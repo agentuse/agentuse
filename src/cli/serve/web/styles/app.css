@@ -408,7 +408,7 @@ a, button, select, summary, label, input, textarea,
   border-radius: 999px;
   background: var(--cyan);
   color: var(--bg);
-  font-family: var(--sans);
+  font-family: var(--mono);
   font-size: 9.5px; font-weight: 600; line-height: 1;
 }
 @media (min-width: 641px) {
@@ -1731,7 +1731,7 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 }
 .log-warning + .log-warning { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
 .log-warning-line {
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 12px;
   color: var(--muted-3);
   white-space: pre-wrap;
@@ -2466,7 +2466,7 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   overflow-x: auto;
   color: var(--muted-3);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   line-height: 1.4;
   white-space: nowrap;
   scrollbar-width: thin;
@@ -2489,7 +2489,7 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   margin-top: 6px;
   color: var(--muted-3);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -3073,7 +3073,7 @@ textarea {
   border-radius: 8px;
   padding: 10px 12px;
   font: inherit;
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: var(--field-font-size);
   color: var(--fg);
   outline: none;
@@ -3199,7 +3199,7 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
    where the button would otherwise fall back to native browser chrome. */
 .learnings-add button {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 13px;
   font-weight: 500;
   letter-spacing: 0.02em;
@@ -3232,7 +3232,7 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .learnings-banner-text { flex: 1; min-width: 220px; font-size: 12.5px; line-height: 1.45; }
 .learnings-banner button {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  font-family: var(--mono); font-size: 12px;
+  font-family: var(--sans); font-size: 12px;
   color: var(--primary-fg, #fff);
   background: var(--primary-bg); border: 1px solid var(--primary-bg);
   border-radius: 8px; min-height: 32px; padding: 0 14px; cursor: pointer;
@@ -3307,7 +3307,7 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
    file, puts the button back in charge of its own text. */
 a.learnings-tidy-start {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  font-family: var(--mono); font-size: 12px; text-decoration: none;
+  font-family: var(--sans); font-size: 12px; text-decoration: none;
   color: var(--primary-fg, #fff);
   background: var(--primary-bg); border: 1px solid var(--primary-bg);
   border-radius: 8px; min-height: 32px; padding: 0 14px;
@@ -3350,7 +3350,7 @@ a.learnings-tidy-start:hover { background: var(--primary-bg-hover); border-color
 .learnings-diff-line.is-hunk { color: var(--muted); }
 .learnings-undo {
   justify-self: start;
-  font-family: var(--mono); font-size: 12px;
+  font-family: var(--sans); font-size: 12px;
   color: var(--fg); background: transparent;
   border: 1px solid var(--line); border-radius: 8px;
   min-height: 32px; padding: 0 14px; cursor: pointer;
@@ -3581,7 +3581,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   border-radius: 6px;
   background: transparent;
   color: var(--muted-2);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 12px;
   cursor: pointer;
 }
@@ -3679,7 +3679,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .project-about-owner { color: var(--muted); }
 .page-agents .project-about-more { margin-top: 8px; }
 .page-agents .project-about-more > summary {
-  font-family: var(--mono); font-size: 11px; color: var(--muted);
+  font-family: var(--sans); font-size: 11px; color: var(--muted);
   cursor: pointer; user-select: none; width: fit-content;
 }
 .page-agents .project-about-more > summary:hover { color: var(--cyan); }
@@ -3812,7 +3812,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home .metric-window button:hover { color: var(--fg); }
 .page-home .metric-window button.on { color: var(--green); background: var(--green-soft); }
 .page-home .metric-empty {
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 12px;
   color: var(--muted-2);
   padding: 4px 2px;
@@ -4114,7 +4114,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home .project-card-arrow { margin-left: auto; flex-shrink: 0; color: var(--muted-2); transition: color 120ms ease, transform 120ms ease; }
 .page-home a.project-card:hover .project-card-arrow { color: var(--cyan); transform: translateX(2px); }
 .page-home .proj-default {
-  flex-shrink: 0; font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.08em;
+  flex-shrink: 0; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em;
   text-transform: uppercase; color: var(--cyan); border: 1px solid var(--cyan-border);
   border-radius: 999px; padding: 1px 7px;
 }
@@ -4311,7 +4311,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 /* Back-to-all-agents link on the single-project view (mirrors agent-detail .back). */
 .page-agents .back {
   display: inline-block; margin-bottom: 14px;
-  font-family: var(--mono); font-size: 12.5px; color: var(--muted); text-decoration: none;
+  font-family: var(--sans); font-size: 12.5px; color: var(--muted); text-decoration: none;
   transition: color 120ms ease;
 }
 .page-agents .back:hover { color: var(--cyan); }
@@ -4741,7 +4741,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .agent-graph-model { color: var(--muted-3); overflow: hidden; text-overflow: ellipsis; }
 .page-agents .agent-graph-mgr {
   padding: 0 5px; border: 1px solid var(--line-strong); border-radius: 999px;
-  font-family: var(--mono); font-size: 9px; font-weight: 400; letter-spacing: 0.05em;
+  font-family: var(--mono); font-size: 10px; font-weight: 400; letter-spacing: 0.05em;
   color: var(--muted); flex-shrink: 0;
 }
 /* Last-run health: age pushed to the row's right edge, tone-colored. */
@@ -4773,7 +4773,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 /* Legend rides in the page header (rendered once, not per project). */
 .page-agents .agent-graph-legend {
   display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
-  margin-top: 10px; font-family: var(--mono); font-size: 10.5px; color: var(--muted-2);
+  margin-top: 10px; font-family: var(--sans); font-size: 10.5px; color: var(--muted-2);
 }
 .page-agents .agent-graph-legend svg { display: block; color: var(--muted-2); }
 .page-agents .agent-graph-legend-item { display: inline-flex; align-items: center; gap: 6px; }
@@ -4889,7 +4889,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .run-dialog .dialog-foot .actions { display: inline-flex; gap: 8px; }
 .page-agents .run-dialog .dialog-foot button,
 .page-agent-detail .run-dialog .dialog-foot button {
-  font-family: var(--mono); font-size: 13px; font-weight: 500; letter-spacing: 0.02em;
+  font-family: var(--sans); font-size: 13px; font-weight: 500; letter-spacing: 0.02em;
   border: 1px solid var(--line-strong); background: transparent; color: var(--fg);
   border-radius: 8px; min-height: 36px; padding: 0 16px; cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease;
@@ -4907,7 +4907,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agent-detail main { width: min(960px, calc(100vw - 32px)); margin: 0 auto; padding: 26px 0 80px; }
 .page-agent-detail .back {
   display: inline-block; margin-bottom: 20px;
-  font-family: var(--mono); font-size: 12.5px; color: var(--muted); text-decoration: none;
+  font-family: var(--sans); font-size: 12.5px; color: var(--muted); text-decoration: none;
   transition: color 120ms ease;
 }
 .page-agent-detail .back:hover { color: var(--cyan); }
@@ -4931,7 +4931,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agent-detail .hero-path code { font-family: var(--mono); font-size: 12px; color: var(--muted); }
 .page-agent-detail .hero-actions { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .page-agent-detail .run-cta {
-  font-family: var(--mono); font-size: 13px; font-weight: 600; letter-spacing: 0.02em;
+  font-family: var(--sans); font-size: 13px; font-weight: 600; letter-spacing: 0.02em;
   padding: 9px 18px; border-radius: 8px; cursor: pointer;
   background: var(--primary-bg); border: 1px solid var(--primary-bg); color: var(--primary-fg);
   transition: background 120ms ease, border-color 120ms ease;
@@ -4941,7 +4941,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agent-detail .run-cta-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 /* Secondary to "Run agent": same run action, one-off instruction appended. */
 .page-agent-detail .run-cta-alt {
-  font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.02em;
+  font-family: var(--sans); font-size: 12.5px; letter-spacing: 0.02em;
   padding: 9px 14px; border-radius: 8px; cursor: pointer;
   background: transparent; border: 1px solid var(--line-strong); color: var(--muted-3);
   white-space: nowrap;
@@ -4958,7 +4958,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   color: var(--muted-3); max-width: 72ch;
 }
 .page-agent-detail .cap-raw > summary {
-  margin-top: 8px; font-family: var(--mono); font-size: 11px; color: var(--muted);
+  margin-top: 8px; font-family: var(--sans); font-size: 11px; color: var(--muted);
   cursor: pointer; user-select: none; width: fit-content;
 }
 .page-agent-detail .cap-raw > summary:hover { color: var(--cyan); }
@@ -4997,7 +4997,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agent-detail .group-title .rule { flex: 1; height: 1px; background: var(--line); }
 .page-agent-detail .group-title .see-all,
 .page-agent-detail .group-title .copy-btn {
-  font-family: var(--mono); font-size: 11.5px; color: var(--muted); text-decoration: none;
+  font-family: var(--sans); font-size: 11.5px; color: var(--muted); text-decoration: none;
   background: none; border: 0; cursor: pointer; padding: 2px 6px; border-radius: 6px;
   transition: color 120ms ease, background 120ms ease;
 }
@@ -5006,7 +5006,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 
 /* source */
 .page-agent-detail .group-title .send-agent-btn {
-  font-family: var(--mono); font-size: 11.5px; color: var(--cyan);
+  font-family: var(--sans); font-size: 11.5px; color: var(--cyan);
   background: var(--cyan-soft); border: 1px solid var(--cyan-border); cursor: pointer;
   padding: 3px 10px; border-radius: 6px;
   white-space: nowrap;
@@ -5014,7 +5014,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agent-detail .group-title .send-agent-btn:hover { background: color-mix(in srgb, var(--cyan) 16%, transparent); }
 .page-agent-detail .group-title .source-view-btn {
-  font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+  font-family: var(--sans); font-size: 11.5px; color: var(--muted);
   background: transparent; border: 1px solid var(--line-strong); cursor: pointer;
   padding: 3px 10px; border-radius: 6px;
   transition: color 120ms ease, border-color 120ms ease;
@@ -5102,7 +5102,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .cca-copy {
   align-self: flex-start; display: inline-flex; align-items: center; gap: 7px;
-  font-family: var(--mono); font-size: 12.5px; font-weight: 500;
+  font-family: var(--sans); font-size: 12.5px; font-weight: 500;
   padding: 8px 14px; border-radius: 8px; cursor: pointer;
   background: var(--fg); border: 1px solid var(--fg); color: var(--bg);
   transition: opacity 120ms ease;
@@ -5364,7 +5364,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-sessions .filters-heading-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; margin-left: auto; }
 .page-sessions .group-toggle {
   appearance: none; border: 1px solid var(--line); border-radius: 999px; background: none;
-  cursor: pointer; font-family: var(--mono); font-size: 11px; color: var(--muted-2);
+  cursor: pointer; font-family: var(--sans); font-size: 11px; color: var(--muted-2);
   padding: 3px 10px; transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
 .page-sessions .group-toggle:hover { color: var(--fg); background: var(--panel-hover); }
@@ -5602,7 +5602,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   gap: 12px;
   margin: 4px 0;
   color: var(--cyan);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -5935,7 +5935,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-sessions .session-feed-footer .row-discard:hover { color: var(--red); background: none; }
 .page-sessions footer {
   color: var(--muted-2);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 11px;
   margin-top: 16px;
   text-align: center;
@@ -6546,7 +6546,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-approval-detail .back-link {
   display: inline-block;
   margin-bottom: 20px;
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 12.5px;
   color: var(--muted);
   text-decoration: none;
@@ -6693,9 +6693,9 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   background: none;
   text-align: left;
   cursor: pointer;
-  /* No font-family: the serve UI sets Geist Mono on the body and every data
-     surface (meta values, tool-stat names) inherits it. Declaring --sans here
-     only won on the non-button rows, so the list rendered in two faces. */
+  /* Explicit mono: these are <button>s, which do not inherit the body face,
+     and they wrap tool names and numeric weights. */
+  font-family: var(--mono);
   color: inherit;
 }
 /* The shell's blanket button rule (`.page-approval-detail button:where(...)`)
