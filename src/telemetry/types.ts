@@ -11,6 +11,8 @@ export interface ToolCallMetrics {
   mcp: number;
   /** Subagent invocations */
   subagent: number;
+  /** Skill discovery/read invocations */
+  skill: number;
 }
 
 export interface FeatureUsage {
@@ -18,10 +20,22 @@ export interface FeatureUsage {
   mcpServersCount: number;
   /** Number of subagents configured */
   subagentsConfigured: number;
-  /** Whether skills were used */
-  skillsUsed: boolean;
+  /** Number of skills explicitly configured for preloading */
+  skillsConfigured: number;
   /** Execution mode */
   mode: 'cli' | 'schedule' | 'webhook';
+}
+
+export type ExecutionClass = 'example' | 'user_agent' | 'test' | 'health_check';
+export type AgentSource = 'local' | 'remote' | 'bundled' | 'installed' | 'unknown';
+export type ExecutionTrigger = 'manual' | 'scheduled' | 'api';
+
+/** Privacy-safe execution context. Never includes names, paths, URLs, or content. */
+export interface ExecutionClassification {
+  executionClass: ExecutionClass;
+  agentSource: AgentSource;
+  isMock: boolean;
+  trigger: ExecutionTrigger;
 }
 
 export interface ConfigPatterns {
@@ -75,6 +89,8 @@ export interface ExecutionResult {
   outputTokens: number;
   /** Whether execution completed successfully */
   success: boolean;
+  /** Context used to build trustworthy activation/adoption cohorts */
+  classification: ExecutionClassification;
   /** Error category if failed */
   errorType?: 'timeout' | 'api_error' | 'tool_error' | 'user_abort' | 'incomplete' | 'unknown';
   /** Tool call breakdown by type */

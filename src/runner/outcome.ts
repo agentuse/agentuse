@@ -1,5 +1,6 @@
 import type { RunAgentResult } from './types';
 import type { RunOutcome } from '../tools/report-outcome.js';
+import { aggregateToolCalls, countSteps } from '../telemetry/metrics.js';
 
 /**
  * Asked once when a run is about to end without either outcome tool being
@@ -133,7 +134,11 @@ export function workerRunResponse(
         : {}),
     ...(result.approvalUrl && { approvalUrl: result.approvalUrl }),
   };
+  const telemetry = {
+    toolCalls: aggregateToolCalls(result.toolCallTraces),
+    steps: countSteps(result.toolCallTraces),
+  };
   return disposition.kind === 'incomplete'
-    ? { id, success: false as const, error: disposition.error, result: wireResult }
-    : { id, success: true as const, result: wireResult };
+    ? { id, success: false as const, error: disposition.error, result: wireResult, telemetry }
+    : { id, success: true as const, result: wireResult, telemetry };
 }

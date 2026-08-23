@@ -103,6 +103,10 @@ describe('external run outcome mapping', () => {
       id: 'request-1',
       success: false,
       error: { code: 'INCOMPLETE', message: 'Login expired' },
+      telemetry: {
+        toolCalls: { total: 0, builtin: 0, mcp: 0, subagent: 0, skill: 0 },
+        steps: 0,
+      },
       result: {
         text: 'Partial diagnostic output',
         finishReason: 'stop',

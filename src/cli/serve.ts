@@ -20,7 +20,14 @@ import { findGateSnapshotFile } from "../session/gate-artifacts.js";
 import { getXdgDataDir } from "../storage/paths.js";
 import { Scheduler, type Schedule, type SerializedSchedule } from "../scheduler";
 import { FileWatcher } from "../watcher";
-import { telemetry, parseModel } from "../telemetry";
+import {
+  telemetry,
+  classifyExecution,
+  configuredFeatureUsage,
+  emptyToolCallMetrics,
+  parseModel,
+  type ToolCallMetrics,
+} from "../telemetry";
 import { version as packageVersion } from "../../package.json";
 import { registerServer, unregisterServer, updateServer, listServers, formatUptime, getDefaultLogFilePath, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { acquireSchedulerLock, releaseSchedulerLock } from "../utils/scheduler-lock";
@@ -198,6 +205,10 @@ interface WorkerExecuteResult {
   success: true;
   /** The reporting worker's RSS when the run settled (see worker recycling). */
   workerRssBytes?: number;
+  telemetry?: {
+    toolCalls: ToolCallMetrics;
+    steps: number;
+  };
   result: {
     text: string;
     finishReason?: string;
@@ -213,6 +224,7 @@ interface WorkerExecuteError {
   success: false;
   /** The reporting worker's RSS when the run settled (see worker recycling). */
   workerRssBytes?: number;
+  telemetry?: WorkerExecuteResult['telemetry'];
   error: {
     code: string;
     message: string;
@@ -2898,12 +2910,14 @@ export function createServeCommand(): Command {
             inputTokens: spawnResult.result.tokens?.input ?? 0,
             outputTokens: spawnResult.result.tokens?.output ?? 0,
             success: true,
-            features: {
-              mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
-              subagentsConfigured: agent.config.subagents?.length ?? 0,
-              skillsUsed: false,
-              mode: 'schedule',
-            },
+            classification: classifyExecution({
+              agentSource: 'local',
+              trigger: 'scheduled',
+              isMock: false,
+            }),
+            toolCalls: spawnResult.telemetry?.toolCalls ?? emptyToolCallMetrics(),
+            ...(spawnResult.telemetry && { steps: spawnResult.telemetry.steps }),
+            features: configuredFeatureUsage(agent.config, 'schedule'),
             config: {
               timeoutCustom: agent.config.timeout !== undefined,
               maxStepsCustom: agent.config.maxSteps !== undefined,
@@ -2929,17 +2943,19 @@ export function createServeCommand(): Command {
             inputTokens: 0,
             outputTokens: 0,
             success: false,
+            classification: classifyExecution({
+              agentSource: 'local',
+              trigger: 'scheduled',
+              isMock: false,
+            }),
+            toolCalls: spawnResult.telemetry?.toolCalls ?? emptyToolCallMetrics(),
+            ...(spawnResult.telemetry && { steps: spawnResult.telemetry.steps }),
             errorType: spawnResult.error.code === 'TIMEOUT'
               ? 'timeout'
               : spawnResult.error.code === 'INCOMPLETE'
                 ? 'incomplete'
                 : 'unknown',
-            features: {
-              mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
-              subagentsConfigured: agent.config.subagents?.length ?? 0,
-              skillsUsed: false,
-              mode: 'schedule',
-            },
+            features: configuredFeatureUsage(agent.config, 'schedule'),
           });
 
           return {
@@ -6610,6 +6626,7 @@ export function createServeCommand(): Command {
               newSessionId: preassignedId,
               trigger: 'api',
             }).then((result) => {
+              const duration = Date.now() - startTime;
               totalExecutions++;
               if (result.success) {
                 successfulExecutions++;
@@ -6620,10 +6637,53 @@ export function createServeCommand(): Command {
                 failedExecutions++;
                 logger.warn(`Detached run ${preassignedId} failed: ${result.error.message}`);
               }
+              telemetry.captureExecution({
+                ...parseModel(body.model || agent.config.model),
+                durationMs: duration,
+                inputTokens: result.success ? result.result.tokens?.input ?? 0 : 0,
+                outputTokens: result.success ? result.result.tokens?.output ?? 0 : 0,
+                success: result.success,
+                classification: classifyExecution({
+                  agentSource: 'local',
+                  trigger: 'api',
+                  isMock: false,
+                }),
+                toolCalls: result.telemetry?.toolCalls ?? emptyToolCallMetrics(),
+                ...(result.telemetry && { steps: result.telemetry.steps }),
+                ...(!result.success && {
+                  errorType: result.error.code === 'TIMEOUT'
+                    ? 'timeout' as const
+                    : result.error.code === 'INCOMPLETE'
+                      ? 'incomplete' as const
+                      : 'unknown' as const,
+                }),
+                features: configuredFeatureUsage(agent.config, 'webhook'),
+                config: {
+                  timeoutCustom: body.timeout !== undefined || agent.config.timeout !== undefined,
+                  maxStepsCustom: body.maxSteps !== undefined || agent.config.maxSteps !== undefined,
+                  quietMode: true,
+                  debugMode: options.debug ?? false,
+                },
+              });
             }).catch((err) => {
               totalExecutions++;
               failedExecutions++;
               logger.warn(`Detached run ${preassignedId} errored: ${(err as Error).message}`);
+              telemetry.captureExecution({
+                ...parseModel(body.model || agent.config.model),
+                durationMs: Date.now() - startTime,
+                inputTokens: 0,
+                outputTokens: 0,
+                success: false,
+                errorType: 'unknown',
+                classification: classifyExecution({
+                  agentSource: 'local',
+                  trigger: 'api',
+                  isMock: false,
+                }),
+                toolCalls: emptyToolCallMetrics(),
+                features: configuredFeatureUsage(agent.config, 'webhook'),
+              });
             }).finally(wakeListHubs);
 
             wakeListHubs();
@@ -6700,12 +6760,14 @@ export function createServeCommand(): Command {
               inputTokens: spawnResult.result.tokens?.input ?? 0,
               outputTokens: spawnResult.result.tokens?.output ?? 0,
               success: true,
-              features: {
-                mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
-                subagentsConfigured: agent.config.subagents?.length ?? 0,
-                skillsUsed: false,
-                mode: 'webhook',
-              },
+              classification: classifyExecution({
+                agentSource: 'local',
+                trigger: 'api',
+                isMock: false,
+              }),
+              toolCalls: spawnResult.telemetry?.toolCalls ?? emptyToolCallMetrics(),
+              ...(spawnResult.telemetry && { steps: spawnResult.telemetry.steps }),
+              features: configuredFeatureUsage(agent.config, 'webhook'),
               config: {
                 timeoutCustom: body.timeout !== undefined || agent.config.timeout !== undefined,
                 maxStepsCustom: body.maxSteps !== undefined || agent.config.maxSteps !== undefined,
@@ -6773,17 +6835,19 @@ export function createServeCommand(): Command {
               inputTokens: 0,
               outputTokens: 0,
               success: false,
+              classification: classifyExecution({
+                agentSource: 'local',
+                trigger: 'api',
+                isMock: false,
+              }),
+              toolCalls: spawnResult.telemetry?.toolCalls ?? emptyToolCallMetrics(),
+              ...(spawnResult.telemetry && { steps: spawnResult.telemetry.steps }),
               errorType: errorCode === 'TIMEOUT'
                 ? 'timeout'
                 : errorCode === 'INCOMPLETE'
                   ? 'incomplete'
                   : 'unknown',
-              features: {
-                mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
-                subagentsConfigured: agent.config.subagents?.length ?? 0,
-                skillsUsed: false,
-                mode: 'webhook',
-              },
+              features: configuredFeatureUsage(agent.config, 'webhook'),
             });
 
             if (errorCode === 'TIMEOUT') {

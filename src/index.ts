@@ -57,7 +57,17 @@ import { resolveTimeout } from './utils/config';
 import { toErrorMessage } from './utils/error-message';
 import { printLogo, type BrandingStyle } from './utils/branding';
 import { validateAgentEnvVars, formatEnvValidationError } from './utils/env-validation';
-import { telemetry, categorizeError, aggregateToolCalls, countSteps, parseModel } from './telemetry';
+import {
+  telemetry,
+  aggregateToolCalls,
+  categorizeError,
+  classifyExecution,
+  configuredFeatureUsage,
+  countSteps,
+  emptyToolCallMetrics,
+  isCanonicalRemoteExample,
+  parseModel,
+} from './telemetry';
 import type { ActiveContextUsage, LogPartLevel, SessionInfo, SessionManager as SessionManagerType, SessionTrigger, ToolPart } from './session';
 import { findServerForProject } from './utils/server-registry';
 
@@ -262,6 +272,14 @@ interface RunCommandOptions {
 async function runCommandAction(file: string, promptArgs: string[], options: RunCommandOptions): Promise<void> {
     const startTime = Date.now();
     let originalCwd: string | undefined;
+    const agentSource = isURL(file) ? 'remote' as const : 'local' as const;
+    let executionClassification = classifyExecution({
+      agentSource,
+      trigger: 'manual',
+      isMock: false,
+      isExampleAgent: agentSource === 'remote' && isCanonicalRemoteExample(file),
+    });
+    let executionFeatures = configuredFeatureUsage(undefined, 'cli');
 
     // Track session info for interrupt handling (needs to be accessible in catch block)
     let interruptSessionInfo: { sessionID: string; agentId: string } | null = null;
@@ -362,6 +380,12 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
         process.env.AGENTUSE_MOCK_APPROVAL = options.mockApproval === true ? 'approve' : options.mockApproval;
       }
       if (isMockMode()) resolveMockApprovalDecision(); // fail fast on an invalid decision value, whatever its source
+      executionClassification = classifyExecution({
+        agentSource,
+        trigger: 'manual',
+        isMock: isMockMode(),
+        isExampleAgent: agentSource === 'remote' && isCanonicalRemoteExample(file),
+      });
 
       // Initialize telemetry
       await telemetry.init(packageVersion);
@@ -552,6 +576,7 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
         agentFilePath = resolve(agentFile);
         agent = await parseAgent(agentFile);
       }
+      executionFeatures = configuredFeatureUsage(agent.config, 'cli');
       
       // Keep additional prompt separate (don't concatenate)
       if (additionalPrompt && options.debug) {
@@ -837,6 +862,9 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
               outputTokens: 0,
               success: false,
               errorType: 'user_abort',
+              classification: executionClassification,
+              toolCalls: emptyToolCallMetrics(),
+              features: executionFeatures,
             });
             await telemetry.shutdown();
             if (jsonMode) {
@@ -880,6 +908,9 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
               outputTokens: 0,
               success: false,
               errorType: 'timeout',
+              classification: executionClassification,
+              toolCalls: emptyToolCallMetrics(),
+              features: executionFeatures,
             });
             await telemetry.shutdown();
             if (jsonMode) {
@@ -908,6 +939,7 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
         inputTokens: result.usage?.inputTokens ?? 0,
         outputTokens: result.usage?.outputTokens ?? 0,
         ...executionOutcomeFields(result),
+        classification: executionClassification,
         toolCalls: aggregateToolCalls(result.toolCallTraces),
         steps: countSteps(result.toolCallTraces),
 
@@ -916,12 +948,7 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
         hasTextOutput: result.hasTextOutput,
 
         // Feature Adoption
-        features: {
-          mcpServersCount: Object.keys(agent.config.mcpServers || {}).length,
-          subagentsConfigured: agent.config.subagents?.length ?? 0,
-          skillsUsed: false, // TODO: track skill usage
-          mode: 'cli' as const,
-        },
+        features: executionFeatures,
 
         // Configuration Patterns
         config: {
@@ -1020,6 +1047,9 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
         inputTokens: 0,
         outputTokens: 0,
         success: false,
+        classification: executionClassification,
+        toolCalls: emptyToolCallMetrics(),
+        features: executionFeatures,
         ...(errorType && { errorType }),
       });
       await telemetry.shutdown();

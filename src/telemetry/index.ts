@@ -12,8 +12,11 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import type { PostHog } from 'posthog-node';
 import { getOrCreateAnonymousId, isFirstRun, markFirstRunComplete } from './id';
-import type { ExecutionResult, ToolCallMetrics, StartupError, ServerStartConfig, ServerShutdownStats, AddCommandResult, TimeoutUnitError } from './types';
+import type { ExecutionResult, StartupError, ServerStartConfig, ServerShutdownStats, AddCommandResult, TimeoutUnitError } from './types';
 import type { ToolCallTrace } from '../plugin/types';
+export { aggregateToolCalls, configuredFeatureUsage, countSteps, emptyToolCallMetrics } from './metrics.js';
+export { classifyExecution, isCanonicalRemoteExample } from './classification.js';
+export type { ExecutionClassification, ToolCallMetrics } from './types.js';
 
 // PostHog configuration
 // This is a public write-only key - safe to commit
@@ -113,42 +116,6 @@ export function parseModel(modelId: string): { provider: string; modelName: stri
  * Aggregate tool call traces into metrics by type
  * MCP tools are prefixed with "mcp__"
  */
-export function aggregateToolCalls(traces: ToolCallTrace[] | undefined): ToolCallMetrics {
-  const metrics: ToolCallMetrics = {
-    total: 0,
-    builtin: 0,
-    mcp: 0,
-    subagent: 0,
-  };
-
-  if (!traces) return metrics;
-
-  for (const trace of traces) {
-    // Skip LLM calls - we only count tool calls
-    if (trace.type === 'llm') continue;
-
-    metrics.total++;
-
-    if (trace.type === 'subagent') {
-      metrics.subagent++;
-    } else if (trace.name.startsWith('mcp__')) {
-      metrics.mcp++;
-    } else {
-      metrics.builtin++;
-    }
-  }
-
-  return metrics;
-}
-
-/**
- * Count LLM steps from traces
- */
-export function countSteps(traces: ToolCallTrace[] | undefined): number {
-  if (!traces) return 0;
-  return traces.filter(t => t.type === 'llm').length;
-}
-
 /**
  * Extract time to first token from the first LLM trace
  * Returns undefined if not available
@@ -286,6 +253,13 @@ class TelemetryManager {
         properties: {
           // Ensure truly anonymous - no person profile
           $process_person_profile: false,
+          telemetry_schema_version: 2,
+
+          // Privacy-safe activation context
+          execution_class: result.classification.executionClass,
+          agent_source: result.classification.agentSource,
+          is_mock: result.classification.isMock,
+          trigger: result.classification.trigger,
 
           // Version and environment
           version: VERSION,
@@ -312,6 +286,10 @@ class TelemetryManager {
             tool_calls_builtin: result.toolCalls.builtin,
             tool_calls_mcp: result.toolCalls.mcp,
             tool_calls_subagent: result.toolCalls.subagent,
+            tool_calls_skill: result.toolCalls.skill,
+            mcp_used: result.toolCalls.mcp > 0,
+            subagents_used: result.toolCalls.subagent > 0,
+            skills_used: result.toolCalls.skill > 0,
           }),
 
           // LLM steps
@@ -324,9 +302,12 @@ class TelemetryManager {
 
           // Feature Adoption
           ...(result.features && {
+            // Legacy names retained while saved insights migrate.
             mcp_servers_count: result.features.mcpServersCount,
             subagents_configured: result.features.subagentsConfigured,
-            skills_used: result.features.skillsUsed,
+            mcp_servers_configured_count: result.features.mcpServersCount,
+            subagents_configured_count: result.features.subagentsConfigured,
+            skills_configured_count: result.features.skillsConfigured,
             mode: result.features.mode,
           }),
 
