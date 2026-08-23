@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { renderToString } from 'preact-render-to-string';
 import { LogEntry } from '../src/cli/serve/web/components/log-entry';
 import { Topbar } from '../src/cli/serve/web/components/topbar';
-import { PendingApprovalCard } from '../src/cli/serve/web/components/pending-approval-card';
+import { PendingApprovalGroups, PendingApprovalRow } from '../src/cli/serve/web/components/pending-approval-card';
 import { StoreTable, type StoreTableColumn } from '../src/cli/serve/web/components/store-table';
 import { ContinuePanel } from '../src/cli/serve/web/components/continue-panel';
 import { DecisionDialog } from '../src/cli/serve/web/components/comment-dialog';
@@ -40,20 +40,46 @@ describe('displayAgentName', () => {
   });
 });
 
-describe('PendingApprovalCard', () => {
-  it('renders the shared Home/Approvals pending-gate layout', () => {
-    const html = renderToString(<PendingApprovalCard row={{
-      project: 'demo', sessionId: 'session-1', agentId: 'agents-x-growth', agentName: '',
-      agentFilePath: '/agents/x/x-engage-reply.agentuse', status: 'pending', sessionStatus: 'suspended',
-      risk: 'Posting is public.', summary: 'Pick a reply.', suspendedAt: Date.now() - 60_000,
+describe('PendingApprovalRow', () => {
+  const base = {
+    project: 'demo', agentId: 'agents-x-growth', agentName: '',
+    agentFilePath: '/agents/x/x-engage-reply.agentuse', status: 'pending' as const, sessionStatus: 'suspended',
+  };
+
+  it('renders the shared Home/Approvals one-line pending row', () => {
+    const now = Date.now();
+    const html = renderToString(<PendingApprovalRow now={now} row={{
+      ...base, sessionId: 'session-1', risk: 'Posting is public.', summary: 'Pick a reply.',
+      hasOptions: true, suspendedAt: now - 60_000,
     }} />);
 
-    expect(html).toContain('class="pending-approval"');
+    expect(html).toContain('class="pending-row"');
     expect(html).toContain('x-engage-reply');
-    expect(html).toContain('Posting is public.');
     expect(html).toContain('Pick a reply.');
+    expect(html).toContain('>pick<');
+    expect(html).toContain('tone-fresh');
     expect(html).toContain('review →');
-    expect(html).not.toContain('wants approval');
+    // Risk is tooltip-only unless the caller asks for the grey line.
+    expect(html).not.toContain('pending-row-risk');
+    expect(html).toContain('title="Posting is public.');
+  });
+
+  it('groups by agent, oldest first, with a risk line and a revised tag', () => {
+    const now = Date.now();
+    const day = 86_400_000;
+    const html = renderToString(<PendingApprovalGroups now={now} rows={[
+      { ...base, sessionId: 'fresh', summary: 'New slate.', suspendedAt: now - 60_000 },
+      { ...base, sessionId: 'old', agentFilePath: '/agents/li/linkedin-ai-news.agentuse', summary: 'Same slate, revised as instructed.', risk: 'Auto-publishes Monday.', suspendedAt: now - 3 * day },
+      { ...base, sessionId: 'mid', summary: 'Another reply.', suspendedAt: now - 2 * day },
+    ]} />);
+
+    // Stalest agent group first; inside a group, oldest first.
+    expect(html.indexOf('linkedin-ai-news')).toBeLessThan(html.indexOf('x-engage-reply'));
+    expect(html.indexOf('session-mid') === -1 ? html.indexOf('Another reply.') : 0).toBeLessThan(html.indexOf('New slate.'));
+    expect(html).toContain('×2');
+    expect(html).toContain('>revised<');
+    expect(html).toContain('tone-stale');
+    expect(html).toContain('pending-row-risk">Auto-publishes Monday.');
   });
 });
 

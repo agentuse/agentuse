@@ -468,43 +468,6 @@ a, button, select, summary, label, input, textarea,
   .topbar .nav-item { min-height: 40px; padding: 0 8px; font-size: 12px; }
 }
 
-/* Shared pending-approval card: Home and Approvals intentionally render the
-   same component so the reviewer learns one compact gate pattern. */
-a.pending-approval {
-  display: block; padding: 14px 18px 12px;
-  color: inherit; text-decoration: none; border-bottom: 1px solid var(--line);
-  transition: background 120ms ease;
-}
-a.pending-approval:last-child { border-bottom: 0; }
-a.pending-approval:hover { background: var(--panel-hover); }
-a.pending-approval:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: -2px; }
-.pending-approval-head {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto;
-  align-items: baseline; gap: 10px 18px; min-width: 0;
-}
-.pending-approval-agent {
-  min-width: 0; font-family: var(--sans); font-size: 14px; font-weight: 500; color: var(--fg);
-  white-space: normal; overflow-wrap: anywhere;
-}
-.pending-approval-time {
-  display: flex; align-items: baseline; gap: 10px;
-  font-family: var(--mono); font-size: 11.5px; color: var(--muted-2); white-space: nowrap;
-}
-.pending-approval-review { font-family: var(--sans); font-size: 12.5px; color: var(--cyan); }
-.pending-approval-risk { margin-top: 4px; font-size: 12.5px; line-height: 1.4; color: var(--cyan); }
-.pending-approval-summary {
-  margin-top: 6px; font-size: 13.5px; line-height: 1.5; color: var(--muted-3);
-  white-space: pre-wrap; overflow-wrap: anywhere;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-}
-@media (max-width: 560px) {
-  a.pending-approval { padding: 12px; }
-  .pending-approval-head { grid-template-columns: 1fr; gap: 4px; }
-  .pending-approval-time { justify-content: space-between; }
-  .pending-approval-risk { margin-top: 8px; }
-  .pending-approval-summary { margin-top: 8px; font-size: 13px; -webkit-line-clamp: 3; }
-}
-
 /* Home scan rows for pending gates: one line each, agent | summary | age | review.
    The age pill carries the only hue so the eye sorts by staleness, not by
    reading. Risk lives in the tooltip; the session page shows it in full. */
@@ -531,6 +494,7 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.02em; text-transform: uppercase;
   color: var(--cyan); background: var(--cyan-soft); border: 1px solid var(--cyan-border);
 }
+.pending-row-tag.revised { color: var(--amber); background: var(--amber-soft); border-color: var(--amber-border); }
 .pending-row-age {
   padding: 2px 7px; border-radius: 999px; font-family: var(--mono); font-size: 11px;
   white-space: nowrap; color: var(--muted-2); border: 1px solid var(--line);
@@ -546,6 +510,33 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   .pending-row-text { grid-column: 1 / 3; grid-row: 2; }
   .pending-row-review { display: none; }
 }
+/* Approvals: pending gates grouped by agent, stalest group first. The group
+   head carries the name once so each row is just decision text + age. */
+.pending-groups { display: flex; flex-direction: column; }
+.pending-group { border-bottom: 1px solid var(--line); }
+.pending-group:last-child { border-bottom: 0; }
+.pending-group-head {
+  display: flex; align-items: baseline; gap: 8px; margin: 0;
+  padding: 10px 16px 4px;
+  font-family: var(--sans); font-size: 13px; font-weight: 600; color: var(--fg);
+}
+.pending-group-count { font-family: var(--mono); font-size: 11px; font-weight: 400; color: var(--muted); }
+.pending-group a.pending-row { border-bottom: 0; padding-top: 5px; padding-bottom: 5px; min-height: 30px; }
+/* The risk column exists only when there is a risk line; otherwise the text
+   takes the full width and the age pill hugs the right edge. */
+.pending-group a.pending-row.no-agent { grid-template-columns: minmax(0, 1fr) auto auto; }
+.pending-group a.pending-row.no-agent.has-risk { grid-template-columns: minmax(0, 1fr) minmax(0, 34%) auto auto; }
+.pending-group a.pending-row:last-of-type { padding-bottom: 12px; }
+/* The risk clause, one line in grey: repeated boilerplate must not shout. */
+.pending-row-risk {
+  min-width: 0; font-size: 12px; color: var(--muted-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+@media (max-width: 640px) {
+  .pending-group a.pending-row.no-agent { grid-template-columns: minmax(0, 1fr) auto; }
+  .pending-row-risk { display: none; }
+}
+
 
 /* ---------------- approvals list ---------------- */
 /* Calm console: pending gates share one cyan-edged surface, settled ones a

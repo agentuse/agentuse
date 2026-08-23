@@ -9,7 +9,7 @@ import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { PushBell } from '../components/push-bell';
-import { PendingApprovalCard } from '../components/pending-approval-card';
+import { PendingApprovalGroups } from '../components/pending-approval-card';
 import { syncAppBadge } from '../lib/badge';
 import { formatApprovalTime, errorText } from '../lib/format';
 import { pageTitle } from '../lib/brand';
@@ -124,6 +124,13 @@ export default function ApprovalsList() {
   const error = fetched.error ?? (!data ? streamError : null);
   const loading = fetched.loading && !data;
   const totalPending = data?.buckets.pending.length ?? 0;
+  // Age pills tick once a minute; nothing on this page needs seconds.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (totalPending === 0) return;
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, [totalPending]);
   const multiProject = data?.multiProject ?? false;
   const recentlyDecided = [...(data?.buckets.completed ?? []), ...(data?.buckets.expired ?? [])]
     .sort((a, b) => (b.decisionAt ?? b.expiresAt ?? 0) - (a.decisionAt ?? a.expiresAt ?? 0));
@@ -152,9 +159,7 @@ export default function ApprovalsList() {
         {data && (
           <>
             <Bucket title="Pending" count={data.buckets.pending.length} emptyText="Nothing waiting on you." accent>
-              {data.buckets.pending.map((row) => (
-                <PendingApprovalCard key={`${row.project}:${row.sessionId}`} row={row} />
-              ))}
+              <PendingApprovalGroups rows={data.buckets.pending} now={now} />
             </Bucket>
             {/* Decided and expired gates share one "Recently decided" list, most
                 recent first, so the operator can confirm a call was recorded. */}
