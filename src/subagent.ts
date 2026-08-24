@@ -76,6 +76,30 @@ export function getMaxSubAgentDepth(): number {
   return DEFAULT_MAX_SUBAGENT_DEPTH;
 }
 
+const MODEL_ERROR_PREFIX = /^\[model: [^\]\r\n]+\](?:\s|$)/;
+
+/**
+ * Prefix model/provider failures with the concrete model that produced them.
+ * Name checks intentionally avoid instanceof so auth errors keep their identity
+ * across module or process boundaries.
+ */
+export function formatSubagentErrorMessage(error: unknown, model: string): string {
+  const message = toErrorMessage(error);
+  const errorRecord = error && typeof error === 'object'
+    ? error as { name?: unknown; provider?: unknown; envVar?: unknown }
+    : undefined;
+  const errorName = errorRecord?.name;
+  const isModelAuthenticationError = errorName === 'AuthenticationError'
+    && typeof errorRecord?.provider === 'string'
+    && typeof errorRecord.envVar === 'string';
+  const isModelError = extractApiErrorDetail(error) !== undefined
+    || isModelAuthenticationError
+    || errorName === 'AnthropicRefreshFailed';
+
+  if (!isModelError || MODEL_ERROR_PREFIX.test(message)) return message;
+  return `[model: ${model}] ${message}`;
+}
+
 /**
  * Create a tool that runs another agent as a sub-agent
  * @param agentPath Path to the agent file (.agentuse)
@@ -569,10 +593,11 @@ export async function createSubAgentTool(
           throw error;
         }
 
-        // toErrorMessage (not String(error)): a provider can reject with a plain
-        // object, and String() on it yields the useless "[object Object]" that then
-        // gets persisted as the session error and bubbled to the parent manager.
-        const errorMsg = toErrorMessage(error);
+        // Normalize with toErrorMessage (not String(error)): a provider can reject
+        // with a plain object, and String() on it yields the useless "[object Object]".
+        // Model/provider failures also carry the concrete attempted model in both
+        // the persisted child error and the result bubbled to the parent manager.
+        const errorMsg = formatSubagentErrorMessage(error, agent.config.model);
         logger.error(`[SubAgent] ${agent.name} failed: ${errorMsg}`);
 
         // Mark session as error if we have session info
