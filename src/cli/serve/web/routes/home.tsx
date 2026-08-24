@@ -11,7 +11,7 @@ import { useSessionTail } from '../hooks/use-session-tail';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
-import { PendingApprovalRow } from '../components/pending-approval-card';
+import { pendingNewestFirst, PendingApprovalRow } from '../components/pending-approval-card';
 import { displayAgentName, formatApprovalTime, formatRelativeTime, displayStatusLabel, humanizeMetric, runTone, type RunTone } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
@@ -139,7 +139,7 @@ function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => voi
 const ATTENTION_ROWS = 3;
 
 /** Pending gates shown before the tail folds. Twenty-plus open gates is a
- *  real state; the reviewer needs the oldest few on screen, not all of them. */
+ *  real state; the reviewer needs the latest few on screen, not all of them. */
 const PENDING_ROWS = 8;
 
 /** Recent-activity rows shown on Home; the full stream lives on /sessions. */
@@ -162,8 +162,7 @@ function AttentionSection(props: {
   const { pending, failed, stranded } = props;
   const total = pending.length + failed.length + stranded.length;
   const now = useNow(pending.length > 0);
-  // Oldest wait first: that is the order a reviewer clears a queue in.
-  const ordered = [...pending].sort((a, b) => (a.suspendedAt ?? a.createdAt ?? 0) - (b.suspendedAt ?? b.createdAt ?? 0));
+  const ordered = pendingNewestFirst(pending);
   const shownPending = pendingOpen ? ordered : ordered.slice(0, PENDING_ROWS);
   const foldedPending = ordered.length - shownPending.length;
   // Each group keeps its own head, so one long list never buries the other.

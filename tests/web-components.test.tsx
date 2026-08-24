@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { renderToString } from 'preact-render-to-string';
 import { LogEntry } from '../src/cli/serve/web/components/log-entry';
 import { Topbar } from '../src/cli/serve/web/components/topbar';
-import { PendingApprovalGroups, PendingApprovalRow } from '../src/cli/serve/web/components/pending-approval-card';
+import { pendingNewestFirst, PendingApprovalGroups, PendingApprovalRow } from '../src/cli/serve/web/components/pending-approval-card';
 import { StoreTable, type StoreTableColumn } from '../src/cli/serve/web/components/store-table';
 import { ContinuePanel } from '../src/cli/serve/web/components/continue-panel';
 import { DecisionDialog } from '../src/cli/serve/web/components/comment-dialog';
@@ -80,6 +80,23 @@ describe('PendingApprovalRow', () => {
     expect(html).toContain('>revised<');
     expect(html).toContain('tone-stale');
     expect(html).toContain('pending-row-risk">Auto-publishes Monday.');
+  });
+
+  it('orders home pending gates newest first and leaves missing timestamps last', () => {
+    const rows = [
+      { ...base, sessionId: 'old', suspendedAt: 100 },
+      { ...base, sessionId: 'unknown' },
+      { ...base, sessionId: 'new', suspendedAt: 300 },
+      { ...base, sessionId: 'fallback', createdAt: 200 },
+    ];
+
+    expect(pendingNewestFirst(rows).map((row) => row.sessionId)).toEqual([
+      'new',
+      'fallback',
+      'old',
+      'unknown',
+    ]);
+    expect(rows.map((row) => row.sessionId)).toEqual(['old', 'unknown', 'new', 'fallback']);
   });
 });
 

@@ -37,6 +37,15 @@ export function waitingSince(row: ApprovalRow): number | undefined {
   return row.suspendedAt ?? row.createdAt;
 }
 
+/** Newest gates first for surfaces where recency is the primary scan order.
+ *  Missing timestamps stay at the end instead of appearing newer than a
+ *  timestamped gate. */
+export function pendingNewestFirst(rows: ApprovalRow[]): ApprovalRow[] {
+  return [...rows].sort((a, b) =>
+    (waitingSince(b) ?? Number.MIN_SAFE_INTEGER) - (waitingSince(a) ?? Number.MIN_SAFE_INTEGER)
+  );
+}
+
 /** One-line scan row for a pending gate: agent, one-line summary, age pill.
  *  Shared by Home and Approvals so the reviewer learns one pattern. The risk
  *  sentence is optional supporting text in grey, one line; it is a sentence
