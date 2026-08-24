@@ -443,6 +443,12 @@ type ExecuteAgentCoreOptions = {
   runOutcome?: RunOutcome;
 };
 
+type ExecuteAgentAttemptOptions = ExecuteAgentCoreOptions & {
+  /** Shared across candidate attempts so a pre-output model fallback does not
+   * consume the approval authority for the resumed execution segment. */
+  approvalLeaseStore: LeaseStore;
+};
+
 function systemMessagesForModel(
   messages: Array<{ role: string; content: string }>,
   model: string
@@ -547,7 +553,9 @@ export async function* executeAgentCore(
       : configuredCandidates;
   const candidates = availableModelCandidates(configured);
   const initiallyPreparedModel = agent.config.model;
+  const approvalLeaseStore = new LeaseStore();
 
+  try {
   for (let index = 0; index < candidates.length; index++) {
     const model = candidates[index]!;
     const attemptSystemMessages = model === initiallyPreparedModel
@@ -568,6 +576,7 @@ export async function* executeAgentCore(
       ...(options.messages && crossesProvider && {
         messages: messagesForFallbackModel(options.messages, attemptSystemMessages, model),
       }),
+      approvalLeaseStore,
     });
 
     try {
@@ -605,12 +614,18 @@ export async function* executeAgentCore(
     clearModelCooldown(model);
     return;
   }
+  } finally {
+    // The lease belongs to this logical execution segment, not to an individual
+    // provider attempt. A failed candidate may hand off to another model, but
+    // no later continuation may inherit the approval.
+    approvalLeaseStore.revoke();
+  }
 }
 
 async function* executeAgentAttempt(
   agent: ParsedAgent,
   tools: ToolSet,
-  options: ExecuteAgentCoreOptions
+  options: ExecuteAgentAttemptOptions
 ): AsyncGenerator<AgentChunk> {
   // SDK-layer execution witness (debug trace of every tool execute via the
   // v7 telemetry integration). Idempotent; complements the effect WAL.
@@ -633,7 +648,7 @@ async function* executeAgentAttempt(
   // changes[]. The store is file-based in the session directory (granted at
   // resume time, possibly by another process) and read per call.
   const effectPatterns = agent.config.tools?.bash?.gated ?? [];
-  const leaseStore = new LeaseStore();
+  const leaseStore = options.approvalLeaseStore;
   // Gate seal (reject-is-terminal): bound whenever the run has a session, since
   // any approval-enabled agent can carry an await_human gate regardless of
   // whether it also declares gated bash commands.
@@ -2053,11 +2068,8 @@ Error: ${errorMessage}`);
     // provider failure all unwind through here — so a rest point is never left
     // with a snapshot that only existed in memory.
     await flushContextSnapshot();
-    // An approval authorizes only the execution segment resumed from that gate.
-    // Consume it on every exit — success, suspension, cancellation, provider
-    // failure, or an exception during context/bootstrap work — so a later
-    // continuation can never inherit authority from an earlier human decision.
-    leaseStore.revoke();
+    // Approval-lease cleanup belongs to executeAgentCore's logical segment,
+    // which may span more than one provider attempt.
   }
 }
 

@@ -1,4 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { aiSdkErrorMocks } from './helpers/ai-sdk-mock';
 
 const createModelMock = mock(async (model: string) => ({ modelId: model }));
@@ -312,5 +315,50 @@ describe('model alias fallback execution', () => {
       'openai:gpt-5.6',
       'google:gemini-3-pro',
     ]);
+  });
+
+  it('keeps an approval lease alive across candidate attempts, then revokes it after the segment', async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), 'agentuse-fallback-lease-'));
+    const leasePath = join(sessionDir, 'approval-lease.json');
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(leasePath, JSON.stringify({
+      version: 1,
+      grantedAt: Date.now(),
+      entries: [{ content: 'bash scripts/substack/ego.sh publish-note approved' }],
+    }));
+    let leasePresentDuringFallback = false;
+    try {
+      streamTextMock
+        .mockImplementationOnce(() => ({
+          stream: (async function* () { yield { type: 'error', error: new Error('503 unavailable') }; })(),
+        }))
+        .mockImplementationOnce(() => {
+          leasePresentDuringFallback = existsSync(leasePath);
+          return {
+            stream: (async function* () { yield { type: 'finish', finishReason: 'stop' }; })(),
+            response: Promise.resolve({ messages: [] }),
+          };
+        });
+      const runAgent = agent();
+      runAgent.config.tools = { bash: { gated: ['bash scripts/substack/ego.sh *'] } };
+
+      await drain(executeAgentCore(runAgent, {}, {
+        ...options,
+        messages: [{ role: 'user', content: 'Continue after approval.' }] as any,
+        sessionManager: {
+          getSessionDirectory: mock(async () => sessionDir),
+          updateSession: mock(async () => {}),
+          updateMessage: mock(async () => {}),
+        } as any,
+        sessionID: 'session-lease',
+        agentId: 'agent-lease',
+        messageID: 'message-lease',
+      }));
+
+      expect(leasePresentDuringFallback).toBe(true);
+      expect(existsSync(leasePath)).toBe(false);
+    } finally {
+      rmSync(sessionDir, { recursive: true, force: true });
+    }
   });
 });
