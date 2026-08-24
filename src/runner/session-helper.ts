@@ -6,7 +6,7 @@ import { computeAgentId } from '../utils/agent-id';
 import { resolveModelProvider } from '../utils/model-utils';
 import { isMockMode } from './mock-tools';
 import { logger, withoutLogSink, type LogRecord } from '../utils/logger';
-import type { RunModelOverride } from '../utils/model-alias';
+import type { ModelFallbackPolicy, RunModelOverride } from '../utils/model-alias';
 
 export interface SessionContext {
   /** cwd-derived project root: drives env, plugins, sandbox, store parent. */
@@ -22,6 +22,7 @@ export interface SessionConfigOptions {
   mcpServers?: string[];
   subagents?: Array<{ path: string; name?: string }>;
   modelOverride?: RunModelOverride;
+  modelFallback?: ModelFallbackPolicy;
 }
 
 export interface CreateSessionParams {
@@ -85,6 +86,7 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
       ...(config.mcpServers && { mcpServers: config.mcpServers }),
       ...(config.subagents && { subagents: config.subagents }),
       ...(config.modelOverride && { modelOverride: config.modelOverride }),
+      ...(config.modelFallback && { modelFallback: config.modelFallback }),
     },
     project: {
       // Record stateRoot so serve discovery (which scans by project root)

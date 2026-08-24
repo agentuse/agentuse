@@ -67,6 +67,12 @@ export interface RunModelOverride {
   resolved: ResolvedModel;
 }
 
+/** Durable ordered fallback policy captured when a session starts. */
+export interface ModelFallbackPolicy {
+  candidates: string[];
+  cooldownMs?: number;
+}
+
 /** Runtime model fields shared by parsed agent configs and override tests. */
 export interface ModelOverrideTarget {
   model: string;
@@ -74,6 +80,29 @@ export interface ModelOverrideTarget {
   modelSource?: ModelResolutionSource;
   modelCandidates?: string[];
   modelFallbackCooldownMs?: number;
+}
+
+/** Capture only the fallback fields that must remain stable across resume. */
+export function snapshotModelFallbackPolicy(
+  target: ModelOverrideTarget
+): ModelFallbackPolicy | undefined {
+  if (!target.modelCandidates) return undefined;
+  return {
+    candidates: [...target.modelCandidates],
+    ...(target.modelFallbackCooldownMs !== undefined && {
+      cooldownMs: target.modelFallbackCooldownMs,
+    }),
+  };
+}
+
+/** Restore a session's original fallback order without changing its selected model. */
+export function applyModelFallbackPolicy(
+  target: ModelOverrideTarget,
+  policy: ModelFallbackPolicy
+): void {
+  target.modelCandidates = [...policy.candidates];
+  if (policy.cooldownMs !== undefined) target.modelFallbackCooldownMs = policy.cooldownMs;
+  else delete target.modelFallbackCooldownMs;
 }
 
 /** Apply one already-resolved run policy without re-reading global aliases. */

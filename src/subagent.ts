@@ -9,7 +9,11 @@ import { DoomLoopDetector } from './tools/index.js';
 import { resolve, dirname } from 'path';
 import { computeAgentId } from './utils/agent-id';
 import { findProjectRoot } from './utils/project';
-import { applyRunModelOverride, type RunModelOverride } from './utils/model-alias';
+import {
+  applyRunModelOverride,
+  snapshotModelFallbackPolicy,
+  type RunModelOverride,
+} from './utils/model-alias';
 import { SessionManager } from './session/manager';
 import { loadAgentTools } from './runner/tools-loader';
 import { EffectWAL } from './runner/effect-wal';
@@ -283,6 +287,7 @@ export async function createSubAgentTool(
                 ? task
                 : undefined;
 
+              const modelFallback = snapshotModelFallbackPolicy(agent.config);
               const sessionResult = await createSessionAndMessage({
                 sessionManager: subagentSessionManager,
                 agent,
@@ -301,6 +306,7 @@ export async function createSubAgentTool(
                     ...(s.name && { name: s.name })
                   })) }),
                   ...(modelOverride && { modelOverride }),
+                  ...(modelFallback && { modelFallback }),
                 },
                 isSubAgent: true,
                 parentSessionID,

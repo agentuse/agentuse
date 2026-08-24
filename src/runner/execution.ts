@@ -451,6 +451,48 @@ function systemMessagesForModel(
   return addAnthropicIdentity(providerNeutral, model);
 }
 
+function providerOptionsForModel(providerOptions: unknown, model: string): unknown {
+  if (!providerOptions || typeof providerOptions !== 'object' || Array.isArray(providerOptions)) {
+    return providerOptions;
+  }
+  const provider = resolveModelProvider(model);
+  const selected = (providerOptions as Record<string, unknown>)[provider];
+  return selected === undefined ? undefined : { [provider]: selected };
+}
+
+/** Rebuild provider-specific history metadata when fallback crosses providers. */
+function messagesForFallbackModel(
+  messages: ModelMessage[],
+  systemMessages: Array<{ role: string; content: string }>,
+  model: string
+): ModelMessage[] {
+  let firstNonSystem = 0;
+  while (firstNonSystem < messages.length && messages[firstNonSystem]?.role === 'system') {
+    firstNonSystem++;
+  }
+  const rebuilt = [
+    ...systemMessages,
+    ...messages.slice(firstNonSystem),
+  ] as ModelMessage[];
+  return rebuilt.map((message: any) => {
+    const providerOptions = providerOptionsForModel(message.providerOptions, model);
+    const content = Array.isArray(message.content)
+      ? message.content.map((part: any) => {
+          const partProviderOptions = providerOptionsForModel(part?.providerOptions, model);
+          if (partProviderOptions === part?.providerOptions) return part;
+          const next = { ...part };
+          if (partProviderOptions === undefined) delete next.providerOptions;
+          else next.providerOptions = partProviderOptions;
+          return next;
+        })
+      : message.content;
+    const next = { ...message, content };
+    if (providerOptions === undefined) delete next.providerOptions;
+    else next.providerOptions = providerOptions;
+    return next;
+  });
+}
+
 function isMeaningfulModelChunk(chunk: AgentChunk): boolean {
   return chunk.type === 'llm-first-token'
     || chunk.type === 'text'
@@ -485,18 +527,24 @@ async function persistSelectedModel(
 }
 
 /**
- * Run a fresh session against an ordered model alias. A transient failure may
- * move to the next candidate only before the provider emits output or invokes a
- * tool. Resumes/redos carry messages and therefore stay pinned to one model.
+ * Run one execution segment against an ordered model alias. A transient failure
+ * may move to the next candidate only before the provider emits output or
+ * invokes a tool in this segment. Resumes/redos start at the model already
+ * selected for the session and may continue forward through the remaining
+ * candidates; persisted history is provider-neutral at this boundary.
  */
 export async function* executeAgentCore(
   agent: ParsedAgent,
   tools: ToolSet,
   options: ExecuteAgentCoreOptions
 ): AsyncGenerator<AgentChunk> {
-  const configured = options.messages
-    ? [agent.config.model]
-    : (agent.config.modelCandidates ?? [agent.config.model]);
+  const configuredCandidates = agent.config.modelCandidates ?? [agent.config.model];
+  const selectedIndex = configuredCandidates.indexOf(agent.config.model);
+  const configured = options.messages && selectedIndex >= 0
+    ? configuredCandidates.slice(selectedIndex)
+    : options.messages
+      ? [agent.config.model]
+      : configuredCandidates;
   const candidates = availableModelCandidates(configured);
   const initiallyPreparedModel = agent.config.model;
 
@@ -511,11 +559,15 @@ export async function* executeAgentCore(
       ...agent,
       config: { ...agent.config, model },
     };
+    const crossesProvider = resolveModelProvider(model) !== resolveModelProvider(initiallyPreparedModel);
     let meaningfulOutput = false;
     let fallbackError: unknown;
     const attempt = executeAgentAttempt(attemptAgent, tools, {
       ...options,
       systemMessages: attemptSystemMessages,
+      ...(options.messages && crossesProvider && {
+        messages: messagesForFallbackModel(options.messages, attemptSystemMessages, model),
+      }),
     });
 
     try {

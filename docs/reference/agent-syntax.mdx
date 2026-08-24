@@ -66,9 +66,10 @@ Additional instructions or context.
   ```
 
   A named alias may be configured with ordered fallback candidates. Fallback is
-  limited to transient or authentication failures before a fresh session
-  receives any model output or tool call; resumes remain pinned to the concrete
-  model already recorded.
+  limited to transient or authentication failures before the current execution
+  segment receives model output or a tool call. A resumed segment starts on the
+  concrete model already recorded, then may advance through its persisted
+  remaining candidates.
 
   **Omitting `model`.** With `models.default` (or `AGENTUSE_MODEL`) configured,
   the field is optional and the agent uses that default. Without a default, a

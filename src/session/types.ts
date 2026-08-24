@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { RunModelOverride } from '../utils/model-alias';
+import type { ModelFallbackPolicy, RunModelOverride } from '../utils/model-alias';
 
 // Deep partial type for updates
 export type DeepPartial<T> = {
@@ -46,6 +46,8 @@ export interface SessionInfo {
     }>;
     /** Explicit run-wide model override; absent for ordinary agent config. */
     modelOverride?: RunModelOverride;
+    /** Ordered fallback policy captured at session creation for durable resume. */
+    modelFallback?: ModelFallbackPolicy;
   };
 
   // Project context

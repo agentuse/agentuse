@@ -9,7 +9,12 @@ import {
 } from '../tools/index.js';
 import { logger } from '../utils/logger';
 import { resolveMaxSteps, DEFAULT_MAX_STEPS } from '../utils/config';
-import { applyRunModelOverride, resumeModelPin } from '../utils/model-alias';
+import {
+  applyModelFallbackPolicy,
+  applyRunModelOverride,
+  resumeModelPin,
+  snapshotModelFallbackPolicy,
+} from '../utils/model-alias';
 import { version as packageVersion } from '../../package.json';
 import type { PrepareAgentOptions, PreparedAgentExecution } from './types';
 import type { ToolSet } from 'ai';
@@ -150,10 +155,14 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     // different policies. Legacy sessions have no snapshot, so an override
     // explicitly supplied to this resume remains a deliberate new choice.
     const persistedModelOverride = found.session.config.modelOverride;
+    const persistedModelFallback = found.session.config.modelFallback;
     effectiveSubagentModelOverride = persistedModelOverride ?? subagentModelOverride;
     if (persistedModelOverride) {
       applyRunModelOverride(agent.config, persistedModelOverride);
-    } else if (!subagentModelOverride) {
+    } else if (persistedModelFallback) {
+      applyModelFallbackPolicy(agent.config, persistedModelFallback);
+    }
+    if (!persistedModelOverride && !subagentModelOverride) {
       // A normal resume continues on the model the session started with (see
       // resumeModelPin): the agent file was re-parsed just now, so an alias
       // would otherwise change model in the middle of one conversation.
@@ -164,6 +173,15 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
             `${agent.config.modelAlias ?? 'the configured default'} now points at ${agent.config.model}`
         );
         agent.config.model = pinnedModel;
+        // Legacy sessions persisted the selected model but not the alias's
+        // fallback policy. Keep the pin first and use today's other resolved
+        // candidates as a best-effort recovery path.
+        if (!persistedModelFallback && agent.config.modelCandidates) {
+          agent.config.modelCandidates = [
+            pinnedModel,
+            ...agent.config.modelCandidates.filter((candidate) => candidate !== pinnedModel),
+          ];
+        }
       }
     }
 
@@ -219,6 +237,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
 
   if (!existingSessionId && sessionManager && projectContext) {
     try {
+      const modelFallback = snapshotModelFallbackPolicy(agent.config);
       const { sessionID: createdSessionID, messageID } = await createSessionAndMessage({
         sessionManager,
         agent,
@@ -239,6 +258,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
             ...(sa.name && { name: sa.name })
           })) }),
           ...(effectiveSubagentModelOverride && { modelOverride: effectiveSubagentModelOverride }),
+          ...(modelFallback && { modelFallback }),
         },
         isSubAgent: false,
       });

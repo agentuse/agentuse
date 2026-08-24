@@ -18,6 +18,7 @@ mock.module('ai', () => ({
   streamText: streamTextMock,
   isStepCount: mock((steps: number) => ({ steps })),
   ...aiSdkErrorMocks(),
+  APICallError: { isInstance: (error: any) => error?.__apiCallError === true },
 }));
 
 let executeAgentCore: typeof import('../src/runner/execution').executeAgentCore;
@@ -236,5 +237,80 @@ describe('model alias fallback execution', () => {
     expect(updateMessage.mock.calls.at(-1)?.[3]).toMatchObject({
       assistant: { modelID: 'openai:gpt-5.6', providerID: 'openai' },
     });
+  });
+
+  it('falls back after an approval resume before the resumed segment emits output', async () => {
+    const forbidden = Object.assign(new Error('OAuth authentication is not allowed for this organization'), {
+      __apiCallError: true,
+      statusCode: 403,
+      url: 'https://api.anthropic.com/v1/messages',
+    });
+    streamTextMock
+      .mockImplementationOnce(() => ({
+        stream: (async function* () { yield { type: 'error', error: forbidden }; })(),
+      }))
+      .mockImplementationOnce(() => ({
+        stream: (async function* () {
+          yield { type: 'text-delta', text: 'resumed on fallback' };
+          yield { type: 'finish', finishReason: 'stop' };
+        })(),
+        response: Promise.resolve({ messages: [] }),
+      }));
+
+    const resumedOptions = {
+      ...options,
+      messages: [
+        {
+          role: 'system',
+          content: "You are Claude Code, Anthropic's official CLI for Claude.",
+          providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+        },
+        { role: 'user', content: 'Complete the task.' },
+        { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'gate-1', toolName: 'await_human', input: {} }] },
+        { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'gate-1', toolName: 'await_human', output: { type: 'json', value: { status: 'approved' } } }] },
+      ] as any,
+    };
+
+    const chunks = await drain(executeAgentCore(agent(), {}, resumedOptions));
+
+    expect(createModelMock.mock.calls.map((call) => call[0])).toEqual([
+      'anthropic:claude-opus-5',
+      'openai:gpt-5.6',
+    ]);
+    expect(chunks.filter((chunk) => chunk.type === 'error')).toHaveLength(0);
+    expect(chunks.find((chunk) => chunk.type === 'text')?.text).toBe('resumed on fallback');
+    const fallbackMessages = (streamTextMock.mock.calls[1][0] as any).messages;
+    expect(fallbackMessages.some((message: any) =>
+      message.content === "You are Claude Code, Anthropic's official CLI for Claude."
+    )).toBe(false);
+    expect(fallbackMessages.some((message: any) => message.providerOptions?.anthropic)).toBe(false);
+  });
+
+  it('continues fallback forward from the model already selected for a resumed session', async () => {
+    const runAgent = agent();
+    runAgent.config.model = 'openai:gpt-5.6';
+    runAgent.config.modelCandidates = [
+      'anthropic:claude-opus-5',
+      'openai:gpt-5.6',
+      'google:gemini-3-pro',
+    ];
+    streamTextMock
+      .mockImplementationOnce(() => ({
+        stream: (async function* () { yield { type: 'error', error: new Error('503 unavailable') }; })(),
+      }))
+      .mockImplementationOnce(() => ({
+        stream: (async function* () { yield { type: 'finish', finishReason: 'stop' }; })(),
+        response: Promise.resolve({ messages: [] }),
+      }));
+
+    await drain(executeAgentCore(runAgent, {}, {
+      ...options,
+      messages: [{ role: 'user', content: 'Continue after approval.' }] as any,
+    }));
+
+    expect(createModelMock.mock.calls.map((call) => call[0])).toEqual([
+      'openai:gpt-5.6',
+      'google:gemini-3-pro',
+    ]);
   });
 });

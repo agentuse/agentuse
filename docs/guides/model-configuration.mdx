@@ -87,12 +87,14 @@ An alias can also carry an ordered fallback list:
 }
 ```
 
-AgentUse falls back when a fresh session cannot get started on a candidate:
+AgentUse falls back when an execution segment cannot get started on a candidate:
 a transient first-request failure (rate limit, timeout, provider 5xx, transport
 error), or a model it cannot authenticate to at all (no login, an OAuth token
-that will not refresh, a 401/403). Either way it only happens before the model
-emits output or invokes a tool, and the selected model is then fixed for that
-session. `cooldown` keeps new runs in the same process
+that will not refresh, a 401/403). This includes a segment resumed after an
+approval gate. Either way it only happens before the model emits new output or
+invokes a tool in that segment. The selected model and remaining ordered
+fallback policy are persisted for later resumes. `cooldown` keeps new runs in
+the same process
 from repeatedly waiting on a model that just failed; it resets when the process
 restarts.
 
@@ -104,8 +106,9 @@ restarts.
 ```
 
 Aliases resolve to concrete models before execution, so session logs and cost
-accounting record the model that actually ran. A suspended run resumes on the
-model it started with, even if the alias has moved since.
+accounting record the model that actually ran. A suspended run first resumes on
+its last selected model, even if the alias has moved since; a fallback-eligible
+failure before new output may then advance through its persisted policy.
 
 To migrate agent files you already have, `agentuse models unpin` swaps pinned
 versions for aliases (`--dry-run` to preview), and `agentuse models bump` moves

@@ -439,6 +439,44 @@ describe('rewriting model references in agent files', () => {
 });
 
 describe('resume pins the model at the prepare step', () => {
+  it('persists the resolved fallback policy when a session is created', async () => {
+    useConfig({
+      aliases: {
+        durable: {
+          candidates: ['anthropic:claude-opus-5', 'openai:gpt-5.6'],
+          cooldown: '45s',
+        },
+      },
+    });
+    const originalXdg = process.env.XDG_DATA_HOME;
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'agentuse-fallback-policy-'));
+    process.env.XDG_DATA_HOME = projectRoot;
+    let cleanup: (() => Promise<void>) | undefined;
+    try {
+      await initStorage(projectRoot);
+      const sessionManager = new SessionManager();
+      const agent = parseAgentContent('---\nmodel: "@durable"\n---\nWork.', 'durable');
+      const prepared = await prepareAgentExecution({
+        agent,
+        mcpClients: [],
+        sessionManager,
+        projectContext: { projectRoot, stateRoot: projectRoot, cwd: projectRoot },
+      });
+      cleanup = prepared.cleanup;
+
+      const found = await sessionManager.findSession(prepared.sessionID!);
+      expect(found?.session.config.modelFallback).toEqual({
+        candidates: ['anthropic:claude-opus-5', 'openai:gpt-5.6'],
+        cooldownMs: 45_000,
+      });
+    } finally {
+      await cleanup?.();
+      if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdg;
+      fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   // The decision itself is covered above; this exercises the wiring, i.e. that
   // prepareAgentExecution really does consult the session record on resume.
   it('rewrites agent.config.model from the session record', async () => {
@@ -454,7 +492,12 @@ describe('resume pins the model at the prepare step', () => {
         agent: { id: agentId, name: 'pinned', isSubAgent: false },
         model: startedOn,
         version: 'test',
-        config: {},
+        config: {
+          modelFallback: {
+            candidates: [startedOn, 'openai:gpt-5.6'],
+            cooldownMs: 42_000,
+          },
+        },
         project: { root: projectRoot, cwd: projectRoot },
       });
       await sessionManager.createMessage(sessionID, agentId, {
@@ -488,6 +531,8 @@ describe('resume pins the model at the prepare step', () => {
       });
 
       expect(agent.config.model).toBe(startedOn);
+      expect(agent.config.modelCandidates).toEqual([startedOn, 'openai:gpt-5.6']);
+      expect(agent.config.modelFallbackCooldownMs).toBe(42_000);
     } finally {
       if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
       else process.env.XDG_DATA_HOME = originalXdg;
