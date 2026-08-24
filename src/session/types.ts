@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { RunModelOverride } from '../utils/model-alias';
 
 // Deep partial type for updates
 export type DeepPartial<T> = {
@@ -43,6 +44,8 @@ export interface SessionInfo {
       path: string;
       name?: string;
     }>;
+    /** Explicit run-wide model override; absent for ordinary agent config. */
+    modelOverride?: RunModelOverride;
   };
 
   // Project context

@@ -9,7 +9,7 @@ import { DoomLoopDetector } from './tools/index.js';
 import { resolve, dirname } from 'path';
 import { computeAgentId } from './utils/agent-id';
 import { findProjectRoot } from './utils/project';
-import { resolveModelString } from './utils/model-alias';
+import { applyRunModelOverride, type RunModelOverride } from './utils/model-alias';
 import { SessionManager } from './session/manager';
 import { loadAgentTools } from './runner/tools-loader';
 import { EffectWAL } from './runner/effect-wal';
@@ -78,7 +78,7 @@ export function getMaxSubAgentDepth(): number {
  * @param maxSteps Step budget from the parent's subagent entry. When omitted, falls back to the
  *   leaf's own `maxSteps:` and then DEFAULT_MAX_STEPS (mirrors the standalone resolveMaxSteps chain)
  * @param basePath Optional base path for resolving relative paths
- * @param modelOverride Optional model override from parent agent
+ * @param modelOverride Optional model override explicitly supplied for the run
  * @param depth Current nesting depth (0 = main agent)
  * @param callStack Array of agent paths in the call stack for cycle detection
  * @param sessionManager Optional session manager for logging
@@ -91,7 +91,7 @@ export async function createSubAgentTool(
   agentPath: string,
   maxSteps?: number,
   basePath?: string,
-  modelOverride?: string,
+  modelOverride?: RunModelOverride,
   depth: number = 0,
   callStack: string[] = [],
   sessionManager?: SessionManager,
@@ -132,23 +132,11 @@ export async function createSubAgentTool(
     throw new SubAgentApprovalUnsupportedError(agent.name, resolvedPath);
   }
 
-  // Apply model override if provided. Resolved like any other hand-written
-  // model, so a parent can point a subagent at `anthropic:claude-sonnet` or a
-  // configured `@name` instead of a pinned version.
+  // Apply only an explicit run-wide override. It was resolved once at the run
+  // boundary so every depth sees the same candidate order and cooldown even if
+  // global aliases are edited while the run is active.
   if (modelOverride) {
-    const resolved = resolveModelString(modelOverride);
-    agent.config.model = resolved.model;
-    if (resolved.candidates !== undefined) agent.config.modelCandidates = resolved.candidates;
-    else delete agent.config.modelCandidates;
-    if (resolved.cooldownMs !== undefined) agent.config.modelFallbackCooldownMs = resolved.cooldownMs;
-    else delete agent.config.modelFallbackCooldownMs;
-    if (resolved.candidates !== undefined) {
-      agent.config.modelAlias = modelOverride;
-      agent.config.modelSource = resolved.source;
-    } else {
-      delete agent.config.modelAlias;
-      delete agent.config.modelSource;
-    }
+    applyRunModelOverride(agent.config, modelOverride);
   }
 
   return {
@@ -312,6 +300,7 @@ export async function createSubAgentTool(
                     path: s.path,
                     ...(s.name && { name: s.name })
                   })) }),
+                  ...(modelOverride && { modelOverride }),
                 },
                 isSubAgent: true,
                 parentSessionID,
@@ -332,13 +321,15 @@ export async function createSubAgentTool(
             }
           }
 
-          // Now create nested sub-agent tools after this subagent's session exists
-          // Pass the NEW subagent SessionManager instance to nested tools
+          // Now create nested sub-agent tools after this subagent's session exists.
+          // Cascade only the original explicit run override. Passing this
+          // child's resolved model pinned grandchildren to one candidate,
+          // erased their own model declaration, and dropped alias fallbacks.
           if (depth + 1 < maxDepth && agent.config.subagents && agent.config.subagents.length > 0) {
             nestedSubAgentTools = await createSubAgentTools(
               agent.config.subagents,
               subAgentBasePath,
-              agent.config.model,
+              modelOverride,
               depth + 1,
               [...callStack, resolvedPath],
               subagentSessionManager,  // Pass NEW instance (not parent's)
@@ -612,7 +603,7 @@ export async function createSubAgentTool(
  * Create tools for multiple sub-agents
  * @param subAgents Array of sub-agent configurations
  * @param basePath Optional base path for resolving relative agent paths
- * @param modelOverride Optional model override from parent agent
+ * @param modelOverride Optional model override explicitly supplied for the run
  * @param depth Current nesting depth (0 = main agent)
  * @param callStack Array of agent paths in the call stack for cycle detection
  * @returns Map of sub-agent tools
@@ -620,7 +611,7 @@ export async function createSubAgentTool(
 export async function createSubAgentTools(
   subAgents?: Array<{ path: string; name?: string | undefined; maxSteps?: number | undefined }>,
   basePath?: string,
-  modelOverride?: string,
+  modelOverride?: RunModelOverride,
   depth: number = 0,
   callStack: string[] = [],
   sessionManager?: SessionManager,

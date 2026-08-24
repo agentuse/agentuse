@@ -9,7 +9,7 @@ import {
 } from '../tools/index.js';
 import { logger } from '../utils/logger';
 import { resolveMaxSteps, DEFAULT_MAX_STEPS } from '../utils/config';
-import { resumeModelPin } from '../utils/model-alias';
+import { applyRunModelOverride, resumeModelPin } from '../utils/model-alias';
 import { version as packageVersion } from '../../package.json';
 import type { PrepareAgentOptions, PreparedAgentExecution } from './types';
 import type { ToolSet } from 'ai';
@@ -38,6 +38,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   const {
     agent,
     mcpClients,
+    subagentModelOverride,
     agentFilePath,
     cliMaxSteps,
     sessionManager,
@@ -130,6 +131,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
   let resumedMessages = prebuiltMessages;
   let userMessage: string;
   let cacheableUserMessage: string | undefined;
+  let effectiveSubagentModelOverride = subagentModelOverride;
 
   logger.debug(`Session manager available: ${!!sessionManager}, Project context available: ${!!projectContext}`);
 
@@ -142,17 +144,27 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     if (!found) {
       throw new Error(`Session not found: ${existingSessionId}`);
     }
-
-    // A resume continues on the model the session started with (see
-    // resumeModelPin): the agent file was re-parsed just now, so an alias would
-    // otherwise follow the registry to a different model mid-conversation.
-    const pinnedModel = resumeModelPin(agent.config, found.session.model);
-    if (pinnedModel) {
-      logger.info(
-        `Resuming on ${pinnedModel} (the model this session started with); ` +
-          `${agent.config.modelAlias ?? 'the configured default'} now points at ${agent.config.model}`
-      );
-      agent.config.model = pinnedModel;
+    // A daemon restart reconstructs the root and subagent tools from agent
+    // files. A persisted run-wide override is authoritative for both; otherwise
+    // a changed alias or a new resume request could split the hierarchy across
+    // different policies. Legacy sessions have no snapshot, so an override
+    // explicitly supplied to this resume remains a deliberate new choice.
+    const persistedModelOverride = found.session.config.modelOverride;
+    effectiveSubagentModelOverride = persistedModelOverride ?? subagentModelOverride;
+    if (persistedModelOverride) {
+      applyRunModelOverride(agent.config, persistedModelOverride);
+    } else if (!subagentModelOverride) {
+      // A normal resume continues on the model the session started with (see
+      // resumeModelPin): the agent file was re-parsed just now, so an alias
+      // would otherwise change model in the middle of one conversation.
+      const pinnedModel = resumeModelPin(agent.config, found.session.model);
+      if (pinnedModel) {
+        logger.info(
+          `Resuming on ${pinnedModel} (the model this session started with); ` +
+            `${agent.config.modelAlias ?? 'the configured default'} now points at ${agent.config.model}`
+        );
+        agent.config.model = pinnedModel;
+      }
     }
 
     sessionID = existingSessionId;
@@ -226,6 +238,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
             path: sa.path,
             ...(sa.name && { name: sa.name })
           })) }),
+          ...(effectiveSubagentModelOverride && { modelOverride: effectiveSubagentModelOverride }),
         },
         isSubAgent: false,
       });
@@ -284,11 +297,13 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       logger.debug(`[SubAgent] Agent file path: ${agentFilePath}`);
       logger.debug(`[SubAgent] Base path for sub-agents: ${basePath}`);
     }
-    // Pass the parent's model to subagents so they inherit any model override
+    // Agent frontmatter is local to that agent. Only a model explicitly
+    // supplied for this run cascades through delegation; passing the parent's
+    // ordinary configured model here made every child's own `model:` dead.
     subAgentTools = await createSubAgentTools(
       agent.config.subagents,
       basePath,
-      agent.config.modelCandidates ? agent.config.modelAlias ?? agent.config.model : agent.config.model,
+      effectiveSubagentModelOverride,
       0,
       [],
       sessionManager,

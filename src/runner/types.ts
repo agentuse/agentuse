@@ -9,12 +9,21 @@ import type { AssistantTokens } from '../session/usage';
 import type { RunOutcome } from '../tools/report-outcome.js';
 import type { EffectWAL } from './effect-wal';
 import type { LiveToolOutputRelay } from './live-tool-output';
+import type { RunModelOverride } from '../utils/model-alias';
 
 export type UsageKind = 'cumulative' | 'step';
 
 export interface PrepareAgentOptions {
   agent: ParsedAgent;
   mcpClients: MCPConnection[];
+  /**
+   * A model override explicitly supplied for this run (CLI/API), propagated to
+   * every delegated agent. Omit for an agent's ordinary configured model: a
+   * parent's frontmatter must not overwrite each child's own `model:` field.
+   * Keep the resolved snapshot so nested children retain the complete fallback
+   * policy instead of inheriting one selected candidate or re-reading aliases.
+   */
+  subagentModelOverride?: RunModelOverride | undefined;
   agentFilePath?: string | undefined;
   cliMaxSteps?: number | undefined;
   sessionManager?: SessionManager | undefined;

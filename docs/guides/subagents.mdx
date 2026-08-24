@@ -325,11 +325,20 @@ subagents:
 
 ### Model Override Inheritance
 
-When you use `--model`, it overrides the model for both the parent and ALL sub-agents:
+Ordinarily, every agent uses the `model:` declared in its own file. A parent's
+configured model does not replace its children's models.
+
+When you explicitly use `--model`, that run-wide override applies to the parent
+and every nested sub-agent:
 
 ```bash
 agentuse run orchestrator.agentuse --model openai:gpt-5.4-mini
 ```
+
+Configured aliases keep their complete fallback order and cooldown at every
+depth. The resolved override is also stored with the session, so a suspended or
+restarted run resumes with the same policy even if the alias configuration has
+changed since the run began.
 
 <Info>
   See [CLI Commands - Model Override](/reference/cli-commands#model-override) for complete details on model override behavior and sub-agent inheritance.

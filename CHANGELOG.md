@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- **Sub-agents no longer silently inherit the parent's configured model.** Each agent now uses the `model:` in its own file unless the run was started with an explicit `-m/--model` (or worker API) override. Explicit overrides still cascade through every nested sub-agent, but now carry the original resolved alias policy rather than whichever concrete candidate the immediate parent happened to select, so provider fallback remains available at deeper levels. The policy is stored with the session as well, keeping suspended and restarted runs reproducible even if alias configuration changes before resume.
+
 ## [0.17.0] - 2026-08-19
 
 ### Added

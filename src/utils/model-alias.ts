@@ -57,6 +57,45 @@ export interface ResolvedModel {
   cooldownMs?: number;
 }
 
+/**
+ * Immutable model policy explicitly supplied for one run. `requested` keeps
+ * the user's alias spelling while `resolved` snapshots its concrete candidates
+ * so a config edit cannot change descendants halfway through a run or resume.
+ */
+export interface RunModelOverride {
+  requested: string;
+  resolved: ResolvedModel;
+}
+
+/** Runtime model fields shared by parsed agent configs and override tests. */
+export interface ModelOverrideTarget {
+  model: string;
+  modelAlias?: string;
+  modelSource?: ModelResolutionSource;
+  modelCandidates?: string[];
+  modelFallbackCooldownMs?: number;
+}
+
+/** Apply one already-resolved run policy without re-reading global aliases. */
+export function applyRunModelOverride(
+  target: ModelOverrideTarget,
+  override: RunModelOverride
+): void {
+  const resolved = override.resolved;
+  target.model = resolved.model;
+  if (resolved.candidates !== undefined) target.modelCandidates = [...resolved.candidates];
+  else delete target.modelCandidates;
+  if (resolved.cooldownMs !== undefined) target.modelFallbackCooldownMs = resolved.cooldownMs;
+  else delete target.modelFallbackCooldownMs;
+  if (resolved.alias !== undefined && resolved.alias !== resolved.model) {
+    target.modelAlias = resolved.alias;
+    target.modelSource = resolved.source;
+  } else {
+    delete target.modelAlias;
+    delete target.modelSource;
+  }
+}
+
 /** Raised when a `@name` alias or a configured default cannot be resolved. */
 export class ModelAliasError extends Error {
   constructor(message: string) {

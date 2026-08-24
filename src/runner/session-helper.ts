@@ -6,6 +6,7 @@ import { computeAgentId } from '../utils/agent-id';
 import { resolveModelProvider } from '../utils/model-utils';
 import { isMockMode } from './mock-tools';
 import { logger, withoutLogSink, type LogRecord } from '../utils/logger';
+import type { RunModelOverride } from '../utils/model-alias';
 
 export interface SessionContext {
   /** cwd-derived project root: drives env, plugins, sandbox, store parent. */
@@ -20,6 +21,7 @@ export interface SessionConfigOptions {
   maxSteps?: number;
   mcpServers?: string[];
   subagents?: Array<{ path: string; name?: string }>;
+  modelOverride?: RunModelOverride;
 }
 
 export interface CreateSessionParams {
@@ -82,6 +84,7 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
       ...(config.maxSteps !== undefined && { maxSteps: config.maxSteps }),
       ...(config.mcpServers && { mcpServers: config.mcpServers }),
       ...(config.subagents && { subagents: config.subagents }),
+      ...(config.modelOverride && { modelOverride: config.modelOverride }),
     },
     project: {
       // Record stateRoot so serve discovery (which scans by project root)

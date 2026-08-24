@@ -27,7 +27,7 @@ import { createDoctorCommand } from './cli/doctor';
 import { createLearningsCommand } from './cli/learnings';
 import { BUILTIN_PROVIDERS } from './providers/registry-sources';
 import { resolveModelProvider } from './utils/model-utils';
-import { resolveModelString } from './utils/model-alias';
+import { applyRunModelOverride, resolveModelString, type RunModelOverride } from './utils/model-alias';
 import { logger, LogLevel } from './utils/logger';
 import { safeHttpUrl } from './utils/url';
 import { basename, resolve, dirname, join } from 'path';
@@ -583,11 +583,13 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
         logger.info(`Additional user prompt: ${additionalPrompt}`);
       }
 
+      let runModelOverride: RunModelOverride | undefined;
       // Override model if specified via CLI
       if (options.model) {
         // Accept the same shorthand as frontmatter: a version alias
         // (`anthropic:claude-sonnet`) or a configured `@name`.
         const resolvedOverride = resolveModelString(options.model);
+        runModelOverride = { requested: options.model, resolved: resolvedOverride };
         const overrideModel = resolvedOverride.model;
         // Bare IDs are canonical OpenAI model IDs; qualified IDs may select a
         // built-in or configured custom provider.
@@ -601,26 +603,7 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
         }
 
         const originalModel = agent.config.model;
-        agent.config.model = overrideModel;
-        if (resolvedOverride.candidates !== undefined) {
-          agent.config.modelCandidates = resolvedOverride.candidates;
-        } else {
-          delete agent.config.modelCandidates;
-        }
-        if (resolvedOverride.cooldownMs !== undefined) {
-          agent.config.modelFallbackCooldownMs = resolvedOverride.cooldownMs;
-        } else {
-          delete agent.config.modelFallbackCooldownMs;
-        }
-        // Preserve an object alias only as runtime policy metadata so the same
-        // fallback candidates can propagate to delegated subagents.
-        if (resolvedOverride.candidates !== undefined) {
-          agent.config.modelAlias = options.model;
-          agent.config.modelSource = resolvedOverride.source;
-        } else {
-          delete agent.config.modelAlias;
-          delete agent.config.modelSource;
-        }
+        applyRunModelOverride(agent.config, runModelOverride);
         logger.info(
           overrideModel === options.model
             ? `Model override: ${originalModel} → ${overrideModel}`
@@ -761,6 +744,7 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
       const preparedExecution: PreparedAgentExecution = await prepareAgentExecution({
         agent,
         mcpClients: mcp,
+        ...(runModelOverride && { subagentModelOverride: runModelOverride }),
         agentFilePath,
         cliMaxSteps,
         sessionManager,
@@ -3878,20 +3862,11 @@ async function runInternalWorker() {
         });
       }
 
+      let runModelOverride: RunModelOverride | undefined;
       if (req.model) {
         const resolved = resolveModelString(req.model);
-        agent.config.model = resolved.model;
-        if (resolved.candidates !== undefined) agent.config.modelCandidates = resolved.candidates;
-        else delete agent.config.modelCandidates;
-        if (resolved.cooldownMs !== undefined) agent.config.modelFallbackCooldownMs = resolved.cooldownMs;
-        else delete agent.config.modelFallbackCooldownMs;
-        if (resolved.candidates !== undefined) {
-          agent.config.modelAlias = req.model;
-          agent.config.modelSource = resolved.source;
-        } else {
-          delete agent.config.modelAlias;
-          delete agent.config.modelSource;
-        }
+        runModelOverride = { requested: req.model, resolved };
+        applyRunModelOverride(agent.config, runModelOverride);
       }
 
       const mcpBasePath = dirname(agentPath);
@@ -3912,6 +3887,7 @@ async function runInternalWorker() {
       const preparedExecution = await prepareAgentExecution({
         agent,
         mcpClients: mcp,
+        ...(runModelOverride && { subagentModelOverride: runModelOverride }),
         agentFilePath: agentPath,
         cliMaxSteps: req.maxSteps,
         sessionManager,

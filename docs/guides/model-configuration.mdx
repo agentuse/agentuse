@@ -388,6 +388,11 @@ agentuse run agent.agentuse -m anthropic:claude-sonnet   # version alias
 agentuse run agent.agentuse -m @fast                     # configured alias
 ```
 
+Without `--model`, a parent and each delegated sub-agent use their own declared
+models. An explicit runtime override is run-wide: it applies at every sub-agent
+depth, including the full candidate order of a fallback alias, and is preserved
+when a session resumes.
+
 <Card title="CLI Commands - Model Override" icon="terminal" href="/reference/cli-commands#model-override">
   See the complete reference for model override format, environment-specific keys, CI/CD examples, and sub-agent inheritance behavior.
 </Card>
