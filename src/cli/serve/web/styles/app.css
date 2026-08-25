@@ -688,6 +688,10 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 .page-approval-detail .status.resuming::before, .page-approval-detail .status.continuing::before { animation: pulse 0.8s ease-in-out infinite; }
 .page-approval-detail .status.running, .page-approval-detail .status.streaming { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
 .page-approval-detail .status.running::before, .page-approval-detail .status.streaming::before { animation: pulse 1.4s ease-in-out infinite; }
+.page-approval-detail .status.revising { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
+.page-approval-detail .status.revising::before { animation: pulse 1.1s ease-in-out infinite; }
+.page-approval-detail .status.awaiting-approval { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
+.page-approval-detail .status.commented { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
 .page-approval-detail .status.completed, .page-approval-detail .status.approved { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
 .page-approval-detail .status.expired, .page-approval-detail .status.error, .page-approval-detail .status.rejected { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
 .page-approval-detail .status.incomplete { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
@@ -6033,7 +6037,30 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   border-bottom: 1px solid var(--line);
 }
 .page-approval-detail a.subagent-event:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+.page-approval-detail .subagent-identity { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .page-approval-detail .subagent-name { color: var(--fg); font-weight: 500; overflow-wrap: anywhere; }
+.page-approval-detail .subagent-role {
+  flex: none;
+  padding: 2px 7px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+.page-approval-detail .subagent-role.judge {
+  color: var(--cyan);
+  border-color: var(--cyan-border);
+  background: var(--cyan-soft);
+}
+.page-approval-detail .subagent-role.reviewer {
+  color: var(--amber);
+  border-color: var(--amber-border);
+  background: var(--amber-soft);
+}
 .page-approval-detail .subagent-id { color: var(--muted); font-size: 11px; font-family: var(--mono); overflow-wrap: anywhere; }
 .page-approval-detail .subagent-event code { color: var(--muted-3); overflow-wrap: anywhere; }
 /* The status chip shares the `.status` class with the page header pill, which
@@ -6045,6 +6072,54 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   color: var(--muted);
   font-size: 11px;
   font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+.page-approval-detail .subagent-context {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--muted-2);
+  font-size: 11px;
+}
+.page-approval-detail .subagent-context strong { color: var(--amber); font-weight: 600; }
+.page-approval-detail .subagent-context time,
+.page-approval-detail .subagent-context span { font-family: var(--mono); }
+.page-approval-detail .subagent-error {
+  grid-column: 2 / -1;
+  color: var(--red);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.page-approval-detail .subagent-children {
+  margin: -2px 0 10px 18px;
+  padding-left: 16px;
+  border-left: 1px solid var(--line-strong);
+}
+.page-approval-detail .subagent-children .subagent-event {
+  margin-top: 8px;
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+}
+.page-approval-detail .subagent-tree-node.is-important > .subagent-event {
+  border-color: var(--line-strong);
+}
+.page-approval-detail .verify-event {
+  border-left-color: var(--cyan-border);
+}
+.page-approval-detail .verify-event-critique {
+  grid-column: 2 / -1;
+  color: var(--muted-2);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.page-approval-detail .verify-event-critique.is-failure { color: var(--red); }
+.page-approval-detail .reviewer-feedback-event { border-left-color: var(--amber-border); }
+.page-approval-detail .reviewer-feedback-comment {
+  grid-column: 2 / -1;
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 /* Mobile: the 3-column grid (chip / name / long session id) overflows on
@@ -6059,10 +6134,15 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
     gap: 6px 10px;
   }
   .page-approval-detail .subagent-id,
+  .page-approval-detail .subagent-context,
+  .page-approval-detail .subagent-error,
+  .page-approval-detail .verify-event-critique,
+  .page-approval-detail .reviewer-feedback-comment,
   .page-approval-detail .subagent-command {
     flex-basis: 100%;
     min-width: 0;
   }
+  .page-approval-detail .subagent-children { margin-left: 8px; padding-left: 10px; }
 }
 
 /* What the sub-agent delivered, under its card in the parent's log. Sits outside

@@ -194,6 +194,7 @@ async function judgeBuiltin(
 async function judgeViaAgent(
   input: JudgeInput,
   judgePath: string,
+  maxAttempts: number,
   agentFilePath: string | undefined,
   projectContext: { projectRoot: string; stateRoot: string; cwd: string } | undefined,
   abortSignal: AbortSignal | undefined,
@@ -281,6 +282,11 @@ async function judgeViaAgent(
           },
           isSubAgent: true,
           parentSessionID: parentSession.sessionID,
+          observability: {
+            role: 'verify-judge',
+            attempt: input.attempt,
+            maxAttempts,
+          },
         });
         judgeSessionID = created.sessionID;
         judgeMsgID = created.messageID;
@@ -411,7 +417,7 @@ export async function judgeOutput(params: {
   const { input, config, agentModel, agentFilePath, projectContext, abortSignal, parentSession } = params;
   try {
     if (config.judge) {
-      return await judgeViaAgent(input, config.judge, agentFilePath, projectContext, abortSignal, parentSession);
+      return await judgeViaAgent(input, config.judge, config.maxRedos + 1, agentFilePath, projectContext, abortSignal, parentSession);
     }
     return await judgeBuiltin(input, config, agentModel, abortSignal);
   } catch (error) {

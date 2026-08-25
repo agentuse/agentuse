@@ -114,6 +114,17 @@ export interface SessionInfo {
     time: number;                      // Unix timestamp (ms) of the final verdict
   };
 
+  /** Runtime-authored metadata for observability surfaces. Unlike agent
+   * configuration, this describes why this particular session exists. Fields
+   * are optional so historical sessions remain fully readable. */
+  observability?: {
+    role?: 'verify-judge';
+    /** Zero-based verify attempt (0 = first candidate output). */
+    attempt?: number;
+    /** Total candidate outputs allowed, including the first attempt. */
+    maxAttempts?: number;
+  };
+
   // Durable channel anchors. These let resume/follow-up paths update the same
   // external thread even when they run in a different serve worker.
   channels?: {

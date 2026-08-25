@@ -42,8 +42,16 @@ When an agent invokes subagents, their sessions are nested:
 └── subagent/
     └── {subSessionID}-{subAgentName}/
         ├── session.json
-        └── ...
+        ├── {messageID}/
+        └── subagent/
+            └── {nestedSessionID}-{nestedAgentName}/
+                ├── session.json
+                └── ...
 ```
+
+Each descendant repeats the same structure beneath its direct parent. The
+stored `parentSessionID` preserves that hierarchy for recursive delegation and
+lets session views render important nested work in context.
 
 ## Data Schemas
 

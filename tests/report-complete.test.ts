@@ -164,6 +164,10 @@ describe('shouldRequestOutcome', () => {
   it('asks for the verdict without inviting a second copy of the report', () => {
     expect(OUTCOME_NUDGE_PROMPT).toContain('report_complete');
     expect(OUTCOME_NUDGE_PROMPT).toContain('report_incomplete');
+    expect(OUTCOME_NUDGE_PROMPT).toContain('preceding turn ended normally');
+    expect(OUTCOME_NUDGE_PROMPT).toContain('did not stop it for a deadline, error, or step limit');
+    expect(OUTCOME_NUDGE_PROMPT).toContain('full preceding task and tool trace');
+    expect(OUTCOME_NUDGE_PROMPT).toContain('do not invent a blocker');
     expect(OUTCOME_NUDGE_PROMPT).toContain('successful evaluation that found nothing');
     expect(OUTCOME_NUDGE_PROMPT).toContain('skipped, blocked, failed, or only partially delivered');
     expect(OUTCOME_NUDGE_PROMPT).toMatch(/do not repeat/i);

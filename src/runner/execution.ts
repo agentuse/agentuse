@@ -30,7 +30,7 @@ import { stripInlineMediaData } from '../tools/media.js';
 import { messagesContainInlineMedia } from '../session/media-cache.js';
 import { stripToolBlocks, hasReasoningParts, lastAssistantMessage } from '../session/message-utils';
 import { OUTCOME_NUDGE_PROMPT, shouldRequestOutcome } from './outcome';
-import { REPORT_COMPLETE_TOOL } from '../tools/report-outcome.js';
+import { REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL } from '../tools/report-outcome.js';
 import type { RunOutcome } from '../tools/report-outcome.js';
 import { ANTHROPIC_IDENTITY_PROMPT, addAnthropicIdentity } from '../utils/anthropic';
 import {
@@ -422,6 +422,23 @@ function usageFromStreamChunk(chunk: any): { usage?: any; usageKind?: 'cumulativ
     ...(usage && { usage }),
     ...(usageKind && { usageKind }),
   };
+}
+
+/**
+ * All assistant/tool messages produced by one streamText segment.
+ *
+ * AI SDK v7's `response` is metadata for the FINAL step only. A normal final
+ * `stop` after several tool rounds commonly has `response.messages: []`, which
+ * erased the completed tool trace before an outcome-nudge or compaction
+ * segment. `responseMessages` is the accumulated history across every step.
+ * Keep the response fallback for hand-built stream mocks and older SDK shapes.
+ */
+async function accumulatedResponseMessages(stream: any): Promise<ModelMessage[]> {
+  if (stream?.responseMessages !== undefined) {
+    return await stream.responseMessages as ModelMessage[];
+  }
+  const response = await stream.response;
+  return (response?.messages as ModelMessage[] | undefined) ?? [];
 }
 
 /**
@@ -868,21 +885,23 @@ async function* executeAgentAttempt(
     return used > 0 && used >= contextManager.compactionThresholdTokens();
   };
 
-  // `stopWhen` predicate: end the run the moment report_complete lands. That
-  // call IS the final answer, so the step the SDK would otherwise run next has
-  // nothing left to say — it costs a full model round-trip (seconds, and the
-  // whole context re-sent) to produce either silence or a duplicate of the
-  // report. The tool executed before this runs, so its result is still streamed
-  // and journaled.
+  // `stopWhen` predicate: end the run the moment report_complete lands. During
+  // the outcome-recovery segment, either verdict ends the run: that segment is
+  // mechanically restricted to the two outcome tools and has no bookkeeping
+  // left to perform. The tool executes before this runs, so its result is still
+  // streamed and journaled.
   //
-  // Deliberately NOT report_incomplete: that path is told to finish bookkeeping
-  // after declaring, so it must keep stepping.
+  // Outside recovery, deliberately NOT report_incomplete: that path is told to
+  // finish bookkeeping after declaring, so it must keep stepping.
   const stopOnDeliveredOutcome = ({ steps }: { steps: Array<{ content?: unknown }> }): boolean => {
     const content = steps[steps.length - 1]?.content;
     if (!Array.isArray(content)) return false;
     return content.some((part: any) =>
       (part?.type === 'tool-result' || part?.type === 'tool-call') &&
-      part?.toolName === REPORT_COMPLETE_TOOL
+      (
+        part?.toolName === REPORT_COMPLETE_TOOL ||
+        (outcomeNudgeSpent && part?.toolName === REPORT_INCOMPLETE_TOOL)
+      )
     );
   };
 
@@ -978,7 +997,10 @@ async function* executeAgentAttempt(
       // that by default in favor of `instructions`; keep the legacy behavior.
       allowSystemInMessages: true,
       maxRetries: MAX_RETRIES,
-      toolChoice: 'auto' as const,
+      // A missing-outcome recovery turn has exactly one job. Require a tool
+      // call there; prose or ordinary tools can only duplicate work or mutate
+      // state after the original turn already ended.
+      toolChoice: outcomeNudgeSpent ? 'required' as const : 'auto' as const,
       // Provider-agnostic reasoning effort -> the SDK maps it to the provider's
       // native control (Anthropic thinking budget / OpenAI reasoningEffort).
       ...(reasoning && { reasoning }),
@@ -1027,7 +1049,13 @@ async function* executeAgentAttempt(
     //      same step is denied (gate-first order only).
     // A generic (all-tools) approval fn is safe: no tool defines its own
     // needsApproval, so nothing is being overridden by taking sole authority.
-    const toolsForStream: ToolSet = { ...modelFacingTools };
+    const toolsForStream: ToolSet = outcomeNudgeSpent
+      ? Object.fromEntries(
+          [REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL]
+            .filter((name) => modelFacingTools[name] !== undefined)
+            .map((name) => [name, modelFacingTools[name]])
+        ) as ToolSet
+      : { ...modelFacingTools };
     const awaitHumanPresent = !!(toolsForStream as any).await_human;
     if (awaitHumanPresent || effectPatterns.length > 0) {
       // Barrier state, scoped to this streamText. Real gates suspend and end the
@@ -1856,8 +1884,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
     // here persists because the next streamText call is built from `messages`.
     if (contextManager) {
       try {
-        const segmentResponse: any = await stream.response;
-        messages = [...segmentInput, ...((segmentResponse?.messages as any[]) ?? [])];
+        messages = [...segmentInput, ...await accumulatedResponseMessages(stream)];
         contextManager.setMessages(messages);
         if (
           segmentFinishReason === 'tool-calls' &&
@@ -1912,8 +1939,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
       })
     ) {
       try {
-        const segmentResponse: any = await stream.response;
-        messages = [...segmentInput, ...((segmentResponse?.messages as any[]) ?? [])];
+        messages = [...segmentInput, ...await accumulatedResponseMessages(stream)];
         // A user-role reminder, not system: providers vary on whether a
         // system message may appear mid-conversation, and every one of them
         // accepts a user turn.

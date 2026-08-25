@@ -39,6 +39,7 @@ import { saveManualLearning, LearningStore, effectiveCap, partitionLearnings, co
 import { homedir } from "os";
 import type { StoreItem } from "../store/types";
 import type { ActiveContextUsage, SessionTrigger } from "../session/types";
+import type { DescendantBreadcrumb, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary } from "../session/important-descendants";
 import { ulid } from "ulid";
 import { sessionViewToken, validateSessionToken } from "../utils/session-token";
 import { readArtifactManifest, getManifestPath } from "../tools/artifact-manifest";
@@ -520,6 +521,8 @@ interface ApprovalPageInfo {
   errorCode?: string;
   errorMessage?: string;
   childSessions?: ChildSessionSummary[];
+  importantDescendants?: ImportantDescendantSummary[];
+  importantDescendantEvents?: ImportantDescendantEvent[];
   originAgent?: {
     id: string;
     name: string;
@@ -561,7 +564,24 @@ interface LogSubagentSession extends ChildSessionSummary {
   href?: string;
   command: string;
   displayStatus: string;
+  parentSessionId?: string;
+  depth?: number;
+  breadcrumb?: DescendantBreadcrumb[];
+  durationMs?: number;
+  kinds?: ImportantDescendantKind[];
+  important?: boolean;
+  phase?: 'revising' | 'awaiting-approval';
+  label?: string;
+  gateLabel?: string;
+  attemptLabel?: string;
+  events?: LogSubagentEvent[];
+  children?: LogSubagentSession[];
 }
+
+type LogSubagentEvent = ImportantDescendantEvent & {
+  href?: string;
+  displayStatus: string;
+};
 
 interface ApprovalLogDetails {
   resumeToken?: string;
@@ -2237,14 +2257,81 @@ function renderChildSessionStatus(child: ChildSessionSummary): string {
 
 function enrichChildSessionForLog(
   child: ChildSessionSummary,
-  childSessionHref?: (sessionId: string) => string
+  childSessionHref?: (sessionId: string) => string,
+  details: Partial<LogSubagentSession> = {}
 ): LogSubagentSession {
   return {
     ...child,
-    displayStatus: renderChildSessionStatus(child),
+    ...details,
+    displayStatus: details.phase ?? renderChildSessionStatus(child),
     command: `agentuse sessions show ${child.sessionId.substring(0, 12)} --all-search`,
     ...(childSessionHref && { href: childSessionHref(child.sessionId) }),
   };
+}
+
+function importantDescendantTree(
+  childSessions: ChildSessionSummary[],
+  importantDescendants: ImportantDescendantSummary[] = [],
+  childSessionHref?: (sessionId: string) => string,
+  root?: { sessionId: string; agentName: string },
+  importantDescendantEvents: ImportantDescendantEvent[] = []
+): LogSubagentSession[] {
+  const nodes = new Map<string, LogSubagentSession>();
+  const directIds = new Set(childSessions.map((child) => child.sessionId));
+
+  for (const child of childSessions) {
+    const terminal = child.status === 'completed' || child.status === 'error';
+    nodes.set(child.sessionId, enrichChildSessionForLog(child, childSessionHref, {
+      ...(terminal && child.updatedAt >= child.createdAt && { durationMs: child.updatedAt - child.createdAt }),
+      ...(root && {
+        parentSessionId: root.sessionId,
+        depth: 1,
+        breadcrumb: [{ sessionId: root.sessionId, agentName: root.agentName }],
+      }),
+    }));
+  }
+  for (const descendant of importantDescendants) {
+    const existing = nodes.get(descendant.sessionId);
+    const child: ChildSessionSummary = existing ?? descendant;
+    nodes.set(descendant.sessionId, enrichChildSessionForLog(child, childSessionHref, {
+      parentSessionId: descendant.parentSessionId,
+      depth: descendant.depth,
+      breadcrumb: descendant.breadcrumb,
+      ...(descendant.durationMs !== undefined && { durationMs: descendant.durationMs }),
+      kinds: descendant.kinds,
+      important: descendant.important,
+      ...(descendant.phase && { phase: descendant.phase }),
+      ...(descendant.label && { label: descendant.label }),
+      ...(descendant.gateLabel && { gateLabel: descendant.gateLabel }),
+      ...(descendant.attemptLabel && { attemptLabel: descendant.attemptLabel }),
+    }));
+  }
+
+  for (const descendant of importantDescendants) {
+    if (directIds.has(descendant.sessionId)) continue;
+    const node = nodes.get(descendant.sessionId);
+    const parent = nodes.get(descendant.parentSessionId);
+    if (!node || !parent) continue;
+    parent.children = [...(parent.children ?? []), node];
+  }
+  for (const event of importantDescendantEvents) {
+    const owner = nodes.get(event.ownerSessionId);
+    if (!owner) continue;
+    const ownerHref = childSessionHref?.(event.ownerSessionId);
+    const projected: LogSubagentEvent = {
+      ...event,
+      displayStatus: event.type === 'reviewer-feedback'
+        ? 'commented'
+        : event.verdict === 'pass' ? 'passed' : event.verdict === 'fail' ? 'failed' : 'error',
+      ...(ownerHref && { href: `${ownerHref}#log-${encodeURIComponent(event.sourceLogId)}` }),
+    };
+    owner.events = [...(owner.events ?? []), projected];
+  }
+  for (const node of nodes.values()) {
+    node.children?.sort((a, b) => a.createdAt - b.createdAt || a.sessionId.localeCompare(b.sessionId));
+    node.events?.sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
+  }
+  return childSessions.map((child) => nodes.get(child.sessionId)!).filter(Boolean);
 }
 
 function childSessionLogEntry(
@@ -2265,17 +2352,29 @@ function childSessionLogEntry(
 function logsWithChildSessions(
   logs: ApprovalLogEntry[] = [],
   childSessions: ChildSessionSummary[] = [],
-  childSessionHref?: (sessionId: string) => string
+  childSessionHref?: (sessionId: string) => string,
+  importantDescendants: ImportantDescendantSummary[] = [],
+  root?: { sessionId: string; agentName: string },
+  importantDescendantEvents: ImportantDescendantEvent[] = []
 ): ApprovalLogEntry[] {
   if (childSessions.length === 0) return logs;
+
+  const childTree = importantDescendantTree(
+    childSessions,
+    importantDescendants,
+    childSessionHref,
+    root,
+    importantDescendantEvents
+  );
 
   const matchedChildIds = new Set<string>();
   const enrichedLogs = logs.map((entry) => {
     if (entry.subagentSession) {
       matchedChildIds.add(entry.subagentSession.sessionId);
-      return entry;
+      const current = childTree.find((candidate) => candidate.sessionId === entry.subagentSession?.sessionId);
+      return current ? { ...entry, subagentSession: current } : entry;
     }
-    const child = childSessions
+    const child = childTree
       .filter((candidate) => !matchedChildIds.has(candidate.sessionId))
       .map((candidate) => ({
         child: candidate,
@@ -2290,11 +2389,11 @@ function logsWithChildSessions(
     matchedChildIds.add(child.sessionId);
     return {
       ...entry,
-      subagentSession: enrichChildSessionForLog(child, childSessionHref),
+      subagentSession: child,
     };
   });
 
-  for (const child of childSessions) {
+  for (const child of childTree) {
     if (!matchedChildIds.has(child.sessionId)) {
       enrichedLogs.push(childSessionLogEntry(child, childSessionHref));
     }
@@ -4992,7 +5091,10 @@ export function createServeCommand(): Command {
                 if (childToken) params.set('token', childToken);
                 params.set('project', found.project.id);
                 return `/sessions/${encodeURIComponent(childSessionId)}?${params.toString()}`;
-              }
+              },
+              found.info.approval.importantDescendants ?? [],
+              { sessionId, agentName: found.info.approval.agent.name },
+              found.info.approval.importantDescendantEvents ?? []
             );
             const logs = allLogs.slice(-logsLimit);
             const approval = { ...found.info.approval };
@@ -5073,7 +5175,10 @@ export function createServeCommand(): Command {
               if (childToken) params.set('token', childToken);
               params.set('project', found.project.id);
               return `/sessions/${encodeURIComponent(childSessionId)}?${params.toString()}`;
-            }
+            },
+            found.info.approval.importantDescendants ?? [],
+            { sessionId, agentName: found.info.approval.agent.name },
+            found.info.approval.importantDescendantEvents ?? []
           );
           const logs = allLogs.slice(-logsLimit);
           const parentSid = found.info.approval.parentSessionId;
@@ -7450,4 +7555,6 @@ export const __testing = {
   sessionMatchesMockFilter,
   sessionListStreamKey,
   sessionLearningTidyAllowed,
+  importantDescendantTree,
+  logsWithChildSessions,
 };

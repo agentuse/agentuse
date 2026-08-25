@@ -11,8 +11,10 @@ import { aggregateToolCalls, countSteps } from '../telemetry/metrics.js';
  * `complete.headline` above whatever text the run already produced.
  */
 export const OUTCOME_NUDGE_PROMPT =
-  '[runtime] This run is ending without a declared outcome. Call report_complete now with a one-line headline ' +
-  '(a successful evaluation that found nothing still counts as complete), or report_incomplete if a required outcome was skipped, blocked, failed, or only partially delivered. ' +
+  '[runtime] This run is ending without a declared outcome. The preceding turn ended normally: the runtime did not stop it for a deadline, error, or step limit. ' +
+  'Review the full preceding task and tool trace, and do not invent a blocker or claim work was skipped when the trace shows it was performed. ' +
+  'Call report_complete now with a one-line headline if the requested objective was achieved (a successful evaluation that found nothing still counts as complete), ' +
+  'or report_incomplete only if the trace shows a required outcome was skipped, blocked, failed, or only partially delivered. ' +
   'Emit ONLY that tool call: do not redo any work, and do not repeat, extend, or rewrite the report you already wrote.';
 
 /**

@@ -1,7 +1,7 @@
 import { memo } from 'preact/compat';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useSmoothText } from '../hooks/use-smooth-text';
-import type { ApprovalChange, ApprovalLogDetails, ApprovalLogEntry, ApprovalOption, ApprovalReference, LogSubagentSession } from '../../types';
+import type { ApprovalChange, ApprovalLogDetails, ApprovalLogEntry, ApprovalOption, ApprovalReference, LogSubagentEvent, LogSubagentSession } from '../../types';
 import { formatLogTime, isJsonLikeContent, logEntrySignature, storeItemPreview, storeItemTitle, valueAsRecord } from '../lib/format';
 import type { StoreItem } from '../../../../store/types';
 import { LogContent, InlineMarkdown } from './content';
@@ -576,25 +576,119 @@ function ApprovalDetailCard(props: {
   );
 }
 
+function formatSessionDuration(durationMs: number | undefined): string | undefined {
+  if (durationMs === undefined || durationMs < 0) return undefined;
+  const seconds = Math.round(durationMs / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  if (minutes < 60) return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const minuteRemainder = minutes % 60;
+  return minuteRemainder ? `${hours}h ${minuteRemainder}m` : `${hours}h`;
+}
+
+function VerifyEventCard(props: { event: Extract<LogSubagentEvent, { type: 'verify' }> }) {
+  const event = props.event;
+  const name = event.mode === 'inline' ? 'Inline criteria' : 'Judge setup';
+  const breadcrumb = event.breadcrumb.map((entry) => entry.agentName).join(' › ');
+  const statusClass = event.verdict === 'pass' ? 'completed' : 'error';
+  const ownerName = event.breadcrumb.at(-1)?.agentName ?? 'owning session';
+  const inner = (
+    <>
+      <span class={`chip status ${statusClass}`}>{event.displayStatus}</span>
+      <span class="subagent-identity">
+        <span class="subagent-name">{name}</span>
+        <span class="subagent-role judge">Judge</span>
+      </span>
+      <code class="subagent-id">{event.judge ?? 'inline'}</code>
+      <span class="subagent-context">
+        <strong>{event.attemptLabel}</strong>
+        {breadcrumb && <span>{breadcrumb}</span>}
+        <time dateTime={new Date(event.time).toISOString()}>{formatLogTime(event.time)}</time>
+      </span>
+      {event.critique && <span class={`verify-event-critique${event.verdict === 'pass' ? '' : ' is-failure'}`}>{event.critique}</span>}
+    </>
+  );
+  const row = event.href
+    ? <a class="subagent-event verify-event" href={event.href} aria-label={`Open inline Judge event in ${ownerName}`}>{inner}<span class="subagent-open-cue" aria-hidden="true">open ›</span></a>
+    : <div class="subagent-event verify-event">{inner}</div>;
+  return <div class="subagent-tree-node is-important" data-event-id={event.id}>{row}</div>;
+}
+
+function ReviewerFeedbackEventCard(props: { event: Extract<LogSubagentEvent, { type: 'reviewer-feedback' }> }) {
+  const event = props.event;
+  const breadcrumb = event.breadcrumb.map((entry) => entry.agentName).join(' › ');
+  const ownerName = event.breadcrumb.at(-1)?.agentName ?? 'owning session';
+  const inner = (
+    <>
+      <span class="chip status commented">{event.displayStatus}</span>
+      <span class="subagent-identity">
+        <span class="subagent-name">Reviewer feedback</span>
+        <span class="subagent-role reviewer">Human</span>
+      </span>
+      <span class="subagent-context">
+        <strong>{event.roundLabel}</strong>
+        {event.reviewer && <span>by {event.reviewer}</span>}
+        {breadcrumb && <span>{breadcrumb}</span>}
+        <time dateTime={new Date(event.time).toISOString()}>{formatLogTime(event.time)}</time>
+      </span>
+      <span class="reviewer-feedback-comment">{event.comment}</span>
+    </>
+  );
+  const row = event.href
+    ? <a class="subagent-event reviewer-feedback-event" href={event.href} aria-label={`Open reviewer feedback in ${ownerName}`}>{inner}<span class="subagent-open-cue" aria-hidden="true">open ›</span></a>
+    : <div class="subagent-event reviewer-feedback-event">{inner}</div>;
+  return <div class="subagent-tree-node is-important" data-event-id={event.id}>{row}</div>;
+}
+
 function SubagentCard(props: { session: LogSubagentSession }) {
   const s = props.session;
   const name = s.agent.name || s.agent.id;
+  const judge = s.kinds?.includes('judge') === true;
+  const breadcrumb = s.breadcrumb?.map((entry) => entry.agentName).join(' › ');
+  const duration = formatSessionDuration(s.durationMs);
+  const nested = [
+    ...(s.children ?? []).map((session) => ({ type: 'session' as const, time: session.createdAt, session })),
+    ...(s.events ?? []).map((event) => ({ type: 'event' as const, time: event.time, event })),
+  ].sort((a, b) => a.time - b.time);
   const inner = (
     <>
       <span class={`chip status ${s.displayStatus}`}>{s.displayStatus}</span>
-      <span class="subagent-name">{name}</span>
+      <span class="subagent-identity">
+        <span class="subagent-name">{name}</span>
+        {judge && <span class="subagent-role judge">Judge</span>}
+      </span>
       <code class="subagent-id">{s.sessionId}</code>
+      {(s.label || breadcrumb || s.createdAt) && (
+        <span class="subagent-context">
+          {s.label && <strong>{s.label}</strong>}
+          {breadcrumb && <span>{breadcrumb}</span>}
+          {s.createdAt && <time dateTime={new Date(s.createdAt).toISOString()}>{formatLogTime(s.createdAt)}</time>}
+          {duration && <span>{duration}</span>}
+        </span>
+      )}
+      {s.errorMessage && <span class="subagent-error">{s.errorMessage}</span>}
       {s.command && <span class="subagent-command">{s.command}</span>}
     </>
   );
-  return s.href
-    ? (
-      <a class="subagent-event" href={s.href} aria-label={`Open subagent session ${name || s.sessionId}`}>
-        {inner}
-        <span class="subagent-open-cue" aria-hidden="true">open ›</span>
-      </a>
-    )
+  const row = s.href
+    ? <a class="subagent-event" href={s.href} aria-label={`Open subagent session ${name || s.sessionId}`}>{inner}<span class="subagent-open-cue" aria-hidden="true">open ›</span></a>
     : <div class="subagent-event">{inner}</div>;
+  return (
+    <div class={`subagent-tree-node${s.important ? ' is-important' : ''}`} data-session-id={s.sessionId}>
+      {row}
+      {nested.length > 0 && (
+        <div class="subagent-children" aria-label={`Important descendants and events of ${name}`}>
+          {nested.map((item) => item.type === 'session'
+            ? <SubagentCard key={item.session.sessionId} session={item.session} />
+            : item.event.type === 'reviewer-feedback'
+              ? <ReviewerFeedbackEventCard key={item.event.id} event={item.event} />
+              : <VerifyEventCard key={item.event.id} event={item.event} />)}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -969,6 +1063,7 @@ function LogEntryImpl(props: LogEntryProps) {
 
   return (
     <li
+      id={`log-${entry.id}`}
       class={classes}
       data-log-id={entry.id}
       data-log-type={entry.type}

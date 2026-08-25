@@ -12,6 +12,7 @@ import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionP
 import { currentProcessRef } from './utils/process-info';
 import { withOwnershipLock } from './utils/ownership-lock';
 import { contextUsageFromSnapshot } from './session/usage';
+import { buildImportantDescendantEvents, buildImportantDescendants } from './session/important-descendants';
 import { repairEscapedText } from './utils/display-text';
 import { Command } from 'commander';
 import { createProviderCommand, createAuthCommand } from './cli/auth';
@@ -68,7 +69,7 @@ import {
   isCanonicalRemoteExample,
   parseModel,
 } from './telemetry';
-import type { ActiveContextUsage, LogPartLevel, SessionInfo, SessionManager as SessionManagerType, SessionTrigger, ToolPart } from './session';
+import type { ActiveContextUsage, LogPartLevel, Part, SessionInfo, SessionManager as SessionManagerType, SessionTrigger, ToolPart } from './session';
 import { findServerForProject } from './utils/server-registry';
 
 const program = new Command();
@@ -1734,10 +1735,12 @@ async function runInternalWorker() {
       const decisionChoice = typeof output.choice === 'string' && output.choice ? output.choice : undefined;
       if (decisionChoice) fields.decisionChoice = decisionChoice;
       const reviewer = valueAsRecord(output.reviewer);
-      const reviewerLabel = typeof reviewer.name === 'string'
-        ? reviewer.name
-        : typeof reviewer.id === 'string'
-          ? reviewer.id
+      const reviewerLabel = typeof reviewer.username === 'string'
+        ? reviewer.username
+        : typeof reviewer.name === 'string'
+          ? reviewer.name
+          : typeof reviewer.id === 'string'
+            ? reviewer.id
           : undefined;
       if (decisionStatus) fields.decisionStatus = decisionStatus;
       if (decisionComment) fields.decisionComment = decisionComment;
@@ -1993,13 +1996,14 @@ async function runInternalWorker() {
     ];
   }
 
-  async function childSessionSummaries(
+  async function sessionHierarchySummaries(
     sessionManager: InstanceType<typeof SessionManager>,
+    rootSession: SessionInfo,
     sessionId: string,
     sessionPath?: string
   ) {
-    const children = await sessionManager.listChildSessions(sessionId, sessionPath);
-    return children.map(({ session }) => ({
+    const descendants = await sessionManager.listDescendantSessions(sessionId, sessionPath);
+    const summarize = ({ session }: { session: SessionInfo }) => ({
       sessionId: session.id,
       agent: {
         id: session.agent.id,
@@ -2012,7 +2016,29 @@ async function runInternalWorker() {
       createdAt: session.time.created,
       updatedAt: session.time.updated,
       ...sessionErrorFields(session),
+    });
+    const childSessions = descendants
+      .filter(({ session }) => session.parentSessionID === sessionId)
+      .map(summarize);
+    const evidence = await Promise.all(descendants.map(async ({ session, agentId }) => {
+      try {
+        const messages = await sessionManager.getSessionMessages(session.id, agentId);
+        const parts = (await Promise.all(
+          messages.map((message) => sessionManager.getMessageParts(session.id, agentId, message.id))
+        )).flat() as Part[];
+        return { session, parts };
+      } catch (error) {
+        // A damaged descendant must not make its Manager page unreadable. Its
+        // terminal session status still participates in failure bubbling.
+        logger.debug(`Failed to inspect descendant ${session.id}: ${(error as Error).message}`);
+        return { session, parts: [] as Part[] };
+      }
     }));
+    return {
+      childSessions,
+      importantDescendants: buildImportantDescendants(rootSession, evidence),
+      importantDescendantEvents: buildImportantDescendantEvents(rootSession, evidence),
+    };
   }
 
   // Resume one existing (suspended) session to completion or re-suspension, reusing
@@ -2548,8 +2574,9 @@ async function runInternalWorker() {
         messages.map((message) => sessionManager.getMessageParts(req.sessionId!, found.agentId, message.id))
       )).flat();
       let logs = logsWithSessionError(buildApprovalLogs(parts), found.session);
-      const childSessions = await childSessionSummaries(
+      const { childSessions, importantDescendants, importantDescendantEvents } = await sessionHierarchySummaries(
         sessionManager,
+        found.session,
         req.sessionId,
         found.path
       );
@@ -2663,6 +2690,8 @@ async function runInternalWorker() {
             ...viewOnlyFields,
             ...(additionalInstruction && { additionalInstruction }),
             ...(childSessions.length > 0 && { childSessions }),
+            ...(importantDescendants.length > 0 && { importantDescendants }),
+            ...(importantDescendantEvents.length > 0 && { importantDescendantEvents }),
             ...(tokenUsage && { tokenUsage }),
             logs
           },
@@ -2735,6 +2764,8 @@ async function runInternalWorker() {
             ...viewOnlyFields,
             ...(additionalInstruction && { additionalInstruction }),
             ...(childSessions.length > 0 && { childSessions }),
+            ...(importantDescendants.length > 0 && { importantDescendants }),
+            ...(importantDescendantEvents.length > 0 && { importantDescendantEvents }),
             ...(tokenUsage && { tokenUsage }),
             logs
           },
@@ -2826,6 +2857,8 @@ async function runInternalWorker() {
           ...(Object.keys(channelMessage).length > 0 && { channelMessage }),
           ...(state.status === 'completed' && { decision: state.output }),
           ...(childSessions.length > 0 && { childSessions }),
+          ...(importantDescendants.length > 0 && { importantDescendants }),
+          ...(importantDescendantEvents.length > 0 && { importantDescendantEvents }),
           ...(tokenUsage && { tokenUsage }),
           logs
         },

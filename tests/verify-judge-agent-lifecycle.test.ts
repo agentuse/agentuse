@@ -7,6 +7,7 @@ const completedSessions: Array<{ sessionId: string; agentId: string }> = [];
 let sessionManagerConstructions = 0;
 let sessionCreations = 0;
 let logSinkCreations = 0;
+let sessionCreationParams: any;
 let runError: Error = new Error('judge execution failed');
 
 class CapturingSessionManager {
@@ -71,8 +72,9 @@ mock.module('../src/session/manager', () => ({
 }));
 
 mock.module('../src/runner/session-helper', () => ({
-  createSessionAndMessage: async () => {
+  createSessionAndMessage: async (params: unknown) => {
     sessionCreations++;
+    sessionCreationParams = params;
     return {
       sessionID: 'judge-session',
       messageID: 'judge-message',
@@ -99,6 +101,7 @@ beforeEach(() => {
   sessionManagerConstructions = 0;
   sessionCreations = 0;
   logSinkCreations = 0;
+  sessionCreationParams = undefined;
   runError = new Error('judge execution failed');
 });
 
@@ -146,6 +149,11 @@ describe('dedicated judge child lifecycle', () => {
       },
     }]);
     expect(completedSessions).toHaveLength(0);
+    expect(sessionCreationParams?.observability).toEqual({
+      role: 'verify-judge',
+      attempt: 0,
+      maxAttempts: 2,
+    });
   });
 
   it('terminalizes the child as JUDGE_CANCELLED and propagates cancellation', async () => {

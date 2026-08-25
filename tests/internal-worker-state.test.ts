@@ -58,10 +58,10 @@ describe('internal worker session state ordering', () => {
     const source = await readFile(join(import.meta.dir, '..', 'src', 'index.ts'), 'utf-8');
     const recoveryStart = source.indexOf('function logsWithRecoveredApprovalDecision');
     const sessionErrorStart = source.indexOf('function logsWithSessionError');
-    const childSummariesStart = source.indexOf('async function childSessionSummaries');
+    const hierarchySummariesStart = source.indexOf('async function sessionHierarchySummaries');
     expect(recoveryStart).toBeGreaterThanOrEqual(0);
     expect(sessionErrorStart).toBeGreaterThan(recoveryStart);
-    expect(childSummariesStart).toBeGreaterThan(sessionErrorStart);
+    expect(hierarchySummariesStart).toBeGreaterThan(sessionErrorStart);
 
     const recoverySource = source.slice(recoveryStart, sessionErrorStart);
     expect(recoverySource).toContain("status: 'completed'");
@@ -70,7 +70,7 @@ describe('internal worker session state ordering', () => {
     expect(recoverySource).not.toContain("status: 'error'");
     expect(recoverySource).not.toContain('errorMessage');
 
-    const sessionErrorSource = source.slice(sessionErrorStart, childSummariesStart);
+    const sessionErrorSource = source.slice(sessionErrorStart, hierarchySummariesStart);
     expect(sessionErrorSource).toContain("id = `session-error:${session.id}`");
     expect(sessionErrorSource).toContain("status: 'error'");
     expect(sessionErrorSource).toContain("title: 'Session failed'");

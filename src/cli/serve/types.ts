@@ -1,4 +1,5 @@
 import type { ActiveContextUsage, SessionTrigger } from "../../session/types";
+import type { DescendantBreadcrumb, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary } from "../../session/important-descendants";
 
 export type { SessionTrigger };
 
@@ -384,6 +385,12 @@ export interface ApprovalPageInfo {
    *  suspended approval gate for a manual retry (POST /sessions/:id/reopen). */
   reopenable?: boolean;
   childSessions?: ChildSessionSummary[];
+  /** Important sessions at any depth, plus context-only bridge ancestors. The
+   * direct-child field above is intentionally retained for API compatibility. */
+  importantDescendants?: ImportantDescendantSummary[];
+  /** Verification markers with no real Judge child session. These remain
+   * events owned by the session that ran verification, never synthetic sessions. */
+  importantDescendantEvents?: ImportantDescendantEvent[];
   /** The delegated leaf that actually raised this gate, when surfaced at a manager
    *  root via the subagent approval cascade. The gate is addressed at sessionId
    *  (the root) but labeled with this leaf. */
@@ -442,7 +449,24 @@ export interface LogSubagentSession extends ChildSessionSummary {
   href?: string;
   command: string;
   displayStatus: string;
+  parentSessionId?: string;
+  depth?: number;
+  breadcrumb?: DescendantBreadcrumb[];
+  durationMs?: number;
+  kinds?: ImportantDescendantKind[];
+  important?: boolean;
+  phase?: 'revising' | 'awaiting-approval';
+  label?: string;
+  gateLabel?: string;
+  attemptLabel?: string;
+  events?: LogSubagentEvent[];
+  children?: LogSubagentSession[];
 }
+
+export type LogSubagentEvent = ImportantDescendantEvent & {
+  href?: string;
+  displayStatus: string;
+};
 
 /** One discrete action executed on approval: verbatim content, no rationale. */
 export interface ApprovalChange {

@@ -542,6 +542,14 @@ describe('session tree stopping', () => {
 
       const children = await parentManager.listChildSessions(parentId);
       expect(children.map((entry) => entry.session.id)).toEqual([childId]);
+      const descendants = await parentManager.listDescendantSessions(parentId);
+      expect(descendants.map((entry) => ({
+        id: entry.session.id,
+        parent: entry.session.parentSessionID,
+      }))).toEqual([
+        { id: childId, parent: parentId },
+        { id: grandchildId, parent: childId },
+      ]);
     } finally {
       if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
       else process.env.XDG_DATA_HOME = originalXdgDataHome;

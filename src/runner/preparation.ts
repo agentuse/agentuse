@@ -21,7 +21,11 @@ import type { ToolSet } from 'ai';
 import { loadAgentTools } from './tools-loader';
 import { EffectWAL } from './effect-wal';
 import { createLiveToolOutputRelay } from './live-tool-output';
-import { buildSystemMessages, buildLearningPrompt } from './system-messages';
+import {
+  buildSystemMessages,
+  buildLearningPrompt,
+  ensurePersistentStoreBoundary,
+} from './system-messages';
 import { createSessionAndMessage } from './session-helper';
 import { bindToolsToSnapshot, createToolsSnapshot } from './tool-snapshot';
 import { rehydrateMessages, ensureTrailingUserTurn } from '../session';
@@ -195,11 +199,33 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     // Carry the cumulative token total forward so the resumed run's usage adds
     // to it rather than overwriting it (keeps the session count monotonic).
     priorTokens = message.assistant.tokens;
-    systemMessages = message.assistant.system.map(content => ({ role: 'system', content }));
+    const persistedSystemMessages = message.assistant.system.map(content => ({ role: 'system', content }));
+    systemMessages = agent.config.store
+      ? ensurePersistentStoreBoundary(persistedSystemMessages)
+      : persistedSystemMessages;
+    const persistedSystemChanged =
+      systemMessages.length !== persistedSystemMessages.length
+      || systemMessages.some((systemMessage, index) =>
+        systemMessage.role !== persistedSystemMessages[index]?.role
+        || systemMessage.content !== persistedSystemMessages[index]?.content
+      );
+    if (persistedSystemChanged) {
+      // Upgrade legacy sessions in place. This keeps diagnostics and later
+      // resumes aligned with the model-facing history. Compare content as well
+      // as length so an older policy version is replaced exactly once.
+      await sessionManager.updateMessage(existingSessionId, found.agentId, message.id, {
+        assistant: { system: systemMessages.map(systemMessage => systemMessage.content) },
+      });
+    }
     userMessage = message.user.prompt.user
       ? `${message.user.prompt.task}\n\n${message.user.prompt.user}`
       : message.user.prompt.task;
     resumedMessages ??= await rehydrateMessages(sessionManager, existingSessionId, found.agentId);
+    if (agent.config.store) {
+      // Context snapshots can predate the persisted-message upgrade above, so
+      // enforce the same boundary directly in the history sent to the model.
+      resumedMessages = ensurePersistentStoreBoundary(resumedMessages);
+    }
     if (userPrompt?.trim()) {
       resumedMessages = [
         ...resumedMessages,

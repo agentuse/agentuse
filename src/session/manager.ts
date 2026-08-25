@@ -1204,6 +1204,45 @@ export class SessionManager {
       );
   }
 
+  /**
+   * Return every nested session below a root while preserving each record's
+   * real parentSessionID. This is additive to listChildSessions: callers that
+   * need the historical direct-child contract keep using that method, while
+   * observability views can build a faithful tree without project-wide scans.
+   */
+  async listDescendantSessions(
+    rootSessionID: string,
+    rootSessionPath?: string
+  ): Promise<SessionEntry[]> {
+    const scopePath = rootSessionPath ?? (await this.findSession(rootSessionID))?.path;
+    if (!scopePath) return [];
+    const entries = await this.readSessionEntries({ relativeDir: `${scopePath}/subagent` });
+    const byParent = new Map<string, SessionEntry[]>();
+    for (const entry of entries) {
+      const parentId = entry.session.parentSessionID;
+      if (!parentId) continue;
+      const siblings = byParent.get(parentId) ?? [];
+      siblings.push(entry);
+      byParent.set(parentId, siblings);
+    }
+    for (const siblings of byParent.values()) {
+      siblings.sort((a, b) =>
+        a.session.time.created - b.session.time.created ||
+        a.session.agent.id.localeCompare(b.session.agent.id) ||
+        a.session.id.localeCompare(b.session.id)
+      );
+    }
+    const ordered: SessionEntry[] = [];
+    const visit = (parentId: string) => {
+      for (const child of byParent.get(parentId) ?? []) {
+        ordered.push(child);
+        visit(child.session.id);
+      }
+    };
+    visit(rootSessionID);
+    return ordered;
+  }
+
   async stopSessionTree(
     sessionID: string,
     options: { message?: string; code?: string; dismissEnded?: boolean } = {}

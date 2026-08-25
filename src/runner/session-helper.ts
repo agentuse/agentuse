@@ -1,6 +1,6 @@
 import type { ParsedAgent } from '../parser';
 import type { SessionManager } from '../session';
-import type { ErrorPartSource, LogPart, LogPartLevel, Part, SessionTrigger, ToolPart } from '../session/types';
+import type { ErrorPartSource, LogPart, LogPartLevel, Part, SessionInfo, SessionTrigger, ToolPart } from '../session/types';
 import type { ApprovalReview, LearningOutcome } from '../learning/types';
 import { computeAgentId } from '../utils/agent-id';
 import { resolveModelProvider } from '../utils/model-utils';
@@ -38,6 +38,7 @@ export interface CreateSessionParams {
   isSubAgent?: boolean;
   parentSessionID?: string;
   trigger?: SessionTrigger;
+  observability?: SessionInfo['observability'];
   /** Pre-assign the session id instead of generating one (serve detached run). */
   sessionId?: string;
 }
@@ -59,6 +60,7 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
     isSubAgent = false,
     parentSessionID,
     trigger,
+    observability,
     sessionId,
   } = params;
 
@@ -70,6 +72,7 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
     ...(sessionId ? { id: sessionId } : {}),
     ...(parentSessionID ? { parentSessionID } : {}),
     ...(trigger ? { trigger } : {}),
+    ...(observability ? { observability } : {}),
     agent: {
       id: agentId,
       name: agent.name,

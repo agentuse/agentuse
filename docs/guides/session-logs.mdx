@@ -163,6 +163,12 @@ When `agentuse serve` is running, the same sessions are browsable as web pages:
   session is suspended on an approval gate, the approve / reject / comment and
   resume controls.
 
+For delegated runs, the parent timeline also surfaces important work from nested
+descendants. Reviewer comments appear as timestamped feedback; a child working
+on that feedback is labeled `revising`, and its next gate is labeled
+`awaiting-approval`. Judge sessions are identified as automated pre-review
+attempts so they are not mistaken for human decisions.
+
 The `/agents` page opens each agent's detail hub, where you can inspect source,
 recent runs, and start a run. Schedule rows also link to the agent detail hub;
 last-run badges still link to the matching session page.

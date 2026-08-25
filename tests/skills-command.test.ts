@@ -120,8 +120,11 @@ ${body}
     expect(output).toContain('name: runner');
     expect(output).toContain('--- creator/SKILL.md ---');
     expect(output).toContain('name: creator');
-    expect(output).toContain('Write compressed, not crammed.');
-    expect(output).toContain('Over 1,500 body words: compress before handoff.');
+    expect(output).toContain('## Minimum Viable Agent');
+    expect(output).toContain('Default to model judgment');
+    expect(output).toContain('The absence of a procedure is intentional');
+    expect(output).toContain('would removing this materially change a likely run?');
+    expect(output).toContain('Ordinary agents should land around 300-700 body words');
   });
 
   it('prints raw installed skill content with installed get', async () => {

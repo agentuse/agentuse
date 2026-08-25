@@ -16,8 +16,6 @@ model: anthropic:claude-sonnet-5
 description: "Short action-oriented purpose"
 ---
 
-You are a focused autonomous agent.
-
 ## Task
 Describe exactly what the agent should accomplish.
 
@@ -25,43 +23,34 @@ Describe exactly what the agent should accomplish.
 Describe where results should go and what format they should use.
 ```
 
-## Common Frontmatter
+## Add Frontmatter Only When Needed
+
+Start with the required execution contract:
 
 ```yaml
 model: anthropic:claude-sonnet-5
 description: "Analyze daily metrics and send a concise summary"
-timeout: 600         # run ceiling: bare number = SECONDS, or "10m"
-maxSteps: 100
-reasoning: high        # provider-agnostic thinking effort: none|minimal|low|medium|high|xhigh. Opt-in, billed at OUTPUT rates; omit for the model default. (Advanced, exact control: anthropic.thinking.budgetTokens / openai.reasoningEffort.)
-schedule: "0 9 * * *"
-verify: true         # judge the output before it ships; string = rubric shorthand, or { criteria | judge, at, maxRedos }. See the judge gotcha below.
-metadata:            # free-form annotations; framework never interprets them
-  draft: true
-  owner: leon
-tools:
-  bash:
-    commands:        # auto-run, no approval
-      - "birdc read *"
-    gated:           # runs only once a human approves the exact command
-      - "birdc reply *"
-skills:
-  auto: false        # prefer a closed catalog when the required skills are known
-  creator:           # preload this specific skill
-subagents:
-  - path: ./researcher.agentuse
-    name: research
-    maxSteps: 50
-mcpServers:
-  filesystem:
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
 ```
+
+Add a field only when the described workflow uses it:
+
+- `timeout` / `maxSteps`: observed work needs a different run ceiling.
+- `reasoning`: genuine judgment, planning, or debugging benefits from it.
+- `schedule`: the job actually recurs under `agentuse serve`.
+- `verify`: output needs an independent quality gate.
+- `tools` / `mcpServers`: the job calls those capabilities.
+- `skills`: the job relies on known reusable instructions.
+- `subagents`: distinct roles materially improve the work.
+- `metadata`: human/tooling annotations that must not enter the prompt.
+
+Never copy a catalog of optional fields into a new agent. Absent feature means
+absent configuration and absent body instructions.
 
 ## Choosing the Model and Thinking Budget
 
-`model:` and thinking are the two knobs with the biggest effect on quality and
-cost. Decide both on purpose, the defaults are rarely right. Validate every id
-against `agentuse models` (the catalog moves).
+`model:` is required and has the biggest effect on quality and cost. Thinking is
+opt-in: add it only when the work benefits from deliberate reasoning. Validate
+every model id against `agentuse models` (the catalog moves).
 
 **Model: pick by the hardest reasoning the agent actually does, not by how
 important the agent feels.**
@@ -116,12 +105,15 @@ high: latency and cost with no lift. Start moderate, tune on observed output.
 
 ## Authoring Checklist
 
+This is a review checklist, not a template to reproduce in the agent. Skip every
+item whose feature is absent from the described workflow.
+
 - A concrete job the agent can finish without interactive supervision.
 - `model:` set explicitly by role (see above); short `description:` if it may be
   listed or used as a subagent.
-- Thinking budget decided, not defaulted: on for judgment/drafting/planning
-  agents, off for mechanical/read-only ones.
-- Tools and MCP servers declared in frontmatter, not assumed ambient.
+- Optional frontmatter omitted unless the job uses it; reasoning reserved for
+  judgment/drafting/planning work.
+- Required tools and MCP servers declared in frontmatter, not assumed ambient.
 - Irreversible bash commands (post, send, delete, deploy) listed under
   `tools.bash.gated`, not just fenced off in the prompt.
 - Plain gated actions rely on the runtime's single-gate pattern: emit
@@ -134,10 +126,14 @@ high: latency and cost with no lift. Start moderate, tune on observed output.
 - Known skills listed explicitly; prefer `auto: false` when the agent does not
   need to discover arbitrary skills at runtime.
 - Inputs, outputs, destinations, and success criteria stated in the body.
+- No method, step, or quality rule a capable model can infer from the objective
+  and context.
+- No speculative branch: each condition was described by the user, observed in
+  prior runs, or prevents a material safety failure.
 - Every body rule placed on purpose: about this job, not about a tool or a past
   run (see Pick the Layer Before You Write the Rule).
-- Edits compressed, not just appended: rule in the body, provenance in the commit
-  message, body no longer than before (see Write Lean).
+- Edits compressed, not just appended: rule in the body, provenance in the
+  commit message, body no longer than before (see Minimum Viable Agent).
 - Examples and untrusted runtime content bounded by XML tags, not left under a
   heading (see Bound What Is Not an Instruction).
 - Multi-role work: subagents with clear names and `maxSteps` limits.
@@ -169,6 +165,17 @@ Pick the shape by where the agent's value lives:
 - **Compliance-heavy** (scanners, trackers, report generators): a strict
   procedure with a pinned output schema is correct; determinism is the point.
 
+Judgment-heavy is the default. Assume a capable model can choose methods,
+sequence ordinary work, notice routine problems, and adapt to the evidence. Do
+not enumerate its reasoning process, heuristics, or every quality dimension. A
+short responsibility statement is useful only when it changes the lens or
+tradeoffs; generic roles such as "expert autonomous agent" add nothing.
+
+Prescribe a method only when the order changes the result, a required external
+protocol demands it, or the job is explicitly compliance-heavy. A rule earns a
+place only when a capable model would otherwise make a materially wrong choice,
+the requirement is non-obvious, or the rule establishes a safety boundary.
+
 The same split applies to tools: the frontmatter allowlist is the real
 capability ceiling, and no prompt wording can widen it. Scope a compliance
 agent tightly; give a judgment agent the read surface and search commands it
@@ -185,16 +192,41 @@ Note that a wildcard tail grants what it does not name: `birdc *` grants
 approval protocol in the body; declaring `gated` injects it, and implies
 `approval:`.
 
-## Write Lean: Hard-Code Invariants, Delegate Judgment
+## Minimum Viable Agent
 
-Treat the body as a recurring prompt cost. Write compressed, not crammed.
+Write the narrowest agent that safely completes the workflow the user actually
+described. Do not generalize it into a reusable system or prepare it for cases
+that have not occurred. Default to model judgment: specify the outcome,
+available context, deliverable, and hard boundaries, then let the model decide
+how to do the work. Treat the body as a recurring prompt cost.
 
-Keep only:
+Start with the minimum executable contract:
 
-- safety boundaries and irreversible-action gates,
-- exact commands, paths, fields, and status values the model cannot infer,
-- ordering that changes the result,
-- inputs, output schema, destination, and success criteria.
+- concrete objective,
+- required inputs and their source,
+- required output and destination,
+- ordering that materially changes the result,
+- non-obvious quality criteria,
+- mechanically enforced boundaries for consequential actions,
+- genuine completion and blocker conditions.
+
+Do not add:
+
+- speculative edge-case handling, retries, cleanup, or recovery procedures,
+- generic advice such as "be accurate" or "handle errors gracefully",
+- alternative tools or fallback workflows nobody requested,
+- explanations of why a rule exists,
+- runtime protocols AgentUse already injects,
+- examples unless they resolve a real ambiguity.
+
+A conditional branch belongs in the body only when the user described it, a
+prior run encountered it, or omitting it creates a material safety risk.
+Unexpected failures should produce an honest incomplete result; they do not
+need a pre-authored decision tree.
+
+Do not add a `Steps` section to a judgment-heavy agent unless a specific ordering
+changes the result. The absence of a procedure is intentional: the model owns
+the method.
 
 Route everything else:
 
@@ -203,7 +235,8 @@ Route everything else:
 - author rationale and operating notes -> `metadata:` or a companion `ABOUT.md`,
 - examples -> keep only when they disambiguate a rule.
 
-Use controlled shorthand:
+For the compliance-heavy minority that genuinely needs ordered steps, use
+controlled shorthand:
 
 - One invariant or branch per line.
 - Prefer imperative fragments: `Read scoreboard first.`
@@ -212,25 +245,14 @@ Use controlled shorthand:
 - Keep full grammar where negation, condition, order, or scope could blur.
 - Never pack multiple policies and exceptions into one long paragraph.
 
-Good:
+Run a subtraction pass after every draft and substantive edit:
 
-```markdown
-1. Read scoreboard unless the manager supplied `soft_bias`.
-2. Select one fresh, in-lane target.
-3. Draft 1-2 sentences; add one new insight.
-4. Save as `awaiting_approval`.
-5. Request approval; when the post command is bash-gated, emit that exact
-   command alongside the plain gate for runtime attachment. Otherwise gate alone.
-6. Explicit approval -> post, verify ID, mark `posted`.
-7. Otherwise -> mark `rejected` or `needs_revision`; never post.
-```
-
-Run a compression pass after every substantive edit:
-
-1. Remove duplicated rules, incident history, and derivable branches.
-2. Move reusable mechanics and learnings to their proper layers.
-3. Split dense lines; preserve unambiguous negation, conditions, order, scope.
-4. Run `agentuse doctor <file>`.
+1. For every sentence ask: would removing this materially change a likely run?
+   If not, delete it.
+2. Remove duplicated rules, incident history, and derivable branches.
+3. Move reusable mechanics and learnings to their proper layers.
+4. Split dense lines; preserve unambiguous negation, conditions, order, scope.
+5. Run `agentuse doctor <file>`.
 
 **Editing a live agent is where bloat actually enters.** New agents get reviewed
 whole; edits get appended and never re-read. When adding a rule to an existing
@@ -239,9 +261,9 @@ agent:
 - Ship the rule, not the case for it. The measurement, the date, the incident,
   the "added because..." belong in the commit message. Provenance inline is paid
   on every run, forever, and changes no behavior.
-- Budget the edit net-neutral: a new rule means cutting one or compressing its
-  neighbors. Growth is added constraint count, and constraint count is itself a
-  defect - an agent satisfying 200 rules writes output that demonstrates
+- Budget the edit net-neutral: never append a rule without checking whether it
+  supersedes, merges with, or lets you remove an existing rule. Constraint
+  count is itself a defect: an agent satisfying 200 rules demonstrates
   compliance instead of doing the job.
 - Keep worked examples, cut explanations. One FAIL/PASS pair teaches more than a
   paragraph on why the rule exists, and costs less.
@@ -249,8 +271,12 @@ agent:
 
 Size guidance is advisory, not a parser limit:
 
-- Over 1,500 body words: compress before handoff.
-- Over 2,500: split/reference or record why the complexity must stay inline.
+- Ordinary agents should land around 300-700 body words. A judgment-heavy agent
+  often needs no procedure at all; a compliance-heavy one commonly needs 5-8
+  operational steps. These are design targets, not quotas or hard limits.
+- Over 1,000 body words: run a dedicated subtraction pass and justify what must
+  remain inline.
+- Over 1,500: split/reference before handoff unless the job is genuinely complex.
 - Over 800 characters on one line: usually multiple rules; split it.
 
 The agent body is not the whole per-request prompt. `agentuse doctor` also
@@ -265,7 +291,9 @@ prices the skill surface, which recurs on every model request:
 
 Over-specification smells: the same rule in several layers, history embedded in
 an invariant, rationale longer than the rule, or a decision tree derivable from
-one sentence of intent. Write what a competent teammate needs, not a manual.
+one sentence of intent. Cover expected behavior and material safety risks; let
+the model handle ordinary variation. Write what a competent teammate needs,
+not a manual.
 
 ## Bound What Is Not an Instruction
 

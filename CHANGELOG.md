@@ -2,7 +2,46 @@
 
 ## [Unreleased]
 
-- **Sub-agents no longer silently inherit the parent's configured model.** Each agent now uses the `model:` in its own file unless the run was started with an explicit `-m/--model` (or worker API) override. Explicit overrides still cascade through every nested sub-agent, but now carry the original resolved alias policy rather than whichever concrete candidate the immediate parent happened to select, so provider fallback remains available at deeper levels. The policy is stored with the session as well, keeping suspended and restarted runs reproducible even if alias configuration changes before resume.
+- **Reviewer comments now explain resumed sub-agent work in parent session timelines.**
+  Human feedback is rendered as a timestamped revision request, an active child
+  reads `revising` instead of reusing the completed gate's prompt, a re-opened
+  gate reads `awaiting-approval`, and Judge attempts are identified as automated
+  pre-review attempts.
+- **The `creator` skill now defaults to minimum-viable agent instructions.** It
+  starts from the workflow the user actually described, omits unused
+  frontmatter and speculative branches, relies on model judgment instead of
+  prescribing inferable methods, and runs a sentence-by-sentence subtraction
+  pass before handoff. Ordinary agents now target a focused 300-700 word body;
+  judgment-heavy agents need no procedure unless ordering changes the result.
+- **Sub-agents no longer silently inherit the parent's configured model.** Each agent now uses the `model:` in its own file unless the run was started with an explicit `-m/--model` (or worker API) override. Explicit overrides still cascade through every nested sub-agent, but now carry the original resolved alias policy rather than whichever concrete candidate the immediate parent happened to select, so provider fallback remains available at deeper levels. The policy is stored with the session as well, keeping explicit overrides and fallback behavior reproducible across resume and restart.
+- **The `serve` web UI has been redesigned for a calmer, denser operations view.**
+  Home, approvals, sessions, agents, schedules, and stores now share the updated
+  visual system, with more readable session logs and responsive layouts.
+- **Approval queues are easier to scan and stay accurate while decisions are processed.**
+  Pending gates are grouped by agent, Home uses compact waiting rows and shows
+  the newest pending work first, and pick-gate cards prioritize risk while
+  folding long draft and command detail. A gate that was just decided no longer
+  briefly reappears when a stale live update arrives.
+- **Long-running sessions remain visible in `serve` after they pass the selected activity window.**
+  Activity filters now use the session's last update rather than its creation
+  time, while still retaining live work that started earlier.
+- **Sub-agent model and provider failures now name the concrete model that failed,**
+  including authentication errors, so fallback and configuration problems are
+  diagnosable from the parent run.
+- **`serve` and run-time operations use less memory and avoid unnecessary filesystem, process, MCP, and web work.**
+  Idle workers can again recycle after high memory use, and worker response
+  caches are bounded.
+- **The built-in `hello` demo now guides first-time users through the full setup path:**
+  installing the AgentUse skill, briefing a coding agent, validating the agent,
+  and completing the first run.
+- **Outcome recovery no longer loses the tool trace from multi-step runs.** When
+  a model finishes without declaring an outcome, the recovery turn sees the
+  complete preceding work and can only report complete or incomplete, avoiding
+  duplicate side effects and false blocker reports.
+- **Persistent store reads now carry an explicit trust and time boundary.**
+  Stored prose cannot authorize itself, and transient claims about credentials,
+  providers, networks, quotas, locks, or services must be checked again before
+  they are used to block or skip work.
 
 ## [0.17.0] - 2026-08-19
 
