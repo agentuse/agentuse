@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-08-25
+
 ### Added
 
 - **AgentUse now gives quiet, actionable upgrade reminders.** A cached daily
