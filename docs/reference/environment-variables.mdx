@@ -422,7 +422,12 @@ Large tool results are re-sent to the model on every subsequent step, so a singl
 ## Telemetry
 
 <ParamField path="AGENTUSE_TELEMETRY_DISABLED" type="boolean">
-  Disable anonymous telemetry collection. No prompts, code, or file paths are ever collected.
+  Disable all anonymous telemetry, including CLI, daemon, execution, and bundled
+  dashboard telemetry. AgentUse records installation and first-execution
+  lifecycle events, execution metadata, and a fixed top-level dashboard page
+  category. The browser sends that category only to its local AgentUse daemon,
+  which batches delivery; it does not contact PostHog directly. No prompts,
+  code, or file paths are ever collected.
   Default: false (telemetry enabled)
 
   ```bash

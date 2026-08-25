@@ -10,7 +10,8 @@ import { logger } from '../utils/logger.js';
  * 1. .agentuse/skills/ - Project-local
  * 2. ~/.agentuse/skills/ - User-global
  * 3. .claude/skills/ - Claude ecosystem compatibility
- * 4. ~/.agents/skills/ - Shared agent skills compatibility
+ * 4. ~/.claude/skills/ - Claude ecosystem compatibility
+ * 5. ~/.agents/skills/ - Shared agent skills compatibility
  */
 export function getDiscoveryDirectories(projectRoot: string): string[] {
   const home = homedir();
@@ -39,10 +40,10 @@ const MAX_CACHED_DISCOVERIES = 32;
 const discoveryCache = new Map<string, DiscoveryCacheEntry>();
 
 /**
- * Cheap fingerprint of a set of paths: mtime + size, or a miss marker when the
- * path is gone. Statting the search roots catches skills being added or removed;
- * statting the SKILL.md files themselves catches edits, which a directory mtime
- * does not see.
+ * Cheap fingerprint of a set of paths: mtime + ctime + mode + size, or a miss
+ * marker when the path is gone. Statting the search roots catches skills being
+ * added, removed, or made readable; statting the SKILL.md files themselves
+ * catches edits, which a directory mtime does not see.
  */
 async function mtimeStamp(paths: string[]): Promise<string> {
   const stamps = await Promise.all(paths.map(pathStamp));
@@ -81,6 +82,11 @@ async function findSkillFiles(
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') return;
+    if (code === 'ELOOP') {
+      scanState.cacheable = false;
+      logger.warn(`Skipping circular skill symlink: ${dir}`);
+      return;
+    }
     if (code === 'EACCES' || code === 'EPERM') {
       scanState.cacheable = false;
       logger.warn(`Skipping unreadable skill directory: ${dir}`);
@@ -105,7 +111,13 @@ async function findSkillFiles(
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
         if (code === 'ENOENT') {
+          scanState.cacheable = false;
           logger.warn(`Skipping dangling skill symlink: ${path}`);
+          continue;
+        }
+        if (code === 'ELOOP') {
+          scanState.cacheable = false;
+          logger.warn(`Skipping circular skill symlink: ${path}`);
           continue;
         }
         if (code === 'EACCES' || code === 'EPERM') {

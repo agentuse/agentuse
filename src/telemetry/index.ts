@@ -210,7 +210,7 @@ class TelemetryManager {
       this.identityPersisted = identity.persisted;
       this.identityMigrated = identity.migrated;
       this.installationCreatedAt = identity.createdAt ?? null;
-      this.firstExecutionPending = identity.isFirstExecution;
+      this.firstExecutionPending = identity.persisted && identity.isFirstExecution;
 
       // Deferred: ~5MB that a telemetry-disabled process, and every serve
       // worker, would otherwise load for nothing.
@@ -298,7 +298,7 @@ class TelemetryManager {
       // retried on the next launch; if it stops before it, the identity remains
       // unclaimed and a later execution can safely try again.
       this.firstExecutionPending = false;
-      this.firstExecutionWrite = markFirstExecutionComplete().then(claim => {
+      this.firstExecutionWrite = markFirstExecutionComplete(this.anonymousId!).then(claim => {
         if (!claim) {
           this.firstExecutionPending = true;
           this.captureExecutionNow(result, false);

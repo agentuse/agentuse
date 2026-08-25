@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { pathToFileURL } from 'url';
@@ -8,6 +8,7 @@ import {
   isFirstRun,
   markFirstExecutionComplete,
   markFirstRunComplete,
+  setTelemetryStaleReclaimHookForTest,
 } from '../src/telemetry/id';
 
 describe('telemetry identity lifecycle', () => {
@@ -21,6 +22,7 @@ describe('telemetry identity lifecycle', () => {
   });
 
   afterEach(async () => {
+    setTelemetryStaleReclaimHookForTest(undefined);
     if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
     else process.env.XDG_DATA_HOME = originalXdgDataHome;
     await rm(root, { recursive: true, force: true });
@@ -38,7 +40,7 @@ describe('telemetry identity lifecycle', () => {
     expect(existing.created).toBe(false);
     expect(existing.isFirstExecution).toBe(true);
 
-    const claim = await markFirstExecutionComplete();
+    const claim = await markFirstExecutionComplete(created.id);
     expect(claim?.firstExecutionAt).toBeTruthy();
     expect(claim?.activationEventId).toBeTruthy();
     const afterExecution = await getOrCreateAnonymousIdentity();
@@ -124,9 +126,9 @@ describe('telemetry identity lifecycle', () => {
   });
 
   it('atomically claims one activation and preserves its retry identity', async () => {
-    await getOrCreateAnonymousIdentity();
+    const identity = await getOrCreateAnonymousIdentity();
     const claims = await Promise.all(
-      Array.from({ length: 20 }, () => markFirstExecutionComplete()),
+      Array.from({ length: 20 }, () => markFirstExecutionComplete(identity.id)),
     );
     expect(claims.filter(Boolean)).toHaveLength(1);
 
@@ -134,5 +136,46 @@ describe('telemetry identity lifecycle', () => {
     expect(persisted.firstExecutionAt).toBe(claims.find(Boolean)?.firstExecutionAt);
     expect(persisted.activationEventId).toBe(claims.find(Boolean)?.activationEventId);
     expect(persisted.isFirstExecution).toBe(false);
+  });
+
+  it('does not let an ephemeral identity claim a recovered durable installation', async () => {
+    const durable = await getOrCreateAnonymousIdentity();
+
+    expect(await markFirstExecutionComplete('ephemeral-fallback-id')).toBeNull();
+    expect((await getOrCreateAnonymousIdentity()).isFirstExecution).toBe(true);
+
+    expect(await markFirstExecutionComplete(durable.id)).not.toBeNull();
+    expect((await getOrCreateAnonymousIdentity()).isFirstExecution).toBe(false);
+  });
+
+  it('reclaims one stale lock without concurrent callers deleting the new owner', async () => {
+    const telemetryDir = join(root, 'agentuse');
+    const lockPath = join(telemetryDir, 'telemetry.json.lock');
+    await mkdir(telemetryDir, { recursive: true });
+    await writeFile(lockPath, 'abandoned-owner');
+    const stale = new Date(Date.now() - 20_000);
+    await utimes(lockPath, stale, stale);
+
+    let releaseReclaimer!: () => void;
+    const reclaimerBlocked = new Promise<void>(resolve => { releaseReclaimer = resolve; });
+    let reportReclaimerStarted!: () => void;
+    const reclaimerStarted = new Promise<void>(resolve => { reportReclaimerStarted = resolve; });
+    let hookCalls = 0;
+    setTelemetryStaleReclaimHookForTest(async () => {
+      hookCalls += 1;
+      reportReclaimerStarted();
+      await reclaimerBlocked;
+    });
+
+    const first = getOrCreateAnonymousIdentity();
+    await reclaimerStarted;
+    const second = getOrCreateAnonymousIdentity();
+    await Bun.sleep(40);
+    expect(hookCalls).toBe(1);
+    releaseReclaimer();
+
+    const identities = await Promise.all([first, second]);
+    expect(new Set(identities.map(identity => identity.id)).size).toBe(1);
+    expect(identities.filter(identity => identity.created)).toHaveLength(1);
   });
 });

@@ -637,6 +637,24 @@ Content`);
       expect(skills.get('circular-skill')?.shadowedLocations).toBeUndefined();
     });
 
+    it('skips a true two-link symlink cycle without aborting readable skills', async () => {
+      const root = join(testDir, 'skills');
+      const readable = join(root, 'readable');
+      await mkdir(readable, { recursive: true });
+      await writeFile(join(readable, 'SKILL.md'), `---
+name: readable-beside-cycle
+description: Readable beside a true symlink cycle
+---
+
+Content`);
+      await symlink('second-link', join(root, 'first-link'));
+      await symlink('first-link', join(root, 'second-link'));
+
+      const skills = await discoverSkillsInDirectories([root]);
+
+      expect(skills.has('readable-beside-cycle')).toBe(true);
+    });
+
     it('warns and continues past dangling skill symlinks', async () => {
       const root = join(testDir, 'skills');
       await mkdir(root);
@@ -649,6 +667,17 @@ Content`);
         const skills = await discoverSkillsInDirectories([root]);
         expect(skills.has('dangling-skill')).toBe(false);
         expect(warnings).toContain(`Skipping dangling skill symlink: ${join(root, 'dangling-skill')}`);
+
+        const target = join(testDir, 'missing-skill');
+        await mkdir(target);
+        await writeFile(join(target, 'SKILL.md'), `---
+name: recovered-dangling-skill
+description: Appeared after the first scan
+---
+
+Content`);
+        const recovered = await discoverSkillsInDirectories([root]);
+        expect(recovered.has('recovered-dangling-skill')).toBe(true);
       } finally {
         logger.warn = originalWarn;
       }

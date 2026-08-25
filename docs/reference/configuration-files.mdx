@@ -254,7 +254,7 @@ Skills are reusable instruction packs stored as `SKILL.md` files. AgentUse disco
 4. `~/.claude/skills/`
 5. `~/.agents/skills/`
 
-Use `.agentuse/skills/` for project-specific skills and `~/.agentuse/skills/` for personal skills shared across projects. The `.claude/skills/` locations provide compatibility with existing Claude skills, while `~/.agents/skills/` supports the shared agent-skills convention. Symlinked skill directories are supported; circular links are ignored safely.
+Use `.agentuse/skills/` for project-specific skills and `~/.agentuse/skills/` for personal skills shared across projects. The `.claude/skills/` locations provide compatibility with existing Claude skills, while `~/.agents/skills/` supports the shared agent-skills convention. Symlinked skill directories and `SKILL.md` files are supported; dangling links are skipped and circular directory links are ignored safely.
 
 See [Skills](/guides/skills) for authoring and discovery details.
 

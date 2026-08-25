@@ -48,7 +48,10 @@
   orphaning a live run, HTTP MCP discovery shares the connection deadline,
   store cache values cannot be mutated through returned objects, and skill
   additions invalidate discovery even when they land during an active scan.
-
+- **Skills can now be shared through `~/.agents/skills/` and symlinks.** The
+  shared location has lowest precedence. Linked roots, directories, and
+  `SKILL.md` files resolve safely; circular directory links are ignored and
+  dangling links do not prevent other skills from loading.
 ## [0.17.0] - 2026-08-19
 
 ### Added

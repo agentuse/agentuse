@@ -71,24 +71,123 @@ async function delay(ms: number): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function acquireConfigLock(): Promise<fs.FileHandle> {
+interface ConfigLock {
+  handle: fs.FileHandle;
+  path: string;
+  token: string;
+  dev: number;
+  ino: number;
+}
+
+let staleReclaimHookForTest: (() => void | Promise<void>) | undefined;
+
+async function removeConfigLockIfOwned(lock: ConfigLock): Promise<boolean> {
+  try {
+    const [currentStat, currentToken] = await Promise.all([
+      fs.stat(lock.path),
+      fs.readFile(lock.path, 'utf8'),
+    ]);
+    if (currentStat.dev !== lock.dev || currentStat.ino !== lock.ino || currentToken !== lock.token) {
+      return false;
+    }
+    await fs.unlink(lock.path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function inspectExistingLock(lockPath: string): Promise<ConfigLock | null> {
+  let handle: fs.FileHandle | undefined;
+  try {
+    handle = await fs.open(lockPath, 'r');
+    const info = await handle.stat();
+    const token = await handle.readFile('utf8');
+    return { handle, path: lockPath, token, dev: info.dev, ino: info.ino };
+  } catch {
+    await handle?.close().catch(() => {});
+    return null;
+  }
+}
+
+async function createOwnedLock(lockPath: string): Promise<ConfigLock> {
+  const handle = await fs.open(lockPath, 'wx', 0o600);
+  const token = crypto.randomUUID();
+  try {
+    await handle.writeFile(token, 'utf8');
+    const info = await handle.stat();
+    return { handle, path: lockPath, token, dev: info.dev, ino: info.ino };
+  } catch (error) {
+    await handle.close().catch(() => {});
+    await fs.unlink(lockPath).catch(() => {});
+    throw error;
+  }
+}
+
+async function acquireConfigLock(): Promise<ConfigLock> {
   const dir = getTelemetryDir();
   await fs.mkdir(dir, { recursive: true });
   const lockPath = getLockPath();
 
   for (let attempt = 0; attempt < LOCK_RETRIES; attempt++) {
     try {
-      return await fs.open(lockPath, 'wx', 0o600);
+      return await createOwnedLock(lockPath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      try {
-        const lockStat = await fs.stat(lockPath);
-        if (Date.now() - lockStat.mtimeMs > LOCK_STALE_MS) {
-          await fs.unlink(lockPath);
-          continue;
+      const existing = await inspectExistingLock(lockPath);
+      if (existing) {
+        try {
+          const info = await existing.handle.stat();
+          if (Date.now() - info.mtimeMs > LOCK_STALE_MS) {
+            // Only one process may reclaim a stale main lock. The recovery
+            // mutex is never stolen: if its owner dies, telemetry safely falls
+            // back to an ephemeral identity instead of risking two writers.
+            const recoveryPath = `${lockPath}.recovery`;
+            let recovery: ConfigLock | null = null;
+            try {
+              recovery = await createOwnedLock(recoveryPath);
+            } catch (recoveryError) {
+              if ((recoveryError as NodeJS.ErrnoException).code !== 'EEXIST') throw recoveryError;
+            }
+            if (recovery) {
+              let reclaimed: ConfigLock | null = null;
+              try {
+                await staleReclaimHookForTest?.();
+                const staleCandidate = await inspectExistingLock(lockPath);
+                if (staleCandidate) {
+                  try {
+                    const candidateInfo = await staleCandidate.handle.stat();
+                    if (Date.now() - candidateInfo.mtimeMs > LOCK_STALE_MS) {
+                      await staleCandidate.handle.close().catch(() => {});
+                      if (await removeConfigLockIfOwned(staleCandidate)) {
+                        try {
+                          // Keep the recovery guard through reacquisition so a
+                          // second stale observer can never validate the old
+                          // inode and later unlink this new owner.
+                          reclaimed = await createOwnedLock(lockPath);
+                        } catch (reacquireError) {
+                          if ((reacquireError as NodeJS.ErrnoException).code !== 'EEXIST') {
+                            throw reacquireError;
+                          }
+                        }
+                      }
+                    }
+                  } finally {
+                    await staleCandidate.handle.close().catch(() => {});
+                  }
+                }
+              } finally {
+                await recovery.handle.close().catch(() => {});
+                await removeConfigLockIfOwned(recovery);
+              }
+              if (reclaimed) return reclaimed;
+            }
+            await delay(LOCK_RETRY_MS);
+            continue;
+          }
+        } finally {
+          await existing.handle.close().catch(() => {});
         }
-      } catch {
-        // Another process released it between stat/unlink; retry normally.
       }
       await delay(LOCK_RETRY_MS);
     }
@@ -97,12 +196,12 @@ async function acquireConfigLock(): Promise<fs.FileHandle> {
 }
 
 async function withConfigLock<T>(operation: () => Promise<T>): Promise<T> {
-  const handle = await acquireConfigLock();
+  const lock = await acquireConfigLock();
   try {
     return await operation();
   } finally {
-    await handle.close().catch(() => {});
-    await fs.unlink(getLockPath()).catch(() => {});
+    await lock.handle.close().catch(() => {});
+    await removeConfigLockIfOwned(lock);
   }
 }
 
@@ -177,17 +276,24 @@ export async function getOrCreateAnonymousIdentity(): Promise<AnonymousIdentity>
   }
 }
 
+/** Test seam for forcing a second stale observer to contend during recovery. */
+export function setTelemetryStaleReclaimHookForTest(
+  hook: (() => void | Promise<void>) | undefined
+): void {
+  staleReclaimHookForTest = hook;
+}
+
 /** Backwards-compatible ID-only accessor. */
 export async function getOrCreateAnonymousId(): Promise<string> {
   return (await getOrCreateAnonymousIdentity()).id;
 }
 
 /** Atomically claims the installation's first execution across processes. */
-export async function markFirstExecutionComplete(): Promise<FirstExecutionClaim | null> {
+export async function markFirstExecutionComplete(expectedIdentityId: string): Promise<FirstExecutionClaim | null> {
   try {
     return await withConfigLock(async () => {
       const config = await readConfig();
-      if (!config?.id || config.firstExecutionAt) return null;
+      if (!config?.id || config.id !== expectedIdentityId || config.firstExecutionAt) return null;
       const claim = {
         firstExecutionAt: new Date().toISOString(),
         activationEventId: crypto.randomUUID(),

@@ -48,7 +48,8 @@ Skills are discovered from these directories (in priority order):
 
 <Note>
 If duplicate skill names exist, the first discovered skill takes precedence.
-Symlinked skill directories are supported. AgentUse resolves real paths to prevent circular traversal.
+Symlinked skill directories and `SKILL.md` files are supported. AgentUse skips
+dangling links and resolves directory real paths to prevent circular traversal.
 </Note>
 
 ### For AI Coding Assistants
