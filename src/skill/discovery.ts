@@ -1,6 +1,6 @@
 import { homedir } from 'os';
 import { join } from 'path';
-import { readdir, stat } from 'fs/promises';
+import { readdir, realpath, stat } from 'fs/promises';
 import { parseSkillFrontmatter } from './parser.js';
 import type { SkillInfo } from './types.js';
 import { logger } from '../utils/logger.js';
@@ -10,6 +10,7 @@ import { logger } from '../utils/logger.js';
  * 1. .agentuse/skills/ - Project-local
  * 2. ~/.agentuse/skills/ - User-global
  * 3. .claude/skills/ - Claude ecosystem compatibility
+ * 4. ~/.agents/skills/ - Shared agent skills compatibility
  */
 export function getDiscoveryDirectories(projectRoot: string): string[] {
   const home = homedir();
@@ -18,6 +19,7 @@ export function getDiscoveryDirectories(projectRoot: string): string[] {
     join(home, '.agentuse', 'skills'),
     join(projectRoot, '.claude', 'skills'),
     join(home, '.claude', 'skills'),
+    join(home, '.agents', 'skills'),
   ];
 }
 
@@ -66,8 +68,11 @@ async function findSkillFiles(
   traversed: string[],
   observedDirectoryStamps: string[],
   matches: string[],
-  scanState: { cacheable: boolean }
+  scanState: { cacheable: boolean; visitedRealDirectories: Set<string> }
 ): Promise<void> {
+  const realDir = await realpath(dir).catch(() => undefined);
+  if (realDir && scanState.visitedRealDirectories.has(realDir)) return;
+
   const observedStamp = await pathStamp(dir);
   let entries;
   try {
@@ -83,19 +88,41 @@ async function findSkillFiles(
     }
     throw error;
   }
+  if (realDir) scanState.visitedRealDirectories.add(realDir);
   traversed.push(dir);
   observedDirectoryStamps.push(observedStamp);
   await traversalHookForTest?.(dir, 'after-read');
   entries.sort((a, b) => a.name.localeCompare(b.name));
   for (const entry of entries) {
     const path = join(dir, entry.name);
-    if (entry.isDirectory()) {
+    let isDirectory = entry.isDirectory();
+    let isFile = entry.isFile();
+    if (entry.isSymbolicLink()) {
+      try {
+        const target = await stat(path);
+        isDirectory = target.isDirectory();
+        isFile = target.isFile();
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT') {
+          logger.warn(`Skipping dangling skill symlink: ${path}`);
+          continue;
+        }
+        if (code === 'EACCES' || code === 'EPERM') {
+          scanState.cacheable = false;
+          logger.warn(`Skipping unreadable skill symlink: ${path}`);
+          continue;
+        }
+        throw error;
+      }
+    }
+    if (isDirectory) {
       // Preserve glob's default behavior: hidden directories are not active
       // skill sources merely because they sit below a configured root.
       if (entry.name.startsWith('.')) continue;
       await findSkillFiles(path, traversed, observedDirectoryStamps, matches, scanState);
     }
-    else if (entry.isFile() && entry.name === 'SKILL.md') matches.push(path);
+    else if (isFile && entry.name === 'SKILL.md') matches.push(path);
   }
 }
 
@@ -114,7 +141,7 @@ async function scanSkillDirectories(
   const observedDirectoryStamps: string[] = [];
   const locations: string[] = [];
   const observedLocationStamps: string[] = [];
-  const scanState = { cacheable: true };
+  const scanState = { cacheable: true, visitedRealDirectories: new Set<string>() };
 
   for (const dir of directories) {
     const matches: string[] = [];

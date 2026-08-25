@@ -44,9 +44,11 @@ Skills are discovered from these directories (in priority order):
 | `~/.agentuse/skills/` | User | Personal skills across projects |
 | `.claude/skills/` | Project | Claude ecosystem compatibility |
 | `~/.claude/skills/` | User | Claude ecosystem compatibility |
+| `~/.agents/skills/` | User | Shared agent skills compatibility |
 
 <Note>
 If duplicate skill names exist, the first discovered skill takes precedence.
+Symlinked skill directories are supported. AgentUse resolves real paths to prevent circular traversal.
 </Note>
 
 ### For AI Coding Assistants

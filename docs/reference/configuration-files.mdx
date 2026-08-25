@@ -22,6 +22,7 @@ AgentUse reads configuration from agent files, environment files, global default
 | `~/.agentuse/skills/` | User | User-global skills |
 | `.claude/skills/` | Project | Claude ecosystem skill compatibility |
 | `~/.claude/skills/` | User | Claude ecosystem skill compatibility |
+| `~/.agents/skills/` | User | Shared agent skills compatibility |
 | `{agent-name}.store.json` | Agent | Persistent store file for agents with store enabled |
 
 ## Agent files
@@ -251,8 +252,9 @@ Skills are reusable instruction packs stored as `SKILL.md` files. AgentUse disco
 2. `~/.agentuse/skills/`
 3. `.claude/skills/`
 4. `~/.claude/skills/`
+5. `~/.agents/skills/`
 
-Use `.agentuse/skills/` for project-specific skills and `~/.agentuse/skills/` for personal skills shared across projects. The `.claude/skills/` locations provide compatibility with existing Claude skills.
+Use `.agentuse/skills/` for project-specific skills and `~/.agentuse/skills/` for personal skills shared across projects. The `.claude/skills/` locations provide compatibility with existing Claude skills, while `~/.agents/skills/` supports the shared agent-skills convention. Symlinked skill directories are supported; circular links are ignored safely.
 
 See [Skills](/guides/skills) for authoring and discovery details.
 

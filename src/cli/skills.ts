@@ -71,6 +71,7 @@ function getInstalledDirectoryInfo(projectRoot: string): DirectoryInfo[] {
     [join(home, '.agentuse', 'skills'), '~/.agentuse/skills'],
     [join(projectRoot, '.claude', 'skills'), '.claude/skills'],
     [join(home, '.claude', 'skills'), '~/.claude/skills'],
+    [join(home, '.agents', 'skills'), '~/.agents/skills'],
   ]);
 
   return getDiscoveryDirectories(projectRoot).map((path) => ({

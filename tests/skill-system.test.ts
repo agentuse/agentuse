@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtemp, writeFile, mkdir, rm } from 'fs/promises';
+import { mkdtemp, writeFile, mkdir, rm, symlink } from 'fs/promises';
 import { join } from 'path';
-import { tmpdir } from 'os';
+import { homedir, tmpdir } from 'os';
 import { parseSkillFrontmatter, parseSkillContent } from '../src/skill/parser';
 import {
   discoverSkills,
+  discoverSkillsInDirectories,
   getSkill,
   getAllSkills,
+  getDiscoveryDirectories,
   resetSkillDiscoveryCache,
   setSkillDiscoveryTraversalHookForTest,
 } from '../src/skill/discovery';
@@ -571,6 +573,107 @@ Content`);
       const skills = await discoverSkills(testDir);
 
       expect(skills.has('nested-skill')).toBe(true);
+    });
+
+    it('includes ~/.agents/skills at lowest precedence', () => {
+      const directories = getDiscoveryDirectories(testDir);
+
+      expect(directories.at(-1)).toBe(join(homedir(), '.agents', 'skills'));
+    });
+
+    it('follows symlinked skill directories and keeps the visible location', async () => {
+      const source = join(testDir, 'source-skill');
+      const root = join(testDir, 'skills');
+      await mkdir(source);
+      await mkdir(root);
+      await writeFile(join(source, 'SKILL.md'), `---
+name: linked-skill
+description: Linked skill
+---
+
+Content`);
+      await symlink('../source-skill', join(root, 'linked-skill'));
+
+      const skills = await discoverSkillsInDirectories([root]);
+
+      expect(skills.get('linked-skill')?.location).toBe(join(root, 'linked-skill', 'SKILL.md'));
+    });
+
+    it('follows a symlinked discovery root', async () => {
+      const sourceRoot = join(testDir, 'source-root');
+      const linkedRoot = join(testDir, 'linked-root');
+      const skillDir = join(sourceRoot, 'root-linked-skill');
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(join(skillDir, 'SKILL.md'), `---
+name: root-linked-skill
+description: Root-linked skill
+---
+
+Content`);
+      await symlink(sourceRoot, linkedRoot);
+
+      const skills = await discoverSkillsInDirectories([linkedRoot]);
+
+      expect(skills.get('root-linked-skill')?.location).toBe(
+        join(linkedRoot, 'root-linked-skill', 'SKILL.md')
+      );
+    });
+
+    it('does not traverse a circular skill-directory symlink', async () => {
+      const root = join(testDir, 'skills');
+      const skillDir = join(root, 'circular-skill');
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(join(skillDir, 'SKILL.md'), `---
+name: circular-skill
+description: Circular skill
+---
+
+Content`);
+      await symlink(skillDir, join(skillDir, 'loop'));
+
+      const skills = await discoverSkillsInDirectories([root]);
+
+      expect(skills.get('circular-skill')?.location).toBe(join(skillDir, 'SKILL.md'));
+      expect(skills.get('circular-skill')?.shadowedLocations).toBeUndefined();
+    });
+
+    it('warns and continues past dangling skill symlinks', async () => {
+      const root = join(testDir, 'skills');
+      await mkdir(root);
+      await symlink(join(testDir, 'missing-skill'), join(root, 'dangling-skill'));
+      const warnings: string[] = [];
+      const originalWarn = logger.warn.bind(logger);
+      logger.warn = (message: string) => warnings.push(message);
+
+      try {
+        const skills = await discoverSkillsInDirectories([root]);
+        expect(skills.has('dangling-skill')).toBe(false);
+        expect(warnings).toContain(`Skipping dangling skill symlink: ${join(root, 'dangling-skill')}`);
+      } finally {
+        logger.warn = originalWarn;
+      }
+    });
+
+    it('visits the same real skill directory once across compatibility roots', async () => {
+      const source = join(testDir, 'source-skill');
+      const firstRoot = join(testDir, 'first-root');
+      const secondRoot = join(testDir, 'second-root');
+      await mkdir(source);
+      await mkdir(firstRoot);
+      await mkdir(secondRoot);
+      await writeFile(join(source, 'SKILL.md'), `---
+name: shared-link
+description: Shared link
+---
+
+Content`);
+      await symlink(source, join(firstRoot, 'shared-link'));
+      await symlink(source, join(secondRoot, 'shared-link'));
+
+      const skills = await discoverSkillsInDirectories([firstRoot, secondRoot]);
+
+      expect(skills.get('shared-link')?.location).toBe(join(firstRoot, 'shared-link', 'SKILL.md'));
+      expect(skills.get('shared-link')?.shadowedLocations).toBeUndefined();
     });
 
     it('returns skills map (may include global skills)', async () => {

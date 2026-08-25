@@ -1037,6 +1037,9 @@ Installed skills are discovered from these directories (in priority order):
 2. `~/.agentuse/skills/` - User-global skills
 3. `.claude/skills/` - Claude ecosystem compatibility
 4. `~/.claude/skills/` - Claude ecosystem compatibility
+5. `~/.agents/skills/` - Shared agent skills compatibility
+
+Symlinked skill directories are supported. AgentUse resolves their real paths and avoids circular traversal.
 
 ### Examples
 
