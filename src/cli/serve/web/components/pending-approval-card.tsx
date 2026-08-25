@@ -85,32 +85,33 @@ interface AgentGroup {
   key: string;
   name: string;
   rows: ApprovalRow[];
-  oldest: number;
+  newest: number;
 }
 
-/** Group pending gates by agent, oldest wait first inside and across groups.
+/** Group pending gates by agent, most recent first inside and across groups.
  *  Grouping makes repeats visible (the same post re-presented twice shows up
  *  as "×2" under one name) and lets the reviewer clear one agent's queue in
- *  one sitting. */
+ *  one sitting. A group's most recent gate determines its position, so new
+ *  activity rises to the top without splitting an agent's approvals apart. */
 export function groupPendingByAgent(rows: ApprovalRow[]): AgentGroup[] {
   const groups = new Map<string, AgentGroup>();
   for (const row of rows) {
     const name = displayAgentName(row.agentName, row.agentFilePath, row.agentId);
     const key = `${row.project}:${name}`;
-    const since = waitingSince(row) ?? Number.MAX_SAFE_INTEGER;
+    const since = waitingSince(row) ?? Number.MIN_SAFE_INTEGER;
     const group = groups.get(key);
     if (group) {
       group.rows.push(row);
-      group.oldest = Math.min(group.oldest, since);
+      group.newest = Math.max(group.newest, since);
     } else {
-      groups.set(key, { key, name, rows: [row], oldest: since });
+      groups.set(key, { key, name, rows: [row], newest: since });
     }
   }
   const bySince = (a: ApprovalRow, b: ApprovalRow) =>
-    (waitingSince(a) ?? Number.MAX_SAFE_INTEGER) - (waitingSince(b) ?? Number.MAX_SAFE_INTEGER);
+    (waitingSince(b) ?? Number.MIN_SAFE_INTEGER) - (waitingSince(a) ?? Number.MIN_SAFE_INTEGER);
   return [...groups.values()]
     .map((g) => ({ ...g, rows: [...g.rows].sort(bySince) }))
-    .sort((a, b) => a.oldest - b.oldest);
+    .sort((a, b) => b.newest - a.newest);
 }
 
 export function PendingApprovalGroups(props: { rows: ApprovalRow[]; now: number }) {

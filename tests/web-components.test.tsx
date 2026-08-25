@@ -64,7 +64,7 @@ describe('PendingApprovalRow', () => {
     expect(html).toContain('title="Posting is public.');
   });
 
-  it('groups by agent, oldest first, with a risk line and a revised tag', () => {
+  it('groups by agent, most recent first, with a risk line and a revised tag', () => {
     const now = Date.now();
     const day = 86_400_000;
     const html = renderToString(<PendingApprovalGroups now={now} rows={[
@@ -73,9 +73,9 @@ describe('PendingApprovalRow', () => {
       { ...base, sessionId: 'mid', summary: 'Another reply.', suspendedAt: now - 2 * day },
     ]} />);
 
-    // Stalest agent group first; inside a group, oldest first.
-    expect(html.indexOf('linkedin-ai-news')).toBeLessThan(html.indexOf('x-engage-reply'));
-    expect(html.indexOf('session-mid') === -1 ? html.indexOf('Another reply.') : 0).toBeLessThan(html.indexOf('New slate.'));
+    // The agent with the newest gate comes first; its own gates are newest first.
+    expect(html.indexOf('x-engage-reply')).toBeLessThan(html.indexOf('linkedin-ai-news'));
+    expect(html.indexOf('New slate.')).toBeLessThan(html.indexOf('Another reply.'));
     expect(html).toContain('×2');
     expect(html).toContain('>revised<');
     expect(html).toContain('tone-stale');
