@@ -11,8 +11,13 @@ import { existsSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import type { PostHog } from 'posthog-node';
-import { getOrCreateAnonymousId, isFirstRun, markFirstRunComplete } from './id';
-import type { ExecutionResult, StartupError, ServerStartConfig, ServerShutdownStats, AddCommandResult, TimeoutUnitError } from './types';
+import {
+  getOrCreateAnonymousIdentity,
+  isFirstRun,
+  markFirstExecutionComplete,
+  markFirstRunComplete,
+} from './id';
+import type { ExecutionResult, StartupError, ServerStartConfig, ServerShutdownStats, AddCommandResult, TimeoutUnitError, WebUITelemetryEvent } from './types';
 import type { ToolCallTrace } from '../plugin/types';
 export { aggregateToolCalls, configuredFeatureUsage, countSteps, emptyToolCallMetrics } from './metrics.js';
 export { classifyExecution, isCanonicalRemoteExample } from './classification.js';
@@ -165,6 +170,11 @@ export function categorizeError(error: unknown): ExecutionResult['errorType'] {
 class TelemetryManager {
   private client: PostHog | null = null;
   private anonymousId: string | null = null;
+  private identityPersisted: boolean = false;
+  private identityMigrated: boolean = false;
+  private installationCreatedAt: string | null = null;
+  private firstExecutionPending: boolean = false;
+  private firstExecutionWrite: Promise<void> | null = null;
   private enabled: boolean;
   private initialized: boolean = false;
   private initPromise: Promise<void> | null = null;
@@ -177,16 +187,16 @@ class TelemetryManager {
    * Initialize the telemetry client
    * Must be called before capturing events
    */
-  async init(version: string): Promise<void> {
+  async init(version: string, options: { batchDelivery?: boolean } = {}): Promise<void> {
     if (this.initPromise) {
       return this.initPromise;
     }
 
-    this.initPromise = this._init(version);
+    this.initPromise = this._init(version, options);
     return this.initPromise;
   }
 
-  private async _init(version: string): Promise<void> {
+  private async _init(version: string, options: { batchDelivery?: boolean }): Promise<void> {
     VERSION = version;
 
     if (!this.enabled) {
@@ -195,16 +205,25 @@ class TelemetryManager {
     }
 
     try {
-      this.anonymousId = await getOrCreateAnonymousId();
+      const identity = await getOrCreateAnonymousIdentity();
+      this.anonymousId = identity.id;
+      this.identityPersisted = identity.persisted;
+      this.identityMigrated = identity.migrated;
+      this.installationCreatedAt = identity.createdAt ?? null;
+      this.firstExecutionPending = identity.isFirstExecution;
 
       // Deferred: ~5MB that a telemetry-disabled process, and every serve
       // worker, would otherwise load for nothing.
       const { PostHog: PostHogClient } = await import('posthog-node');
       this.client = new PostHogClient(POSTHOG_API_KEY, {
         host: POSTHOG_HOST,
-        // CLI: send events immediately, don't batch
-        flushAt: 1,
-        flushInterval: 0,
+        // Short-lived CLI commands send immediately. The serve daemon queues
+        // independent events and delivers them together through PostHog's
+        // /batch endpoint. A conservative one-minute cadence keeps outbound
+        // telemetry quiet while retaining each event's capture timestamp.
+        flushAt: options.batchDelivery ? 100 : 1,
+        flushInterval: options.batchDelivery ? 60_000 : 0,
+        maxBatchSize: 100,
         // Suppress network error logs - telemetry failures shouldn't pollute output
         disableGeoip: true,
       });
@@ -213,6 +232,35 @@ class TelemetryManager {
       this.client.on('error', () => {
         // Silently ignore - telemetry errors are not important
       });
+
+      // Lifecycle events use stable UUIDs and immutable timestamps. They are
+      // deliberately retried on every launch: PostHog deduplicates successful
+      // repeats, while an interrupted or failed send remains recoverable.
+      if (identity.persisted && identity.createdAt && identity.installationEventId) {
+        this.client.capture({
+          distinctId: identity.id,
+          event: 'installation_created',
+          timestamp: new Date(identity.createdAt),
+          uuid: identity.installationEventId,
+          properties: {
+            $process_person_profile: false,
+            telemetry_schema_version: 2,
+            version: VERSION,
+            os: process.platform,
+            arch: process.arch,
+            node_version: process.version,
+            is_ci: isCI(),
+            is_docker: isDocker(),
+            is_npx: isNpx(),
+            is_local_dev: isLocalDev(),
+            identity_persisted: true,
+            installation_created_at: identity.createdAt,
+          },
+        });
+      }
+      if (identity.persisted && identity.firstExecutionAt && identity.firstExecutionAt !== 'legacy' && identity.activationEventId) {
+        this.captureInstallationActivated(identity.firstExecutionAt, identity.activationEventId);
+      }
 
       this.initialized = true;
     } catch {
@@ -242,11 +290,41 @@ class TelemetryManager {
    * Capture an agent execution event
    */
   captureExecution(result: ExecutionResult): void {
+    if (!this.enabled || !this.initialized || !this.client || !this.anonymousId) return;
+
+    if (this.firstExecutionPending) {
+      // Persist the cross-process activation claim before emitting its events.
+      // If the process stops after this write, the stable lifecycle UUID is
+      // retried on the next launch; if it stops before it, the identity remains
+      // unclaimed and a later execution can safely try again.
+      this.firstExecutionPending = false;
+      this.firstExecutionWrite = markFirstExecutionComplete().then(claim => {
+        if (!claim) {
+          this.firstExecutionPending = true;
+          this.captureExecutionNow(result, false);
+          return;
+        }
+        this.captureInstallationActivated(claim.firstExecutionAt, claim.activationEventId);
+        this.captureExecutionNow(result, true);
+      });
+      return;
+    }
+
+    this.captureExecutionNow(result, false);
+  }
+
+  private captureExecutionNow(result: ExecutionResult, isFirstExecution: boolean): void {
     if (!this.enabled || !this.initialized || !this.client || !this.anonymousId) {
       return;
     }
 
     try {
+      const executionOrigin = result.executionOrigin
+        ?? (result.features?.mode === 'schedule'
+          ? 'schedule'
+          : result.features?.mode === 'cli'
+            ? 'cli'
+            : 'serve');
       this.client.capture({
         distinctId: this.anonymousId,
         event: 'agent_execution',
@@ -254,6 +332,12 @@ class TelemetryManager {
           // Ensure truly anonymous - no person profile
           $process_person_profile: false,
           telemetry_schema_version: 2,
+          identity_persisted: this.identityPersisted,
+          identity_migrated: this.identityMigrated,
+          is_first_execution: isFirstExecution,
+          execution_origin: executionOrigin,
+          ...(result.reportedSurface && { reported_surface: result.reportedSurface }),
+          ...(this.installationCreatedAt && { installation_created_at: this.installationCreatedAt }),
 
           // Privacy-safe activation context
           execution_class: result.classification.executionClass,
@@ -326,8 +410,38 @@ class TelemetryManager {
           }),
         },
       });
+      this.identityMigrated = false;
     } catch {
       // Silently ignore capture errors
+    }
+  }
+
+  private captureInstallationActivated(firstExecutionAt: string, activationEventId: string): void {
+    if (!this.client || !this.anonymousId) return;
+    try {
+      this.client.capture({
+        distinctId: this.anonymousId,
+        event: 'installation_activated',
+        timestamp: new Date(firstExecutionAt),
+        uuid: activationEventId,
+        properties: {
+          $process_person_profile: false,
+          telemetry_schema_version: 2,
+          identity_persisted: this.identityPersisted,
+          first_execution_at: firstExecutionAt,
+          ...(this.installationCreatedAt && { installation_created_at: this.installationCreatedAt }),
+          version: VERSION,
+          os: process.platform,
+          arch: process.arch,
+          node_version: process.version,
+          is_ci: isCI(),
+          is_docker: isDocker(),
+          is_npx: isNpx(),
+          is_local_dev: isLocalDev(),
+        },
+      });
+    } catch {
+      // Stable UUID + local state make this event retryable next launch.
     }
   }
 
@@ -481,6 +595,35 @@ class TelemetryManager {
     }
   }
 
+  /** Capture a predefined Web UI intent reported through the local daemon. */
+  captureWebUITelemetry(value: WebUITelemetryEvent): void {
+    if (!this.enabled || !this.initialized || !this.client || !this.anonymousId) return;
+
+    try {
+      this.client.capture({
+        distinctId: this.anonymousId,
+        event: 'web_ui_page_viewed',
+        properties: {
+          $process_person_profile: false,
+          telemetry_schema_version: 2,
+          identity_persisted: this.identityPersisted,
+          ...(this.installationCreatedAt && { installation_created_at: this.installationCreatedAt }),
+          version: VERSION,
+          os: process.platform,
+          arch: process.arch,
+          node_version: process.version,
+          is_ci: isCI(),
+          is_docker: isDocker(),
+          is_npx: isNpx(),
+          is_local_dev: isLocalDev(),
+          page: value.page,
+        },
+      });
+    } catch {
+      // Telemetry is best-effort; never affect a serve response.
+    }
+  }
+
   /**
    * Capture an add command event (for agentuse add)
    */
@@ -528,6 +671,10 @@ class TelemetryManager {
    * Should be called before process exit to flush pending events
    */
   async shutdown(): Promise<void> {
+    if (this.firstExecutionWrite) {
+      await this.firstExecutionWrite;
+      this.firstExecutionWrite = null;
+    }
     if (!this.client) return;
 
     try {

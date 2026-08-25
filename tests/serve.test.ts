@@ -828,6 +828,61 @@ describe('Serve Command - Multi-Project Routing', () => {
   });
 });
 
+describe('serve telemetry attribution', () => {
+  it('separates bundled Web UI runs from external API runs', async () => {
+    const { reportedSurfaceForRun } = (await import('../src/cli/serve')).__testing;
+    expect(reportedSurfaceForRun({ agent: 'a.agentuse', reportedSurface: 'web_ui' })).toBe('web_ui');
+    expect(reportedSurfaceForRun({ agent: 'a.agentuse' })).toBe('api');
+  });
+
+  it('deduplicates Web UI page reports across callers and rate limits floods', async () => {
+    const {
+      createWebUITelemetryGuard,
+      acceptWebUITelemetry,
+      WEB_UI_TELEMETRY_DEDUPE_MS,
+    } = (await import('../src/cli/serve')).__testing;
+    const guard = createWebUITelemetryGuard(1_000);
+
+    expect(acceptWebUITelemetry(guard, 'home', 1_000)).toBe(true);
+    expect(acceptWebUITelemetry(guard, 'home', 1_001)).toBe(false);
+    expect(acceptWebUITelemetry(guard, 'home', 1_000 + WEB_UI_TELEMETRY_DEDUPE_MS)).toBe(true);
+
+    const floodGuard = createWebUITelemetryGuard(2_000);
+    const accepted = Array.from({ length: 25 }, (_, index) =>
+      acceptWebUITelemetry(floodGuard, `page-${index}`, 2_000));
+    expect(accepted.filter(Boolean)).toHaveLength(20);
+  });
+
+  it('allows same-origin browser telemetry on protected daemons without weakening API auth', async () => {
+    const { canSubmitWebUITelemetry } = (await import('../src/cli/serve')).__testing;
+    expect(canSubmitWebUITelemetry({ crossOrigin: false })).toBe(true);
+    expect(canSubmitWebUITelemetry({ crossOrigin: true })).toBe(false);
+    expect(canSubmitWebUITelemetry({
+      apiKey: 'secret', requestOrigin: 'http://localhost:3000', crossOrigin: false,
+    })).toBe(true);
+    expect(canSubmitWebUITelemetry({ apiKey: 'secret', crossOrigin: false })).toBe(false);
+    expect(canSubmitWebUITelemetry({
+      apiKey: 'secret', authorization: 'Bearer secret', crossOrigin: true,
+    })).toBe(true);
+  });
+
+  it('accepts only the fixed Web UI telemetry vocabulary', async () => {
+    const { parseWebUITelemetryBody } = (await import('../src/cli/serve')).__testing;
+    expect(parseWebUITelemetryBody({ event: 'page_viewed', page: 'sessions' })).toEqual({ page: 'sessions' });
+    expect(parseWebUITelemetryBody({ event: 'anything', page: 'sessions' })).toBeUndefined();
+    expect(parseWebUITelemetryBody({ event: 'page_viewed', page: '/sessions/private-id' })).toBeUndefined();
+    expect(parseWebUITelemetryBody({ event: 'page_viewed', page: 'sessions', private: 'value' })).toEqual({ page: 'sessions' });
+  });
+
+  it('reduces browser routes to privacy-safe page categories', async () => {
+    const { webUIPageForPath } = await import('../src/cli/serve/web/lib/api');
+    expect(webUIPageForPath('/')).toBe('home');
+    expect(webUIPageForPath('/sessions/01-secret-session-id')).toBe('sessions');
+    expect(webUIPageForPath('/agents/project/private-agent')).toBe('agents');
+    expect(webUIPageForPath('/unexpected/private-value')).toBe('other');
+  });
+});
+
 describe('worker recycling', () => {
   const MB = 1024 * 1024;
   const base = { rssBytes: 400 * MB, activeRuns: 0, ageMs: 10 * 60_000, thresholdMb: 300, minAgeMs: 120_000 };

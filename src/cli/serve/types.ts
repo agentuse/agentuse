@@ -11,6 +11,8 @@ export interface RunRequest {
   timeout?: number;
   maxSteps?: number;
   sessionId?: string;
+  /** Best-effort caller report; not an authentication claim. */
+  reportedSurface?: 'web_ui';
 }
 
 export interface RunResponse {

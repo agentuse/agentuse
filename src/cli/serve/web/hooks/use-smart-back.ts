@@ -1,5 +1,6 @@
 import { useEffect } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
+import { reportWebUIPageView, webUIPageForPath } from '../lib/api';
 
 /**
  * How many in-app history entries sit behind the current one — i.e. how many
@@ -9,6 +10,8 @@ import { useLocation } from 'preact-iso';
  * when there is no in-app history and `history.back()` would leave the app.
  */
 let depth = 0;
+const PAGE_VIEW_DEDUPE_MS = 15 * 60 * 1000;
+const reportedPages = new Map<string, number>();
 
 /**
  * Mount once inside <LocationProvider>. Keeps {@link depth} in sync with
@@ -23,6 +26,13 @@ export function NavTracker() {
   useEffect(() => {
     if (wasPush) depth += 1;
   }, [url, wasPush]);
+  useEffect(() => {
+    const page = webUIPageForPath(new URL(url, location.origin).pathname);
+    const now = Date.now();
+    if (now - (reportedPages.get(page) ?? 0) < PAGE_VIEW_DEDUPE_MS) return;
+    reportedPages.set(page, now);
+    reportWebUIPageView(page);
+  }, [url]);
   // A pop (back/forward button, or our own history.back()) shrinks it.
   useEffect(() => {
     const onPop = () => {

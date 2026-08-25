@@ -171,6 +171,65 @@ interface RunRequest {
    * the web "Run" button so it can redirect straight to the live session view.
    */
   detach?: boolean;
+  /** Best-effort caller report. It is intentionally not treated as auth. */
+  reportedSurface?: 'web_ui';
+}
+
+function reportedSurfaceForRun(body: RunRequest): 'web_ui' | 'api' {
+  return body.reportedSurface === 'web_ui' ? 'web_ui' : 'api';
+}
+
+const WEB_UI_TELEMETRY_PAGES = new Set([
+  'home', 'agents', 'schedules', 'sessions', 'approvals', 'stores', 'settings', 'learnings', 'other',
+]);
+
+function parseWebUITelemetryBody(body: Record<string, unknown>): { page: 'home' | 'agents' | 'schedules' | 'sessions' | 'approvals' | 'stores' | 'settings' | 'learnings' | 'other' } | undefined {
+  if (body.event !== 'page_viewed' || typeof body.page !== 'string' || !WEB_UI_TELEMETRY_PAGES.has(body.page)) {
+    return undefined;
+  }
+  return { page: body.page as 'home' | 'agents' | 'schedules' | 'sessions' | 'approvals' | 'stores' | 'settings' | 'learnings' | 'other' };
+}
+
+const WEB_UI_TELEMETRY_DEDUPE_MS = 15 * 60 * 1000;
+const WEB_UI_TELEMETRY_RATE_CAPACITY = 20;
+const WEB_UI_TELEMETRY_RATE_PER_MS = WEB_UI_TELEMETRY_RATE_CAPACITY / 60_000;
+
+interface WebUITelemetryGuard {
+  pages: Map<string, number>;
+  tokens: number;
+  lastRefillAt: number;
+}
+
+function createWebUITelemetryGuard(now = Date.now()): WebUITelemetryGuard {
+  return { pages: new Map(), tokens: WEB_UI_TELEMETRY_RATE_CAPACITY, lastRefillAt: now };
+}
+
+/** Daemon-wide guard: limits requests and deduplicates page categories across tabs/reloads. */
+function acceptWebUITelemetry(guard: WebUITelemetryGuard, page: string, now = Date.now()): boolean {
+  const elapsed = Math.max(0, now - guard.lastRefillAt);
+  guard.tokens = Math.min(
+    WEB_UI_TELEMETRY_RATE_CAPACITY,
+    guard.tokens + elapsed * WEB_UI_TELEMETRY_RATE_PER_MS,
+  );
+  guard.lastRefillAt = now;
+  if (guard.tokens < 1) return false;
+  guard.tokens -= 1;
+
+  const lastReportedAt = guard.pages.get(page);
+  if (lastReportedAt !== undefined && now - lastReportedAt < WEB_UI_TELEMETRY_DEDUPE_MS) return false;
+  guard.pages.set(page, now);
+  return true;
+}
+
+function canSubmitWebUITelemetry(options: {
+  apiKey?: string | undefined;
+  authorization?: string | undefined;
+  requestOrigin?: string | undefined;
+  crossOrigin: boolean;
+}): boolean {
+  if (!options.apiKey) return !options.crossOrigin;
+  if (validateApiKeyHeader(options.authorization, options.apiKey)) return true;
+  return !!options.requestOrigin && options.requestOrigin !== 'null' && !options.crossOrigin;
 }
 
 interface RunResponse {
@@ -2819,7 +2878,7 @@ export function createServeCommand(): Command {
       }
 
       // Initialize telemetry
-      await telemetry.init(packageVersion);
+      await telemetry.init(packageVersion, { batchDelivery: true });
 
       // Spawn one worker per project. Each worker loads its own project's
       // .env / .env.local on each execute request, so per-project env stays
@@ -4535,6 +4594,7 @@ export function createServeCommand(): Command {
         };
       };
 
+      const webUITelemetryGuard = createWebUITelemetryGuard();
       const server = createServer(async (req, res) => {
         const requestUrl = new URL(req.url || '/', serverUrl);
         // Canonical data/action endpoints live under `/api/*`; HTML pages live at
@@ -4640,6 +4700,31 @@ export function createServeCommand(): Command {
         // SPA static assets (hashed, immutable) — public, served before the auth
         // gate so the browser can load the bundle on token-only deep links.
         if (staticAssets.serveAsset(req, res, requestUrl.pathname)) return;
+
+        // The browser reports only a fixed page category to its own local
+        // daemon. Same-origin submissions work on API-key/capability daemons
+        // without putting a bearer secret into the SPA. Non-browser callers
+        // on protected daemons still need the API key. All accepted requests
+        // share a daemon-side token bucket and 15-minute page dedupe window.
+        if (isApi && routePath === '/telemetry' && req.method === 'POST' && canSubmitWebUITelemetry({
+          apiKey,
+          authorization: req.headers.authorization,
+          requestOrigin,
+          crossOrigin,
+        })) {
+          try {
+            const raw = await readRequestBody(req, 1024);
+            const event = parseWebUITelemetryBody(raw ? JSON.parse(raw) as Record<string, unknown> : {});
+            if (event && acceptWebUITelemetry(webUITelemetryGuard, event.page)) {
+              telemetry.captureWebUITelemetry(event);
+            }
+          } catch {
+            // Invalid, oversized, duplicate, or rate-limited reports are silent.
+          }
+          res.writeHead(204);
+          res.end();
+          return;
+        }
 
         // Auth check
         if (apiKey && !isCapabilityRoute && !validateApiKey(req, apiKey)) {
@@ -6672,6 +6757,7 @@ export function createServeCommand(): Command {
         try {
           // Parse request
           const body = await parseRequestBody(req);
+          const reportedSurface = reportedSurfaceForRun(body);
           const wantsStream = req.headers.accept?.includes("application/x-ndjson");
 
           // Resolve project
@@ -6753,6 +6839,8 @@ export function createServeCommand(): Command {
                   trigger: 'api',
                   isMock: false,
                 }),
+                executionOrigin: 'serve',
+                reportedSurface,
                 toolCalls: result.telemetry?.toolCalls ?? emptyToolCallMetrics(),
                 ...(result.telemetry && { steps: result.telemetry.steps }),
                 ...(!result.success && {
@@ -6786,6 +6874,8 @@ export function createServeCommand(): Command {
                   trigger: 'api',
                   isMock: false,
                 }),
+                executionOrigin: 'serve',
+                reportedSurface,
                 toolCalls: emptyToolCallMetrics(),
                 features: configuredFeatureUsage(agent.config, 'webhook'),
               });
@@ -6870,6 +6960,8 @@ export function createServeCommand(): Command {
                 trigger: 'api',
                 isMock: false,
               }),
+              executionOrigin: 'serve',
+              reportedSurface,
               toolCalls: spawnResult.telemetry?.toolCalls ?? emptyToolCallMetrics(),
               ...(spawnResult.telemetry && { steps: spawnResult.telemetry.steps }),
               features: configuredFeatureUsage(agent.config, 'webhook'),
@@ -6945,6 +7037,8 @@ export function createServeCommand(): Command {
                 trigger: 'api',
                 isMock: false,
               }),
+              executionOrigin: 'serve',
+              reportedSurface,
               toolCalls: spawnResult.telemetry?.toolCalls ?? emptyToolCallMetrics(),
               ...(spawnResult.telemetry && { steps: spawnResult.telemetry.steps }),
               errorType: errorCode === 'TIMEOUT'
@@ -7557,4 +7651,10 @@ export const __testing = {
   sessionLearningTidyAllowed,
   importantDescendantTree,
   logsWithChildSessions,
+  reportedSurfaceForRun,
+  parseWebUITelemetryBody,
+  createWebUITelemetryGuard,
+  acceptWebUITelemetry,
+  canSubmitWebUITelemetry,
+  WEB_UI_TELEMETRY_DEDUPE_MS,
 };

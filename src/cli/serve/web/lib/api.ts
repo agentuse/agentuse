@@ -58,6 +58,27 @@ async function postJson<T>(path: string, body: Record<string, unknown>): Promise
   return payload as T;
 }
 
+export type WebUIPage = 'home' | 'agents' | 'schedules' | 'sessions' | 'approvals' | 'stores' | 'settings' | 'learnings' | 'other';
+
+export function webUIPageForPath(pathname: string): WebUIPage {
+  const head = pathname.split('/').filter(Boolean)[0];
+  if (!head) return 'home';
+  return head === 'agents' || head === 'schedules' || head === 'sessions' || head === 'approvals'
+    || head === 'stores' || head === 'settings' || head === 'learnings'
+    ? head
+    : 'other';
+}
+
+/** Best-effort local reporting; the browser never contacts PostHog. */
+export function reportWebUIPageView(page: WebUIPage): void {
+  void fetch('/api/telemetry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event: 'page_viewed', page }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
 export type ApprovalRow = ApprovalSummary & { project: string };
 
 export interface ApprovalsListPayload {
@@ -549,7 +570,12 @@ export function runAgentDetached(agent: string, project: string | undefined, pro
   // project is omitted on single-project daemons (the server falls back to its
   // only/default project), e.g. when launched from a session view with no
   // ?project= in the URL.
-  const body: Record<string, unknown> = { agent, ...(project ? { project } : {}), detach: true };
+  const body: Record<string, unknown> = {
+    agent,
+    ...(project ? { project } : {}),
+    detach: true,
+    reportedSurface: 'web_ui',
+  };
   if (prompt && prompt.trim()) body.prompt = prompt.trim();
   return postJson('/api/run', body);
 }

@@ -91,6 +91,10 @@ export interface ExecutionResult {
   success: boolean;
   /** Context used to build trustworthy activation/adoption cohorts */
   classification: ExecutionClassification;
+  /** Runtime that executed the agent; determined inside AgentUse. */
+  executionOrigin?: 'cli' | 'schedule' | 'serve';
+  /** Caller-reported serve surface. Best-effort, not an authentication claim. */
+  reportedSurface?: 'web_ui' | 'api';
   /** Error category if failed */
   errorType?: 'timeout' | 'api_error' | 'tool_error' | 'user_abort' | 'incomplete' | 'unknown';
   /** Tool call breakdown by type */
@@ -156,6 +160,11 @@ export interface ServerShutdownStats {
   successfulExecutions: number;
   /** Number of failed executions */
   failedExecutions: number;
+}
+
+export interface WebUITelemetryEvent {
+  /** Privacy-safe top-level SPA page category. */
+  page: 'home' | 'agents' | 'schedules' | 'sessions' | 'approvals' | 'stores' | 'settings' | 'learnings' | 'other';
 }
 
 export interface AddCommandResult {

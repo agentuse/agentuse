@@ -391,15 +391,19 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
       // Initialize telemetry
       await telemetry.init(packageVersion);
 
+      const firstRun = await telemetry.isFirstRun();
+
       // Show ASCII logo (unless in quiet/json mode)
       if (!effectiveQuiet) {
         const brandingStyle: BrandingStyle = options.compact ? 'compact' : 'full';
         printLogo(brandingStyle);
 
         // Show first-run telemetry notice
-        if (await telemetry.isFirstRun()) {
+        if (firstRun) {
           logger.info('agentuse collects anonymous usage data to improve the product.');
           logger.info('Set AGENTUSE_TELEMETRY_DISABLED=true to opt out.\n');
+          // Acknowledgement means the disclosure was actually rendered. A
+          // quiet/JSON invocation leaves it pending for the next visible run.
           await telemetry.markFirstRunComplete();
         }
       }
