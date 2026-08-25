@@ -1685,6 +1685,7 @@ async function resumeSession(
       toolResult,
       skipTokenValidation: true
     });
+    let enteredRunAgent = false;
     try {
       const agentPath = resumed.agentFilePath ?? found.session.agent.filePath;
       const agent = (rememberAgent && agentPath === found.session.agent.filePath)
@@ -1692,6 +1693,10 @@ async function resumeSession(
         : await parseAgent(agentPath);
       const mcp = await connectMCP(agent.config.mcpServers, options.debug ?? false, path.dirname(agentPath));
 
+      // From this boundary onward the reviewer decision is durable. A later
+      // error may follow successful external effects, so reopening the gate
+      // would invite the operator to approve and execute them a second time.
+      enteredRunAgent = true;
       const result = await runAgent(
         agent,
         mcp,
@@ -1728,9 +1733,11 @@ async function resumeSession(
       }, null, 2) + "\n");
       if (!disposition.success) process.exitCode = disposition.exitCode;
     } catch (err) {
-      await restoreResumeToolResult({ sessionManager, rollback: resumed.rollback }).catch((restoreErr) => {
-        logger.warn(`Failed to restore pending approval after resume error: ${(restoreErr as Error).message}`);
-      });
+      if (!enteredRunAgent) {
+        await restoreResumeToolResult({ sessionManager, rollback: resumed.rollback }).catch((restoreErr) => {
+          logger.warn(`Failed to restore pending approval after resume error: ${(restoreErr as Error).message}`);
+        });
+      }
       throw err;
     }
 

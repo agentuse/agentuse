@@ -1,8 +1,8 @@
 import type { SessionManager } from '../session';
 import type { SessionInfo, ToolState } from '../session/types';
 import { isProcessRefAliveAsync } from '../utils/process-info';
-import { LeaseStore } from './approval-lease';
-import { GateSealStore } from './gate-seal';
+import { LeaseStore, type ApprovalLease } from './approval-lease';
+import { GateSealStore, type GateSealSnapshot } from './gate-seal';
 import { applyGateDecisionEffects } from './gate-decision';
 import {
   loadSessionPartsFlat,
@@ -22,6 +22,11 @@ export interface ResumeToolRollback {
   messageId: string;
   partId: string;
   state: ToolState;
+  decisionEffects?: {
+    sessionDir: string;
+    lease?: ApprovalLease;
+    seal: GateSealSnapshot;
+  };
 }
 
 export async function applyResumeToolResult(options: {
@@ -167,6 +172,12 @@ async function applyClaimedResumeToolResult(options: {
   // block the resume, it just means gated commands stay denied.
   try {
     const sessionDir = await sessionManager.getSessionDirectory(sessionId, found.agentId);
+    const leaseStore = new LeaseStore(sessionDir);
+    const gateSealStore = new GateSealStore(sessionDir);
+    const priorLease = leaseStore.read();
+    const priorSeal = gateSealStore.snapshot();
+    rollback.decisionEffects = { sessionDir, seal: priorSeal };
+    if (priorLease) rollback.decisionEffects.lease = priorLease;
     const decisionStatus = toolResult && typeof toolResult === 'object'
       ? (toolResult as { status?: unknown }).status
       : undefined;
@@ -174,8 +185,8 @@ async function applyClaimedResumeToolResult(options: {
       ? (toolResult as { choice?: unknown }).choice
       : undefined;
     applyGateDecisionEffects({
-      leaseStore: new LeaseStore(sessionDir),
-      gateSealStore: new GateSealStore(sessionDir),
+      leaseStore,
+      gateSealStore,
       status: decisionStatus,
       choice: decisionChoice,
       gateInput: input,
@@ -201,6 +212,21 @@ export async function restoreResumeToolResult(options: {
 }): Promise<void> {
   const { sessionManager, rollback } = options;
   if (!rollback) return;
+
+  // Restore authorization state before making the approval pending again. A
+  // pending gate must never be visible with the reject seal or approval lease
+  // from the failed preflight attempt still in force.
+  if (rollback.decisionEffects) {
+    const leaseStore = new LeaseStore(rollback.decisionEffects.sessionDir);
+    const leaseRestored = rollback.decisionEffects.lease
+      ? leaseStore.grant(rollback.decisionEffects.lease)
+      : leaseStore.revoke();
+    const sealRestored = new GateSealStore(rollback.decisionEffects.sessionDir)
+      .restoreSnapshot(rollback.decisionEffects.seal);
+    if (!leaseRestored || !sealRestored) {
+      throw new Error('Failed to restore approval authorization state; gate remains resolved');
+    }
+  }
 
   await sessionManager.updatePart(
     rollback.sessionId,

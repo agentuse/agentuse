@@ -272,12 +272,27 @@ function createTransport(name: string, config: MCPServerConfig, debug: boolean =
  * wedged, no client exists yet, and the subprocess would otherwise outlive
  * the run.
  */
-async function connectWithTimeout(
+export async function connectWithTimeout(
   name: string,
   transport: any,
-  timeoutSeconds: number
-): Promise<MCPClient> {
-  const connectPromise = createMCPClient({ name, transport });
+  timeoutSeconds: number,
+  options: {
+    preloadTools?: boolean;
+    createClient?: (options: { name: string; transport: any }) => Promise<MCPClient>;
+  } = {}
+): Promise<{ client: MCPClient; preloadedTools?: Record<string, Tool> }> {
+  let client: MCPClient | undefined;
+  const createClient = options.createClient ?? createMCPClient;
+  const connectPromise = (async () => {
+    client = await createClient({ name, transport });
+    const preloadedTools = options.preloadTools
+      ? await client.tools() as Record<string, Tool>
+      : undefined;
+    return {
+      client,
+      ...(preloadedTools && { preloadedTools }),
+    };
+  })();
 
   if (timeoutSeconds <= 0) {
     return connectPromise;
@@ -286,7 +301,7 @@ async function connectWithTimeout(
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
-      const error = new Error(`Timed out after ${timeoutSeconds}s while connecting`);
+      const error = new Error(`Timed out after ${timeoutSeconds}s while connecting and discovering tools`);
       error.name = 'TimeoutError';
       reject(error);
     }, timeoutSeconds * 1000);
@@ -295,11 +310,17 @@ async function connectWithTimeout(
   try {
     return await Promise.race([connectPromise, timeoutPromise]);
   } catch (error) {
-    try { await transport.close(); } catch { /* ignore */ }
-    // The abandoned handshake may still settle; close it if it wins the race
-    // late, and absorb its rejection so it isn't reported as unhandled.
+    if (client) {
+      // Cleanup must not turn the deadline into another unbounded wait when a
+      // broken client also hangs during close.
+      void client.close().catch(() => { /* ignore */ });
+    } else {
+      void Promise.resolve(transport.close()).catch(() => { /* ignore */ });
+    }
+    // The abandoned handshake/readiness probe may still settle; close it if it
+    // wins the race late, and absorb its rejection so it is not unhandled.
     connectPromise.then(
-      (client) => client.close().catch(() => { /* ignore */ }),
+      (connected) => connected.client.close().catch(() => { /* ignore */ }),
       () => { /* connect failed; transport already closed */ }
     );
     throw error;
@@ -337,26 +358,19 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
       const transport = createTransport(name, config, debug, basePath);
 
       // Create MCP client using AI SDK's built-in method
-      client = await connectWithTimeout(
+      const connected = await connectWithTimeout(
         name,
         transport,
-        config.connectTimeout ?? DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS
+        config.connectTimeout ?? DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS,
+        { preloadTools: 'url' in config }
       );
+      client = connected.client;
 
       // For HTTP transports, immediately fetch tools to ensure connection is ready
       // This follows the official AI SDK pattern for MCP clients
-      let preloadedTools: Record<string, Tool> | undefined = undefined;
+      let preloadedTools = connected.preloadedTools;
       if ('url' in config) {
-        logger.debug(`[MCP] HTTP connection detected, fetching tools immediately for: ${name}`);
-        try {
-          // Cast to Record<string, Tool> since McpToolSet is structurally compatible
-          preloadedTools = await client.tools() as Record<string, Tool>;
-          logger.debug(`[MCP] HTTP connection verified and ${Object.keys(preloadedTools).length} tools loaded for: ${name}`);
-        } catch (error) {
-          logger.warn(`[MCP] Failed to fetch tools immediately for ${name}: ${error instanceof Error ? error.message : String(error)}`);
-          // Re-throw to be caught by outer try-catch
-          throw error;
-        }
+        logger.debug(`[MCP] HTTP connection verified and ${Object.keys(preloadedTools ?? {}).length} tools loaded for: ${name}`);
       }
 
       // Debug, not info: connection chatter repeats per server per run and drowns

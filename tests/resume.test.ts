@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { SessionInfo } from '../src/session/types';
@@ -7,6 +7,21 @@ import { resolveResumeExecutionContext } from '../src/cli/sessions';
 import { applyResumeToolResult, restoreResumeToolResult } from '../src/runner/resume';
 
 describe('resume tool result', () => {
+  it('keeps a CLI approval durable after runAgent has started', async () => {
+    const source = await readFile(join(import.meta.dir, '..', 'src', 'cli', 'sessions.ts'), 'utf8');
+    const applyStart = source.indexOf('const resumed = await applyResumeToolResult');
+    const enteredStart = source.indexOf('enteredRunAgent = true;', applyStart);
+    const runStart = source.indexOf('const result = await runAgent(', enteredStart);
+    const catchStart = source.indexOf('} catch (err) {', runStart);
+    const catchEnd = source.indexOf('throw err;', catchStart);
+    expect(applyStart).toBeGreaterThanOrEqual(0);
+    expect(enteredStart).toBeGreaterThan(applyStart);
+    expect(runStart).toBeGreaterThan(enteredStart);
+    const catchSource = source.slice(catchStart, catchEnd);
+    expect(catchSource).toContain('if (!enteredRunAgent)');
+    expect(catchSource).toContain('restoreResumeToolResult');
+  });
+
   it('can restore a pending approval after resume startup fails', async () => {
     const pendingState = {
       status: 'pending' as const,

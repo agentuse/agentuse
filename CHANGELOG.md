@@ -42,6 +42,12 @@
   Stored prose cannot authorize itself, and transient claims about credentials,
   providers, networks, quotas, locks, or services must be checked again before
   they are used to block or skip work.
+- **Long-lived processes now recover safely from stale runtime state.** Resume
+  decisions cannot reopen after execution has begun, failed preflight restores
+  approval leases and terminal seals atomically, PID reuse is rechecked before
+  orphaning a live run, HTTP MCP discovery shares the connection deadline,
+  store cache values cannot be mutated through returned objects, and skill
+  additions invalidate discovery even when they land during an active scan.
 
 ## [0.17.0] - 2026-08-19
 

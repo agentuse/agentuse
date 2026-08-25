@@ -3,7 +3,13 @@ import { mkdtemp, writeFile, mkdir, rm } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { parseSkillFrontmatter, parseSkillContent } from '../src/skill/parser';
-import { discoverSkills, getSkill, getAllSkills } from '../src/skill/discovery';
+import {
+  discoverSkills,
+  getSkill,
+  getAllSkills,
+  resetSkillDiscoveryCache,
+  setSkillDiscoveryTraversalHookForTest,
+} from '../src/skill/discovery';
 import { validateAllowedTools, formatToolsWarning } from '../src/skill/validate';
 import { createSkillTool, createSkillTools, loadSkillPromptOutputs } from '../src/skill/tool';
 import { expandTrustedSkills } from '../src/skill/capabilities';
@@ -27,6 +33,9 @@ describe('Skill System', () => {
   });
 
   afterEach(async () => {
+    setSkillDiscoveryTraversalHookForTest(undefined);
+    resetSkillDiscoveryCache();
+
     // Restore original HOME
     if (originalHome !== undefined) {
       process.env.HOME = originalHome;
@@ -377,6 +386,129 @@ Missing description`);
   });
 
   describe('discoverSkills', () => {
+    it('rescans when a nested skill is added while discovery is traversing', async () => {
+      const group = join(testDir, '.agentuse', 'skills', 'group');
+      const existing = join(group, 'existing');
+      await mkdir(existing, { recursive: true });
+      await writeFile(join(existing, 'SKILL.md'), `---
+name: existing-during-scan
+description: Existing skill
+---
+
+Content`);
+
+      let added = false;
+      setSkillDiscoveryTraversalHookForTest(async (dir, phase) => {
+        if (dir !== group || phase !== 'after-read' || added) return;
+        added = true;
+        const late = join(group, 'late');
+        await mkdir(late);
+        await writeFile(join(late, 'SKILL.md'), `---
+name: added-during-scan
+description: Added after the directory listing
+---
+
+Content`);
+      });
+
+      const skills = await discoverSkills(testDir);
+      expect(skills.has('existing-during-scan')).toBe(true);
+      expect(skills.has('added-during-scan')).toBe(true);
+    });
+
+    it('skips unreadable subtrees without hiding readable skills', async () => {
+      const root = join(testDir, '.agentuse', 'skills');
+      const readable = join(root, 'readable');
+      const unreadable = join(root, 'unreadable');
+      await mkdir(readable, { recursive: true });
+      await mkdir(unreadable);
+      await writeFile(join(readable, 'SKILL.md'), `---
+name: readable-next-to-unreadable
+description: Still discoverable
+---
+
+Content`);
+      await writeFile(join(unreadable, 'SKILL.md'), `---
+name: recovered-readable-skill
+description: Visible after permission recovery
+---
+
+Content`);
+
+      setSkillDiscoveryTraversalHookForTest((dir, phase) => {
+        if (dir !== unreadable || phase !== 'before-read') return;
+        const error = new Error('permission denied') as NodeJS.ErrnoException;
+        error.code = 'EACCES';
+        throw error;
+      });
+
+      const skills = await discoverSkills(testDir);
+      expect(skills.has('readable-next-to-unreadable')).toBe(true);
+      expect(skills.has('recovered-readable-skill')).toBe(false);
+
+      setSkillDiscoveryTraversalHookForTest(undefined);
+      const recovered = await discoverSkills(testDir);
+      expect(recovered.has('recovered-readable-skill')).toBe(true);
+    });
+
+    it('does not activate skills inside hidden directories', async () => {
+      const hidden = join(testDir, '.agentuse', 'skills', '.disabled', 'hidden');
+      await mkdir(hidden, { recursive: true });
+      await writeFile(join(hidden, 'SKILL.md'), `---
+name: hidden-disabled-skill
+description: Must remain disabled
+---
+
+Content`);
+
+      const skills = await discoverSkills(testDir);
+      expect(skills.has('hidden-disabled-skill')).toBe(false);
+    });
+
+    it('invalidates a warm cache when a nested skill or duplicate is added', async () => {
+      const group = join(testDir, '.agentuse', 'skills', 'group');
+      const existing = join(group, 'existing');
+      await mkdir(existing, { recursive: true });
+      await writeFile(join(existing, 'SKILL.md'), `---
+name: cached-skill
+description: Existing skill
+allowed-tools: Bash(cached-command:*)
+---
+
+Content`);
+
+      const warmed = await discoverSkills(testDir);
+      expect(warmed.get('cached-skill')?.shadowedLocations).toBeUndefined();
+      await Bun.sleep(5);
+
+      const added = join(group, 'added');
+      await mkdir(added);
+      await writeFile(join(added, 'SKILL.md'), `---
+name: added-after-cache
+description: Added later
+---
+
+Content`);
+      const duplicate = join(group, 'duplicate');
+      await mkdir(duplicate);
+      await writeFile(join(duplicate, 'SKILL.md'), `---
+name: cached-skill
+description: Shadowing duplicate
+---
+
+Content`);
+
+      const refreshed = await discoverSkills(testDir);
+      expect(refreshed.has('added-after-cache')).toBe(true);
+      expect(refreshed.get('cached-skill')?.shadowedLocations).toContain(join(existing, 'SKILL.md'));
+      const trustByName: NormalizedSkillsConfig = {
+        auto: true,
+        trusted: false,
+        explicit: { 'cached-skill': { trusted: true } },
+      };
+      expect(expandTrustedSkills({ bash: { commands: [] } }, refreshed, trustByName)?.bash?.commands).toEqual([]);
+    });
+
     it('discovers skills from .agentuse/skills directory', async () => {
       const skillsDir = join(testDir, '.agentuse', 'skills');
       await mkdir(skillsDir, { recursive: true });

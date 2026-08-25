@@ -1,7 +1,6 @@
-import { glob } from 'glob';
 import { homedir } from 'os';
 import { join } from 'path';
-import { access, stat } from 'fs/promises';
+import { readdir, stat } from 'fs/promises';
 import { parseSkillFrontmatter } from './parser.js';
 import type { SkillInfo } from './types.js';
 import { logger } from '../utils/logger.js';
@@ -22,22 +21,12 @@ export function getDiscoveryDirectories(projectRoot: string): string[] {
   ];
 }
 
-/**
- * Check if a directory exists
- */
-async function directoryExists(dir: string): Promise<boolean> {
-  try {
-    await access(dir);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 interface DiscoveryCacheEntry {
   skills: Map<string, SkillInfo>;
   /** Every SKILL.md the scan touched, winners and shadowed duplicates alike. */
   locations: string[];
+  /** Every directory traversed. A child addition changes its parent's mtime. */
+  directories: string[];
   stamp: string;
 }
 
@@ -54,29 +43,86 @@ const discoveryCache = new Map<string, DiscoveryCacheEntry>();
  * does not see.
  */
 async function mtimeStamp(paths: string[]): Promise<string> {
-  const stamps = await Promise.all(paths.map(async (path) => {
-    try {
-      const info = await stat(path);
-      return `${path}:${info.mtimeMs}:${info.size}`;
-    } catch {
-      return `${path}:-`;
-    }
-  }));
+  const stamps = await Promise.all(paths.map(pathStamp));
   return stamps.join('|');
 }
 
-async function scanSkillDirectories(directories: string[]): Promise<Map<string, SkillInfo>> {
+async function pathStamp(path: string): Promise<string> {
+  try {
+    const info = await stat(path);
+    return `${path}:${info.mtimeMs}:${info.ctimeMs}:${info.mode}:${info.size}`;
+  } catch {
+    return `${path}:-`;
+  }
+}
+
+type TraversalPhase = 'before-read' | 'after-read';
+let traversalHookForTest:
+  | ((dir: string, phase: TraversalPhase) => void | Promise<void>)
+  | undefined;
+
+async function findSkillFiles(
+  dir: string,
+  traversed: string[],
+  observedDirectoryStamps: string[],
+  matches: string[],
+  scanState: { cacheable: boolean }
+): Promise<void> {
+  const observedStamp = await pathStamp(dir);
+  let entries;
+  try {
+    await traversalHookForTest?.(dir, 'before-read');
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return;
+    if (code === 'EACCES' || code === 'EPERM') {
+      scanState.cacheable = false;
+      logger.warn(`Skipping unreadable skill directory: ${dir}`);
+      return;
+    }
+    throw error;
+  }
+  traversed.push(dir);
+  observedDirectoryStamps.push(observedStamp);
+  await traversalHookForTest?.(dir, 'after-read');
+  entries.sort((a, b) => a.name.localeCompare(b.name));
+  for (const entry of entries) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      // Preserve glob's default behavior: hidden directories are not active
+      // skill sources merely because they sit below a configured root.
+      if (entry.name.startsWith('.')) continue;
+      await findSkillFiles(path, traversed, observedDirectoryStamps, matches, scanState);
+    }
+    else if (entry.isFile() && entry.name === 'SKILL.md') matches.push(path);
+  }
+}
+
+async function scanSkillDirectories(
+  directories: string[]
+): Promise<{
+  skills: Map<string, SkillInfo>;
+  traversed: string[];
+  locations: string[];
+  observedDirectoryStamp: string;
+  observedLocationStamp: string;
+  cacheable: boolean;
+}> {
   const skills = new Map<string, SkillInfo>();
+  const traversed: string[] = [];
+  const observedDirectoryStamps: string[] = [];
+  const locations: string[] = [];
+  const observedLocationStamps: string[] = [];
+  const scanState = { cacheable: true };
 
   for (const dir of directories) {
-    if (!await directoryExists(dir)) {
-      continue;
-    }
-
-    const pattern = join(dir, '**/SKILL.md');
-    const matches = await glob(pattern, { absolute: true });
+    const matches: string[] = [];
+    await findSkillFiles(dir, traversed, observedDirectoryStamps, matches, scanState);
 
     for (const match of matches) {
+      locations.push(match);
+      observedLocationStamps.push(await pathStamp(match));
       const skill = await parseSkillFrontmatter(match);
       if (!skill) continue;
 
@@ -104,7 +150,14 @@ async function scanSkillDirectories(directories: string[]): Promise<Map<string, 
     }
   }
 
-  return skills;
+  return {
+    skills,
+    traversed,
+    locations,
+    observedDirectoryStamp: observedDirectoryStamps.join('|'),
+    observedLocationStamp: observedLocationStamps.join('|'),
+    cacheable: scanState.cacheable,
+  };
 }
 
 /**
@@ -118,35 +171,51 @@ async function discoverSkillsFromDirectories(directories: string[]): Promise<Map
   const key = directories.join('\u0000');
   const cached = discoveryCache.get(key);
   if (cached) {
-    const stamp = `${await mtimeStamp(directories)}|${await mtimeStamp(cached.locations)}`;
+    const stamp = `${await mtimeStamp(directories)}|${await mtimeStamp(cached.directories)}|${await mtimeStamp(cached.locations)}`;
     if (stamp === cached.stamp) return new Map(cached.skills);
   }
 
-  // Stamped before the scan so a skill added while it runs invalidates the
-  // entry instead of being fingerprinted as already-seen.
-  const rootStamp = await mtimeStamp(directories);
-  const skills = await scanSkillDirectories(directories);
-  const locations = Array.from(skills.values()).flatMap(
-    (skill) => [skill.location, ...(skill.shadowedLocations ?? [])]
-  );
+  // Capture each path before it is traversed or parsed, then compare that
+  // observation with the filesystem after the scan. If the tree changed in
+  // between, retry rather than caching an incomplete snapshot.
+  let lastSkills = new Map<string, SkillInfo>();
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const rootStamp = await mtimeStamp(directories);
+    const scan = await scanSkillDirectories(directories);
+    lastSkills = scan.skills;
+    if (!scan.cacheable) return new Map(scan.skills);
+    const observedStamp = `${rootStamp}|${scan.observedDirectoryStamp}|${scan.observedLocationStamp}`;
+    const currentStamp = `${await mtimeStamp(directories)}|${await mtimeStamp(scan.traversed)}|${await mtimeStamp(scan.locations)}`;
+    if (observedStamp !== currentStamp) continue;
 
-  discoveryCache.delete(key);
-  discoveryCache.set(key, {
-    skills,
-    locations,
-    stamp: `${rootStamp}|${await mtimeStamp(locations)}`,
-  });
-  if (discoveryCache.size > MAX_CACHED_DISCOVERIES) {
-    discoveryCache.delete(discoveryCache.keys().next().value!);
+    discoveryCache.delete(key);
+    discoveryCache.set(key, {
+      skills: scan.skills,
+      locations: scan.locations,
+      directories: scan.traversed,
+      stamp: currentStamp,
+    });
+    if (discoveryCache.size > MAX_CACHED_DISCOVERIES) {
+      discoveryCache.delete(discoveryCache.keys().next().value!);
+    }
+    return new Map(scan.skills);
   }
 
-  // Copied so a caller mutating the map it gets back cannot corrupt the cache.
-  return new Map(skills);
+  // A continuously changing tree may not yield a stable snapshot. Return the
+  // latest result, but deliberately do not memoize it so the next call retries.
+  return new Map(lastSkills);
 }
 
 /** Test seam: forget every memoized discovery. */
 export function resetSkillDiscoveryCache(): void {
   discoveryCache.clear();
+}
+
+/** Test seam for deterministic mutations between readdir and traversal. */
+export function setSkillDiscoveryTraversalHookForTest(
+  hook: ((dir: string, phase: TraversalPhase) => void | Promise<void>) | undefined
+): void {
+  traversalHookForTest = hook;
 }
 
 /**

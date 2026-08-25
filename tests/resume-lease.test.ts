@@ -10,8 +10,9 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { initStorage } from '../src/storage';
 import { SessionManager } from '../src/session';
-import { applyResumeToolResult } from '../src/runner/resume';
+import { applyResumeToolResult, restoreResumeToolResult } from '../src/runner/resume';
 import { LeaseStore, LEASE_FILENAME } from '../src/runner/approval-lease';
+import { GateSealStore } from '../src/runner/gate-seal';
 
 const APPROVED_REPLY = 'Agree completely. The eval harness is the real product; the agent is the demo.';
 
@@ -192,6 +193,58 @@ describe('resume lease lifecycle', () => {
       });
 
       expect(fs.existsSync(join(sessionDir, LEASE_FILENAME))).toBe(false);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
+  it('preflight rollback restores lease and seal state before reopening the gate', async () => {
+    const { projectRoot, sessionManager, sessionID, sessionDir } = await makeSuspendedSession(GATE_INPUT);
+    try {
+      const resumed = await applyResumeToolResult({
+        sessionManager,
+        sessionId: sessionID,
+        toolResult: { status: 'reject', reviewer: { username: 'cli' } },
+        resumeToken: 'tok-123',
+      });
+      expect(new GateSealStore(sessionDir).isSealed()).toBe(true);
+
+      await restoreResumeToolResult({ sessionManager, rollback: resumed.rollback });
+      expect(new GateSealStore(sessionDir).isSealed()).toBe(false);
+      expect(new LeaseStore(sessionDir).read()).toBeUndefined();
+
+      await applyResumeToolResult({
+        sessionManager,
+        sessionId: sessionID,
+        toolResult: { status: 'approve', reviewer: { username: 'cli' } },
+        resumeToken: 'tok-123',
+      });
+      expect(new GateSealStore(sessionDir).isSealed()).toBe(false);
+      expect(new LeaseStore(sessionDir).isCovered(
+        `birdc reply 2077948120484513954 "${APPROVED_REPLY}"`
+      )).toBe(true);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
+  it('rollback preserves a malformed pre-existing seal byte-for-byte', async () => {
+    const { projectRoot, sessionManager, sessionID, sessionDir } = await makeSuspendedSession(GATE_INPUT);
+    const sealPath = join(sessionDir, 'gate-seal.json');
+    try {
+      fs.writeFileSync(sealPath, '{malformed-but-terminal');
+      const resumed = await applyResumeToolResult({
+        sessionManager,
+        sessionId: sessionID,
+        toolResult: { status: 'reject', reviewer: { username: 'cli' } },
+        resumeToken: 'tok-123',
+      });
+      await restoreResumeToolResult({ sessionManager, rollback: resumed.rollback });
+
+      expect(new GateSealStore(sessionDir).isSealed()).toBe(true);
+      expect(fs.readFileSync(sealPath, 'utf8')).toBe('{malformed-but-terminal');
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
       delete process.env.XDG_DATA_HOME;

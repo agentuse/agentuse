@@ -136,7 +136,7 @@ function assertNoSymlinkPathSegments(projectRoot: string, storeName: string): vo
  * the caller fails fast instead of corrupting the store.
  */
 function normalizeStoreData(data: unknown): Record<string, unknown> {
-  if (isPlainObject(data)) return data;
+  if (isPlainObject(data)) return structuredClone(data);
 
   if (typeof data === 'string') {
     let parsed: unknown;
@@ -148,7 +148,7 @@ function normalizeStoreData(data: unknown): Record<string, unknown> {
         `Pass an object, e.g. { "field": "value" }.`
       );
     }
-    if (isPlainObject(parsed)) return parsed;
+    if (isPlainObject(parsed)) return structuredClone(parsed);
     throw new Error(
       `Store data must be a plain object, received a JSON string that decoded to ${describeType(parsed)}. ` +
       `Pass an object, e.g. { "field": "value" }.`
@@ -186,6 +186,14 @@ interface StoreCacheEntry {
   items: StoreItem[];
 }
 
+function cloneStoreItem(item: StoreItem): StoreItem {
+  return structuredClone(item);
+}
+
+function cloneStoreItems(items: StoreItem[]): StoreItem[] {
+  return items.map(cloneStoreItem);
+}
+
 /**
  * Parsed store files, keyed by store path.
  *
@@ -194,13 +202,11 @@ interface StoreCacheEntry {
  * paid in full by read-only ops that change nothing. The parse stays good for
  * as long as the file on disk is the one it came from, which a stat answers.
  *
- * Entries hold the parsed array itself and `readItems` hands out a shallow
- * copy. Items are shared, not copied: no code path mutates a stored item in
- * place (create/update/upsert build a fresh object via spread), so sharing
- * them is safe and keeps the copy O(n) pointers instead of a deep clone. The
- * *array* is copied because the write path does mutate it - create pushes,
- * delete splices - and an aborted write must not leave those edits in the
- * cache.
+ * Entries own private item snapshots. Internal transactions receive a shallow
+ * array copy and replace items instead of mutating them; public methods clone
+ * the rows they return. That boundary prevents caller-side edits to returned
+ * data from leaking into a later unrelated write while retaining the parse
+ * cache's main benefit.
  *
  * Bounded so a long-lived `serve` worker touching many projects' stores does
  * not hold every one of them resident; entries are evicted least-recently-used.
@@ -219,7 +225,7 @@ function cacheGet(path: string): StoreCacheEntry | undefined {
 
 function cacheSet(path: string, entry: StoreCacheEntry): void {
   parsedStoreCache.delete(path);
-  parsedStoreCache.set(path, entry);
+  parsedStoreCache.set(path, { ...entry, items: cloneStoreItems(entry.items) });
   if (parsedStoreCache.size > MAX_CACHED_STORES) {
     const oldest = parsedStoreCache.keys().next();
     if (!oldest.done) parsedStoreCache.delete(oldest.value);
@@ -445,7 +451,7 @@ export class Store {
     // making the next op re-read and re-validate it. Still inside the lock, so
     // no other process can have replaced the file before this stat.
     const identity = await fileIdentity(this.storePath);
-    if (identity) cacheSet(this.storePath, { identity, items: items.slice() });
+    if (identity) cacheSet(this.storePath, { identity, items });
     else parsedStoreCache.delete(this.storePath);
   }
 
@@ -475,14 +481,15 @@ export class Store {
       ...(options.title && { title: options.title }),
       ...(options.status && { status: options.status }),
       ...(options.parentId && { parentId: options.parentId }),
-      ...(options.tags && { tags: options.tags }),
+      ...(options.tags && { tags: [...options.tags] }),
       ...(this.agentName && { createdBy: this.agentName }),
     };
 
-    return this.withWriteLock((items) => {
+    const created = await this.withWriteLock((items) => {
       items.push(item);
       return { items, result: item, changed: [item] };
     });
+    return cloneStoreItem(created);
   }
 
   /**
@@ -490,7 +497,8 @@ export class Store {
    */
   async get(id: string): Promise<StoreItem | null> {
     const items = await this.readItems();
-    return items.find(item => item.id === id) || null;
+    const item = items.find(item => item.id === id);
+    return item ? cloneStoreItem(item) : null;
   }
 
   /**
@@ -501,7 +509,7 @@ export class Store {
     // untouched (the mutate body never runs).
     const normalizedData = options.data !== undefined ? normalizeStoreData(options.data) : undefined;
 
-    return this.withWriteLock((items) => {
+    const result = await this.withWriteLock((items) => {
       const index = items.findIndex(item => item.id === id);
       if (index === -1) return { items, result: null };
 
@@ -513,7 +521,7 @@ export class Store {
         ...(options.title !== undefined && { title: options.title }),
         ...(options.status !== undefined && { status: options.status }),
         ...(options.parentId !== undefined && { parentId: options.parentId }),
-        ...(options.tags !== undefined && { tags: options.tags }),
+        ...(options.tags !== undefined && { tags: [...options.tags] }),
         ...(normalizedData !== undefined && {
           data: { ...existing.data, ...normalizedData }
         }),
@@ -522,6 +530,7 @@ export class Store {
       items[index] = updated;
       return { items, result: updated, changed: [updated] };
     });
+    return result ? cloneStoreItem(result) : null;
   }
 
   /**
@@ -540,7 +549,7 @@ export class Store {
     const normalizedData = normalizeStoreData(options.data);
     const entries = Object.entries(where);
 
-    return this.withWriteLock<{ item: StoreItem; created: boolean }>((items) => {
+    const result = await this.withWriteLock<{ item: StoreItem; created: boolean }>((items) => {
       let index = -1;
       for (let i = 0; i < items.length; i++) {
         const candidate = items[i]!;
@@ -558,7 +567,7 @@ export class Store {
           ...(options.title && { title: options.title }),
           ...(options.status && { status: options.status }),
           ...(options.parentId && { parentId: options.parentId }),
-          ...(options.tags && { tags: options.tags }),
+          ...(options.tags && { tags: [...options.tags] }),
           ...(this.agentName && { createdBy: this.agentName }),
         };
         items.push(item);
@@ -573,7 +582,7 @@ export class Store {
         ...(options.title !== undefined && { title: options.title }),
         ...(options.status !== undefined && { status: options.status }),
         ...(options.parentId !== undefined && { parentId: options.parentId }),
-        ...(options.tags !== undefined && { tags: options.tags }),
+        ...(options.tags !== undefined && { tags: [...options.tags] }),
         data: behavior.replaceData
           ? normalizedData
           : { ...existing.data, ...normalizedData },
@@ -581,6 +590,7 @@ export class Store {
       items[index] = updated;
       return { items, result: { item: updated, created: false }, changed: [updated] };
     });
+    return { ...result, item: cloneStoreItem(result.item) };
   }
 
   /**
@@ -659,7 +669,7 @@ export class Store {
    */
   async list(options: StoreListOptions = {}): Promise<StoreItem[]> {
     const items = await this.readItems();
-    return this.paginate(this.filterAndSort(items, options), options);
+    return cloneStoreItems(this.paginate(this.filterAndSort(items, options), options));
   }
 
   /**
@@ -670,7 +680,7 @@ export class Store {
   async query(options: StoreListOptions = {}): Promise<StoreQueryResult> {
     const items = await this.readItems();
     const filtered = this.filterAndSort(items, options);
-    return { items: this.paginate(filtered, options), total: filtered.length };
+    return { items: cloneStoreItems(this.paginate(filtered, options)), total: filtered.length };
   }
 
   /**

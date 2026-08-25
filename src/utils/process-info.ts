@@ -92,6 +92,12 @@ export function getProcessStartTime(pid: number): string | null {
   const cached = readCachedStartTime(pid);
   if (cached) return cached;
 
+  return refreshProcessStartTime(pid);
+}
+
+function refreshProcessStartTime(pid: number): string | null {
+  startTimeCache.delete(pid);
+
   const linuxStartTime = getLinuxProcessStartTime(pid);
   if (linuxStartTime) return cacheStartTime(pid, linuxStartTime);
 
@@ -115,6 +121,12 @@ export function getProcessStartTime(pid: number): string | null {
 export function getProcessStartTimeAsync(pid: number): Promise<string | null> {
   const cached = readCachedStartTime(pid);
   if (cached) return Promise.resolve(cached);
+
+  return refreshProcessStartTimeAsync(pid);
+}
+
+function refreshProcessStartTimeAsync(pid: number): Promise<string | null> {
+  startTimeCache.delete(pid);
 
   const linuxStartTime = getLinuxProcessStartTime(pid);
   if (linuxStartTime) return Promise.resolve(cacheStartTime(pid, linuxStartTime));
@@ -191,8 +203,13 @@ export function processRefState(ref: ProcessRef): ProcessRefState {
   const current = getProcessStartTime(ref.pid);
   if (!current) return 'alive';
   if (current === ref.procStartedAt) return 'alive';
+  // A mismatch from the TTL cache may describe the previous occupant of a
+  // recycled PID. Re-probe before declaring anything about the current owner.
+  const fresh = refreshProcessStartTime(ref.pid);
+  if (!fresh) return 'alive';
+  if (fresh === ref.procStartedAt) return 'alive';
   const priorBoot = bootIdOf(ref.procStartedAt);
-  const currentBoot = bootIdOf(current);
+  const currentBoot = bootIdOf(fresh);
   if (priorBoot && currentBoot && priorBoot !== currentBoot) return 'dead';
   return 'ambiguous';
 }
@@ -206,14 +223,28 @@ export function isProcessRefAlive(ref: ProcessRef): boolean {
   if (!ref.procStartedAt) return true;
   const current = getProcessStartTime(ref.pid);
   if (!current) return true;
-  return current === ref.procStartedAt;
+  if (current === ref.procStartedAt) return true;
+  const fresh = refreshProcessStartTime(ref.pid);
+  return !fresh || fresh === ref.procStartedAt;
 }
 
 /** `isProcessRefAlive` for async callers; see `getProcessStartTimeAsync`. */
-export async function isProcessRefAliveAsync(ref: ProcessRef): Promise<boolean> {
-  if (typeof ref.pid !== 'number' || !isPidAlive(ref.pid)) return false;
+export async function isProcessRefAliveAsync(
+  ref: ProcessRef,
+  probe: {
+    isPidAlive?: (pid: number) => boolean;
+    readStartTime?: (pid: number) => Promise<string | null>;
+    readFreshStartTime?: (pid: number) => Promise<string | null>;
+  } = {}
+): Promise<boolean> {
+  const pidAlive = probe.isPidAlive ?? isPidAlive;
+  if (typeof ref.pid !== 'number' || !pidAlive(ref.pid)) return false;
   if (!ref.procStartedAt) return true;
-  const current = await getProcessStartTimeAsync(ref.pid);
+  const readStartTime = probe.readStartTime ?? getProcessStartTimeAsync;
+  const readFreshStartTime = probe.readFreshStartTime ?? refreshProcessStartTimeAsync;
+  const current = await readStartTime(ref.pid);
   if (!current) return true;
-  return current === ref.procStartedAt;
+  if (current === ref.procStartedAt) return true;
+  const fresh = await readFreshStartTime(ref.pid);
+  return !fresh || fresh === ref.procStartedAt;
 }

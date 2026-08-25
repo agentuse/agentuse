@@ -21,6 +21,18 @@ describe("Store", () => {
   });
 
   describe("create()", () => {
+    it("does not persist mutations made through returned or input references", async () => {
+      const input = { nested: { value: "original" } };
+      const first = await store.create({ data: input });
+      (input.nested as { value: string }).value = "mutated-input";
+      ((first.data.nested as { value: string })).value = "mutated-return";
+
+      await store.create({ data: { value: "second" } });
+
+      const persisted = await store.get(first.id);
+      expect(persisted?.data).toEqual({ nested: { value: "original" } });
+    });
+
     it("creates item with required fields", async () => {
       const item = await store.create({
         data: { message: "hello" },

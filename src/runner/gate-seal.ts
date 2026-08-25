@@ -29,6 +29,11 @@ export interface GateSeal {
   reason: string;
 }
 
+export interface GateSealSnapshot {
+  exists: boolean;
+  raw?: string;
+}
+
 /**
  * Per-session seal persistence. File-based in the session directory, next to
  * the approval lease and effect WAL, and read synchronously per gate dispatch.
@@ -52,9 +57,23 @@ export class GateSealStore {
     const filePath = this.filePath;
     if (!filePath) return false;
     try {
+      // Fail closed: a damaged seal still represents a terminal reviewer
+      // rejection until an explicit rollback removes or restores it.
       return fs.existsSync(filePath);
     } catch {
       return false;
+    }
+  }
+
+  snapshot(): GateSealSnapshot {
+    const filePath = this.filePath;
+    if (!filePath) return { exists: false };
+    try {
+      if (!fs.existsSync(filePath)) return { exists: false };
+      return { exists: true, raw: fs.readFileSync(filePath, 'utf8') };
+    } catch {
+      // Preserve fail-closed existence even when the bytes cannot be read.
+      return { exists: true };
     }
   }
 
@@ -70,6 +89,39 @@ export class GateSealStore {
       fs.writeFileSync(filePath, JSON.stringify(seal, null, 2));
     } catch (error) {
       logger.debug(`[GateSeal] seal failed: ${(error as Error).message}`);
+    }
+  }
+
+  restoreSnapshot(snapshot: GateSealSnapshot): boolean {
+    const filePath = this.filePath;
+    if (!filePath) return false;
+    if (!snapshot.exists) {
+      return this.unseal();
+    }
+    if (snapshot.raw === undefined) {
+      // The prior seal existed but was unreadable. Never erase a terminal
+      // rejection merely because rollback could not snapshot its bytes.
+      return fs.existsSync(filePath);
+    }
+    try {
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, snapshot.raw);
+      return true;
+    } catch (error) {
+      logger.debug(`[GateSeal] snapshot restore failed: ${(error as Error).message}`);
+      return false;
+    }
+  }
+
+  unseal(): boolean {
+    const filePath = this.filePath;
+    if (!filePath) return false;
+    try {
+      fs.rmSync(filePath, { force: true });
+      return true;
+    } catch (error) {
+      logger.debug(`[GateSeal] unseal failed: ${(error as Error).message}`);
+      return false;
     }
   }
 }

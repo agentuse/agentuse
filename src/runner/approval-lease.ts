@@ -136,8 +136,8 @@ export class LeaseStore {
     }
   }
 
-  grant(lease: ApprovalLease): void {
-    this.write(lease);
+  grant(lease: ApprovalLease): boolean {
+    return this.write(lease);
   }
 
   private write(lease: ApprovalLease): boolean {
@@ -156,13 +156,15 @@ export class LeaseStore {
     }
   }
 
-  revoke(): void {
+  revoke(): boolean {
     const filePath = this.filePath;
-    if (!filePath) return;
+    if (!filePath) return false;
     try {
       fs.rmSync(filePath, { force: true });
+      return true;
     } catch (error) {
       logger.debug(`[Lease] revoke failed: ${(error as Error).message}`);
+      return false;
     }
   }
 
