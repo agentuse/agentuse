@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- **AgentUse now gives quiet, actionable upgrade reminders.** A cached daily
+  npm registry check runs off the command path, interactive CLI commands show
+  the exact npm/pnpm/Bun/Yarn upgrade command at most once per release per week,
+  and the serve Home page shows the same information in a dismissible banner.
+  CI, JSON/quiet output, local builds, `npx`, and
+  `AGENTUSE_UPDATE_CHECK_DISABLED=true` remain silent.
 - **Reviewer comments now explain resumed sub-agent work in parent session timelines.**
   Human feedback is rendered as a timestamped revision request, an active child
   reads `revising` instead of reusing the completed gate's prompt, a re-opened

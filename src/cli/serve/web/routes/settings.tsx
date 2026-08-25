@@ -7,6 +7,7 @@ import { pageTitle, brandName } from '../lib/brand';
 import { useSessionListView } from '../hooks/use-session-list-view';
 import { HOME_SECTIONS, useHomeSections } from '../hooks/use-home-sections';
 import { usePushBell } from '../hooks/use-push';
+import { debugSettingsEnabled, requestUpdatePreview } from '../lib/update-preview';
 
 function Group(props: { title: string; children: ComponentChildren }) {
   return (
@@ -82,6 +83,7 @@ function NotificationsGroup() {
 
 export default function Settings() {
   useTitle(pageTitle('Settings'));
+  const showDebug = debugSettingsEnabled(location.search);
   const sessionList = useSessionListView();
   const homeSections = useHomeSections();
   const [clearing, setClearing] = useState(false);
@@ -177,6 +179,23 @@ export default function Settings() {
             </button>
           </Row>
         </Group>
+
+        {showDebug && (
+          <Group title="Debug">
+            <Row label="Update notification" hint="Preview the update banner on Home without contacting npm or changing the update cache.">
+              <button
+                type="button"
+                class="settings-item"
+                onClick={() => {
+                  requestUpdatePreview();
+                  location.assign('/');
+                }}
+              >
+                Preview
+              </button>
+            </Row>
+          </Group>
+        )}
       </main>
     </div>
   );

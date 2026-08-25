@@ -29,6 +29,7 @@ import {
   type ToolCallMetrics,
 } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
+import { getCachedAvailableUpdate, refreshUpdateCacheInBackground } from "../update-check";
 import { registerServer, unregisterServer, updateServer, listServers, formatUptime, getDefaultLogFilePath, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { acquireSchedulerLock, releaseSchedulerLock } from "../utils/scheduler-lock";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
@@ -2879,6 +2880,7 @@ export function createServeCommand(): Command {
 
       // Initialize telemetry
       await telemetry.init(packageVersion, { batchDelivery: true });
+      refreshUpdateCacheInBackground(packageVersion);
 
       // Spawn one worker per project. Each worker loads its own project's
       // .env / .env.local on each execute request, so per-project env stays
@@ -4852,7 +4854,14 @@ export function createServeCommand(): Command {
 
           if (isApi) {
             res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ version: packageVersion, brand: { name: brandNameCfg ?? "AgentUse" }, default: defaultProject, projects: projectInfo }));
+            const update = getCachedAvailableUpdate(packageVersion);
+            res.end(JSON.stringify({
+              version: packageVersion,
+              ...(update && { update }),
+              brand: { name: brandNameCfg ?? "AgentUse" },
+              default: defaultProject,
+              projects: projectInfo,
+            }));
             return;
           }
         }

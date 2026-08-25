@@ -4194,6 +4194,45 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home a.home-stat-failed { color: var(--red); text-decoration: none; border-bottom: 1px dotted var(--red-border); }
 .page-home .home-countdown { font-family: var(--mono); font-size: 13px; color: var(--fg); font-variant-numeric: tabular-nums; }
 
+/* A release reminder is actionable but not operationally urgent. It sits above
+   the fleet state, can be dismissed per browser, and never enters daemon logs. */
+.page-home .home-update-banner {
+  display: flex; align-items: center; gap: 12px;
+  margin: 0 0 24px; padding: 12px 14px;
+  border: 1px solid var(--cyan-border); border-radius: 10px;
+  background: var(--cyan-soft); color: var(--fg);
+}
+.page-home .home-update-copy { flex: 1; min-width: 0; }
+.page-home .home-update-copy strong {
+  display: block; font-family: var(--sans); font-size: 13.5px; line-height: 1.3; font-weight: 600;
+}
+.page-home .home-update-details {
+  display: flex; align-items: baseline; gap: 8px; min-width: 0; margin-top: 4px;
+  font-family: var(--mono); font-size: 10.5px; line-height: 1.35; color: var(--muted);
+}
+.page-home .home-update-separator { color: var(--line-strong); }
+.page-home .home-update-details code {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: inherit; font-size: 11px; color: var(--muted-3);
+}
+.page-home .home-update-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.page-home .home-update-banner button {
+  flex-shrink: 0; border: 1px solid var(--line-strong); border-radius: 7px;
+  background: var(--panel); color: var(--fg); cursor: pointer; font-family: inherit;
+}
+.page-home .home-update-action { padding: 6px 9px; font-size: 11.5px; }
+.page-home .home-update-dismiss { width: 28px; height: 28px; padding: 0; font-size: 18px; line-height: 1; color: var(--muted); }
+.page-home .home-update-banner button:hover { border-color: var(--cyan-border); background: var(--panel-hover); }
+@media (max-width: 720px) {
+  .page-home .home-update-banner { align-items: flex-start; flex-wrap: wrap; }
+  .page-home .home-update-copy { min-width: 240px; }
+}
+@media (max-width: 480px) {
+  .page-home .home-update-copy { flex-basis: 100%; min-width: 0; }
+  .page-home .home-update-actions { width: 100%; }
+  .page-home .home-update-action { flex: 1; }
+}
+
 /* Working now: one row per live session inside a single surface. */
 .page-home a.now-row {
   display: flex; align-items: center; gap: 12px;

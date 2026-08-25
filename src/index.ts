@@ -71,8 +71,15 @@ import {
 } from './telemetry';
 import type { ActiveContextUsage, LogPartLevel, Part, SessionInfo, SessionManager as SessionManagerType, SessionTrigger, ToolPart } from './session';
 import { findServerForProject } from './utils/server-registry';
+import {
+  getCachedCliUpdate,
+  markUpdateNoticeShown,
+  refreshUpdateCacheInBackground,
+  type AvailableUpdate,
+} from './update-check';
 
 const program = new Command();
+let pendingUpdateNotice: AvailableUpdate | null = null;
 
 function hasServeForApprovalRun(projectRoot: string, agentFilePath?: string): boolean {
   return Boolean(
@@ -165,6 +172,29 @@ program
       }
     }
   });
+
+// Read-only cache lookup on the command path; the registry refresh uses an
+// unref'd socket and can never hold up command startup or process exit.
+program.hook('preAction', (_command, actionCommand) => {
+  refreshUpdateCacheInBackground(packageVersion);
+  const options = actionCommand.optsWithGlobals() as { quiet?: boolean; json?: boolean };
+  // The long-lived daemon surfaces the same information in its Web UI; do not
+  // print an update reminder into its terminal/log when it eventually exits.
+  if (actionCommand.name() !== 'serve' && process.stderr.isTTY && !options.quiet && !options.json) {
+    pendingUpdateNotice = getCachedCliUpdate(packageVersion);
+  }
+});
+
+program.hook('postAction', () => {
+  const update = pendingUpdateNotice;
+  pendingUpdateNotice = null;
+  if (!update) return;
+  process.stderr.write(
+    `\nUpdate available: agentuse ${update.currentVersion} → ${update.latestVersion}\n`
+    + `Run: ${update.command}\n`,
+  );
+  markUpdateNoticeShown(update.latestVersion);
+});
 
 // Add provider command (manages auth + custom providers)
 program.addCommand(createProviderCommand());

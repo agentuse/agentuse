@@ -10,11 +10,13 @@ import { isAttentionSessionDismissed, useGlobalApprovals } from '../hooks/use-gl
 import { useSessionTail } from '../hooks/use-session-tail';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
+import { UpdateBanner } from '../components/update-banner';
 import { Loading } from '../components/loading';
 import { pendingNewestFirst, PendingApprovalRow } from '../components/pending-approval-card';
 import { displayAgentName, formatApprovalTime, formatRelativeTime, displayStatusLabel, humanizeMetric, runTone, type RunTone } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
+import { consumeUpdatePreview, previewUpdate } from '../lib/update-preview';
 
 function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -644,6 +646,7 @@ function formatClock(now: number): string {
 
 export default function Home() {
   useTitle(pageTitle());
+  const [previewRequested] = useState(() => consumeUpdatePreview());
   const { data, error, loading } = useFetch('home', () => fetchInfo(), { refreshMs: 30_000 });
   const liveHome = useLiveHome();
   const attentionState = useGlobalApprovals();
@@ -785,6 +788,9 @@ export default function Home() {
       <div class="home-ambient" aria-hidden="true"></div>
       <Topbar currentPage="home" />
       <main class="home-boot">
+        {(previewRequested && data)
+          ? <UpdateBanner update={previewUpdate(data.version)} persistDismissal={false} />
+          : data?.update && <UpdateBanner update={data.update} />}
         <header class="home-head" aria-live="polite">
           <div class="home-date">{formatClock(now)}</div>
           <h1 class="home-sentence">

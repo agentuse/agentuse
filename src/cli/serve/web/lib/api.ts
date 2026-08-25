@@ -485,6 +485,12 @@ export interface ProjectInfo {
 
 export interface InfoPayload {
   version: string;
+  update?: {
+    currentVersion: string;
+    latestVersion: string;
+    packageManager: 'npm' | 'pnpm' | 'bun' | 'yarn';
+    command: string;
+  };
   default: string | null;
   projects: ProjectInfo[];
 }

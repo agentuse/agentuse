@@ -517,6 +517,12 @@ dashboard built from the same data.)
 ```json
 {
   "version": "0.12.0",
+  "update": {
+    "currentVersion": "0.12.0",
+    "latestVersion": "0.18.0",
+    "packageManager": "npm",
+    "command": "npm install -g agentuse@latest"
+  },
   "default": "projA",
   "projects": [
     { "id": "projA", "path": "/abs/path/to/projA", "agentCount": 3, "scheduleCount": 1 },
@@ -524,6 +530,9 @@ dashboard built from the same data.)
   ]
 }
 ```
+
+`update` is present only when the cached npm registry result contains a newer
+stable AgentUse version. The dashboard uses it for its dismissible update banner.
 
 `default` is `null` in multi-project mode without `--default`; single-project mode returns the sole project id.
 
