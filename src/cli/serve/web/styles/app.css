@@ -4209,7 +4209,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home .now-desc { margin-top: 3px; font-size: 12.5px; color: var(--muted-3); line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .page-home .now-meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .page-home .now-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 .page-home .now-grid a.now-row {
