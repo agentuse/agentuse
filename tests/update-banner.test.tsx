@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import renderToString from 'preact-render-to-string';
-import { UpdateBanner } from '../src/cli/serve/web/components/update-banner';
+import { isUpdateVersionDismissed, UpdateBanner } from '../src/cli/serve/web/components/update-banner';
 import { consumeUpdatePreview, debugSettingsEnabled, previewUpdate, requestUpdatePreview } from '../src/cli/serve/web/lib/update-preview';
 
 describe('UpdateBanner', () => {
@@ -25,6 +25,11 @@ describe('UpdateBanner', () => {
       packageManager: 'npm',
       command: 'npm install -g agentuse@latest',
     });
+  });
+
+  it('does not carry one release dismissal onto a later release', () => {
+    expect(isUpdateVersionDismissed('0.18.0', '0.18.0')).toBe(true);
+    expect(isUpdateVersionDismissed('0.18.0', '0.19.0')).toBe(false);
   });
 
   it('carries the Settings preview to Home exactly once', () => {

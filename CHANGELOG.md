@@ -2,17 +2,21 @@
 
 ## [Unreleased]
 
+### Added
+
 - **AgentUse now gives quiet, actionable upgrade reminders.** A cached daily
   npm registry check runs off the command path, interactive CLI commands show
   the exact npm/pnpm/Bun/Yarn upgrade command at most once per release per week,
   and the serve Home page shows the same information in a dismissible banner.
   CI, JSON/quiet output, local builds, `npx`, and
   `AGENTUSE_UPDATE_CHECK_DISABLED=true` remain silent.
-- **Reviewer comments now explain resumed sub-agent work in parent session timelines.**
-  Human feedback is rendered as a timestamped revision request, an active child
-  reads `revising` instead of reusing the completed gate's prompt, a re-opened
-  gate reads `awaiting-approval`, and Judge attempts are identified as automated
-  pre-review attempts.
+- **Skills can now be shared through `~/.agents/skills/` and symlinks.** The
+  shared location has lowest precedence. Linked roots, directories, and
+  `SKILL.md` files resolve safely; circular directory links are ignored and
+  dangling links do not prevent other skills from loading.
+
+### Changed
+
 - **The `creator` skill now defaults to minimum-viable agent instructions.** It
   starts from the workflow the user actually described, omits unused
   frontmatter and speculative branches, relies on model judgment instead of
@@ -24,40 +28,46 @@
   Home, approvals, sessions, agents, schedules, and stores now share the updated
   visual system, with more readable session logs and responsive layouts.
 - **Approval queues are easier to scan and stay accurate while decisions are processed.**
-  Pending gates are grouped by agent, Home uses compact waiting rows and shows
-  the newest pending work first, and pick-gate cards prioritize risk while
-  folding long draft and command detail. A gate that was just decided no longer
-  briefly reappears when a stale live update arrives.
-- **Long-running sessions remain visible in `serve` after they pass the selected activity window.**
-  Activity filters now use the session's last update rather than its creation
-  time, while still retaining live work that started earlier.
-- **Sub-agent model and provider failures now name the concrete model that failed,**
-  including authentication errors, so fallback and configuration problems are
-  diagnosable from the parent run.
+  Pending gates are grouped by agent and ordered by each group's newest request,
+  with newest work first within every group. Home likewise uses compact waiting
+  rows and shows newest pending work first. Pick-gate cards prioritize risk
+  while folding long draft and command detail. A gate that was just decided no
+  longer briefly reappears when a stale live update arrives.
 - **`serve` and run-time operations use less memory and avoid unnecessary filesystem, process, MCP, and web work.**
   Idle workers can again recycle after high memory use, and worker response
   caches are bounded.
 - **The built-in `hello` demo now guides first-time users through the full setup path:**
   installing the AgentUse skill, briefing a coding agent, validating the agent,
   and completing the first run.
-- **Outcome recovery no longer loses the tool trace from multi-step runs.** When
-  a model finishes without declaring an outcome, the recovery turn sees the
-  complete preceding work and can only report complete or incomplete, avoiding
-  duplicate side effects and false blocker reports.
 - **Persistent store reads now carry an explicit trust and time boundary.**
   Stored prose cannot authorize itself, and transient claims about credentials,
   providers, networks, quotas, locks, or services must be checked again before
   they are used to block or skip work.
+
+### Fixed
+
+- **Reviewer comments now explain resumed sub-agent work in parent session timelines.**
+  Human feedback is rendered as a timestamped revision request, an active child
+  reads `revising` instead of reusing the completed gate's prompt, a re-opened
+  gate reads `awaiting-approval`, and Judge attempts are identified as automated
+  pre-review attempts.
+- **Long-running sessions remain visible in `serve` after they pass the selected activity window.**
+  Activity filters now use the session's last update rather than its creation
+  time, while still retaining live work that started earlier.
+- **Sub-agent model and provider failures now name the concrete model that failed,**
+  including authentication errors, so fallback and configuration problems are
+  diagnosable from the parent run.
+- **Outcome recovery no longer loses the tool trace from multi-step runs.** When
+  a model finishes without declaring an outcome, the recovery turn sees the
+  complete preceding work and can only report complete or incomplete, avoiding
+  duplicate side effects and false blocker reports.
 - **Long-lived processes now recover safely from stale runtime state.** Resume
   decisions cannot reopen after execution has begun, failed preflight restores
   approval leases and terminal seals atomically, PID reuse is rechecked before
   orphaning a live run, HTTP MCP discovery shares the connection deadline,
   store cache values cannot be mutated through returned objects, and skill
   additions invalidate discovery even when they land during an active scan.
-- **Skills can now be shared through `~/.agents/skills/` and symlinks.** The
-  shared location has lowest precedence. Linked roots, directories, and
-  `SKILL.md` files resolve safely; circular directory links are ignored and
-  dangling links do not prevent other skills from loading.
+
 ## [0.17.0] - 2026-08-19
 
 ### Added

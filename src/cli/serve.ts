@@ -4853,6 +4853,10 @@ export function createServeCommand(): Command {
           })));
 
           if (isApi) {
+            // The helper enforces the 24-hour cache interval. Calling it from
+            // the polled info route lets a daemon discover releases that land
+            // weeks after startup without introducing a separate live timer.
+            refreshUpdateCacheInBackground(packageVersion);
             res.writeHead(200, { "Content-Type": "application/json" });
             const update = getCachedAvailableUpdate(packageVersion);
             res.end(JSON.stringify({

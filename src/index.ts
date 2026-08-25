@@ -176,6 +176,15 @@ program
 // Read-only cache lookup on the command path; the registry refresh uses an
 // unref'd socket and can never hold up command startup or process exit.
 program.hook('preAction', (_command, actionCommand) => {
+  // Update-check opt-outs are supported in the same global .env/config env
+  // sources as run and serve, so load them before reading cache or networking.
+  // A malformed config must retain the command's own validation/reporting;
+  // update checks are best-effort and may never become a new failure path.
+  try {
+    loadGlobalDefaults();
+  } catch {
+    return;
+  }
   refreshUpdateCacheInBackground(packageVersion);
   const options = actionCommand.optsWithGlobals() as { quiet?: boolean; json?: boolean };
   // The long-lived daemon surfaces the same information in its Web UI; do not

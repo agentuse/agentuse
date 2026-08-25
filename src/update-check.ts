@@ -78,18 +78,45 @@ interface ParsedVersion {
   major: number;
   minor: number;
   patch: number;
-  prerelease: string | null;
+  prerelease: string[] | null;
 }
 
 export function parseVersion(value: string): ParsedVersion | null {
-  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(value.trim());
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([^+]+))?(?:\+(.+))?$/.exec(value.trim());
   if (!match) return null;
+  if ([match[1], match[2], match[3]].some(identifier => (
+    identifier.length > 1 && identifier.startsWith('0')
+  ))) return null;
+  const prerelease = match[4]?.split('.') ?? null;
+  const build = match[5]?.split('.') ?? null;
+  if (prerelease?.some(identifier => (
+    !/^[0-9A-Za-z-]+$/.test(identifier)
+    || (/^\d+$/.test(identifier) && identifier.length > 1 && identifier.startsWith('0'))
+  ))) return null;
+  if (build?.some(identifier => !/^[0-9A-Za-z-]+$/.test(identifier))) return null;
   return {
     major: Number(match[1]),
     minor: Number(match[2]),
     patch: Number(match[3]),
-    prerelease: match[4] ?? null,
+    prerelease,
   };
+}
+
+function comparePrereleaseIdentifiers(candidate: string[], current: string[]): number {
+  const length = Math.max(candidate.length, current.length);
+  for (let index = 0; index < length; index += 1) {
+    const next = candidate[index];
+    const installed = current[index];
+    if (next === undefined) return -1;
+    if (installed === undefined) return 1;
+    if (next === installed) continue;
+    const nextNumeric = /^\d+$/.test(next);
+    const installedNumeric = /^\d+$/.test(installed);
+    if (nextNumeric && installedNumeric) return Number(next) > Number(installed) ? 1 : -1;
+    if (nextNumeric !== installedNumeric) return nextNumeric ? -1 : 1;
+    return next > installed ? 1 : -1;
+  }
+  return 0;
 }
 
 /** Stable releases sort after prereleases with the same numeric version. */
@@ -100,10 +127,10 @@ export function isNewerVersion(candidate: string, current: string): boolean {
   for (const key of ['major', 'minor', 'patch'] as const) {
     if (next[key] !== installed[key]) return next[key] > installed[key];
   }
-  if (next.prerelease === installed.prerelease) return false;
+  if (next.prerelease === null && installed.prerelease === null) return false;
   if (next.prerelease === null) return true;
   if (installed.prerelease === null) return false;
-  return next.prerelease.localeCompare(installed.prerelease, undefined, { numeric: true }) > 0;
+  return comparePrereleaseIdentifiers(next.prerelease, installed.prerelease) > 0;
 }
 
 export function detectPackageManager(
@@ -184,6 +211,10 @@ export function markUpdateNoticeShown(latestVersion: string, now = Date.now()): 
 
 let refreshInFlight = false;
 
+export function shouldRefreshUpdateCache(checkedAt: number | undefined, now = Date.now()): boolean {
+  return checkedAt === undefined || now - checkedAt >= UPDATE_CHECK_INTERVAL_MS;
+}
+
 /**
  * Refresh npm's `latest` dist-tag without holding the process open. A failed
  * attempt still advances checkedAt when the process lives long enough to hear
@@ -192,7 +223,7 @@ let refreshInFlight = false;
 export function refreshUpdateCacheInBackground(currentVersion: string, now = Date.now()): void {
   if (refreshInFlight || updateChecksDisabled() || isNpxRun() || isLocalDevelopmentBuild()) return;
   const cache = readJson<UpdateCache>(updateCachePath());
-  if (cache && now - cache.checkedAt < UPDATE_CHECK_INTERVAL_MS) return;
+  if (!shouldRefreshUpdateCache(cache?.checkedAt, now)) return;
 
   refreshInFlight = true;
   let settled = false;

@@ -24,6 +24,14 @@ Open `http://127.0.0.1:12233`. The Home page streams:
 - recent outcomes and upcoming schedules
 - deterministic metrics written through `record_metric`
 
+Pending approval groups are ordered by their newest request, with newest gates
+first inside each group. Requests without a timestamp follow timestamped work.
+
+When the cached npm `latest` version is newer than the installed version, Home
+also shows a dismissible update banner. Its copy action uses the package manager
+that installed AgentUse. Dismissal is stored in that browser for that version,
+so a later release can appear normally.
+
 Mock and test sessions are excluded by default from all of these list-backed
 surfaces, and they never fire push notifications, so validating an agent does not
 distort the picture of what production is doing. They are still stored in full

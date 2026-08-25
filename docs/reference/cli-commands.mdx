@@ -532,7 +532,8 @@ dashboard built from the same data.)
 ```
 
 `update` is present only when the cached npm registry result contains a newer
-stable AgentUse version. The dashboard uses it for its dismissible update banner.
+AgentUse version from npm's `latest` dist-tag. The dashboard uses it for its
+dismissible update banner.
 
 `default` is `null` in multi-project mode without `--default`; single-project mode returns the sole project id.
 

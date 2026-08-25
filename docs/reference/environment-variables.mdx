@@ -441,7 +441,9 @@ Large tool results are re-sent to the model on every subsequent step, so a singl
   Disable the daily npm registry check and all CLI/Web UI update reminders.
   Update checks are cached locally, run off the command's critical path, and
   are also disabled automatically in CI, local development builds, and `npx`
-  cache executions.
+  cache executions. Interactive CLI reminders appear at most once per version
+  every seven days and are suppressed for non-TTY, `--quiet`, and `--json`
+  output. The dashboard keeps its dismissal per browser and version.
 
   ```bash
   export AGENTUSE_UPDATE_CHECK_DISABLED=true

@@ -4,26 +4,31 @@ import type { InfoPayload } from '../lib/api';
 type UpdateInfo = NonNullable<InfoPayload['update']>;
 const DISMISSED_VERSION_KEY = 'agentuse:update-dismissed-version';
 
+export function isUpdateVersionDismissed(dismissedVersion: string | null, latestVersion: string): boolean {
+  return dismissedVersion === latestVersion;
+}
+
 export function UpdateBanner(props: { update: UpdateInfo; persistDismissal?: boolean }) {
   const { update } = props;
   const persistDismissal = props.persistDismissal !== false;
-  const [dismissed, setDismissed] = useState(() => {
-    if (!persistDismissal) return false;
+  const [dismissedVersion, setDismissedVersion] = useState<string | null>(() => {
+    if (!persistDismissal) return null;
     try {
       return typeof localStorage !== 'undefined'
-        && localStorage.getItem(DISMISSED_VERSION_KEY) === update.latestVersion;
+        ? localStorage.getItem(DISMISSED_VERSION_KEY)
+        : null;
     } catch {
-      return false;
+      return null;
     }
   });
   const [copied, setCopied] = useState(false);
-  if (dismissed) return null;
+  if (isUpdateVersionDismissed(dismissedVersion, update.latestVersion)) return null;
 
   const dismiss = () => {
     if (persistDismissal) {
       try { localStorage.setItem(DISMISSED_VERSION_KEY, update.latestVersion); } catch { /* tab-only dismissal */ }
     }
-    setDismissed(true);
+    setDismissedVersion(update.latestVersion);
   };
   const copy = async () => {
     try {
