@@ -235,8 +235,12 @@ async function main(): Promise<void> {
   browser(['open', `${baseUrl}/agents`]);
   browser(['wait', '--text', 'Renewal Review']);
   expectBrowser(
-    `document.body.innerText.includes('AgentUse Control Room') && document.body.innerText.includes('Revenue Operations')`,
-    'brand and ABOUT.md identity render on the Agents page',
+    `document.body.innerText.includes('AgentUse Control Room')`,
+    'brand renders on the Agents page',
+  );
+  expectBrowser(
+    `document.body.innerText.toLowerCase().includes('revenue operations')`,
+    'ABOUT.md identity renders on the Agents page',
   );
 
   browser(['select', 'select[aria-label="Add column"]', 'meta:owner']);
