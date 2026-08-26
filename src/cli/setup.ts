@@ -15,7 +15,7 @@ interface SetupOptions {
   yes?: boolean;
   port?: string;
   host?: string;
-  noAuth?: boolean;
+  auth?: boolean;
 }
 
 let prompts: typeof ClackPrompts | undefined;
@@ -71,12 +71,12 @@ async function promptProjectName(): Promise<string | null> {
 }
 
 export function webSetupServeArgs(
-  options: Pick<SetupOptions, 'port' | 'host' | 'noAuth'>,
+  options: Pick<SetupOptions, 'port' | 'host' | 'auth'>,
 ): string[] {
   const args = ['--open'];
   if (options.port) args.push('--port', options.port);
   if (options.host) args.push('--host', options.host);
-  if (options.noAuth) args.push('--no-auth');
+  if (options.auth === false) args.push('--no-auth');
   return args;
 }
 

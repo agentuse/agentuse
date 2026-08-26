@@ -5,7 +5,7 @@ import { join } from 'path';
 import { FIRST_PROJECT_DEFAULT_NAME, managedProjectSlug, terminalFirstAgentPrompt, validateManagedProjectName } from '../src/onboarding';
 import { getManagedProjectsRoot } from '../src/utils/global-config';
 import { createManagedProject } from '../src/utils/managed-project';
-import { resolveSetupSurface, webSetupServeArgs } from '../src/cli/setup';
+import { createSetupCommand, resolveSetupSurface, webSetupServeArgs } from '../src/cli/setup';
 
 describe('managed onboarding projects', () => {
   const roots: string[] = [];
@@ -69,9 +69,13 @@ describe('managed onboarding projects', () => {
     expect(webSetupServeArgs({
       host: '0.0.0.0',
       port: '12233',
-      noAuth: true,
+      auth: false,
     })).toEqual(['--open', '--port', '12233', '--host', '0.0.0.0', '--no-auth']);
     expect(webSetupServeArgs({})).toEqual(['--open']);
+
+    const command = createSetupCommand();
+    command.parseOptions(['--web', '--no-auth']);
+    expect(command.opts()).toMatchObject({ web: true, auth: false });
   });
 
   it('gives coding agents a terminal-specific first-agent handoff', () => {
