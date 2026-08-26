@@ -11,6 +11,8 @@ import { useSessionTail } from '../hooks/use-session-tail';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
 import { UpdateBanner } from '../components/update-banner';
+import { OnboardingEmptyState } from '../components/onboarding-empty-state';
+import { FirstProjectEmptyState } from '../components/first-project-empty-state';
 import { Loading } from '../components/loading';
 import { pendingNewestFirst, PendingApprovalRow } from '../components/pending-approval-card';
 import { displayAgentName, formatApprovalTime, formatRelativeTime, displayStatusLabel, humanizeMetric, runTone, type RunTone } from '../lib/format';
@@ -245,7 +247,7 @@ function tallyRunsByAgent(sessions: SessionRow[]): AgentRuns[] {
   const byAgent = new Map<string, AgentRuns>();
   for (const s of sessions) {
     const agentId = s.agent.id || s.agent.name;
-    const key = `${s.project} ${agentId}`;
+    const key = `${s.project}\0${agentId}`;
     let bar = byAgent.get(key);
     if (!bar) {
       bar = {
@@ -714,10 +716,15 @@ export default function Home() {
   };
 
   const sections = useHomeSections();
-  const running = liveHome.sessions.filter(isLiveRow);
+  // The guided demo is product education, not fleet activity. Keep it
+  // discoverable for "continue setup" while excluding it from operational
+  // counts, attention queues, charts, and the activity feed.
+  const onboardingSession = liveHome.sessions.find((session) => session.trigger === 'onboarding');
+  const operationalSessions = liveHome.sessions.filter((session) => session.trigger !== 'onboarding');
+  const running = operationalSessions.filter(isLiveRow);
   // subagentActive rows are live work (counted in `running`), not blocked on a
   // human, so they must not also show up as waiting.
-  const waiting = liveHome.sessions.filter((s) => s.status === 'suspended' && !s.subagentActive);
+  const waiting = operationalSessions.filter((s) => s.status === 'suspended' && !s.subagentActive);
   // Recent failures surface in "Needs your attention" alongside pending gates.
   // Not every failed-tone run is waiting on a human: runs the reviewer stopped
   // themselves (USER_STOPPED) or already reviewed and discarded (dismissedAt,
@@ -735,7 +742,7 @@ export default function Home() {
   }, [attentionState.dismissAttentionSession, attentionState.restoreAttentionSession]);
   // Not truncated here: the section itself folds the tail behind "show all", so
   // the header count is the real number of runs waiting on a review.
-  const failedRecent = liveHome.sessions
+  const failedRecent = operationalSessions
     .filter((s) => runTone(s.status) === 'failed' && s.errorCode !== 'USER_STOPPED' && s.dismissedAt === undefined
       && !isAttentionSessionDismissed(attentionState.dismissedAttentionSessions, s))
     .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
@@ -743,7 +750,7 @@ export default function Home() {
   // `suspended`, so neither the failed filter above nor the pending-gate list
   // catches them, yet nothing will ever move them: the only way out is a human
   // stopping the run. Dismissing one stops it, which is exactly the fix.
-  const strandedRecent = liveHome.sessions
+  const strandedRecent = operationalSessions
     .filter((s) => liveHome.suspendedGates.orphaned.has(sessionRowKey(s)) && s.dismissedAt === undefined
       && !isAttentionSessionDismissed(attentionState.dismissedAttentionSessions, s))
     .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
@@ -769,6 +776,10 @@ export default function Home() {
   }, [countdownFired, schedules.refetch]);
 
   const projects = data?.projects ?? [];
+  const noProjects = Boolean(data) && projects.length === 0;
+  const noAgents = Boolean(data) && projects.length > 0 && projects.every((project) => project.agentCount === 0);
+  const onboardingProject = data?.default ?? projects[0]?.id;
+  const onboardingProjectInfo = projects.find((project) => project.id === onboardingProject);
   const runningByProject = new Map<string, number>();
   for (const row of running) runningByProject.set(row.project, (runningByProject.get(row.project) ?? 0) + 1);
 
@@ -778,10 +789,34 @@ export default function Home() {
   // Header sentence + stat line. "Waiting on you" counts what the section of
   // the same name lists: pending gates, recent failures, stranded runs.
   const waitingOnYou = liveHome.pendingRows.length + failedRecent.length + strandedRecent.length;
-  const runs24h = liveHome.sessions.length;
-  const failed24h = liveHome.sessions.filter((s) => runTone(s.status) === 'failed').length;
-  const ended24h = liveHome.sessions.filter((s) => { const t = runTone(s.status); return t === 'ok' || t === 'failed'; }).length;
+  const runs24h = operationalSessions.length;
+  const failed24h = operationalSessions.filter((s) => runTone(s.status) === 'failed').length;
+  const ended24h = operationalSessions.filter((s) => { const t = runTone(s.status); return t === 'ok' || t === 'failed'; }).length;
   const successPct = ended24h > 0 ? Math.round(((ended24h - failed24h) / ended24h) * 100) : null;
+
+  if (noProjects || noAgents) {
+    return (
+      <div class="page-home" data-ambient="idle">
+        <div class="home-ambient" aria-hidden="true"></div>
+        <Topbar currentPage="home" />
+        <main class="home-boot home-onboarding">
+          {(previewRequested && data)
+            ? <UpdateBanner update={previewUpdate(data.version)} persistDismissal={false} />
+            : data?.update && <UpdateBanner update={data.update} />}
+          {noProjects
+            ? <FirstProjectEmptyState />
+            : <OnboardingEmptyState
+                {...(onboardingProject ? { projectId: onboardingProject } : {})}
+                {...(onboardingProjectInfo?.about?.name ? { projectName: onboardingProjectInfo.about.name } : {})}
+                {...(onboardingProjectInfo?.path ? { projectPath: onboardingProjectInfo.path } : {})}
+                {...(onboardingSession ? { session: onboardingSession } : {})}
+              />}
+          {error && <div class="errors" role="alert">Failed to load: {error.message}</div>}
+          {liveHome.error && <div class="errors" role="alert">Failed to load sessions: {liveHome.error.message}</div>}
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div class="page-home" data-ambient={ambient}>
@@ -900,7 +935,7 @@ export default function Home() {
         )}
 
         {sections.isVisible('latest') && (
-          <RunsByAgent sessions={liveHome.sessions} loading={liveHome.loading} />
+          <RunsByAgent sessions={operationalSessions} loading={liveHome.loading} />
         )}
 
         {(sections.isVisible('coming-up') || sections.isVisible('feed')) && (

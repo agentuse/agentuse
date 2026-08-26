@@ -15,23 +15,51 @@ import type {
 // Demo responses for different model variants
 // Exported so tests can assert on the live copy instead of hardcoding phrases.
 export const DEMO_RESPONSES: Record<string, string> = {
+  onboarding: `# Project pulse
+
+**Status:** On track
+
+## Progress
+
+- The new onboarding path is ready for review.
+- The first-run experience now has one clear next action.
+- Dashboard and session views passed their latest checks.
+
+## Needs attention
+
+- Confirm the final empty-state copy with one new user.
+- Add an activation event for the first real agent run.
+
+## Recommended next move
+
+Ship the onboarding update, then watch how many new users create and run an agent in their first session.
+
+> Simulated run — this report uses sample project data.
+
+---
+
+## Create your own agent
+
+1. Select **Create my first agent…** below.
+2. Describe one job you want to automate. Copy the generated prompt and paste it into your coding agent.
+3. Keep this dashboard open while the coding agent creates and validates the \`.agentuse\` file. Your new agent appears automatically.
+4. Open the new agent, complete any provider setup it gives you, and select **Run**.`,
+
   hello: `# Create your first AgentUse agent
 
-This guide uses a demo model, so you can complete these setup steps without an API key.
+You just completed an AgentUse run with the demo model — no API key required.
 
-## 1. Give your coding agent AgentUse guidance
+## Create the real agent with your coding agent
 
-Run this in your project:
+If you are viewing this in the dashboard, choose **Create my first agent…** below. It prepares the handoff for you.
+
+From a terminal, install the AgentUse skill first:
 
 \`\`\`bash
 npx skills add agentuse/agentuse
 \`\`\`
 
-This installs the AgentUse skill for coding agents such as Codex, Claude Code, Cursor, and other Agent Skills-compatible assistants.
-
-## 2. Ask it to create your first agent
-
-Copy and paste this prompt into your coding agent:
+Then paste this into Codex, Claude Code, Cursor, or another Agent Skills-compatible coding agent:
 
 \`\`\`text
 Help me create my first AgentUse agent.
@@ -40,10 +68,10 @@ Use the installed AgentUse skill and load the current core and creator guidance 
 
 Once the requirements are clear, create one focused .agentuse file in this repository. Validate it with agentuse doctor and agentuse test, and fix any issues.
 
-Then give me step-by-step instructions for configuring the agent's chosen model provider, running the agent directly, and setting it up with agentuse serve. Include the exact commands for my agent file and explain any credentials or environment variables I need before running them.
+Do not start a real run automatically. If agentuse serve is already running, tell me when the new agent should appear in its dashboard. Otherwise, give me the exact command to start it. Then guide me through configuring the chosen model provider and launching the first real run from the Web UI.
 \`\`\`
 
-Your coding agent will create the file, validate it, test it safely, and give you the command for the first real run.`,
+Keep this dashboard open. AgentUse detects the new file automatically.`,
 
   welcome: `Welcome! This is a demo response from AgentUse.
 
@@ -72,6 +100,9 @@ export function createDemoModel(modelId: string): LanguageModelV2 {
 
   const responseKey = modelId in DEMO_RESPONSES ? modelId : 'default';
   const responseText = DEMO_RESPONSES[responseKey];
+  // The first-run guide should feel immediate in the dashboard. It is longer
+  // than the tiny test responses, so use a brisker type-on cadence.
+  const streamDelayMs = modelId === 'hello' || modelId === 'onboarding' ? 5 : 20;
 
   return {
     specificationVersion: 'v2',
@@ -129,7 +160,7 @@ export function createDemoModel(modelId: string): LanguageModelV2 {
             });
 
             // Small delay between words for streaming effect
-            await new Promise((resolve) => setTimeout(resolve, 20));
+            await new Promise((resolve) => setTimeout(resolve, streamDelayMs));
           }
 
           // Emit text-end

@@ -1178,6 +1178,14 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 .debug-prompt-button svg, .session-action-button svg { color: var(--cyan); flex: none; }
 .debug-prompt-button:hover, .session-action-button:hover { border-color: var(--cyan-border); color: var(--fg); background: var(--cyan-soft); }
 .debug-prompt-button:focus-visible, .session-action-button:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 1px; }
+.page-approval-detail .debug-prompt-button.onboarding-handoff {
+  border-color: transparent;
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+  font-weight: 620;
+}
+.page-approval-detail .debug-prompt-button.onboarding-handoff svg { color: currentColor; }
+.page-approval-detail .debug-prompt-button.onboarding-handoff:hover { border-color: transparent; background: var(--primary-bg-hover); color: var(--primary-fg); }
 .stop-session-button svg { color: var(--red); }
 .stop-session-button:hover { border-color: var(--red-border); color: var(--fg); background: var(--red-soft); }
 .stop-session-button:focus-visible { outline-color: var(--red-border); }
@@ -3789,6 +3797,151 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   .page-stores h1 { font-size: 28px; }
 }
 
+/* --- first-run onboarding ---
+   A focused empty state built from the dashboard's existing surface, type,
+   spacing, and primary-action tokens. It replaces operational chrome only
+   while the selected project has no agents. */
+.onboarding-empty {
+  display: grid;
+  grid-template-columns: minmax(0, 1.12fr) minmax(280px, 0.88fr);
+  gap: 48px;
+  align-items: center;
+  min-height: 430px;
+  padding: 56px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--surface-shadow);
+}
+.page-home .home-onboarding { padding-top: 56px; }
+.onboarding-copy { min-width: 0; }
+.onboarding-empty h1,
+.onboarding-empty h2 {
+  margin: 0;
+  max-width: 12ch;
+  font-family: var(--sans);
+  font-size: clamp(34px, 5vw, 52px);
+  line-height: 1.04;
+  letter-spacing: -0.035em;
+  font-weight: 520;
+}
+.onboarding-empty .onboarding-lede {
+  max-width: 46ch;
+  margin: 18px 0 0;
+  color: var(--muted-3);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.55;
+}
+.onboarding-project {
+  display: grid; gap: 4px; max-width: 560px; margin-top: 22px;
+  padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
+}
+.onboarding-project > span { color: var(--muted); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; }
+.onboarding-project strong { color: var(--fg); font-family: var(--sans); font-size: 14px; font-weight: 560; }
+.onboarding-project code { overflow-wrap: anywhere; color: var(--fg); font-family: var(--mono); font-size: 12px; line-height: 1.45; }
+.onboarding-project small { color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+.onboarding-project small code { color: inherit; font-size: inherit; }
+.onboarding-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+  margin-top: 28px;
+}
+.onboarding-primary {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 0 17px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+  font: 600 13.5px/1 var(--sans);
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 120ms ease, transform 120ms ease, opacity 120ms ease;
+}
+.page-home a.onboarding-primary,
+.page-agents a.onboarding-primary { color: var(--primary-fg); border-bottom: 0; }
+.onboarding-primary:hover:not(:disabled) { background: var(--primary-bg-hover); transform: translateY(-1px); }
+.onboarding-primary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+.onboarding-primary:disabled { cursor: default; opacity: 0.7; }
+.onboarding-primary .btn-spinner { border-color: color-mix(in srgb, var(--primary-fg) 30%, transparent); border-top-color: var(--primary-fg); }
+.onboarding-assurance {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.onboarding-error {
+  margin-top: 14px;
+  color: var(--red);
+  font-size: 12.5px;
+}
+.onboarding-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+}
+.onboarding-steps li {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 14px;
+  padding: 19px 0;
+  border-bottom: 1px solid var(--line);
+}
+.onboarding-step-number {
+  padding-top: 2px;
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+}
+.onboarding-steps strong,
+.onboarding-steps small { display: block; }
+.onboarding-steps strong { color: var(--fg); font-size: 13.5px; font-weight: 560; }
+.onboarding-steps small { margin-top: 3px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.onboarding-steps li.is-current .onboarding-step-number { color: var(--fg); }
+.onboarding-steps li.is-current strong { color: var(--cyan); }
+.first-project-form { max-width: 560px; margin-top: 26px; }
+.first-project-form > label {
+  display: block; margin-bottom: 8px; color: var(--muted-2); font: 600 11px/1 var(--sans); letter-spacing: 0.03em;
+}
+.first-project-input-row { display: flex; gap: 10px; }
+.first-project-input-row input {
+  min-width: 0; flex: 1 1 auto; width: 100%; height: 42px; min-height: 42px; padding: 0 13px; border: 1px solid var(--line-strong);
+  border-radius: 9px; background: var(--panel); color: var(--fg); font: 14px/1 var(--sans);
+}
+.first-project-input-row input:focus { outline: 2px solid var(--cyan); outline-offset: 1px; border-color: transparent; }
+.first-project-form > small { display: block; margin-top: 10px; color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+.first-project-form > small code { color: var(--muted-2); font-family: var(--mono); font-size: 11px; }
+.page-agents .onboarding-empty.is-compact { min-height: 360px; padding: 44px 48px; }
+.page-agents .onboarding-empty.is-compact h2 { font-size: clamp(32px, 4vw, 44px); }
+@media (max-width: 760px) {
+  .onboarding-empty,
+  .page-agents .onboarding-empty.is-compact {
+    grid-template-columns: 1fr;
+    gap: 36px;
+    min-height: 0;
+    padding: 32px 24px;
+  }
+  .page-home .home-onboarding { padding-top: 32px; }
+  .onboarding-empty h1,
+  .onboarding-empty h2,
+  .page-agents .onboarding-empty.is-compact h2 { font-size: 34px; }
+  .first-project-input-row { align-items: stretch; flex-direction: column; }
+  .first-project-input-row input { flex: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-primary { transition: none; }
+  .onboarding-primary:hover:not(:disabled) { transform: none; }
+}
+
 /* --- home --- */
 /* Agent-recorded metric rollups (Results section) */
 .page-home .metric-window {
@@ -5118,6 +5271,14 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 /* Head + close chrome comes from the shared dialog rules (push-bell section). */
 .cca-body { padding: 18px; display: flex; flex-direction: column; gap: 14px; overflow: auto; max-height: calc(100vh - 64px - 50px); }
 
+.cca-context {
+  display: grid; gap: 4px; padding: 10px 12px;
+  border: 1px solid var(--cyan-border); border-radius: 9px; background: var(--cyan-soft);
+}
+.cca-context span { color: var(--muted); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; }
+.cca-context code { overflow-wrap: anywhere; color: var(--fg); font-family: var(--mono); font-size: 12px; line-height: 1.45; }
+.cca-context small { color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+
 /* terminal preview (kept dark in both themes, like a real terminal) */
 .cca-terminal {
   border-radius: 10px; overflow: hidden; border: 1px solid rgba(255,255,255,0.10);
@@ -5149,6 +5310,10 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .cca-copy:hover { opacity: 0.85; }
 .cca-copy svg { width: 14px; height: 14px; }
+.cca-copy-hint { margin: -8px 0 0; color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+.cca-preview { border-top: 1px solid var(--line); padding-top: 12px; }
+.cca-preview summary { color: var(--muted); font-size: 11.5px; cursor: pointer; }
+.cca-preview[open] summary { margin-bottom: 10px; }
 .cca-detail { display: flex; flex-direction: column; gap: 8px; }
 .cca-detail label { font-family: var(--sans); font-size: 13px; color: var(--fg); }
 .cca-detail label .opt { color: var(--muted); }

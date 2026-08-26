@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, statSync } from 'fs';
+import { readFileSync, existsSync, statSync, mkdirSync, renameSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
 import * as dotenv from 'dotenv';
@@ -181,6 +181,46 @@ export function getGlobalConfigPath(): string {
   const override = process.env.AGENTUSE_CONFIG;
   if (override && override.length > 0) return path.resolve(override);
   return path.join(homedir(), '.agentuse', 'config.json');
+}
+
+/** Managed projects live beside config.json, so AGENTUSE_CONFIG also provides
+ * a complete isolation seam for tests and portable installations. */
+export function getManagedProjectsRoot(configPath = getGlobalConfigPath()): string {
+  return path.join(path.dirname(configPath), 'projects');
+}
+
+/** Add a project without rewriting unrelated or forward-compatible config
+ * fields. The rename keeps readers from observing a partially-written file. */
+export function persistServeProject(
+  project: GlobalConfigProject,
+  configPath = getGlobalConfigPath(),
+): void {
+  let root: Record<string, unknown> = {};
+  if (existsSync(configPath)) {
+    const raw = JSON.parse(readFileSync(configPath, 'utf8')) as unknown;
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      fail(configPath, 'root must be a JSON object');
+    }
+    root = raw as Record<string, unknown>;
+  }
+  const existingServe = root.serve;
+  if (existingServe !== undefined && (existingServe === null || typeof existingServe !== 'object' || Array.isArray(existingServe))) {
+    fail(configPath, '`serve` must be an object');
+  }
+  const serve = { ...((existingServe as Record<string, unknown> | undefined) ?? {}) };
+  const existingProjects = serve.projects;
+  if (existingProjects !== undefined && !Array.isArray(existingProjects)) {
+    fail(configPath, '`serve.projects` must be an array');
+  }
+  const projects = [...((existingProjects as unknown[] | undefined) ?? [])];
+  projects.push(project);
+  serve.projects = projects;
+  root.serve = serve;
+
+  mkdirSync(path.dirname(configPath), { recursive: true });
+  const temporaryPath = `${configPath}.${process.pid}.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify(root, null, 2)}\n`, { mode: 0o600 });
+  renameSync(temporaryPath, configPath);
 }
 
 export function getGlobalEnvPath(): string {

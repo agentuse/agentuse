@@ -33,7 +33,8 @@ import { getCachedAvailableUpdate, refreshUpdateCacheInBackground } from "../upd
 import { registerServer, unregisterServer, updateServer, listServers, formatUptime, getDefaultLogFilePath, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { acquireSchedulerLock, releaseSchedulerLock } from "../utils/scheduler-lock";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
-import { loadGlobalConfig, applyGlobalConfigEnv, expandHome, getGlobalConfigPath, getGlobalEnvPath, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
+import { loadGlobalConfig, applyGlobalConfigEnv, expandHome, getGlobalConfigPath, getGlobalEnvPath, getManagedProjectsRoot, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
+import { createManagedProject, ManagedProjectError } from "../utils/managed-project";
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
 import { getSlackWebClient } from "../slack/lifecycle";
 import { saveManualLearning, LearningStore, effectiveCap, partitionLearnings, consolidateLearnings, undoConsolidation, readTidyRecord, writeTidyRecord, clearTidyRecord, strandedLearningsFile, type LearningConfig, type ConsolidationResult, type TidyProgress } from "../learning";
@@ -74,6 +75,8 @@ import {
 // older session types above are) would drift from the page that consumes it.
 import type { SessionContextPayload } from "./serve/types";
 import { startOrphanReconcileLoop } from "./serve/orphan-reconcile";
+import { ONBOARDING_AGENT_ID, ONBOARDING_AGENT_SOURCE } from "../onboarding";
+import { openBrowser } from "../utils/open-browser";
 
 const APPROVAL_LIST_SSE_INTERVAL_MS = 10_000;
 const SESSION_LIST_SSE_INTERVAL_MS = 10_000;
@@ -247,6 +250,9 @@ interface RunResponse {
 
 interface WorkerExecuteOptions {
   agentPath?: string;
+  /** In-memory agent definition used by the zero-file onboarding run. */
+  agentContent?: string;
+  agentName?: string;
   projectRoot: string;
   prompt?: string | undefined;
   model?: string | undefined;
@@ -540,6 +546,8 @@ interface ApprovalPageInfo {
   sessionStatus: string;
   /** Resolved project id, stamped by the serve daemon (see findApprovalInfo). */
   project?: string;
+  /** Absolute directory watched for agent files, stamped by the serve daemon. */
+  projectPath?: string;
   createdAt?: number;
   model?: string;
   agent: {
@@ -877,8 +885,10 @@ class AgentWorker {
    */
   execute(options: WorkerExecuteOptions): Promise<WorkerExecuteResult | WorkerExecuteError> {
     return this.request({
-      type: options.sessionId && !options.agentPath ? "resume" : "execute",
+      type: options.sessionId && !options.agentPath && !options.agentContent ? "resume" : "execute",
       agentPath: options.agentPath,
+      agentContent: options.agentContent,
+      agentName: options.agentName,
       projectRoot: options.projectRoot,
       prompt: options.prompt,
       model: options.model,
@@ -2697,8 +2707,9 @@ export function createServeCommand(): Command {
     .option("-d, --debug", "Enable debug mode")
     .option("--no-auth", "Disable API key requirement for exposed hosts (dangerous)")
     .option("--no-log-file", "Disable the per-server log file (stdout/stderr tee)")
+    .option("--open", "Open the Web UI in the default browser after startup")
     .option("--hide-agent-source", "Hide raw agent source in the dashboard and /api/agents/detail; capability summaries stay visible (or config.serve.hideAgentSource)")
-    .action(async (options: { port?: string; host?: string; publicUrl?: string; directory: string[]; default?: string; debug?: boolean; auth: boolean; logFile: boolean; hideAgentSource?: boolean }) => {
+    .action(async (options: { port?: string; host?: string; publicUrl?: string; directory: string[]; default?: string; debug?: boolean; auth: boolean; logFile: boolean; open?: boolean; hideAgentSource?: boolean }) => {
       // Load global config once; hard-fail on malformed config so users don't silently get defaults.
       let globalConfig: GlobalConfig | null = null;
       try {
@@ -2767,7 +2778,9 @@ export function createServeCommand(): Command {
         process.env.AGENTUSE_DEBUG = "true";
       }
 
-      // Resolve projects: CLI -C > config.serve.projects > cwd fallback.
+      // Resolve projects: explicit CLI scopes, then saved projects. A bare
+      // `serve` deliberately does not turn the launch directory into a project;
+      // the Web UI will offer a managed first project instead.
       const dirFlags = options.directory ?? [];
       const projectSeeds: Array<Omit<Project, 'agentFiles'>> = [];
       if (dirFlags.length > 0) {
@@ -2788,15 +2801,6 @@ export function createServeCommand(): Command {
             process.exit(1);
           }
         }
-      } else {
-        const ctx = resolveProjectContext(process.cwd());
-        const envLocal = resolve(ctx.projectRoot, '.env.local');
-        projectSeeds.push({
-          id: basename(ctx.projectRoot),
-          root: ctx.projectRoot,
-          scopeRoot: ctx.projectRoot,
-          envFile: existsSync(envLocal) ? envLocal : ctx.envFile,
-        });
       }
 
       loadedServeEnvFiles.push(...loadServeProjectEnvironment(projectSeeds));
@@ -2825,10 +2829,10 @@ export function createServeCommand(): Command {
         idSeen.set(p.id, p.root);
       }
 
-      const multiProject = projectSeeds.length > 1;
+      let multiProject = projectSeeds.length > 1;
 
       // CLI --default > config.serve.default.
-      const effectiveDefault = options.default ?? serveCfg?.default;
+      let effectiveDefault = options.default ?? serveCfg?.default;
 
       // Validate effective default
       if (effectiveDefault !== undefined) {
@@ -2938,7 +2942,7 @@ export function createServeCommand(): Command {
       }, {
         onError: (error) => logger.debug(`Orphan reconciliation failed: ${(error as Error).message}`),
       });
-      for (const p of projectSeeds) {
+      const spawnProjectWorker = async (p: Omit<Project, 'agentFiles'>): Promise<AgentWorker> => {
         const w = new AgentWorker({
           AGENTUSE_RESUME_PUBLIC_URL: effectivePublicUrl,
           AGENTUSE_PROJECT_ID: p.id,
@@ -2955,11 +2959,19 @@ export function createServeCommand(): Command {
         try {
           await w.spawn();
         } catch (err) {
-          console.error(chalk.red(`Failed to spawn worker for ${p.id}: ${(err as Error).message}`));
+          throw new Error(`Failed to spawn worker for ${p.id}: ${(err as Error).message}`);
+        }
+        workers.set(p.id, w);
+        return w;
+      };
+      for (const p of projectSeeds) {
+        try {
+          await spawnProjectWorker(p);
+        } catch (err) {
+          console.error(chalk.red((err as Error).message));
           for (const live of workers.values()) live.shutdown();
           process.exit(1);
         }
-        workers.set(p.id, w);
       }
       orphanReconcileLoop.runNow();
       logger.debug(`Spawned ${workers.size} agent worker(s)`);
@@ -3223,7 +3235,8 @@ export function createServeCommand(): Command {
 
       // One file watcher per project
       const fileWatchers: FileWatcher[] = [];
-      for (const project of projects) {
+      let projectCreationInFlight = false;
+      const watchProject = (project: Project): FileWatcher => {
         const watcher = new FileWatcher({
           projectRoot: project.root,
           ...(project.scopeRoot !== project.root && { agentRoot: project.scopeRoot }),
@@ -3314,7 +3327,39 @@ export function createServeCommand(): Command {
 
         watcher.start();
         fileWatchers.push(watcher);
+        return watcher;
+      };
+      for (const project of projects) {
+        watchProject(project);
       }
+
+      /** Attach the first managed project without restarting the daemon. The
+       * directory and config entry are created by the request handler first. */
+      const attachManagedProject = async (id: string, projectRoot: string): Promise<Project> => {
+        const envLocal = resolve(projectRoot, '.env.local');
+        const seed: Omit<Project, 'agentFiles'> = {
+          id,
+          root: projectRoot,
+          scopeRoot: projectRoot,
+          envFile: existsSync(envLocal) ? envLocal : resolve(projectRoot, '.env'),
+        };
+        await initStorage(projectRoot);
+        await spawnProjectWorker(seed);
+        const project: Project = { ...seed, agentFiles: [] };
+        projectSeeds.push(seed);
+        projects.push(project);
+        projectsById.set(id, project);
+        agentCounts.set(id, 0);
+        pathSeen.set(projectRoot, id);
+        idSeen.set(id, projectRoot);
+        multiProject = projects.length > 1;
+        if (projects.length === 1) effectiveDefault = undefined;
+        watchProject(project);
+        updateRegistryCounts();
+        orphanReconcileLoop.runNow();
+        logger.info(`Project ${id}: ${projectRoot}`);
+        return project;
+      };
 
       const resolveRequestProject = (body: RunRequest): { project: Project } | { error: { status: number; code: string; message: string; extra?: Record<string, unknown> } } => {
         if (body.project !== undefined) {
@@ -3331,8 +3376,18 @@ export function createServeCommand(): Command {
           return { project: proj };
         }
 
+        if (projects.length === 0) {
+          return {
+            error: {
+              status: 409,
+              code: "PROJECT_REQUIRED",
+              message: "Create a project before running an agent",
+            },
+          };
+        }
+
         if (!multiProject) {
-          return { project: projects[0] };
+          return { project: projects[0]! };
         }
 
         if (effectiveDefault) {
@@ -3402,6 +3457,7 @@ export function createServeCommand(): Command {
             // daemons) can still address project-scoped endpoints like
             // POST /api/run.
             info.approval.project = project.id;
+            info.approval.projectPath = project.scopeRoot;
             // Same idea for the agent's scope-relative path: it is what the
             // agent detail hub is addressed by, and only the daemon knows the
             // served scope the session's absolute file path sits under.
@@ -3464,6 +3520,7 @@ export function createServeCommand(): Command {
             // daemons) can still address project-scoped endpoints like
             // POST /api/run.
             info.approval.project = project.id;
+            info.approval.projectPath = project.scopeRoot;
             // Same idea for the agent's scope-relative path: it is what the
             // agent detail hub is addressed by, and only the daemon knows the
             // served scope the session's absolute file path sits under.
@@ -4288,7 +4345,7 @@ export function createServeCommand(): Command {
         const triageFilter = parseSessionTriageFilter(requestUrl.searchParams.get('triage') ?? undefined);
         const triggerFilterRaw = requestUrl.searchParams.get('trigger') ?? undefined;
         const triggerFilter: SessionTrigger | undefined =
-          triggerFilterRaw === 'scheduled' || triggerFilterRaw === 'manual' || triggerFilterRaw === 'slack' || triggerFilterRaw === 'api'
+          triggerFilterRaw === 'scheduled' || triggerFilterRaw === 'manual' || triggerFilterRaw === 'slack' || triggerFilterRaw === 'api' || triggerFilterRaw === 'onboarding'
             ? triggerFilterRaw
             : undefined;
         const approvalFilter = parseApprovalSessionFilter(requestUrl.searchParams.get('approval') ?? undefined);
@@ -4839,7 +4896,7 @@ export function createServeCommand(): Command {
         // GET /api returns server-info JSON; GET / serves the HTML dashboard.
         // Both share the same project rollup so the two surfaces never drift.
         if (req.method === "GET" && routePath === "/") {
-          const defaultProject = effectiveDefault ?? (multiProject ? null : projects[0].id);
+          const defaultProject = effectiveDefault ?? (projects.length === 1 ? projects[0]!.id : null);
           // ABOUT.md at the project root names the project for the UI (#156):
           // display identity only, read per request (mtime-cached) so edits
           // show up without a restart.
@@ -6760,6 +6817,105 @@ export function createServeCommand(): Command {
           return;
         }
 
+        if (req.method === "POST" && routePath === "/projects") {
+          if (projects.length > 0 || projectCreationInFlight) {
+            sendError(res, 409, "PROJECT_ALREADY_CONFIGURED", "A project is already configured for this server");
+            return;
+          }
+          projectCreationInFlight = true;
+          try {
+            const body = await parseJSONBody(req);
+            const managed = await createManagedProject(body.name);
+            const project = await attachManagedProject(managed.id, managed.root);
+
+            sendJSON(res, 201, {
+              success: true,
+              project: {
+                id: project.id,
+                path: project.root,
+                agentCount: 0,
+                scheduleCount: 0,
+                about: { name: managed.name, description: 'Your AgentUse agents' },
+              },
+            });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            if (err instanceof ManagedProjectError && err.code === 'PROJECT_EXISTS') {
+              sendError(res, 409, err.code, err.message);
+            } else {
+              sendError(res, err instanceof ManagedProjectError ? 500 : 400, "INVALID_PROJECT", (err as Error).message);
+            }
+          } finally {
+            projectCreationInFlight = false;
+          }
+          return;
+        }
+
+        if (req.method === "POST" && routePath === "/onboarding/run") {
+          try {
+            const rawBody = await parseJSONBody(req);
+            const projectId = typeof rawBody.project === 'string' ? rawBody.project : undefined;
+            const resolved = resolveRequestProject({
+              agent: ONBOARDING_AGENT_ID,
+              ...(projectId && { project: projectId }),
+            });
+            if ('error' in resolved) {
+              const { status, code, message, extra } = resolved.error;
+              if (extra) {
+                res.writeHead(status, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ success: false, error: { code, message }, ...extra }));
+              } else {
+                sendError(res, status, code, message);
+              }
+              return;
+            }
+
+            const project = resolved.project;
+            if ((agentCounts.get(project.id) ?? 0) > 0) {
+              sendError(res, 409, "ONBOARDING_NOT_AVAILABLE", "The sample run is available only while this project has no agents");
+              return;
+            }
+
+            const onboardingWorker = workers.get(project.id);
+            if (!onboardingWorker) {
+              sendError(res, 500, "WORKER_UNAVAILABLE", `No worker for project ${project.id}`);
+              return;
+            }
+
+            const preassignedId = ulid();
+            void onboardingWorker.execute({
+              agentContent: ONBOARDING_AGENT_SOURCE,
+              agentName: ONBOARDING_AGENT_ID,
+              projectRoot: project.root,
+              timeout: 60,
+              maxSteps: 1,
+              debug: options.debug,
+              newSessionId: preassignedId,
+              trigger: 'onboarding',
+            }).then((result) => {
+              if (!result.success) {
+                logger.warn(`Onboarding run ${preassignedId} failed: ${result.error.message}`);
+              }
+            }).catch((err) => {
+              logger.warn(`Onboarding run ${preassignedId} errored: ${(err as Error).message}`);
+            }).finally(wakeListHubs);
+
+            wakeListHubs();
+            const sessionToken = apiKey ? sessionViewToken(preassignedId, apiKey) : undefined;
+            res.writeHead(202, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({
+              success: true,
+              sessionId: preassignedId,
+              status: "running",
+              ...(sessionToken && { token: sessionToken }),
+            }));
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
         if (req.method !== "POST" || routePath !== "/run") {
           sendError(res, 404, "NOT_FOUND", "Endpoint not found. Use POST /api/run or GET /api");
           return;
@@ -7243,7 +7399,7 @@ export function createServeCommand(): Command {
           port,
           host: effectiveHost,
           publicUrl: effectivePublicUrl,
-          projectRoot: projects[0].root,
+          projectRoot: projects[0]?.root ?? getManagedProjectsRoot(),
           startTime: serverStartTime,
           agentCount: totalAgents,
           scheduleCount: schedules.length,
@@ -7257,11 +7413,14 @@ export function createServeCommand(): Command {
         // Server info
         console.log(`  ${chalk.dim("Server")}    ${chalk.cyan(serverUrl)}`);
         console.log(`  ${chalk.dim("Public")}    ${chalk.cyan(effectivePublicUrl)}`);
-        if (!multiProject) {
+        if (projects.length === 0) {
+          console.log(`  ${chalk.dim("Projects")}  ${chalk.dim("None yet — create one in the Web UI")}`);
+          console.log(`  ${chalk.dim("Storage")}   ${chalk.dim(join(getManagedProjectsRoot(), '<project>'))}`);
+        } else if (!multiProject) {
           console.log(`  ${chalk.dim("AgentUse data")}`);
           console.log(`    ${chalk.dim("Global")}  ${chalk.dim("~/.agentuse")}`);
-          console.log(`    ${chalk.dim("Project")} ${chalk.dim(join(projects[0].root, '.agentuse'))}`);
-          console.log(`  ${chalk.dim("Scope")}     ${projects[0].scopeRoot}`);
+          console.log(`    ${chalk.dim("Project")} ${chalk.dim(join(projects[0]!.root, '.agentuse'))}`);
+          console.log(`  ${chalk.dim("Scope")}     ${projects[0]!.scopeRoot}`);
         } else {
           console.log(`  ${chalk.dim("Projects")}  ${projects.length}`);
           for (const p of projects) {
@@ -7288,17 +7447,21 @@ export function createServeCommand(): Command {
         console.log(`\n  ${chalk.dim("Webhooks")}`);
         const authHeader = apiKey ? ` -H "Authorization: Bearer $AGENTUSE_API_KEY"` : "";
         const firstProject = projects[0];
-        const firstAgent = firstProject.agentFiles[0] || "path/to/agent.agentuse";
-        if (!multiProject) {
-          console.log(`    curl -X POST ${serverUrl}/run${authHeader} -H "Content-Type: application/json" -d '{"agent": "${firstAgent}"}'`);
+        if (firstProject) {
+          const firstAgent = firstProject.agentFiles[0] || "path/to/agent.agentuse";
+          if (!multiProject) {
+            console.log(`    curl -X POST ${serverUrl}/run${authHeader} -H "Content-Type: application/json" -d '{"agent": "${firstAgent}"}'`);
+          } else {
+            console.log(`    curl -X POST ${serverUrl}/run${authHeader} -H "Content-Type: application/json" -d '{"project": "${firstProject.id}", "agent": "${firstAgent}"}'`);
+            console.log(`    ${chalk.dim(`curl ${serverUrl}/ for server info`)}`);
+          }
+          console.log(`    ${chalk.dim(`curl -N ... -H "Accept: application/x-ndjson" -d '{"agent": "..."}' (streaming)`)}`);
         } else {
-          console.log(`    curl -X POST ${serverUrl}/run${authHeader} -H "Content-Type: application/json" -d '{"project": "${firstProject.id}", "agent": "${firstAgent}"}'`);
-          console.log(`    ${chalk.dim(`curl ${serverUrl}/ for server info`)}`);
+          console.log(`    ${chalk.dim("Create a project in the Web UI to enable run webhooks.")}`);
         }
-        console.log(`    ${chalk.dim(`curl -N ... -H "Accept: application/x-ndjson" -d '{"agent": "..."}' (streaming)`)}`);
 
         // Available agents for webhooks (only in single-project mode to avoid noise)
-        if (!multiProject && firstProject.agentFiles.length > 0) {
+        if (!multiProject && firstProject && firstProject.agentFiles.length > 0) {
           console.log(`\n    ${chalk.dim(`Agents (${firstProject.agentFiles.length})`)}`);
           for (const agent of firstProject.agentFiles) {
             console.log(`      ${agent}`);
@@ -7311,6 +7474,15 @@ export function createServeCommand(): Command {
         }
 
         console.log();
+
+        if (options.open) {
+          void openBrowser(serverUrl).then((opened) => {
+            if (!opened) {
+              console.log(chalk.dim(`  Browser could not be opened here. Open ${serverUrl} from a machine that can reach this server.`));
+              console.log();
+            }
+          });
+        }
 
         // Capture server start telemetry
         telemetry.captureServerStart({

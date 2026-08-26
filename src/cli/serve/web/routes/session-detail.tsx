@@ -30,6 +30,7 @@ import {
 } from '../lib/format';
 import { brandName, pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
+import { ONBOARDING_AGENT_NAME, ONBOARDING_MODEL } from '../../../../onboarding';
 
 type ApprovalHeader = Omit<ApprovalPageInfo, 'logs'>;
 
@@ -1494,9 +1495,13 @@ export default function SessionDetail() {
               existed, and a warning behind a button nobody presses is not a
               warning. The rules themselves fold away inside the panel instead. */}
           <DebugPromptButton
+            mode={!approval.agent.filePath && approval.agent.name === ONBOARDING_AGENT_NAME && approval.model === ONBOARDING_MODEL
+              ? 'onboarding'
+              : 'debug'}
             context={{
               sessionId: approval.sessionId,
               projectId,
+              projectPath: approval.projectPath,
               agentName: agentLabel,
               agentFilePath: approval.agent.filePath,
               model: approval.model,

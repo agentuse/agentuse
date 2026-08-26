@@ -4,6 +4,7 @@ import { SendToCodingAgentDialog } from './send-to-coding-agent-dialog';
 export interface DebugPromptContext {
   sessionId: string;
   projectId?: string | undefined;
+  projectPath?: string | undefined;
   agentName?: string | undefined;
   agentFilePath?: string | undefined;
   model?: string | undefined;
@@ -29,6 +30,7 @@ export function buildDebugPrompt(ctx: DebugPromptContext, detail = ''): string {
   lines.push('Session:');
   lines.push(`- Session ID: ${ctx.sessionId}`);
   if (ctx.projectId) lines.push(`- Project: ${ctx.projectId}`);
+  if (ctx.projectPath) lines.push(`- Project directory: ${ctx.projectPath}`);
   if (ctx.agentName) {
     lines.push(`- Agent: ${ctx.agentName}${ctx.agentFilePath ? ` (${ctx.agentFilePath})` : ''}`);
   } else if (ctx.agentFilePath) {
@@ -54,31 +56,66 @@ export function buildDebugPrompt(ctx: DebugPromptContext, detail = ''): string {
   return lines.join('\n');
 }
 
+/** Ready-to-paste handoff from the demo session to a real project agent. */
+export function buildOnboardingPrompt(ctx: DebugPromptContext, detail = ''): string {
+  const lines = [
+    'Help me create my first AgentUse agent in this project.',
+  ];
+  if (ctx.projectId) lines.splice(1, 0, `Project: ${ctx.projectId}`);
+  if (ctx.projectPath) lines.push(`Project directory: ${ctx.projectPath}`);
+  lines.push(
+    '',
+    'Load and follow the installed onboarding workflow:',
+    '  agentuse skills get onboarding --full',
+    '',
+    'The supplied project directory is authoritative. AgentUse serve is already running; do not change its project settings or restart it.',
+  );
+  if (detail.trim()) lines.push('', `The job I want to automate: ${detail.trim()}`);
+  return lines.join('\n');
+}
+
 // Opens the shared "Send to Coding Agent" dialog pre-loaded with a debug prompt
 // for this run (Claude Code, Codex, …): the /agentuse skill, the session id, and
 // the exact command to replay the run's logs, plus an optional focus note.
-export function DebugPromptButton(props: { context: DebugPromptContext }) {
+export function DebugPromptButton(props: { context: DebugPromptContext; mode?: 'debug' | 'onboarding' }) {
   const [open, setOpen] = useState(false);
+  const onboarding = props.mode === 'onboarding';
 
   return (
     <>
       <button
         type="button"
-        class="debug-prompt-button"
+        class={`debug-prompt-button${onboarding ? ' onboarding-handoff' : ''}`}
         onClick={() => setOpen(true)}
-        title="Hand this run to a coding agent (Claude Code, Codex…) to debug, fix, or improve it"
+        title={onboarding
+          ? 'Give a coding agent a ready-to-paste prompt for creating your first real agent'
+          : 'Hand this run to a coding agent (Claude Code, Codex…) to debug, fix, or improve it'}
       >
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="9" y="9" width="13" height="13" rx="2" />
           <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
         </svg>
-        <span>Send to Coding Agent…</span>
+        <span>{onboarding ? 'Create my first agent…' : 'Send to Coding Agent…'}</span>
       </button>
       <SendToCodingAgentDialog
         open={open}
-        buildPrompt={(detail) => buildDebugPrompt(props.context, detail)}
-        detailLabel="Give the agent more detail on what to focus on"
-        placeholder="e.g. the run timed out on the email step"
+        buildPrompt={(detail) => onboarding
+          ? buildOnboardingPrompt(props.context, detail)
+          : buildDebugPrompt(props.context, detail)}
+        {...(onboarding ? {
+          title: 'create your first agent',
+          detailFirst: true,
+          promptCollapsed: true,
+          copyLabel: 'Copy instructions',
+          copyHint: 'Paste into Codex, Claude Code, Cursor, or another coding agent. Keep this dashboard open—your agent will appear here when it is ready.',
+          ...(props.context.projectPath ? {
+            contextLabel: 'Your agent will be saved in',
+            contextValue: props.context.projectPath,
+            contextHint: 'AgentUse created and registered this project for you.',
+          } : {}),
+        } : {})}
+        detailLabel={onboarding ? 'What would you like your first agent to do?' : 'Give the agent more detail on what to focus on'}
+        placeholder={onboarding ? 'e.g. summarize new support tickets every morning' : 'e.g. the run timed out on the email step'}
         onClose={() => setOpen(false)}
       />
     </>

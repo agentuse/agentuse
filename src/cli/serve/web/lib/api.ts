@@ -499,6 +499,10 @@ export function fetchInfo(): Promise<InfoPayload> {
   return getJson('/api');
 }
 
+export function createManagedProject(name: string): Promise<{ success: true; project: ProjectInfo }> {
+  return postJson('/api/projects', { name });
+}
+
 export type AgentRow = AgentSummary;
 
 /** Folder-level `ABOUT.md`: names a directory that groups agents (#156). */
@@ -584,6 +588,11 @@ export function runAgentDetached(agent: string, project: string | undefined, pro
   };
   if (prompt && prompt.trim()) body.prompt = prompt.trim();
   return postJson('/api/run', body);
+}
+
+/** Start the zero-file, demo-model first-run guide from an empty dashboard. */
+export function runOnboardingDetached(project?: string): Promise<DetachedRunResponse> {
+  return postJson('/api/onboarding/run', project ? { project } : {});
 }
 
 export interface SchedulesPayload {

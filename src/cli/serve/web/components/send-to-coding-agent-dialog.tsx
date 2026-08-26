@@ -34,8 +34,16 @@ async function copyText(text: string): Promise<boolean> {
 export function SendToCodingAgentDialog(props: {
   open: boolean;
   buildPrompt: (detail: string) => string;
+  title?: string;
+  detailFirst?: boolean;
   detailLabel?: string;
   placeholder?: string;
+  copyHint?: string;
+  copyLabel?: string;
+  promptCollapsed?: boolean;
+  contextLabel?: string;
+  contextValue?: string;
+  contextHint?: string;
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -63,6 +71,43 @@ export function SendToCodingAgentDialog(props: {
     });
   };
 
+  const detailField = (
+    <div class="cca-detail">
+      <label for="cca-detail-input">
+        {props.detailLabel ?? 'Give the agent more detail'} <span class="opt">(optional)</span>
+      </label>
+      <textarea
+        id="cca-detail-input"
+        placeholder={props.placeholder}
+        value={detail}
+        {...noAutofill}
+        onInput={(e) => setDetail((e.target as HTMLTextAreaElement).value)}
+      />
+    </div>
+  );
+
+  const promptPreview = (
+    <div class="cca-terminal">
+      <div class="cca-chrome">
+        <span class="cca-dot red" /><span class="cca-dot yellow" /><span class="cca-dot green" />
+        <span class="cca-chrome-title">Coding Agent</span>
+      </div>
+      <pre class="cca-prompt">{prompt}</pre>
+    </div>
+  );
+
+  const copyControls = (
+    <>
+      <button type="button" class="cca-copy" onClick={copy}>
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <path d="M5.5 1.5A1.5 1.5 0 0 0 4 3v8a1.5 1.5 0 0 0 1.5 1.5h6A1.5 1.5 0 0 0 13 11V5.62a1.5 1.5 0 0 0-.44-1.06l-2.12-2.12a1.5 1.5 0 0 0-1.06-.44H5.5Z" /><path d="M2.5 4.5A1.5 1.5 0 0 0 1 6v8A1.5 1.5 0 0 0 2.5 15.5h6A1.5 1.5 0 0 0 10 14h-6a.5.5 0 0 1-.5-.5V4.5h-1Z" opacity="0.55" />
+        </svg>
+        {copied ? 'Copied' : (props.copyLabel ?? 'Copy prompt')}
+      </button>
+      {props.copyHint && <p class="cca-copy-hint">{props.copyHint}</p>}
+    </>
+  );
+
   return (
     <dialog
       class="cca-dialog"
@@ -72,35 +117,30 @@ export function SendToCodingAgentDialog(props: {
       onClose={props.onClose}
     >
       <div class="dialog-head">
-        <span id="cca-title" class="title">send to coding agent</span>
+        <span id="cca-title" class="title">{props.title ?? 'send to coding agent'}</span>
         <button type="button" class="dialog-close" aria-label="Close" onClick={props.onClose}>×</button>
       </div>
       <div class="cca-body">
-        <div class="cca-terminal">
-          <div class="cca-chrome">
-            <span class="cca-dot red" /><span class="cca-dot yellow" /><span class="cca-dot green" />
-            <span class="cca-chrome-title">Coding Agent</span>
+        {props.contextValue && (
+          <div class="cca-context">
+            <span>{props.contextLabel ?? 'Project'}</span>
+            <code>{props.contextValue}</code>
+            {props.contextHint && <small>{props.contextHint}</small>}
           </div>
-          <pre class="cca-prompt">{prompt}</pre>
-        </div>
-        <button type="button" class="cca-copy" onClick={copy}>
-          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-            <path d="M5.5 1.5A1.5 1.5 0 0 0 4 3v8a1.5 1.5 0 0 0 1.5 1.5h6A1.5 1.5 0 0 0 13 11V5.62a1.5 1.5 0 0 0-.44-1.06l-2.12-2.12a1.5 1.5 0 0 0-1.06-.44H5.5Z" /><path d="M2.5 4.5A1.5 1.5 0 0 0 1 6v8A1.5 1.5 0 0 0 2.5 15.5h6A1.5 1.5 0 0 0 10 14h-6a.5.5 0 0 1-.5-.5V4.5h-1Z" opacity="0.55" />
-          </svg>
-          {copied ? 'Copied' : 'Copy prompt'}
-        </button>
-        <div class="cca-detail">
-          <label for="cca-detail-input">
-            {props.detailLabel ?? 'Give the agent more detail'} <span class="opt">(optional)</span>
-          </label>
-          <textarea
-            id="cca-detail-input"
-            placeholder={props.placeholder}
-            value={detail}
-            {...noAutofill}
-            onInput={(e) => setDetail((e.target as HTMLTextAreaElement).value)}
-          />
-        </div>
+        )}
+        {props.detailFirst && detailField}
+        {props.promptCollapsed ? (
+          <>
+            {copyControls}
+            <details class="cca-preview">
+              <summary>Preview instructions</summary>
+              {promptPreview}
+            </details>
+          </>
+        ) : (
+          <>{promptPreview}{copyControls}</>
+        )}
+        {!props.detailFirst && detailField}
       </div>
     </dialog>
   );

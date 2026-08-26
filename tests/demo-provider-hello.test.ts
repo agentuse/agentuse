@@ -15,9 +15,32 @@ describe('hello demo model', () => {
     expect(text).not.toContain('[describe the recurring job]');
     expect(text).toContain('agentuse doctor');
     expect(text).toContain('agentuse test');
-    expect(text).toContain("configuring the agent's chosen model provider");
-    expect(text).toContain('running the agent directly');
+    expect(text).toContain('Create my first agent…');
+    expect(text).toContain('configuring the chosen model provider');
+    expect(text).toContain('launching the first real run from the Web UI');
     expect(text).toContain('agentuse serve');
-    expect(text).toContain('credentials or environment variables');
+    expect(text).toContain('AgentUse detects the new file automatically');
+    expect(text).toContain('Do not start a real run automatically');
+  });
+
+  it('returns a useful simulated result for the Web UI onboarding run', async () => {
+    const result = await createDemoModel('onboarding').doGenerate({} as never);
+    const text = result.content
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('');
+
+    expect(text).toContain('# Project pulse');
+    expect(text).toContain('## Progress');
+    expect(text).toContain('## Needs attention');
+    expect(text).toContain('## Recommended next move');
+    expect(text).toContain('Simulated run');
+    expect(text).toContain('sample project data');
+    expect(text).toContain('## Create your own agent');
+    expect(text).toContain('Create my first agent…');
+    expect(text).toContain('Copy the generated prompt');
+    expect(text).toContain('Keep this dashboard open');
+    expect(text).toContain('select **Run**');
+    expect(text).not.toContain('npx skills add');
   });
 });

@@ -12,8 +12,9 @@ export type SessionStatus = 'running' | 'completed' | 'error' | 'suspended';
 // How a run was triggered. Drives filtering on the /sessions operator surface.
 // 'manual' is the default for CLI direct runs, subagents, and the HTTP run
 // endpoint when no origin is specified; serve sets 'scheduled' / 'api' / 'slack'
-// where it knows the origin.
-export type SessionTrigger = 'scheduled' | 'manual' | 'slack' | 'api';
+// where it knows the origin. 'onboarding' is the in-memory, zero-config guide
+// launched from an empty serve dashboard.
+export type SessionTrigger = 'scheduled' | 'manual' | 'slack' | 'api' | 'onboarding';
 
 export interface SessionInfo {
   id: string;                        // ULID

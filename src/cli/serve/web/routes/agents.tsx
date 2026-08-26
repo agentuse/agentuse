@@ -2,7 +2,7 @@ import type { VNode } from 'preact';
 import { useLocation } from 'preact-iso';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { AboutInfo, AgentRow, SessionRow, SessionsPayload } from '../lib/api';
-import { fetchAgents, fetchSessions } from '../lib/api';
+import { fetchAgents, fetchInfo, fetchSessions } from '../lib/api';
 import { useSessionsStream } from '../hooks/use-sessions-stream';
 import { term, termTitle } from '../lib/terms';
 import { matchesAgentFilter } from '../lib/agent-filter';
@@ -23,6 +23,8 @@ import { RunInstructionDialog } from '../components/run-instruction-dialog';
 import { AgentGraphView } from '../components/agent-graph-view';
 import { GroupRail } from '../components/group-rail';
 import { SchedulePill } from '../components/schedule-pill';
+import { OnboardingEmptyState } from '../components/onboarding-empty-state';
+import { FirstProjectEmptyState } from '../components/first-project-empty-state';
 import { agentDetailHref } from '../lib/links';
 
 /** Shared empty fallback, so a miss never hands a memoizing child a fresh array. */
@@ -696,6 +698,7 @@ export default function Agents({ project }: { project?: string } = {}) {
   const location = useLocation();
   const goBack = useSmartBack('/agents');
   const { data, error, loading } = useFetch('agents', () => fetchAgents(), { refreshMs: 30_000 });
+  const info = useFetch('agents-info', () => fetchInfo(), { refreshMs: 30_000 });
   // ABOUT.md identity (#156): directory path -> display info, keyed
   // `projectId::dir` with '.' for the project root. Missing entries fall back
   // to raw ids and paths, so an about-less deployment renders unchanged.
@@ -758,7 +761,7 @@ export default function Agents({ project }: { project?: string } = {}) {
   // "no such project" from "project loaded but empty" so the empty state reads
   // correctly. The API always returns every agent; scoping is a client filter.
   const allLoaded = useMemo(() => data?.agents ?? [], [data]);
-  const projectMissing = scoped && Boolean(data) && !allLoaded.some((a) => a.projectId === project);
+  const projectMissing = scoped && info.data !== null && !info.data.projects.some((item) => item.id === project);
   const loadedAgents = useMemo(
     () => (scoped ? allLoaded.filter((a) => a.projectId === project) : allLoaded),
     [allLoaded, scoped, project],
@@ -790,6 +793,15 @@ export default function Agents({ project }: { project?: string } = {}) {
   const lastRunFor = (a: AgentRow) => runsFor(a)[0];
   const rowCtx: RowCtx = { pins, columns: renderColumns, runsFor, lastRunFor };
   const allAgents = query ? loadedAgents.filter((a) => matchesAgentFilter(a, query)) : loadedAgents;
+  const onboardingProject = scoped ? project : (info.data?.default ?? info.data?.projects[0]?.id);
+  const noProjects = info.data?.projects.length === 0;
+  const onboardingProjectInfo = info.data?.projects.find((item) => item.id === onboardingProject);
+  const onboardingSession = sessionRows.find((session) =>
+    session.trigger === 'onboarding' && session.project === onboardingProject);
+  const showOnboarding = Boolean(
+    data && info.data && !query && !projectMissing && onboardingProject &&
+    onboardingProjectInfo?.agentCount === 0 && loadedAgents.length === 0
+  );
   const byProject = new Map<string, AgentRow[]>();
   for (const agent of allAgents) {
     const list = byProject.get(agent.projectId);
@@ -815,6 +827,10 @@ export default function Agents({ project }: { project?: string } = {}) {
       ? `No ${term('project')} “${project}” is loaded here.`
       : filterActive
         ? `${allAgents.length} of ${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} match ${filterLabel}.`
+        : noProjects
+          ? 'Create a project to keep your first agents and runs together.'
+        : showOnboarding
+          ? scoped ? `No agents in this ${term('project')} yet.` : 'No agents yet.'
         : scoped
           ? `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} in this ${term('project')}.`
           : `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} across ${byProject.size} ${term('project', byProject.size)}.`;
@@ -964,7 +980,17 @@ export default function Agents({ project }: { project?: string } = {}) {
                 </div>}
           </section>
         )}
-        {byProject.size === 0
+        {noProjects && !scoped
+          ? <FirstProjectEmptyState compact />
+          : showOnboarding
+          ? <OnboardingEmptyState
+              compact
+              {...(onboardingProject ? { projectId: onboardingProject } : {})}
+              {...(onboardingProjectInfo?.about?.name ? { projectName: onboardingProjectInfo.about.name } : {})}
+              {...(onboardingProjectInfo?.path ? { projectPath: onboardingProjectInfo.path } : {})}
+              {...(onboardingSession ? { session: onboardingSession } : {})}
+            />
+          : byProject.size === 0
           ? <div class="panel">{loading && !data
             ? <Loading label="Loading agents…" />
             : <div class="empty">

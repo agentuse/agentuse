@@ -334,6 +334,8 @@ export interface ApprovalPageInfo {
    *  clients without ?project= in the URL can address project-scoped
    *  endpoints (e.g. "Run new session" on a multi-project daemon). */
   project?: string;
+  /** Absolute directory watched by serve for this project's agent files. */
+  projectPath?: string;
   createdAt?: number;
   model?: string;
   agent: {

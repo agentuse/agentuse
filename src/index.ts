@@ -19,6 +19,7 @@ import { createProviderCommand, createAuthCommand } from './cli/auth';
 import { AuthStorage } from './auth/storage';
 import { createSessionsCommand } from './cli/sessions';
 import { createServeCommand } from './cli/serve';
+import { createSetupCommand } from './cli/setup';
 import { createModelsCommand } from './cli/models';
 import { createSkillsCommand } from './cli/skills';
 import { createBenchmarkCommand } from './cli/benchmark';
@@ -213,6 +214,9 @@ program.addCommand(createAuthCommand(), { hidden: true });
 
 // Add sessions command
 program.addCommand(createSessionsCommand());
+
+// Add first-run setup command (browser or terminal)
+program.addCommand(createSetupCommand());
 
 // Add serve command (includes ps subcommand)
 program.addCommand(createServeCommand());
@@ -1125,6 +1129,9 @@ async function runInternalWorker() {
     id: string;
     type: 'execute' | 'resume' | 'continue-session' | 'finish-cascade' | 'approval-info' | 'session-status' | 'session-context' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'session-final-responses' | 'stop-session' | 'reopen-gate' | 'invalidate-lists' | 'release';
     agentPath?: string;
+    /** In-memory agent definition. Fresh execute only; never persisted as a file. */
+    agentContent?: string;
+    agentName?: string;
     projectRoot: string;
     /** invalidate-lists: hold the short list TTL for a window (start pokes). */
     externalActivity?: boolean;
@@ -3783,7 +3790,8 @@ async function runInternalWorker() {
     try {
       invalidateListCaches(req.projectRoot);
       let agentPath = req.agentPath ? resolve(req.projectRoot, req.agentPath) : '';
-      if (req.type === 'execute' && (!req.agentPath || !existsSync(agentPath))) {
+      const inMemoryAgent = req.type === 'execute' && typeof req.agentContent === 'string';
+      if (req.type === 'execute' && !inMemoryAgent && (!req.agentPath || !existsSync(agentPath))) {
         return {
           id: req.id,
           success: false,
@@ -3927,7 +3935,9 @@ async function runInternalWorker() {
         );
       }
 
-      const agent = await parseAgent(agentPath);
+      const agent = inMemoryAgent
+        ? parseAgentContent(req.agentContent!, req.agentName ?? 'in-memory-agent')
+        : await parseAgent(agentPath);
 
       const envValidation = validateAgentEnvVars(agent.config);
       if (!envValidation.valid) {
@@ -3945,7 +3955,7 @@ async function runInternalWorker() {
         applyRunModelOverride(agent.config, runModelOverride);
       }
 
-      const mcpBasePath = dirname(agentPath);
+      const mcpBasePath = inMemoryAgent ? undefined : dirname(agentPath);
       mcp = await connectMCP(agent.config.mcpServers, req.debug ?? false, mcpBasePath);
 
       const timeoutSeconds = req.timeout ?? agent.config.timeout ?? 300;
@@ -3964,7 +3974,7 @@ async function runInternalWorker() {
         agent,
         mcpClients: mcp,
         ...(runModelOverride && { subagentModelOverride: runModelOverride }),
-        agentFilePath: agentPath,
+        ...(!inMemoryAgent && { agentFilePath: agentPath }),
         cliMaxSteps: req.maxSteps,
         sessionManager,
         projectContext,
@@ -3996,7 +4006,7 @@ async function runInternalWorker() {
           abortController.signal,
           startTime,
           false,
-          agentPath,
+          inMemoryAgent ? undefined : agentPath,
           req.maxSteps,
           sessionManager,
           // Serve registers projects explicitly; agents live in their registered

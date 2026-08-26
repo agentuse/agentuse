@@ -164,16 +164,17 @@ export function useLiveHome(): LiveHome {
 
   useEffect(() => {
     if (!sessionsData) return;
+    const operationalSessions = sessionsData.sessions.filter((row) => row.trigger !== 'onboarding');
     // Diff by rendered label, not raw status: an approval decision flips a
     // suspended row from "awaiting approval" to "resuming" without a status
     // change, and the feed should surface that transition.
     const next = new Map<string, string>();
-    for (const row of sessionsData.sessions) next.set(sessionRowKey(row), labelFor(row, false, gates));
+    for (const row of operationalSessions) next.set(sessionRowKey(row), labelFor(row, false, gates));
     const prev = prevLabels.current;
     prevLabels.current = next;
 
     if (!prev) {
-      const seeded = [...sessionsData.sessions]
+      const seeded = [...operationalSessions]
         .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt))
         .slice(0, SEED_LIMIT)
         .map((row) => eventFor(row, { isNew: false, fresh: false, seq: seq.current++, gates }));
@@ -182,7 +183,7 @@ export function useLiveHome(): LiveHome {
     }
 
     const fresh: ActivityEvent[] = [];
-    for (const row of sessionsData.sessions) {
+    for (const row of operationalSessions) {
       const before = prev.get(sessionRowKey(row));
       if (before === next.get(sessionRowKey(row))) continue;
       fresh.push(eventFor(row, { isNew: before === undefined, fresh: true, seq: seq.current++, gates }));
