@@ -15,6 +15,7 @@ interface SetupOptions {
   yes?: boolean;
   port?: string;
   host?: string;
+  noAuth?: boolean;
 }
 
 let prompts: typeof ClackPrompts | undefined;
@@ -69,10 +70,18 @@ async function promptProjectName(): Promise<string | null> {
   return String(name);
 }
 
-async function runWebSetup(options: SetupOptions): Promise<void> {
+export function webSetupServeArgs(
+  options: Pick<SetupOptions, 'port' | 'host' | 'noAuth'>,
+): string[] {
   const args = ['--open'];
   if (options.port) args.push('--port', options.port);
   if (options.host) args.push('--host', options.host);
+  if (options.noAuth) args.push('--no-auth');
+  return args;
+}
+
+async function runWebSetup(options: SetupOptions): Promise<void> {
+  const args = webSetupServeArgs(options);
   await createServeCommand().parseAsync(args, { from: 'user' });
 }
 
@@ -150,6 +159,7 @@ export function createSetupCommand(): Command {
     .option('-y, --yes', 'Accept the default project name without prompting')
     .option('-p, --port <number>', 'Web setup server port (default: 12233)')
     .option('-H, --host <string>', 'Web setup server host (default: 127.0.0.1)')
+    .option('--no-auth', 'Disable server API key requirement (dangerous on publicly reachable hosts)')
     .action(async (options: SetupOptions) => {
       const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
       let surface: SetupSurface | 'prompt';

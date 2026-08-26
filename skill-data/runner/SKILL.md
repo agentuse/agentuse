@@ -13,6 +13,7 @@ server used for webhooks, approvals, channels, and schedules.
 ```bash
 agentuse setup                       # first-run Browser or Terminal setup
 agentuse setup --web                 # open guided setup in the Web UI
+agentuse setup --web -H 0.0.0.0 --no-auth  # trusted local VM/container port mapping
 agentuse setup --terminal            # guided headless/SSH setup
 agentuse setup --terminal --name my-agents --yes  # non-interactive
 
@@ -56,6 +57,11 @@ GUI. A bare `agentuse serve` never adopts the shell's current directory; with
 no saved projects it opens in browser setup mode. Use `-C` when an existing
 folder is intentionally the project, or save it
 under `serve.projects` in `~/.agentuse/config.json`.
+
+Binding setup to an exposed host requires server authentication. For a trusted
+local VM or container whose port is published only to host localhost, pass
+`--host 0.0.0.0 --no-auth`. Do not use `--no-auth` on a publicly reachable
+interface.
 
 - `/agents`, `/schedules`, what the daemon loaded.
 - `/sessions`, every run; filter with `?agent=` / `?trigger=`.
