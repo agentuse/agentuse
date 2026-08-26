@@ -69,6 +69,7 @@ export function buildOnboardingPrompt(ctx: DebugPromptContext, detail = ''): str
     '  agentuse skills get onboarding --full',
     '',
     'The supplied project directory is authoritative. AgentUse serve is already running; do not change its project settings or restart it.',
+    'Before creating a file, run `agentuse provider list`. If no AgentUse runtime provider is configured, guide me through `agentuse provider login` and wait until it is ready. Use only a model from a confirmed provider.',
   );
   if (detail.trim()) lines.push('', `The job I want to automate: ${detail.trim()}`);
   return lines.join('\n');
@@ -107,7 +108,7 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
           detailFirst: true,
           promptCollapsed: true,
           copyLabel: 'Copy instructions',
-          copyHint: 'Paste into Codex, Claude Code, Cursor, or another coding agent. Keep this dashboard open—your agent will appear here when it is ready.',
+          copyHint: 'Paste into Codex, Claude Code, Cursor, or another coding agent. It will confirm an AgentUse provider before creating your agent.',
           ...(props.context.projectPath ? {
             contextLabel: 'Your agent will be saved in',
             contextValue: props.context.projectPath,

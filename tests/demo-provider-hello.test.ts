@@ -16,7 +16,8 @@ describe('hello demo model', () => {
     expect(text).toContain('agentuse doctor');
     expect(text).toContain('agentuse test');
     expect(text).toContain('Create my first agent…');
-    expect(text).toContain('configuring the chosen model provider');
+    expect(text).toContain('agentuse provider list');
+    expect(text).toContain('model from a configured provider');
     expect(text).toContain('launching the first real run from the Web UI');
     expect(text).toContain('agentuse serve');
     expect(text).toContain('AgentUse detects the new file automatically');

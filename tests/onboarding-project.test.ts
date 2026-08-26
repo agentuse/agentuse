@@ -69,8 +69,23 @@ describe('managed onboarding projects', () => {
     const prompt = terminalFirstAgentPrompt('/tmp/my-agents');
     expect(prompt).toContain('onboarding skill for terminal setup');
     expect(prompt).toContain('Project directory: /tmp/my-agents');
-    expect(prompt).toContain('agentuse doctor and agentuse test');
+    expect(prompt).toContain('agentuse provider list');
+    expect(prompt).toContain('agentuse provider login');
+    expect(prompt).toContain('using only that provider');
+    expect(prompt).toMatch(/agentuse\s+doctor and agentuse test/);
     expect(prompt).toContain('exact agentuse run command');
     expect(prompt).toContain('Do not perform a real run yet');
+  });
+
+  it('requires a runnable provider before the onboarding skill creates an agent', () => {
+    const skill = readFileSync(join(process.cwd(), 'skill-data/onboarding/SKILL.md'), 'utf8');
+    const providerStep = skill.indexOf('## 2. Confirm a Provider Before Creating Anything');
+    const createStep = skill.indexOf('## 3. Create It in the Confirmed Project');
+
+    expect(providerStep).toBeGreaterThan(-1);
+    expect(createStep).toBeGreaterThan(providerStep);
+    expect(skill).toContain('agentuse provider list');
+    expect(skill).toContain('do not write the agent file yet');
+    expect(skill).toContain('use only a model from that provider');
   });
 });

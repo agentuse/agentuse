@@ -61,6 +61,10 @@ export function OnboardingEmptyState(props: {
         </li>
         <li>
           <span class="onboarding-step-number">03</span>
+          <span><strong>Connect a provider</strong><small>Choose how your real agents run</small></span>
+        </li>
+        <li>
+          <span class="onboarding-step-number">04</span>
           <span><strong>Create your agent</strong><small>Use your coding agent, then run it here</small></span>
         </li>
       </ol>

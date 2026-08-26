@@ -42,8 +42,9 @@ Ship the onboarding update, then watch how many new users create and run an agen
 
 1. Select **Create my first agent…** below.
 2. Describe one job you want to automate. Copy the generated prompt and paste it into your coding agent.
-3. Keep this dashboard open while the coding agent creates and validates the \`.agentuse\` file. Your new agent appears automatically.
-4. Open the new agent, complete any provider setup it gives you, and select **Run**.`,
+3. The coding agent checks whether AgentUse has a model provider. If not, it helps you connect one before creating anything.
+4. Keep this dashboard open while it creates and validates the \`.agentuse\` file with a model from that provider. Your new agent appears automatically.
+5. Open the new agent and select **Run**.`,
 
   hello: `# Create your first AgentUse agent
 
@@ -66,9 +67,9 @@ Help me create my first AgentUse agent.
 
 Use the installed AgentUse skill and load the current core and creator guidance first. If I have not described the recurring job yet, interview me before creating anything. Ask concise questions one at a time until you understand the job, trigger, inputs, desired output, success criteria, and any consequential actions that require human approval.
 
-Once the requirements are clear, create one focused .agentuse file in this repository. Validate it with agentuse doctor and agentuse test, and fix any issues.
+Once the requirements are clear, run agentuse provider list. If no AgentUse runtime provider is configured, do not create the file yet; guide me through agentuse provider login and wait until it is ready. Then create one focused .agentuse file using only a model from a configured provider. Validate it with agentuse doctor and agentuse test, and fix any issues.
 
-Do not start a real run automatically. If agentuse serve is already running, tell me when the new agent should appear in its dashboard. Otherwise, give me the exact command to start it. Then guide me through configuring the chosen model provider and launching the first real run from the Web UI.
+Do not start a real run automatically. If agentuse serve is already running, tell me when the new agent should appear in its dashboard. Otherwise, give me the exact command to start it. Then guide me through launching the first real run from the Web UI.
 \`\`\`
 
 Keep this dashboard open. AgentUse detects the new file automatically.`,

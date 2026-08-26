@@ -45,6 +45,9 @@ describe('coding-agent handoff prompts', () => {
     expect(prompt).toContain('Project directory: /workspace/acme-automations');
     expect(prompt).toContain('project directory is authoritative');
     expect(prompt).toContain('do not change its project settings or restart it');
+    expect(prompt).toContain('agentuse provider list');
+    expect(prompt).toContain('agentuse provider login');
+    expect(prompt).toContain('Use only a model from a confirmed provider');
     expect(prompt).toContain('summarize new support tickets every morning');
   });
 });
