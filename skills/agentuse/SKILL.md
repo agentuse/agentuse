@@ -26,7 +26,7 @@ agentuse skills get creator --full
 ```bash
 agentuse skills get runner          # run, list, sessions, serve, schedules
 agentuse skills get creator         # author and improve .agentuse files
-agentuse skills get onboarding      # guided first agent from the Web UI
+agentuse skills get onboarding      # guided first agent from terminal or Web UI
 agentuse skills installed           # inspect project/user skills
 ```
 

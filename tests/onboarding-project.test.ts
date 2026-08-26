@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { FIRST_PROJECT_DEFAULT_NAME, managedProjectSlug, validateManagedProjectName } from '../src/onboarding';
+import { FIRST_PROJECT_DEFAULT_NAME, managedProjectSlug, terminalFirstAgentPrompt, validateManagedProjectName } from '../src/onboarding';
 import { getManagedProjectsRoot } from '../src/utils/global-config';
 import { createManagedProject } from '../src/utils/managed-project';
 import { resolveSetupSurface } from '../src/cli/setup';
@@ -63,5 +63,14 @@ describe('managed onboarding projects', () => {
     expect(resolveSetupSurface({}, true)).toBe('prompt');
     expect(() => resolveSetupSurface({}, false)).toThrow('--web or --terminal');
     expect(() => resolveSetupSurface({ web: true, terminal: true }, true)).toThrow('not both');
+  });
+
+  it('gives coding agents a terminal-specific first-agent handoff', () => {
+    const prompt = terminalFirstAgentPrompt('/tmp/my-agents');
+    expect(prompt).toContain('onboarding skill for terminal setup');
+    expect(prompt).toContain('Project directory: /tmp/my-agents');
+    expect(prompt).toContain('agentuse doctor and agentuse test');
+    expect(prompt).toContain('exact agentuse run command');
+    expect(prompt).toContain('Do not perform a real run yet');
   });
 });

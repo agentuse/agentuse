@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import type * as ClackPrompts from '@clack/prompts';
-import { FIRST_PROJECT_DEFAULT_NAME, validateManagedProjectName } from '../onboarding';
+import { FIRST_PROJECT_DEFAULT_NAME, terminalFirstAgentPrompt, validateManagedProjectName } from '../onboarding';
 import { loadGlobalConfig } from '../utils/global-config';
 import { createManagedProject, ManagedProjectError } from '../utils/managed-project';
 import { createServeCommand } from './serve';
@@ -76,6 +76,19 @@ async function runWebSetup(options: SetupOptions): Promise<void> {
   await createServeCommand().parseAsync(args, { from: 'user' });
 }
 
+function printTerminalNextSteps(projectRoot: string): void {
+  console.log(chalk.bold('\nNext — create your first agent'));
+  console.log(chalk.dim('\n1. Start AgentUse in another terminal and leave it running:'));
+  console.log(`\n   ${chalk.cyan('agentuse serve')}`);
+  console.log(chalk.dim('\n2. Install the AgentUse skill for your coding agent (one time):'));
+  console.log(`\n   ${chalk.cyan('npx skills add agentuse/agentuse')}`);
+  console.log(chalk.dim('\n3. Open the project with your preferred coding agent:'));
+  console.log(`\n   ${chalk.cyan(`cd ${JSON.stringify(projectRoot)}`)}`);
+  console.log(`   ${chalk.cyan('codex')}  ${chalk.dim('# or: claude, pi')}`);
+  console.log(chalk.dim('\n4. Paste this prompt:'));
+  console.log(`\n${terminalFirstAgentPrompt(projectRoot)}`);
+}
+
 async function runTerminalSetup(options: SetupOptions, interactive: boolean): Promise<void> {
   let config;
   try {
@@ -92,7 +105,8 @@ async function runTerminalSetup(options: SetupOptions, interactive: boolean): Pr
     for (const project of configured) {
       console.log(`  ${chalk.cyan(project.id ?? 'project')}  ${chalk.dim(project.path)}`);
     }
-    console.log(chalk.dim('\nStart the dashboard with: agentuse serve'));
+    console.log(chalk.dim('\nStart AgentUse with:'));
+    console.log(`\n  ${chalk.cyan('agentuse serve')}`);
     return;
   }
 
@@ -119,9 +133,7 @@ async function runTerminalSetup(options: SetupOptions, interactive: boolean): Pr
     console.log(chalk.green(`✓ Created project ${project.name}`));
     console.log(`  ${chalk.dim('Location')}  ${project.root}`);
     console.log(`  ${chalk.dim('Agents')}    ${project.root}/agents`);
-    console.log(chalk.dim('\nNext:'));
-    console.log(`  ${chalk.cyan('agentuse serve')}              Open the dashboard`);
-    console.log(`  ${chalk.cyan('agentuse skills get onboarding --full')}  Create your first agent`);
+    printTerminalNextSteps(project.root);
   } catch (error) {
     const message = error instanceof ManagedProjectError ? error.message : (error as Error).message;
     console.error(chalk.red(`Setup failed: ${message}`));

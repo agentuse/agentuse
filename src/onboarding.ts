@@ -17,6 +17,16 @@ Create a concise project pulse from the sample workspace activity.`;
 
 export const FIRST_PROJECT_DEFAULT_NAME = 'my-agents';
 
+export function terminalFirstAgentPrompt(projectRoot: string): string {
+  return `Use the AgentUse onboarding skill for terminal setup.
+
+Project directory: ${projectRoot}
+
+Ask what I want to automate, create exactly one focused agent, validate it with
+agentuse doctor and agentuse test, and return the exact agentuse run command.
+Do not perform a real run yet.`;
+}
+
 /** Filesystem-safe, readable id for managed first projects. */
 export function managedProjectSlug(name: string): string {
   return name
