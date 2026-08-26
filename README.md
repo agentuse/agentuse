@@ -36,11 +36,14 @@ you the runtime while keeping the agent under your control.
 
 ## Quick start
 
-Try AgentUse without installing it or configuring an API key:
+Set up your first project without installing AgentUse globally:
 
 ```bash
-npx -y agentuse@latest run https://agentuse.io/hello.agentuse
+npx -y agentuse@latest setup
 ```
+
+Choose Browser for guided visual setup or Terminal for a headless Linux/SSH
+flow. Both create the same managed project under `~/.agentuse/projects`.
 
 For real agents, install the CLI and connect a model provider:
 
@@ -94,7 +97,7 @@ agentuse run morning-repo-brief.agentuse
 Start `agentuse serve` to activate its schedule:
 
 ```bash
-agentuse serve
+agentuse serve -C .
 ```
 
 The same file can run from a developer machine, a server, CI, or a container.
@@ -113,7 +116,7 @@ Configuration changes the trigger and environment, not the agent definition.
 Webhook example:
 
 ```bash
-agentuse serve
+agentuse serve -C .
 
 curl http://127.0.0.1:12233/api/run \
   -H "Content-Type: application/json" \
@@ -125,6 +128,12 @@ One daemon can serve several projects:
 ```bash
 agentuse serve -C ./project-a -C ./project-b
 ```
+
+`agentuse setup` is the recommended first-run entry point. Starting
+`agentuse serve` without `-C` also opens the dashboard setup without adopting
+your terminal's current directory. Existing folders stay opt-in via `-C` or
+`serve.projects` in
+`~/.agentuse/config.json`.
 
 ## Operate agents, not prompts
 

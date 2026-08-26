@@ -11,6 +11,11 @@ server used for webhooks, approvals, channels, and schedules.
 ## Commands
 
 ```bash
+agentuse setup                       # first-run Browser or Terminal setup
+agentuse setup --web                 # open guided setup in the Web UI
+agentuse setup --terminal            # guided headless/SSH setup
+agentuse setup --terminal --name my-agents --yes  # non-interactive
+
 agentuse agents [--verbose|--json]
 
 agentuse run <file>                  # append "text" for one-off instructions
@@ -21,7 +26,8 @@ agentuse run <file> --json --no-tty -C /path/to/project
 agentuse sessions [-n 20|--json]
 agentuse sessions show <session-id> --full
 
-agentuse serve [-p 8080]
+agentuse serve [-p 8080]             # dashboard; create/load saved projects
+agentuse serve -C /path/to/project   # explicitly serve an existing folder
 agentuse serve ps                    # daemon status + counts
 agentuse serve agents                # agents the daemon actually loaded (live)
 agentuse serve schedules             # schedules the daemon actually loaded (live)
@@ -43,6 +49,13 @@ root `/status` route, so a live daemon answers 404 there. `/status` is
 session-scoped (`/sessions/<id>/status?logs=1` returns that run's JSON).
 
 ## Serve Web UI
+
+`agentuse setup` is the recommended first-run command: Browser setup starts
+the Web UI, while Terminal setup creates the same managed project without a
+GUI. A bare `agentuse serve` never adopts the shell's current directory; with
+no saved projects it opens in browser setup mode. Use `-C` when an existing
+folder is intentionally the project, or save it
+under `serve.projects` in `~/.agentuse/config.json`.
 
 - `/agents`, `/schedules`, what the daemon loaded.
 - `/sessions`, every run; filter with `?agent=` / `?trigger=`.

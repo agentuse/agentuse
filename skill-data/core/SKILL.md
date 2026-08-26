@@ -24,6 +24,8 @@ agentuse skills installed [list|get|path] <name>   # project/user skills
 
 ## Load A Specialized Builtin Skill
 
+- `agentuse skills get onboarding`, first-project handoff from the Web UI to
+  one validated first agent and its first real run.
 - `agentuse skills get runner`, running, listing, sessions, serve, schedules.
 - `agentuse skills get creator`, authoring, improving, reviewing `.agentuse`.
 - `agentuse skills get tester`, validating agents with mock runs (no real
@@ -33,6 +35,7 @@ agentuse skills installed [list|get|path] <name>   # project/user skills
 ## Entrypoints
 
 ```bash
+agentuse setup           # first project: Browser or Terminal
 agentuse agents          # what can run in this project
 agentuse run <file>      # run an agent (append "text" for one-off instructions)
 agentuse sessions        # inspect prior runs
