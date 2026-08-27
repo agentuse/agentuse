@@ -4067,8 +4067,9 @@ async function runInternalWorker() {
         resumeRollback = undefined;
         const duration = Date.now() - startTime;
 
-        // Learning capture (execution + any reviewer comments) runs once inside
-        // runAgent's post-run lifecycle, so nothing extra is needed here.
+        // Opt-in automatic observation runs once inside runAgent's post-run
+        // lifecycle. Deliberate reviewer learning is saved separately when
+        // Learn is selected, so nothing extra is needed here.
 
         return workerRunResponse(req.id, result, duration);
       } catch (err) {

@@ -134,7 +134,7 @@ describe("tidying up an over-cap corrections file", () => {
       );
 
       expect(prompt).toContain(permanentRule);
-      expect(prompt).toContain("Rules already PERMANENT");
+      expect(prompt).toContain("Guidance already PERMANENT");
       // Visible but not addressable: this pass decides what happens to STAGED
       // corrections, and the block is rewritten whole by a later pass. It still
       // has to be readable here, or a rule the block already states gets
@@ -155,7 +155,7 @@ describe("tidying up an over-cap corrections file", () => {
     it("says nothing about permanent rules when the agent has none", () => {
       const prompt = buildDecidePrompt([learning({ id: "rule0" })], "Just instructions.", 10, NOW);
 
-      expect(prompt).not.toContain("Rules already PERMANENT");
+      expect(prompt).not.toContain("Guidance already PERMANENT");
     });
   });
 
@@ -733,9 +733,9 @@ describe("tidying up an over-cap corrections file", () => {
       AGENT_FILE.trimEnd(),
       "",
       "<!-- agentuse:learned -->",
-      "## Learned Guidelines (override skill defaults on conflict)",
+      "## Learned Guidance",
       "",
-      "Corrections graduated from previous runs. These take precedence over Skills — if one contradicts a skill's default, follow the guideline:",
+      "Guidance consolidated from previous runs. Apply each learning only when its situation is relevant. Preserve its intended scope; do not turn examples or past incidents into universal requirements. The current task and the agent's authored instructions take precedence. A clearly relevant learning may refine a soft skill default:",
       "",
       "- [tip] A rule the human rewrote by hand, in their own words.",
       "<!-- /agentuse:learned -->",

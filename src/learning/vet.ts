@@ -73,7 +73,7 @@ export async function vetCandidates(params: {
 
   const { body, permanentText } = splitInstructions(agentInstructions);
   const contract = permanentText
-    ? `${body.trim()}\n\n## Learned Guidelines (already permanent)\n${permanentText}`
+    ? `${body.trim()}\n\n## Learned Guidance (already permanent)\n${permanentText}`
     : body.trim();
 
   const rulesBlock = activeRules.length > 0

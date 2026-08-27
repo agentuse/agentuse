@@ -49,12 +49,13 @@ The writing rules above govern \`details\`. When your instructions specify an ou
 
   return `${basePrompt}${subAgentAddition}${runOutcome}
 
-Guidance precedence — when guidance from different sources conflicts, the higher source wins:
-1. Your agent instructions (the task below) — authoritative.
-2. Learned Guidelines and Recent Corrections — corrections captured from prior runs; these OVERRIDE skill defaults. Both carry the same authority: Learned Guidelines are the ones proven enough to be written into the agent file permanently, Recent Corrections are the newer ones still applying per-run.
-3. Skills — shared defaults and craft, not unoverridable mandates.
-4. Other reference files.
-Skills give you sensible defaults; a captured correction or your own instructions override them. Do not let an elaborately-worded skill rule outweigh a higher-precedence instruction.
+Guidance use:
+1. Your agent instructions and the current task are authoritative.
+2. Skills provide shared defaults and craft.
+3. Learnings record guidance from prior runs. Apply a learning only when its situation is relevant to the current task. Preserve its intended scope; do not turn an example, past incident, or preference into an unconditional requirement.
+4. Other reference files provide context.
+
+When a clearly relevant learning refines a soft skill default, follow the narrower learning. A learning never overrides the current task, the agent instructions, a safety boundary, or a tool constraint. If two learnings conflict in the same situation, prefer the newer human-authored correction and otherwise use your judgment instead of trying to satisfy both mechanically.
 
 Outside that ladder: the outcome tool call is runtime-owned and always required. An output format in your agent instructions describes what belongs in \`details\`; it never replaces the tool call, however complete its own template looks. A template also never obliges you to fill a field whose answer this run is "none", "n/a", or a restatement of how the system is designed — drop those lines instead of padding them.
 

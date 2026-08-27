@@ -781,12 +781,12 @@ describe('DecisionDialog component', () => {
     expect(html).toContain('leave a comment');
     expect(html).toContain('explain your decision');
     expect(html).toContain('Send comment');
-    expect(html).not.toContain('Remember this comment as a future learning');
+    expect(html).not.toContain('Learn from this comment');
   });
 
   it('renders the manual learning affordance when allowed', () => {
     const html = renderToString(<DecisionDialog open mode="comment" allowRemember onSubmit={noop} onClose={noop} />);
-    expect(html).toContain('Remember this comment as a future learning');
+    expect(html).toContain('Learn from this comment');
   });
 
   it('renders reject mode with optional reason copy', () => {
@@ -795,7 +795,7 @@ describe('DecisionDialog component', () => {
     expect(html).toContain('configured rejected-state updates');
     expect(html).toContain('optional: which part is wrong is enough');
     expect(html).toContain('>Reject</button>');
-    expect(html).not.toContain('Remember this comment as a future learning');
+    expect(html).not.toContain('Learn from this comment');
   });
 });
 

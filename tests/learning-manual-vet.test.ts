@@ -24,8 +24,11 @@ beforeAll(async () => {
 });
 
 const dirs: string[] = [];
+const priorXdgDataHome = process.env.XDG_DATA_HOME;
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  if (priorXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = priorXdgDataHome;
   completeTextMock.mockClear();
 });
 
@@ -33,6 +36,7 @@ describe("manual learning vet", () => {
   it("quarantines a duplicate verdict instead of activating another copy", async () => {
     const dir = mkdtempSync(join(tmpdir(), "learning-manual-vet-"));
     dirs.push(dir);
+    process.env.XDG_DATA_HOME = dir;
     const agentFile = join(dir, "demo.agentuse");
     writeFileSync(agentFile, "---\nname: demo\nmodel: demo:test\n---\nAlways cite primary sources.\n");
 

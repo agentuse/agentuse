@@ -100,12 +100,12 @@ describe('session context stack', () => {
     const task = [
       '# Reporter\n\nSummarise the inbox.',
       '## Approval Gate\n\nApproval is enabled in frontmatter.',
-      '## Skills (shared defaults — your agent instructions and any captured corrections override these on conflict)',
+      '## Skills (shared defaults; agent instructions and relevant contextual learnings may refine them)',
       [
         '## Skill: slack-formatting\n\n**Base directory**: /repo/.agentuse/skills/slack-formatting\n\nUse mrkdwn.',
         '## Skill: fastmail\n\n**Base directory**: /repo/.agentuse/skills/fastmail\n\nUse the fm CLI.',
       ].join('\n\n'),
-      '## Recent Corrections (override skill defaults on conflict)\n\n- [tone] Be terse.',
+      '## Relevant Learnings\n\n- [tone] Be terse.',
     ].join('\n\n');
 
     const payload = buildSessionContextPayload({ session, message: message({ task }), tools: null });

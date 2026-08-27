@@ -65,18 +65,16 @@ export function parseLearnedBlock(source: string): PermanentRule[] {
 }
 
 /**
- * The heading is deliberately identical in meaning to the runtime block in
- * ../runner/system-messages, so a graduated rule behaves exactly as it did while
- * it was being injected. The runtime block is titled "Recent Corrections" so the
- * two do not collide as duplicate `## Learned Guidelines` headings once an agent
- * file carries a graduated block.
+ * The block uses the same contextual semantics as the runtime learning block.
+ * Graduation changes storage and reviewability, not authority: historical
+ * guidance must still be applied only in the situation it describes.
  */
 export function renderLearnedBlock(learnings: (Learning | PermanentRule)[]): string {
   const bullets = learnings.map((l) => `- [${l.category}] ${l.instruction}`).join('\n');
   return `${LEARNED_BLOCK_START}
-## Learned Guidelines (override skill defaults on conflict)
+## Learned Guidance
 
-Corrections graduated from previous runs. These take precedence over Skills — if one contradicts a skill's default, follow the guideline:
+Guidance consolidated from previous runs. Apply each learning only when its situation is relevant. Preserve its intended scope; do not turn examples or past incidents into universal requirements. The current task and the agent's authored instructions take precedence. A clearly relevant learning may refine a soft skill default:
 
 ${bullets}
 ${LEARNED_BLOCK_END}`;

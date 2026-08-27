@@ -283,9 +283,10 @@ Additional instructions or context.
   Let the agent keep what reviewers tell it and apply the best of it to later
   runs. See the [Learning guide](/guides/learning).
 
-  `learning: true` is shorthand for `{ capture: true, apply: true }`, which
-  captures **human corrections only**. Free-form observation capture is opt-in
-  through `capture.custom` or `capture.agent`.
+  `learning: true` applies feedback a reviewer explicitly saved with **Learn
+  from this comment**, `--remember`, or manual add. An unchecked comment affects
+  the current run only. Free-form observation capture is opt-in through
+  `capture.custom` or `capture.agent`.
 
   ```yaml
   learning:
@@ -300,7 +301,7 @@ Additional instructions or context.
 
   | Key | Type | Description |
   |-----|------|-------------|
-  | `capture` | boolean \| object | `false` disables capture. `true` (or `{}`) captures human corrections only: approval comments, `--remember`, manual add. The object form adds channels. Default `true` |
+  | `capture` | boolean \| object | Automatic observation configuration. `true` or `{}` enables no automatic channel; human learning uses Learn/`--remember`. Name `addons`, `custom`, or `agent` to opt in. Default `true` |
   | `capture.addons` | string[] | Channels verified structurally in code rather than by prompt. `tool-errors` (failed call → corrected call → confirmed success) is the only entry today. Default `[]` |
   | `capture.custom` | string | What is worth keeping, in your own words. Enables free-form observation capture through the built-in evaluator, scoped by this text. Mutually exclusive with `agent` |
   | `capture.agent` | string | Path to an `.agentuse` file that replaces the built-in evaluator, relative to this agent file, the same pattern as `verify.judge`. Its candidates are still vetted. Mutually exclusive with `custom` |
@@ -319,9 +320,10 @@ Additional instructions or context.
   </Warning>
 
   <Note>
-    Boolean `capture: true` still parses, but its meaning narrowed in v0.18.0
-    from free-form auto-capture to corrections only. An agent carrying it (or
-    `learning: true`) warns once at parse time and runs the narrower behaviour;
+    Boolean `capture: true` still parses, but its meaning narrowed in v0.18.0:
+    it enables no automatic observation channel. Human feedback becomes durable
+    only when the reviewer chooses Learn (or uses `--remember`). An agent
+    carrying it (or `learning: true`) warns once at parse time;
     `agentuse doctor` echoes the notice.
 
     `file` and `evaluate` were removed in v0.17.0 and are rejected by name at

@@ -1,7 +1,7 @@
 /**
  * The 0.18 capture config: `learning.capture` is no longer a boolean switch over
- * free-form auto-capture. Corrections (human feedback) are what capture MEANS;
- * everything that can manufacture policy from a run nobody reviewed — the typed
+ * free-form auto-capture. Human feedback becomes durable through the separate,
+ * deliberate Learn path; everything that can observe a run automatically — the typed
  * addons, the scoped `custom` evaluator, a replacement `agent` — is opt-in by
  * name.
  *
@@ -11,7 +11,7 @@
  */
 import { describe, it, expect } from "bun:test";
 import { parseAgentContent } from "../src/parser";
-import { legacyLearningConfigNotices } from "../src/learning/types";
+import { hasAutomaticLearningCapture, legacyLearningConfigNotices } from "../src/learning/types";
 
 function parseLearning(yaml: string) {
   const content = `---\nmodel: anthropic:claude-sonnet-4-0\n${yaml}\n---\n\nbody`;
@@ -19,12 +19,20 @@ function parseLearning(yaml: string) {
 }
 
 describe("learning.capture config", () => {
-  it("expands the shorthands to corrections-only capture", () => {
+  it("expands the shorthands without enabling automatic capture", () => {
     // `true` and `{}` mean the same thing, and neither reaches free-form capture:
     // "enable and hope" must not be able to manufacture policy.
     expect(parseLearning("learning: true")).toEqual({ capture: { addons: [] }, apply: true });
     expect(parseLearning("learning:\n  capture: true")).toEqual({ capture: { addons: [] }, apply: true });
     expect(parseLearning("learning:\n  capture: {}")).toEqual({ capture: { addons: [] }, apply: true });
+  });
+
+  it("recognizes only named automatic channels", () => {
+    expect(hasAutomaticLearningCapture(parseLearning("learning: true"))).toBe(false);
+    expect(hasAutomaticLearningCapture(parseLearning("learning:\n  capture: false"))).toBe(false);
+    expect(hasAutomaticLearningCapture(parseLearning("learning:\n  capture:\n    custom: tone"))).toBe(true);
+    expect(hasAutomaticLearningCapture(parseLearning("learning:\n  capture:\n    agent: ./capture.agentuse"))).toBe(true);
+    expect(hasAutomaticLearningCapture(parseLearning("learning:\n  capture:\n    addons: [tool-errors]"))).toBe(true);
   });
 
   it("accepts a typed addon", () => {
@@ -48,7 +56,7 @@ describe("learning.capture config", () => {
     });
   });
 
-  it("keeps capture: false as a full opt-out", () => {
+  it("keeps capture: false as an automatic-capture opt-out", () => {
     expect(parseLearning("learning:\n  capture: false\n  apply: true")).toEqual({
       capture: false,
       apply: true,
@@ -87,13 +95,13 @@ describe("legacyLearningConfigNotices", () => {
   it("explains the narrowed meaning of learning: true", () => {
     const [notice, ...rest] = legacyLearningConfigNotices(true);
     expect(rest).toEqual([]);
-    expect(notice).toContain("captures corrections only");
+    expect(notice).toContain("explicitly chooses Learn");
     expect(notice).toContain('capture: { custom: "..." }');
   });
 
   it("explains the narrowed meaning of capture: true", () => {
     const [notice] = legacyLearningConfigNotices({ capture: true, apply: true });
-    expect(notice).toContain("corrections only");
+    expect(notice).toContain("no automatic observation channels");
     expect(notice).toContain('capture: { custom: "..." }');
   });
 

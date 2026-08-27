@@ -1716,8 +1716,9 @@ async function resumeSession(
         summary.id
       );
 
-      // Learning capture (execution + any reviewer comments) runs once inside
-      // runAgent's post-run lifecycle, so nothing extra is needed here.
+      // Opt-in automatic observation runs once inside runAgent's post-run
+      // lifecycle. Deliberate reviewer learning is saved separately when Learn
+      // is selected, so nothing extra is needed here.
 
       const disposition = classifyRunResult(result);
       process.stdout.write(JSON.stringify({

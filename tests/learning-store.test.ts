@@ -474,6 +474,10 @@ Always wait for explicit approval before publishing.
     } as never, agentFile, projectRoot);
 
     const prompt = result?.prompt ?? "";
+    expect(prompt).toContain("## Relevant Learnings");
+    expect(prompt).toContain("Apply each learning only when its situation is relevant");
+    expect(prompt).toContain("current task and agent instructions take precedence");
+    expect(prompt).not.toContain("take precedence over Skills");
     expect(prompt.indexOf("Manual rule")).toBeLessThan(prompt.indexOf("Approval rule"));
     expect(prompt.indexOf("Approval rule")).toBeLessThan(prompt.indexOf("Auto rule"));
   });

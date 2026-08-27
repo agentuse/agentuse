@@ -7,7 +7,7 @@ import { dirname } from 'path';
 import ora from 'ora';
 import type { AgentCompleteEvent } from '../plugin/types';
 import type {
-  ApprovalReview, ChannelCounts, LearningCategory, LearningChannel,
+  ChannelCounts, LearningCategory, LearningChannel,
   LearningConfig, LearningDraft, LearningOutcome, LearningSource,
 } from './types';
 import { evaluateExecution, refineManualLearning, renderRunEvidence } from './evaluator';
@@ -31,8 +31,6 @@ export interface ExtractLearningsOptions {
   /** Cwd-derived project root used by capture-agent tools and sandboxes. */
   projectRoot?: string | undefined;
   config: LearningConfig;
-  /** Reviewer comments from this run's approval gates (paired with the work). */
-  reviews?: ApprovalReview[];
   /** Session the run belongs to; stamped on captured learnings so the session
    *  view can show only the lessons that run produced. */
   sessionId?: string | undefined;
@@ -43,15 +41,15 @@ export interface ExtractLearningsOptions {
  * Called after agent completion when learning.capture is enabled.
  *
  * The pipeline, per channel:
- * 1. corrections (always on with capture): the durable principles behind
- *    reviewer comments, via the built-in evaluator. Skipped entirely when the
- *    run drew no comments — the corrections-only default costs nothing then.
+ * 1. deliberate human learning is handled before this pipeline by the Learn
+ *    checkbox, --remember, or manual add. An ordinary approval comment only
+ *    revises the current run and never enters durable memory implicitly.
  * 2. tool-errors (addon): failure→recovery pairs detected structurally in the
  *    trace, in code. No model judgment involved in whether one is real.
  * 3. custom / agent (opt-in): free-form observation capture, via the built-in
  *    evaluator scoped by the guidance text, or a replacement evaluator agent.
  *
- * Every free-form candidate — corrections included — then passes the vet
+ * Every free-form candidate then passes the vet
  * against the COMPLETE agent contract before it can become active; failures
  * are quarantined (human-authored) or rejected (model-authored), never
  * silently injected. Stored entries whose recorded contract hash is missing
@@ -70,8 +68,6 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
   // Skip if capture is not enabled (shouldn't happen, but safety check)
   if (!capture) return { status: 'none', source: 'auto', count: 0, titles: [] };
 
-  const reviews = options.reviews ?? [];
-  const hadReviews = reviews.length > 0;
   const model = config.model ?? agentModel;
   const currentHash = hashInstructions(agentInstructions);
 
@@ -112,26 +108,23 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
     const freeformAgent = capture.agent;
     const freeformCustom = capture.custom;
 
-    // corrections + custom share one evaluator call (they already did as one
-    // pass, and one helper call per run is the cost ceiling capture aims for).
-    // The call is skipped outright when it would have nothing to do: no
-    // reviewer comments and no free-form opt-in.
-    if (hadReviews || freeformCustom !== undefined) {
+    // Ordinary reviewer comments are intentionally absent here. A human makes
+    // feedback durable only through Learn/--remember; `custom` is the separate,
+    // explicit opt-in for having a model observe executions automatically.
+    if (freeformCustom !== undefined) {
       const evaluated = await evaluateExecution({
         event,
         agentInstructions,
         model,
-        freeform: freeformCustom !== undefined ? { guidance: freeformCustom } : false,
+        freeform: { guidance: freeformCustom },
         existingLearnings: active,
-        reviews,
         capacity: { cap },
       });
       collect(evaluated, 'custom'); // evaluator stamps corrections/custom itself
     }
 
-    // Replacement evaluator agent: free-form candidates only; corrections stay
-    // on the built-in path above — the one channel that cannot manufacture
-    // policy must not depend on a user-supplied agent behaving.
+    // Replacement evaluator agent: free-form candidates only. Explicit human
+    // learnings stay on the Learn/--remember path and never depend on this agent.
     if (freeformAgent !== undefined) {
       const { captureViaAgent } = await import('./capture-agent.js');
       const agentDrafts = await captureViaAgent({
@@ -144,7 +137,6 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
           cwd: process.cwd(),
         },
         existingLearnings: active,
-        reviews,
         cap,
       });
       collect(agentDrafts, 'agent');
@@ -285,7 +277,7 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
         logger.debug(`[Learning] ${refused.length} auto learning(s) refused: rule set full at ${cap}`);
       }
       return {
-        status: 'none', source: hadReviews ? 'approval' : 'auto', count: 0, titles: [],
+        status: 'none', source: 'auto', count: 0, titles: [],
         ...(drafts.length > 0 || typedDrafts.length > 0 ? { channels: counts } : {}),
       };
     }
@@ -324,7 +316,7 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
     const detail = error instanceof Error ? error.message : String(error);
     spinner.fail('Failed to extract learnings');
     logger.debug(`[Learning] Error: ${detail}`);
-    return { status: 'failed', source: hadReviews ? 'approval' : 'auto', count: 0, titles: [], detail };
+    return { status: 'failed', source: 'auto', count: 0, titles: [], detail };
   }
 }
 

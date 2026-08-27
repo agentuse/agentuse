@@ -132,41 +132,7 @@ describe("evaluateExecution", () => {
     expect(opts.prompt).toContain("Output: No results found for 'pricing'");
   });
 
-  it("surfaces reviewer feedback in the prompt and trusts approval learnings at 0.95", async () => {
-    completeTextMock.mockImplementation(async () =>
-      JSON.stringify([
-        {
-          source: "approval",
-          category: "warning",
-          title: "Avoid salesy intros",
-          instruction: "Keep intros factual; avoid promotional language.",
-          confidence: 0.7,
-        },
-      ]),
-    );
-
-    // Corrections-only (freeform: false) is the default mode, and a reviewer
-    // comment is exactly what it exists to capture.
-    const result = await evaluateExecution({
-      event: baseEvent,
-      agentInstructions: "Agent instructions",
-      model: "gpt-4",
-      freeform: false,
-      reviews: [{ comment: "this intro is too salesy", work: "Draft: Unlock the AMAZING secret!!!" }],
-    });
-
-    const [, opts] = completeTextMock.mock.calls[0] as unknown as [string, { prompt: string }];
-    expect(opts.prompt).toContain("Reviewer Feedback");
-    expect(opts.prompt).toContain("this intro is too salesy");
-    expect(opts.prompt).toContain("Unlock the AMAZING secret");
-
-    // Human-sourced: kept despite confidence < 0.8, stored at the trusted 0.95.
-    expect(result).toHaveLength(1);
-    expect(result[0].source).toBe("approval");
-    expect(result[0].confidence).toBe(0.95);
-  });
-
-  it("forces source to 'auto' when the model claims approval but there were no reviews", async () => {
+  it("forces source to 'auto' when the model claims human provenance", async () => {
     completeTextMock.mockImplementation(async () =>
       JSON.stringify([
         {
@@ -204,7 +170,7 @@ describe("evaluateExecution", () => {
     approvedRuns: 0,
   });
 
-  it("demands a fold from every learning once the set is full, reviewer ones included", async () => {
+  it("demands a fold from every automatic learning once the set is full", async () => {
     completeTextMock.mockImplementation(async () => "[]");
     const active = [rule(0), rule(1), rule(2)];
 
@@ -223,9 +189,9 @@ describe("evaluateExecution", () => {
     // The carve-out that let a reviewer correction land without folding is what
     // built the backlog: rules past the cap are never injected, so they can
     // neither prove themselves nor be evicted.
-    expect(prompt).toContain("applies to reviewer-sourced learnings too");
+    expect(prompt).toContain("Automatic capture does not get a hidden extra slot");
     // Folding must not be read as picking a winner.
-    expect(prompt).toContain("satisfies both");
+    expect(prompt).toContain("preserves both intents");
   });
 
   it("reads the permanent block from the agent file, however far down it sits", async () => {
@@ -264,33 +230,6 @@ describe("evaluateExecution", () => {
     // The block is excised from the body rather than left in it, so the permanent
     // rules are shown once, under their own heading.
     expect(prompt).not.toContain("<!-- agentuse:learned -->");
-  });
-
-  it("discards execution-derived learnings in corrections-only mode", async () => {
-    // freeform: false is the default. The prompt says not to return "auto"
-    // learnings, but the guarantee is in code: a model that returns them anyway
-    // must not be able to manufacture policy from a run nobody reviewed.
-    completeTextMock.mockImplementation(async () =>
-      JSON.stringify([
-        { source: "auto", category: "tip", title: "From the run", instruction: "Do a thing the run suggested.", confidence: 0.95 },
-        { source: "approval", category: "warning", title: "From the reviewer", instruction: "Keep intros factual.", confidence: 0.95 },
-      ]),
-    );
-
-    const result = await evaluateExecution({
-      event: baseEvent,
-      agentInstructions: "Agent instructions",
-      model: "gpt-4",
-      freeform: false,
-      reviews: [{ comment: "too salesy" }],
-    });
-
-    expect(result).toHaveLength(1);
-    expect(result[0]!.source).toBe("approval");
-    expect(result[0]!.channel).toBe("corrections");
-
-    const prompt = String(completeTextMock.mock.calls[0]?.[1]?.prompt ?? "");
-    expect(prompt).toContain("captures human corrections only");
   });
 
   it("scopes execution-derived capture to the custom guidance when one is given", async () => {
@@ -341,7 +280,7 @@ describe("evaluateExecution", () => {
     });
 
     const prompt = String(completeTextMock.mock.calls[0]?.[1]?.prompt ?? "");
-    expect(prompt).toContain("CONTRADICT an existing rule");
+    expect(prompt).toContain("contradict an existing learning WHEN BOTH APPLY TO THE SAME SITUATION");
     expect(prompt).not.toContain("The set is FULL");
   });
 
@@ -367,7 +306,7 @@ describe("evaluateExecution", () => {
     // The example is the strongest instruction in any prompt: it must show a
     // real short rule rather than describe a long one.
     expect(prompt).not.toContain("Detailed instruction");
-    expect(prompt).toContain("Keep intros factual. No promotional language.");
+    expect(prompt).toContain("When the search tool returns no results, narrow the query before widening it.");
   });
 
   it("tells an Anthropic model what job it is doing, and asks for it short", async () => {

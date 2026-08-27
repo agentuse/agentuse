@@ -75,7 +75,7 @@ const INSTRUCTIONS = "Do things";
  *  an extra model call the test would then have to answer. */
 const CURRENT_HASH = hashInstructions(INSTRUCTIONS);
 
-/** Corrections-only: the default capture mode since 0.18. */
+/** No automatic channels: the default capture mode since 0.18. */
 const CORRECTIONS_ONLY = { capture: { addons: [] }, apply: false } as const;
 /** Free-form observation capture, scoped by guidance — the opt-in that makes
  *  execution-derived learnings reachable at all. */
@@ -244,102 +244,7 @@ describe("extractLearnings", () => {
     expect(await store.load()).toHaveLength(1);
   });
 
-  it("shows the evaluator every active rule with its id, and re-asserts a repeat", async () => {
-    // Two properties in one run, because they are the same mechanism.
-    //
-    // The evaluator is shown the WHOLE active set, each entry with the id that
-    // makes it revisable. Withholding any of it was the older behaviour and it
-    // is what let contradictory rules accumulate: a rule the model cannot see is
-    // a rule it cannot notice its new one collides with.
-    //
-    // And a reviewer repeating a correction still refreshes the stored entry
-    // rather than appending a near-copy beside it.
-    const store = LearningStore.fromAgentFile(agentFilePath, tempDir);
-    const dormant = {
-      id: "dormant1",
-      category: "warning" as const,
-      title: "Cut teaching-mode lines",
-      instruction: "Rewrite instruction shaped phrasing as the author's own lived observation.",
-      confidence: 0.95,
-      injectedCount: 0,
-      extractedAt: "2026-06-02T00:00:00.000Z",
-      source: "approval" as const,
-      instructionsHash: CURRENT_HASH,
-      reasserted: 0,
-      approvedRuns: 0,
-    };
-    const fillers = Array.from({ length: 10 }, (_, i) => ({
-      ...dormant,
-      id: `filler${i}`,
-      title: `Filler ${i}`,
-      instruction: `Unrelated guidance covering separate territory numbered ${i} exactly.`,
-      extractedAt: `2026-07-${String(i + 1).padStart(2, "0")}T00:00:00.000Z`,
-    }));
-    await store.save([dormant, ...fillers]);
-
-    respondWith(() => JSON.stringify([{
-      source: "approval",
-      category: "warning",
-      title: "Don't lecture the author",
-      instruction: "Rewrite instruction shaped phrasing as the author's own lived observation, never a rule.",
-      confidence: 0.95,
-    }]));
-
-    const outcome = await extractLearnings({
-      event,
-      agentInstructions: INSTRUCTIONS,
-      agentModel: "gpt-4",
-      agentFilePath,
-      stateRoot: tempDir,
-      // Corrections-only: the reviewer comment is what makes the evaluator run.
-      config: CORRECTIONS_ONLY,
-      reviews: [{ comment: "Don't lecture" }],
-      sessionId: "sess-repeat",
-    });
-
-    // Every active rule reached the evaluator, each addressable by id, together
-    // with the instruction to reconcile rather than merely avoid duplicating.
-    const prompt = String(completeTextMock.mock.calls[0]?.[1]?.prompt ?? "");
-    expect(prompt).toContain("Filler 9");
-    expect(prompt).toContain("Cut teaching-mode lines");
-    expect(prompt).toContain("(id dormant1)");
-    expect(prompt).toContain("CONTRADICT an existing rule");
-    expect(prompt).toContain('"supersedes"');
-
-    // The candidate then went through the vet, against the same rules in force.
-    const vetPrompt = String(completeTextMock.mock.calls[1]?.[1]?.prompt ?? "");
-    expect(isVetPrompt(vetPrompt)).toBe(true);
-    expect(vetPrompt).toContain("(id dormant1)");
-
-    // And the repeat refreshed the existing entry rather than appending a near-copy.
-    expect(outcome.status).toBe("captured");
-    expect(outcome.count).toBe(1);
-    const loaded = await store.load();
-    expect(loaded).toHaveLength(11);
-    const updated = loaded.find((l) => l.id === "dormant1");
-    expect(updated?.title).toBe("Don't lecture the author");
-    // Refreshed to now, so it ranks as recent and is injected next run.
-    expect(updated?.extractedAt).not.toBe("2026-06-02");
-    expect(updated?.extractedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect(updated?.sessionId).toBe("sess-repeat");
-  });
-
-  it("quarantines a human correction the vet finds contradictory, never drops it", async () => {
-    respondWith(
-      () => JSON.stringify([{
-        source: "approval",
-        category: "warning",
-        title: "Always cite a summary",
-        instruction: "Cite the summary rather than the primary source.",
-        confidence: 0.95,
-      }]),
-      (prompt) => JSON.stringify(candidateIds(prompt).map((id) => ({
-        id,
-        verdict: "contradiction",
-        detail: "Cite the primary source, never a summary.",
-      }))),
-    );
-
+  it("does nothing when no automatic channel is enabled", async () => {
     const outcome = await extractLearnings({
       event,
       agentInstructions: INSTRUCTIONS,
@@ -347,17 +252,14 @@ describe("extractLearnings", () => {
       agentFilePath,
       stateRoot: tempDir,
       config: CORRECTIONS_ONLY,
-      reviews: [{ comment: "cite the summary" }],
     });
 
-    // Set aside with the conflict named — not injected, and not discarded: a
-    // human wrote it, so silently dropping it is never allowed.
-    expect(outcome.quarantined).toBe(1);
+    // Human feedback becomes durable through Learn/--remember, which calls a
+    // separate API. This automatic extraction API has no reviewer input.
+    expect(completeTextMock).not.toHaveBeenCalled();
+    expect(outcome.status).toBe("none");
     expect(outcome.count).toBe(0);
-    expect(outcome.channels?.corrections).toEqual({ captured: 0, vettedOut: 0, quarantined: 1 });
-    const raw = readFileSync(learningsPath, "utf-8");
-    expect(raw).toContain("state:quarantined");
-    expect(raw).toContain("<!-- why: contradicts the contract: Cite the primary source, never a summary. -->");
+    expect(await LearningStore.fromAgentFile(agentFilePath, tempDir).load()).toEqual([]);
   });
 
   it("rejects a model-authored duplicate outright rather than storing it", async () => {

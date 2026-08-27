@@ -59,6 +59,15 @@ describe("reading the block back out of an agent file", () => {
     ]);
   });
 
+  it("renders learned guidance with contextual rather than unconditional authority", () => {
+    const block = renderLearnedBlock([rule("a", "For simple questions, answer directly.")]);
+
+    expect(block).toContain("## Learned Guidance");
+    expect(block).toContain("Apply each learning only when its situation is relevant");
+    expect(block).toContain("agent's authored instructions take precedence");
+    expect(block).not.toContain("take precedence over Skills");
+  });
+
   it("keeps a multi-line rule whole", () => {
     // A graduated rule can carry its own numbered list, so a bullet runs until
     // the next bullet starts, not to the end of its line.

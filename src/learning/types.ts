@@ -9,10 +9,10 @@ import { z } from 'zod';
 export type CaptureAddon = 'tool-errors';
 
 /**
- * Canonical capture config. Corrections — human feedback via approval comments,
- * `--remember`, and manual add — are always on when capture is enabled at all:
- * capture being on MEANS human feedback is captured, and there is no
- * corrections-off-but-capture-on state. Everything else is opt-in:
+ * Canonical automatic-capture config. Deliberate human learning through the
+ * Learn checkbox, `--remember`, and manual add is a separate path: a reviewer
+ * explicitly selects what becomes durable. Everything here is opt-in
+ * observation of a run without that per-comment choice:
  * - `addons`: typed channels verified structurally in code.
  * - `custom`: scoped free-form observation capture via the built-in evaluator.
  * - `agent`: an .agentuse file replaces the built-in evaluator (the same
@@ -36,6 +36,17 @@ export interface CanonicalLearningConfig {
   model?: string | undefined;    // model for helper calls (capture + vet + tidy); defaults to the agent's
 }
 
+/** Whether this config opts into observing a run without a human choosing
+ * Learn. Kept as one shared predicate so shorthand/default configs cannot
+ * accidentally start automatic capture in a new caller. */
+export function hasAutomaticLearningCapture(config: CanonicalLearningConfig | undefined): boolean {
+  const capture = config?.capture;
+  return Boolean(
+    capture
+    && (capture.addons.length > 0 || capture.custom !== undefined || capture.agent !== undefined),
+  );
+}
+
 const CaptureObjectSchema = z
   .object({
     addons: z.array(z.enum(['tool-errors'])).default([]),
@@ -56,10 +67,10 @@ const CaptureObjectSchema = z
 
 /**
  * `capture: true` still parses, but its meaning narrowed in 0.18: it used to
- * mean free-form auto-capture, it now means corrections only. Free-form
- * observation capture is unreachable without explicitly writing `custom` or
- * `agent` — "enable and hope" cannot manufacture policy. An empty object is
- * the same as `true`.
+ * mean free-form auto-capture; it now enables no automatic observation
+ * channels. Human feedback becomes durable only through Learn/--remember.
+ * Free-form observation capture is unreachable without explicitly writing
+ * `custom` or `agent`. An empty object is the same as `true`.
  *
  * `true` is normalized by preprocess rather than a union branch with a
  * `.transform`: a transform inside a union collapses every branch error to
@@ -115,8 +126,8 @@ const CanonicalLearningSchema = z
 
 /**
  * Config schema for the learning feature in agent config.
- * Accepts `learning: true` (sugar for corrections-only capture + apply) or the
- * canonical object. The boolean sugar is normalized by preprocess, not a union
+ * Accepts `learning: true` (apply deliberate human learnings; automatic
+ * observation off) or the canonical object. The boolean sugar is normalized by preprocess, not a union
  * branch — see the note on {@link CaptureSchema}.
  *
  * The pre-0.15 `{ evaluate, apply? }` shape is gone: `.strict()` on the
@@ -143,7 +154,7 @@ export function legacyLearningConfigNotices(rawLearning: unknown): string[] {
   const notices: string[] = [];
   if (rawLearning === true) {
     notices.push(
-      'learning: true now captures corrections only (human feedback) — free-form auto-capture no longer runs. '
+      'learning: true now learns human feedback only when the reviewer explicitly chooses Learn (or uses --remember); ordinary comments stay with the current run. Free-form auto-capture no longer runs. '
       + 'Explicit form: learning: { capture: true, apply: true }. '
       + 'To restore scoped free-form capture, set capture: { custom: "..." }',
     );
@@ -153,7 +164,7 @@ export function legacyLearningConfigNotices(rawLearning: unknown): string[] {
     && (rawLearning as { capture?: unknown }).capture === true
   ) {
     notices.push(
-      'learning.capture: true now means corrections only (human feedback) — free-form auto-capture no longer runs. '
+      'learning.capture: true enables no automatic observation channels. Human feedback is saved only through Learn/--remember; free-form auto-capture no longer runs. '
       + 'To restore scoped free-form capture, set capture: { custom: "..." }',
     );
   }
@@ -233,7 +244,7 @@ export type LearningState = 'active' | 'graduated' | 'retired' | 'quarantined';
 
 /**
  * Which capture channel produced a learning.
- * - corrections: human feedback (approval comments, --remember, manual add)
+ * - corrections: human feedback explicitly saved through Learn, --remember, or manual add
  * - tool-errors: typed, structurally-verified recovery records
  * - custom: scoped free-form capture via the built-in evaluator
  * - agent: free-form capture via a replacement evaluator agent

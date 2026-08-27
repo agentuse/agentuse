@@ -493,8 +493,8 @@ export function buildDecidePrompt(
   const permanentSection = permanentRules.length > 0
     ? `
 
-## Rules already PERMANENT in this agent (part of the same ruleset)
-Graduated by an earlier pass. They apply on EVERY run and cost no slot, so they are the most expensive rules here to get wrong.
+## Guidance already PERMANENT in this agent
+Graduated by an earlier pass. It is available on every run but applies only when its stated situation is relevant. It costs no slot, so it is the most expensive guidance here to scope badly.
 ${permanentRules.map((r) => `- [${r.category}] ${r.instruction}`).join('\n')}`
     : '';
 
@@ -512,19 +512,19 @@ ${inventory}
 2. **rewrite** — a correction a human has REPEATED is not wrong, it is not landing. Name it and it will be restated more sharply. Prefer this over retiring anything marked as repeated.
 3. **compress** — a correction that is right, and far longer than the thing it has to say. Name it and it will be shortened without losing a case. This is the only move that fires on SIZE, so nothing else will ever reach a correction that was captured once, is doing its job, and happens to run to several hundred words. Reach for it when an entry's word count is out of proportion to the number of distinct things it tells the agent to do — a rule illustrated five times over, paragraphs restating instructions the agent's own text above already gives, or the story of the run that produced it. Not a substitute for retire: compress keeps every case, so use it on corrections worth keeping.
 4. **retire** — a correction that another one now fully covers, or that the agent's own instructions above already state. Only entries with no "CANNOT RETIRE" flag.
-5. **graduate** — a correction moves into the agent's permanent instructions above, where it applies on every run and never competes for a slot. Only entries marked "may be graduated", and only after step 1 below.
+5. **graduate** — a correction moves into the agent's permanent learned-guidance block above, where it is available on every run and never competes for a slot. Its contextual scope does not change. Only entries marked "may be graduated", and only after step 1 below.
 
 The permanent rules above are not yours to edit in this pass — a later pass rewrites that block as a whole. Read them, and never graduate something they already cover.
 
 ## How to decide, in order
 
-1. **Reconcile before you promote anything.** Read the whole list, plus the agent's own instructions above, as ONE ruleset the agent has to obey all at once. Look for pairs that say the same thing, and for pairs that CONTRADICT — where a later correction overrules an earlier one, or narrows it so far they cannot both be followed. Contradictions are the most important thing on this page and the easiest to miss, because two rules can collide while sharing no wording at all. Resolve those first, by merging them or by retiring the one that was overruled.
+1. **Reconcile before you promote anything.** These are contextual learnings, not a checklist that applies to every run. Compare their trigger situations first. Look for pairs that say the same thing for the same situation, and for pairs that contradict when both would apply. Guidance for different situations may coexist even when its wording differs. Resolve true same-scope contradictions first, by merging them or retiring the one that was overruled.
 2. **Only then graduate.** A rule earns permanence AFTER it has been checked against everything else, not instead of being checked. Never graduate a rule that another correction in this list overrules, and never graduate one that restates or contradicts something already in the agent's instructions above — that block is part of the ruleset, and a second permanent copy of a rule you cannot later reconcile is the worst outcome available here.
 
 ## Rules
 - Every id you name must come from the list. Each id may appear in AT MOST ONE move.
 - **Who wrote a rule is evidence, not a verdict.** A rule marked src:manual or src:approval came from a human and should weigh heavily — but the same human wrote the correction that may now overrule it, so authorship cannot decide whether a rule is still true. Judge each one on whether it still earns a place: is it current, is it covered by another, has it been superseded? A newer human correction retiring an older human rule is exactly the right outcome, not something to avoid.
-- Merge two corrections whenever both can be stated as one rule, even when they constrain different situations. Merging is not discarding: the merged wording must carry every case the originals covered, and whoever writes it sees all of them. Leaving a pair alone is right only when no single rule can hold both without losing a constraint — a judgement about the wording, not about whether the subjects match.
+- Merge corrections when they express the same guidance for the same situation, or when one learning can preserve every source's trigger explicitly without broadening any of them. Never merge merely to reduce the count when doing so would erase when each learning applies. Merging is not discarding: the merged wording must carry every case and scope the originals covered.
 ${learnings.length > cap
   ? '- This set is over its limit, so some of these corrections do not reach the agent at all. Leaving a pair alone is not the safe choice; it is a choice to leave something dormant.'
   : '- This set already fits the limit, so nothing here is dormant and there is no pressure to cut the count. What brought you here is length: one or more of these is far longer than the thing it has to say, and every word is re-read on every run. Compress those. Do not manufacture merges or retirements to look busy.'}
@@ -548,7 +548,7 @@ export function buildMergePrompt(group: Learning[]): string {
 
 ${parts}
 
-Write ONE correction that replaces them. It must cover everything all of them covered — do not just pick the best one and drop the rest, and do not invent guidance none of them gave.
+Write ONE contextual learning that replaces them. It must cover everything all of them covered, including every trigger or situation where each source applies. Do not turn situation-specific guidance into a universal rule, pick one source and drop the rest, or invent guidance none of them gave.
 
 Respond with ONLY a JSON object, no other text:
 {"category": "tip|warning|pattern|tool-usage|error-fix", "title": "short title", "instruction": "the merged instruction"}`;
@@ -590,7 +590,7 @@ Cut freely:
 - **The second through Nth example of one point.** Keep the sharpest illustration — a fail/pass contrast beats a lone specimen — and drop the rest. Examples that each carry a DIFFERENT case all stay.
 - Repetition, throat-clearing, and the same point restated in new words.
 
-Cut never: a case, an exception, a threshold or number, a trigger condition, a named failure, a required output. Those ARE the rule.
+Cut never: a case, an exception, a threshold or number, a trigger condition, a named failure, a required output. Those define the learning and its scope.
 
 The failure to avoid is writing the topic instead of the instruction. "Keep the register light" names a subject; it does not tell the agent what light means or when to reach for it. If your shorter text leaves a reader asking "yes, but what do I actually do?", it is too short — not because of its length, but because an instruction went missing.
 
@@ -609,7 +609,7 @@ export function buildRewritePrompt(learning: Learning, why: string): string {
 
 Reason it was flagged: ${why}
 
-Restate it more concretely and more specifically, so the agent cannot follow it and still make the mistake. Keep it to the same rule — do not broaden it or add guidance it did not carry.
+Restate it more concretely and more specifically, so the agent cannot apply it in the same situation and still make the mistake. Preserve or clarify its trigger; do not broaden it into a universal rule or add guidance it did not carry.
 
 Respond with ONLY a JSON object, no other text:
 {"title": "short title", "instruction": "the sharper instruction"}`;
@@ -672,7 +672,7 @@ These are NOT yours to rewrite. They are here so you can see what each rule sits
 ${body}`
     : '';
 
-  return `Below are the permanent rules in one agent's instruction file. They apply on EVERY run of this agent. Rewrite them as one coherent set.${fresh}
+  return `Below are permanent learnings in one agent's instruction file. They are available on every run but each learning applies only when its situation is relevant. Rewrite them as one coherent set whose trigger scopes remain explicit.${fresh}
 
 ## The rules
 ${listed}${bodySection}
@@ -682,7 +682,7 @@ ${listed}${bodySection}
 Combine, tighten, and reorder freely. Specifically look for:
 - **Two rules that are halves of one procedure** — especially a pair that reference each other ("see the rule about X", "otherwise use the handling below"). A reader has to hold both to act on either. Make them one.
 - **A rule and the correction to that rule** — where a later rule redefines a term or overrules a case in an earlier one. The correction belongs inside the rule it corrects, not beside it.
-- **The same instruction stated more than once** in different words or different scopes.
+- **The same guidance stated more than once for the same situation.** Different scopes are not duplicates unless one rewritten learning can preserve those scopes explicitly.
 - **Leftovers from staging** — phrases like "CORRECTION of an auto-learning from this session", "on the 2026-07-14 run", or an id like "id:a37rttpa". These made sense while the rule was a pending correction. In a permanent rule they are noise: state the rule, keep the concrete evidence that makes it credible, drop the bookkeeping.
 - **A rule the body already states.** Drop it. The body outranks it anyway, so the copy here only adds length and a second place to drift.
 - **A passage inside a rule that the body already states.** Cut the passage, keep the rule. This is usually the largest saving available and the one most often missed: a rule earns its place on one instruction and carries three paragraphs restating steps, gate fields, or constraints the body already spells out. Cut only where the body gives the same instruction, not merely the same subject — if the body mentions the topic without saying what to do, the passage is the only place the instruction exists and it stays.
@@ -693,7 +693,7 @@ Combine, tighten, and reorder freely. Specifically look for:
 Aim for the shortest text that still tells the agent every single thing its sources told it. Those are two demands at once and both are real:
 
 - **Cut words freely.** Repetition, throat-clearing, the same point made twice in different sentences, narration of how the rule came to exist. A merged rule that is half the length of its sources is a good outcome when the removed words were not carrying an instruction.
-- **Cut instructions never.** Every case, exception, threshold, trigger, named failure and worked example is load-bearing. A 24h cutoff, a reviewer's verbatim complaint, "do X but NOT when Y" — those are the rule. Drop one and the agent behaves differently, which is the whole cost of getting this wrong.
+- **Cut guidance and scope never.** Every case, exception, threshold, trigger, named failure and worked example is load-bearing. A 24h cutoff or "do X but NOT when Y" defines when the learning applies. Drop one and contextual guidance becomes a universal rule or silently stops covering a case.
 - **Cut a repeated example freely.** The line above protects the FIRST example of a point, not the fourth. A rule that quotes six phrasings of what "light register" sounds like is teaching one thing six times, and every copy after the clearest costs a slot in every future run while adding nothing. Keep the sharpest illustration — a fail/pass contrast beats a lone specimen — and cut the rest. Distinct examples that each carry a DIFFERENT case all stay: the test is whether deleting one loses an instruction, not whether it loses a sentence.
 
 The failure to avoid is writing the topic instead of the instruction. "Keep the two senses of 'connect' apart" names a subject; it does not tell anyone what either sense is or what to do about them, so it replaces a rule with a label. If your merged text would leave a reader asking "yes, but what do I actually do?", it is too short — not because of its length, but because an instruction went missing.

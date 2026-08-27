@@ -4,9 +4,8 @@
  *
  * Replacing the evaluator does not buy a bypass: everything the capture agent
  * returns still passes the common vet, provenance stamping, and lifecycle
- * validation in extractLearnings. Corrections (human feedback) deliberately
- * stay on the built-in path — the one channel that cannot manufacture policy
- * must not depend on a user-supplied agent behaving.
+ * validation in extractLearnings. Deliberate human learning stays on the
+ * Learn/--remember path and never depends on a user-supplied agent behaving.
  *
  * The built-in evaluator remains the default because capture runs after every
  * run: one cheap helper call, not a full subagent session spawned as a shadow
@@ -26,7 +25,7 @@ import { DoomLoopDetector } from '../tools/index.js';
 import { resolveMaxSteps } from '../utils/config.js';
 import { logger } from '../utils/logger.js';
 import type { AgentCompleteEvent } from '../plugin/types.js';
-import type { ApprovalReview, Learning, LearningCategory, LearningDraft } from './types.js';
+import type { Learning, LearningCategory, LearningDraft } from './types.js';
 import { renderRunEvidence } from './evaluator.js';
 import { generateLearningId } from './store.js';
 
@@ -34,10 +33,10 @@ const LEARNING_CATEGORIES = ['tip', 'warning', 'pattern', 'tool-usage', 'error-f
 
 const SubmitLearningsSchema = z.object({
   learnings: z.array(z.object({
-    category: z.enum(LEARNING_CATEGORIES).describe('The kind of rule'),
+    category: z.enum(LEARNING_CATEGORIES).describe('The kind of learning'),
     title: z.string().min(1).describe('Short title (max 6 words)'),
-    instruction: z.string().min(1).describe('The rule, written as an order the agent can act on — a few sentences, never a document'),
-    confidence: z.number().min(0).max(1).optional().describe('How confident you are this is a durable, correct rule (default 0.8)'),
+    instruction: z.string().min(1).describe('Contextual guidance with its trigger where needed — a few sentences, never a document'),
+    confidence: z.number().min(0).max(1).optional().describe('How confident you are this is durable, correctly scoped guidance (default 0.8)'),
     supersedes: z.string().optional().describe('Id of an existing active rule this one replaces (fold or trade), from the list in your task'),
   })).max(5).describe('0-5 candidate learnings; prefer fewer, higher-quality ones'),
 });
@@ -55,10 +54,9 @@ export async function captureViaAgent(params: {
   projectContext?: { projectRoot: string; stateRoot: string; cwd: string } | undefined;
   /** Rules already in force, with ids, so the capture agent can reconcile. */
   existingLearnings: Learning[];
-  reviews: ApprovalReview[];
   cap: number;
 }): Promise<LearningDraft[]> {
-  const { event, captureAgentPath, agentFilePath, projectContext, existingLearnings, reviews, cap } = params;
+  const { event, captureAgentPath, agentFilePath, projectContext, existingLearnings, cap } = params;
 
   const resolvedPath = resolve(dirname(agentFilePath), captureAgentPath);
   const captureAgent = await parseAgent(resolvedPath);
@@ -98,23 +96,18 @@ export async function captureViaAgent(params: {
       stateRoot: projectContext?.stateRoot,
     });
 
-    const reviewsBlock = reviews.length > 0
-      ? `\n\n## Reviewer feedback left at approval gates\n${reviews
-          .map((r, i) => `${i + 1}. ${r.comment}`)
-          .join('\n')}`
-      : '';
     const existingBlock = existingLearnings.length > 0
-      ? `\n\n## Rules the agent already carries (${existingLearnings.length}/${cap} slots used)\nDo not restate one; to replace one, set "supersedes" to its id.\n${existingLearnings
+      ? `\n\n## Learnings the agent already carries (${existingLearnings.length}/${cap} slots used)\nTreat these as contextual guidance. Do not restate one for the same situation; to replace one, set "supersedes" to its id. Guidance for a different situation may coexist.\n${existingLearnings
           .map((l) => `- (id ${l.id}) [${l.category}] ${l.title}: ${l.instruction.slice(0, 200)}`)
           .join('\n')}`
       : '';
 
     const captureTask = `A run of the agent "${event.agent.name}" just completed. Evaluate it per your own instructions and record the durable learnings future runs should carry.
 
-${renderRunEvidence(event)}${reviewsBlock}${existingBlock}
+${renderRunEvidence(event)}${existingBlock}
 
 ## Recording your result (required)
-Call the \`submit_learnings\` tool exactly once with 0-5 candidate learnings (an empty list is a fine answer). Each learning is ONE instruction the agent can act on, stated in a sentence or two — never a document, never a retelling of what happened. Your candidates will be vetted against the agent's own instructions before any of them takes effect.`;
+Call the \`submit_learnings\` tool exactly once with 0-5 candidate learnings (an empty list is a fine answer). Each learning is concise, appropriately scoped guidance for a similar future situation. Include the trigger when it is not universal; never return a document or a retelling of what happened. Your candidates will be vetted against the agent's own instructions before any of them takes effect.`;
 
     // The candidates arrive as validated tool args, not scraped prose — the
     // same reason verify's judge uses submit_verdict.

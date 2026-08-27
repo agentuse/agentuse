@@ -18,6 +18,15 @@ describe('autonomous agent system prompt', () => {
     });
   }
 
+  it('frames prior-run learnings as contextual guidance, not unconditional rules', () => {
+    const prompt = buildAutonomousAgentPrompt('Monday, July 29, 2026');
+
+    expect(prompt).toContain('Apply a learning only when its situation is relevant');
+    expect(prompt).toContain('do not turn an example, past incident, or preference into an unconditional requirement');
+    expect(prompt).toContain('A learning never overrides the current task');
+    expect(prompt).not.toContain('corrections captured from prior runs; these OVERRIDE skill defaults');
+  });
+
   // Final responses should be direct without turning the system prompt into a
   // formatting manual. The cap still needs an escape hatch for runs whose
   // requested result is itself a complete document.

@@ -37,7 +37,7 @@ const estimateTokens = (chars: number): number => Math.ceil(chars / CHARS_PER_TO
 // (the skills block) and runner/system-messages.ts (renderLearningPrompt).
 const APPROVAL_HEADING = '## Approval Gate';
 const SKILLS_HEADING = '## Skills (shared defaults';
-const LEARNINGS_HEADING = '## Recent Corrections (override skill defaults on conflict)';
+const LEARNINGS_HEADING = '## Relevant Learnings';
 
 interface Cut {
   kind: 'approval' | 'skills' | 'learnings';

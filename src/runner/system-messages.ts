@@ -281,7 +281,7 @@ export interface LearningPromptResult {
 }
 
 /**
- * Render the Learned Guidelines block, optionally recording that the injected
+ * Render the Relevant Learnings block, optionally recording that the injected
  * learnings were used.
  *
  * Split from the two entry points below because static inspection (`agentuse
@@ -328,14 +328,14 @@ async function renderLearningPrompt(
       return undefined;
     }
 
-    // "Recent Corrections", not "Learned Guidelines": once an agent has
-    // graduated rules, its own file carries a `## Learned Guidelines` block, and
-    // appending a second heading of the same name would leave the model reading
-    // two identically-titled lists. The split is also honest — these are the
-    // ones still on probation.
-    const prompt = `## Recent Corrections (override skill defaults on conflict)
+    // Keep the injected store distinct from the graduated block in the agent
+    // file, while giving both the same contextual semantics. A learning is
+    // durable guidance, not an unconditional rule: the old "override" wording
+    // caused models to satisfy every historical correction even when the
+    // current task was different.
+    const prompt = `## Relevant Learnings
 
-Corrections captured from previous runs. These take precedence over Skills — if one contradicts a skill's default, follow the guideline:
+Guidance captured from previous runs. Apply each learning only when its situation is relevant to the current task. Preserve the reviewer's intended scope; do not turn examples or past incidents into universal requirements. The current task and agent instructions take precedence. A clearly relevant learning may refine a soft skill default:
 
 ${injected.map(l => `- [${l.category}] ${l.instruction}`).join('\n')}`;
 

@@ -10,17 +10,19 @@ tag: Experimental
 
 ## What is Learning?
 
-Learning lets an agent **capture** durable rules from its runs into a readable
-markdown file and **apply** them in future runs. Capture arrives through
-**channels**, and only one of them is on by default: **corrections**, the human
-feedback a reviewer leaves at an approval gate, saves with `--remember`, or adds
-by hand.
+Learning lets reviewers deliberately teach an agent from real work. Leave a
+comment at review time and check **Learn from this comment** when the feedback
+should help in similar future situations. An unchecked comment revises the
+current run only.
 
-That default is the whole design. A human authored every correction, so
-corrections are the one channel that cannot manufacture policy out of a run that
-merely happened to go a certain way. Free-form observation capture (the
-evaluator watching a run and deciding what the agent should believe from now on)
-is real capability and stays available, but you have to ask for it by name.
+AgentUse turns checked feedback into concise, appropriately scoped guidance,
+stores it in a readable markdown file, and applies it to later runs when
+relevant. A learning is durable guidance, not an unconditional rule: the current
+task and the agent's authored instructions still take precedence.
+
+That deliberate human choice is the default. Automatic observation of a run is
+advanced capability and remains available through explicit capture channels,
+but it is never enabled merely by writing `learning: true`.
 
 Everything a channel produces then passes a **vet** against the agent's complete
 instructions before it can reach a future run, and everything that reaches a
@@ -29,13 +31,13 @@ against.
 
 ## Quick Start
 
-A single switch turns on both capture and apply:
+A single switch applies deliberate human learnings on future runs:
 
 ```yaml
 ---
 model: anthropic:claude-sonnet-5
-approval: true   # reviewer comments are what this agent learns from
-learning: true   # capture corrections AND apply them next run
+approval: true   # exposes review comments and the Learn checkbox
+learning: true   # apply checked feedback on similar future runs
 ---
 
 # Blog Writer
@@ -47,22 +49,29 @@ Write short productivity blog posts.
 - Include 3 actionable tips
 ```
 
-`learning: true` is sugar for `{ capture: true, apply: true }`: corrections are
-captured, vetted, and injected on the next run. Learnings accumulate in a
+During review, write the correction and check **Learn from this comment**. The
+same operation is available as `--remember` in the CLI. AgentUse grounds the
+comment in the work being reviewed, vets it against the agent's instructions,
+and stores it. Unchecked comments are never added to durable memory.
+
+`learning: true` is sugar for `{ capture: true, apply: true }`: it applies
+explicitly saved human learnings, while automatic observation remains off.
+Learnings accumulate in a
 learnings file inside the AgentUse state directory, not in your repository.
 `agentuse learnings ./blog-writer.agentuse --path` prints where; see
 [Storage](#storage).
 
 <Note>
-  `capture: true` used to mean free-form auto-capture. As of v0.18.0 it means
-  corrections only, and an agent still carrying the old form says so once on
-  parse. See [Upgrading an existing agent](#upgrading-an-existing-agent).
+  `capture: true` used to mean free-form auto-capture. As of v0.18.0 it enables
+  no automatic observation channels. Human feedback is saved through the Learn
+  checkbox, `--remember`, or manual add. See
+  [Upgrading an existing agent](#upgrading-an-existing-agent).
 </Note>
 
-## Capture-Only (Review Before Trust)
+## Store Without Applying
 
-For a human-in-the-loop workflow, capture rules but do not auto-apply them.
-Review the file, then copy the best ones into your instructions yourself:
+To collect explicitly selected human learnings without putting them into future
+prompts yet:
 
 ```yaml
 learning:
@@ -70,32 +79,17 @@ learning:
   apply: false   # accumulate for manual review, never auto-inject
 ```
 
-This is the safer default for agents that touch untrusted input (web pages,
-emails, tickets), where an auto-applied rule could persist a bad or injected
-instruction. See [Best Practices](#best-practices).
+The Learn checkbox and `--remember` still save guidance. `apply: false` only
+keeps it out of future prompts until you turn application back on.
 
-`capture: true` still means corrections only, so on an agent with no approval
-gates there is nothing for it to collect. Add a `custom` block if you want the
-run itself observed; the [vet](#every-candidate-is-vetted) is what makes that
-safe enough to leave `apply` on.
+## Advanced: Automatic Capture Channels
 
-## Capture channels
-
-`capture` is either `false` or an object. The object form always includes
-corrections: capture being on *means* human feedback is captured, and there is
-no corrections-off-but-capture-on state. Everything else is opt-in.
+Most agents should stop at `learning: true`. Use capture channels only when you
+also want AgentUse to learn without a reviewer checking Learn on a comment.
 
 ```yaml
 learning:
-  capture: true                   # corrections only: human feedback
-                                  # (approval comments, --remember, manual add)
-  apply: true
-  max: 15
-```
-
-```yaml
-learning:
-  capture:                        # object form still includes corrections
+  capture:
     addons: [tool-errors]         # typed, structurally-verified channels
     custom: |                     # scoped free-form capture, built-in evaluator
       Only note selector changes.
@@ -109,14 +103,11 @@ learning:
 `verify.criteria` (tune the built-in), `agent` plays the role of `verify.judge`
 (replace it), and setting both is a parse error with the same message style.
 
-### corrections
+### deliberate human learning
 
-On whenever capture is on. The durable principle behind a reviewer's approval
-comment, a rule saved with `--remember`, or one added by hand in the CLI or the
-serve UI. See [Learning from approval comments](#learning-from-approval-comments).
-
-Corrections cost nothing on a run that drew no comments: the evaluator call is
-skipped outright when there is nothing for it to read.
+The Learn checkbox, `--remember`, and manual add are the standard human path.
+They are not automatic capture channels: the reviewer explicitly decides which
+comments become durable. Ordinary approval comments affect the current run only.
 
 ### `tool-errors` (addon)
 
@@ -174,9 +165,9 @@ learning:
 
 An `.agentuse` file replaces the built-in evaluator for free-form capture, the
 same pattern as `verify.judge`. The path resolves relative to the agent file
-that declares it. The capture agent receives the run's evidence, the reviewer
-comments, and the rules the agent already carries with their ids, and records
-its result by calling `submit_learnings` once with 0-5 candidates:
+that declares it. The capture agent receives the run's evidence and the
+learnings the agent already carries with their ids, and records its result by
+calling `submit_learnings` once with 0-5 candidates:
 
 ```yaml
 ---
@@ -190,27 +181,26 @@ Never record anything about the content the agent produced.
 ```
 
 Replacing the evaluator does not buy a bypass. Its candidates still pass the
-common vet, provenance stamping, and lifecycle validation. Corrections stay on
-the built-in path either way: the one channel that cannot manufacture policy
-must not depend on a user-supplied agent behaving.
+common vet, provenance stamping, and lifecycle validation. Deliberate human
+learning stays on the separate Learn/`--remember` path either way; it never
+depends on a user-supplied capture agent behaving.
 
 A nested `learning:` or `verify:` block on the capture agent is ignored (a
 helper pass must not recurse into a tree of helper passes), and a capture agent
 that suspends on an approval gate is an error.
 
 <Note>
-  The built-in evaluator stays the default because capture runs after **every**
-  run: one cheap helper call, not a full subagent session spawned as a shadow
-  child of every run in your fleet. Reach for `agent` when the judgment is
-  genuinely domain-specific, not to save a line of YAML.
+  `learning: true` makes no post-run evaluator call. The built-in evaluator runs
+  only when `capture.custom` is configured; use `capture.agent` when that
+  automatic judgment is genuinely domain-specific.
 </Note>
 
 ## Configuration Options
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `learning: true` | `boolean` | Shorthand for `{ capture: true, apply: true }`. |
-| `capture` | `boolean \| object` | `false` disables capture. `true` (or `{}`) captures corrections only. The object form adds channels. Defaults to `true`. |
+| `learning: true` | `boolean` | Apply learnings explicitly saved through Learn, `--remember`, or manual add. Automatic observation remains off. |
+| `capture` | `boolean \| object` | Automatic observation configuration. `true` or `{}` enables no automatic channel; name `addons`, `custom`, or `agent` to opt in. Default `true` for compatibility. |
 | `capture.addons` | `string[]` | Typed, structurally-verified channels. `tool-errors` is the only entry today. Defaults to `[]`. |
 | `capture.custom` | `string` | Guidance that scopes free-form observation capture through the built-in evaluator. Mutually exclusive with `agent`. |
 | `capture.agent` | `string` | Path to an `.agentuse` file that replaces the built-in evaluator, relative to this agent file. Mutually exclusive with `custom`. |
@@ -388,11 +378,12 @@ This reads only whether that file exists, never what is in it, so the agent beha
 
 ## How capture works
 
-After a run finishes, when `capture` is enabled:
+After a run finishes with an automatic channel configured:
 
-1. **Gather candidates per channel.** Corrections and `custom` share one
-   evaluator call, which sees the agent's complete instructions; `agent` runs
-   the replacement evaluator; `tool-errors` scans the run's tool traces in code.
+1. **Gather candidates per channel.** `custom` uses the built-in evaluator,
+   `agent` runs the replacement evaluator, and `tool-errors` scans the run's
+   tool traces in code. Deliberate human learnings are saved immediately by the
+   Learn/`--remember` path rather than inferred here.
 2. **Vet the free-form candidates** against the complete contract, the rules in
    force, and the trace. Passes become active, contradictions and failed human
    corrections are quarantined, and model-authored duplicates and ungrounded
@@ -411,9 +402,12 @@ The result is reported in the run's output and in the session log:
 Extracted 2 learning(s), 1 quarantined → ~/.local/share/agentuse/project/…/blog-writer.learnings.md
 ```
 
-## Learning from approval comments
+## Deliberate Learning from Review Comments
 
-When [Approval Gates](/guides/approval-gates) are enabled and `capture` is on, **any comment you leave at a gate** can be promoted into a durable learning. In practice your feedback arrives through the revise loop (leaving a comment sends the work back to be reworked and re-presents the same gate), while the final approve is usually a bare click with no comment, so comments are captured wherever they appear, not only on the approving decision. This is the highest-signal feedback an agent receives, and it is the channel that is on by default.
+At an [Approval Gate](/guides/approval-gates), a comment normally revises the
+current run and nothing more. Check **Learn from this comment** when AgentUse
+should remember the feedback for similar future situations. That explicit
+choice is what makes the comment durable.
 
 ```yaml
 ---
@@ -426,9 +420,16 @@ learning: true
 ...
 ```
 
-When you leave a note like "Going forward, always cite a source before publishing", a generalizability filter decides whether the comment is a **durable agent-wide rule** or a **one-off edit** to this run. Only durable rules are captured (as `src:approval`, confidence `0.95`); one-off edits (like "fix the typo in paragraph two" or "give me the source link") are ignored. Approval-sourced learnings rank ahead of auto-extracted ones when injected, so your learnings survive the per-run cap.
+The same comment serves both purposes: it revises the current work, and when
+checked, the learning processor grounds it in the reviewed output and rewrites
+it as appropriately scoped guidance. For example, “this intro is too salesy”
+can become “For informational posts, keep intros factual rather than
+promotional,” not the universal rule “Never use promotional language.”
 
-For faster teaching, the approval comment dialog can also save an explicit future rule. Use the comment for the current revision, then check **Remember this as a future rule** and write the durable rule separately. Checking the box is itself the opt-in, so it works on any agent, no `learning` config required to save. Manual rules are stored as `src:manual`, confidence `1.00`, and rank ahead of approval-promoted and auto-extracted learnings. They are only injected into future runs once the agent has `learning.apply` enabled (the dialog says so if it isn't). The CLI equivalent is:
+Checking Learn works even when the agent has no learning configuration; the
+guidance is stored but reaches future runs only when `learning.apply` is enabled.
+Explicit human learnings are stored as `src:manual` and rank ahead of automatic
+observations. The CLI equivalent is:
 
 ```bash
 agentuse sessions resume 01K... \
@@ -464,12 +465,17 @@ On next run or approval resume (when `apply: true`):
 
 1. Loads the agent's active rules from storage, skipping quarantined and
    [stale](#rules-are-stamped-with-the-instructions-they-were-checked-against) ones
-2. Injects the top `max` of them (15 by default) as a `## Recent Corrections` section
+2. Injects the top `max` of them (15 by default) as a `## Relevant Learnings` section
 3. Counts the injection against each rule's `injectedCount`
 
-This keeps learnings at the instruction level - where they have the most influence on agent behavior.
+The runtime tells the model to apply each learning only when its situation is
+relevant, preserve its intended scope, and never let it override the current
+task or authored agent instructions. A clearly relevant learning can refine a
+soft skill default without becoming a universal checklist item.
 
-Learnings that have [graduated](#tidying-up) live in your agent file's own `## Learned Guidelines` block instead. Both carry the same authority and both override skill defaults; the split just separates the proven rules from the ones still applying per-run.
+Learnings that have [graduated](#tidying-up) live in your agent file's own
+`## Learned Guidance` block. Graduation changes storage and reviewability, not
+these contextual semantics.
 
 <Note>
   **`injectedCount` counts cost, not value.** It is how many runs a rule was
@@ -699,9 +705,9 @@ Graduated rules are written into your agent file inside a marked block:
 
 ```markdown
 <!-- agentuse:learned -->
-## Learned Guidelines (override skill defaults on conflict)
+## Learned Guidance
 
-Corrections graduated from previous runs. These take precedence over Skills — if one contradicts a skill's default, follow the guideline:
+Guidance consolidated from previous runs. Apply each learning only when its situation is relevant. Preserve its intended scope; do not turn examples or past incidents into universal requirements. The current task and the agent's authored instructions take precedence. A clearly relevant learning may refine a soft skill default:
 
 - [tip] Cite sources before publishing
 <!-- /agentuse:learned -->
@@ -719,7 +725,7 @@ change by hand survives, and is what the next rewrite works from.
 
 The block is also excluded from the instruction hash, so a rule graduating never
 makes the rest of the set stale. Rules still on probation are injected under a
-separate `## Recent Corrections` heading, so the two tiers never collide.
+separate `## Relevant Learnings` heading, so the two tiers never collide.
 
 <Note>
   Graduation is skipped, and the result says so, when the agent file is not
@@ -854,8 +860,8 @@ Nothing is ever silently ignored.
 
 | What you have | What happens | Behavior |
 |---|---|---|
-| `learning: true` | Warns once, continues | Runs as `{ capture: true, apply: true }`: corrections-only capture, strictly narrower than before. Nothing new can be injected that could not be before, and free-form capture stops. The warning names the explicit form and is echoed by `agentuse doctor`. |
-| `capture: true` | Still parses; meaning narrows | Old meaning: free-form auto-capture. New meaning: corrections only. First-class syntax going forward; a one-time notice per agent names `capture: { custom: "..." }` as the way to restore scoped free-form capture. |
+| `learning: true` | Warns once, continues | Applies deliberately saved human learnings. Ordinary comments affect only the current run and free-form capture stops. The warning names the explicit form and is echoed by `agentuse doctor`. |
+| `capture: true` | Still parses; meaning narrows | Old meaning: free-form auto-capture. New meaning: no automatic observation channels. Human learning uses Learn/`--remember`; a one-time notice names `capture: { custom: "..." }` as the way to restore scoped free-form capture. |
 | `capture: false` | Unchanged | Capture off. |
 | `apply: true` / `apply: false` | Unchanged | Same boolean, same meaning; `true` now injects only vetted, active, non-stale learnings. |
 | `criteria: "..."` | **Hard error, agent quits** | The only mapping that honors it would keep free-form policy capture running automatically. Rewrite it as `capture: { custom: "..." }`; the error and `doctor` both say so. |

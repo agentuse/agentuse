@@ -7,6 +7,7 @@ import { AuthenticationError } from '../models';
 import { logger, runWithLogSink } from '../utils/logger';
 import { toErrorMessage } from '../utils/error-message';
 import { extractLearnings, LearningStore } from '../learning/index.js';
+import { hasAutomaticLearningCapture } from '../learning/types.js';
 import { findProjectRoot } from '../utils/project';
 import { isMockMode } from './mock-tools';
 import { recordCorrectionsMarker, recordLearningMarker, recordErrorMarkerForLatestMessage, createSessionLogSink, gatherApprovalContext, type SessionLogSink } from './session-helper';
@@ -713,19 +714,19 @@ export async function runPostLifecycle(options: {
     }
   }
 
-  if (agent.config.learning?.capture && agentFilePath && isMockMode()) {
+  const automaticCapture = hasAutomaticLearningCapture(agent.config.learning);
+
+  if (automaticCapture && agentFilePath && isMockMode()) {
     // A mock run's tool results are fabricated by the mock model, so anything
     // learned from it is learned from fiction (and lands in the agent's REAL
     // learnings file, since only stores are isolated). Skip the pass entirely.
     // `gated` scope is skipped too: partial fabrication still poisons the well.
     logger.info('[Learning] Skipped: mock run (fabricated tool results are not real experience).');
-  } else if (agent.config.learning?.capture && agentFilePath) {
+  } else if (agent.config.learning && agentFilePath) {
     try {
-      // Single learning pass over the whole run: execution traces AND any
-      // reviewer comments left at approval gates. The reviews are read from the
-      // session here (one place) rather than promoted separately at each resume
-      // site, so a comment and the run that produced the reviewed work are
-      // evaluated together and deduped in one call.
+      // Approval history is used only as evidence that injected guidance
+      // survived review. An ordinary comment is feedback for this run, not a
+      // durable learning; the explicit Learn/--remember path stores those.
       const approvalContext = (options.sessionManager && options.sessionId && options.agentId)
         ? await gatherApprovalContext(
           options.sessionManager,
@@ -757,26 +758,30 @@ export async function runPostLifecycle(options: {
           .catch((err: unknown) => logger.debug(`[Learning] Could not credit approved run: ${(err as Error).message}`));
       }
 
-      const outcome = await extractLearnings({
-        event,
-        agentInstructions: agent.instructions,
-        agentModel: agent.config.model,
-        agentFilePath,
-        stateRoot,
-        projectRoot: options.projectRoot,
-        config: agent.config.learning,
-        reviews,
-        sessionId: options.sessionId,
-      });
-      // Surface the outcome (including a silent failure) in the session log.
-      if (options.sessionManager && options.sessionId && options.agentId && options.messageId) {
-        await recordLearningMarker(
-          options.sessionManager,
-          options.sessionId,
-          options.agentId,
-          options.messageId,
-          outcome,
-        );
+      // Automatic observation is advanced and opt-in. The standard
+      // `learning: true` path performs no post-run model call: it applies stored
+      // guidance and learns only when the reviewer explicitly checks Learn.
+      if (automaticCapture) {
+        const outcome = await extractLearnings({
+          event,
+          agentInstructions: agent.instructions,
+          agentModel: agent.config.model,
+          agentFilePath,
+          stateRoot,
+          projectRoot: options.projectRoot,
+          config: agent.config.learning,
+          sessionId: options.sessionId,
+        });
+        // Surface the outcome (including a silent failure) in the session log.
+        if (options.sessionManager && options.sessionId && options.agentId && options.messageId) {
+          await recordLearningMarker(
+            options.sessionManager,
+            options.sessionId,
+            options.agentId,
+            options.messageId,
+            outcome,
+          );
+        }
       }
     } catch (learningError) {
       logger.debug(`[Learning] Extraction failed: ${(learningError as Error).message}`);

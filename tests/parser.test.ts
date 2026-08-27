@@ -484,7 +484,7 @@ Test invalid thinking budget.`;
       expect(() => parseAgentContent(content, 'test')).toThrow('Invalid agent configuration');
     });
 
-    it('expands learning: true to corrections-only capture + apply', () => {
+    it('expands learning: true to deliberate human learning + apply', () => {
       const content = `---
 model: anthropic:claude-sonnet-4-0
 learning: true
@@ -499,7 +499,7 @@ Capture and apply execution learnings.`;
         apply: true
       });
       // The narrowed meaning is announced once per agent and echoed by doctor.
-      expect(agent.configNotices?.some((n) => n.includes('corrections only'))).toBe(true);
+      expect(agent.configNotices?.some((n) => n.includes('explicitly chooses Learn'))).toBe(true);
     });
 
     it('defaults capture and apply to true for the object form', () => {
