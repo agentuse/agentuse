@@ -1,15 +1,18 @@
-import { app, BrowserWindow, dialog, Menu, shell, Tray, nativeImage, type Event, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, dialog, Menu, shell, Tray, type Event, type MenuItemConstructorOptions } from "electron";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
+import { pendingApprovalCount, pendingApprovalTitle, pendingApprovalTooltip, type ApprovalBucketsPayload } from "./approval-status";
 import { createEditMenu, createNavigationMenu, type NavigationCommands } from "./menus";
 import { isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, selectServer, serverUrl, type RegisteredServer } from "./runtime";
+import { createAgentUseTrayIcon } from "./tray-icon";
 
 const require = createRequire(__filename);
 const APP_NAME = "AgentUse";
 const STARTUP_TIMEOUT_MS = 15_000;
+const APPROVAL_POLL_INTERVAL_MS = 5_000;
 
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
@@ -17,6 +20,9 @@ let dashboardUrl: string | undefined;
 let dashboardApiKey: string | undefined;
 let currentServer: RegisteredServer | undefined;
 let ownedServer: ChildProcess | undefined;
+let approvalPollTimer: ReturnType<typeof setInterval> | undefined;
+let displayedPendingApprovals = 0;
+let approvalRefreshInFlight = false;
 let isQuitting = false;
 let quitInProgress = false;
 
@@ -29,6 +35,39 @@ function runtimeStatus(activeServer: RegisteredServer | undefined): string {
   if (!dashboardUrl) return "Starting…";
   if (!activeServer) return "Unavailable";
   return ownedServer ? "Running (started by AgentUse)" : "Running (attached to existing server)";
+}
+
+function setPendingApprovals(count: number): void {
+  displayedPendingApprovals = count;
+  tray?.setTitle(pendingApprovalTitle(count));
+  tray?.setToolTip(pendingApprovalTooltip(count));
+}
+
+async function refreshPendingApprovals(): Promise<void> {
+  if (approvalRefreshInFlight || !dashboardUrl) return;
+  approvalRefreshInFlight = true;
+  try {
+    const approvalsUrl = new URL("/api/approvals", dashboardUrl);
+    approvalsUrl.searchParams.set("view", "buckets");
+    const response = await fetch(approvalsUrl, {
+      signal: AbortSignal.timeout(2_000),
+      headers: dashboardApiKey ? { Authorization: `Bearer ${dashboardApiKey}` } : undefined,
+    });
+    if (!response.ok) return;
+    const count = pendingApprovalCount(await response.json() as ApprovalBucketsPayload);
+    if (count !== undefined) setPendingApprovals(count);
+  } catch {
+    // A transient server restart should not make the last known count flicker.
+  } finally {
+    approvalRefreshInFlight = false;
+  }
+}
+
+function startApprovalPolling(): void {
+  if (approvalPollTimer) return;
+  void refreshPendingApprovals();
+  approvalPollTimer = setInterval(() => void refreshPendingApprovals(), APPROVAL_POLL_INTERVAL_MS);
+  approvalPollTimer.unref();
 }
 
 async function probeServer(url: string, apiKey?: string): Promise<"ready" | "unauthorized" | "unreachable"> {
@@ -103,6 +142,7 @@ async function acquireServer(): Promise<void> {
       currentServer = undefined;
       dashboardUrl = undefined;
       dashboardApiKey = undefined;
+      setPendingApprovals(0);
     }
     refreshMenus();
   });
@@ -171,6 +211,7 @@ async function showDashboard(): Promise<void> {
       currentServer = undefined;
       dashboardUrl = undefined;
       dashboardApiKey = undefined;
+      setPendingApprovals(0);
     } else {
       currentServer = registered;
     }
@@ -178,6 +219,8 @@ async function showDashboard(): Promise<void> {
   if (!dashboardUrl) await acquireServer();
   if (!window || window.isDestroyed()) window = createWindow();
   if (window.webContents.getURL() !== dashboardUrl) await window.loadURL(dashboardUrl!);
+  startApprovalPolling();
+  void refreshPendingApprovals();
   window.show();
   window.focus();
   refreshMenus();
@@ -239,10 +282,8 @@ function refreshMenus(): void {
 }
 
 function createTray(): void {
-  tray = new Tray(nativeImage.createEmpty());
-  // A text title makes the status item visible without a bundled icon asset.
-  tray.setTitle("AU");
-  tray.setToolTip(APP_NAME);
+  tray = new Tray(createAgentUseTrayIcon());
+  setPendingApprovals(displayedPendingApprovals);
   tray.on("click", () => void showDashboard());
   refreshMenus();
 }
@@ -271,6 +312,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on("second-instance", () => void showDashboard());
   app.on("before-quit", (event) => {
     isQuitting = true;
+    if (approvalPollTimer) clearInterval(approvalPollTimer);
     if (quitInProgress) return;
     event.preventDefault();
     void stopOwnedServerCleanly().finally(() => {
