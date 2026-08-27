@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
+import { createEditMenu, createNavigationMenu, type NavigationCommands } from "./menus";
 import { isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, selectServer, serverUrl, type RegisteredServer } from "./runtime";
 
 const require = createRequire(__filename);
@@ -144,6 +145,10 @@ function createWindow(): BrowserWindow {
   browser.webContents.on("will-navigate", guardNavigation);
   browser.webContents.on("will-redirect", guardNavigation);
   browser.webContents.on("will-attach-webview", (event) => event.preventDefault());
+  // Electron emits the in-page event for History API changes made by the SPA.
+  // Rebuild only the application menu so the tray menu and lifecycle stay put.
+  browser.webContents.on("did-navigate", refreshApplicationMenu);
+  browser.webContents.on("did-navigate-in-page", refreshApplicationMenu);
   browser.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(permission === "notifications" || permission === "clipboard-sanitized-write");
   });
@@ -182,10 +187,10 @@ async function openLogs(): Promise<void> {
   if (currentServer?.logFile) await shell.openPath(currentServer.logFile);
 }
 
-function refreshMenus(): void {
+function runtimeMenuItems(): MenuItemConstructorOptions[] {
   const activeServer = currentServer && listRegisteredServers().find((server) => server.pid === currentServer?.pid);
   const status: MenuItemConstructorOptions = { label: `Runtime: ${runtimeStatus(activeServer)}`, enabled: false };
-  const items: MenuItemConstructorOptions[] = [
+  return [
     { label: "Open AgentUse", click: () => void showDashboard() },
     status,
     { type: "separator" },
@@ -196,8 +201,41 @@ function refreshMenus(): void {
     { type: "separator" },
     { label: "Quit AgentUse", accelerator: "Command+Q", click: () => app.quit() },
   ];
-  tray?.setContextMenu(Menu.buildFromTemplate(items));
-  Menu.setApplicationMenu(Menu.buildFromTemplate([{ label: APP_NAME, submenu: items }]));
+}
+
+function activeNavigationHistory() {
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return undefined;
+  return window.webContents.navigationHistory;
+}
+
+const navigationCommands: NavigationCommands = {
+  canGoBack: () => activeNavigationHistory()?.canGoBack() ?? false,
+  canGoForward: () => activeNavigationHistory()?.canGoForward() ?? false,
+  goBack: () => {
+    const history = activeNavigationHistory();
+    if (history?.canGoBack()) history.goBack();
+  },
+  goForward: () => {
+    const history = activeNavigationHistory();
+    if (history?.canGoForward()) history.goForward();
+  },
+};
+
+function refreshTrayMenu(): void {
+  tray?.setContextMenu(Menu.buildFromTemplate(runtimeMenuItems()));
+}
+
+function refreshApplicationMenu(): void {
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { label: APP_NAME, submenu: runtimeMenuItems() },
+    createEditMenu(),
+    createNavigationMenu(navigationCommands),
+  ]));
+}
+
+function refreshMenus(): void {
+  refreshTrayMenu();
+  refreshApplicationMenu();
 }
 
 function createTray(): void {
