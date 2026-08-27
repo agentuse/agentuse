@@ -1,0 +1,77 @@
+---
+title: macOS Desktop App
+description: Run the AgentUse dashboard as a native macOS menu-bar app
+tag: Experimental
+---
+
+The AgentUse desktop app wraps the same local dashboard and `agentuse serve`
+runtime used by the CLI. It does not maintain a separate agent configuration or
+renderer, so CLI runs and browser access continue to work independently.
+
+## How it behaves
+
+Launching AgentUse opens the dashboard. Closing the window hides it without
+stopping the backend, so schedules, approvals, and active runs remain available.
+Use the AgentUse menu-bar icon to:
+
+- open or restore AgentUse
+- see whether the app is attached to an existing backend or owns the backend it started
+- open the dashboard in your default browser
+- reveal the current backend log, when one is available
+- quit AgentUse
+
+**Quit AgentUse** or <kbd>Command</kbd>+<kbd>Q</kbd> stops a backend started by
+the app. A backend that was already running when the app launched is left alone.
+Only one desktop app instance can run at a time.
+
+The desktop window accepts only the loopback dashboard origin. Links to normal
+`http` or `https` sites open in the default browser; other external navigation
+is blocked. Electron renderer access to Node.js is disabled and context
+isolation is enabled.
+
+## Develop locally
+
+From the repository root, install workspace dependencies and build the existing
+CLI and web UI before starting Electron:
+
+```bash
+pnpm install
+bun run build
+pnpm desktop:dev
+```
+
+The desktop process attaches to a registered `agentuse serve` daemon when one
+is running. Otherwise it starts the compiled local CLI on a loopback port. The
+canonical browser dashboard remains available from the URL shown in the menu.
+
+## Build a macOS app
+
+```bash
+pnpm desktop:package:mac
+```
+
+To create an unsigned development build, run
+`CSC_IDENTITY_AUTO_DISCOVERY=false pnpm desktop:package:mac`. For distribution, set
+the standard electron-builder signing variables (`CSC_LINK` and
+`CSC_KEY_PASSWORD`) and the notarization variables (`APPLE_ID`,
+`APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`) in the release environment.
+The package configuration leaves hardened runtime enabled and provides a
+notarization hook without committing credentials.
+
+The packaged app includes the existing AgentUse runtime and dashboard assets;
+it does not require network access to render the local UI. Model providers and
+external tools still have their normal connectivity requirements.
+
+## Troubleshooting
+
+If the window does not load, open the menu-bar item and check **Runtime status**.
+When a log is registered, **Open Logs** opens it in its associated app. You can also use
+the CLI independently:
+
+```bash
+agentuse serve ps
+agentuse serve logs
+```
+
+See [Operations Dashboard](/guides/serve-dashboard) for dashboard behavior and
+[CLI Commands](/reference/cli-commands) for the full `serve` reference.

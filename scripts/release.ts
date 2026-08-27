@@ -285,11 +285,13 @@ function dateChangelog(version: string): void {
 }
 
 function bumpManifest(version: string): void {
-  const path = join(root, 'package.json');
-  const text = readFileSync(path, 'utf8');
-  const bumped = text.replace(/^(\s*"version":\s*")[^"]+(",)$/m, `$1${version}$2`);
-  if (bumped === text) fail('Could not rewrite the version field in package.json.');
-  writeFileSync(path, bumped);
+  for (const relativePath of ['package.json', 'apps/desktop/package.json']) {
+    const path = join(root, relativePath);
+    const text = readFileSync(path, 'utf8');
+    const bumped = text.replace(/^(\s*"version":\s*")[^"]+(",)$/m, `$1${version}$2`);
+    if (bumped === text) fail(`Could not rewrite the version field in ${relativePath}.`);
+    writeFileSync(path, bumped);
+  }
   if (manifest().version !== version) fail(`package.json still reads ${manifest().version} after the bump.`);
 }
 
@@ -305,7 +307,7 @@ function prepare(bump: string | undefined, anyBranch: boolean): void {
   // recovery advice remains correct if `git tag` fails after a successful commit.
   let committed = false;
   try {
-    capture('git', ['add', 'CHANGELOG.md', 'package.json']);
+    capture('git', ['add', 'CHANGELOG.md', 'package.json', 'apps/desktop/package.json']);
     capture('git', ['commit', '-m', `Release v${version}`]);
     committed = true;
     capture('git', ['tag', '-a', `v${version}`, '-m', `Release v${version}`]);
@@ -315,11 +317,11 @@ function prepare(bump: string | undefined, anyBranch: boolean): void {
         `  git tag -a v${version} -m "Release v${version}"\n\n` +
         `Or abandon both commit and edits with:\n` +
         `  git reset --soft HEAD~1\n` +
-        `  git restore --staged CHANGELOG.md package.json\n` +
-        `  git restore CHANGELOG.md package.json`
-      : `CHANGELOG.md and package.json were rewritten but no release commit was created. Undo with:\n` +
-        `  git restore --staged CHANGELOG.md package.json\n` +
-        `  git restore CHANGELOG.md package.json`;
+        `  git restore --staged CHANGELOG.md package.json apps/desktop/package.json\n` +
+        `  git restore CHANGELOG.md package.json apps/desktop/package.json`
+      : `CHANGELOG.md and package manifests were rewritten but no release commit was created. Undo with:\n` +
+        `  git restore --staged CHANGELOG.md package.json apps/desktop/package.json\n` +
+        `  git restore CHANGELOG.md package.json apps/desktop/package.json`;
     fail(
       `${(error as Error).message}\n\n` +
         recovery,
@@ -361,6 +363,8 @@ function verify(): void {
     { name: 'tag / package version', run: assertTriggeredTagMatchesManifest },
     { name: 'typecheck', run: () => stream('bun', ['run', 'typecheck']) },
     { name: 'typecheck:scripts', run: () => stream('bun', ['run', 'typecheck:scripts']) },
+    { name: 'desktop typecheck', run: () => stream('bun', ['run', 'desktop:typecheck']) },
+    { name: 'desktop tests', run: () => stream('bun', ['run', 'desktop:test']) },
     { name: 'build', run: () => stream('bun', ['run', 'build']) },
     { name: 'tests + coverage', run: () => stream('bun', ['run', 'test:coverage']) },
   ];

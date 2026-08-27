@@ -58,6 +58,7 @@
       "icon": "play",
       "pages": [
         "guides/serve-dashboard",
+        "guides/macos-desktop",
         "guides/schedule",
         "guides/webhooks",
         "guides/channels",

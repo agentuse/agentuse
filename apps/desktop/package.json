@@ -1,0 +1,64 @@
+{
+  "name": "@agentuse/desktop",
+  "version": "0.18.0",
+  "private": true,
+  "description": "Native macOS shell for the AgentUse dashboard",
+  "main": "dist/main.cjs",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --outfile=dist/main.cjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "dev": "pnpm run build && electron .",
+    "start": "electron .",
+    "test": "bun test src/**/*.test.ts",
+    "predist:mac": "pnpm --dir ../.. run build",
+    "dist:mac": "pnpm run build && electron-builder --mac",
+    "package:mac": "pnpm run dist:mac",
+    "dist:dir": "pnpm run build && electron-builder --mac --dir"
+  },
+  "dependencies": {
+    "agentuse": "workspace:*"
+  },
+  "devDependencies": {
+    "@electron/notarize": "^3.1.0",
+    "@types/bun": "^1.2.19",
+    "@types/node": "^22.0.0",
+    "electron": "^37.2.6",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.23.1",
+    "typescript": "^5.9.2"
+  },
+  "build": {
+    "appId": "ai.agentuse.desktop",
+    "productName": "AgentUse",
+    "asar": true,
+    "forceCodeSigning": false,
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": ["dmg", "zip"],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "sign": false
+    },
+    "afterSign": "scripts/notarize.cjs",
+    "files": [
+      "dist/main.cjs",
+      "package.json",
+      "!node_modules/agentuse/.pnpm-store/**",
+      "!node_modules/agentuse/apps/**",
+      "!node_modules/agentuse/benchmarks/**",
+      "!node_modules/agentuse/docs/**",
+      "!node_modules/agentuse/scripts/**",
+      "!node_modules/agentuse/src/**",
+      "!node_modules/agentuse/static/**",
+      "!node_modules/agentuse/templates/**",
+      "!node_modules/agentuse/tests/**",
+      "!node_modules/agentuse/.github/**"
+    ],
+    "extraMetadata": {
+      "description": "AgentUse native dashboard shell"
+    }
+  }
+}
