@@ -654,10 +654,15 @@ export default function Home() {
   const { data, error, loading } = useFetch('home', () => fetchInfo(), { refreshMs: 30_000 });
   const liveHome = useLiveHome();
   const attentionState = useGlobalApprovals();
+  // The operator's first question is whether anything needs action. Fleet-wide
+  // agent parsing and metric-store scans can be materially slower on large
+  // installations, so do not let those secondary requests contend with the
+  // sessions and approvals snapshots during the critical first paint.
+  const primaryReady = data !== null && !liveHome.loading && !attentionState.loading;
 
   // Agent parse failures are counted on their project card, using the same
   // payload as /agents rather than hiding one aggregate warning in the footer.
-  const agents = useFetch('home-agents', () => fetchAgents(), { refreshMs: 30_000 });
+  const agents = useFetch('home-agents', () => fetchAgents(), { refreshMs: 30_000, enabled: primaryReady });
   const failedAgentsByProject = new Map<string, number>();
   for (const failure of agents.data?.errors ?? []) {
     failedAgentsByProject.set(failure.projectId, (failedAgentsByProject.get(failure.projectId) ?? 0) + 1);
@@ -665,7 +670,7 @@ export default function Home() {
 
   // Soonest upcoming scheduled run powers the hero countdown; refresh often
   // enough that a fired schedule rolls over to the next one without a reload.
-  const schedules = useFetch('home-schedules', () => fetchSchedules(), { refreshMs: 60_000 });
+  const schedules = useFetch('home-schedules', () => fetchSchedules(), { refreshMs: 60_000, enabled: primaryReady });
   const nextSchedule = (() => {
     let best: { at: number; agentPath: string } | null = null;
     for (const s of schedules.data?.schedules ?? []) {
@@ -681,7 +686,7 @@ export default function Home() {
   // is normal and returns empty rows, so the section simply doesn't render.
   // Visibility probes the widest window so picking a quiet 1-day view leaves
   // the section (and its window toggle) on screen instead of stranding you.
-  const metricRows = useFetch('home-metrics', () => fetchStoreRows('metrics'), { refreshMs: 60_000 });
+  const metricRows = useFetch('home-metrics', () => fetchStoreRows('metrics'), { refreshMs: 60_000, enabled: primaryReady });
   const [metricsWindow, setMetricsWindowState] = useState(() => readMetricsWindow());
   const setMetricsWindow = (days: number) => {
     try {

@@ -321,18 +321,6 @@ export default function SessionsList() {
   // same action immediately, even while their independent SSE snapshots lag.
   const attentionState = useGlobalApprovals();
 
-  // Agent list powers the filter's type-ahead so operators pick a real agent id
-  // instead of guessing a substring (which silently misses renamed/moved ids).
-  const agentsFetch = useFetch('sessions-agent-options', () => fetchAgents(), {});
-  const agentOptions = (() => {
-    const byId = new Map<string, string>();
-    for (const a of agentsFetch.data?.agents ?? []) {
-      const id = a.path.replace(/\.agentuse$/, '');
-      if (!byId.has(id)) byId.set(id, a.name);
-    }
-    return [...byId.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-  })();
-
   const key = `sessions:${win}:${statusFilter}:${triageFilter}:${triggerFilter}:${mockFilter}:${agentFilter ?? ''}:${approvalFilter ?? ''}:${view}`;
   const [streamData, setStreamData] = useState<SessionsPayload | null>(null);
   const [streamError, setStreamError] = useState<Error | null>(null);
@@ -396,6 +384,17 @@ export default function SessionsList() {
   const resolvedData = streamFallback ? (fetched.data ?? streamData) : (streamData ?? fetched.data);
   const resolvedError = fetched.error ?? (!resolvedData ? streamError : null);
   const resolvedLoading = fetched.loading && !resolvedData;
+  // Agent options are useful once the feed is visible, but building the full
+  // fleet payload is not allowed to delay the session list itself.
+  const agentsFetch = useFetch('sessions-agent-options', () => fetchAgents(), { enabled: resolvedData !== null });
+  const agentOptions = (() => {
+    const byId = new Map<string, string>();
+    for (const a of agentsFetch.data?.agents ?? []) {
+      const id = a.path.replace(/\.agentuse$/, '');
+      if (!byId.has(id)) byId.set(id, a.name);
+    }
+    return [...byId.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  })();
   // Page 1 keeps refreshing (SSE snapshots / polling) while loadedMore holds
   // older rows, so the two can overlap; keep the first (freshest) copy of each
   // row so list keys stay unique.
