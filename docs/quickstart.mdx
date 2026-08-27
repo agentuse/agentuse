@@ -1,198 +1,144 @@
 ---
 title: Quick Start
-description: Deploy your first autonomous agent in 5 minutes
+description: Set up AgentUse and run your first agent
 ---
 
-## Installation
+## Install AgentUse
 
 ```bash
-pnpm install -g agentuse
+npm install -g agentuse
+agentuse --version
 ```
 
 <Info>
-  See [Installation Guide](/installation) for npm, bunx, Docker, and development setup options.
+  See [Installation](/installation) for pnpm, Bun, Docker, and development setup options.
 </Info>
 
-## Authentication
+## Start setup
 
 ```bash
-agentuse auth login
+agentuse setup
 ```
 
-<Info>
-  See [Model Configuration](/guides/model-configuration) for OAuth setup, API keys, and environment variable configuration.
-</Info>
+Choose **Browser** for the guided setup. AgentUse opens its Web UI and keeps the
+server running in your terminal.
 
-## Supported Models
+<Steps>
+  <Step title="Create a project">
+    Keep the suggested name, `my-agents`, or change it. AgentUse creates a
+    dedicated project under `~/.agentuse/projects/` and shows its full path
+    before anything writes an agent file.
+  </Step>
 
-AgentUse supports multiple AI providers with the format `provider:model-name`. Examples:
+  <Step title="Run the sample agent">
+    Select **Run sample agent** to see a complete session in the dashboard. The
+    sample uses built-in data, needs no provider credentials, and does not
+    create an agent file.
+  </Step>
 
-```bash
-anthropic:claude-sonnet-5
-openai:gpt-5.6
-openrouter:minimax/minimax-m3
-opencode-go:kimi-k2.7-code
-bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0
-```
+  <Step title="Connect a provider">
+    In the sample result, select **Create my first agent**, describe the job you
+    want to automate, and copy the instructions into your coding agent. It will
+    check `agentuse provider list` and guide you through provider login if
+    needed. No agent file is written until a runtime provider is ready.
+  </Step>
 
-<Tip>
-  Any model available from Anthropic, OpenAI, OpenRouter, OpenCode Go, or Amazon Bedrock can be used. You can also specify custom API keys: `anthropic:claude-sonnet-5:CUSTOM_API_KEY`
-</Tip>
+  <Step title="Create your agent">
+    Your coding agent creates one focused agent in this project and validates
+    it without starting a real run.
+  </Step>
 
-## Your First Agent
-
-Create `hello.agentuse`:
-
-```markdown
----
-model: anthropic:claude-haiku-4-5
-description: "Simple greeting agent that welcomes users"
----
-
-Greet the user.
-```
-
-Run it:
-```bash
-agentuse run hello.agentuse
-
-# Or run with additional instructions
-agentuse run hello.agentuse "speak like a pirate"
-
-# Run with options
-agentuse run hello.agentuse --verbose
-agentuse run hello.agentuse --quiet
-agentuse run hello.agentuse --no-tty
-agentuse run hello.agentuse --timeout 600
-
-# Override the model at runtime
-agentuse run hello.agentuse --model openai:gpt-5.4-mini
-agentuse run hello.agentuse -m anthropic:claude-sonnet-5
-```
-
-## File System Agent
-
-Create `project-analyzer.agentuse`:
-
-```markdown
----
-model: anthropic:claude-haiku-4-5
-description: "Analyzes project structure and identifies key components"
-mcpServers:
-  filesystem:
-    command: "npx"
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
----
-
-You are a code analyzer. When asked about a project:
-1. List the main files and folders
-2. Identify the project type (Node.js, Python, etc.)
-3. Summarize what the project does based on README or package.json
-```
-
-Run it:
-```bash
-agentuse run project-analyzer.agentuse
-```
-
-<Info>
-  See [Agent Syntax - MCP Servers](/reference/agent-syntax#mcp-servers) for HTTP servers, environment variables, and tool restrictions.
-</Info>
-
-## Model Override
-
-Override the model at runtime without editing agent files:
-
-```bash
-agentuse run analyzer.agentuse --model anthropic:claude-sonnet
-agentuse run analyzer.agentuse -m openai:gpt-5.4-mini
-```
-
-Leaving the version off (`anthropic:claude-sonnet`) tracks the newest model in that line; pin a version when you need reproducibility.
-
-<Tip>
-  See [CLI Commands - Model Override](/reference/cli-commands#model-override) for format details, environment-specific keys, and sub-agent inheritance behavior.
-</Tip>
-
-## Sub-agents Support
-
-AgentUse supports calling other agents as sub-agents:
-
-```markdown
----
-model: anthropic:claude-haiku-4-5
-description: "Orchestrates tasks by delegating to specialized sub-agents"
-subagents:
-  - path: "./helper-agent.agentuse"
-    name: "helper"
-    maxSteps: 50
----
-
-You can call the helper agent using the sub-agent tools.
-```
-
-## Remote Agents
-
-You can run agents directly from HTTPS URLs:
-
-```bash
-# Run from trusted sources (agentuse.io) without prompts
-agentuse run https://agentuse.io/hello.agentuse
-
-# Other URLs will prompt for confirmation
-agentuse run https://example.com/path/to/agent.agentuse
-
-# Preview the agent content first
-# Choose 'p' when prompted to preview before execution
-```
+  <Step title="Run it">
+    Return to the Web UI, open the new agent on the **Agents** page, review it,
+    and start its first real run.
+  </Step>
+</Steps>
 
 <Warning>
-  Only HTTPS URLs with `.agentuse` extensions are supported for security. Always review remote agents before execution.
+  Your coding agent's own login does not authenticate the agents it creates.
+  If no AgentUse provider is ready, the onboarding flow will pause and guide
+  you through `agentuse provider login` before writing the agent file.
 </Warning>
 
-## Environment Variables
+### Terminal or headless setup
 
-Configure API keys and behavior via environment variables or `.env` files:
+If a browser cannot be opened, use the same setup flow in the terminal:
 
 ```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-export OPENAI_API_KEY="sk-proj-..."
+agentuse setup --terminal
 ```
 
-<Info>
-  See [Environment Variables Reference](/reference/environment-variables) for all configuration options including custom API key suffixes, behavior control, and MCP server settings.
-</Info>
+AgentUse creates and registers the project, prints its full path, and gives you
+the exact next steps. The dashboard is optional for this path.
 
-## Schedule Your Agent
+## Create an agent without a coding agent
 
-Add a `schedule` to run agents automatically:
+You do not need Codex, Claude Code, or another coding agent. Complete
+`agentuse setup` first, then use the project path shown by setup.
+
+### 1. Configure a runtime provider
+
+```bash
+cd ~/.agentuse/projects/my-agents
+agentuse provider list
+agentuse provider login
+```
+
+Choose a provider in the login prompt, then list its current models:
+
+```bash
+agentuse models <provider>
+```
+
+### 2. Write one agent file
+
+Create `agents/hello.agentuse` and replace `<provider>:<model>` with an exact
+model ID from the previous command:
 
 ```markdown
 ---
-model: anthropic:claude-sonnet-5
-schedule: "1h"    # Or cron: "0 * * * *"
+model: <provider>:<model>
+description: Write a friendly greeting
 ---
 
-Check system status and send a summary report.
+Write a short greeting and suggest one useful task you can help with.
 ```
 
-Start the server to enable scheduling:
+### 3. Validate and run it
+
+```bash
+agentuse doctor agents/hello.agentuse
+agentuse run agents/hello.agentuse
+```
+
+To inspect the result later:
+
+```bash
+agentuse sessions
+```
+
+## Start AgentUse again
+
+Setup is only required once. Later, start the registered project and Web UI
+with:
 
 ```bash
 agentuse serve
 ```
 
-<Info>
-  See [Scheduled Agents Guide](/guides/schedule) for cron expressions, intervals, and best practices.
-</Info>
-
-## What's Next?
+## What's next?
 
 <CardGroup cols={2}>
   <Card title="Creating Agents" icon="file-pen" href="/guides/creating-agents">
-    Learn agent syntax
+    Learn agent syntax and design patterns
   </Card>
-  <Card title="Examples" icon="lightbulb" href="https://github.com/agentuse/agentuse/tree/main/templates/agents">
-    See more examples
+  <Card title="Model Configuration" icon="key" href="/guides/model-configuration">
+    Configure providers, credentials, and model defaults
+  </Card>
+  <Card title="Schedules" icon="clock" href="/guides/schedule">
+    Run an agent automatically
+  </Card>
+  <Card title="CLI Commands" icon="terminal" href="/reference/cli-commands">
+    Browse all AgentUse commands
   </Card>
 </CardGroup>

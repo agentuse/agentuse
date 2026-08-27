@@ -1,177 +1,236 @@
 ---
 title: Installation
-description: Install AgentUse and start deploying autonomous agents
+description: Install, upgrade, or remove the AgentUse CLI
 ---
 
-## System Requirements
+## Requirements
 
 <CardGroup cols={2}>
   <Card title="Node.js" icon="node">
-    Version 18.0.0 or higher required
+    Node.js 22 or later
   </Card>
-  <Card title="Operating System" icon="desktop">
+  <Card title="Operating system" icon="desktop">
     macOS, Linux, or Windows with WSL
   </Card>
 </CardGroup>
 
-## Installation Methods
+Check your Node.js version before installing:
 
-### Global Installation (Recommended)
+```bash
+node --version
+```
+
+## Install globally
+
+A global installation gives you the `agentuse` command in every terminal.
 
 <Tabs>
-  <Tab title="pnpm">
-    ```bash
-    pnpm install -g agentuse
-    
-    # Verify installation
-    agentuse --version
-    ```
-  </Tab>
   <Tab title="npm">
     ```bash
     npm install -g agentuse
-    
-    # Verify installation
     agentuse --version
     ```
   </Tab>
-  <Tab title="bun">
+  <Tab title="pnpm">
+    ```bash
+    pnpm install -g agentuse
+    agentuse --version
+    ```
+  </Tab>
+  <Tab title="Bun">
     ```bash
     bun add -g agentuse
-    
-    # Verify installation
     agentuse --version
     ```
   </Tab>
-  <Tab title="yarn">
+  <Tab title="Yarn">
     ```bash
     yarn global add agentuse
-    
-    # Verify installation
     agentuse --version
     ```
   </Tab>
 </Tabs>
 
-### Run Without Installation
+<Card title="Continue to Quick Start" icon="rocket" href="/quickstart">
+  Create a project, run the built-in sample, and create your first agent.
+</Card>
 
-Use `pnpx` or `bunx` to run AgentUse without installing:
+## Run without installing
+
+Package runners download AgentUse into their cache and run it without adding a
+global command:
+
+<Tabs>
+  <Tab title="npx">
+    ```bash
+    npx agentuse@latest setup
+    ```
+  </Tab>
+  <Tab title="pnpm dlx">
+    ```bash
+    pnpm dlx agentuse@latest setup
+    ```
+  </Tab>
+  <Tab title="bunx">
+    ```bash
+    bunx agentuse@latest setup
+    ```
+  </Tab>
+</Tabs>
+
+Use the same runner prefix for later commands. For example:
 
 ```bash
-# Using pnpx
-pnpx agentuse@latest run your-agent.agentuse
-
-# Using npx
-npx agentuse@latest run your-agent.agentuse
-
-# Using bunx with Bun runtime (faster)
-bunx --bun agentuse run your-agent.agentuse
+npx agentuse@latest serve
 ```
 
-### Development Setup
+Install AgentUse globally if you expect to use it regularly.
 
-Clone and build from source:
+## Upgrade
+
+Run the install command again to move to the latest release:
+
+<Tabs>
+  <Tab title="npm">
+    ```bash
+    npm install -g agentuse@latest
+    ```
+  </Tab>
+  <Tab title="pnpm">
+    ```bash
+    pnpm install -g agentuse@latest
+    ```
+  </Tab>
+  <Tab title="Bun">
+    ```bash
+    bun add -g agentuse@latest
+    ```
+  </Tab>
+  <Tab title="Yarn">
+    ```bash
+    yarn global add agentuse@latest
+    ```
+  </Tab>
+</Tabs>
+
+Confirm which version your shell resolves:
 
 ```bash
-# Clone the repository
-git clone https://github.com/agentuse/agentuse.git
-cd agentuse
-
-# Enable corepack if pnpm is not available
-corepack enable
-
-# Install dependencies with pnpm
-pnpm install
-
-# Build the project
-pnpm run build
-
-# Link for local development
-pnpm link
-
-# Now you can use 'agentuse' command globally
 agentuse --version
 ```
 
-## Authentication Setup
+## Uninstall
 
-AgentUse supports multiple AI providers. Authenticate using the interactive login:
+Removing the CLI does not remove your projects or AgentUse configuration under
+`~/.agentuse`.
+
+<Tabs>
+  <Tab title="npm">
+    ```bash
+    npm uninstall -g agentuse
+    ```
+  </Tab>
+  <Tab title="pnpm">
+    ```bash
+    pnpm remove -g agentuse
+    ```
+  </Tab>
+  <Tab title="Bun">
+    ```bash
+    bun remove -g agentuse
+    ```
+  </Tab>
+  <Tab title="Yarn">
+    ```bash
+    yarn global remove agentuse
+    ```
+  </Tab>
+</Tabs>
+
+## Install from source
+
+Use this path when contributing to AgentUse or testing an unreleased build.
+It requires Node.js 22+, Bun, and pnpm.
 
 ```bash
-agentuse auth login
+git clone https://github.com/agentuse/agentuse.git
+cd agentuse
+
+corepack enable
+pnpm install --frozen-lockfile
+pnpm build
+npm link
+
+agentuse --version
 ```
 
-<Card title="Model Configuration" icon="key" href="/guides/model-configuration">
-  See the complete authentication guide for OAuth setup, API keys, environment variables, and security best practices.
-</Card>
-
-## Verify Installation
-
-Check that everything is working:
-
-<Steps>
-  <Step title="Check Version">
-    ```bash
-    agentuse --version
-    ```
-  </Step>
-  <Step title="Check Authentication">
-    ```bash
-    agentuse auth list
-    # or use the short alias
-    agentuse auth ls
-    ```
-  </Step>
-  <Step title="Run Test Agent">
-    ```bash
-    echo '---
-    name: test
-    model: anthropic:claude-haiku-4-5
-    ---
-    Say "Installation successful!"' > test.agentuse
-    
-    agentuse run test.agentuse
-    ```
-  </Step>
-</Steps>
+`npm link` points the global `agentuse` command at this checkout. Re-run
+`pnpm build` after source changes, or use the repository's development scripts
+for watch mode.
 
 ## Docker
 
-AgentUse provides an official Docker image with Node.js, Python, and common utilities pre-installed.
+You do not need Docker to use AgentUse. The official image is intended for
+self-hosting and containerized execution.
 
-<Card title="Self-Hosting" icon="server" href="/guides/self-hosting">
-  Run AgentUse in Docker for local development or production deployment.
+<Card title="Self-hosting with Docker" icon="docker" href="/guides/self-hosting">
+  Run the Web UI, webhooks, schedules, and agents in a container.
 </Card>
 
 ## Troubleshooting
 
 <AccordionGroup>
-  <Accordion title="Command not found">
-    If `agentuse` command is not found after installation:
-    
-    1. Check your PATH:
+  <Accordion title="agentuse: command not found">
+    Confirm that your package manager's global binary directory is on `PATH`:
+
     ```bash
-    echo $PATH
+    npm prefix -g
+    pnpm bin -g
+    bun pm bin -g
     ```
-    
-    2. Find where pnpm installs global packages:
-    ```bash
-    pnpm config get prefix
-    ```
-    
-    3. Add to PATH if needed:
-    ```bash
-    export PATH="$PATH:$(pnpm config get prefix)/bin"
-    ```
+
+    Restart your terminal after changing `PATH`. You can also use
+    `npx agentuse@latest --version` without changing your global installation.
   </Accordion>
-  <Accordion title="Node version issues">
-    Check your Node.js version:
+
+  <Accordion title="Your Node.js version is too old">
+    AgentUse requires Node.js 22 or later:
+
     ```bash
     node --version
     ```
-    
-    If below v18, update Node.js:
-    - Use [nvm](https://github.com/nvm-sh/nvm): `nvm install 20`
-    - Or download from [nodejs.org](https://nodejs.org)
+
+    With [nvm](https://github.com/nvm-sh/nvm), install and select Node.js 22:
+
+    ```bash
+    nvm install 22
+    nvm use 22
+    ```
+  </Accordion>
+
+  <Accordion title="Global installation has permission errors">
+    Avoid installing with `sudo`. Use a Node.js version manager such as
+    [nvm](https://github.com/nvm-sh/nvm) or
+    [Volta](https://volta.sh), then retry the global installation.
+  </Accordion>
+
+  <Accordion title="The wrong AgentUse version runs">
+    Check which executable your shell resolves:
+
+    ```bash
+    command -v agentuse
+    agentuse --version
+    ```
+
+    Remove an older installation made by another package manager, or put the
+    intended package manager's global binary directory earlier on `PATH`.
+  </Accordion>
+
+  <Accordion title="A browser cannot be opened">
+    Use the terminal setup path on a remote, headless, or SSH environment:
+
+    ```bash
+    agentuse setup --terminal
+    ```
   </Accordion>
 </AccordionGroup>
