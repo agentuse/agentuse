@@ -790,11 +790,83 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 @media (max-width: 560px) {
   .page-approval-detail .session-bar-queue-count { display: none; }
 }
+/* Contextual transcript search. This lives in the sticky session header instead
+   of browser chrome: Cmd/Ctrl+F searches only the run's log entries. */
+.page-approval-detail .session-log-search {
+  flex: 0 1 280px;
+  min-width: 180px;
+  height: 36px;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 7px 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted-3);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--fg) 7%, transparent);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.page-approval-detail .session-log-search:focus-within {
+  border-color: var(--cyan-border);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cyan) 14%, transparent),
+    0 2px 8px color-mix(in srgb, var(--fg) 7%, transparent);
+}
+.page-approval-detail .session-log-search-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--muted-2);
+}
+.page-approval-detail .session-log-search input {
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  appearance: none;
+  background: transparent;
+  color: var(--fg);
+  font: 13px/1 var(--sans);
+}
+.page-approval-detail .session-log-search input::-webkit-search-cancel-button { display: none; }
+.page-approval-detail .session-log-search input::placeholder { color: var(--muted-2); opacity: 1; }
+.page-approval-detail .session-log-search .session-log-search-clear {
+  flex: none;
+  width: 30px;
+  height: 20px;
+  min-height: 0;
+  margin: 0;
+  padding: 2px 0 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted-3);
+  cursor: pointer;
+}
+.page-approval-detail .session-log-search .session-log-search-clear:hover { color: var(--fg); background: transparent; }
+.page-approval-detail .session-log-search .session-log-search-clear:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 1px; }
+.page-approval-detail .session-log-search-clear svg { width: 16px; height: 16px; }
+@media (max-width: 700px) {
+  .page-approval-detail .session-bar { flex-wrap: wrap; }
+  .page-approval-detail .session-log-search {
+    order: 3;
+    flex-basis: 100%;
+    width: 100%;
+    margin-left: 0;
+  }
+}
 /* Scroll-to-top: revealed only once the page is scrolled away from the top, so it
    never invites a no-op click while already there. */
 .page-approval-detail .session-bar-top {
   flex: none;
-  margin-left: auto;
+  margin-left: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;

@@ -3,9 +3,8 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
-import { join } from "node:path";
 import { pendingApprovalCount, pendingApprovalTitle, pendingApprovalTooltip, type ApprovalBucketsPayload } from "./approval-status";
-import { createEditMenu, createNavigationMenu, type NavigationCommands } from "./menus";
+import { createEditMenu, createNavigationMenu, type FindCommands, type NavigationCommands } from "./menus";
 import { parseNotificationFrames, type NativeNotificationEvent } from "./notification-stream";
 import { isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, selectServer, serverUrl, type RegisteredServer } from "./runtime";
 import { createAgentUseTrayIcon } from "./tray-icon";
@@ -389,6 +388,20 @@ const navigationCommands: NavigationCommands = {
   },
 };
 
+function focusSessionLogSearch(): void {
+  if (window && !window.isDestroyed() && window.isVisible()) {
+    void window.webContents.executeJavaScript("window.dispatchEvent(new Event('agentuse:find-session-log'))");
+    return;
+  }
+  void showDashboard().then(() => window?.webContents.executeJavaScript(
+    "window.dispatchEvent(new Event('agentuse:find-session-log'))"
+  ));
+}
+
+const findCommands: FindCommands = {
+  open: focusSessionLogSearch,
+};
+
 function refreshTrayMenu(): void {
   trayMenu = Menu.buildFromTemplate(runtimeMenuItems());
 }
@@ -396,7 +409,7 @@ function refreshTrayMenu(): void {
 function refreshApplicationMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: APP_NAME, submenu: runtimeMenuItems() },
-    createEditMenu(),
+    createEditMenu(findCommands),
     createNavigationMenu(navigationCommands),
   ]));
 }

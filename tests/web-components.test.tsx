@@ -10,7 +10,7 @@ import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/c
 import { parseChartSpec } from '../src/cli/serve/web/lib/chart-svg';
 import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { displayAgentName, isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
-import { aggregateToolStats, hasActionableApproval, headerTokenUsage, tokenUsageMetaItems, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
+import { aggregateToolStats, hasActionableApproval, headerTokenUsage, sessionLogMatches, tokenUsageMetaItems, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
 import { FeedResponse, NewSinceLastVisit, SessionRowView } from '../src/cli/serve/web/routes/sessions-list';
 import { labelFor, suspendedGateKinds } from '../src/cli/serve/web/hooks/use-live-home';
 import {
@@ -31,6 +31,37 @@ import { learningsTidyHref } from '../src/cli/serve/web/lib/links';
 import type { LearningSummary, SessionLearning, TidyResult } from '../src/cli/serve/web/lib/api';
 
 const noop = () => {};
+
+describe('session log search', () => {
+  const entry: ApprovalLogEntry = {
+    id: 'log-1',
+    type: 'tool',
+    title: 'Publish approved reply',
+    tool: 'post_to_substack',
+    status: 'completed',
+    message: 'The public reply was verified.',
+    details: { input: '{"channel":"Substack"}', output: '{"url":"https://example.com/reply"}' },
+  };
+
+  it('matches visible log text and tool details case-insensitively', () => {
+    expect(sessionLogMatches(entry, 'APPROVED')).toBe(true);
+    expect(sessionLogMatches(entry, 'substack reply')).toBe(true);
+    expect(sessionLogMatches(entry, 'example.com')).toBe(true);
+  });
+
+  it('includes nested sub-agent cards rendered inside a log entry', () => {
+    const delegated = {
+      ...entry,
+      subagentSession: { children: [{ agent: { name: 'Reply Judge' } }] },
+    } as unknown as ApprovalLogEntry;
+    expect(sessionLogMatches(delegated, 'reply judge')).toBe(true);
+  });
+
+  it('requires every word and treats a blank query as unfiltered', () => {
+    expect(sessionLogMatches(entry, 'substack missing')).toBe(false);
+    expect(sessionLogMatches(entry, '   ')).toBe(true);
+  });
+});
 
 describe('displayAgentName', () => {
   it('prefers a human name and falls back to the agent filename', () => {

@@ -1,9 +1,10 @@
 import { describe, expect, it, mock } from "bun:test";
+import type { MenuItemConstructorOptions } from "electron";
 import { createEditMenu, createNavigationMenu } from "./menus";
 
 describe("desktop application menus", () => {
   it("uses native editing roles in standard macOS order", () => {
-    const menu = createEditMenu();
+    const menu = createEditMenu({ open: () => {} });
     const items = menu.submenu as Array<{ role?: string }>;
     expect(items.map((item) => item.role).filter(Boolean)).toEqual([
       "undo",
@@ -15,6 +16,17 @@ describe("desktop application menus", () => {
       "delete",
       "selectAll",
     ]);
+  });
+
+  it("provides standard macOS find commands", () => {
+    const open = mock(() => undefined);
+    const menu = createEditMenu({ open });
+    const find = (menu.submenu as MenuItemConstructorOptions[]).find((item) => item.label === "Find");
+    const items = find?.submenu as MenuItemConstructorOptions[];
+
+    expect(items.map((item) => item.accelerator)).toEqual(["Command+F"]);
+    items[0]?.click?.({} as never, undefined as never, {} as never);
+    expect(open).toHaveBeenCalledTimes(1);
   });
 
   it("reflects navigation availability and delegates navigation", () => {

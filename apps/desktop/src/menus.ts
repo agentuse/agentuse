@@ -7,7 +7,11 @@ export interface NavigationCommands {
   goForward(): void;
 }
 
-export function createEditMenu(): MenuItemConstructorOptions {
+export interface FindCommands {
+  open(): void;
+}
+
+export function createEditMenu(find: FindCommands): MenuItemConstructorOptions {
   return {
     label: "Edit",
     submenu: [
@@ -21,6 +25,12 @@ export function createEditMenu(): MenuItemConstructorOptions {
       { role: "delete" },
       { type: "separator" },
       { role: "selectAll" },
+      {
+        label: "Find",
+        submenu: [
+          { label: "Find…", accelerator: "Command+F", click: find.open },
+        ],
+      },
     ],
   };
 }

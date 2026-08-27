@@ -38,6 +38,18 @@ type ApprovalHeader = Omit<ApprovalPageInfo, 'logs'>;
 // preparing entries for display; the underlying logsRef entries are never mutated.
 type PreparedLogEntry = ApprovalLogEntry & { repeatCount?: number };
 
+/** Match the text carried by a rendered session-log entry. Multiple words use
+ * AND semantics so a specific query narrows rather than broadens the feed. */
+export function sessionLogMatches(entry: ApprovalLogEntry, query: string): boolean {
+  const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return true;
+  // Sub-agent cards and their important descendants live on top-level fields
+  // such as subagentSession, not only in details. Index the complete durable
+  // entry so every piece of transcript text the row can render is searchable.
+  const haystack = JSON.stringify(entry).toLocaleLowerCase();
+  return terms.every((term) => haystack.includes(term));
+}
+
 const tokenFmt = new Intl.NumberFormat('en-US');
 function formatTokenCount(value: number | undefined): string {
   return value === undefined ? '—' : tokenFmt.format(value);
@@ -314,6 +326,7 @@ export default function SessionDetail() {
   const [artifactRevision, setArtifactRevision] = useState(0);
   const [logsLimit, setLogsLimit] = useState(400);
   const [logsTotal, setLogsTotal] = useState<number | null>(null);
+  const [logQuery, setLogQuery] = useState('');
   // Debug-level operational logs are hidden by default to keep the log readable;
   // the preference persists across sessions.
   const [showDebug, setShowDebug] = useState<boolean>(() => {
@@ -334,6 +347,7 @@ export default function SessionDetail() {
   // Logs accumulate monotonically across the session; the status payload can
   // briefly return fewer entries during approval handoffs, so merge by id.
   const logsRef = useRef(new Map<string, ApprovalLogEntry>());
+  const logSearchRef = useRef<HTMLInputElement>(null);
   const currentResumeTokenRef = useRef<string | undefined>(token);
   const followScrollRef = useRef(true);
   // First-paint scroll-to-end happens once per session. The router reuses this
@@ -348,6 +362,31 @@ export default function SessionDetail() {
   // feed-first layout after it ends, so the transcript never snaps closed
   // under the reader. Latched per session (reset in the [sessionId] effect).
   const firstViewEndedRef = useRef<boolean | null>(null);
+
+  // The desktop Edit > Find command dispatches the same event. The keyboard
+  // listener keeps the browser/PWA version consistent without exposing a
+  // browser-wide finder for a page where the transcript is the useful scope.
+  useEffect(() => {
+    const focusSearch = () => {
+      document.querySelector<HTMLDetailsElement>('.session-transcript')?.setAttribute('open', '');
+      requestAnimationFrame(() => {
+        logSearchRef.current?.focus();
+        logSearchRef.current?.select();
+      });
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLocaleLowerCase() === 'f') {
+        event.preventDefault();
+        focusSearch();
+      }
+    };
+    window.addEventListener('agentuse:find-session-log', focusSearch);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('agentuse:find-session-log', focusSearch);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, []);
 
   const mergeLog = useCallback((entry: ApprovalLogEntry): boolean => {
     if (entry?.id == null) return false;
@@ -421,6 +460,7 @@ export default function SessionDetail() {
     setArtifacts([]);
     setLogsLimit(400);
     setLogsTotal(null);
+    setLogQuery('');
     // Re-latch the summary-first decision, and the keyed uncontrolled
     // <details> transcript remounts closed for the new session.
     firstViewEndedRef.current = null;
@@ -775,6 +815,10 @@ export default function SessionDetail() {
     if (idx < 0 || idx === collapsedLogs.length - 1) return collapsedLogs;
     return [...collapsedLogs.slice(0, idx), ...collapsedLogs.slice(idx + 1), collapsedLogs[idx]];
   }, [collapsedLogs, actionable]);
+  const matchingFeedLogs = useMemo(
+    () => feedLogs.filter((entry) => sessionLogMatches(entry, logQuery)),
+    [feedLogs, logQuery]
+  );
 
   useEffect(() => {
     if (continueActionable) setSubmittingContinue(false);
@@ -1178,14 +1222,16 @@ export default function SessionDetail() {
         </button>
       )}
       <ul class="logs" role="log">
-        {visibleLogs.length === 0 && (
+        {(visibleLogs.length === 0 || (logQuery && matchingFeedLogs.length === 0)) && (
           <li class="log-empty">
-            {orderedLogs.length === 0
+            {logQuery && visibleLogs.length > 0
+              ? `No session log entries match “${logQuery}”.`
+              : orderedLogs.length === 0
               ? 'No session events yet.'
               : `${debugCount} debug ${debugCount === 1 ? 'entry' : 'entries'} hidden. Enable the debug toggle to view.`}
           </li>
         )}
-        {feedLogs.map((entry) => {
+        {matchingFeedLogs.map((entry) => {
           const entryActionable = actionable && entry.status === 'pending' && Boolean(entry.details) &&
             (!currentResumeTokenRef.current || entry.details?.resumeToken === currentResumeTokenRef.current);
           return (
@@ -1213,7 +1259,7 @@ export default function SessionDetail() {
             />
           );
         })}
-        {showWorking && (
+        {showWorking && !logQuery && (
           <li class="log-item log-working">
             <div class="log-head">
               <span class="log-time" />
@@ -1265,6 +1311,46 @@ export default function SessionDetail() {
               </a>
             </div>
           )}
+          <div class="session-log-search" role="search">
+            <svg class="session-log-search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="7" cy="7" r="4.5" /><path d="m11 11 3 3" />
+            </svg>
+            <input
+              ref={logSearchRef}
+              type="search"
+              value={logQuery}
+              placeholder="Search session log…"
+              aria-label="Search session log"
+              onInput={(event) => {
+                const query = (event.currentTarget as HTMLInputElement).value;
+                setLogQuery(query);
+                if (query && logsTotal !== null && logsRef.current.size < logsTotal) setLogsLimit(5_000);
+                if (query) document.querySelector<HTMLDetailsElement>('.session-transcript')?.setAttribute('open', '');
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Escape') return;
+                event.preventDefault();
+                setLogQuery('');
+                (event.currentTarget as HTMLInputElement).blur();
+              }}
+            />
+            {logQuery && (
+              <button
+                type="button"
+                class="session-log-search-clear"
+                aria-label="Clear session log search"
+                title="Clear search"
+                onClick={() => {
+                  setLogQuery('');
+                  logSearchRef.current?.focus();
+                }}
+              >
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+                  <path d="m4.5 4.5 7 7m0-7-7 7" />
+                </svg>
+              </button>
+            )}
+          </div>
           <button
             type="button"
             class="session-bar-top"
