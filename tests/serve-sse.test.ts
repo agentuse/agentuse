@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { createServer, type Server } from 'http';
-import { ApprovalEventHub, ApprovalListEventHub, type ApprovalListPoll, type SessionPoll, type SessionSnapshot } from '../src/cli/serve/sse';
+import { ApprovalEventHub, ApprovalListEventHub, NotificationEventHub, type ApprovalListPoll, type SessionPoll, type SessionSnapshot } from '../src/cli/serve/sse';
 import type { ApprovalLogEntry } from '../src/cli/serve/types';
 
 function listen(server: Server): Promise<number> {
@@ -247,6 +247,53 @@ describe('ApprovalListEventHub', () => {
     } finally {
       liveHub.shutdown();
       liveServer.close();
+    }
+  });
+});
+
+describe('NotificationEventHub', () => {
+  it('streams only events published after a native client subscribes', async () => {
+    const hub = new NotificationEventHub<{ category: string; payload: { title: string } }>({ heartbeatIntervalMs: 10_000 });
+    hub.publish({ category: 'approvals', payload: { title: 'historical' } });
+    const server = createServer((req, res) => {
+      hub.subscribe({ req, res });
+    });
+    const port = await listen(server);
+
+    try {
+      const resPromise = fetch(`http://127.0.0.1:${port}/api/notifications/events`);
+      setTimeout(() => hub.publish({ category: 'approvals', payload: { title: 'Approval needed' } }), 40);
+      const res = await resPromise;
+      const buf = await readUntil(res, (value) => value.includes('Approval needed'));
+      expect(buf).toContain('event: notification');
+      expect(buf).toContain('Approval needed');
+      expect(buf).not.toContain('historical');
+    } finally {
+      hub.shutdown();
+      server.close();
+    }
+  });
+
+  it('drops disconnected native clients', async () => {
+    const hub = new NotificationEventHub<{ title: string }>({ heartbeatIntervalMs: 10_000 });
+    const server = createServer((req, res) => {
+      hub.subscribe({ req, res });
+    });
+    const port = await listen(server);
+
+    try {
+      const controller = new AbortController();
+      const resPromise = fetch(`http://127.0.0.1:${port}/api/notifications/events`, { signal: controller.signal });
+      setTimeout(() => hub.publish({ title: 'connected' }), 40);
+      const res = await resPromise;
+      await readUntil(res, (value) => value.includes('connected'));
+      expect(hub.activeSubscriberCount()).toBe(1);
+      controller.abort();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(hub.activeSubscriberCount()).toBe(0);
+    } finally {
+      hub.shutdown();
+      server.close();
     }
   });
 });

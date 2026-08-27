@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, Menu, shell, Tray, type Event, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, dialog, Menu, Notification, shell, Tray, type Event, type MenuItemConstructorOptions } from "electron";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
@@ -6,6 +6,7 @@ import { createServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
 import { pendingApprovalCount, pendingApprovalTitle, pendingApprovalTooltip, type ApprovalBucketsPayload } from "./approval-status";
 import { createEditMenu, createNavigationMenu, type NavigationCommands } from "./menus";
+import { parseNotificationFrames, type NativeNotificationEvent } from "./notification-stream";
 import { isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, selectServer, serverUrl, type RegisteredServer } from "./runtime";
 import { createAgentUseTrayIcon } from "./tray-icon";
 
@@ -23,6 +24,9 @@ let dashboardApiKey: string | undefined;
 let currentServer: RegisteredServer | undefined;
 let ownedServer: ChildProcess | undefined;
 let approvalPollTimer: ReturnType<typeof setInterval> | undefined;
+let notificationStreamController: AbortController | undefined;
+let notificationStreamOrigin: string | undefined;
+const activeNotifications = new Map<string, Notification>();
 let displayedPendingApprovals = 0;
 let approvalRefreshInFlight = false;
 let isQuitting = false;
@@ -70,6 +74,97 @@ function startApprovalPolling(): void {
   void refreshPendingApprovals();
   approvalPollTimer = setInterval(() => void refreshPendingApprovals(), APPROVAL_POLL_INTERVAL_MS);
   approvalPollTimer.unref();
+}
+
+function stopNotificationStream(): void {
+  notificationStreamController?.abort();
+  notificationStreamController = undefined;
+  notificationStreamOrigin = undefined;
+}
+
+function notificationTargetUrl(url: string): string | undefined {
+  if (!dashboardUrl) return undefined;
+  try {
+    const remote = new URL(url);
+    return new URL(`${remote.pathname}${remote.search}${remote.hash}`, dashboardUrl).toString();
+  } catch {
+    return undefined;
+  }
+}
+
+function showNativeNotification(event: NativeNotificationEvent): void {
+  if (!Notification.isSupported()) return;
+  const key = event.payload.tag ?? `${event.category}:${event.payload.url}`;
+  activeNotifications.get(key)?.close();
+  const notification = new Notification({
+    title: event.payload.title,
+    body: event.payload.body,
+    silent: false,
+  });
+  activeNotifications.set(key, notification);
+  const forget = () => {
+    if (activeNotifications.get(key) === notification) activeNotifications.delete(key);
+  };
+  notification.on("click", () => {
+    const target = notificationTargetUrl(event.payload.url);
+    void showDashboard(target);
+  });
+  notification.on("close", forget);
+  notification.on("failed", (_event, error) => {
+    console.error("Could not show AgentUse notification:", error);
+    forget();
+  });
+  notification.show();
+}
+
+async function waitForNotificationReconnect(signal: AbortSignal): Promise<void> {
+  await new Promise<void>((resolve) => {
+    if (signal.aborted) return resolve();
+    const timer = setTimeout(resolve, 3_000);
+    signal.addEventListener("abort", () => {
+      clearTimeout(timer);
+      resolve();
+    }, { once: true });
+  });
+}
+
+async function consumeNotificationStream(origin: string, apiKey: string | undefined, signal: AbortSignal): Promise<void> {
+  while (!signal.aborted) {
+    try {
+      const streamUrl = new URL("/api/notifications/events", origin);
+      const response = await fetch(streamUrl, {
+        signal,
+        headers: {
+          Accept: "text/event-stream",
+          ...(apiKey && { Authorization: `Bearer ${apiKey}` }),
+        },
+      });
+      if (!response.ok || !response.body) throw new Error(`Notification stream returned ${response.status}`);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (!signal.aborted) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parsed = parseNotificationFrames(buffer);
+        buffer = parsed.remainder;
+        for (const event of parsed.events) showNativeNotification(event);
+      }
+    } catch (error) {
+      if (!signal.aborted) console.debug("AgentUse notification stream disconnected:", error);
+    }
+    if (!signal.aborted) await waitForNotificationReconnect(signal);
+  }
+}
+
+function startNotificationStream(): void {
+  if (!dashboardUrl) return;
+  if (notificationStreamController && notificationStreamOrigin === dashboardUrl) return;
+  stopNotificationStream();
+  notificationStreamOrigin = dashboardUrl;
+  notificationStreamController = new AbortController();
+  void consumeNotificationStream(dashboardUrl, dashboardApiKey, notificationStreamController.signal);
 }
 
 async function probeServer(url: string, apiKey?: string): Promise<"ready" | "unauthorized" | "unreachable"> {
@@ -144,6 +239,7 @@ async function acquireServer(): Promise<void> {
       currentServer = undefined;
       dashboardUrl = undefined;
       dashboardApiKey = undefined;
+      stopNotificationStream();
       setPendingApprovals(0);
     }
     refreshMenus();
@@ -221,13 +317,14 @@ function resetAutomaticInitialFocus(browser: BrowserWindow): void {
   });
 }
 
-async function showDashboard(): Promise<void> {
+async function showDashboard(requestedUrl?: string): Promise<void> {
   if (currentServer) {
     const registered = listRegisteredServers().find((server) => server.pid === currentServer?.pid);
     if (!registered || await probeServer(serverUrl(registered), dashboardApiKey) !== "ready") {
       currentServer = undefined;
       dashboardUrl = undefined;
       dashboardApiKey = undefined;
+      stopNotificationStream();
       setPendingApprovals(0);
     } else {
       currentServer = registered;
@@ -235,8 +332,10 @@ async function showDashboard(): Promise<void> {
   }
   if (!dashboardUrl) await acquireServer();
   if (!window || window.isDestroyed()) window = createWindow();
-  if (window.webContents.getURL() !== dashboardUrl) await window.loadURL(dashboardUrl!);
+  const targetUrl = requestedUrl ? notificationTargetUrl(requestedUrl) ?? dashboardUrl! : dashboardUrl!;
+  if (window.webContents.getURL() !== targetUrl) await window.loadURL(targetUrl);
   startApprovalPolling();
+  startNotificationStream();
   void refreshPendingApprovals();
   window.show();
   window.focus();
@@ -342,6 +441,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on("before-quit", (event) => {
     isQuitting = true;
     if (approvalPollTimer) clearInterval(approvalPollTimer);
+    stopNotificationStream();
     if (quitInProgress) return;
     event.preventDefault();
     void stopOwnedServerCleanly().finally(() => {

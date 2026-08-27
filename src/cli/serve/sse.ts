@@ -487,3 +487,57 @@ export class ApprovalListEventHub<TSnapshot> {
     }
   }
 }
+
+/**
+ * Fans already-composed notification events out to connected native clients.
+ * Unlike the snapshot hubs above, this stream deliberately has no replay:
+ * opening the desktop app must not re-notify historical approvals or sessions.
+ */
+export class NotificationEventHub<TEvent> {
+  private subscribers = new Set<ServerResponse>();
+  private readonly heartbeatIntervalMs: number;
+  private readonly maxSubscribers: number;
+
+  constructor(options: { heartbeatIntervalMs?: number; maxSubscribers?: number } = {}) {
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? 25_000;
+    this.maxSubscribers = options.maxSubscribers ?? 10;
+  }
+
+  subscribe(options: { req: IncomingMessage; res: ServerResponse }): boolean {
+    if (this.subscribers.size >= this.maxSubscribers) return false;
+    const { req, res } = options;
+    this.subscribers.add(res);
+    writeSseHeaders(res);
+
+    const heartbeat = setInterval(() => {
+      if (!res.destroyed) res.write(`: hb\n\n`);
+    }, this.heartbeatIntervalMs);
+    const onClose = () => {
+      clearInterval(heartbeat);
+      this.subscribers.delete(res);
+    };
+    res.on("close", onClose);
+    req.on("close", onClose);
+    return true;
+  }
+
+  publish(event: TEvent): void {
+    const message = `event: notification\ndata: ${JSON.stringify(event)}\n\n`;
+    for (const res of [...this.subscribers]) {
+      if (res.destroyed) {
+        this.subscribers.delete(res);
+        continue;
+      }
+      res.write(message);
+    }
+  }
+
+  activeSubscriberCount(): number {
+    return this.subscribers.size;
+  }
+
+  shutdown(): void {
+    for (const res of this.subscribers) res.end();
+    this.subscribers.clear();
+  }
+}

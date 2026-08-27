@@ -60,8 +60,8 @@ const ICON_192_PNG = Buffer.from(ICON_192_PNG_BASE64, "base64");
 const ICON_512_PNG = Buffer.from(ICON_512_PNG_BASE64, "base64");
 import { WebAssets, renderWebAssetsMissingPage } from "./serve/static";
 import { readAbout, type AboutInfo } from "./serve/about";
-import { PushService, SERVICE_WORKER_JS } from "./serve/push";
-import { ApprovalEventHub, ApprovalListEventHub } from "./serve/sse";
+import { PushService, SERVICE_WORKER_JS, type PushCategory, type PushPayload } from "./serve/push";
+import { ApprovalEventHub, ApprovalListEventHub, NotificationEventHub } from "./serve/sse";
 import {
   findStoreItem,
   isSafeStoreName,
@@ -4304,6 +4304,24 @@ export function createServeCommand(): Command {
       // subscriptions persist in the data dir; notifications fire on pending
       // approvals and session completions (see pushService.notify call sites).
       const pushService = new PushService(getXdgDataDir(), (msg) => console.log(msg));
+      type NativeNotificationEvent = {
+        category: PushCategory;
+        payload: Pick<PushPayload, 'title' | 'body' | 'url' | 'tag' | 'appBadge'>;
+      };
+      const notificationHub = new NotificationEventHub<NativeNotificationEvent>();
+      const deliverNotification = (category: PushCategory, payload: PushPayload): Promise<void> => {
+        notificationHub.publish({
+          category,
+          payload: {
+            title: payload.title,
+            body: payload.body,
+            url: payload.url,
+            ...(payload.tag && { tag: payload.tag }),
+            ...(payload.appBadge !== undefined && { appBadge: payload.appBadge }),
+          },
+        });
+        return pushService.notify(category, payload);
+      };
       // Push session/approval state to the SPA over SSE (one worker poll per
       // session, fanned to all subscribed tabs), replacing in-page polling.
       const approvalHub = new ApprovalEventHub();
@@ -6347,7 +6365,7 @@ export function createServeCommand(): Command {
             const sessionQuery = new URLSearchParams();
             if (token) sessionQuery.set('token', token);
             sessionQuery.set('project', found.project.id);
-            void pushService.notify('sessions', {
+            void deliverNotification('sessions', {
               title: status === 'completed' ? "Session completed" : "Session failed",
               body: multiProject ? `${found.project.id}/${agentName}` : agentName,
               url: `${effectivePublicUrl}/sessions/${encodeURIComponent(sessionId)}?${sessionQuery.toString()}`,
@@ -6423,6 +6441,13 @@ export function createServeCommand(): Command {
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
+        if (req.method === "GET" && isApi && routePath === '/notifications/events') {
+          if (!notificationHub.subscribe({ req, res })) {
+            sendError(res, 503, "TOO_MANY_SUBSCRIBERS", "Too many native notification connections");
           }
           return;
         }
@@ -6552,7 +6577,7 @@ export function createServeCommand(): Command {
                 // requires a choice), so those always tap through to the page.
                 const hasOptions = (found.info.approval.options?.length ?? 0) > 0;
                 const decidableInline = pushSessionId === sessionId && !hasOptions;
-                await pushService.notify('approvals', {
+                await deliverNotification('approvals', {
                   title: "Approval needed",
                   body: [
                     prompt ? `${label}: ${prompt.slice(0, 140)}` : label,
@@ -7322,6 +7347,7 @@ export function createServeCommand(): Command {
         approvalHub.shutdown();
         approvalListHub.shutdown();
         sessionListHub.shutdown();
+        notificationHub.shutdown();
         if (approvalSweepTimer) {
           clearInterval(approvalSweepTimer);
           approvalSweepTimer = null;
