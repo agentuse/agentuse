@@ -15,6 +15,7 @@ const STARTUP_TIMEOUT_MS = 15_000;
 const APPROVAL_POLL_INTERVAL_MS = 5_000;
 
 let window: BrowserWindow | undefined;
+let windowNeedsInitialFocusReset = false;
 let tray: Tray | undefined;
 let trayMenu: Menu | undefined;
 let dashboardUrl: string | undefined;
@@ -202,7 +203,22 @@ function createWindow(): BrowserWindow {
     }
     callback({ requestHeaders: details.requestHeaders });
   });
+  windowNeedsInitialFocusReset = true;
   return browser;
+}
+
+function resetAutomaticInitialFocus(browser: BrowserWindow): void {
+  if (!windowNeedsInitialFocusReset) return;
+  windowNeedsInitialFocusReset = false;
+  setImmediate(() => {
+    if (browser.isDestroyed() || browser.webContents.isDestroyed()) return;
+    void browser.webContents.executeJavaScript(`
+      (() => {
+        const active = document.activeElement;
+        if (active instanceof HTMLElement && active.classList.contains('skip-link')) active.blur();
+      })()
+    `).catch(() => {});
+  });
 }
 
 async function showDashboard(): Promise<void> {
@@ -224,6 +240,7 @@ async function showDashboard(): Promise<void> {
   void refreshPendingApprovals();
   window.show();
   window.focus();
+  resetAutomaticInitialFocus(window);
   refreshMenus();
 }
 
