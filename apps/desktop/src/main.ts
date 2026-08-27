@@ -16,6 +16,7 @@ const APPROVAL_POLL_INTERVAL_MS = 5_000;
 
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
+let trayMenu: Menu | undefined;
 let dashboardUrl: string | undefined;
 let dashboardApiKey: string | undefined;
 let currentServer: RegisteredServer | undefined;
@@ -226,6 +227,14 @@ async function showDashboard(): Promise<void> {
   refreshMenus();
 }
 
+function toggleDashboard(): void {
+  if (window && !window.isDestroyed() && window.isVisible()) {
+    window.hide();
+    return;
+  }
+  void showDashboard();
+}
+
 async function openLogs(): Promise<void> {
   if (currentServer?.logFile) await shell.openPath(currentServer.logFile);
 }
@@ -265,7 +274,7 @@ const navigationCommands: NavigationCommands = {
 };
 
 function refreshTrayMenu(): void {
-  tray?.setContextMenu(Menu.buildFromTemplate(runtimeMenuItems()));
+  trayMenu = Menu.buildFromTemplate(runtimeMenuItems());
 }
 
 function refreshApplicationMenu(): void {
@@ -284,7 +293,10 @@ function refreshMenus(): void {
 function createTray(): void {
   tray = new Tray(createAgentUseTrayIcon());
   setPendingApprovals(displayedPendingApprovals);
-  tray.on("click", () => void showDashboard());
+  tray.on("click", toggleDashboard);
+  tray.on("right-click", () => {
+    if (trayMenu) tray?.popUpContextMenu(trayMenu);
+  });
   refreshMenus();
 }
 
