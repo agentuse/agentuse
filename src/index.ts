@@ -1304,11 +1304,22 @@ async function runInternalWorker() {
     };
   }
 
-  interface ApprovalProjectionIndex {
+  interface ApprovalProjectionIndexV1 {
     version: 1;
     approvalGeneration: number;
     approvals: ApprovalSummary[];
   }
+
+  interface ApprovalProjectionIndexV2 {
+    version: 2;
+    approvalGeneration: number;
+    approvals: ApprovalSummary[];
+    /** Session-index timestamps used to refresh only approval-bearing runs
+     * whose durable state changed since this projection was written. */
+    sourceUpdatedAt: Record<string, number>;
+  }
+
+  type ApprovalProjectionIndex = ApprovalProjectionIndexV1 | ApprovalProjectionIndexV2;
 
   function approvalProjectionKey(projectRoot: string): string {
     const projectHash = createHash('sha256').update(resolve(projectRoot)).digest('hex').slice(0, 20);
@@ -3446,11 +3457,7 @@ async function runInternalWorker() {
         if (!(error instanceof CorruptStorageError)) throw error;
         logger.warn(`Rebuilding corrupt approval index: ${error.message}`);
       }
-      if (
-        projection?.version === 1 &&
-        projection.approvalGeneration === approvalGeneration &&
-        Array.isArray(projection.approvals)
-      ) {
+      if (projection && projection.approvalGeneration === approvalGeneration && Array.isArray(projection.approvals)) {
         return {
           id: req.id,
           success: true as const,
@@ -3460,11 +3467,30 @@ async function runInternalWorker() {
         };
       }
 
-      // Build one all-history projection for this project. Date-windowed Web UI
-      // requests filter this compact file in memory instead of rescanning every
-      // session/message/part tree for each page load and SSE poll.
-      const sessions = await sessionManager.listAllSessions();
-      const approvals: ApprovalSummary[] = [];
+      const indexedSessions = await sessionManager.listSessionSummaries({ includeSubagents: true });
+      const indexedTopLevel = indexedSessions.filter((session) =>
+        !session.parentSessionId && sessionBelongsToProject(session, req.projectRoot)
+      );
+      const currentSessionIds = new Set(indexedTopLevel.map((session) => session.sessionId));
+      const priorApprovals = projection && Array.isArray(projection.approvals)
+        ? projection.approvals.filter((approval) => currentSessionIds.has(approval.sessionId))
+        : [];
+      const priorSourceUpdatedAt = projection?.version === 2 && projection.sourceUpdatedAt
+        ? projection.sourceUpdatedAt
+        : {};
+      const incremental = projection !== null && Array.isArray(projection.approvals);
+      const summariesToRefresh = incremental
+        ? indexedTopLevel.filter((session) =>
+            session.approvalRelevant === true && priorSourceUpdatedAt[session.sessionId] !== session.updatedAt
+          )
+        : indexedTopLevel;
+      const refreshIds = new Set(summariesToRefresh.map((session) => session.sessionId));
+      const approvals: ApprovalSummary[] = incremental
+        ? priorApprovals.filter((approval) => !refreshIds.has(approval.sessionId))
+        : [];
+      const sourceUpdatedAt: Record<string, number> = incremental
+        ? Object.fromEntries(Object.entries(priorSourceUpdatedAt).filter(([sessionId]) => currentSessionIds.has(sessionId)))
+        : {};
       const sessionBatchSize = 16;
 
       const summarizeApproval = async (
@@ -3622,16 +3648,30 @@ async function runInternalWorker() {
         };
       };
 
-      for (let i = 0; i < sessions.length; i += sessionBatchSize) {
-        const batch = sessions.slice(i, i + sessionBatchSize);
+      // A stale projection used to trigger listAllSessions(), reading every
+      // historical session and regularly exceeding the serve worker's 30s RPC
+      // deadline after worker recycling. The compact session index already
+      // records exactly which roots have participated in an approval lifecycle.
+      // Preserve legacy rows from the previous projection and re-read only
+      // indexed approval roots whose timestamp changed. A missing/corrupt
+      // projection still takes the conservative full-history bootstrap path.
+      for (let i = 0; i < summariesToRefresh.length; i += sessionBatchSize) {
+        const summaryBatch = summariesToRefresh.slice(i, i + sessionBatchSize);
+        const batch = (await Promise.all(summaryBatch.map((summary) =>
+          sessionManager.findSession(summary.sessionId)
+        ))).filter((entry): entry is NonNullable<typeof entry> => entry !== null);
         const summaries = await Promise.all(batch.map(summarizeApproval));
         approvals.push(...summaries.filter((approval): approval is ApprovalSummary => approval !== null));
+        for (const summary of summaryBatch) {
+          sourceUpdatedAt[summary.sessionId] = summary.updatedAt;
+        }
       }
 
       await writeJSON(projectionKey, {
-        version: 1,
+        version: 2,
         approvalGeneration,
         approvals,
+        sourceUpdatedAt,
       } satisfies ApprovalProjectionIndex);
 
       return {

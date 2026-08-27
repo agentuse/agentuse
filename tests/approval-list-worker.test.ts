@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
+import { createHash } from 'crypto';
 import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { createInterface, type Interface as ReadlineInterface } from 'readline';
-import { initStorage } from '../src/storage';
+import { initStorage, readJSON, writeJSON } from '../src/storage';
 import { SessionManager } from '../src/session';
 
 async function readWorkerJson(rl: ReadlineInterface, timeoutMs = 10_000): Promise<any> {
@@ -42,6 +43,46 @@ async function startWorker(): Promise<{ child: ChildProcessWithoutNullStreams; r
   const ready = await readWorkerJson(rl);
   expect(ready).toEqual({ type: 'ready' });
   return { child, rl };
+}
+
+async function addPendingApproval(
+  manager: SessionManager,
+  projectRoot: string,
+  agentId: string,
+  prompt: string
+): Promise<string> {
+  const sessionId = await manager.createSession({
+    agent: { id: agentId, name: agentId, isSubAgent: false },
+    model: 'demo:test',
+    version: 'test',
+    config: {},
+    project: { root: projectRoot, cwd: projectRoot },
+  });
+  const messageId = await manager.createMessage(sessionId, agentId, {
+    user: { prompt: { task: 'review' } },
+    assistant: {
+      system: [],
+      modelID: 'demo:test',
+      providerID: 'demo',
+      mode: 'build',
+      path: { cwd: projectRoot, root: projectRoot },
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    },
+  });
+  await manager.addPart(sessionId, agentId, messageId, {
+    type: 'tool',
+    callID: `call-${sessionId}`,
+    tool: 'await_human',
+    state: {
+      status: 'pending',
+      input: { prompt },
+      suspendedAt: Date.now(),
+      resumePayload: { kind: 'await_human', resumeToken: `token-${sessionId}` },
+    },
+  });
+  await manager.setSessionSuspended(sessionId, agentId);
+  return sessionId;
 }
 
 describe('approval list worker', () => {
@@ -229,6 +270,67 @@ describe('approval list worker', () => {
       );
       expect(byId[liveId]?.status).toBe('pending');
       expect(byId[deadId]?.status).toBe('errored');
+    } finally {
+      if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdgDataHome;
+      await rm(dataHome, { recursive: true, force: true });
+    }
+  });
+
+  it('incrementally refreshes a stale projection while preserving unmarked legacy approvals', async () => {
+    const originalXdgDataHome = process.env.XDG_DATA_HOME;
+    const dataHome = await mkdtemp(join(tmpdir(), 'agentuse-approvals-incremental-'));
+    const projectRoot = join(dataHome, 'project');
+    process.env.XDG_DATA_HOME = dataHome;
+    try {
+      await initStorage(projectRoot);
+      const manager = new SessionManager();
+      const legacyId = await addPendingApproval(manager, projectRoot, 'agents/legacy', 'Approve legacy?');
+
+      worker = await startWorker();
+      worker.child.stdin.write(`${JSON.stringify({
+        id: 'list-initial',
+        type: 'list-approvals',
+        projectRoot,
+      })}\n`);
+      expect((await readWorkerJson(worker.rl)).approvals).toHaveLength(1);
+
+      const freshId = await addPendingApproval(manager, projectRoot, 'agents/fresh', 'Approve fresh?');
+      const projectHash = createHash('sha256').update(resolve(projectRoot)).digest('hex').slice(0, 20);
+      const projectionKey = `.index/approvals.${projectHash}.v1`;
+      const projection = await readJSON<any>(projectionKey);
+      await writeJSON(projectionKey, {
+        version: 1,
+        approvalGeneration: projection.approvalGeneration,
+        approvals: projection.approvals,
+      });
+
+      // Simulate a pre-approvalRelevant index entry from an older install. The
+      // v1 projection is the only durable evidence for this historical row.
+      const index = await readJSON<any>('.index/sessions.v1');
+      delete index.sessions[legacyId].approvalRelevant;
+      await writeJSON('.index/sessions.v1', index);
+
+      worker.child.stdin.write(`${JSON.stringify({
+        id: 'invalidate',
+        type: 'invalidate-lists',
+        projectRoot,
+      })}\n`);
+      expect((await readWorkerJson(worker.rl)).success).toBe(true);
+      worker.child.stdin.write(`${JSON.stringify({
+        id: 'list-refreshed',
+        type: 'list-approvals',
+        projectRoot,
+      })}\n`);
+
+      const refreshed = await readWorkerJson(worker.rl);
+      expect(refreshed.success).toBe(true);
+      expect(refreshed.approvals.map((approval: { sessionId: string }) => approval.sessionId).sort())
+        .toEqual([freshId, legacyId].sort());
+      const migrated = await readJSON<any>(projectionKey);
+      expect(migrated.version).toBe(2);
+      expect(migrated.sourceUpdatedAt[freshId]).toBeNumber();
+      expect(migrated.sourceUpdatedAt[legacyId]).toBeUndefined();
     } finally {
       if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
       else process.env.XDG_DATA_HOME = originalXdgDataHome;
