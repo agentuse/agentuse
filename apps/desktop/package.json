@@ -35,6 +35,7 @@
     "forceCodeSigning": false,
     "mac": {
       "category": "public.app-category.developer-tools",
+      "icon": "build/icon.svg",
       "target": ["dmg", "zip"],
       "hardenedRuntime": true,
       "gatekeeperAssess": false
