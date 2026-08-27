@@ -13,13 +13,18 @@ export interface FetchState<T> {
  * interval and on tab visibility changes (the SPA replacement for the old
  * meta-refresh). Stale responses from superseded keys are dropped.
  */
-export function useFetch<T>(key: string, fn: () => Promise<T>, options: { refreshMs?: number } = {}): FetchState<T> {
+export function useFetch<T>(
+  key: string,
+  fn: () => Promise<T>,
+  options: { refreshMs?: number; enabled?: boolean } = {}
+): FetchState<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<ApiRequestError | null>(null);
   const [loading, setLoading] = useState(true);
   const generation = useRef(0);
   const fnRef = useRef(fn);
   fnRef.current = fn;
+  const enabled = options.enabled !== false;
 
   const load = useCallback(async (showLoading: boolean) => {
     const id = ++generation.current;
@@ -41,6 +46,7 @@ export function useFetch<T>(key: string, fn: () => Promise<T>, options: { refres
   // mount effect for the same key (lazy-route resolution can render twice).
   const loadedKeyRef = useRef<string | null>(null);
   useEffect(() => {
+    if (!enabled) return;
     if (loadedKeyRef.current === key) return;
     // A key change means a different resource (e.g. navigating between two
     // agent-detail pages that reuse the mounted route component). Drop the
@@ -52,9 +58,10 @@ export function useFetch<T>(key: string, fn: () => Promise<T>, options: { refres
     }
     loadedKeyRef.current = key;
     void load(true);
-  }, [key, load]);
+  }, [key, enabled, load]);
 
   useEffect(() => {
+    if (!enabled) return;
     const refreshMs = options.refreshMs;
     if (!refreshMs) return;
     const timer = setInterval(() => {
@@ -68,7 +75,7 @@ export function useFetch<T>(key: string, fn: () => Promise<T>, options: { refres
       clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [key, options.refreshMs, load]);
+  }, [key, enabled, options.refreshMs, load]);
 
   const refetch = useCallback(() => void load(false), [load]);
   return { data, error, loading, refetch };
