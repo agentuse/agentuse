@@ -68,6 +68,8 @@
     "typecheck": "tsc --noEmit",
     "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json",
     "smoke:cli": "node bin/cli.js --version",
+    "sbx:bootstrap": "bash scripts/sbx-bootstrap.sh",
+    "sbx:smoke": "bash scripts/sbx-onboarding-smoke.sh",
     "prepack": "AGENTUSE_SKIP_SERVE_RESTART=1 bun run build:clean",
     "pack-dry": "npm pack --dry-run",
     "release:preflight": "bun scripts/release.ts preflight",

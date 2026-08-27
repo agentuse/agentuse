@@ -289,6 +289,7 @@ agent development, and ongoing support.
 
 - [Report bugs](https://github.com/agentuse/agentuse/issues)
 - [Share ideas](https://github.com/agentuse/agentuse/discussions)
+- [Development workflows](./DEVELOPMENT.md)
 
 Local validation:
 

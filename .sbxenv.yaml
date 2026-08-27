@@ -1,0 +1,13 @@
+schemaVersion: "1"
+name: agentuse-dev
+agent: codex
+
+workspace:
+  path: .
+  clone: true
+
+ports:
+  - sandbox: 12233
+    host: 12233
+    hostIP: 127.0.0.1
+    protocol: tcp4
