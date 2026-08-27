@@ -7,6 +7,20 @@ import { z } from 'zod';
 import { searchStrings, type Store } from './store';
 import type { StoreCreateOptions, StoreUpdateOptions, StoreListOptions, StoreItem } from './types';
 
+/** Advisory only: stores accept larger rows, but model-facing reads/writes get costly fast. */
+const STORE_DATA_SOFT_LIMIT_BYTES = 8 * 1024;
+
+function largeDataWarning(data: Record<string, unknown>): string | undefined {
+  const bytes = Buffer.byteLength(JSON.stringify(data), 'utf8');
+  if (bytes <= STORE_DATA_SOFT_LIMIT_BYTES) return undefined;
+  return (
+    `Item data is ${bytes.toLocaleString('en-US')} bytes, above the recommended 8 KiB per item. ` +
+    'The write succeeded, but large rows consume substantial model context when read or updated. ' +
+    'Keep store items as compact workflow records; normalize repeated records into separate typed items ' +
+    'or keep large reports and datasets as file artifacts.'
+  );
+}
+
 /**
  * Helper to filter out undefined values from an object
  * This ensures we don't pass undefined to methods that don't expect it
@@ -169,13 +183,15 @@ export function createStoreTools(store: Store): Record<string, Tool> {
      * Create a new item in the store
      */
     store_create: {
-      description: `Create a new item in the "${storeName}" store. Use this to track work items, results, or any data you want to persist.`,
+      description:
+        `Create a new item in the "${storeName}" store. Use store items as compact workflow records, ` +
+        `preferably no more than 8 KiB of data each; normalize repeated records or keep large reports and datasets as file artifacts.`,
       inputSchema: z.object({
         type: z.string().optional().describe('Item type (e.g., "keyword", "outline", "draft")'),
         title: z.string().optional().describe('Human-readable title'),
         status: z.string().optional().describe('Status (e.g., "pending", "in_progress", "done")'),
         data: z.record(z.unknown()).describe(
-          'The item data payload only. Put type, title, status, parentId, and tags at the top level; do not wrap the full item inside data.'
+          'The item data payload only. Keep it compact (preferably no more than 8 KiB); normalize repeated records or use a file artifact for large reports and datasets. Put type, title, status, parentId, and tags at the top level; do not wrap the full item inside data.'
         ),
         parentId: z.string().optional().describe('ID of parent item to link to'),
         tags: z.array(z.string()).optional().describe('Tags for categorization'),
@@ -213,18 +229,18 @@ export function createStoreTools(store: Store): Record<string, Tool> {
         }
         // Echo only metadata (no `data`) - the caller already has the payload
         // it sent; returning it again just burns tokens.
+        const warnings = [
+          item.type === undefined
+            ? 'Created item has no type, so type-filtered store_list calls will not find it. If this was unintended, pass type at the top level of store_create.'
+            : undefined,
+          largeDataWarning(item.data),
+        ].filter((warning): warning is string => warning !== undefined);
         return {
           success: true,
           store: storeName,
           id: item.id,
           item: projectItem(item),
-          ...(item.type === undefined
-            ? {
-                warning:
-                  'Created item has no type, so type-filtered store_list calls will not find it. ' +
-                  'If this was unintended, pass type at the top level of store_create.',
-              }
-            : {}),
+          ...(warnings.length > 0 ? { warning: warnings.join(' ') } : {}),
         };
       },
     },
@@ -261,13 +277,18 @@ export function createStoreTools(store: Store): Record<string, Tool> {
      * Update an item by ID
      */
     store_update: {
-      description: `Update an existing item in the "${storeName}" store. Only provided fields will be updated.`,
+      description:
+        `Update an existing item in the "${storeName}" store. Only provided fields will be updated. ` +
+        `Keep each item as a compact workflow record, preferably no more than 8 KiB of data; ` +
+        `normalize repeated records or keep large reports and datasets as file artifacts.`,
       inputSchema: z.object({
         id: z.string().describe('The item ID to update'),
         type: z.string().optional().describe('New item type'),
         title: z.string().optional().describe('New title'),
         status: z.string().optional().describe('New status'),
-        data: z.record(z.unknown()).optional().describe('Data fields to merge into existing data'),
+        data: z.record(z.unknown()).optional().describe(
+          'Data fields to merge into existing data. Keep the complete item compact (preferably no more than 8 KiB); normalize repeated records or use a file artifact for large reports and datasets.'
+        ),
         parentId: z.string().optional().describe('New parent ID'),
         tags: z.array(z.string()).optional().describe('New tags (replaces existing)'),
       }),
@@ -296,11 +317,13 @@ export function createStoreTools(store: Store): Record<string, Tool> {
             error: `Item not found: ${id}`,
           };
         }
+        const warning = largeDataWarning(item.data);
         return {
           success: true,
           store: storeName,
           id: item.id,
           item: projectItem(item),
+          ...(warning ? { warning } : {}),
         };
       },
     },

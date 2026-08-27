@@ -83,6 +83,14 @@ When `store` is configured, your agent can:
 | **Delete** | Remove items by ID |
 | **List** | Query and search items with filters, full-text search, and projection |
 
+<Tip>
+  **Keep each item compact.** Store rows are workflow records, not document or
+  analytics containers. Aim to keep `data` at or below 8 KiB. Normalize repeated
+  records into separate typed items, and keep large reports or datasets as file
+  artifacts. Larger items are accepted, but store tools warn because reading and
+  updating them consumes substantial model context.
+</Tip>
+
 ## Listing and searching
 
 `store_list` is built to be **token-efficient**: by default it returns lightweight summary rows (id, type, title, status, tags, parent, timestamps) **without the `data` payload**. The agent scans the summaries, then calls `store_get` for the full data of the one item it needs, instead of pulling every payload into context.

@@ -677,6 +677,14 @@ describe("createStoreTools", () => {
     }
   });
 
+  it("advises compact rows in store write tool descriptions before invocation", () => {
+    for (const name of ["store_create", "store_update"] as const) {
+      expect(tools[name].description).toContain("compact workflow record");
+      expect(tools[name].description).toContain("8 KiB");
+      expect(tools[name].description).toContain("file artifacts");
+    }
+  });
+
   it("store_list returns summary rows without data by default", async () => {
     const res = await call(tools.store_list, {});
     const items = res.items as Array<Record<string, unknown>>;
@@ -862,6 +870,33 @@ describe("createStoreTools", () => {
     expect(res.warning).toContain("has no type");
     expect(res.warning).toContain("type-filtered store_list");
     expect((await store.get(res.id as string))?.data).toEqual({ message: "untyped payload" });
+  });
+
+  it("store_create persists but warns about data above the advisory row size", async () => {
+    const res = await call(tools.store_create, {
+      type: "report",
+      data: { body: "x".repeat(9 * 1024) },
+    });
+
+    expect(res.success).toBe(true);
+    expect(res.warning).toContain("above the recommended 8 KiB per item");
+    expect(res.warning).toContain("write succeeded");
+    expect((await store.get(res.id as string))?.data).toEqual({ body: "x".repeat(9 * 1024) });
+  });
+
+  it("store_update warns based on the complete merged row, not only the patch", async () => {
+    const created = await store.create({ type: "report", data: { first: "x".repeat(5 * 1024) } });
+    const res = await call(tools.store_update, {
+      id: created.id,
+      data: { second: "y".repeat(4 * 1024) },
+    });
+
+    expect(res.success).toBe(true);
+    expect(res.warning).toContain("above the recommended 8 KiB per item");
+    expect((await store.get(created.id))?.data).toEqual({
+      first: "x".repeat(5 * 1024),
+      second: "y".repeat(4 * 1024),
+    });
   });
 
   it("store_get returns full data, or only requested fields", async () => {
