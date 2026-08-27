@@ -110,6 +110,39 @@ describe("record_metric tool", () => {
     });
   });
 
+  it("stores an item count once when value/unit redundantly duplicate it", async () => {
+    const tool = createRecordMetricTool({ projectRoot: tempDir, sessionId: "s1", agentId: "agent-a" });
+    await run(tool, { metric: "replies_posted", count: 1, value: 1, unit: "reply" });
+
+    const items = await metricsStore().list();
+    expect(items).toHaveLength(1);
+    expect(items[0]!.title).toBe("replies_posted · 1");
+    expect(items[0]!.data).toEqual({
+      metric: "replies_posted",
+      count: 1,
+      sessionId: "s1",
+      agent: "agent-a",
+    });
+  });
+
+  it("treats count_only as a legacy sentinel instead of an amount unit", async () => {
+    const tool = createRecordMetricTool({ projectRoot: tempDir, sessionId: "s1" });
+    await run(tool, { metric: "replies_posted", count: 3, value: 0, unit: "count_only" });
+
+    const items = await metricsStore().list();
+    expect(items[0]!.title).toBe("replies_posted · 3");
+    expect(items[0]!.data).toEqual({ metric: "replies_posted", count: 3, sessionId: "s1" });
+  });
+
+  it("drops an unlabelled zero placeholder when a positive count exists", async () => {
+    const tool = createRecordMetricTool({ projectRoot: tempDir, sessionId: "s1" });
+    await run(tool, { metric: "posts_scheduled", count: 4, value: 0, unit: "" });
+
+    const items = await metricsStore().list();
+    expect(items[0]!.title).toBe("posts_scheduled · 4");
+    expect(items[0]!.data).toEqual({ metric: "posts_scheduled", count: 4, sessionId: "s1" });
+  });
+
   it("is idempotent per (sessionId, metric): re-recording overwrites", async () => {
     const tool = createRecordMetricTool({ projectRoot: tempDir, sessionId: "ses_1", agentId: "a" });
     await run(tool, { metric: "tickets_triaged", count: 3 });

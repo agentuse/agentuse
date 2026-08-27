@@ -18,6 +18,7 @@ import { pendingNewestFirst, PendingApprovalRow } from '../components/pending-ap
 import { displayAgentName, formatApprovalTime, formatRelativeTime, displayStatusLabel, humanizeMetric, runTone, type RunTone } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
+import { normalizeMetricValues } from '../../../../shared/metric-values';
 import { consumeUpdatePreview, previewUpdate } from '../lib/update-preview';
 
 function plural(n: number, word: string): string {
@@ -473,22 +474,23 @@ function aggregateMetrics(payload: StoreRowsPayload | null | undefined, windowDa
         agg = { metric, count: 0, hasCount: false, value: 0, hasValue: false, unit: null, mixedUnits: false, latestAt: 0, events: [] };
         byMetric.set(metric, agg);
       }
-      const { count, value, unit, note } = item.data;
+      const { note } = item.data;
+      const { count, value, unit } = normalizeMetricValues(item.data);
       agg.events.push({
         at,
-        value: typeof value === 'number' && Number.isFinite(value) ? value : null,
-        count: typeof count === 'number' && Number.isFinite(count) ? count : null,
+        value,
+        count,
       });
-      if (typeof count === 'number' && Number.isFinite(count)) {
+      if (count !== null) {
         agg.count += count;
         agg.hasCount = true;
       }
-      if (typeof value === 'number' && Number.isFinite(value)) {
+      if (value !== null) {
         agg.value += value;
         agg.hasValue = true;
         // A metric name owns one unit; on a mismatch show the count only
         // rather than summing dollars into minutes.
-        if (typeof unit === 'string') {
+        if (unit !== null) {
           if (agg.unit === null) agg.unit = unit;
           else if (agg.unit !== unit) agg.mixedUnits = true;
         }

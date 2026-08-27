@@ -16,6 +16,7 @@
 import type { Tool } from 'ai';
 import { z } from 'zod';
 import { Store } from '../store/store.js';
+import { normalizeMetricValues } from '../shared/metric-values.js';
 
 /** Reserved shared store every record_metric write lands in. */
 export const METRICS_STORE_NAME = 'metrics';
@@ -59,9 +60,10 @@ const RecordMetricInput = z.object({
 type RecordMetricArgs = z.infer<typeof RecordMetricInput>;
 
 function metricTitle({ metric, value, unit, count }: RecordMetricArgs): string {
+  const normalized = normalizeMetricValues({ value, unit, count });
   const parts = [metric];
-  if (count !== undefined) parts.push(String(count));
-  if (value !== undefined) parts.push(unit ? `${value} ${unit}` : String(value));
+  if (normalized.count !== null) parts.push(String(normalized.count));
+  if (normalized.value !== null) parts.push(normalized.unit ? `${normalized.value} ${normalized.unit}` : String(normalized.value));
   return parts.join(' · ');
 }
 
@@ -78,20 +80,22 @@ export function createRecordMetricTool(context: MetricToolContext): Tool {
     description:
       `Record a business-metric fact about work you just completed (a count and/or an amount), ` +
       `e.g. {metric: "invoices_chased", count: 4, value: 11200, unit: "usd"}. ` +
+      `For an item count, set count only; do not duplicate it into value/unit. ` +
       `Record once per metric, at the moment the work completes. ` +
       `Recording the same metric again in this run overwrites the earlier record (safe on retries). ` +
       `Only record facts you computed from your actual inputs - never estimates.`,
     inputSchema: RecordMetricInput,
     execute: async (args: RecordMetricArgs) => {
       const { metric, value, unit, count, note } = args;
+      const normalized = normalizeMetricValues({ value, unit, count });
       // Resolved per call so a session bound after tool construction still keys
       // the upsert (see MetricToolContext.sessionId).
       const sessionId = context.sessionId;
       const data: Record<string, unknown> = {
         metric,
-        ...(value !== undefined && { value }),
-        ...(unit !== undefined && { unit }),
-        ...(count !== undefined && { count }),
+        ...(normalized.value !== null && { value: normalized.value }),
+        ...(normalized.unit !== null && { unit: normalized.unit }),
+        ...(normalized.count !== null && { count: normalized.count }),
         ...(note !== undefined && { note }),
         ...(sessionId !== undefined && { sessionId }),
         ...(agentId !== undefined && { agent: agentId }),
