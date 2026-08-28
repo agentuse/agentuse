@@ -11,6 +11,22 @@ export interface FindCommands {
   open(): void;
 }
 
+export interface TrayMenuCommands {
+  showDashboard(): void;
+  showSettings(): void;
+  quit(): void;
+}
+
+export function createTrayMenu(commands: TrayMenuCommands): MenuItemConstructorOptions[] {
+  return [
+    { label: "Show Dashboard", click: commands.showDashboard },
+    { type: "separator" },
+    { label: "Settings…", accelerator: "Command+,", click: commands.showSettings },
+    { type: "separator" },
+    { label: "Quit AgentUse", accelerator: "Command+Q", click: commands.quit },
+  ];
+}
+
 export function createEditMenu(find: FindCommands): MenuItemConstructorOptions {
   return {
     label: "Edit",

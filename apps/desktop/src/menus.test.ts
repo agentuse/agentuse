@@ -1,8 +1,27 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { MenuItemConstructorOptions } from "electron";
-import { createEditMenu, createNavigationMenu } from "./menus";
+import { createEditMenu, createNavigationMenu, createTrayMenu } from "./menus";
 
 describe("desktop application menus", () => {
+  it("keeps the menu-bar menu focused on dashboard, settings, and quit", () => {
+    const showDashboard = mock(() => undefined);
+    const showSettings = mock(() => undefined);
+    const quit = mock(() => undefined);
+    const items = createTrayMenu({ showDashboard, showSettings, quit });
+
+    expect(items.map((item) => item.label).filter(Boolean)).toEqual([
+      "Show Dashboard",
+      "Settings…",
+      "Quit AgentUse",
+    ]);
+    items[0]?.click?.({} as never, undefined as never, {} as never);
+    items[2]?.click?.({} as never, undefined as never, {} as never);
+    items[4]?.click?.({} as never, undefined as never, {} as never);
+    expect(showDashboard).toHaveBeenCalledTimes(1);
+    expect(showSettings).toHaveBeenCalledTimes(1);
+    expect(quit).toHaveBeenCalledTimes(1);
+  });
+
   it("uses native editing roles in standard macOS order", () => {
     const menu = createEditMenu({ open: () => {} });
     const items = menu.submenu as Array<{ role?: string }>;

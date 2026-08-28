@@ -1,11 +1,14 @@
-import { app, BrowserWindow, dialog, Menu, Notification, shell, Tray, type Event, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, dialog, Menu, Notification, shell, Tray, type Event } from "electron";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { createServer, type AddressInfo } from "node:net";
+import { join } from "node:path";
 import { pendingApprovalCount, pendingApprovalTitle, pendingApprovalTooltip, type ApprovalBucketsPayload } from "./approval-status";
-import { createEditMenu, createNavigationMenu, type FindCommands, type NavigationCommands } from "./menus";
+import { createEditMenu, createNavigationMenu, createTrayMenu, type FindCommands, type NavigationCommands } from "./menus";
 import { parseNotificationFrames, type NativeNotificationEvent } from "./notification-stream";
+import { encodeNativeSettingsMessage, isNativeSettingsPipeClosure, parseNativeSettingsCommand, type NativeSettingsMessage } from "./native-settings";
 import { createDesktopQuitPolicy } from "./quit-policy";
 import { isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, selectServer, serverUrl, type RegisteredServer } from "./runtime";
 import { createAgentUseTrayIcon } from "./tray-icon";
@@ -16,6 +19,9 @@ const STARTUP_TIMEOUT_MS = 15_000;
 const APPROVAL_POLL_INTERVAL_MS = 5_000;
 
 let window: BrowserWindow | undefined;
+let settingsProcess: ChildProcess | undefined;
+let settingsOutputBuffer = "";
+let settingsCommandQueue = Promise.resolve();
 let tray: Tray | undefined;
 let trayMenu: Menu | undefined;
 let dashboardUrl: string | undefined;
@@ -30,17 +36,13 @@ let displayedPendingApprovals = 0;
 let approvalRefreshInFlight = false;
 let isQuitting = false;
 let quitInProgress = false;
+let serverOperation: "starting" | "stopping" | undefined;
+let serverAcquisition: Promise<void> | undefined;
 const quitPolicy = createDesktopQuitPolicy();
 
 function resolveCliPath(): string {
   if (process.env.AGENTUSE_CLI_PATH) return process.env.AGENTUSE_CLI_PATH;
   return require.resolve("agentuse/bin/cli.js");
-}
-
-function runtimeStatus(activeServer: RegisteredServer | undefined): string {
-  if (!dashboardUrl) return "Starting…";
-  if (!activeServer) return "Unavailable";
-  return ownedServer ? "Running (started by AgentUse)" : "Running (attached to existing server)";
 }
 
 function setPendingApprovals(count: number): void {
@@ -249,6 +251,18 @@ async function acquireServer(): Promise<void> {
   dashboardApiKey = undefined;
 }
 
+async function ensureServer(): Promise<void> {
+  if (dashboardUrl && currentServer) return;
+  if (!serverAcquisition) {
+    serverOperation = "starting";
+    serverAcquisition = acquireServer().finally(() => {
+      serverAcquisition = undefined;
+      serverOperation = undefined;
+    });
+  }
+  await serverAcquisition;
+}
+
 function createWindow(): BrowserWindow {
   const browser = new BrowserWindow({
     width: 1280,
@@ -325,7 +339,7 @@ async function showDashboard(requestedUrl?: string): Promise<void> {
       currentServer = registered;
     }
   }
-  if (!dashboardUrl) await acquireServer();
+  if (!dashboardUrl) await ensureServer();
   if (!window || window.isDestroyed()) window = createWindow();
   const targetUrl = requestedUrl ? notificationTargetUrl(requestedUrl) ?? dashboardUrl! : dashboardUrl!;
   if (window.webContents.getURL() !== targetUrl) await window.loadURL(targetUrl);
@@ -338,6 +352,109 @@ async function showDashboard(requestedUrl?: string): Promise<void> {
   refreshMenus();
 }
 
+function nativeSettingsExecutablePath(): string {
+  const bundle = app.isPackaged
+    ? join(process.resourcesPath, "..", "Frameworks", "AgentUseSettings.app")
+    : join(__dirname, "AgentUseSettings.app");
+  return join(bundle, "Contents", "MacOS", "AgentUseSettings");
+}
+
+function sendNativeSettingsMessage(message: NativeSettingsMessage, child = settingsProcess): void {
+  if (!child?.stdin?.writable || child.stdin.destroyed || child.exitCode !== null || child.killed) return;
+  try {
+    child.stdin.write(encodeNativeSettingsMessage(message), (error) => {
+      if (error) handleNativeSettingsPipeError(error, child);
+    });
+  } catch (error) {
+    handleNativeSettingsPipeError(error, child);
+  }
+}
+
+function handleNativeSettingsPipeError(error: unknown, child: ChildProcess): void {
+  if (settingsProcess === child) settingsProcess = undefined;
+  if (!isNativeSettingsPipeClosure(error)) {
+    console.error("Could not write to native Settings:", error);
+  }
+}
+
+async function pushNativeSettingsState(child = settingsProcess): Promise<void> {
+  if (!child || child !== settingsProcess) return;
+  const state = await desktopSettingsState();
+  if (child !== settingsProcess) return;
+  sendNativeSettingsMessage({ type: "state", state }, child);
+}
+
+async function handleNativeSettingsCommand(line: string, child: ChildProcess): Promise<void> {
+  if (child !== settingsProcess) return;
+  const command = parseNativeSettingsCommand(line);
+  if (!command) return;
+  switch (command.type) {
+    case "refresh":
+      await pushNativeSettingsState(child);
+      break;
+    case "ready":
+      await pushNativeSettingsState(child);
+      sendNativeSettingsMessage({ type: "show" }, child);
+      break;
+    case "toggleServer": {
+      const operation = toggleServerFromSettings();
+      await pushNativeSettingsState(child);
+      await operation;
+      await pushNativeSettingsState(child);
+      break;
+    }
+    case "setLaunchAtLogin":
+      app.setLoginItemSettings({
+        openAtLogin: command.enabled,
+        openAsHidden: command.enabled,
+        args: command.enabled ? ["--hidden"] : [],
+      });
+      await pushNativeSettingsState(child);
+      break;
+  }
+}
+
+function showSettings(): void {
+  if (settingsProcess && settingsProcess.exitCode === null && !settingsProcess.killed) {
+    sendNativeSettingsMessage({ type: "show" });
+    void pushNativeSettingsState();
+    return;
+  }
+
+  const executable = nativeSettingsExecutablePath();
+  if (!existsSync(executable)) {
+    dialog.showErrorBox("AgentUse Settings could not open", `The native Settings helper is missing at ${executable}. Rebuild the desktop app and try again.`);
+    return;
+  }
+
+  const child = spawn(executable, [], { stdio: ["pipe", "pipe", "inherit"] });
+  settingsProcess = child;
+  settingsOutputBuffer = "";
+  child.stdin?.on("error", (error) => handleNativeSettingsPipeError(error, child));
+  child.stdin?.on("close", () => {
+    if (settingsProcess === child) settingsProcess = undefined;
+  });
+  child.stdout?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk: string) => {
+    settingsOutputBuffer += chunk;
+    const lines = settingsOutputBuffer.split("\n");
+    settingsOutputBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      settingsCommandQueue = settingsCommandQueue
+        .then(() => handleNativeSettingsCommand(line, child))
+        .catch((error: unknown) => console.error("Could not handle native Settings command:", error));
+    }
+  });
+  child.once("error", (error) => {
+    if (settingsProcess === child) settingsProcess = undefined;
+    dialog.showErrorBox("AgentUse Settings could not open", error.message);
+  });
+  child.once("exit", () => {
+    if (settingsProcess === child) settingsProcess = undefined;
+  });
+}
+
 function toggleDashboard(): void {
   if (window && !window.isDestroyed() && window.isVisible()) {
     window.hide();
@@ -346,29 +463,96 @@ function toggleDashboard(): void {
   void showDashboard();
 }
 
-async function openLogs(): Promise<void> {
-  if (currentServer?.logFile) await shell.openPath(currentServer.logFile);
+async function readLogTail(logFile: string | undefined, maxBytes = 200_000): Promise<string> {
+  if (!logFile) return "";
+  try {
+    const file = await open(logFile, "r");
+    try {
+      const { size } = await file.stat();
+      const length = Math.min(size, maxBytes);
+      const buffer = Buffer.alloc(length);
+      await file.read(buffer, 0, length, Math.max(0, size - length));
+      return buffer.toString("utf8");
+    } finally {
+      await file.close();
+    }
+  } catch {
+    return "";
+  }
+}
+
+async function desktopSettingsState() {
+  const activeServer = currentServer && listRegisteredServers().find((server) => server.pid === currentServer?.pid);
+  const launchAtLogin = app.getLoginItemSettings().openAtLogin;
+  if (serverOperation === "starting") {
+    return {
+      status: "starting" as const,
+      title: "Starting server…",
+      detail: "Preparing the local AgentUse dashboard.",
+      actionLabel: "Start Server" as const,
+      actionDisabled: true,
+      launchAtLogin,
+      logText: "",
+    };
+  }
+  if (serverOperation === "stopping") {
+    return {
+      status: "stopping" as const,
+      title: "Stopping server…",
+      detail: "Active work is being allowed to finish.",
+      actionLabel: "Stop Server" as const,
+      actionDisabled: true,
+      launchAtLogin,
+      logText: await readLogTail(activeServer?.logFile),
+      logFile: activeServer?.logFile,
+    };
+  }
+  if (!activeServer) {
+    return {
+      status: "stopped" as const,
+      title: "Server stopped",
+      detail: "Start the server to use the local dashboard and schedules.",
+      actionLabel: "Start Server" as const,
+      actionDisabled: false,
+      launchAtLogin,
+      logText: "",
+    };
+  }
+  const isOwned = ownedServer?.pid === activeServer.pid;
+  return {
+    status: "running" as const,
+    title: isOwned ? "Server running" : "Connected to external server",
+    detail: isOwned ? `Dashboard available at ${serverUrl(activeServer)}` : `Started outside AgentUse at ${serverUrl(activeServer)}`,
+    actionLabel: "Stop Server" as const,
+    actionDisabled: !isOwned,
+    launchAtLogin,
+    logText: await readLogTail(activeServer.logFile),
+    logFile: activeServer.logFile,
+  };
+}
+
+async function toggleServerFromSettings() {
+  const activeServer = currentServer && listRegisteredServers().find((server) => server.pid === currentServer?.pid);
+  if (activeServer && ownedServer?.pid === activeServer.pid) {
+    serverOperation = "stopping";
+    try {
+      await stopOwnedServerCleanly();
+      window?.hide();
+    } finally {
+      serverOperation = undefined;
+    }
+  } else if (!activeServer) {
+    await ensureServer();
+    startApprovalPolling();
+    startNotificationStream();
+  }
+  refreshMenus();
+  return desktopSettingsState();
 }
 
 function requestFullQuit(): void {
   quitPolicy.requestFullQuit();
   app.quit();
-}
-
-function runtimeMenuItems(quit: () => void): MenuItemConstructorOptions[] {
-  const activeServer = currentServer && listRegisteredServers().find((server) => server.pid === currentServer?.pid);
-  const status: MenuItemConstructorOptions = { label: `Runtime: ${runtimeStatus(activeServer)}`, enabled: false };
-  return [
-    { label: "Open AgentUse", click: () => void showDashboard() },
-    status,
-    { type: "separator" },
-    // A protected runtime needs a header, which shell.openExternal cannot pass
-    // without exposing the key. Keep it available in the embedded window only.
-    { label: "Open in Browser", enabled: !!dashboardUrl && !dashboardApiKey, click: () => dashboardUrl && void shell.openExternal(dashboardUrl) },
-    { label: "Open Logs", enabled: !!activeServer?.logFile, click: () => void openLogs() },
-    { type: "separator" },
-    { label: "Quit AgentUse", accelerator: "Command+Q", click: quit },
-  ];
 }
 
 function activeNavigationHistory() {
@@ -404,14 +588,31 @@ const findCommands: FindCommands = {
 };
 
 function refreshTrayMenu(): void {
-  trayMenu = Menu.buildFromTemplate(runtimeMenuItems(requestFullQuit));
+  trayMenu = Menu.buildFromTemplate(createTrayMenu({
+    showDashboard: () => void showDashboard(),
+    showSettings,
+    quit: requestFullQuit,
+  }));
 }
 
 function refreshApplicationMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     // Command+Q and Dock Quit flow through before-quit without opting into a
     // full termination. The menu-bar item's separate menu opts in explicitly.
-    { label: APP_NAME, submenu: runtimeMenuItems(() => app.quit()) },
+    {
+      label: APP_NAME,
+      submenu: [
+        { role: "about" },
+        { type: "separator" },
+        { label: "Settings…", accelerator: "Command+,", click: showSettings },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { label: "Quit AgentUse", accelerator: "Command+Q", click: () => app.quit() },
+      ],
+    },
     createEditMenu(findCommands),
     createNavigationMenu(navigationCommands),
   ]));
@@ -453,15 +654,21 @@ async function stopOwnedServerCleanly(): Promise<void> {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  // Local desktop reinstalls terminate the existing app with SIGTERM before
+  // replacing its bundle. Treat that as an explicit full quit so an owned
+  // server gets the same graceful shutdown as the menu-bar Quit command.
+  process.once("SIGTERM", requestFullQuit);
   app.on("second-instance", () => void showDashboard());
   app.on("before-quit", (event) => {
     if (!quitPolicy.shouldTerminate()) {
       event.preventDefault();
       window?.hide();
+      sendNativeSettingsMessage({ type: "hide" });
       if (process.platform === "darwin") app.dock?.hide();
       return;
     }
     isQuitting = true;
+    sendNativeSettingsMessage({ type: "quit" });
     if (approvalPollTimer) clearInterval(approvalPollTimer);
     stopNotificationStream();
     if (quitInProgress) return;
@@ -474,6 +681,13 @@ if (!app.requestSingleInstanceLock()) {
   app.on("activate", () => void showDashboard());
   app.whenReady().then(async () => {
     createTray();
+    if (process.argv.includes("--hidden")) {
+      await ensureServer();
+      startApprovalPolling();
+      startNotificationStream();
+      refreshMenus();
+      return;
+    }
     await showDashboard();
   }).catch((error: unknown) => {
     console.error("Could not open AgentUse desktop:", error);

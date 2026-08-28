@@ -58,6 +58,7 @@
     "desktop:typecheck": "pnpm --filter @agentuse/desktop typecheck",
     "desktop:test": "pnpm --filter @agentuse/desktop test",
     "desktop:package:mac": "pnpm --filter @agentuse/desktop package:mac",
+    "desktop:install-local": "pnpm --filter @agentuse/desktop install:local",
     "link": "npm link",
     "unlink": "npm unlink",
     "test": "bun test tests/plugin-manager.test.ts && for f in tests/*.test.ts tests/*.test.tsx; do [ \"$f\" = \"tests/plugin-manager.test.ts\" ] || bun test \"$f\" || exit 1; done",

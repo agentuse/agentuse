@@ -29,6 +29,7 @@ import { TidyProgressView } from '../src/cli/serve/web/routes/learnings-tidy';
 import { sessionContextFetchKey } from '../src/cli/serve/web/routes/session-context';
 import { learningsTidyHref } from '../src/cli/serve/web/lib/links';
 import type { LearningSummary, SessionLearning, TidyResult } from '../src/cli/serve/web/lib/api';
+import { RecentJobRow, recentJobSummary } from '../src/cli/serve/web/routes/agent-detail';
 
 const noop = () => {};
 
@@ -72,6 +73,50 @@ describe('displayAgentName', () => {
     expect(displayAgentName('X Engage Reply', '/agents/x/x-engage-reply.agentuse', 'agents-x-growth')).toBe('X Engage Reply');
     expect(displayAgentName('', '/agents/x/x-engage-reply.agentuse', 'agents-x-growth')).toBe('x-engage-reply');
     expect(displayAgentName('agents-x-growth', '/agents/x/x-engage-reply.agentuse', 'agents-x-growth')).toBe('x-engage-reply');
+  });
+});
+
+describe('agent recent jobs', () => {
+  it('turns a Markdown final response into a compact outcome summary', () => {
+    expect(recentJobSummary('# Finished\n\n- Added retry handling\n- [Tests pass](https://example.com)')).toBe(
+      'Finished Added retry handling Tests pass',
+    );
+    expect(recentJobSummary('A long response', 6)).toBe('A long…');
+  });
+
+  it('renders the response as the job summary with the full session one click away', () => {
+    const html = renderToString(<RecentJobRow row={{
+      project: 'demo',
+      sessionId: '1234567890abcdef',
+      agent: { id: 'agents/reviewer', name: 'Reviewer' },
+      status: 'completed',
+      trigger: 'manual',
+      createdAt: Date.now() - 60_000,
+      updatedAt: Date.now() - 30_000,
+      finalResponse: 'Implemented retry handling and added coverage.',
+    }} />);
+
+    expect(html).toContain('class="job-row"');
+    expect(html).toContain('Implemented retry handling and added coverage.');
+    expect(html).toContain('Full response');
+    expect(html).toContain('Open job');
+    expect(html).toContain('/sessions/1234567890abcdef?project=demo');
+  });
+
+  it('shows useful live-state copy before a final response exists', () => {
+    const html = renderToString(<RecentJobRow row={{
+      project: 'demo',
+      sessionId: 'live-session',
+      agent: { id: 'agents/reviewer', name: 'Reviewer' },
+      status: 'running',
+      trigger: 'schedule',
+      createdAt: Date.now() - 60_000,
+      updatedAt: Date.now(),
+    }} />);
+
+    expect(html).toContain('class="job-row live"');
+    expect(html).toContain('This job is running. Its response will appear here when available.');
+    expect(html).not.toContain('Full response');
   });
 });
 

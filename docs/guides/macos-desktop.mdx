@@ -14,11 +14,17 @@ Launching AgentUse opens the dashboard. Closing the window hides it without
 stopping the backend, so schedules, approvals, and active runs remain available.
 Use the AgentUse menu-bar icon to:
 
-- open or restore AgentUse
-- see whether the app is attached to an existing backend or owns the backend it started
-- open the dashboard in your default browser
-- reveal the current backend log, when one is available
+- show the AgentUse dashboard
+- open Settings
 - quit AgentUse
+
+Settings shows whether the local server is running, lets you start or stop a
+server owned by the desktop app, configures launch at login, and displays the
+current server log. The Settings window uses native SwiftUI controls while the
+dashboard remains the existing web interface. A server started outside the app
+is identified as external and is never stopped by the desktop controls. Login
+launches start in the background so the menu-bar status and approvals are
+available without opening the dashboard window.
 
 **Quit AgentUse** or <kbd>Command</kbd>+<kbd>Q</kbd> stops a backend started by
 the app. A backend that was already running when the app launched is left alone.
@@ -58,14 +64,18 @@ the standard electron-builder signing variables (`CSC_LINK` and
 The package configuration leaves hardened runtime enabled and provides a
 notarization hook without committing credentials.
 
+The Settings helper normally builds for the current Mac. When producing a
+universal Electron application, set `AGENTUSE_SETTINGS_UNIVERSAL=1` so its
+nested SwiftUI helper also contains both `arm64` and `x86_64` architectures.
+
 The packaged app includes the existing AgentUse runtime and dashboard assets;
 it does not require network access to render the local UI. Model providers and
 external tools still have their normal connectivity requirements.
 
 ## Troubleshooting
 
-If the window does not load, open the menu-bar item and check **Runtime status**.
-When a log is registered, **Open Logs** opens it in its associated app. You can also use
+If the window does not load, open **Settings** from the menu-bar item and check
+the server status and **Logs** tab. You can also use
 the CLI independently:
 
 ```bash

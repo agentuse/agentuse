@@ -6,15 +6,16 @@
   "main": "dist/main.cjs",
   "type": "module",
   "scripts": {
-    "build": "esbuild src/main.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --outfile=dist/main.cjs",
+    "build": "sh scripts/build-icon.sh && esbuild src/main.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --outfile=dist/main.cjs && sh scripts/build-native-settings.sh",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "dev": "pnpm run build && electron .",
     "start": "electron .",
-    "test": "bun test src/**/*.test.ts",
+    "test": "bun test ./src",
     "predist:mac": "pnpm --dir ../.. run build",
     "dist:mac": "pnpm run build && electron-builder --mac",
     "package:mac": "pnpm run dist:mac",
-    "dist:dir": "pnpm run build && electron-builder --mac --dir"
+    "dist:dir": "pnpm run build && electron-builder --mac --dir",
+    "install:local": "sh scripts/install-local.sh"
   },
   "dependencies": {
     "agentuse": "workspace:*"
@@ -29,13 +30,13 @@
     "typescript": "^5.9.2"
   },
   "build": {
-    "appId": "ai.agentuse.desktop",
+    "appId": "io.agentuse.desktop",
     "productName": "AgentUse",
     "asar": true,
     "forceCodeSigning": false,
     "mac": {
       "category": "public.app-category.developer-tools",
-      "icon": "build/icon.svg",
+      "icon": "build/icon.icns",
       "target": ["dmg", "zip"],
       "hardenedRuntime": true,
       "gatekeeperAssess": false
@@ -57,6 +58,12 @@
       "!node_modules/agentuse/templates/**",
       "!node_modules/agentuse/tests/**",
       "!node_modules/agentuse/.github/**"
+    ],
+    "extraFiles": [
+      {
+        "from": "dist/AgentUseSettings.app",
+        "to": "Frameworks/AgentUseSettings.app"
+      }
     ],
     "extraMetadata": {
       "description": "AgentUse native dashboard shell"

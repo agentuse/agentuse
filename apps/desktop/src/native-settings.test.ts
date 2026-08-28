@@ -1,0 +1,31 @@
+import { describe, expect, it } from "bun:test";
+import { encodeNativeSettingsMessage, isNativeSettingsPipeClosure, parseNativeSettingsCommand } from "./native-settings";
+
+describe("native settings protocol", () => {
+  it("accepts the supported commands", () => {
+    expect(parseNativeSettingsCommand('{"type":"ready"}')).toEqual({ type: "ready" });
+    expect(parseNativeSettingsCommand('{"type":"refresh"}')).toEqual({ type: "refresh" });
+    expect(parseNativeSettingsCommand('{"type":"toggleServer"}')).toEqual({ type: "toggleServer" });
+    expect(parseNativeSettingsCommand('{"type":"setLaunchAtLogin","enabled":true}')).toEqual({
+      type: "setLaunchAtLogin",
+      enabled: true,
+    });
+  });
+
+  it("rejects malformed and unknown commands", () => {
+    expect(parseNativeSettingsCommand("not json")).toBeUndefined();
+    expect(parseNativeSettingsCommand('{"type":"setLaunchAtLogin","enabled":"yes"}')).toBeUndefined();
+    expect(parseNativeSettingsCommand('{"type":"deleteEverything"}')).toBeUndefined();
+  });
+
+  it("encodes one newline-delimited message", () => {
+    expect(encodeNativeSettingsMessage({ type: "show" })).toBe('{"type":"show"}\n');
+  });
+
+  it("recognizes stream closure errors without hiding unrelated failures", () => {
+    expect(isNativeSettingsPipeClosure(Object.assign(new Error("broken pipe"), { code: "EPIPE" }))).toBe(true);
+    expect(isNativeSettingsPipeClosure(Object.assign(new Error("destroyed"), { code: "ERR_STREAM_DESTROYED" }))).toBe(true);
+    expect(isNativeSettingsPipeClosure(Object.assign(new Error("permission denied"), { code: "EACCES" }))).toBe(false);
+    expect(isNativeSettingsPipeClosure(new Error("missing code"))).toBe(false);
+  });
+});

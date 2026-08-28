@@ -14,7 +14,7 @@ import { AgentLearningsPanel, StrandedLearningsBanner } from '../components/lear
 import { SendToCodingAgentDialog } from '../components/send-to-coding-agent-dialog';
 import { RunInstructionDialog } from '../components/run-instruction-dialog';
 import { LogContent } from '../components/content';
-import { formatApprovalTime, displayStatusLabel } from '../lib/format';
+import { formatApprovalTime, formatRelativeTime, displayStatusLabel, errorText } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 
 /**
@@ -184,24 +184,62 @@ function Capabilities(props: { meta: AgentDetailMeta; model: string; schedule: s
   );
 }
 
-function RunRow(props: { row: SessionRow }) {
+/** Compact a final response into the outcome-first sentence used while skimming jobs. */
+export function recentJobSummary(value: string, max = 280): string {
+  const compact = value
+    .replace(/```[\s\S]*?```/g, ' Code output available in the full response. ')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/\[([^\]]+)]\([^)]+\)/g, '$1')
+    .replace(/[*_~`>|]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (compact.length <= max) return compact;
+  return `${compact.slice(0, max).trimEnd()}…`;
+}
+
+function recentJobFallback(row: SessionRow): string {
+  if (row.errorMessage) return errorText(row.errorMessage);
+  if (row.subagentActive) return 'Working in a delegated agent. Its response will appear here when it returns.';
+  if (row.status === 'running' || row.status === 'resuming' || row.status === 'continuing') {
+    return 'This job is running. Its response will appear here when available.';
+  }
+  if (row.status === 'suspended') return 'Waiting for approval or input before this job can continue.';
+  return 'This job ended without a final response.';
+}
+
+export function RecentJobRow(props: { row: SessionRow }) {
   const { row } = props;
   const href = `/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`;
   const status = displayStatusLabel(row.status, row.errorCode);
+  const summary = row.finalResponse?.trim() ? recentJobSummary(row.finalResponse) : recentJobFallback(row);
+  const live = row.status === 'running' || row.status === 'resuming' || row.status === 'continuing' || row.subagentActive === true;
   return (
-    <a class="run-row" href={href}>
-      <span class={`chip status ${status}`}>{status}</span>
-      <span class="chip trigger">{row.trigger}</span>
-      <span class="run-row-time">{formatApprovalTime(row.createdAt)}</span>
-      <span class="run-row-id"><code>{row.sessionId.slice(0, 12)}</code></span>
-    </a>
+    <article class={`job-row${live ? ' live' : ''}`}>
+      <div class="job-row-head">
+        <span class={`chip status ${live ? 'running' : status}`}>{row.subagentActive ? 'running · subagent' : status}</span>
+        <span class="chip trigger">{row.trigger}</span>
+        <span class="job-row-time" title={formatApprovalTime(row.updatedAt || row.createdAt)}>{formatRelativeTime(row.updatedAt || row.createdAt)}</span>
+      </div>
+      <p class="job-row-summary">{summary}</p>
+      {row.finalResponse?.trim() && (
+        <details class="job-response">
+          <summary>Full response</summary>
+          <div class="job-response-content"><LogContent value={row.finalResponse} forceMarkdown /></div>
+        </details>
+      )}
+      <footer class="job-row-foot">
+        <code>{row.sessionId.slice(0, 12)}</code>
+        <a href={href}>Open job <span aria-hidden="true">→</span></a>
+      </footer>
+    </article>
   );
 }
 
-function RecentRuns(props: { agentId: string; project: string }) {
+function RecentJobs(props: { agentId: string; project: string }) {
   const { data, error, loading } = useFetch(
-    `agent-runs:${props.project}:${props.agentId}`,
-    () => fetchSessions({ agent: props.agentId, window: '30d' }),
+    `agent-jobs:${props.project}:${props.agentId}`,
+    () => fetchSessions({ agent: props.agentId, window: '30d', detail: 'feed' }),
     { refreshMs: 15_000 }
   );
   const rows = (data?.sessions ?? []).filter((r) => r.project === props.project).slice(0, 8);
@@ -215,10 +253,10 @@ function RecentRuns(props: { agentId: string; project: string }) {
         <a class="see-all" href={seeAll}>view all →</a>
       </div>
       <div class="panel">
-        {loading && !data && <Loading label="Loading runs…" />}
-        {error && <div class="empty err">Failed to load runs: {error.message}</div>}
-        {data && rows.length === 0 && <div class="empty">No runs in the last 30 days.</div>}
-        {rows.length > 0 && <div class="run-list">{rows.map((r) => <RunRow key={r.sessionId} row={r} />)}</div>}
+        {loading && !data && <Loading label="Loading jobs…" />}
+        {error && <div class="empty err">Failed to load jobs: {error.message}</div>}
+        {data && rows.length === 0 && <div class="empty">No jobs in the last 30 days.</div>}
+        {rows.length > 0 && <div class="job-list">{rows.map((r) => <RecentJobRow key={r.sessionId} row={r} />)}</div>}
       </div>
     </section>
   );
@@ -321,10 +359,10 @@ function SourcePanel(props: { source: string; runPath: string; project: string; 
   );
 }
 
-type AgentTab = 'history' | 'learnings' | 'source';
+type AgentTab = 'jobs' | 'learnings' | 'source';
 
 const AGENT_TABS: { id: AgentTab; label: string }[] = [
-  { id: 'history', label: 'History' },
+  { id: 'jobs', label: 'Recent jobs' },
   { id: 'learnings', label: 'Learnings' },
   { id: 'source', label: 'Source' },
 ];
@@ -333,7 +371,7 @@ export default function AgentDetail() {
   const { params } = useRoute();
   const project = decodeURIComponent(params.project ?? '');
   const runPath = (params.agent ?? '').split('/').map(decodeURIComponent).join('/');
-  const [tab, setTab] = useState<AgentTab>('history');
+  const [tab, setTab] = useState<AgentTab>('jobs');
   const [runOpen, setRunOpen] = useState(false);
   // Reported up out of the Learnings tab. The tab is mounted from the start, so
   // this arrives on load without anyone opening it — which is the point: an
@@ -409,8 +447,8 @@ export default function AgentDetail() {
               ))}
             </div>
 
-            <div id="panel-history" class="tab-panel" role="tabpanel" aria-labelledby="tab-history" hidden={tab !== 'history'}>
-              <RecentRuns agentId={agentIdFromPath(data.path)} project={data.projectId} />
+            <div id="panel-jobs" class="tab-panel" role="tabpanel" aria-labelledby="tab-jobs" hidden={tab !== 'jobs'}>
+              <RecentJobs agentId={agentIdFromPath(data.path)} project={data.projectId} />
             </div>
             <div id="panel-learnings" class="tab-panel" role="tabpanel" aria-labelledby="tab-learnings" hidden={tab !== 'learnings'}>
               <LearningsGroup project={data.projectId} runPath={data.runPath} hoistStranded={setStrandedAt} />
