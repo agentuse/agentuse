@@ -22,8 +22,8 @@ export function terminalFirstAgentPrompt(projectRoot: string): string {
 
 Project directory: ${projectRoot}
 
-Ask what I want to automate. Before creating a file, run agentuse provider list
-and confirm an AgentUse runtime provider is configured. If none is configured,
+Ask what I want to automate. Before creating a file, run agentuse provider list --json
+and confirm an AgentUse runtime provider has \`configured: true\`. If none is configured,
 guide me through agentuse provider login and wait until it is ready. Then create
 exactly one focused agent using only that provider, validate it with agentuse
 doctor and agentuse test, and return the exact agentuse run command.

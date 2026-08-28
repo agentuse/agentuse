@@ -8,6 +8,7 @@ import {
   OPENCODE_GO_PROVIDER_ID,
 } from "../providers/opencode-go";
 import { AUTH_PROVIDERS, BUILTIN_PROVIDERS } from "../providers/registry-sources";
+import { getProviderStatus } from "../auth/provider-status.js";
 
 const GITHUB_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
@@ -111,7 +112,7 @@ export function createProviderCommand(): Command {
       process.stdout.write("  provider logout [provider]      - Remove stored credentials\n");
       process.stdout.write("  provider add <name> --url <url> - Add custom endpoint\n");
       process.stdout.write("  provider remove <name>          - Remove a provider\n");
-      process.stdout.write("  provider list                   - Show stored credentials\n");
+      process.stdout.write("  provider list [--json]          - Show provider authentication status\n");
       process.stdout.write("  provider help                   - Show this help message\n\n");
       
       process.stdout.write("GETTING API KEYS:\n");
@@ -375,8 +376,16 @@ export function createProviderCommand(): Command {
     .command("list")
     .alias("ls")
     .description("List stored credentials")
-    .action(async () => {
-      const authPath = AuthStorage.getFilePath();
+    .option("--json", "Output provider status as JSON")
+    .action(async (options: { json?: boolean }) => {
+      const status = await getProviderStatus();
+
+      if (options.json) {
+        process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
+        return;
+      }
+
+      const authPath = status.credentialStore;
       const homedir = process.env.HOME || process.env.USERPROFILE || "";
       const displayPath = authPath.startsWith(homedir)
         ? authPath.replace(homedir, "~")
@@ -384,127 +393,38 @@ export function createProviderCommand(): Command {
 
       process.stdout.write(`📁 Credentials stored in: ${displayPath}\n\n`);
 
-      // Define providers and their auth sources in priority order
-      const providers = [
-        {
-          name: "anthropic",
-          display: "Anthropic",
-          envVars: ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
-        },
-        {
-          name: "openai",
-          display: "OpenAI",
-          envVars: ["OPENAI_API_KEY"],
-        },
-        {
-          name: "openrouter",
-          display: "OpenRouter",
-          envVars: ["OPENROUTER_API_KEY"],
-        },
-        {
-          name: OPENCODE_GO_PROVIDER_ID,
-          display: OPENCODE_GO_DISPLAY_NAME,
-          envVars: [OPENCODE_GO_API_KEY_ENV],
-        },
-      ];
-
       process.stdout.write("Authentication (in priority order):\n");
       process.stdout.write("─".repeat(50) + "\n\n");
 
-      for (const provider of providers) {
-        // Use new getProviderAuth to get both OAuth and API key
-        const providerAuth = await AuthStorage.getProviderAuth(provider.name);
-        const sources: { priority: number; source: string; type: string; active: boolean }[] = [];
-
-        // Priority 1: OAuth tokens (stored)
-        if (providerAuth.oauth) {
-          sources.push({
-            priority: 1,
-            source: providerAuth.oauth.type === "codex-oauth" ? "ChatGPT OAuth" : "OAuth",
-            type: providerAuth.oauth.type,
-            active: true,
-          });
-        }
-
-        // Priority 1 (Anthropic only): CLAUDE_CODE_OAUTH_TOKEN
-        if (provider.name === "anthropic" && process.env.CLAUDE_CODE_OAUTH_TOKEN) {
-          // If no stored OAuth, this takes priority
-          if (!providerAuth.oauth) {
-            sources.push({
-              priority: 1,
-              source: "CLAUDE_CODE_OAUTH_TOKEN",
-              type: "env",
-              active: true,
-            });
-          }
-        }
-
-        // Priority 2: Stored API keys
-        if (providerAuth.api) {
-          sources.push({
-            priority: 2,
-            source: "Stored API key",
-            type: "api",
-            active: !sources.some(s => s.priority === 1),
-          });
-        }
-
-        // Priority 3: Environment variables
-        for (const envVar of provider.envVars) {
-          if (envVar === "CLAUDE_CODE_OAUTH_TOKEN") continue; // Already handled
-          if (process.env[envVar]) {
-            sources.push({
-              priority: 3,
-              source: envVar,
-              type: "env",
-              active: sources.length === 0,
-            });
-          }
-        }
-
-        // Display provider section
-        if (sources.length > 0) {
-          process.stdout.write(`${provider.display}:\n`);
-          for (const source of sources.sort((a, b) => a.priority - b.priority)) {
-            const icon = source.type === "oauth" || source.type === "codex-oauth" ? "🔑" : source.type === "api" ? "🎫" : "🌍";
-            const activeMarker = source.active ? " ← active" : "";
-            const priorityLabel = `[${source.priority}]`;
-            process.stdout.write(`  ${priorityLabel} ${icon} ${source.source}${activeMarker}\n`);
-          }
-          process.stdout.write("\n");
-        }
-      }
-
-      // Show providers with no auth configured
-      const unconfiguredProviders: typeof providers = [];
-      for (const p of providers) {
-        const providerAuth = await AuthStorage.getProviderAuth(p.name);
-        const hasEnv = p.envVars.some(e => process.env[e]);
-        if (!providerAuth.oauth && !providerAuth.api && !hasEnv) {
-          unconfiguredProviders.push(p);
-        }
-      }
-
-      if (unconfiguredProviders.length > 0) {
-        process.stdout.write("Not configured:\n");
-        for (const p of unconfiguredProviders) {
-          process.stdout.write(`  ⚠️  ${p.display} - run \`agentuse provider login ${p.name}\`\n`);
+      for (const provider of status.providers.filter((item) => item.configured)) {
+        process.stdout.write(`${provider.name}:\n`);
+        for (const source of provider.sources) {
+          const icon = source.kind === "oauth" ? "🔑" : source.kind === "api_key" ? "🎫" : "🌍";
+          const activeMarker = source.active ? " ← active" : "";
+          const priorityLabel = `[${source.priority}]`;
+          process.stdout.write(`  ${priorityLabel} ${icon} ${source.name}${activeMarker}\n`);
         }
         process.stdout.write("\n");
       }
 
-      // Show custom providers
-      const customProviders = await AuthStorage.getCustomProviders();
-      const customEntries = Object.entries(customProviders);
-      if (customEntries.length > 0) {
+      const unconfiguredProviders = status.providers.filter((provider) => !provider.configured);
+
+      if (unconfiguredProviders.length > 0) {
+        process.stdout.write("Not configured:\n");
+        for (const provider of unconfiguredProviders) {
+          process.stdout.write(`  ⚠️  ${provider.name} - run \`agentuse provider login ${provider.id}\`\n`);
+        }
+        process.stdout.write("\n");
+      }
+
+      if (status.customProviders.length > 0) {
+        const customProviderAuth = await AuthStorage.getCustomProviders();
         process.stdout.write("Custom Providers:\n");
         process.stdout.write("─".repeat(50) + "\n");
-        for (const [name, config] of customEntries) {
-          process.stdout.write(`  🔌 ${name} → ${config.baseURL}`);
-          if (config.key) {
-            process.stdout.write(` (key: ****${config.key.slice(-4)})`);
-          }
-          process.stdout.write("\n");
+        for (const provider of status.customProviders) {
+          const key = customProviderAuth[provider.id]?.key;
+          const keyStatus = key ? ` (key: ****${key.slice(-4)})` : "";
+          process.stdout.write(`  🔌 ${provider.id} → ${provider.baseURL}${keyStatus}\n`);
         }
         process.stdout.write("\n");
       }

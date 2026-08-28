@@ -26,7 +26,7 @@ defer optional integrations and elaborate multi-agent architecture.
 Run this from the supplied project directory:
 
 ```bash
-agentuse provider list
+agentuse provider list --json
 ```
 
 The coding agent's own login is not an AgentUse runtime credential. Do not
@@ -35,7 +35,8 @@ current coding agent can respond.
 
 - If no provider is configured, do not write the agent file yet. Guide the
   user through `agentuse provider login <provider>`, then run
-  `agentuse provider list` again after they finish. Keep the choice simple:
+  `agentuse provider list --json` again after they finish. A provider is
+  available only when its JSON entry has `configured: true`. Keep the choice simple:
   explain subscription/OAuth versus API-key billing when the login command
   offers both, but do not choose a paid provider or billing method for them.
 - If one provider is configured, use only a model from that provider.
