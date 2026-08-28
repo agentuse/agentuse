@@ -853,6 +853,16 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 .page-approval-detail .session-log-search .session-log-search-clear:hover { color: var(--fg); background: transparent; }
 .page-approval-detail .session-log-search .session-log-search-clear:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 1px; }
 .page-approval-detail .session-log-search-clear svg { width: 16px; height: 16px; }
+::highlight(agentuse-session-search) {
+  background: color-mix(in srgb, var(--amber) 58%, transparent);
+  color: inherit;
+}
+.page-approval-detail mark[data-agentuse-session-search] {
+  padding: 0;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--amber) 58%, transparent);
+  color: inherit;
+}
 @media (max-width: 700px) {
   .page-approval-detail .session-bar { flex-wrap: wrap; }
   .page-approval-detail .session-log-search {

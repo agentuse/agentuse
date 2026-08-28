@@ -10,7 +10,7 @@ import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/c
 import { parseChartSpec } from '../src/cli/serve/web/lib/chart-svg';
 import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { displayAgentName, isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
-import { aggregateToolStats, hasActionableApproval, headerTokenUsage, sessionLogMatches, tokenUsageMetaItems, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
+import { aggregateToolStats, hasActionableApproval, headerTokenUsage, sessionLogMatches, sessionLogSearchTerms, tokenUsageMetaItems, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
 import { FeedResponse, NewSinceLastVisit, SessionRowView } from '../src/cli/serve/web/routes/sessions-list';
 import { labelFor, suspendedGateKinds } from '../src/cli/serve/web/hooks/use-live-home';
 import {
@@ -60,6 +60,10 @@ describe('session log search', () => {
   it('requires every word and treats a blank query as unfiltered', () => {
     expect(sessionLogMatches(entry, 'substack missing')).toBe(false);
     expect(sessionLogMatches(entry, '   ')).toBe(true);
+  });
+
+  it('normalizes and de-duplicates highlight terms', () => {
+    expect(sessionLogSearchTerms('  Judge JUDGE reply  ')).toEqual(['judge', 'reply']);
   });
 });
 

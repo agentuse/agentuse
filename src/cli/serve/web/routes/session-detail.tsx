@@ -38,10 +38,14 @@ type ApprovalHeader = Omit<ApprovalPageInfo, 'logs'>;
 // preparing entries for display; the underlying logsRef entries are never mutated.
 type PreparedLogEntry = ApprovalLogEntry & { repeatCount?: number };
 
+export function sessionLogSearchTerms(query: string): string[] {
+  return [...new Set(query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean))];
+}
+
 /** Match the text carried by a rendered session-log entry. Multiple words use
  * AND semantics so a specific query narrows rather than broadens the feed. */
 export function sessionLogMatches(entry: ApprovalLogEntry, query: string): boolean {
-  const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const terms = sessionLogSearchTerms(query);
   if (terms.length === 0) return true;
   // Sub-agent cards and their important descendants live on top-level fields
   // such as subagentSession, not only in details. Index the complete durable
@@ -327,6 +331,7 @@ export default function SessionDetail() {
   const [logsLimit, setLogsLimit] = useState(400);
   const [logsTotal, setLogsTotal] = useState<number | null>(null);
   const [logQuery, setLogQuery] = useState('');
+  const [showLogSearch, setShowLogSearch] = useState(false);
   // Debug-level operational logs are hidden by default to keep the log readable;
   // the preference persists across sessions.
   const [showDebug, setShowDebug] = useState<boolean>(() => {
@@ -363,27 +368,30 @@ export default function SessionDetail() {
   // under the reader. Latched per session (reset in the [sessionId] effect).
   const firstViewEndedRef = useRef<boolean | null>(null);
 
-  // The desktop Edit > Find command dispatches the same event. The keyboard
-  // listener keeps the browser/PWA version consistent without exposing a
-  // browser-wide finder for a page where the transcript is the useful scope.
+  // The desktop Edit > Find command dispatches the same event. The search stays
+  // out of the session header until requested, then takes focus like a native
+  // find overlay. Browser/PWA views get the same scoped Cmd/Ctrl+F behavior.
   useEffect(() => {
-    const focusSearch = () => {
+    const revealSearch = () => {
       document.querySelector<HTMLDetailsElement>('.session-transcript')?.setAttribute('open', '');
+      setShowLogSearch(true);
       requestAnimationFrame(() => {
-        logSearchRef.current?.focus();
-        logSearchRef.current?.select();
+        requestAnimationFrame(() => {
+          logSearchRef.current?.focus();
+          logSearchRef.current?.select();
+        });
       });
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLocaleLowerCase() === 'f') {
         event.preventDefault();
-        focusSearch();
+        revealSearch();
       }
     };
-    window.addEventListener('agentuse:find-session-log', focusSearch);
+    window.addEventListener('agentuse:find-session-log', revealSearch);
     window.addEventListener('keydown', onKeyDown);
     return () => {
-      window.removeEventListener('agentuse:find-session-log', focusSearch);
+      window.removeEventListener('agentuse:find-session-log', revealSearch);
       window.removeEventListener('keydown', onKeyDown);
     };
   }, []);
@@ -461,6 +469,7 @@ export default function SessionDetail() {
     setLogsLimit(400);
     setLogsTotal(null);
     setLogQuery('');
+    setShowLogSearch(false);
     // Re-latch the summary-first decision, and the keyed uncontrolled
     // <details> transcript remounts closed for the new session.
     firstViewEndedRef.current = null;
@@ -819,6 +828,98 @@ export default function SessionDetail() {
     () => feedLogs.filter((entry) => sessionLogMatches(entry, logQuery)),
     [feedLogs, logQuery]
   );
+
+  // Chromium's Custom Highlight API emphasizes matches without rewriting the
+  // rich, nested LogEntry DOM or disturbing text selection. Older embedded
+  // engines get an equivalent temporary <mark>-based fallback below.
+  useLayoutEffect(() => {
+    type HighlightRegistry = {
+      set: (name: string, highlight: unknown) => void;
+      delete: (name: string) => boolean;
+    };
+    type HighlightConstructor = new (...ranges: Range[]) => unknown;
+    const registry = (CSS as unknown as { highlights?: HighlightRegistry }).highlights;
+    const HighlightClass = (window as unknown as { Highlight?: HighlightConstructor }).Highlight;
+    const highlightName = 'agentuse-session-search';
+    const clearFallbackMarks = () => {
+      document.querySelectorAll<HTMLElement>('mark[data-agentuse-session-search]').forEach((mark) => {
+        mark.replaceWith(document.createTextNode(mark.textContent ?? ''));
+      });
+    };
+    registry?.delete(highlightName);
+    clearFallbackMarks();
+
+    const terms = sessionLogSearchTerms(logQuery);
+    if (terms.length === 0) return;
+
+    const ranges: Range[] = [];
+    const textNodes: Text[] = [];
+    const collectTextNodes = (node: Node) => {
+      for (const child of Array.from(node.childNodes)) {
+        if (child.nodeType === 3) textNodes.push(child as Text);
+        else collectTextNodes(child);
+      }
+    };
+    document.querySelectorAll<HTMLElement>('.page-approval-detail .logs .log-item').forEach((row) => {
+      // Walk childNodes directly: a few embedded WebView builds omit the
+      // TreeWalker/NodeFilter globals even though their DOM nodes are complete.
+      const rowTextStart = textNodes.length;
+      collectTextNodes(row);
+      if (registry && HighlightClass) {
+        for (const textNode of textNodes.slice(rowTextStart)) {
+          const text = textNode.data.toLocaleLowerCase();
+          for (const term of terms) {
+            let from = 0;
+            while (from < text.length) {
+              const index = text.indexOf(term, from);
+              if (index < 0) break;
+              const range = document.createRange();
+              range.setStart(textNode, index);
+              range.setEnd(textNode, index + term.length);
+              ranges.push(range);
+              from = index + term.length;
+            }
+          }
+        }
+      }
+    });
+    if (registry && HighlightClass) {
+      registry.set(highlightName, new HighlightClass(...ranges));
+      return () => registry.delete(highlightName);
+    }
+
+    // Older embedded Chromium builds lack CSS.highlights. Wrap only matching
+    // text nodes as a fallback, and unwrap them in the effect cleanup before
+    // the next query/render so Preact continues to own the surrounding DOM.
+    const escaped = [...terms]
+      .sort((a, b) => b.length - a.length)
+      .map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const pattern = new RegExp(`(${escaped.join('|')})`, 'giu');
+    for (const textNode of textNodes) {
+      pattern.lastIndex = 0;
+      if (!pattern.test(textNode.data)) continue;
+      pattern.lastIndex = 0;
+      const parent = textNode.parentNode;
+      if (!parent) continue;
+      let cursor = 0;
+      for (const match of textNode.data.matchAll(pattern)) {
+        const index = match.index ?? 0;
+        if (index > cursor) parent.insertBefore(document.createTextNode(textNode.data.slice(cursor, index)), textNode);
+        const mark = document.createElement('mark');
+        mark.dataset.agentuseSessionSearch = '';
+        mark.textContent = match[0];
+        parent.insertBefore(mark, textNode);
+        cursor = index + match[0].length;
+      }
+      if (cursor < textNode.data.length) parent.insertBefore(document.createTextNode(textNode.data.slice(cursor)), textNode);
+      parent.removeChild(textNode);
+    }
+
+    return () => {
+      registry?.delete(highlightName);
+      clearFallbackMarks();
+    };
+  }, [logQuery, matchingFeedLogs]);
 
   useEffect(() => {
     if (continueActionable) setSubmittingContinue(false);
@@ -1311,7 +1412,7 @@ export default function SessionDetail() {
               </a>
             </div>
           )}
-          <div class="session-log-search" role="search">
+          {showLogSearch && <div class="session-log-search" role="search">
             <svg class="session-log-search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <circle cx="7" cy="7" r="4.5" /><path d="m11 11 3 3" />
             </svg>
@@ -1331,26 +1432,25 @@ export default function SessionDetail() {
                 if (event.key !== 'Escape') return;
                 event.preventDefault();
                 setLogQuery('');
+                setShowLogSearch(false);
                 (event.currentTarget as HTMLInputElement).blur();
               }}
             />
-            {logQuery && (
-              <button
-                type="button"
-                class="session-log-search-clear"
-                aria-label="Clear session log search"
-                title="Clear search"
-                onClick={() => {
-                  setLogQuery('');
-                  logSearchRef.current?.focus();
-                }}
-              >
-                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
-                  <path d="m4.5 4.5 7 7m0-7-7 7" />
-                </svg>
-              </button>
-            )}
-          </div>
+            <button
+              type="button"
+              class="session-log-search-clear"
+              aria-label="Close session log search"
+              title="Close search"
+              onClick={() => {
+                setLogQuery('');
+                setShowLogSearch(false);
+              }}
+            >
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+                <path d="m4.5 4.5 7 7m0-7-7 7" />
+              </svg>
+            </button>
+          </div>}
           <button
             type="button"
             class="session-bar-top"
