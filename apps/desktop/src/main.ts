@@ -16,7 +16,6 @@ const STARTUP_TIMEOUT_MS = 15_000;
 const APPROVAL_POLL_INTERVAL_MS = 5_000;
 
 let window: BrowserWindow | undefined;
-let windowNeedsInitialFocusReset = false;
 let tray: Tray | undefined;
 let trayMenu: Menu | undefined;
 let dashboardUrl: string | undefined;
@@ -284,6 +283,10 @@ function createWindow(): BrowserWindow {
   browser.webContents.on("will-navigate", guardNavigation);
   browser.webContents.on("will-redirect", guardNavigation);
   browser.webContents.on("will-attach-webview", (event) => event.preventDefault());
+  // The web UI keeps its accessibility skip link in browsers. Electron gives
+  // the first link automatic focus on launch, turning that normally hidden
+  // control into persistent app chrome, so remove it from desktop documents.
+  browser.webContents.on("dom-ready", () => void removeDesktopSkipLink(browser));
   // Electron emits the in-page event for History API changes made by the SPA.
   // Rebuild only the application menu so the tray menu and lifecycle stay put.
   browser.webContents.on("did-navigate", refreshApplicationMenu);
@@ -300,22 +303,12 @@ function createWindow(): BrowserWindow {
     }
     callback({ requestHeaders: details.requestHeaders });
   });
-  windowNeedsInitialFocusReset = true;
   return browser;
 }
 
-function resetAutomaticInitialFocus(browser: BrowserWindow): void {
-  if (!windowNeedsInitialFocusReset) return;
-  windowNeedsInitialFocusReset = false;
-  setImmediate(() => {
-    if (browser.isDestroyed() || browser.webContents.isDestroyed()) return;
-    void browser.webContents.executeJavaScript(`
-      (() => {
-        const active = document.activeElement;
-        if (active instanceof HTMLElement && active.classList.contains('skip-link')) active.blur();
-      })()
-    `).catch(() => {});
-  });
+async function removeDesktopSkipLink(browser: BrowserWindow): Promise<void> {
+  if (browser.isDestroyed() || browser.webContents.isDestroyed()) return;
+  await browser.webContents.executeJavaScript("document.querySelector('.skip-link')?.remove()").catch(() => {});
 }
 
 async function showDashboard(requestedUrl?: string): Promise<void> {
@@ -336,12 +329,12 @@ async function showDashboard(requestedUrl?: string): Promise<void> {
   if (!window || window.isDestroyed()) window = createWindow();
   const targetUrl = requestedUrl ? notificationTargetUrl(requestedUrl) ?? dashboardUrl! : dashboardUrl!;
   if (window.webContents.getURL() !== targetUrl) await window.loadURL(targetUrl);
+  await removeDesktopSkipLink(window);
   startApprovalPolling();
   startNotificationStream();
   void refreshPendingApprovals();
   window.show();
   window.focus();
-  resetAutomaticInitialFocus(window);
   refreshMenus();
 }
 
