@@ -15,6 +15,11 @@ private struct SettingsState: Codable, Equatable {
     var actionLabel: String
     var actionDisabled: Bool
     var launchAtLogin: Bool
+    var cliStatus: String
+    var cliTitle: String
+    var cliDetail: String
+    var cliActionLabel: String
+    var cliActionDisabled: Bool
     var logText: String
     var logFile: String?
 
@@ -25,6 +30,11 @@ private struct SettingsState: Codable, Equatable {
         actionLabel: "Start Server",
         actionDisabled: true,
         launchAtLogin: false,
+        cliStatus: "unavailable",
+        cliTitle: "Checking command line tool…",
+        cliDetail: "Looking for the AgentUse CLI.",
+        cliActionLabel: "Install",
+        cliActionDisabled: true,
         logText: "",
         logFile: nil
     )
@@ -33,6 +43,7 @@ private struct SettingsState: Codable, Equatable {
 private struct HostMessage: Decodable {
     var type: String
     var state: SettingsState?
+    var message: String?
 }
 
 private struct HelperCommand: Encodable {
@@ -80,6 +91,8 @@ private final class HostConnection: @unchecked Sendable {
             switch message.type {
             case "state":
                 if let state = message.state { self?.model?.apply(state) }
+            case "error":
+                if let message = message.message { self?.model?.showError(message) }
             case "show":
                 NSApplication.shared.activate(ignoringOtherApps: true)
                 NSApplication.shared.windows.first?.makeKeyAndOrderFront(nil)
@@ -98,6 +111,7 @@ private final class HostConnection: @unchecked Sendable {
 private final class SettingsModel: ObservableObject {
     @Published private(set) var state = SettingsState.loading
     @Published private(set) var actionInFlight = false
+    @Published var errorMessage: String?
 
     init() {
         HostConnection.shared.model = self
@@ -106,6 +120,10 @@ private final class SettingsModel: ObservableObject {
     func apply(_ state: SettingsState) {
         self.state = state
         actionInFlight = false
+    }
+
+    func showError(_ message: String) {
+        errorMessage = message
     }
 
     func toggleServer() {
@@ -118,6 +136,12 @@ private final class SettingsModel: ObservableObject {
         guard !actionInFlight else { return }
         actionInFlight = true
         HostConnection.shared.send(HelperCommand(type: "setLaunchAtLogin", enabled: enabled))
+    }
+
+    func toggleCliLink() {
+        guard !state.cliActionDisabled, !actionInFlight else { return }
+        actionInFlight = true
+        HostConnection.shared.send(HelperCommand(type: "toggleCliLink"))
     }
 
     func refresh() {
@@ -175,6 +199,26 @@ private struct GeneralSettingsView: View {
                     )
                 )
                 .disabled(model.actionInFlight)
+            }
+
+            Section("Command Line") {
+                HStack(spacing: 10) {
+                    Image(systemName: "terminal")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 16)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.state.cliTitle)
+                        Text(model.state.cliDetail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 16)
+                    Button(model.state.cliActionLabel) {
+                        model.toggleCliLink()
+                    }
+                    .disabled(model.state.cliActionDisabled || model.actionInFlight)
+                }
             }
         }
         .formStyle(.grouped)
@@ -240,6 +284,17 @@ private struct SettingsView: View {
                 .tabItem { Label("Logs", systemImage: "doc.text") }
         }
         .frame(minWidth: 560, idealWidth: 620, minHeight: 380, idealHeight: 440)
+        .alert(
+            "Command Line Tool",
+            isPresented: Binding(
+                get: { model.errorMessage != nil },
+                set: { if !$0 { model.errorMessage = nil } }
+            )
+        ) {
+            Button("OK") { model.errorMessage = nil }
+        } message: {
+            Text(model.errorMessage ?? "")
+        }
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))

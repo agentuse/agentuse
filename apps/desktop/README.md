@@ -6,11 +6,16 @@ backend. At launch it attaches to a local `agentuse serve` process registered by
 the CLI, or starts the packaged `agentuse` CLI if none is available. The
 menu-bar menu stays focused on showing the dashboard, opening Settings, and
 quitting the app. Settings provides server controls, launch-at-login, and the
-current server log without introducing a second dashboard renderer. Its UI is
+current server log, and can link the bundled `agentuse` command into
+`~/.local/bin` without introducing a second dashboard renderer. Its UI is
 an Ice-inspired SwiftUI helper app using native macOS tabs, forms, buttons,
 toggles, typography, colors, and accessibility behavior. Electron remains the
 owner of server state and exchanges typed newline-delimited JSON messages with
 the helper over its standard input and output.
+
+Before offering to install that link, Settings resolves `agentuse` from the
+user's login-shell PATH. Existing npm, pnpm, yarn, bun, Homebrew, and other
+installations are reported by path and are never replaced or shadowed.
 
 ## Development
 
@@ -36,8 +41,9 @@ Avoid launching `apps/desktop/dist/*/AgentUse.app` directly; keeping one
 canonical installation prevents Launch Services from retaining several local
 copies with the same bundle identifier.
 
-Building the desktop package requires Xcode command-line tools because the
-desktop build compiles `native-settings/AgentUseSettings.swift`. The default
+Building the desktop package requires Xcode because the desktop build compiles
+`native-settings/AgentUseSettings.swift` and uses Apple's asset-catalog compiler
+to produce the multi-resolution app icon. The default
 build matches the host architecture. Set `AGENTUSE_SETTINGS_UNIVERSAL=1` to
 produce an `arm64` + `x86_64` Settings helper for a universal Electron build.
 

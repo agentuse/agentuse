@@ -65,6 +65,12 @@
         "to": "Frameworks/AgentUseSettings.app"
       }
     ],
+    "extraResources": [
+      {
+        "from": "scripts/agentuse-cli",
+        "to": "bin/agentuse"
+      }
+    ],
     "extraMetadata": {
       "description": "AgentUse native dashboard shell"
     }

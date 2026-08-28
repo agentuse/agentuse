@@ -617,6 +617,7 @@ class TelemetryManager {
           is_npx: isNpx(),
           is_local_dev: isLocalDev(),
           page: value.page,
+          client_surface: value.clientSurface,
         },
       });
     } catch {
@@ -700,4 +701,4 @@ class TelemetryManager {
 export const telemetry = new TelemetryManager();
 
 // Re-export types
-export type { ExecutionResult, StartupError, ServerStartConfig, ServerShutdownStats, AddCommandResult } from './types';
+export type { ExecutionResult, StartupError, ServerStartConfig, ServerShutdownStats, AddCommandResult, WebUITelemetryEvent } from './types';

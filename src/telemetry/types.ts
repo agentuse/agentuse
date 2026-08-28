@@ -94,7 +94,7 @@ export interface ExecutionResult {
   /** Runtime that executed the agent; determined inside AgentUse. */
   executionOrigin?: 'cli' | 'schedule' | 'serve';
   /** Caller-reported serve surface. Best-effort, not an authentication claim. */
-  reportedSurface?: 'web_ui' | 'api';
+  reportedSurface?: 'web_ui' | 'mac_app' | 'api';
   /** Error category if failed */
   errorType?: 'timeout' | 'api_error' | 'tool_error' | 'user_abort' | 'incomplete' | 'unknown';
   /** Tool call breakdown by type */
@@ -165,6 +165,8 @@ export interface ServerShutdownStats {
 export interface WebUITelemetryEvent {
   /** Privacy-safe top-level SPA page category. */
   page: 'home' | 'agents' | 'schedules' | 'sessions' | 'approvals' | 'stores' | 'settings' | 'learnings' | 'other';
+  /** Container displaying the shared Web UI. */
+  clientSurface: 'web' | 'mac_app';
 }
 
 export interface AddCommandResult {

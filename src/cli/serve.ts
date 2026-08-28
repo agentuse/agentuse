@@ -27,6 +27,7 @@ import {
   emptyToolCallMetrics,
   parseModel,
   type ToolCallMetrics,
+  type WebUITelemetryEvent,
 } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
 import { getCachedAvailableUpdate, refreshUpdateCacheInBackground } from "../update-check";
@@ -179,19 +180,33 @@ interface RunRequest {
   reportedSurface?: 'web_ui';
 }
 
-function reportedSurfaceForRun(body: RunRequest): 'web_ui' | 'api' {
-  return body.reportedSurface === 'web_ui' ? 'web_ui' : 'api';
+type WebUIClientSurface = 'web' | 'mac_app';
+
+function webUIClientSurface(value: string | string[] | undefined): WebUIClientSurface {
+  const header = Array.isArray(value) ? value[0] : value;
+  return header === 'mac_app' ? 'mac_app' : 'web';
+}
+
+function reportedSurfaceForRun(body: RunRequest, clientSurface: WebUIClientSurface = 'web'): 'web_ui' | 'mac_app' | 'api' {
+  if (body.reportedSurface !== 'web_ui') return 'api';
+  return clientSurface === 'mac_app' ? 'mac_app' : 'web_ui';
 }
 
 const WEB_UI_TELEMETRY_PAGES = new Set([
   'home', 'agents', 'schedules', 'sessions', 'approvals', 'stores', 'settings', 'learnings', 'other',
 ]);
 
-function parseWebUITelemetryBody(body: Record<string, unknown>): { page: 'home' | 'agents' | 'schedules' | 'sessions' | 'approvals' | 'stores' | 'settings' | 'learnings' | 'other' } | undefined {
+function parseWebUITelemetryBody(
+  body: Record<string, unknown>,
+  clientSurface: WebUIClientSurface = 'web',
+): WebUITelemetryEvent | undefined {
   if (body.event !== 'page_viewed' || typeof body.page !== 'string' || !WEB_UI_TELEMETRY_PAGES.has(body.page)) {
     return undefined;
   }
-  return { page: body.page as 'home' | 'agents' | 'schedules' | 'sessions' | 'approvals' | 'stores' | 'settings' | 'learnings' | 'other' };
+  return {
+    page: body.page as WebUITelemetryEvent['page'],
+    clientSurface,
+  };
 }
 
 const WEB_UI_TELEMETRY_DEDUPE_MS = 15 * 60 * 1000;
@@ -4791,8 +4806,11 @@ export function createServeCommand(): Command {
         })) {
           try {
             const raw = await readRequestBody(req, 1024);
-            const event = parseWebUITelemetryBody(raw ? JSON.parse(raw) as Record<string, unknown> : {});
-            if (event && acceptWebUITelemetry(webUITelemetryGuard, event.page)) {
+            const event = parseWebUITelemetryBody(
+              raw ? JSON.parse(raw) as Record<string, unknown> : {},
+              webUIClientSurface(req.headers['x-agentuse-client']),
+            );
+            if (event && acceptWebUITelemetry(webUITelemetryGuard, `${event.clientSurface}:${event.page}`)) {
               telemetry.captureWebUITelemetry(event);
             }
           } catch {
@@ -6962,7 +6980,10 @@ export function createServeCommand(): Command {
         try {
           // Parse request
           const body = await parseRequestBody(req);
-          const reportedSurface = reportedSurfaceForRun(body);
+          const reportedSurface = reportedSurfaceForRun(
+            body,
+            webUIClientSurface(req.headers['x-agentuse-client']),
+          );
           const wantsStream = req.headers.accept?.includes("application/x-ndjson");
 
           // Resolve project
@@ -7874,6 +7895,7 @@ export const __testing = {
   importantDescendantTree,
   logsWithChildSessions,
   reportedSurfaceForRun,
+  webUIClientSurface,
   parseWebUITelemetryBody,
   createWebUITelemetryGuard,
   acceptWebUITelemetry,

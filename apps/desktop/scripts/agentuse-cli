@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+launcher_path=$0
+while [ -L "$launcher_path" ]; do
+  link_target=$(readlink "$launcher_path")
+  case "$link_target" in
+    /*) launcher_path=$link_target ;;
+    *) launcher_path=$(dirname "$launcher_path")/$link_target ;;
+  esac
+done
+
+resources_dir=$(CDPATH= cd -- "$(dirname -- "$launcher_path")/.." && pwd)
+electron_path="$resources_dir/../MacOS/AgentUse"
+cli_path="$resources_dir/app.asar/node_modules/agentuse/bin/cli.js"
+
+ELECTRON_RUN_AS_NODE=1 exec "$electron_path" "$cli_path" "$@"

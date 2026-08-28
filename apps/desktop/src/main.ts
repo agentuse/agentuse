@@ -12,6 +12,7 @@ import { encodeNativeSettingsMessage, isNativeSettingsPipeClosure, parseNativeSe
 import { createDesktopQuitPolicy } from "./quit-policy";
 import { isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, selectServer, serverUrl, type RegisteredServer } from "./runtime";
 import { createAgentUseTrayIcon } from "./tray-icon";
+import { defaultCliLinkPath, inspectCliAvailability, loginShellPath, packagedCliLauncherPath, toggleCliLink } from "./cli-link";
 
 const require = createRequire(__filename);
 const APP_NAME = "AgentUse";
@@ -38,7 +39,13 @@ let isQuitting = false;
 let quitInProgress = false;
 let serverOperation: "starting" | "stopping" | undefined;
 let serverAcquisition: Promise<void> | undefined;
+let userLoginPath: Promise<string> | undefined;
 const quitPolicy = createDesktopQuitPolicy();
+
+function resolveUserLoginPath(): Promise<string> {
+  userLoginPath ??= loginShellPath();
+  return userLoginPath;
+}
 
 function resolveCliPath(): string {
   if (process.env.AGENTUSE_CLI_PATH) return process.env.AGENTUSE_CLI_PATH;
@@ -312,8 +319,9 @@ function createWindow(): BrowserWindow {
     return permission === "notifications" || permission === "clipboard-sanitized-write";
   });
   browser.webContents.session.webRequest.onBeforeSendHeaders((details, callback) => {
-    if (dashboardUrl && dashboardApiKey && isDashboardNavigation(details.url, dashboardUrl)) {
-      details.requestHeaders.Authorization = `Bearer ${dashboardApiKey}`;
+    if (dashboardUrl && isDashboardNavigation(details.url, dashboardUrl)) {
+      details.requestHeaders["X-AgentUse-Client"] = "mac_app";
+      if (dashboardApiKey) details.requestHeaders.Authorization = `Bearer ${dashboardApiKey}`;
     }
     callback({ requestHeaders: details.requestHeaders });
   });
@@ -411,6 +419,21 @@ async function handleNativeSettingsCommand(line: string, child: ChildProcess): P
       });
       await pushNativeSettingsState(child);
       break;
+    case "toggleCliLink": {
+      try {
+        await toggleCliLink(
+          defaultCliLinkPath(),
+          packagedCliLauncherPath(process.resourcesPath),
+          await resolveUserLoginPath(),
+        );
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        sendNativeSettingsMessage({ type: "error", message: `Could not update the command line tool: ${detail}` }, child);
+      } finally {
+        await pushNativeSettingsState(child);
+      }
+      break;
+    }
   }
 }
 
@@ -484,6 +507,19 @@ async function readLogTail(logFile: string | undefined, maxBytes = 200_000): Pro
 async function desktopSettingsState() {
   const activeServer = currentServer && listRegisteredServers().find((server) => server.pid === currentServer?.pid);
   const launchAtLogin = app.getLoginItemSettings().openAtLogin;
+  const cli = inspectCliAvailability(
+    defaultCliLinkPath(),
+    packagedCliLauncherPath(process.resourcesPath),
+    await resolveUserLoginPath(),
+  );
+  const commonState = {
+    launchAtLogin,
+    cliStatus: cli.status,
+    cliTitle: cli.title,
+    cliDetail: cli.detail,
+    cliActionLabel: cli.actionLabel,
+    cliActionDisabled: cli.actionDisabled,
+  };
   if (serverOperation === "starting") {
     return {
       status: "starting" as const,
@@ -491,7 +527,7 @@ async function desktopSettingsState() {
       detail: "Preparing the local AgentUse dashboard.",
       actionLabel: "Start Server" as const,
       actionDisabled: true,
-      launchAtLogin,
+      ...commonState,
       logText: "",
     };
   }
@@ -502,7 +538,7 @@ async function desktopSettingsState() {
       detail: "Active work is being allowed to finish.",
       actionLabel: "Stop Server" as const,
       actionDisabled: true,
-      launchAtLogin,
+      ...commonState,
       logText: await readLogTail(activeServer?.logFile),
       logFile: activeServer?.logFile,
     };
@@ -514,7 +550,7 @@ async function desktopSettingsState() {
       detail: "Start the server to use the local dashboard and schedules.",
       actionLabel: "Start Server" as const,
       actionDisabled: false,
-      launchAtLogin,
+      ...commonState,
       logText: "",
     };
   }
@@ -525,7 +561,7 @@ async function desktopSettingsState() {
     detail: isOwned ? `Dashboard available at ${serverUrl(activeServer)}` : `Started outside AgentUse at ${serverUrl(activeServer)}`,
     actionLabel: "Stop Server" as const,
     actionDisabled: !isOwned,
-    launchAtLogin,
+    ...commonState,
     logText: await readLogTail(activeServer.logFile),
     logFile: activeServer.logFile,
   };

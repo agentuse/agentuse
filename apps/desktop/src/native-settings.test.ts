@@ -6,6 +6,7 @@ describe("native settings protocol", () => {
     expect(parseNativeSettingsCommand('{"type":"ready"}')).toEqual({ type: "ready" });
     expect(parseNativeSettingsCommand('{"type":"refresh"}')).toEqual({ type: "refresh" });
     expect(parseNativeSettingsCommand('{"type":"toggleServer"}')).toEqual({ type: "toggleServer" });
+    expect(parseNativeSettingsCommand('{"type":"toggleCliLink"}')).toEqual({ type: "toggleCliLink" });
     expect(parseNativeSettingsCommand('{"type":"setLaunchAtLogin","enabled":true}')).toEqual({
       type: "setLaunchAtLogin",
       enabled: true,

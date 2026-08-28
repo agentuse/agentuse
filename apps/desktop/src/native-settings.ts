@@ -5,6 +5,11 @@ export interface DesktopSettingsState {
   actionLabel: "Start Server" | "Stop Server";
   actionDisabled: boolean;
   launchAtLogin: boolean;
+  cliStatus: "installed" | "external" | "notInstalled" | "conflict" | "unavailable";
+  cliTitle: string;
+  cliDetail: string;
+  cliActionLabel: "Install" | "Remove";
+  cliActionDisabled: boolean;
   logText: string;
   logFile?: string;
 }
@@ -13,10 +18,12 @@ export type NativeSettingsCommand =
   | { type: "ready" }
   | { type: "refresh" }
   | { type: "toggleServer" }
+  | { type: "toggleCliLink" }
   | { type: "setLaunchAtLogin"; enabled: boolean };
 
 export type NativeSettingsMessage =
   | { type: "state"; state: DesktopSettingsState }
+  | { type: "error"; message: string }
   | { type: "show" }
   | { type: "hide" }
   | { type: "quit" };
@@ -34,6 +41,7 @@ export function parseNativeSettingsCommand(line: string): NativeSettingsCommand 
     case "ready":
     case "refresh":
     case "toggleServer":
+    case "toggleCliLink":
       return { type: command.type };
     case "setLaunchAtLogin":
       return typeof command.enabled === "boolean"

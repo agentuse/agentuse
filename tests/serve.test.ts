@@ -832,6 +832,7 @@ describe('serve telemetry attribution', () => {
   it('separates bundled Web UI runs from external API runs', async () => {
     const { reportedSurfaceForRun } = (await import('../src/cli/serve')).__testing;
     expect(reportedSurfaceForRun({ agent: 'a.agentuse', reportedSurface: 'web_ui' })).toBe('web_ui');
+    expect(reportedSurfaceForRun({ agent: 'a.agentuse', reportedSurface: 'web_ui' }, 'mac_app')).toBe('mac_app');
     expect(reportedSurfaceForRun({ agent: 'a.agentuse' })).toBe('api');
   });
 
@@ -843,9 +844,10 @@ describe('serve telemetry attribution', () => {
     } = (await import('../src/cli/serve')).__testing;
     const guard = createWebUITelemetryGuard(1_000);
 
-    expect(acceptWebUITelemetry(guard, 'home', 1_000)).toBe(true);
-    expect(acceptWebUITelemetry(guard, 'home', 1_001)).toBe(false);
-    expect(acceptWebUITelemetry(guard, 'home', 1_000 + WEB_UI_TELEMETRY_DEDUPE_MS)).toBe(true);
+    expect(acceptWebUITelemetry(guard, 'web:home', 1_000)).toBe(true);
+    expect(acceptWebUITelemetry(guard, 'web:home', 1_001)).toBe(false);
+    expect(acceptWebUITelemetry(guard, 'mac_app:home', 1_001)).toBe(true);
+    expect(acceptWebUITelemetry(guard, 'web:home', 1_000 + WEB_UI_TELEMETRY_DEDUPE_MS)).toBe(true);
 
     const floodGuard = createWebUITelemetryGuard(2_000);
     const accepted = Array.from({ length: 25 }, (_, index) =>
@@ -868,10 +870,23 @@ describe('serve telemetry attribution', () => {
 
   it('accepts only the fixed Web UI telemetry vocabulary', async () => {
     const { parseWebUITelemetryBody } = (await import('../src/cli/serve')).__testing;
-    expect(parseWebUITelemetryBody({ event: 'page_viewed', page: 'sessions' })).toEqual({ page: 'sessions' });
+    expect(parseWebUITelemetryBody({ event: 'page_viewed', page: 'sessions' })).toEqual({ page: 'sessions', clientSurface: 'web' });
+    expect(parseWebUITelemetryBody({ event: 'page_viewed', page: 'sessions' }, 'mac_app')).toEqual({
+      page: 'sessions', clientSurface: 'mac_app',
+    });
     expect(parseWebUITelemetryBody({ event: 'anything', page: 'sessions' })).toBeUndefined();
     expect(parseWebUITelemetryBody({ event: 'page_viewed', page: '/sessions/private-id' })).toBeUndefined();
-    expect(parseWebUITelemetryBody({ event: 'page_viewed', page: 'sessions', private: 'value' })).toEqual({ page: 'sessions' });
+    expect(parseWebUITelemetryBody({ event: 'page_viewed', page: 'sessions', private: 'value' })).toEqual({
+      page: 'sessions', clientSurface: 'web',
+    });
+  });
+
+  it('trusts only the fixed Mac client header value for telemetry segmentation', async () => {
+    const { webUIClientSurface } = (await import('../src/cli/serve')).__testing;
+    expect(webUIClientSurface(undefined)).toBe('web');
+    expect(webUIClientSurface('mac_app')).toBe('mac_app');
+    expect(webUIClientSurface('desktop')).toBe('web');
+    expect(webUIClientSurface(['mac_app', 'web'])).toBe('mac_app');
   });
 
   it('reduces browser routes to privacy-safe page categories', async () => {
