@@ -67,7 +67,7 @@ Help me create my first AgentUse agent.
 
 Use the installed AgentUse skill and load the current core and creator guidance first. If I have not described the recurring job yet, interview me before creating anything. Ask concise questions one at a time until you understand the job, trigger, inputs, desired output, success criteria, and any consequential actions that require human approval.
 
-Once the requirements are clear, run agentuse provider list --json. If no AgentUse runtime provider has \`configured: true\`, do not create the file yet; guide me through agentuse provider login and wait until it is ready. Then create one focused .agentuse file using only a model from a configured provider. Validate it with agentuse doctor and agentuse test, and fix any issues.
+Once the requirements are clear, run agentuse provider list --json. If no AgentUse runtime provider has \`configured: true\`, do not create the file yet. Tell me to run agentuse provider login myself in my own terminal. Do not operate the interactive login or ask me to paste credentials, authorization URLs, or callback URLs into chat. Wait until I say login is finished, then check again. Create one focused .agentuse file only after a provider is confirmed. Validate it with agentuse doctor and agentuse test, and fix any issues.
 
 Do not start a real run automatically. If agentuse serve is already running, tell me when the new agent should appear in its dashboard. Otherwise, give me the exact command to start it. Then guide me through launching the first real run from the Web UI.
 \`\`\`

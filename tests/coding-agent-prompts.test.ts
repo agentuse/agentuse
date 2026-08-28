@@ -53,6 +53,9 @@ describe('coding-agent handoff prompts', () => {
     expect(prompt).toContain('Do not change its project settings or restart it');
     expect(prompt).toContain('agentuse provider list');
     expect(prompt).toContain('agentuse provider login');
+    expect(prompt).toContain('open Terminal and run this command myself');
+    expect(prompt).toContain('Do not run this interactive login command for me');
+    expect(prompt).toContain('Do not ask me to paste API keys');
     expect(prompt).toContain('Use only a model from a confirmed provider');
     expect(prompt).toContain('summarize new support tickets every morning');
   });
@@ -81,6 +84,9 @@ describe('coding-agent handoff prompts', () => {
     expect(prompt).toContain(`\`\`\`sh\n${bundledCli} skills get onboarding --full\n\`\`\``);
     expect(prompt).toContain(`\`\`\`sh\n${bundledCli} provider list --json\n\`\`\``);
     expect(prompt).toContain(`\`\`\`sh\n${bundledCli} provider login\n\`\`\``);
+    expect(prompt).toContain('open Terminal and run this exact command myself');
+    expect(prompt).toContain('Do not run this interactive login command for me');
+    expect(prompt).toContain('callback URLs into this chat');
     expect(prompt).toContain('AgentUse Desktop owns the running `serve` process');
     expect(prompt).toContain('## Provider Status from AgentUse Desktop');
     expect(prompt).toContain('"credentialStore": "/tmp/fresh-home/.local/share/agentuse/auth.json"');

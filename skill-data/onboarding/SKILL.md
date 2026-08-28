@@ -33,12 +33,13 @@ The coding agent's own login is not an AgentUse runtime credential. Do not
 infer that Anthropic, OpenAI, or another provider is available because the
 current coding agent can respond.
 
-- If no provider is configured, do not write the agent file yet. Guide the
-  user through `agentuse provider login <provider>`, then run
-  `agentuse provider list --json` again after they finish. A provider is
-  available only when its JSON entry has `configured: true`. Keep the choice simple:
-  explain subscription/OAuth versus API-key billing when the login command
-  offers both, but do not choose a paid provider or billing method for them.
+- If no provider is configured, do not write the agent file yet. Tell the user
+  to open their own terminal and run `agentuse provider login` themselves.
+  Do not start or operate the interactive login inside the coding-agent shell,
+  and do not ask the user to paste API keys, authorization codes,
+  authorization URLs, or callback URLs into chat. Wait until the user says
+  login is finished, then run `agentuse provider list --json` again. A provider
+  is available only when its JSON entry has `configured: true`.
 - If one provider is configured, use only a model from that provider.
 - If several providers are configured, honor `models.default` when present;
   otherwise ask which configured provider they want to use.

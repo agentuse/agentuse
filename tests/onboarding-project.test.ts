@@ -84,6 +84,9 @@ describe('managed onboarding projects', () => {
     expect(prompt).toContain('Project directory: /tmp/my-agents');
     expect(prompt).toContain('agentuse provider list');
     expect(prompt).toContain('agentuse provider login');
+    expect(prompt).toContain('my own terminal');
+    expect(prompt).toContain('interactive login or ask me to paste credentials');
+    expect(prompt).toContain('callback');
     expect(prompt).toContain('using only that provider');
     expect(prompt).toMatch(/agentuse\s+doctor and agentuse test/);
     expect(prompt).toContain('exact agentuse run command');

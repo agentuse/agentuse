@@ -24,7 +24,9 @@ Project directory: ${projectRoot}
 
 Ask what I want to automate. Before creating a file, run agentuse provider list --json
 and confirm an AgentUse runtime provider has \`configured: true\`. If none is configured,
-guide me through agentuse provider login and wait until it is ready. Then create
+stop and tell me to run agentuse provider login myself in my own terminal. Do not run
+the interactive login or ask me to paste credentials, authorization URLs, or callback
+URLs into chat. Wait until I say login is finished, then check again. Then create
 exactly one focused agent using only that provider, validate it with agentuse
 doctor and agentuse test, and return the exact agentuse run command.
 Do not perform a real run yet.`;
