@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { buildCodingAgentPrompt } from '../src/cli/serve/web/routes/agent-detail';
-import { buildDebugPrompt, buildOnboardingPrompt } from '../src/cli/serve/web/components/debug-prompt-button';
+import { buildDebugPrompt, buildOnboardingPrompt, onboardingProjectAgents } from '../src/cli/serve/web/components/debug-prompt-button';
+import type { AgentRow } from '../src/cli/serve/web/lib/api';
 
 describe('coding-agent handoff prompts', () => {
   it('requires the creator skill before reviewing or editing agent source', () => {
@@ -39,12 +40,17 @@ describe('coding-agent handoff prompts', () => {
       model: 'demo:hello',
     }, 'summarize new support tickets every morning');
 
+    expect(prompt).toStartWith('# Create My First Agent\n');
+    expect(prompt).toContain('## Project');
+    expect(prompt).toContain('## What I Want to Automate');
+    expect(prompt).toContain('## Required Workflow');
+    expect(prompt).toContain('## Runtime Guardrails');
     expect(prompt).toContain('Help me create my first AgentUse agent in this project.');
     expect(prompt).toContain('agentuse skills get onboarding --full');
-    expect(prompt).toContain('AgentUse serve is already running');
-    expect(prompt).toContain('Project directory: /workspace/acme-automations');
+    expect(prompt).toContain('AgentUse `serve` is already running');
+    expect(prompt).toContain('- **Directory:** /workspace/acme-automations');
     expect(prompt).toContain('project directory is authoritative');
-    expect(prompt).toContain('do not change its project settings or restart it');
+    expect(prompt).toContain('Do not change its project settings or restart it');
     expect(prompt).toContain('agentuse provider list');
     expect(prompt).toContain('agentuse provider login');
     expect(prompt).toContain('Use only a model from a confirmed provider');
@@ -52,7 +58,7 @@ describe('coding-agent handoff prompts', () => {
   });
 
   it('uses the CLI bundled inside AgentUse.app for every Desktop onboarding command', () => {
-    const bundledCli = "env ELECTRON_RUN_AS_NODE=1 '/Users/Example User/Applications/AgentUse.app/Contents/MacOS/AgentUse' '/Users/Example User/Applications/AgentUse.app/Contents/Resources/app.asar/node_modules/agentuse/bin/cli.js'";
+    const bundledCli = "env HOME='/tmp/fresh-home' XDG_DATA_HOME='/tmp/fresh-data' ELECTRON_RUN_AS_NODE=1 '/Users/Example User/Applications/AgentUse.app/Contents/MacOS/AgentUse' '/Users/Example User/Applications/AgentUse.app/Contents/Resources/app.asar/node_modules/agentuse/bin/cli.js'";
     const prompt = buildOnboardingPrompt({
       sessionId: '01DESKTOPONBOARDING',
       projectPath: '/workspace/acme-automations',
@@ -60,14 +66,58 @@ describe('coding-agent handoff prompts', () => {
       surface: 'desktop',
       cliCommand: bundledCli,
       serveAlreadyRunning: true,
+      providerStatus: {
+        credentialStore: '/tmp/fresh-home/.local/share/agentuse/auth.json',
+        providers: [
+          { id: 'anthropic', name: 'Anthropic', configured: false, sources: [] },
+          { id: 'openai', name: 'OpenAI', configured: false, sources: [] },
+        ],
+        customProviders: [],
+      },
     });
 
-    expect(prompt).toContain(`  ${bundledCli} skills get onboarding --full`);
-    expect(prompt).toContain(`\`${bundledCli} provider list\``);
-    expect(prompt).toContain(`\`${bundledCli} provider login\``);
-    expect(prompt).toContain('AgentUse Desktop owns the running serve process');
+    expect(prompt).toContain('## AgentUse CLI');
+    expect(prompt).toContain(`\`\`\`sh\n${bundledCli}\n\`\`\``);
+    expect(prompt).toContain(`\`\`\`sh\n${bundledCli} skills get onboarding --full\n\`\`\``);
+    expect(prompt).toContain(`\`\`\`sh\n${bundledCli} provider list --json\n\`\`\``);
+    expect(prompt).toContain(`\`\`\`sh\n${bundledCli} provider login\n\`\`\``);
+    expect(prompt).toContain('AgentUse Desktop owns the running `serve` process');
+    expect(prompt).toContain('## Provider Status from AgentUse Desktop');
+    expect(prompt).toContain('"credentialStore": "/tmp/fresh-home/.local/share/agentuse/auth.json"');
+    expect(prompt).toContain('"configured": false');
+    expect(prompt).toContain('Use this status as authoritative');
+    expect(prompt).toContain('at least one source with `stored: true`');
+    expect(prompt).not.toContain('Before creating a file, check the available AgentUse providers');
+    expect(prompt.indexOf('## Provider Status from AgentUse Desktop')).toBeLessThan(
+      prompt.indexOf(`${bundledCli} provider list --json`),
+    );
     expect(prompt).toContain('CLI bundled inside AgentUse Desktop');
     expect(prompt).toContain('Do not substitute a package-manager installation or bare `agentuse`');
     expect(prompt).not.toContain('\n  agentuse ');
+  });
+});
+
+describe('first-agent onboarding detection', () => {
+  const agent = (projectId: string, runPath: string, name: string): AgentRow => ({
+    projectId,
+    path: runPath,
+    runPath,
+    name,
+    model: 'openai:gpt-5.6-luna',
+  });
+
+  it('detects agents only in the onboarding project', () => {
+    const first = agent('first-project', 'agents/hello-world.agentuse', 'hello-world');
+    const unrelated = agent('another-project', 'agents/reporter.agentuse', 'reporter');
+
+    expect(onboardingProjectAgents([unrelated, first], 'first-project')).toEqual([first]);
+    expect(onboardingProjectAgents([first], undefined)).toEqual([]);
+  });
+
+  it('retains every match so multiple agents route to the project instead of guessing', () => {
+    const first = agent('first-project', 'agents/hello-world.agentuse', 'hello-world');
+    const second = agent('first-project', 'agents/daily-brief.agentuse', 'daily-brief');
+
+    expect(onboardingProjectAgents([first, second], 'first-project')).toEqual([first, second]);
   });
 });

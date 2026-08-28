@@ -1686,7 +1686,7 @@ export default function SessionDetail() {
               : 'debug'}
             context={{
               sessionId: approval.sessionId,
-              projectId,
+              projectId: projectId ?? approval.project,
               projectPath: approval.projectPath,
               agentName: agentLabel,
               agentFilePath: approval.agent.filePath,

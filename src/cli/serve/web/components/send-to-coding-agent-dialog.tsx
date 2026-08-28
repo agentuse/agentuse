@@ -44,6 +44,7 @@ export function SendToCodingAgentDialog(props: {
   contextLabel?: string;
   contextValue?: string;
   contextHint?: string;
+  onCopied?: () => void;
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -67,6 +68,7 @@ export function SendToCodingAgentDialog(props: {
     void copyText(prompt).then((ok) => {
       if (!ok) return;
       setCopied(true);
+      props.onCopied?.();
       setTimeout(() => setCopied(false), 1500);
     });
   };

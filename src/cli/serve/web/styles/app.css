@@ -1268,6 +1268,49 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 }
 .page-approval-detail .debug-prompt-button.onboarding-handoff svg { color: currentColor; }
 .page-approval-detail .debug-prompt-button.onboarding-handoff:hover { border-color: transparent; background: var(--primary-bg-hover); color: var(--primary-fg); }
+.page-approval-detail .debug-prompt-button.onboarding-handoff:disabled { opacity: 0.7; cursor: default; }
+.onboarding-provider-status-error {
+  align-self: center; color: var(--red); font-family: var(--sans); font-size: 11.5px;
+}
+.page-approval-detail .onboarding-agent-status {
+  flex: 1 1 100%; display: flex; align-items: center; gap: 12px; min-width: 0;
+  padding: 13px 14px; border: 1px solid var(--line-strong); border-radius: 10px;
+  background: var(--panel); color: var(--fg);
+}
+.page-approval-detail .onboarding-agent-status.is-ready {
+  border-color: color-mix(in srgb, var(--green) 38%, var(--line));
+  background: color-mix(in srgb, var(--green) 7%, var(--panel));
+}
+.onboarding-agent-status-icon {
+  display: grid; place-items: center; flex: none; width: 24px; height: 24px;
+  border-radius: 999px; background: var(--green); color: var(--bg); font-size: 13px; font-weight: 800;
+}
+.onboarding-agent-status-spinner { flex: none; width: 17px; height: 17px; }
+.onboarding-agent-status-copy { display: grid; gap: 3px; min-width: 0; }
+.onboarding-agent-status-copy strong { font-size: 13px; font-weight: 620; }
+.onboarding-agent-status-copy > span,
+.onboarding-agent-status-copy small { color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+.onboarding-agent-status-copy code { color: var(--fg); font-size: inherit; }
+.onboarding-agent-status-primary {
+  flex: none; margin-left: auto; padding: 7px 12px; border-radius: 8px;
+  background: var(--primary-bg); color: var(--primary-fg); font-size: 12px; font-weight: 620;
+}
+.page-approval-detail a.onboarding-agent-status-primary { color: var(--primary-fg); border-bottom: 0; }
+.onboarding-agent-status-primary:hover { background: var(--primary-bg-hover); }
+.onboarding-agent-status-actions { display: flex; flex: none; gap: 7px; margin-left: auto; }
+.onboarding-agent-status-actions button {
+  padding: 6px 9px; border: 1px solid var(--line-strong); border-radius: 7px;
+  background: var(--surface); color: var(--muted-3); font-family: var(--sans); font-size: 11.5px; cursor: pointer;
+}
+.onboarding-agent-status-actions button:hover { border-color: var(--cyan-border); color: var(--fg); }
+@media (max-width: 640px) {
+  .page-approval-detail .onboarding-agent-status { align-items: flex-start; flex-wrap: wrap; }
+  .onboarding-agent-status-copy { flex: 1; }
+  .onboarding-agent-status-primary,
+  .onboarding-agent-status-actions { width: 100%; margin-left: 36px; }
+  .onboarding-agent-status-primary { text-align: center; }
+  .onboarding-agent-status-actions button { flex: 1; }
+}
 .stop-session-button svg { color: var(--red); }
 .stop-session-button:hover { border-color: var(--red-border); color: var(--fg); background: var(--red-soft); }
 .stop-session-button:focus-visible { outline-color: var(--red-border); }
