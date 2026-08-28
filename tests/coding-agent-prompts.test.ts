@@ -50,4 +50,24 @@ describe('coding-agent handoff prompts', () => {
     expect(prompt).toContain('Use only a model from a confirmed provider');
     expect(prompt).toContain('summarize new support tickets every morning');
   });
+
+  it('uses the CLI bundled inside AgentUse.app for every Desktop onboarding command', () => {
+    const bundledCli = "env ELECTRON_RUN_AS_NODE=1 '/Users/Example User/Applications/AgentUse.app/Contents/MacOS/AgentUse' '/Users/Example User/Applications/AgentUse.app/Contents/Resources/app.asar/node_modules/agentuse/bin/cli.js'";
+    const prompt = buildOnboardingPrompt({
+      sessionId: '01DESKTOPONBOARDING',
+      projectPath: '/workspace/acme-automations',
+    }, '', {
+      surface: 'desktop',
+      cliCommand: bundledCli,
+      serveAlreadyRunning: true,
+    });
+
+    expect(prompt).toContain(`  ${bundledCli} skills get onboarding --full`);
+    expect(prompt).toContain(`\`${bundledCli} provider list\``);
+    expect(prompt).toContain(`\`${bundledCli} provider login\``);
+    expect(prompt).toContain('AgentUse Desktop owns the running serve process');
+    expect(prompt).toContain('CLI bundled inside AgentUse Desktop');
+    expect(prompt).toContain('Do not substitute a package-manager installation or bare `agentuse`');
+    expect(prompt).not.toContain('\n  agentuse ');
+  });
 });

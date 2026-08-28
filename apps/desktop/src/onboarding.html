@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Set up AgentUse for Mac</title>
+  <style>
+    @font-face {
+      font-family: "Geist";
+      src: url("assets/fonts/Geist-Variable.woff2") format("woff2");
+      font-weight: 100 900;
+      font-style: normal;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: "Geist Mono";
+      src: url("assets/fonts/GeistMono-Variable.woff2") format("woff2");
+      font-weight: 100 900;
+      font-style: normal;
+      font-display: swap;
+    }
+    :root {
+      color-scheme: light dark;
+      --sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+      --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --bg: light-dark(#fafaf9, #0f1113);
+      --fg: light-dark(#0a0a0a, #f4f5f6);
+      --line: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.08));
+      --line-strong: light-dark(rgba(0, 0, 0, 0.16), rgba(255, 255, 255, 0.14));
+      --panel: light-dark(rgba(0, 0, 0, 0.025), rgba(255, 255, 255, 0.03));
+      --panel-hover: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.06));
+      --surface: light-dark(#ffffff, #16181c);
+      --surface-shadow: light-dark(0 1px 2px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.4));
+      --muted: light-dark(rgba(0, 0, 0, 0.55), rgba(255, 255, 255, 0.48));
+      --muted-2: light-dark(rgba(0, 0, 0, 0.35), rgba(255, 255, 255, 0.3));
+      --muted-3: light-dark(rgba(0, 0, 0, 0.75), rgba(255, 255, 255, 0.72));
+      --cyan: light-dark(#0e7490, #22d3ee);
+      --cyan-soft: light-dark(rgba(8, 145, 178, 0.08), rgba(34, 211, 238, 0.08));
+      --cyan-border: light-dark(rgba(8, 145, 178, 0.35), rgba(34, 211, 238, 0.35));
+      --green: light-dark(#047857, #4ade80);
+      --green-soft: light-dark(rgba(4, 120, 87, 0.08), rgba(74, 222, 128, 0.08));
+      --green-border: light-dark(rgba(4, 120, 87, 0.35), rgba(74, 222, 128, 0.35));
+      --amber: light-dark(#b45309, #fbbf24);
+      --amber-soft: light-dark(rgba(180, 83, 9, 0.1), rgba(251, 191, 36, 0.08));
+      --amber-border: light-dark(rgba(180, 83, 9, 0.35), rgba(251, 191, 36, 0.35));
+      --red: light-dark(#b91c1c, #f87171);
+      --primary-fg: light-dark(#ffffff, #000000);
+      --primary-bg: light-dark(#047857, #4ade80);
+      --primary-bg-hover: light-dark(#065f46, #86efac);
+    }
+    * { box-sizing: border-box; }
+    html, body { min-width: 700px; min-height: 600px; background: var(--bg); }
+    body {
+      margin: 0;
+      color: var(--fg);
+      font: 14px/1.55 var(--sans);
+      -webkit-font-smoothing: antialiased;
+      user-select: none;
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 62px;
+      padding: 0 24px;
+      border-bottom: 1px solid var(--line);
+      background: var(--bg);
+    }
+    .brand { display: inline-flex; align-items: center; }
+    .brand img { display: block; width: auto; height: 18px; }
+    .brand-dark { display: none !important; }
+    .surface-label {
+      color: var(--muted);
+      font: 10.5px/1 var(--mono);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    main {
+      width: min(828px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 28px 0;
+    }
+    .setup-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1.08fr) minmax(300px, 0.92fr);
+      gap: 46px;
+      align-items: stretch;
+      min-height: 500px;
+      padding: 48px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface);
+      box-shadow: var(--surface-shadow);
+    }
+    .setup-copy {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+    }
+    .eyebrow {
+      margin-bottom: 10px;
+      color: var(--cyan);
+      font: 11px/1 var(--mono);
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+    h1 {
+      max-width: 10ch;
+      margin: 0;
+      font-size: clamp(38px, 5vw, 48px);
+      font-weight: 520;
+      line-height: 1.04;
+      letter-spacing: -0.035em;
+    }
+    .lede {
+      max-width: 39ch;
+      margin: 18px 0 0;
+      color: var(--muted-3);
+      font-size: 15px;
+      line-height: 1.55;
+    }
+    .setup-actions { padding-top: 20px; }
+    button { font: inherit; }
+    .primary {
+      appearance: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 42px;
+      padding: 0 17px;
+      border: 1px solid transparent;
+      border-radius: 9px;
+      background: var(--primary-bg);
+      color: var(--primary-fg);
+      font: 600 13.5px/1 var(--sans);
+      cursor: pointer;
+      transition: background 120ms ease, transform 120ms ease, opacity 120ms ease;
+    }
+    .primary:hover:not(:disabled) { background: var(--primary-bg-hover); transform: translateY(-1px); }
+    .primary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
+    .primary:disabled { cursor: default; opacity: 0.45; }
+    .error { min-height: 18px; margin: 10px 0 0; color: var(--red); font-size: 12.5px; }
+    .setup-options {
+      align-self: center;
+      margin: 0;
+      padding: 0;
+      border-top: 1px solid var(--line);
+    }
+    .setup-option {
+      padding: 19px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .option-heading {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .option-title { display: block; color: var(--fg); font-size: 13.5px; font-weight: 560; }
+    .option-copy { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .optional {
+      margin-left: 6px;
+      color: var(--muted-2);
+      font: 10.5px/1 var(--mono);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .login-check { display: inline-flex; flex: none; align-items: center; color: var(--muted-3); cursor: pointer; }
+    .login-check input { width: 14px; height: 14px; margin: 2px 0 0; accent-color: var(--green); cursor: pointer; }
+    .launcher-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 1px 8px;
+      border: 1px solid var(--cyan-border);
+      border-radius: 999px;
+      background: var(--cyan-soft);
+      color: var(--cyan);
+      font: 10.5px/1 var(--mono);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .status.ready { border-color: var(--green-border); background: var(--green-soft); color: var(--green); }
+    .status.missing, .status.outdated { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
+    .status.conflict { border-color: light-dark(rgba(185, 28, 28, 0.35), rgba(248, 113, 113, 0.35)); background: light-dark(rgba(185, 28, 28, 0.08), rgba(248, 113, 113, 0.1)); color: var(--red); }
+    code {
+      display: block;
+      margin-top: 4px;
+      overflow-wrap: anywhere;
+      color: var(--muted-3);
+      font: 11.5px/1.45 var(--mono);
+      user-select: text;
+    }
+    .path-label {
+      display: block;
+      margin-top: 10px;
+      color: var(--muted-2);
+      font: 10.5px/1 var(--mono);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .secondary {
+      appearance: none;
+      min-height: 28px;
+      padding: 4px 9px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--panel);
+      color: var(--muted-3);
+      font: 500 12px/1 var(--sans);
+      cursor: pointer;
+    }
+    .secondary:hover:not(:disabled) { border-color: var(--line-strong); background: var(--panel-hover); color: var(--fg); }
+    .secondary:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 2px; }
+    .secondary:disabled { cursor: wait; opacity: 0.55; }
+    @media (prefers-color-scheme: dark) {
+      .brand-light { display: none !important; }
+      .brand-dark { display: block !important; }
+    }
+    @media (max-width: 760px) {
+      .setup-shell { grid-template-columns: 1fr; gap: 34px; min-height: 0; padding: 36px; }
+      .setup-actions { padding-top: 20px; }
+      h1 { max-width: none; font-size: 38px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .primary { transition: none; }
+      .primary:hover:not(:disabled) { transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand" aria-label="AgentUse">
+      <img class="brand-light" src="assets/agentuse-wordmark-light.svg" alt="AgentUse">
+      <img class="brand-dark" src="assets/agentuse-wordmark-dark.svg" alt="AgentUse">
+    </span>
+    <span class="surface-label">Desktop app</span>
+  </header>
+
+  <main>
+    <section class="setup-shell" aria-labelledby="setup-title">
+      <div class="setup-copy">
+        <div class="eyebrow">Desktop setup</div>
+        <h1 id="setup-title">Set up AgentUse for Mac</h1>
+        <p class="lede">Choose whether AgentUse starts at login, and optionally add its bundled CLI launcher for Terminal.</p>
+      </div>
+
+      <div class="setup-options" aria-label="Desktop setup options">
+        <div class="setup-option">
+          <div class="option-heading">
+            <div>
+              <label class="option-title" for="launch-at-login">Launch AgentUse at login</label>
+              <span class="option-copy">Start quietly in the menu bar for schedules, approvals, and background runs.</span>
+            </div>
+            <span class="login-check">
+              <input id="launch-at-login" type="checkbox" checked>
+            </span>
+          </div>
+        </div>
+
+        <div class="setup-option">
+          <span class="option-title">Add CLI launcher <span class="optional">Optional</span></span>
+          <span class="option-copy" id="launcher-copy">Creates an agentuse command for Terminal. Make sure ~/.local/bin is in your PATH.</span>
+          <span class="path-label">Run in Terminal</span>
+          <code id="launcher-path">~/.local/bin/agentuse</code>
+          <div class="launcher-meta">
+            <span class="status missing" id="launcher-status"><span>Not added</span></span>
+            <button class="secondary" type="button" id="launcher-action">Add</button>
+          </div>
+        </div>
+
+        <div class="setup-actions">
+          <button class="primary" type="button" id="continue">Continue</button>
+          <p class="error" id="error" role="alert"></p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const setupBridge = window.agentuseSetup;
+    const loginToggle = document.getElementById("launch-at-login");
+    const launcherCopy = document.getElementById("launcher-copy");
+    const launcherStatus = document.getElementById("launcher-status");
+    const launcherStatusText = launcherStatus.querySelector("span");
+    const launcherPath = document.getElementById("launcher-path");
+    const launcherAction = document.getElementById("launcher-action");
+    const continueButton = document.getElementById("continue");
+    const errorText = document.getElementById("error");
+    let currentState = {
+      launcher: {
+        path: "~/.local/bin/agentuse",
+        status: "missing",
+        detail: "Creates an agentuse command for Terminal. Make sure ~/.local/bin is in your PATH.",
+      },
+    };
+
+    function render(state) {
+      currentState = state;
+      launcherPath.textContent = state.launcher.path.replace(/^\/Users\/[^/]+/, "~");
+      launcherStatus.className = `status ${state.launcher.status}`;
+      launcherStatusText.textContent = {
+        ready: "Available",
+        missing: "Not added",
+        outdated: "Needs repair",
+        conflict: "Path conflict",
+      }[state.launcher.status];
+      launcherCopy.textContent = state.launcher.detail;
+      launcherAction.hidden = state.launcher.status === "ready";
+      launcherAction.textContent = state.launcher.status === "outdated" ? "Repair" : state.launcher.status === "conflict" ? "Try again" : "Add";
+    }
+
+    async function refresh() {
+      if (!setupBridge) {
+        render(currentState);
+        return;
+      }
+      errorText.textContent = "";
+      render(await setupBridge.getState());
+    }
+
+    launcherAction.addEventListener("click", async () => {
+      if (!setupBridge) return;
+      launcherAction.disabled = true;
+      launcherAction.textContent = "Adding…";
+      errorText.textContent = "";
+      try {
+        render(await setupBridge.installCliLauncher());
+      } catch (error) {
+        errorText.textContent = error.message;
+        await refresh();
+      } finally {
+        launcherAction.disabled = false;
+      }
+    });
+
+    continueButton.addEventListener("click", async () => {
+      if (!setupBridge) return;
+      continueButton.disabled = true;
+      continueButton.textContent = "Opening…";
+      errorText.textContent = "";
+      try {
+        await setupBridge.complete(loginToggle.checked);
+      } catch (error) {
+        errorText.textContent = error.message;
+        continueButton.disabled = false;
+        continueButton.textContent = "Continue";
+      }
+    });
+
+    refresh().catch((error) => { errorText.textContent = error.message; });
+  </script>
+</body>
+</html>

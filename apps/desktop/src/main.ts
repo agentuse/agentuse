@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, Menu, Notification, shell, Tray, type Event } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell, Tray, type Event, type IpcMainInvokeEvent } from "electron";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
@@ -6,13 +6,21 @@ import { open } from "node:fs/promises";
 import { createServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
 import { pendingApprovalCount, pendingApprovalTitle, pendingApprovalTooltip, type ApprovalBucketsPayload } from "./approval-status";
+import { bundledCliCommand } from "./bundled-cli";
 import { createEditMenu, createNavigationMenu, createTrayMenu, type FindCommands, type NavigationCommands } from "./menus";
 import { parseNotificationFrames, type NativeNotificationEvent } from "./notification-stream";
 import { encodeNativeSettingsMessage, isNativeSettingsPipeClosure, parseNativeSettingsCommand, type NativeSettingsMessage } from "./native-settings";
+import {
+  clearPendingDesktopOnboardingLaunchAtLoginDefault,
+  desktopOnboardingStatePath,
+  hasDesktopOnboardingAppliedLaunchAtLoginDefault,
+  isDesktopOnboardingComplete,
+  markDesktopOnboardingComplete,
+} from "./onboarding-state";
 import { createDesktopQuitPolicy } from "./quit-policy";
 import { isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, selectServer, serverUrl, type RegisteredServer } from "./runtime";
 import { createAgentUseTrayIcon } from "./tray-icon";
-import { defaultCliLinkPath, inspectCliAvailability, loginShellPath, packagedCliLauncherPath, toggleCliLink } from "./cli-link";
+import { defaultCliLinkPath, inspectCliAvailability, loginShellPath, packagedCliLauncherPath, toggleCliLink, type CliLinkState } from "./cli-link";
 
 const require = createRequire(__filename);
 const APP_NAME = "AgentUse";
@@ -20,6 +28,7 @@ const STARTUP_TIMEOUT_MS = 15_000;
 const APPROVAL_POLL_INTERVAL_MS = 5_000;
 
 let window: BrowserWindow | undefined;
+let setupWindow: BrowserWindow | undefined;
 let settingsProcess: ChildProcess | undefined;
 let settingsOutputBuffer = "";
 let settingsCommandQueue = Promise.resolve();
@@ -50,6 +59,101 @@ function resolveUserLoginPath(): Promise<string> {
 function resolveCliPath(): string {
   if (process.env.AGENTUSE_CLI_PATH) return process.env.AGENTUSE_CLI_PATH;
   return require.resolve("agentuse/bin/cli.js");
+}
+
+function onboardingStateFile(): string {
+  return desktopOnboardingStatePath(app.getPath("userData"));
+}
+
+function onboardingCliLinkState(link: CliLinkState) {
+  return {
+    path: defaultCliLinkPath(),
+    status: link.status === "installed" || link.status === "external"
+      ? "ready" as const
+      : link.status === "notInstalled"
+        ? "missing" as const
+        : "conflict" as const,
+    detail: link.status === "notInstalled"
+      ? "Creates an agentuse command for Terminal. Make sure ~/.local/bin is in your PATH."
+      : link.detail,
+  };
+}
+
+async function desktopSetupState() {
+  const link = inspectCliAvailability(
+    defaultCliLinkPath(),
+    packagedCliLauncherPath(process.resourcesPath),
+    await resolveUserLoginPath(),
+  );
+  return {
+    launcher: onboardingCliLinkState(link),
+  };
+}
+
+function assertSetupSender(event: IpcMainInvokeEvent): void {
+  if (!setupWindow || setupWindow.isDestroyed() || event.sender.id !== setupWindow.webContents.id) {
+    throw new Error("This setup request did not come from the AgentUse setup window.");
+  }
+}
+
+function registerDesktopIpc(): void {
+  ipcMain.on("agentuse:desktop-context", (event) => {
+    if (!window || window.isDestroyed() || event.sender.id !== window.webContents.id) {
+      event.returnValue = undefined;
+      return;
+    }
+    event.returnValue = {
+      surface: "desktop",
+      cliCommand: bundledCliCommand(process.execPath, resolveCliPath()),
+      serveAlreadyRunning: true,
+    };
+  });
+  ipcMain.handle("agentuse:setup:get-state", async (event) => {
+    assertSetupSender(event);
+    return desktopSetupState();
+  });
+  ipcMain.handle("agentuse:setup:install-cli-launcher", async (event) => {
+    assertSetupSender(event);
+    const linkPath = defaultCliLinkPath();
+    const launcherPath = packagedCliLauncherPath(process.resourcesPath);
+    const loginPath = await resolveUserLoginPath();
+    const current = inspectCliAvailability(linkPath, launcherPath, loginPath);
+    if (current.status === "notInstalled") {
+      await toggleCliLink(linkPath, launcherPath, loginPath);
+    } else if (current.status !== "installed" && current.status !== "external") {
+      throw new Error(current.detail);
+    }
+    return desktopSetupState();
+  });
+  ipcMain.handle("agentuse:setup:complete", async (event, launchAtLogin: unknown) => {
+    assertSetupSender(event);
+    if (typeof launchAtLogin !== "boolean") throw new TypeError("Launch at Login must be enabled or disabled.");
+    app.setLoginItemSettings({
+      openAtLogin: launchAtLogin,
+      openAsHidden: launchAtLogin,
+      args: launchAtLogin ? ["--hidden"] : [],
+    });
+    await showDashboard();
+    await markDesktopOnboardingComplete(onboardingStateFile());
+    const completedWindow = setupWindow;
+    setupWindow = undefined;
+    completedWindow?.destroy();
+  });
+}
+
+async function isDesktopOnboardingReady(): Promise<boolean> {
+  return isDesktopOnboardingComplete(onboardingStateFile());
+}
+
+async function revertLegacyDesktopOnboardingDefault(): Promise<void> {
+  const statePath = onboardingStateFile();
+  if (!await hasDesktopOnboardingAppliedLaunchAtLoginDefault(statePath)) return;
+  if (!await clearPendingDesktopOnboardingLaunchAtLoginDefault(statePath)) return;
+  app.setLoginItemSettings({
+    openAtLogin: false,
+    openAsHidden: false,
+    args: [],
+  });
 }
 
 function setPendingApprovals(count: number): void {
@@ -279,6 +383,7 @@ function createWindow(): BrowserWindow {
     title: APP_NAME,
     show: false,
     webPreferences: {
+      preload: join(__dirname, "preload.cjs"),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
@@ -326,6 +431,62 @@ function createWindow(): BrowserWindow {
     callback({ requestHeaders: details.requestHeaders });
   });
   return browser;
+}
+
+function createSetupWindow(): BrowserWindow {
+  const browser = new BrowserWindow({
+    width: 860,
+    height: 660,
+    minWidth: 720,
+    minHeight: 620,
+    title: "Set up AgentUse for Mac",
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, "setup-preload.cjs"),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+    },
+  });
+  browser.on("close", (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      browser.hide();
+    }
+  });
+  browser.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  const guardNavigation = (event: Event, url: string) => {
+    if (url !== browser.webContents.getURL()) event.preventDefault();
+  };
+  browser.webContents.on("will-navigate", guardNavigation);
+  browser.webContents.on("will-redirect", guardNavigation);
+  browser.webContents.on("will-attach-webview", (event) => event.preventDefault());
+  browser.once("ready-to-show", () => {
+    browser.show();
+    browser.focus();
+  });
+  return browser;
+}
+
+async function showDesktopSetup(): Promise<void> {
+  if (process.platform === "darwin") await app.dock?.show();
+  if (!setupWindow || setupWindow.isDestroyed()) {
+    setupWindow = createSetupWindow();
+    await setupWindow.loadFile(join(__dirname, "onboarding.html"));
+  }
+  setupWindow.show();
+  setupWindow.focus();
+  refreshMenus();
+}
+
+async function showPrimaryWindow(): Promise<void> {
+  if (!await isDesktopOnboardingReady()) {
+    await revertLegacyDesktopOnboardingDefault();
+    await showDesktopSetup();
+    return;
+  }
+  await showDashboard();
 }
 
 async function removeDesktopSkipLink(browser: BrowserWindow): Promise<void> {
@@ -479,11 +640,15 @@ function showSettings(): void {
 }
 
 function toggleDashboard(): void {
+  if (setupWindow && !setupWindow.isDestroyed() && setupWindow.isVisible()) {
+    setupWindow.hide();
+    return;
+  }
   if (window && !window.isDestroyed() && window.isVisible()) {
     window.hide();
     return;
   }
-  void showDashboard();
+  void showPrimaryWindow();
 }
 
 async function readLogTail(logFile: string | undefined, maxBytes = 200_000): Promise<string> {
@@ -625,7 +790,7 @@ const findCommands: FindCommands = {
 
 function refreshTrayMenu(): void {
   trayMenu = Menu.buildFromTemplate(createTrayMenu({
-    showDashboard: () => void showDashboard(),
+    showDashboard: () => void showPrimaryWindow(),
     showSettings,
     quit: requestFullQuit,
   }));
@@ -694,11 +859,12 @@ if (!app.requestSingleInstanceLock()) {
   // replacing its bundle. Treat that as an explicit full quit so an owned
   // server gets the same graceful shutdown as the menu-bar Quit command.
   process.once("SIGTERM", requestFullQuit);
-  app.on("second-instance", () => void showDashboard());
+  app.on("second-instance", () => void showPrimaryWindow());
   app.on("before-quit", (event) => {
     if (!quitPolicy.shouldTerminate()) {
       event.preventDefault();
       window?.hide();
+      setupWindow?.hide();
       sendNativeSettingsMessage({ type: "hide" });
       if (process.platform === "darwin") app.dock?.hide();
       return;
@@ -714,17 +880,19 @@ if (!app.requestSingleInstanceLock()) {
       app.quit();
     });
   });
-  app.on("activate", () => void showDashboard());
+  app.on("activate", () => void showPrimaryWindow());
   app.whenReady().then(async () => {
+    registerDesktopIpc();
     createTray();
-    if (process.argv.includes("--hidden")) {
+    const onboardingReady = await isDesktopOnboardingReady();
+    if (process.argv.includes("--hidden") && onboardingReady) {
       await ensureServer();
       startApprovalPolling();
       startNotificationStream();
       refreshMenus();
       return;
     }
-    await showDashboard();
+    await showPrimaryWindow();
   }).catch((error: unknown) => {
     console.error("Could not open AgentUse desktop:", error);
     dialog.showErrorBox("AgentUse could not start", error instanceof Error ? error.message : String(error));

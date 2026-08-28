@@ -13,6 +13,27 @@ export interface DebugPromptContext {
   errorMessage?: string | undefined;
 }
 
+export interface OnboardingExecutionContext {
+  surface: 'web' | 'desktop';
+  cliCommand: string;
+  serveAlreadyRunning: boolean;
+}
+
+declare global {
+  interface Window {
+    agentuseDesktop?: {
+      surface: 'desktop';
+      cliCommand: string;
+      serveAlreadyRunning: true;
+    };
+  }
+}
+
+function currentOnboardingExecutionContext(): OnboardingExecutionContext | undefined {
+  if (typeof window === 'undefined' || !window.agentuseDesktop) return undefined;
+  return window.agentuseDesktop;
+}
+
 // The prompt a coding agent (Claude Code, Codex, etc.) receives when the user
 // wants to debug/fix/improve this run. It carries enough context to start
 // without back-and-forth: the /agentuse skill, the session id, and the exact
@@ -57,19 +78,33 @@ export function buildDebugPrompt(ctx: DebugPromptContext, detail = ''): string {
 }
 
 /** Ready-to-paste handoff from the demo session to a real project agent. */
-export function buildOnboardingPrompt(ctx: DebugPromptContext, detail = ''): string {
+export function buildOnboardingPrompt(
+  ctx: DebugPromptContext,
+  detail = '',
+  execution?: OnboardingExecutionContext,
+): string {
+  const cli = execution?.cliCommand ?? 'agentuse';
   const lines = [
     'Help me create my first AgentUse agent in this project.',
   ];
   if (ctx.projectId) lines.splice(1, 0, `Project: ${ctx.projectId}`);
   if (ctx.projectPath) lines.push(`Project directory: ${ctx.projectPath}`);
+  if (execution?.surface === 'desktop') {
+    lines.push(
+      '',
+      'For every AgentUse command, use this CLI bundled inside AgentUse Desktop. Do not substitute a package-manager installation or bare `agentuse`:',
+      `  ${cli}`,
+    );
+  }
   lines.push(
     '',
     'Load and follow the installed onboarding workflow:',
-    '  agentuse skills get onboarding --full',
+    `  ${cli} skills get onboarding --full`,
     '',
-    'The supplied project directory is authoritative. AgentUse serve is already running; do not change its project settings or restart it.',
-    'Before creating a file, run `agentuse provider list`. If no AgentUse runtime provider is configured, guide me through `agentuse provider login` and wait until it is ready. Use only a model from a confirmed provider.',
+    execution?.surface === 'desktop' && execution.serveAlreadyRunning
+      ? 'The supplied project directory is authoritative. AgentUse Desktop owns the running serve process; do not change its project settings, reconfigure it, or restart it.'
+      : 'The supplied project directory is authoritative. AgentUse serve is already running; do not change its project settings or restart it.',
+    `Before creating a file, run \`${cli} provider list\`. If no AgentUse runtime provider is configured, guide me through \`${cli} provider login\` and wait until it is ready. Use only a model from a confirmed provider.`,
   );
   if (detail.trim()) lines.push('', `The job I want to automate: ${detail.trim()}`);
   return lines.join('\n');
@@ -101,7 +136,7 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
       <SendToCodingAgentDialog
         open={open}
         buildPrompt={(detail) => onboarding
-          ? buildOnboardingPrompt(props.context, detail)
+          ? buildOnboardingPrompt(props.context, detail, currentOnboardingExecutionContext())
           : buildDebugPrompt(props.context, detail)}
         {...(onboarding ? {
           title: 'create your first agent',
