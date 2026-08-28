@@ -6,6 +6,7 @@ import { createServer, type AddressInfo } from "node:net";
 import { pendingApprovalCount, pendingApprovalTitle, pendingApprovalTooltip, type ApprovalBucketsPayload } from "./approval-status";
 import { createEditMenu, createNavigationMenu, type FindCommands, type NavigationCommands } from "./menus";
 import { parseNotificationFrames, type NativeNotificationEvent } from "./notification-stream";
+import { createDesktopQuitPolicy } from "./quit-policy";
 import { isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, selectServer, serverUrl, type RegisteredServer } from "./runtime";
 import { createAgentUseTrayIcon } from "./tray-icon";
 
@@ -30,6 +31,7 @@ let displayedPendingApprovals = 0;
 let approvalRefreshInFlight = false;
 let isQuitting = false;
 let quitInProgress = false;
+const quitPolicy = createDesktopQuitPolicy();
 
 function resolveCliPath(): string {
   if (process.env.AGENTUSE_CLI_PATH) return process.env.AGENTUSE_CLI_PATH;
@@ -317,6 +319,7 @@ function resetAutomaticInitialFocus(browser: BrowserWindow): void {
 }
 
 async function showDashboard(requestedUrl?: string): Promise<void> {
+  if (process.platform === "darwin") await app.dock?.show();
   if (currentServer) {
     const registered = listRegisteredServers().find((server) => server.pid === currentServer?.pid);
     if (!registered || await probeServer(serverUrl(registered), dashboardApiKey) !== "ready") {
@@ -354,7 +357,12 @@ async function openLogs(): Promise<void> {
   if (currentServer?.logFile) await shell.openPath(currentServer.logFile);
 }
 
-function runtimeMenuItems(): MenuItemConstructorOptions[] {
+function requestFullQuit(): void {
+  quitPolicy.requestFullQuit();
+  app.quit();
+}
+
+function runtimeMenuItems(quit: () => void): MenuItemConstructorOptions[] {
   const activeServer = currentServer && listRegisteredServers().find((server) => server.pid === currentServer?.pid);
   const status: MenuItemConstructorOptions = { label: `Runtime: ${runtimeStatus(activeServer)}`, enabled: false };
   return [
@@ -366,7 +374,7 @@ function runtimeMenuItems(): MenuItemConstructorOptions[] {
     { label: "Open in Browser", enabled: !!dashboardUrl && !dashboardApiKey, click: () => dashboardUrl && void shell.openExternal(dashboardUrl) },
     { label: "Open Logs", enabled: !!activeServer?.logFile, click: () => void openLogs() },
     { type: "separator" },
-    { label: "Quit AgentUse", accelerator: "Command+Q", click: () => app.quit() },
+    { label: "Quit AgentUse", accelerator: "Command+Q", click: quit },
   ];
 }
 
@@ -403,12 +411,14 @@ const findCommands: FindCommands = {
 };
 
 function refreshTrayMenu(): void {
-  trayMenu = Menu.buildFromTemplate(runtimeMenuItems());
+  trayMenu = Menu.buildFromTemplate(runtimeMenuItems(requestFullQuit));
 }
 
 function refreshApplicationMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: APP_NAME, submenu: runtimeMenuItems() },
+    // Command+Q and Dock Quit flow through before-quit without opting into a
+    // full termination. The menu-bar item's separate menu opts in explicitly.
+    { label: APP_NAME, submenu: runtimeMenuItems(() => app.quit()) },
     createEditMenu(findCommands),
     createNavigationMenu(navigationCommands),
   ]));
@@ -452,6 +462,12 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on("second-instance", () => void showDashboard());
   app.on("before-quit", (event) => {
+    if (!quitPolicy.shouldTerminate()) {
+      event.preventDefault();
+      window?.hide();
+      if (process.platform === "darwin") app.dock?.hide();
+      return;
+    }
     isQuitting = true;
     if (approvalPollTimer) clearInterval(approvalPollTimer);
     stopNotificationStream();
@@ -469,6 +485,6 @@ if (!app.requestSingleInstanceLock()) {
   }).catch((error: unknown) => {
     console.error("Could not open AgentUse desktop:", error);
     dialog.showErrorBox("AgentUse could not start", error instanceof Error ? error.message : String(error));
-    app.quit();
+    requestFullQuit();
   });
 }
