@@ -21,6 +21,7 @@ import { createDesktopQuitPolicy } from "./quit-policy";
 import { isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, selectServer, serverUrl, type RegisteredServer } from "./runtime";
 import { createAgentUseTrayIcon } from "./tray-icon";
 import { defaultCliLinkPath, inspectCliAvailability, loginShellPath, packagedCliLauncherPath, toggleCliLink, type CliLinkState } from "./cli-link";
+import { getProviderStatus } from "../../../src/auth/provider-status";
 
 const require = createRequire(__filename);
 const APP_NAME = "AgentUse";
@@ -96,6 +97,12 @@ function assertSetupSender(event: IpcMainInvokeEvent): void {
   }
 }
 
+function assertDashboardSender(event: IpcMainInvokeEvent): void {
+  if (!window || window.isDestroyed() || event.sender.id !== window.webContents.id) {
+    throw new Error("This request did not come from the AgentUse dashboard window.");
+  }
+}
+
 function registerDesktopIpc(): void {
   ipcMain.on("agentuse:desktop-context", (event) => {
     if (!window || window.isDestroyed() || event.sender.id !== window.webContents.id) {
@@ -104,9 +111,13 @@ function registerDesktopIpc(): void {
     }
     event.returnValue = {
       surface: "desktop",
-      cliCommand: bundledCliCommand(process.execPath, resolveCliPath()),
+      cliCommand: bundledCliCommand(process.execPath, resolveCliPath(), process.env),
       serveAlreadyRunning: true,
     };
+  });
+  ipcMain.handle("agentuse:desktop:get-provider-status", async (event) => {
+    assertDashboardSender(event);
+    return getProviderStatus();
   });
   ipcMain.handle("agentuse:setup:get-state", async (event) => {
     assertSetupSender(event);

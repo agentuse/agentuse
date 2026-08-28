@@ -2,7 +2,29 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-/** A shell-ready command that runs the CLI packaged inside AgentUse.app. */
-export function bundledCliCommand(electronExecutable: string, cliEntry: string): string {
-  return `env ELECTRON_RUN_AS_NODE=1 ${shellQuote(electronExecutable)} ${shellQuote(cliEntry)}`;
+const RUNTIME_PATH_ENV = ["HOME", "XDG_DATA_HOME", "AGENTUSE_CONFIG"] as const;
+
+/**
+ * A shell-ready command that runs the CLI packaged inside AgentUse.app.
+ *
+ * Carry only the non-secret paths that decide which AgentUse profile the CLI
+ * reads. This keeps a coding-agent handoff attached to the same credential
+ * store and config as Desktop without copying API keys into the prompt.
+ */
+export function bundledCliCommand(
+  electronExecutable: string,
+  cliEntry: string,
+  runtimeEnv: NodeJS.ProcessEnv = {},
+): string {
+  const pathAssignments = RUNTIME_PATH_ENV.flatMap((name) => {
+    const value = runtimeEnv[name];
+    return value ? [`${name}=${shellQuote(value)}`] : [];
+  });
+  return [
+    "env",
+    ...pathAssignments,
+    "ELECTRON_RUN_AS_NODE=1",
+    shellQuote(electronExecutable),
+    shellQuote(cliEntry),
+  ].join(" ");
 }
