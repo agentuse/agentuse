@@ -59,6 +59,7 @@ let quitInProgress = false;
 let quitConfirmationInFlight = false;
 let serverOperation: "starting" | "stopping" | undefined;
 let serverAcquisition: Promise<void> | undefined;
+let dashboardPresentationQueue = Promise.resolve();
 let userLoginPath: Promise<string> | undefined;
 let desktopSetupStartedAt: number | undefined;
 let desktopCliLauncherAdded = false;
@@ -650,7 +651,15 @@ async function prepareDesktopDocument(browser: BrowserWindow): Promise<void> {
   })()`).catch(() => {});
 }
 
-async function showDashboard(requestedUrl?: string): Promise<void> {
+function showDashboard(requestedUrl?: string): Promise<void> {
+  const presentation = dashboardPresentationQueue
+    .catch(() => {})
+    .then(() => presentDashboard(requestedUrl));
+  dashboardPresentationQueue = presentation;
+  return presentation;
+}
+
+async function presentDashboard(requestedUrl?: string): Promise<void> {
   if (process.platform === "darwin") await app.dock?.show();
   if (currentServer) {
     const registered = listRegisteredServers().find((server) => server.pid === currentServer?.pid);
