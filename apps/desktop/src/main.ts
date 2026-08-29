@@ -612,16 +612,33 @@ async function prepareDesktopDocument(browser: BrowserWindow): Promise<void> {
 
     let brandWasFocusedBeforeBlur = false;
     const brandIsFocused = () => document.activeElement?.matches?.('.topbar .brand') === true;
+    const desktopFocusSink = () => {
+      let sink = document.querySelector('[data-agentuse-desktop-focus-sink]');
+      if (sink instanceof HTMLElement) return sink;
+      sink = document.createElement('div');
+      sink.setAttribute('data-agentuse-desktop-focus-sink', '');
+      sink.setAttribute('role', 'presentation');
+      sink.tabIndex = -1;
+      Object.assign(sink.style, {
+        position: 'fixed',
+        width: '1px',
+        height: '1px',
+        inset: '0 auto auto 0',
+        opacity: '0',
+        overflow: 'hidden',
+        pointerEvents: 'none',
+        outline: 'none',
+      });
+      document.body.prepend(sink);
+      return sink;
+    };
     const repairAccidentalBrandFocus = () => {
       requestAnimationFrame(() => {
         if (!brandIsFocused() || brandWasFocusedBeforeBlur) {
           brandWasFocusedBeforeBlur = false;
           return;
         }
-        const main = document.querySelector('main');
-        if (!(main instanceof HTMLElement)) return;
-        if (!main.hasAttribute('tabindex')) main.setAttribute('tabindex', '-1');
-        main.focus({ preventScroll: true });
+        desktopFocusSink().focus({ preventScroll: true });
       });
     };
 
