@@ -562,13 +562,80 @@ private struct LogsSettingsView: View {
 
 private struct AboutSettingsView: View {
     @ObservedObject var model: SettingsModel
+    @State private var showsErrorDetails = false
+
+    private var updateVersion: String {
+        model.state.updateAvailableVersion ?? "the latest version"
+    }
+
+    private var statusTitle: String {
+        switch model.state.updateStatus {
+        case "checking": "Checking for updates…"
+        case "upToDate": "You’re up to date"
+        case "available": "AgentUse \(updateVersion) is available"
+        case "downloading": "Downloading AgentUse \(updateVersion)"
+        case "ready": "Ready to install"
+        case "error": "Unable to check for updates"
+        default: "Software Updates"
+        }
+    }
+
+    private var statusDetail: String {
+        switch model.state.updateStatus {
+        case "checking": "This should only take a moment."
+        case "upToDate": "Updates are checked automatically."
+        case "available": "Download the update when you’re ready."
+        case "downloading": "\(model.state.updateProgress ?? 0)% complete"
+        case "ready": "AgentUse \(updateVersion) has been downloaded. The app will restart to finish installing."
+        case "error": "Check your internet connection and try again."
+        default: model.state.updateDetail
+        }
+    }
+
+    private var statusSymbol: String {
+        switch model.state.updateStatus {
+        case "upToDate": "checkmark.circle.fill"
+        case "available", "downloading": "arrow.down.circle.fill"
+        case "ready": "arrow.clockwise.circle.fill"
+        case "error": "exclamationmark.triangle.fill"
+        default: "arrow.triangle.2.circlepath"
+        }
+    }
 
     private var statusColor: Color {
         switch model.state.updateStatus {
-        case "available", "ready": .accentColor
+        case "available", "downloading", "ready": .accentColor
         case "error": .red
         case "upToDate": .green
         default: .secondary
+        }
+    }
+
+    @ViewBuilder
+    private var updateAction: some View {
+        switch model.state.updateStatus {
+        case "upToDate":
+            Button("Check Again") {
+                model.performUpdateAction()
+            }
+            .buttonStyle(.link)
+            .disabled(model.state.updateActionDisabled || model.actionInFlight)
+        case "available", "ready":
+            Button(model.state.updateActionLabel) {
+                model.performUpdateAction()
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+            .disabled(model.state.updateActionDisabled || model.actionInFlight)
+        case "checking", "downloading", "unavailable":
+            EmptyView()
+        default:
+            Button(model.state.updateStatus == "error" ? "Try Again" : model.state.updateActionLabel) {
+                model.performUpdateAction()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
+            .disabled(model.state.updateActionDisabled || model.actionInFlight)
         }
     }
 
@@ -592,28 +659,50 @@ private struct AboutSettingsView: View {
                     .textSelection(.enabled)
             }
 
-            VStack(spacing: 10) {
-                HStack(spacing: 7) {
-                    if model.state.updateStatus == "checking" || model.state.updateStatus == "downloading" {
+            VStack(spacing: 12) {
+                HStack(spacing: 8) {
+                    if model.state.updateStatus == "checking" {
                         ProgressView()
                             .controlSize(.small)
                     } else {
-                        Circle()
-                            .fill(statusColor)
-                            .frame(width: 8, height: 8)
+                        Image(systemName: statusSymbol)
+                            .foregroundStyle(statusColor)
                             .accessibilityHidden(true)
                     }
-                    Text(model.state.updateDetail)
-                        .font(.caption)
-                        .foregroundStyle(model.state.updateStatus == "error" ? .red : .secondary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(statusTitle)
+                        .font(.callout)
+                        .fontWeight(.medium)
                 }
 
-                Button(model.state.updateActionLabel) {
-                    model.performUpdateAction()
+                Text(statusDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if model.state.updateStatus == "downloading" {
+                    ProgressView(value: Double(model.state.updateProgress ?? 0), total: 100)
+                        .progressViewStyle(.linear)
+                        .frame(width: 220)
                 }
-                .disabled(model.state.updateActionDisabled || model.actionInFlight)
+
+                updateAction
+
+                if model.state.updateStatus == "error" {
+                    DisclosureGroup("Show Details", isExpanded: $showsErrorDetails) {
+                        ScrollView {
+                            Text(model.state.updateDetail)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(height: 72)
+                        .padding(.top, 4)
+                    }
+                    .font(.caption)
+                    .frame(maxWidth: 320)
+                }
             }
             .frame(maxWidth: 360)
 

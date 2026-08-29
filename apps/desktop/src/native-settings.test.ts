@@ -71,6 +71,10 @@ describe("native settings packaged metadata", () => {
     expect(source).toContain('case "available": command = "downloadUpdate"');
     expect(source).toContain('case "ready": command = "installUpdate"');
     expect(source).toContain('default: command = "checkForUpdates"');
+    expect(source).toContain('case "upToDate": "You’re up to date"');
+    expect(source).toContain('Button("Check Again")');
+    expect(source).toContain('ProgressView(value: Double(model.state.updateProgress ?? 0), total: 100)');
+    expect(source).toContain('DisclosureGroup("Show Details"');
   });
 });
 
