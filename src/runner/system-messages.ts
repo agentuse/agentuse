@@ -260,7 +260,9 @@ ${mountList}
  * Result from building learning prompt
  */
 export interface LearningPromptResult {
-  prompt: string;
+  /** Prompt text to inject. Absent when stored active rules exist but all are
+   * held out (for example because every rule is stale). */
+  prompt?: string;
   /** Learnings injected into this prompt. */
   count: number;
   /** ACTIVE learnings in the file, injected and dormant together. Reported
@@ -325,7 +327,14 @@ async function renderLearningPrompt(
     const active = injected.length + dormant.length + staleIds.size;
 
     if (injected.length === 0) {
-      return undefined;
+      if (active === 0) return undefined;
+      if (recordUsage && staleIds.size > 0) {
+        logger.warn(
+          `[Learning] All ${staleIds.size} active learning(s) are stale because the agent instructions changed; `
+          + `none were injected. Re-vet them with: agentuse learnings tidy ${agentFilePath}`
+        );
+      }
+      return { count: 0, total: active, injectedIds: [], cap, stale: staleIds.size };
     }
 
     // Keep the injected store distinct from the graduated block in the agent

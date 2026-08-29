@@ -113,8 +113,10 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       agentFilePath,
       projectContext?.stateRoot ?? findProjectRoot(agentFilePath),
     );
-    if (learningResult) {
+    if (learningResult?.prompt) {
       resolvedInstructions = `${resolvedInstructions}\n\n${learningResult.prompt}`;
+    }
+    if (learningResult) {
       learningsApplied = learningResult.count;
       learningsStored = learningResult.total;
       learningsCap = learningResult.cap;

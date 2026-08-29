@@ -38,7 +38,7 @@ import { registerServer, unregisterServer, updateServer, listServers, formatUpti
 import { acquireSchedulerLock, releaseSchedulerLock } from "../utils/scheduler-lock";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, applyGlobalConfigEnv, expandHome, getGlobalConfigPath, getGlobalEnvPath, getManagedProjectsRoot, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
-import { createManagedProject, ManagedProjectError } from "../utils/managed-project";
+import { createManagedProjectTransaction, ManagedProjectError } from "../utils/managed-project";
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
 import { getSlackWebClient } from "../slack/lifecycle";
 import { saveManualLearning, LearningStore, effectiveCap, partitionLearnings, consolidateLearnings, undoConsolidation, readTidyRecord, writeTidyRecord, clearTidyRecord, strandedLearningsFile, type LearningConfig, type ConsolidationResult, type TidyProgress } from "../learning";
@@ -3454,8 +3454,8 @@ export function createServeCommand(): Command {
       }
 
       /** Attach the first managed project without restarting the daemon. The
-       * directory and config entry are created by the request handler first. */
-      const attachManagedProject = async (id: string, projectRoot: string): Promise<Project> => {
+       * request handler persists its config entry only after this succeeds. */
+      const attachManagedProject = async (id: string, projectRoot: string): Promise<{ project: Project; rollback: () => Promise<void> }> => {
         const envLocal = resolve(projectRoot, '.env.local');
         const seed: Omit<Project, 'agentFiles'> = {
           id,
@@ -3464,21 +3464,47 @@ export function createServeCommand(): Command {
           envFile: existsSync(envLocal) ? envLocal : resolve(projectRoot, '.env'),
         };
         await initStorage(projectRoot);
-        await spawnProjectWorker(seed);
+        const worker = await spawnProjectWorker(seed);
         const project: Project = { ...seed, agentFiles: [] };
-        projectSeeds.push(seed);
-        projects.push(project);
-        projectsById.set(id, project);
-        agentCounts.set(id, 0);
-        pathSeen.set(projectRoot, id);
-        idSeen.set(id, projectRoot);
-        multiProject = projects.length > 1;
-        if (projects.length === 1) effectiveDefault = undefined;
-        watchProject(project);
-        updateRegistryCounts();
-        orphanReconcileLoop.runNow();
-        logger.info(`Project ${id}: ${projectRoot}`);
-        return project;
+        let watcher: FileWatcher | undefined;
+        const rollback = async (): Promise<void> => {
+          if (watcher) {
+            await watcher.close().catch(() => {});
+            const watcherIndex = fileWatchers.indexOf(watcher);
+            if (watcherIndex >= 0) fileWatchers.splice(watcherIndex, 1);
+          }
+          worker.shutdown();
+          workers.delete(id);
+          workerReadyAt.delete(id);
+          const seedIndex = projectSeeds.indexOf(seed);
+          if (seedIndex >= 0) projectSeeds.splice(seedIndex, 1);
+          const projectIndex = projects.indexOf(project);
+          if (projectIndex >= 0) projects.splice(projectIndex, 1);
+          projectsById.delete(id);
+          agentCounts.delete(id);
+          pathSeen.delete(projectRoot);
+          idSeen.delete(id);
+          multiProject = projects.length > 1;
+          updateRegistryCounts();
+        };
+        try {
+          projectSeeds.push(seed);
+          projects.push(project);
+          projectsById.set(id, project);
+          agentCounts.set(id, 0);
+          pathSeen.set(projectRoot, id);
+          idSeen.set(id, projectRoot);
+          multiProject = projects.length > 1;
+          if (projects.length === 1) effectiveDefault = undefined;
+          watcher = watchProject(project);
+          updateRegistryCounts();
+          orphanReconcileLoop.runNow();
+          logger.info(`Project ${id}: ${projectRoot}`);
+          return { project, rollback };
+        } catch (error) {
+          await rollback();
+          throw error;
+        }
       };
 
       const resolveRequestProject = (body: RunRequest): { project: Project } | { error: { status: number; code: string; message: string; extra?: Record<string, unknown> } } => {
@@ -6989,8 +7015,16 @@ export function createServeCommand(): Command {
           projectCreationInFlight = true;
           try {
             const body = await parseJSONBody(req);
-            const managed = await createManagedProject(body.name);
-            const project = await attachManagedProject(managed.id, managed.root);
+            // Runtime attachment is staged before config registration. A failed
+            // worker or watcher startup therefore leaves neither a phantom
+            // config entry nor a directory that blocks retry.
+            const { managed, value: project } = await createManagedProjectTransaction(
+              body.name,
+              async (staged) => {
+                const attached = await attachManagedProject(staged.id, staged.root);
+                return { value: attached.project, rollback: attached.rollback };
+              },
+            );
 
             sendJSON(res, 201, {
               success: true,

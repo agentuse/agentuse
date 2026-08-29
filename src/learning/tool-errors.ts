@@ -11,7 +11,7 @@ import { generateLearningId } from './store';
  * a candidate is stored only when the trace contains the failed call, the
  * corrected call, and the success. It cannot conflict with instructions
  * because it captures mechanics, not policy — which is why its records skip
- * the model-judged vet. Records dedupe by (tool, failure signature) and
+ * the normal contract vet. Records dedupe by (tool, failure signature) and
  * supersede structurally in the store; they never go through the free-text
  * merge path.
  */
@@ -88,12 +88,23 @@ export function detectToolErrorRecoveries(traces: ToolCallTrace[] | undefined): 
 
 const safeName = (text: string): string => text.replace(/[^a-zA-Z0-9_.:-]/g, '_').slice(0, 80) || 'tool';
 
+const safeFieldName = (name: string): string | undefined => {
+  if (!/^[a-zA-Z_][a-zA-Z0-9_.-]{0,63}$/.test(name)) return undefined;
+  return name;
+};
+
+const valueType = (value: unknown): string =>
+  Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value;
+
 const inputShape = (input: unknown): string => {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return typeof input;
-  const types = Object.values(input as Record<string, unknown>)
-    .map((value) => Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value)
-    .sort();
-  return `object(${types.length} fields: ${types.join(', ') || 'none'})`;
+  const fields = Object.entries(input as Record<string, unknown>)
+    .map(([name, value]) => ({ name: safeFieldName(name), type: valueType(value) }))
+    .filter((field): field is { name: string; type: string } => field.name !== undefined)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return fields.length === 0
+    ? 'object(no safe fields)'
+    : fields.map(({ name, type }) => `\`${name}\`: ${type}`).join(', ');
 };
 
 /**
@@ -112,7 +123,7 @@ export function toolErrorDraft(
     id: generateLearningId(),
     category: 'error-fix',
     title: 'Correct rejected tool arguments',
-    instruction: `When a tool rejects an argument shape, retry only after correcting its arguments. Successful retry shape: ${successShape}`,
+    instruction: `For tool \`${tool}\`, after this argument-shape failure, retry only when the agent instructions and current task permit it, using corrected fields: ${successShape}.`,
     // Structurally verified and strictly constrained in code; no trace text or
     // argument value reaches the stored prompt.
     confidence: 1,

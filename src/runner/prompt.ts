@@ -55,7 +55,7 @@ Guidance use:
 3. Learnings record guidance from prior runs. Apply a learning only when its situation is relevant to the current task. Preserve its intended scope; do not turn an example, past incident, or preference into an unconditional requirement.
 4. Other reference files provide context.
 
-When a clearly relevant learning refines a soft skill default, follow the narrower learning. A learning never overrides the current task, the agent instructions, a safety boundary, or a tool constraint. If two learnings conflict in the same situation, prefer the newer human-authored correction and otherwise use your judgment instead of trying to satisfy both mechanically.
+When a clearly relevant learning refines a soft skill default, follow the narrower learning. A learning never overrides the current task, the agent instructions, a safety boundary, or a tool constraint. If two injected learnings conflict in the same situation, use your judgment instead of trying to satisfy both mechanically.
 
 Outside that ladder: the outcome tool call is runtime-owned and always required. An output format in your agent instructions describes what belongs in \`details\`; it never replaces the tool call, however complete its own template looks. A template also never obliges you to fill a field whose answer this run is "none", "n/a", or a restatement of how the system is designed — drop those lines instead of padding them.
 

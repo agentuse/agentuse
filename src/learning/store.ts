@@ -653,13 +653,23 @@ export class LearningStore {
       );
       if (idx >= 0) {
         const prior = existing[idx]!;
-        const { sessionId: _priorSessionId, ...priorWithoutSession } = prior;
+        const {
+          sessionId: _priorSessionId,
+          tool: _priorTool,
+          failureSignature: _priorFailureSignature,
+          evidence: _priorEvidence,
+          quarantineReason: _priorQuarantineReason,
+          instructionsHash: _priorInstructionsHash,
+          ...priorWithoutChannelMetadata
+        } = prior;
         existing[idx] = {
-          ...priorWithoutSession,
+          ...priorWithoutChannelMetadata,
           category: draft.category,
           title: draft.title,
           instruction: draft.instruction,
           source: 'manual',
+          channel: draft.channel ?? 'corrections',
+          ...(draft.instructionsHash ? { instructionsHash: draft.instructionsHash } : {}),
           confidence: 1,
           extractedAt: draft.extractedAt,
           // The re-asserting session owns the rule now (or none, for an

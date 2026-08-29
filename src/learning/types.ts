@@ -212,6 +212,9 @@ export interface LearningOutcome {
   detail?: string;     // error message when status is 'failed'
   /** Per-channel counts for this pass. Absent when the pass never ran. */
   channels?: Partial<Record<LearningChannel, ChannelCounts>>;
+  /** Producer/vet failures isolated to one channel. Other channels may still
+   * capture successfully in the same pass. */
+  channelErrors?: Partial<Record<LearningChannel, string>>;
   /** Candidates quarantined this pass, re-vetted stored entries included. */
   quarantined?: number;
 }

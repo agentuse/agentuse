@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { FIRST_PROJECT_DEFAULT_NAME, managedProjectSlug, terminalFirstAgentPrompt, validateManagedProjectName } from '../src/onboarding';
 import { getManagedProjectsRoot } from '../src/utils/global-config';
-import { createManagedProject } from '../src/utils/managed-project';
+import { createManagedProject, createManagedProjectTransaction, rollbackManagedProject } from '../src/utils/managed-project';
 import { createSetupCommand, resolveSetupSurface, webSetupServeArgs } from '../src/cli/setup';
 
 describe('managed onboarding projects', () => {
@@ -54,6 +54,37 @@ describe('managed onboarding projects', () => {
     const first = await createManagedProject('my-agents', { configPath });
     expect(first.root).toBe(projectRoot);
     await expect(createManagedProject('my-agents', { configPath })).rejects.toThrow('already exists');
+  });
+
+  it('can stage an unregistered project and roll it back after attachment failure', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agentuse-onboarding-'));
+    roots.push(root);
+    const configPath = join(root, 'config.json');
+    writeFileSync(configPath, JSON.stringify({ serve: { projects: [] } }));
+
+    const created = await createManagedProject('my-agents', { configPath, register: false });
+
+    expect(existsSync(created.root)).toBe(true);
+    expect(JSON.parse(readFileSync(configPath, 'utf8')).serve.projects).toEqual([]);
+    await rollbackManagedProject(created);
+    expect(existsSync(created.root)).toBe(false);
+  });
+
+  it('rolls back files and config when runtime attachment rejects', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agentuse-onboarding-'));
+    roots.push(root);
+    const configPath = join(root, 'config.json');
+    writeFileSync(configPath, JSON.stringify({ serve: { projects: [] } }));
+    const projectRoot = join(getManagedProjectsRoot(configPath), 'my-agents');
+
+    await expect(createManagedProjectTransaction(
+      'my-agents',
+      async () => { throw new Error('worker startup rejected'); },
+      { configPath },
+    )).rejects.toThrow('worker startup rejected');
+
+    expect(existsSync(projectRoot)).toBe(false);
+    expect(JSON.parse(readFileSync(configPath, 'utf8')).serve.projects).toEqual([]);
   });
 
   it('selects browser or terminal setup without guessing in non-interactive shells', () => {

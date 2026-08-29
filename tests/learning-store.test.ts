@@ -12,6 +12,7 @@ import type { Learning } from "../src/learning/types";
 import { saveManualLearning } from "../src/learning";
 import { getProjectDir, getProjectDirSync } from "../src/storage/paths";
 import { buildLearningPrompt, previewLearningPrompt } from "../src/runner/system-messages";
+import { hashInstructions } from "../src/learning/contract";
 
 const baseLearning: Learning = {
   id: "learn001",
@@ -997,6 +998,46 @@ Always wait for explicit approval before publishing.
       await store.upsertManual(note({ supersedes: "prior001" }));
 
       expect(readFileSync(store.filePath, "utf-8")).not.toContain("supersedes");
+    });
+
+    it("refreshes stale provenance and clears tool-error metadata on a manual reassertion", async () => {
+      await store.save([{
+        ...priorNote("prior001", "Use the publish slug when sending a post"),
+        source: "auto",
+        channel: "tool-errors",
+        instructionsHash: "old-contract",
+        tool: "publish",
+        failureSignature: "deadbeef1234",
+        evidence: "old structural evidence",
+        quarantineReason: "old reason",
+      }]);
+
+      await store.upsertManual(note({
+        instruction: "Use the publish slug when sending a post",
+        channel: "corrections",
+        instructionsHash: hashInstructions("Do work."),
+      }));
+
+      const [updated] = await store.load();
+      expect(updated?.source).toBe("manual");
+      expect(updated?.channel).toBe("corrections");
+      expect(updated?.instructionsHash).toBe(hashInstructions("Do work."));
+      expect(updated?.tool).toBeUndefined();
+      expect(updated?.failureSignature).toBeUndefined();
+      expect(updated?.evidence).toBeUndefined();
+      expect(updated?.quarantineReason).toBeUndefined();
+
+      const nextRun = await buildLearningPrompt({
+        name: "blog",
+        instructions: "Do work.",
+        config: {
+          model: "demo:test",
+          skills: { auto: false, trusted: false, explicit: {} },
+          learning: { capture: { addons: [] }, apply: true },
+        },
+      } as never, agentFile, projectRoot);
+      expect(nextRun?.prompt).toContain("Use the publish slug when sending a post");
+      expect(nextRun?.stale).toBe(0);
     });
   });
 

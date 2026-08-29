@@ -287,7 +287,7 @@ describe("extractLearnings", () => {
     expect(existsSync(learningsPath)).toBe(false);
   });
 
-  it("captures a tool-error recovery structurally, with no model call", async () => {
+  it("captures a structurally detected tool-error recovery after contract vetting", async () => {
     const traced: AgentCompleteEvent = {
       ...event,
       result: {
@@ -315,15 +315,56 @@ describe("extractLearnings", () => {
       config: { capture: { addons: ["tool-errors"] }, apply: false },
     });
 
-    // Structurally verified in code — the trace holds the failure, the corrected
-    // call and the success — so this channel never asks a model anything.
-    expect(completeTextMock).not.toHaveBeenCalled();
+    // Structural detection establishes that the recovery happened; the
+    // standing guidance still passes the contract vet before storage.
+    expect(completeTextMock).toHaveBeenCalledTimes(1);
     expect(outcome.status).toBe("captured");
     expect(outcome.channels?.["tool-errors"]).toEqual({ captured: 1, vettedOut: 0, quarantined: 0 });
     const raw = readFileSync(learningsPath, "utf-8");
     expect(raw).toContain("ch:tool-errors");
     expect(raw).toContain("tool:publish");
     expect(raw).toContain("<!-- evidence: ");
+  });
+
+  it("keeps a typed recovery when the independent custom producer fails", async () => {
+    const traced: AgentCompleteEvent = {
+      ...event,
+      result: {
+        ...event.result,
+        toolCalls: 2,
+        toolCallTraces: [
+          {
+            name: "publish", type: "tool", startTime: 0, duration: 5, success: false,
+            input: { path: "post.md" }, output: "Error: missing required field 'slug'",
+          },
+          {
+            name: "publish", type: "tool", startTime: 1, duration: 5, success: true,
+            input: { path: "post.md", slug: "post" }, output: "ok",
+          },
+        ],
+      },
+    };
+    completeTextMock.mockImplementation(async (_model: string, opts: { prompt: string }) => {
+      if (isVetPrompt(opts.prompt)) return vetAllPass(opts.prompt);
+      throw new Error("custom evaluator unavailable");
+    });
+
+    const outcome = await extractLearnings({
+      event: traced,
+      agentInstructions: INSTRUCTIONS,
+      agentModel: "gpt-4",
+      agentFilePath,
+      stateRoot: tempDir,
+      config: {
+        capture: { addons: ["tool-errors"], custom: "Record useful execution patterns" },
+        apply: false,
+      },
+    });
+
+    expect(outcome.status).toBe("captured");
+    expect(outcome.channelErrors?.custom).toContain("custom evaluator unavailable");
+    expect(outcome.channels?.["tool-errors"]?.captured).toBe(1);
+    expect(readFileSync(learningsPath, "utf-8")).toContain("tool:publish");
   });
 
   it("re-vets a stored rule that predates contract hashing and stamps it", async () => {

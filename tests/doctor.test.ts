@@ -5,6 +5,8 @@ import { tmpdir } from 'os';
 import { runDoctor } from '../src/cli/doctor';
 import { getSessionStorageDir } from '../src/storage/paths';
 import type { Message, SessionInfo, ToolPart } from '../src/session/types';
+import { LearningStore } from '../src/learning/store';
+import { hashInstructions } from '../src/learning/contract';
 
 describe('agentuse doctor', () => {
   let testDir: string;
@@ -328,6 +330,38 @@ Do the task.`);
     expect(output).toContain('visible: 0');
     expect(output).toContain('estimated catalog: ~0 tokens/model request');
     expect(output).toMatch(/total: ~\d+ tokens\/model request/);
+  });
+
+  it('reports an all-stale learning store and a concrete tidy action', async () => {
+    const agentPath = join(testDir, 'stale.agentuse');
+    await writeFile(agentPath, `---
+name: Stale Learning Agent
+model: demo:test
+learning: true
+---
+
+Do the current task.`);
+    await LearningStore.fromAgentFile(agentPath, testDir).save([{
+      id: 'stale001',
+      category: 'tip',
+      title: 'Old contract rule',
+      instruction: 'Follow guidance from the old contract.',
+      confidence: 1,
+      injectedCount: 0,
+      extractedAt: '2026-01-01T00:00:00.000Z',
+      source: 'manual',
+      channel: 'corrections',
+      instructionsHash: hashInstructions('Different instructions.'),
+      reasserted: 0,
+      approvedRuns: 0,
+    }]);
+
+    await runDoctor(agentPath);
+
+    const output = logs.join('\n');
+    expect(output).toContain('learned guidelines: 0 of 1 applied');
+    expect(output).toContain('1 learning is stale');
+    expect(output).toContain(`agentuse learnings tidy ${agentPath}`);
   });
 
   it('warns when open discovery makes the skill catalog expensive', async () => {

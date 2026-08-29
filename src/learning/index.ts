@@ -45,7 +45,8 @@ export interface ExtractLearningsOptions {
  *    checkbox, --remember, or manual add. An ordinary approval comment only
  *    revises the current run and never enters durable memory implicitly.
  * 2. tool-errors (addon): failure→recovery pairs detected structurally in the
- *    trace, in code. No model judgment involved in whether one is real.
+ *    trace, in code. Detection is deterministic; the resulting standing rule
+ *    still passes the contract vet before it can become active.
  * 3. custom / agent (opt-in): free-form observation capture, via the built-in
  *    evaluator scoped by the guidance text, or a replacement evaluator agent.
  *
@@ -97,6 +98,7 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
     // ---- Gather candidates per channel -------------------------------------
     const drafts: LearningDraft[] = [];
     const channelOf = new Map<string, LearningChannel>();
+    const channelErrors: Partial<Record<LearningChannel, string>> = {};
     const collect = (list: LearningDraft[], fallback: LearningChannel) => {
       for (const d of list) {
         d.channel = d.channel ?? fallback;
@@ -112,44 +114,56 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
     // feedback durable only through Learn/--remember; `custom` is the separate,
     // explicit opt-in for having a model observe executions automatically.
     if (freeformCustom !== undefined) {
-      const evaluated = await evaluateExecution({
-        event,
-        agentInstructions,
-        model,
-        freeform: { guidance: freeformCustom },
-        existingLearnings: active,
-        capacity: { cap },
-      });
-      collect(evaluated, 'custom'); // evaluator stamps corrections/custom itself
+      try {
+        const evaluated = await evaluateExecution({
+          event,
+          agentInstructions,
+          model,
+          freeform: { guidance: freeformCustom },
+          existingLearnings: active,
+          capacity: { cap },
+        });
+        collect(evaluated, 'custom'); // evaluator stamps corrections/custom itself
+      } catch (error) {
+        channelErrors.custom = (error as Error).message;
+        logger.warn(`[Learning] Custom capture failed: ${channelErrors.custom}`);
+      }
     }
 
     // Replacement evaluator agent: free-form candidates only. Explicit human
     // learnings stay on the Learn/--remember path and never depend on this agent.
     if (freeformAgent !== undefined) {
-      const { captureViaAgent } = await import('./capture-agent.js');
-      const agentDrafts = await captureViaAgent({
-        event,
-        captureAgentPath: freeformAgent,
-        agentFilePath,
-        projectContext: {
-          projectRoot: options.projectRoot ?? dirname(agentFilePath),
-          stateRoot: options.stateRoot,
-          cwd: process.cwd(),
-        },
-        existingLearnings: active,
-        cap,
-      });
-      collect(agentDrafts, 'agent');
+      try {
+        const { captureViaAgent } = await import('./capture-agent.js');
+        const agentDrafts = await captureViaAgent({
+          event,
+          captureAgentPath: freeformAgent,
+          agentFilePath,
+          projectContext: {
+            projectRoot: options.projectRoot ?? dirname(agentFilePath),
+            stateRoot: options.stateRoot,
+            cwd: process.cwd(),
+          },
+          existingLearnings: active,
+          cap,
+        });
+        collect(agentDrafts, 'agent');
+      } catch (error) {
+        channelErrors.agent = (error as Error).message;
+        logger.warn(`[Learning] Capture agent failed: ${channelErrors.agent}`);
+      }
     }
 
-    // Typed channel: structurally verified in code, no model judgment. These
-    // skip the model vet — they capture mechanics, not policy.
+    // Typed channel: structurally verified in code. Detection needs no model,
+    // but the resulting durable guidance still passes the contract vet because
+    // a successful retry does not prove retrying is allowed in every context.
     const typedDrafts: LearningDraft[] = [];
     if (capture.addons.includes('tool-errors')) {
       const now = new Date().toISOString();
       for (const recovery of detectToolErrorRecoveries(event.result.toolCallTraces)) {
         typedDrafts.push(toolErrorDraft(recovery, now));
       }
+      collect(typedDrafts, 'tool-errors');
     }
 
     // ---- Vet ----------------------------------------------------------------
@@ -177,7 +191,11 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
         });
       } catch (error) {
         vetFailed = true;
-        logger.warn(`[Learning] Vet call failed (${(error as Error).message}); keeping human corrections unvetted, dropping observation candidates.`);
+        const detail = (error as Error).message;
+        for (const channel of new Set(drafts.map((draft) => channelOf.get(draft.id)!))) {
+          channelErrors[channel] = `Vet failed: ${detail}`;
+        }
+        logger.warn(`[Learning] Vet call failed (${detail}); keeping human corrections unvetted, dropping observation candidates.`);
       }
 
       for (const draft of drafts) {
@@ -213,8 +231,6 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
         logger.debug(`[Learning] Vetted out (${verdict.verdict}) [${channel}] ${draft.title}: ${describeVetFailure(verdict)}`);
       }
     }
-    vetted.push(...typedDrafts);
-
     // ---- Stamp provenance and store ----------------------------------------
     for (const draft of vetted) {
       draft.instructionsHash = currentHash;
@@ -272,12 +288,15 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
     // store's answer, so the session marker never claims "Learned 2 lessons"
     // when nothing was written.
     if (persisted.length === 0 && quarantinedTotal === 0) {
-      spinner.succeed('No new learnings extracted');
+      const failed = Object.keys(channelErrors).length > 0;
+      if (failed) spinner.fail('Failed to extract learnings');
+      else spinner.succeed('No new learnings extracted');
       if (refused.length > 0) {
         logger.debug(`[Learning] ${refused.length} auto learning(s) refused: rule set full at ${cap}`);
       }
       return {
-        status: 'none', source: 'auto', count: 0, titles: [],
+        status: failed ? 'failed' : 'none', source: 'auto', count: 0, titles: [],
+        ...(failed ? { detail: Object.values(channelErrors).join('; '), channelErrors } : {}),
         ...(drafts.length > 0 || typedDrafts.length > 0 ? { channels: counts } : {}),
       };
     }
@@ -310,6 +329,7 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
       count: persisted.length,
       titles: persisted.map(l => l.title),
       channels: counts,
+      ...(Object.keys(channelErrors).length > 0 ? { channelErrors } : {}),
       quarantined: quarantinedTotal,
     };
   } catch (error) {

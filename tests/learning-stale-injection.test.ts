@@ -105,12 +105,18 @@ describe("stale learnings are held out of the injected prompt", () => {
     expect(loaded.find((l) => l.id === "fresh001")!.injectedCount).toBe(1);
   });
 
-  it("reports nothing to inject when every active rule is stale", async () => {
+  it("returns diagnostics when every active rule is stale", async () => {
     await store.save([
       learning({ id: "stale001", instructionsHash: hashInstructions("Some other contract.") }),
     ]);
 
-    expect(await buildLearningPrompt(agent as never, agentFile, projectRoot)).toBeUndefined();
+    expect(await buildLearningPrompt(agent as never, agentFile, projectRoot)).toEqual({
+      count: 0,
+      total: 1,
+      injectedIds: [],
+      cap: 15,
+      stale: 1,
+    });
   });
 
   it("reports the same split from the read-only preview", async () => {
@@ -137,6 +143,6 @@ describe("stale learnings are held out of the injected prompt", () => {
       learning({ id: "stale001", instructionsHash: hashInstructions(beforeEdit), instruction: "Keep every introduction to one sentence." }),
     ]);
 
-    expect(await buildLearningPrompt(afterEdit as never, agentFile, projectRoot)).toBeUndefined();
+    expect((await buildLearningPrompt(afterEdit as never, agentFile, projectRoot))?.stale).toBe(1);
   });
 });

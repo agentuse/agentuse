@@ -36,6 +36,7 @@ import {
 } from "./dashboard-shortcut";
 import { getProviderStatus } from "../../../src/auth/provider-status";
 import { loadGlobalConfig } from "../../../src/utils/global-config";
+import { initializeDesktopGlobalDefaults } from "./global-defaults";
 
 const require = createRequire(__filename);
 const APP_NAME = "AgentUse";
@@ -1176,6 +1177,10 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on("activate", () => void showPrimaryWindow());
   app.whenReady().then(async () => {
+    // Finder-launched apps do not inherit shell setup. Load the same AgentUse
+    // global .env and config.json env block as the CLI before any provider
+    // status check, server authentication, or child-process construction.
+    initializeDesktopGlobalDefaults();
     registerDesktopIpc();
     createTray();
     await initializeDesktopPreferences();

@@ -130,10 +130,12 @@ describe("toolErrorDraft", () => {
     // adversarial instructions and must never be stored for later injection.
     expect(draft.evidence).toContain("failed shape:");
     expect(draft.evidence).toContain("succeeded shape:");
-    expect(draft.evidence).toContain("object(2 fields: string, string)");
+    expect(draft.evidence).toContain("`path`: string");
+    expect(draft.evidence).toContain("`slug`: string");
     expect(draft.evidence).not.toContain("p.md");
     expect(draft.instruction).not.toContain("missing field");
-    expect(draft.instruction).not.toContain("publish");
+    expect(draft.instruction).toContain("tool `publish`");
+    expect(draft.instruction).toContain("`slug`: string");
   });
 
   it("redacts credential values and sanitizes adversarial keys", () => {

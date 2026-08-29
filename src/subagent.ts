@@ -273,8 +273,10 @@ export async function createSubAgentTool(
               resolvedPath,
               projectContext?.stateRoot ?? findProjectRoot(resolvedPath),
             );
-            if (learningResult) {
+            if (learningResult?.prompt) {
               leafInstructions = `${leafInstructions}\n\n${learningResult.prompt}`;
+            }
+            if (learningResult) {
               logger.debug(`[SubAgent] Appended ${learningResult.count} learning(s) to ${agent.name}`);
             }
           }

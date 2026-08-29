@@ -317,7 +317,7 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
   const learningPreview = agent.config.learning?.apply
     ? await previewLearningPrompt(agent, agentFilePath, projectContext.stateRoot)
     : undefined;
-  const estimatedLearningTokens = learningPreview ? estimateTextTokens(learningPreview.prompt) : 0;
+  const estimatedLearningTokens = learningPreview?.prompt ? estimateTextTokens(learningPreview.prompt) : 0;
 
   const estimatedRequestTokens =
     estimatedInstructionTokens + estimatedPreloadedTokens + estimatedCatalogTokens + estimatedLearningTokens;
@@ -354,6 +354,7 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
     }
     if (learningPreview.stale > 0) {
       console.log(chalk.yellow(`  ${learningPreview.stale} learning${learningPreview.stale === 1 ? ' is' : 's are'} stale: the instructions changed since they were vetted. They are held out of injection until the next capture or tidy re-vets them.`));
+      console.log(chalk.gray(`  Fix: agentuse learnings tidy ${agentFilePath}`));
     }
   }
   // Legacy `learning:` forms that still parse with a narrowed meaning. The
