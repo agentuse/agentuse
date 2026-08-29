@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync, readFileSync
 import { join, relative, resolve } from "path";
 import { getXdgDataDir } from "../storage/paths";
 import { getProcessStartTime, getCurrentProcessStartTime } from "./process-info";
+import type { DesktopServerSupervisor } from "./desktop-supervisor";
 
 export interface ServerProjectEntry {
   id: string;
@@ -43,6 +44,8 @@ export interface ServerEntry {
   projects?: ServerProjectEntry[];
   /** Flat log file path (stdout/stderr tee). Absent when --no-log-file was passed. */
   logFile?: string;
+  /** Present when a desktop app process owns this daemon's lifecycle. */
+  supervisor?: DesktopServerSupervisor;
 }
 
 function getRegistryDir(): string {

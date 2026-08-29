@@ -81,6 +81,14 @@ import type { SessionContextPayload } from "./serve/types";
 import { startOrphanReconcileLoop } from "./serve/orphan-reconcile";
 import { ONBOARDING_AGENT_ID, ONBOARDING_AGENT_SOURCE } from "../onboarding";
 import { openBrowser } from "../utils/open-browser";
+import {
+  createIdempotentShutdown,
+  DESKTOP_LIFETIME_FD_ENV,
+  DESKTOP_SUPERVISOR_ENV,
+  parseDesktopLifetimeFd,
+  parseDesktopServerSupervisor,
+  watchDesktopLifetime,
+} from "../utils/desktop-supervisor";
 
 const APPROVAL_LIST_SSE_INTERVAL_MS = 10_000;
 const SESSION_LIST_SSE_INTERVAL_MS = 10_000;
@@ -2827,6 +2835,13 @@ export function createServeCommand(): Command {
     .option("--open", "Open the Web UI in the default browser after startup")
     .option("--hide-agent-source", "Hide raw agent source in the dashboard and /api/agents/detail; capability summaries stay visible (or config.serve.hideAgentSource)")
     .action(async (options: { port?: string; host?: string; publicUrl?: string; directory: string[]; default?: string; debug?: boolean; auth: boolean; logFile: boolean; open?: boolean; hideAgentSource?: boolean }) => {
+      const desktopSupervisor = parseDesktopServerSupervisor(process.env[DESKTOP_SUPERVISOR_ENV]);
+      const desktopLifetimeFd = parseDesktopLifetimeFd(process.env[DESKTOP_LIFETIME_FD_ENV]);
+      // These describe only this daemon. Do not leak the parent's ownership
+      // channel into worker processes spawned later by the server.
+      delete process.env[DESKTOP_SUPERVISOR_ENV];
+      delete process.env[DESKTOP_LIFETIME_FD_ENV];
+
       // Load global config once; hard-fail on malformed config so users don't silently get defaults.
       let globalConfig: GlobalConfig | null = null;
       try {
@@ -7470,7 +7485,7 @@ export function createServeCommand(): Command {
       });
 
       // Graceful shutdown
-      const shutdown = async () => {
+      const shutdown = createIdempotentShutdown(async () => {
         console.log("\nShutting down...");
 
         // Do not enqueue another maintenance RPC while workers are being cut
@@ -7550,7 +7565,9 @@ export function createServeCommand(): Command {
           const done = logHandle ? logHandle.close() : Promise.resolve();
           done.finally(() => process.exit(0));
         });
-      };
+      });
+
+      watchDesktopLifetime(desktopLifetimeFd, () => void shutdown());
 
       process.on("SIGINT", shutdown);
       process.on("SIGTERM", shutdown);
@@ -7608,6 +7625,7 @@ export function createServeCommand(): Command {
           version: packageVersion,
           projects: registryProjects,
           ...(logFilePath && { logFile: logFilePath }),
+          ...(desktopSupervisor && { supervisor: desktopSupervisor }),
         });
 
         printLogo();

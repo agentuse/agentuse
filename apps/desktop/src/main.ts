@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, Notification, shell, Tray, type Event, type IpcMainInvokeEvent } from "electron";
 import { autoUpdater } from "electron-updater";
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { open } from "node:fs/promises";
@@ -19,7 +20,7 @@ import {
   markDesktopOnboardingComplete,
 } from "./onboarding-state";
 import { createDesktopQuitPolicy, deferDesktopQuitAfterDrain, shouldWarnBeforeFullQuit } from "./quit-policy";
-import { isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, selectServer, serverUrl, type RegisteredServer } from "./runtime";
+import { isAbandonedDesktopServer, isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, selectServer, serverUrl, type RegisteredServer } from "./runtime";
 import { createAgentUseTrayIcon } from "./tray-icon";
 import { selectLoopbackPort } from "./port-selection";
 import { defaultCliLinkPath, inspectCliAvailability, loginShellPath, packagedCliLauncherPath, toggleCliLink, type CliLinkState } from "./cli-link";
@@ -39,11 +40,23 @@ import { getProviderStatus } from "../../../src/auth/provider-status";
 import { loadGlobalConfig } from "../../../src/utils/global-config";
 import { initializeDesktopGlobalDefaults } from "./global-defaults";
 import { DesktopUpdater, type DesktopUpdateState } from "./updater";
+import { currentProcessRef } from "../../../src/utils/process-info";
+import {
+  DESKTOP_LIFETIME_FD_ENV,
+  DESKTOP_SUPERVISOR_ENV,
+  type DesktopServerSupervisor,
+} from "../../../src/utils/desktop-supervisor";
 
 const require = createRequire(__filename);
 const APP_NAME = "AgentUse";
 const STARTUP_TIMEOUT_MS = 15_000;
 const APPROVAL_POLL_INTERVAL_MS = 5_000;
+const DESKTOP_SERVER_LIFETIME_FD = 3;
+const desktopServerSupervisor: DesktopServerSupervisor = {
+  kind: "desktop",
+  token: randomUUID(),
+  ...currentProcessRef(),
+};
 
 let window: BrowserWindow | undefined;
 let setupWindow: BrowserWindow | undefined;
@@ -424,7 +437,48 @@ async function waitForServer(pid: number, apiKey?: string): Promise<RegisteredSe
   throw new Error("AgentUse server did not become ready within 15 seconds.");
 }
 
+function registeredServerIsStillRunning(server: RegisteredServer): boolean {
+  return listRegisteredServers().some((candidate) => candidate.pid === server.pid
+    && (!server.procStartedAt || !candidate.procStartedAt || candidate.procStartedAt === server.procStartedAt));
+}
+
+async function reconcileAbandonedDesktopServers(): Promise<void> {
+  const abandoned = listRegisteredServers().filter((server) => isAbandonedDesktopServer(server));
+  for (const server of abandoned) {
+    console.warn(`Stopping AgentUse server ${server.pid} left by a terminated desktop app.`);
+    try {
+      process.kill(server.pid, "SIGTERM");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+        console.warn(`Could not stop abandoned AgentUse server ${server.pid}:`, error);
+      }
+      continue;
+    }
+
+    const deadline = Date.now() + 12_000;
+    while (Date.now() < deadline && registeredServerIsStillRunning(server)) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    if (!registeredServerIsStillRunning(server)) continue;
+
+    // Match the explicit app-quit policy: a daemon that ignores its graceful
+    // window must not outlive the desktop supervisor indefinitely.
+    try {
+      process.kill(server.pid, "SIGKILL");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+        console.warn(`Could not force-stop abandoned AgentUse server ${server.pid}:`, error);
+      }
+    }
+    const forcedDeadline = Date.now() + 1_000;
+    while (Date.now() < forcedDeadline && registeredServerIsStillRunning(server)) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+}
+
 async function acquireServer(): Promise<void> {
+  await reconcileAbandonedDesktopServers();
   const existing = selectServer(listRegisteredServers());
   if (existing) {
     const inheritedApiKey = process.env.AGENTUSE_API_KEY;
@@ -447,14 +501,21 @@ async function acquireServer(): Promise<void> {
   ownedServer = spawn(process.execPath, [cli, "serve", "--host", "127.0.0.1", "--port", String(ownedPort)], {
     cwd: app.getPath("home"),
     detached: false,
-    stdio: "ignore",
+    // fd 3 is a lifetime lease: an abnormal desktop exit closes the pipe and
+    // asks the daemon to take its normal graceful shutdown path.
+    stdio: ["ignore", "ignore", "ignore", "pipe"],
     // Match the CLI's loopback-only default so Open in Browser works without
     // leaking credentials in a URL. The server rejects cross-origin writes.
-    env: { ...process.env, AGENTUSE_API_KEY: undefined, ELECTRON_RUN_AS_NODE: "1" },
+    env: {
+      ...process.env,
+      AGENTUSE_API_KEY: undefined,
+      ELECTRON_RUN_AS_NODE: "1",
+      [DESKTOP_LIFETIME_FD_ENV]: String(DESKTOP_SERVER_LIFETIME_FD),
+      [DESKTOP_SUPERVISOR_ENV]: JSON.stringify(desktopServerSupervisor),
+    },
   });
   const ownedPid = ownedServer.pid;
   if (!ownedPid) throw new Error("AgentUse backend process did not start.");
-  ownedServer.unref();
   ownedServer.once("exit", () => {
     ownedServer = undefined;
     if (currentServer?.pid === ownedPid) {

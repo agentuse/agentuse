@@ -31,6 +31,14 @@ pnpm --filter @agentuse/desktop dev
 for local development. The app starts an owned daemon with `agentuse serve` and
 leaves an externally started daemon untouched when quitting.
 
+An app-owned daemon receives a dedicated lifetime pipe and records the desktop
+process identity in the server registry. Normal Quit sends `SIGTERM` and allows
+the daemon to drain; a crash or forced app termination closes the pipe and
+triggers that same idempotent shutdown path. On the next launch, the app only
+reclaims a surviving daemon when its recorded desktop supervisor is verifiably
+gone. A terminal- or service-started daemon has no supervisor metadata and is
+always left untouched.
+
 For routine testing of the packaged app, install and launch one canonical copy:
 
 ```sh

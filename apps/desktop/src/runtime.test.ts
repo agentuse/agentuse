@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isDashboardNavigation, isLocalServer, isSafeExternalUrl, selectServer, serverUrl } from "./runtime";
+import { isAbandonedDesktopServer, isDashboardNavigation, isLocalServer, isSafeExternalUrl, selectServer, serverUrl } from "./runtime";
 
 describe("desktop runtime helpers", () => {
   it("only attaches to local registered servers", () => {
@@ -25,5 +25,21 @@ describe("desktop runtime helpers", () => {
     expect(isDashboardNavigation("https://example.com", "http://127.0.0.1:12233")).toBe(false);
     expect(isSafeExternalUrl("https://agentuse.ai/docs")).toBe(true);
     expect(isSafeExternalUrl("file:///etc/passwd")).toBe(false);
+  });
+
+  it("only reclaims desktop-supervised servers whose original app is gone", () => {
+    const server = {
+      pid: 20,
+      host: "127.0.0.1",
+      port: 12233,
+      projectRoot: "/test",
+      startTime: 1,
+      version: "1",
+      supervisor: { kind: "desktop" as const, pid: 10, token: "0123456789abcdef" },
+    };
+
+    expect(isAbandonedDesktopServer(server, () => "dead")).toBe(true);
+    expect(isAbandonedDesktopServer(server, () => "alive")).toBe(false);
+    expect(isAbandonedDesktopServer({ ...server, supervisor: undefined }, () => "dead")).toBe(false);
   });
 });

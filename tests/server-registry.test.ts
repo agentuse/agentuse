@@ -47,6 +47,7 @@ describe("Server Registry", () => {
         agentCount: 5,
         scheduleCount: 2,
         version: "1.0.0",
+        supervisor: { kind: "desktop", pid: 123, token: "0123456789abcdef" },
       });
 
       const entryPath = path.join(REGISTRY_DIR, `${process.pid}.json`);
@@ -61,6 +62,7 @@ describe("Server Registry", () => {
       expect(entry.agentCount).toBe(5);
       expect(entry.scheduleCount).toBe(2);
       expect(entry.version).toBe("1.0.0");
+      expect(entry.supervisor).toEqual({ kind: "desktop", pid: 123, token: "0123456789abcdef" });
     });
   });
 

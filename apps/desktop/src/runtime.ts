@@ -1,7 +1,8 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { isProcessRefAlive } from "../../../src/utils/process-info";
+import { isProcessRefAlive, processRefState, type ProcessRefState } from "../../../src/utils/process-info";
+import type { DesktopServerSupervisor } from "../../../src/utils/desktop-supervisor";
 
 /** Public shape written by `agentuse serve` to its process registry. */
 export interface RegisteredServer {
@@ -14,6 +15,7 @@ export interface RegisteredServer {
   publicUrl?: string;
   logFile?: string;
   procStartedAt?: string;
+  supervisor?: DesktopServerSupervisor;
 }
 
 export function serverRegistryDirectory(env: NodeJS.ProcessEnv = process.env): string {
@@ -57,6 +59,13 @@ export function listRegisteredServers(
 
 export function selectServer(servers: readonly RegisteredServer[]): RegisteredServer | undefined {
   return servers.filter(isLocalServer).sort((left, right) => left.startTime - right.startTime)[0];
+}
+
+export function isAbandonedDesktopServer(
+  server: RegisteredServer,
+  supervisorState: (supervisor: DesktopServerSupervisor) => ProcessRefState = processRefState,
+): boolean {
+  return server.supervisor?.kind === "desktop" && supervisorState(server.supervisor) === "dead";
 }
 
 export function isDashboardNavigation(target: string, dashboardUrl: string): boolean {

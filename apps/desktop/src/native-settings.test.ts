@@ -87,4 +87,12 @@ describe("desktop updater packaging", () => {
       releaseType: "release",
     }]);
   });
+
+  it("supervises the packaged server through a dedicated lifetime pipe", async () => {
+    const source = await Bun.file(join(desktopRoot, "src", "main.ts")).text();
+    expect(source).toContain('stdio: ["ignore", "ignore", "ignore", "pipe"]');
+    expect(source).toContain("[DESKTOP_LIFETIME_FD_ENV]");
+    expect(source).toContain("[DESKTOP_SUPERVISOR_ENV]");
+    expect(source).not.toContain("ownedServer.unref()");
+  });
 });
