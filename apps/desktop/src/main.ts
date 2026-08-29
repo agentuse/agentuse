@@ -1041,6 +1041,7 @@ function initializeDesktopUpdater(): void {
     isPackaged: app.isPackaged,
     platform: process.platform,
     currentVersion: app.getVersion(),
+    beforeInstall: () => quitPolicy.requestFullQuit(),
     onStateChange: () => void pushNativeSettingsState(),
   });
 

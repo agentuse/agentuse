@@ -24,13 +24,14 @@ class FakeAutoUpdater extends EventEmitter {
   }
 }
 
-function createUpdater(fake = new FakeAutoUpdater(), packaged = true) {
+function createUpdater(fake = new FakeAutoUpdater(), packaged = true, beforeInstall?: () => void) {
   return {
     fake,
     updater: new DesktopUpdater(fake as DesktopAutoUpdater, {
       isPackaged: packaged,
       platform: "darwin",
       currentVersion: "0.19.1",
+      beforeInstall,
     }),
   };
 }
@@ -50,7 +51,13 @@ describe("desktop updater", () => {
   });
 
   it("requires separate download and restart/install actions", async () => {
-    const { fake, updater } = createUpdater();
+    const actions: string[] = [];
+    const fake = new FakeAutoUpdater();
+    fake.quitAndInstall = (isSilent?: boolean, isForceRunAfter?: boolean) => {
+      actions.push("install");
+      fake.installs.push([isSilent, isForceRunAfter]);
+    };
+    const { updater } = createUpdater(fake, true, () => actions.push("authorize-quit"));
 
     fake.emit("update-available", { version: "0.19.2" });
     expect(updater.state).toMatchObject({
@@ -73,6 +80,7 @@ describe("desktop updater", () => {
 
     updater.installUpdate();
     expect(fake.installs).toEqual([[false, true]]);
+    expect(actions).toEqual(["authorize-quit", "install"]);
   });
 
   it("contains offline errors and allows a later retry", async () => {

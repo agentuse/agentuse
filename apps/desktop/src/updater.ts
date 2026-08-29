@@ -42,6 +42,7 @@ interface DesktopUpdaterOptions {
   isPackaged: boolean;
   platform: NodeJS.Platform;
   currentVersion: string;
+  beforeInstall?: () => void;
   onStateChange?: (state: DesktopUpdateState) => void;
 }
 
@@ -161,6 +162,10 @@ export class DesktopUpdater {
     if (!this.enabled || this.stateValue.status !== "ready") return;
     // This is called only from the explicit Restart and Install button.
     try {
+      // Let the host opt into a full application quit before Squirrel asks
+      // Electron to restart. AgentUse otherwise treats app-initiated quits as
+      // requests to keep the menu-bar process running in the background.
+      this.options.beforeInstall?.();
       this.autoUpdater.quitAndInstall(false, true);
     } catch (error) {
       this.setError(error);
