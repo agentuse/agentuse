@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { createDesktopQuitPolicy, shouldWarnBeforeFullQuit } from "./quit-policy";
+import { createDesktopQuitPolicy, deferDesktopQuitAfterDrain, shouldWarnBeforeFullQuit } from "./quit-policy";
 
 describe("desktop quit policy", () => {
   it("keeps Dock and application-menu quit requests in the background", () => {
@@ -18,5 +18,23 @@ describe("desktop quit policy", () => {
     expect(shouldWarnBeforeFullQuit({ exitCode: 0, killed: false })).toBe(false);
     expect(shouldWarnBeforeFullQuit({ exitCode: null, killed: true })).toBe(false);
     expect(shouldWarnBeforeFullQuit({ exitCode: null, killed: false })).toBe(true);
+  });
+
+  it("defers the final quit until the prevented before-quit event can unwind", async () => {
+    const actions: string[] = [];
+    let deferredQuit: (() => void) | undefined;
+
+    await deferDesktopQuitAfterDrain(
+      async () => { actions.push("drain"); },
+      () => { actions.push("quit"); },
+      (callback) => {
+        actions.push("defer");
+        deferredQuit = callback;
+      },
+    );
+
+    expect(actions).toEqual(["drain", "defer"]);
+    deferredQuit?.();
+    expect(actions).toEqual(["drain", "defer", "quit"]);
   });
 });

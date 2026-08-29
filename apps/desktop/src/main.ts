@@ -18,7 +18,7 @@ import {
   isDesktopOnboardingComplete,
   markDesktopOnboardingComplete,
 } from "./onboarding-state";
-import { createDesktopQuitPolicy, shouldWarnBeforeFullQuit } from "./quit-policy";
+import { createDesktopQuitPolicy, deferDesktopQuitAfterDrain, shouldWarnBeforeFullQuit } from "./quit-policy";
 import { isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, selectServer, serverUrl, type RegisteredServer } from "./runtime";
 import { createAgentUseTrayIcon } from "./tray-icon";
 import { selectLoopbackPort } from "./port-selection";
@@ -1219,7 +1219,7 @@ if (!app.requestSingleInstanceLock()) {
     stopNotificationStream();
     if (quitInProgress) return;
     event.preventDefault();
-    void stopOwnedServerCleanly().finally(() => {
+    void deferDesktopQuitAfterDrain(stopOwnedServerCleanly, () => {
       quitInProgress = true;
       app.quit();
     });
