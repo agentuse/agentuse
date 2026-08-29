@@ -869,22 +869,58 @@ describe('serve telemetry attribution', () => {
   });
 
   it('accepts only the fixed Web UI telemetry vocabulary', async () => {
-    const { parseWebUITelemetryBody } = (await import('../src/cli/serve')).__testing;
-    expect(parseWebUITelemetryBody({ event: 'page_viewed', page: 'sessions' })).toEqual({ page: 'sessions', clientSurface: 'web' });
+    const { parseWebUITelemetryBody, webUITelemetryDedupeKey } = (await import('../src/cli/serve')).__testing;
+    expect(parseWebUITelemetryBody({ event: 'page_viewed', page: 'sessions' })).toEqual({
+      event: 'page_viewed', page: 'sessions', clientSurface: 'web',
+    });
     expect(parseWebUITelemetryBody({ event: 'page_viewed', page: 'sessions' }, 'mac_app')).toEqual({
-      page: 'sessions', clientSurface: 'mac_app',
+      event: 'page_viewed', page: 'sessions', clientSurface: 'mac_app',
     });
     expect(parseWebUITelemetryBody({ event: 'anything', page: 'sessions' })).toBeUndefined();
     expect(parseWebUITelemetryBody({ event: 'page_viewed', page: '/sessions/private-id' })).toBeUndefined();
     expect(parseWebUITelemetryBody({ event: 'page_viewed', page: 'sessions', private: 'value' })).toEqual({
-      page: 'sessions', clientSurface: 'web',
+      event: 'page_viewed', page: 'sessions', clientSurface: 'web',
     });
+
+    const completed = parseWebUITelemetryBody({
+      event: 'onboarding_step_completed',
+      onboarding_route: 'desktop',
+      step: 'desktop_setup',
+      launch_at_login_enabled: true,
+      cli_launcher_status: 'added',
+      private_path: '/Users/private/project',
+    }, 'mac_setup');
+    expect(completed).toEqual({
+      event: 'onboarding_step_completed',
+      onboardingRoute: 'desktop',
+      clientSurface: 'mac_setup',
+      step: 'desktop_setup',
+      launchAtLoginEnabled: true,
+      cliLauncherStatus: 'added',
+    });
+    expect(webUITelemetryDedupeKey(completed!)).toBe('desktop:onboarding_step_completed:desktop_setup');
+    const macStart = parseWebUITelemetryBody({ event: 'onboarding_started', onboarding_route: 'desktop' }, 'mac_setup');
+    const sharedUIStart = parseWebUITelemetryBody({ event: 'onboarding_started', onboarding_route: 'desktop' }, 'mac_app');
+    expect(webUITelemetryDedupeKey(macStart!)).toBe(webUITelemetryDedupeKey(sharedUIStart!));
+
+    expect(parseWebUITelemetryBody({
+      event: 'onboarding_completed', onboarding_route: 'web', agent_count: 1_000, detection_method: 'poll',
+    })).toEqual({
+      event: 'onboarding_completed', onboardingRoute: 'web', clientSurface: 'web', agentCount: 100, detectionMethod: 'poll',
+    });
+    expect(parseWebUITelemetryBody({
+      event: 'onboarding_step_completed', onboarding_route: 'web', step: 'private-project-name',
+    })).toBeUndefined();
+    expect(parseWebUITelemetryBody({
+      event: 'onboarding_started', onboarding_route: 'private-route',
+    })).toBeUndefined();
   });
 
   it('trusts only the fixed Mac client header value for telemetry segmentation', async () => {
     const { webUIClientSurface } = (await import('../src/cli/serve')).__testing;
     expect(webUIClientSurface(undefined)).toBe('web');
     expect(webUIClientSurface('mac_app')).toBe('mac_app');
+    expect(webUIClientSurface('mac_setup')).toBe('mac_setup');
     expect(webUIClientSurface('desktop')).toBe('web');
     expect(webUIClientSurface(['mac_app', 'web'])).toBe('mac_app');
   });

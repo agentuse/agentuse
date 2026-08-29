@@ -1,4 +1,6 @@
+import { useEffect } from 'preact/hooks';
 import type { SessionRow } from '../lib/api';
+import { reportOnboardingTelemetry } from '../lib/api';
 import { useOnboardingRun } from '../hooks/use-onboarding-run';
 
 function sessionHref(session: SessionRow): string {
@@ -15,6 +17,9 @@ export function OnboardingEmptyState(props: {
   compact?: boolean;
 }) {
   const { run, busy, error } = useOnboardingRun(props.projectId);
+  useEffect(() => {
+    reportOnboardingTelemetry({ event: 'onboarding_started' });
+  }, []);
   // A completed sample is not onboarding state users need to return to. Only
   // keep the link while it is live; afterward the empty state is ready to run
   // the sample again rather than becoming a permanent "review demo" screen.

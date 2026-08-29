@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 import { buildCodingAgentPrompt } from '../src/cli/serve/web/routes/agent-detail';
-import { buildDebugPrompt, buildOnboardingPrompt, onboardingProjectAgents } from '../src/cli/serve/web/components/debug-prompt-button';
+import {
+  buildDebugPrompt,
+  buildOnboardingPrompt,
+  onboardingProjectAgents,
+  onboardingProviderReadiness,
+} from '../src/cli/serve/web/components/debug-prompt-button';
 import type { AgentRow } from '../src/cli/serve/web/lib/api';
 
 describe('coding-agent handoff prompts', () => {
@@ -125,5 +130,19 @@ describe('first-agent onboarding detection', () => {
     const second = agent('first-project', 'agents/daily-brief.agentuse', 'daily-brief');
 
     expect(onboardingProjectAgents([first, second], 'first-project')).toEqual([first, second]);
+  });
+
+  it('reports provider readiness without exposing provider credentials', () => {
+    expect(onboardingProviderReadiness()).toBe('unknown');
+    expect(onboardingProviderReadiness({
+      credentialStore: '/private/auth.json',
+      providers: [{ id: 'openai', name: 'OpenAI', configured: false, sources: [] }],
+      customProviders: [],
+    })).toBe('not_ready');
+    expect(onboardingProviderReadiness({
+      credentialStore: '/private/auth.json',
+      providers: [{ id: 'openai', name: 'OpenAI', configured: true, sources: [] }],
+      customProviders: [],
+    })).toBe('ready');
   });
 });

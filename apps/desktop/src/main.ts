@@ -50,7 +50,37 @@ let quitInProgress = false;
 let serverOperation: "starting" | "stopping" | undefined;
 let serverAcquisition: Promise<void> | undefined;
 let userLoginPath: Promise<string> | undefined;
+let desktopSetupStartedAt: number | undefined;
+let desktopCliLauncherAdded = false;
+const pendingDesktopOnboardingTelemetry: Array<Record<string, unknown>> = [];
 const quitPolicy = createDesktopQuitPolicy();
+
+function queueDesktopOnboardingTelemetry(payload: Record<string, unknown>): void {
+  pendingDesktopOnboardingTelemetry.push({ ...payload, onboarding_route: "desktop" });
+}
+
+async function flushDesktopOnboardingTelemetry(): Promise<void> {
+  if (!dashboardUrl || pendingDesktopOnboardingTelemetry.length === 0) return;
+  const telemetryUrl = new URL("/api/telemetry", dashboardUrl);
+  while (pendingDesktopOnboardingTelemetry.length > 0) {
+    try {
+      const response = await fetch(telemetryUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-AgentUse-Client": "mac_setup",
+          ...(dashboardApiKey ? { Authorization: `Bearer ${dashboardApiKey}` } : {}),
+        },
+        body: JSON.stringify(pendingDesktopOnboardingTelemetry[0]),
+        signal: AbortSignal.timeout(2_000),
+      });
+      if (!response.ok) return;
+      pendingDesktopOnboardingTelemetry.shift();
+    } catch {
+      return;
+    }
+  }
+}
 
 function resolveUserLoginPath(): Promise<string> {
   userLoginPath ??= loginShellPath();
@@ -125,30 +155,61 @@ function registerDesktopIpc(): void {
   });
   ipcMain.handle("agentuse:setup:install-cli-launcher", async (event) => {
     assertSetupSender(event);
-    const linkPath = defaultCliLinkPath();
-    const launcherPath = packagedCliLauncherPath(process.resourcesPath);
-    const loginPath = await resolveUserLoginPath();
-    const current = inspectCliAvailability(linkPath, launcherPath, loginPath);
-    if (current.status === "notInstalled") {
-      await toggleCliLink(linkPath, launcherPath, loginPath);
-    } else if (current.status !== "installed" && current.status !== "external") {
-      throw new Error(current.detail);
+    try {
+      const linkPath = defaultCliLinkPath();
+      const launcherPath = packagedCliLauncherPath(process.resourcesPath);
+      const loginPath = await resolveUserLoginPath();
+      const current = inspectCliAvailability(linkPath, launcherPath, loginPath);
+      if (current.status === "notInstalled") {
+        await toggleCliLink(linkPath, launcherPath, loginPath);
+        desktopCliLauncherAdded = true;
+      } else if (current.status !== "installed" && current.status !== "external") {
+        throw new Error(current.detail);
+      }
+      return desktopSetupState();
+    } catch (error) {
+      queueDesktopOnboardingTelemetry({
+        event: "onboarding_step_failed",
+        step: "desktop_setup",
+        error_code: "cli_launcher_add_failed",
+      });
+      throw error;
     }
-    return desktopSetupState();
   });
   ipcMain.handle("agentuse:setup:complete", async (event, launchAtLogin: unknown) => {
     assertSetupSender(event);
     if (typeof launchAtLogin !== "boolean") throw new TypeError("Launch at Login must be enabled or disabled.");
-    app.setLoginItemSettings({
-      openAtLogin: launchAtLogin,
-      openAsHidden: launchAtLogin,
-      args: launchAtLogin ? ["--hidden"] : [],
-    });
-    await showDashboard();
-    await markDesktopOnboardingComplete(onboardingStateFile());
-    const completedWindow = setupWindow;
-    setupWindow = undefined;
-    completedWindow?.destroy();
+    try {
+      const launcher = (await desktopSetupState()).launcher;
+      const cliLauncherStatus = launcher.status === "ready"
+        ? desktopCliLauncherAdded ? "added" : "already_available"
+        : launcher.status === "conflict" ? "conflict" : "skipped";
+      app.setLoginItemSettings({
+        openAtLogin: launchAtLogin,
+        openAsHidden: launchAtLogin,
+        args: launchAtLogin ? ["--hidden"] : [],
+      });
+      await showDashboard();
+      queueDesktopOnboardingTelemetry({
+        event: "onboarding_step_completed",
+        step: "desktop_setup",
+        launch_at_login_enabled: launchAtLogin,
+        cli_launcher_status: cliLauncherStatus,
+        ...(desktopSetupStartedAt !== undefined && { duration_ms: Date.now() - desktopSetupStartedAt }),
+      });
+      await flushDesktopOnboardingTelemetry();
+      await markDesktopOnboardingComplete(onboardingStateFile());
+      const completedWindow = setupWindow;
+      setupWindow = undefined;
+      completedWindow?.destroy();
+    } catch (error) {
+      queueDesktopOnboardingTelemetry({
+        event: "onboarding_step_failed",
+        step: "desktop_setup",
+        error_code: "desktop_setup_failed",
+      });
+      throw error;
+    }
   });
 }
 
@@ -481,6 +542,14 @@ function createSetupWindow(): BrowserWindow {
 }
 
 async function showDesktopSetup(): Promise<void> {
+  if (desktopSetupStartedAt === undefined) {
+    desktopSetupStartedAt = Date.now();
+    queueDesktopOnboardingTelemetry({ event: "onboarding_started" });
+    // Start the local daemon behind setup so a user who leaves before Continue
+    // is still represented in the onboarding funnel. Failures stay invisible;
+    // Continue will retry through the normal dashboard path.
+    void ensureServer().then(flushDesktopOnboardingTelemetry).catch(() => {});
+  }
   if (process.platform === "darwin") await app.dock?.show();
   if (!setupWindow || setupWindow.isDestroyed()) {
     setupWindow = createSetupWindow();

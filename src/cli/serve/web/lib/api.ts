@@ -79,6 +79,47 @@ export function reportWebUIPageView(page: WebUIPage): void {
   }).catch(() => {});
 }
 
+export type OnboardingTelemetryStep =
+  | 'desktop_setup'
+  | 'project_created'
+  | 'sample_run_completed'
+  | 'agent_prompt_copied'
+  | 'agent_detected'
+  | 'agent_opened';
+
+export type OnboardingTelemetryPayload = {
+  event: 'onboarding_started' | 'onboarding_completed';
+  duration_ms?: number;
+  agent_count?: number;
+  detection_method?: 'poll' | 'manual_check';
+} | {
+  event: 'onboarding_step_completed' | 'onboarding_step_failed';
+  step: OnboardingTelemetryStep;
+  duration_ms?: number;
+  error_code?:
+    | 'project_create_failed'
+    | 'sample_run_failed'
+    | 'provider_status_failed'
+    | 'agent_check_failed';
+  provider_readiness?: 'ready' | 'not_ready' | 'unknown';
+  agent_count?: number;
+  detection_method?: 'poll' | 'manual_check';
+};
+
+export function currentOnboardingRoute(): 'desktop' | 'web' {
+  return typeof window !== 'undefined' && window.agentuseDesktop ? 'desktop' : 'web';
+}
+
+/** Best-effort onboarding reporting; names, paths, and prompt text are never accepted. */
+export function reportOnboardingTelemetry(payload: OnboardingTelemetryPayload): void {
+  void fetch('/api/telemetry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...payload, onboarding_route: currentOnboardingRoute() }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
 export type ApprovalRow = ApprovalSummary & { project: string };
 
 export interface ApprovalsListPayload {

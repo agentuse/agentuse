@@ -1,11 +1,15 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { FIRST_PROJECT_DEFAULT_NAME } from '../../../../onboarding';
-import { createManagedProject } from '../lib/api';
+import { createManagedProject, reportOnboardingTelemetry } from '../lib/api';
 
 export function FirstProjectEmptyState(props: { compact?: boolean }) {
   const [name, setName] = useState(FIRST_PROJECT_DEFAULT_NAME);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    reportOnboardingTelemetry({ event: 'onboarding_started' });
+  }, []);
 
   const submit = async (event: Event) => {
     event.preventDefault();
@@ -14,8 +18,14 @@ export function FirstProjectEmptyState(props: { compact?: boolean }) {
     setError(null);
     try {
       await createManagedProject(name.trim());
+      reportOnboardingTelemetry({ event: 'onboarding_step_completed', step: 'project_created' });
       location.reload();
     } catch (err) {
+      reportOnboardingTelemetry({
+        event: 'onboarding_step_failed',
+        step: 'project_created',
+        error_code: 'project_create_failed',
+      });
       setError((err as Error).message);
       setBusy(false);
     }

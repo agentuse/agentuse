@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'preact/hooks';
+import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { SendToCodingAgentDialog } from './send-to-coding-agent-dialog';
-import { fetchAgents, type AgentRow } from '../lib/api';
+import { fetchAgents, reportOnboardingTelemetry, type AgentRow } from '../lib/api';
 import { agentDetailHref } from '../lib/links';
 import type { ProviderStatus } from '../../../../auth/provider-status';
 
@@ -42,6 +42,14 @@ function currentOnboardingExecutionContext(providerStatus?: ProviderStatus): Onb
     serveAlreadyRunning: window.agentuseDesktop.serveAlreadyRunning,
     ...(providerStatus ? { providerStatus } : {}),
   };
+}
+
+export function onboardingProviderReadiness(providerStatus?: ProviderStatus): 'ready' | 'not_ready' | 'unknown' {
+  if (!providerStatus) return 'unknown';
+  return providerStatus.providers.some((provider) => provider.configured)
+    || providerStatus.customProviders.some((provider) => provider.hasApiKey)
+    ? 'ready'
+    : 'not_ready';
 }
 
 const ONBOARDING_POLL_MS = 3_000;
@@ -257,6 +265,21 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | undefined>(undefined);
   const [providerStatusLoading, setProviderStatusLoading] = useState(false);
   const [providerStatusError, setProviderStatusError] = useState<string | null>(null);
+  const manualCheckRef = useRef(false);
+
+  useEffect(() => {
+    if (!onboarding) return;
+    reportOnboardingTelemetry({ event: 'onboarding_started' });
+    if (props.context.sessionStatus === 'completed') {
+      reportOnboardingTelemetry({ event: 'onboarding_step_completed', step: 'sample_run_completed' });
+    } else if (props.context.sessionStatus === 'error') {
+      reportOnboardingTelemetry({
+        event: 'onboarding_step_failed',
+        step: 'sample_run_completed',
+        error_code: 'sample_run_failed',
+      });
+    }
+  }, [onboarding, props.context.sessionId, props.context.sessionStatus]);
 
   useEffect(() => {
     setOpen(false);
@@ -278,11 +301,38 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
         const matches = onboardingProjectAgents(payload.agents, props.context.projectId);
         setCheckError(null);
         if (matches.length === 0) return;
+        const detectionMethod = manualCheckRef.current ? 'manual_check' : 'poll';
+        manualCheckRef.current = false;
+        const durationMs = waitingStartedAt === null ? undefined : Math.max(0, Date.now() - waitingStartedAt);
+        reportOnboardingTelemetry({
+          event: 'onboarding_step_completed',
+          step: 'agent_detected',
+          agent_count: matches.length,
+          detection_method: detectionMethod,
+          ...(durationMs !== undefined && { duration_ms: durationMs }),
+        });
+        reportOnboardingTelemetry({
+          event: 'onboarding_completed',
+          agent_count: matches.length,
+          detection_method: detectionMethod,
+          ...(durationMs !== undefined && { duration_ms: durationMs }),
+        });
         setDetectedAgents(matches);
         setWaitingStartedAt(null);
         writeWaitingStartedAt(storageKey, null);
       } catch (error) {
-        if (!cancelled) setCheckError((error as Error).message || 'Could not check for your agent.');
+        if (!cancelled) {
+          if (manualCheckRef.current) {
+            manualCheckRef.current = false;
+            reportOnboardingTelemetry({
+              event: 'onboarding_step_failed',
+              step: 'agent_detected',
+              error_code: 'agent_check_failed',
+              detection_method: 'manual_check',
+            });
+          }
+          setCheckError((error as Error).message || 'Could not check for your agent.');
+        }
       }
     };
 
@@ -316,7 +366,12 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
     setWaitingStartedAt(startedAt);
     writeWaitingStartedAt(storageKey, startedAt);
     setCheckRevision((value) => value + 1);
-  }, [storageKey]);
+    reportOnboardingTelemetry({
+      event: 'onboarding_step_completed',
+      step: 'agent_prompt_copied',
+      provider_readiness: onboardingProviderReadiness(providerStatus),
+    });
+  }, [providerStatus, storageKey]);
 
   const openPrompt = useCallback(async () => {
     if (!onboarding || typeof window === 'undefined' || !window.agentuseDesktop) {
@@ -329,6 +384,11 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
       setProviderStatus(await window.agentuseDesktop.getProviderStatus());
       setOpen(true);
     } catch (error) {
+      reportOnboardingTelemetry({
+        event: 'onboarding_step_failed',
+        step: 'agent_prompt_copied',
+        error_code: 'provider_status_failed',
+      });
       setProviderStatusError((error as Error).message || 'Could not read provider status from AgentUse Desktop.');
     } finally {
       setProviderStatusLoading(false);
@@ -344,7 +404,11 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
           <strong>Your agent is ready</strong>
           <span><code>{agent.name}</code> was added successfully.</span>
         </span>
-        <a class="onboarding-agent-status-primary" href={agentDetailHref(agent.projectId, agent.runPath)}>
+        <a
+          class="onboarding-agent-status-primary"
+          href={agentDetailHref(agent.projectId, agent.runPath)}
+          onClick={() => reportOnboardingTelemetry({ event: 'onboarding_step_completed', step: 'agent_opened' })}
+        >
           Open agent
         </a>
       </div>
@@ -362,7 +426,11 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
           <strong>Your agents are ready</strong>
           <span>{detectedAgents.length} agents are available in this project.</span>
         </span>
-        <a class="onboarding-agent-status-primary" href={projectHref}>Open agents</a>
+        <a
+          class="onboarding-agent-status-primary"
+          href={projectHref}
+          onClick={() => reportOnboardingTelemetry({ event: 'onboarding_step_completed', step: 'agent_opened' })}
+        >Open agents</a>
       </div>
     );
   }
@@ -387,6 +455,7 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
               <button
                 type="button"
                 onClick={() => {
+                  manualCheckRef.current = true;
                   setCheckError(null);
                   setCheckRevision((value) => value + 1);
                 }}

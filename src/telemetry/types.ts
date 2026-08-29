@@ -162,12 +162,53 @@ export interface ServerShutdownStats {
   failedExecutions: number;
 }
 
-export interface WebUITelemetryEvent {
-  /** Privacy-safe top-level SPA page category. */
-  page: 'home' | 'agents' | 'schedules' | 'sessions' | 'approvals' | 'stores' | 'settings' | 'learnings' | 'other';
-  /** Container displaying the shared Web UI. */
-  clientSurface: 'web' | 'mac_app';
-}
+export type WebUIClientSurface = 'web' | 'mac_app' | 'mac_setup';
+
+export type OnboardingRoute = 'web' | 'desktop';
+
+export type OnboardingStep =
+  | 'desktop_setup'
+  | 'project_created'
+  | 'sample_run_completed'
+  | 'agent_prompt_copied'
+  | 'agent_detected'
+  | 'agent_opened';
+
+export type WebUITelemetryEvent =
+  | {
+      event: 'page_viewed';
+      /** Privacy-safe top-level SPA page category. */
+      page: 'home' | 'agents' | 'schedules' | 'sessions' | 'approvals' | 'stores' | 'settings' | 'learnings' | 'other';
+      /** Container displaying the shared Web UI. */
+      clientSurface: WebUIClientSurface;
+    }
+  | {
+      event: 'onboarding_started' | 'onboarding_completed';
+      onboardingRoute: OnboardingRoute;
+      clientSurface: WebUIClientSurface;
+      durationMs?: number;
+      agentCount?: number;
+      detectionMethod?: 'poll' | 'manual_check';
+    }
+  | {
+      event: 'onboarding_step_completed' | 'onboarding_step_failed';
+      onboardingRoute: OnboardingRoute;
+      clientSurface: WebUIClientSurface;
+      step: OnboardingStep;
+      durationMs?: number;
+      errorCode?:
+        | 'project_create_failed'
+        | 'sample_run_failed'
+        | 'provider_status_failed'
+        | 'agent_check_failed'
+        | 'cli_launcher_add_failed'
+        | 'desktop_setup_failed';
+      launchAtLoginEnabled?: boolean;
+      cliLauncherStatus?: 'already_available' | 'added' | 'skipped' | 'conflict';
+      providerReadiness?: 'ready' | 'not_ready' | 'unknown';
+      agentCount?: number;
+      detectionMethod?: 'poll' | 'manual_check';
+    };
 
 export interface AddCommandResult {
   /** Source type: 'github', 'git', 'local', or 'skill' */

@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
-import { runOnboardingDetached } from '../lib/api';
+import { reportOnboardingTelemetry, runOnboardingDetached } from '../lib/api';
 
 /** Launch the in-memory guide and move straight into its live session. */
 export function useOnboardingRun(projectId: string | undefined) {
@@ -19,6 +19,11 @@ export function useOnboardingRun(projectId: string | undefined) {
       if (result.token) params.set('token', result.token);
       location.route(`/sessions/${encodeURIComponent(result.sessionId)}?${params.toString()}`);
     } catch (err) {
+      reportOnboardingTelemetry({
+        event: 'onboarding_step_failed',
+        step: 'sample_run_completed',
+        error_code: 'sample_run_failed',
+      });
       setError((err as Error).message);
       setBusy(false);
     }

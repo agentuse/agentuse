@@ -27,6 +27,9 @@ import {
   emptyToolCallMetrics,
   parseModel,
   type ToolCallMetrics,
+  type OnboardingRoute,
+  type OnboardingStep,
+  type WebUIClientSurface,
   type WebUITelemetryEvent,
 } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
@@ -180,11 +183,9 @@ interface RunRequest {
   reportedSurface?: 'web_ui';
 }
 
-type WebUIClientSurface = 'web' | 'mac_app';
-
 function webUIClientSurface(value: string | string[] | undefined): WebUIClientSurface {
   const header = Array.isArray(value) ? value[0] : value;
-  return header === 'mac_app' ? 'mac_app' : 'web';
+  return header === 'mac_app' || header === 'mac_setup' ? header : 'web';
 }
 
 function reportedSurfaceForRun(body: RunRequest, clientSurface: WebUIClientSurface = 'web'): 'web_ui' | 'mac_app' | 'api' {
@@ -195,18 +196,82 @@ function reportedSurfaceForRun(body: RunRequest, clientSurface: WebUIClientSurfa
 const WEB_UI_TELEMETRY_PAGES = new Set([
   'home', 'agents', 'schedules', 'sessions', 'approvals', 'stores', 'settings', 'learnings', 'other',
 ]);
+const ONBOARDING_TELEMETRY_EVENTS = new Set([
+  'onboarding_started', 'onboarding_step_completed', 'onboarding_step_failed', 'onboarding_completed',
+]);
+const ONBOARDING_ROUTES = new Set<OnboardingRoute>(['web', 'desktop']);
+const ONBOARDING_STEPS = new Set<OnboardingStep>([
+  'desktop_setup', 'project_created', 'sample_run_completed', 'agent_prompt_copied', 'agent_detected', 'agent_opened',
+]);
+const ONBOARDING_ERROR_CODES = new Set([
+  'project_create_failed', 'sample_run_failed', 'provider_status_failed', 'agent_check_failed',
+  'cli_launcher_add_failed', 'desktop_setup_failed',
+]);
+const CLI_LAUNCHER_STATUSES = new Set(['already_available', 'added', 'skipped', 'conflict']);
+const PROVIDER_READINESS = new Set(['ready', 'not_ready', 'unknown']);
+const DETECTION_METHODS = new Set(['poll', 'manual_check']);
+
+function boundedTelemetryNumber(value: unknown, max: number): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.min(Math.round(value), max)
+    : undefined;
+}
 
 function parseWebUITelemetryBody(
   body: Record<string, unknown>,
   clientSurface: WebUIClientSurface = 'web',
 ): WebUITelemetryEvent | undefined {
-  if (body.event !== 'page_viewed' || typeof body.page !== 'string' || !WEB_UI_TELEMETRY_PAGES.has(body.page)) {
+  if (body.event === 'page_viewed') {
+    if (typeof body.page !== 'string' || !WEB_UI_TELEMETRY_PAGES.has(body.page)) return undefined;
+    return {
+      event: 'page_viewed',
+      page: body.page as Extract<WebUITelemetryEvent, { event: 'page_viewed' }>['page'],
+      clientSurface,
+    };
+  }
+  if (typeof body.event !== 'string' || !ONBOARDING_TELEMETRY_EVENTS.has(body.event)
+    || typeof body.onboarding_route !== 'string' || !ONBOARDING_ROUTES.has(body.onboarding_route as OnboardingRoute)) {
     return undefined;
   }
-  return {
-    page: body.page as WebUITelemetryEvent['page'],
+  const durationMs = boundedTelemetryNumber(body.duration_ms, 24 * 60 * 60 * 1_000);
+  const agentCount = boundedTelemetryNumber(body.agent_count, 100);
+  const common = {
+    onboardingRoute: body.onboarding_route as OnboardingRoute,
     clientSurface,
+    ...(durationMs === undefined ? {} : { durationMs }),
+    ...(agentCount === undefined ? {} : { agentCount }),
+    ...(typeof body.detection_method === 'string' && DETECTION_METHODS.has(body.detection_method)
+      ? { detectionMethod: body.detection_method as 'poll' | 'manual_check' }
+      : {}),
   };
+  if (body.event === 'onboarding_started' || body.event === 'onboarding_completed') {
+    return { event: body.event, ...common };
+  }
+  if (typeof body.step !== 'string' || !ONBOARDING_STEPS.has(body.step as OnboardingStep)) return undefined;
+  return {
+    event: body.event as 'onboarding_step_completed' | 'onboarding_step_failed',
+    ...common,
+    step: body.step as OnboardingStep,
+    ...(typeof body.error_code === 'string' && ONBOARDING_ERROR_CODES.has(body.error_code)
+      ? { errorCode: body.error_code as Extract<WebUITelemetryEvent, { event: 'onboarding_step_failed' }>['errorCode'] }
+      : {}),
+    ...(typeof body.launch_at_login_enabled === 'boolean'
+      ? { launchAtLoginEnabled: body.launch_at_login_enabled }
+      : {}),
+    ...(typeof body.cli_launcher_status === 'string' && CLI_LAUNCHER_STATUSES.has(body.cli_launcher_status)
+      ? { cliLauncherStatus: body.cli_launcher_status as 'already_available' | 'added' | 'skipped' | 'conflict' }
+      : {}),
+    ...(typeof body.provider_readiness === 'string' && PROVIDER_READINESS.has(body.provider_readiness)
+      ? { providerReadiness: body.provider_readiness as 'ready' | 'not_ready' | 'unknown' }
+      : {}),
+  };
+}
+
+function webUITelemetryDedupeKey(value: WebUITelemetryEvent): string {
+  if (value.event === 'page_viewed') return `${value.clientSurface}:page:${value.page}`;
+  // A Desktop onboarding route moves from mac_setup to the shared mac_app UI.
+  // Dedupe across that surface boundary so the route has one lifecycle event.
+  return [value.onboardingRoute, value.event, 'step' in value ? value.step : ''].join(':');
 }
 
 const WEB_UI_TELEMETRY_DEDUPE_MS = 15 * 60 * 1000;
@@ -214,17 +279,17 @@ const WEB_UI_TELEMETRY_RATE_CAPACITY = 20;
 const WEB_UI_TELEMETRY_RATE_PER_MS = WEB_UI_TELEMETRY_RATE_CAPACITY / 60_000;
 
 interface WebUITelemetryGuard {
-  pages: Map<string, number>;
+  events: Map<string, number>;
   tokens: number;
   lastRefillAt: number;
 }
 
 function createWebUITelemetryGuard(now = Date.now()): WebUITelemetryGuard {
-  return { pages: new Map(), tokens: WEB_UI_TELEMETRY_RATE_CAPACITY, lastRefillAt: now };
+  return { events: new Map(), tokens: WEB_UI_TELEMETRY_RATE_CAPACITY, lastRefillAt: now };
 }
 
-/** Daemon-wide guard: limits requests and deduplicates page categories across tabs/reloads. */
-function acceptWebUITelemetry(guard: WebUITelemetryGuard, page: string, now = Date.now()): boolean {
+/** Daemon-wide guard: limits requests and deduplicates fixed event keys across tabs/reloads. */
+function acceptWebUITelemetry(guard: WebUITelemetryGuard, key: string, now = Date.now()): boolean {
   const elapsed = Math.max(0, now - guard.lastRefillAt);
   guard.tokens = Math.min(
     WEB_UI_TELEMETRY_RATE_CAPACITY,
@@ -234,9 +299,9 @@ function acceptWebUITelemetry(guard: WebUITelemetryGuard, page: string, now = Da
   if (guard.tokens < 1) return false;
   guard.tokens -= 1;
 
-  const lastReportedAt = guard.pages.get(page);
+  const lastReportedAt = guard.events.get(key);
   if (lastReportedAt !== undefined && now - lastReportedAt < WEB_UI_TELEMETRY_DEDUPE_MS) return false;
-  guard.pages.set(page, now);
+  guard.events.set(key, now);
   return true;
 }
 
@@ -4810,7 +4875,7 @@ export function createServeCommand(): Command {
               raw ? JSON.parse(raw) as Record<string, unknown> : {},
               webUIClientSurface(req.headers['x-agentuse-client']),
             );
-            if (event && acceptWebUITelemetry(webUITelemetryGuard, `${event.clientSurface}:${event.page}`)) {
+            if (event && acceptWebUITelemetry(webUITelemetryGuard, webUITelemetryDedupeKey(event))) {
               telemetry.captureWebUITelemetry(event);
             }
           } catch {
@@ -7897,6 +7962,7 @@ export const __testing = {
   reportedSurfaceForRun,
   webUIClientSurface,
   parseWebUITelemetryBody,
+  webUITelemetryDedupeKey,
   createWebUITelemetryGuard,
   acceptWebUITelemetry,
   canSubmitWebUITelemetry,
