@@ -13,6 +13,13 @@ describe("desktop quit policy", () => {
     expect(policy.shouldTerminate()).toBe(true);
   });
 
+  it("identifies a native updater quit so Electron must not prevent it", () => {
+    const policy = createDesktopQuitPolicy();
+    policy.requestNativeUpdaterQuit();
+    expect(policy.shouldTerminate()).toBe(true);
+    expect(policy.isNativeUpdaterQuit()).toBe(true);
+  });
+
   it("warns only while a server owned by the app is still running", () => {
     expect(shouldWarnBeforeFullQuit(undefined)).toBe(false);
     expect(shouldWarnBeforeFullQuit({ exitCode: 0, killed: false })).toBe(false);

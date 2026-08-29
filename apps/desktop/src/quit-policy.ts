@@ -1,6 +1,8 @@
 export interface DesktopQuitPolicy {
   requestFullQuit(): void;
+  requestNativeUpdaterQuit(): void;
   shouldTerminate(): boolean;
+  isNativeUpdaterQuit(): boolean;
 }
 
 export interface OwnedServerState {
@@ -34,8 +36,14 @@ export async function deferDesktopQuitAfterDrain(
  */
 export function createDesktopQuitPolicy(): DesktopQuitPolicy {
   let fullQuitRequested = false;
+  let nativeUpdaterQuitRequested = false;
   return {
     requestFullQuit: () => { fullQuitRequested = true; },
+    requestNativeUpdaterQuit: () => {
+      fullQuitRequested = true;
+      nativeUpdaterQuitRequested = true;
+    },
     shouldTerminate: () => fullQuitRequested,
+    isNativeUpdaterQuit: () => nativeUpdaterQuitRequested,
   };
 }

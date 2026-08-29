@@ -871,7 +871,7 @@ async function handleNativeSettingsCommand(line: string, child: ChildProcess): P
       await pushNativeSettingsState(child);
       break;
     case "installUpdate":
-      desktopUpdater?.installUpdate();
+      await desktopUpdater?.installUpdate();
       break;
   }
 }
@@ -1102,7 +1102,21 @@ function initializeDesktopUpdater(): void {
     isPackaged: app.isPackaged,
     platform: process.platform,
     currentVersion: app.getVersion(),
-    beforeInstall: () => quitPolicy.requestFullQuit(),
+    beforeInstall: async () => {
+      // Squirrel's macOS updater closes BrowserWindows before it emits
+      // `before-quit`. Drain the supervised server first, then authorize an
+      // uninterrupted native quit so window close guards cannot hide the app
+      // or cancel ShipIt's installation transaction.
+      await stopOwnedServerCleanly();
+      quitPolicy.requestNativeUpdaterQuit();
+      isQuitting = true;
+      sendNativeSettingsMessage({ type: "quit" });
+      if (approvalPollTimer) {
+        clearInterval(approvalPollTimer);
+        approvalPollTimer = undefined;
+      }
+      stopNotificationStream();
+    },
     onStateChange: () => void pushNativeSettingsState(),
   });
 
@@ -1278,6 +1292,11 @@ if (!app.requestSingleInstanceLock()) {
     sendNativeSettingsMessage({ type: "quit" });
     if (approvalPollTimer) clearInterval(approvalPollTimer);
     stopNotificationStream();
+    // electron-updater/Squirrel must own this quit from start to finish. Its
+    // transaction was prepared above, including draining the owned server, so
+    // preventing this event would leave ShipIt waiting for a process that can
+    // no longer complete the native updater's original quit request.
+    if (quitPolicy.isNativeUpdaterQuit()) return;
     if (quitInProgress) return;
     event.preventDefault();
     void deferDesktopQuitAfterDrain(stopOwnedServerCleanly, () => {

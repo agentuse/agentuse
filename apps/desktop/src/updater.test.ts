@@ -24,7 +24,7 @@ class FakeAutoUpdater extends EventEmitter {
   }
 }
 
-function createUpdater(fake = new FakeAutoUpdater(), packaged = true, beforeInstall?: () => void) {
+function createUpdater(fake = new FakeAutoUpdater(), packaged = true, beforeInstall?: () => void | Promise<void>) {
   return {
     fake,
     updater: new DesktopUpdater(fake as DesktopAutoUpdater, {
@@ -57,7 +57,11 @@ describe("desktop updater", () => {
       actions.push("install");
       fake.installs.push([isSilent, isForceRunAfter]);
     };
-    const { updater } = createUpdater(fake, true, () => actions.push("authorize-quit"));
+    const { updater } = createUpdater(fake, true, async () => {
+      actions.push("drain-server");
+      await Promise.resolve();
+      actions.push("authorize-native-quit");
+    });
 
     fake.emit("update-available", { version: "0.19.2" });
     expect(updater.state).toMatchObject({
@@ -78,9 +82,17 @@ describe("desktop updater", () => {
     expect(updater.state.actionLabel).toBe("Restart and Install");
     expect(fake.installs).toEqual([]);
 
-    updater.installUpdate();
-    expect(fake.installs).toEqual([[false, true]]);
-    expect(actions).toEqual(["authorize-quit", "install"]);
+    const install = updater.installUpdate();
+    expect(updater.state).toMatchObject({
+      status: "ready",
+      detail: "Preparing to restart…",
+      actionDisabled: true,
+    });
+    expect(fake.installs).toEqual([]);
+
+    await install;
+    expect(fake.installs).toEqual([[undefined, undefined]]);
+    expect(actions).toEqual(["drain-server", "authorize-native-quit", "install"]);
   });
 
   it("contains offline errors and allows a later retry", async () => {
@@ -105,7 +117,7 @@ describe("desktop updater", () => {
 
     await updater.checkForUpdates();
     await updater.downloadUpdate();
-    updater.installUpdate();
+    await updater.installUpdate();
 
     expect(updater.state.status).toBe("unavailable");
     expect(fake.checks).toBe(0);

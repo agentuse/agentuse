@@ -42,7 +42,7 @@ interface DesktopUpdaterOptions {
   isPackaged: boolean;
   platform: NodeJS.Platform;
   currentVersion: string;
-  beforeInstall?: () => void;
+  beforeInstall?: () => void | Promise<void>;
   onStateChange?: (state: DesktopUpdateState) => void;
 }
 
@@ -53,6 +53,7 @@ function errorDetail(error: unknown): string {
 
 export class DesktopUpdater {
   private readonly enabled: boolean;
+  private installInProgress = false;
   private stateValue: DesktopUpdateState;
 
   constructor(
@@ -158,16 +159,26 @@ export class DesktopUpdater {
     }
   }
 
-  installUpdate(): void {
-    if (!this.enabled || this.stateValue.status !== "ready") return;
+  async installUpdate(): Promise<void> {
+    if (!this.enabled || this.stateValue.status !== "ready" || this.installInProgress) return;
     // This is called only from the explicit Restart and Install button.
+    this.installInProgress = true;
+    this.setState({
+      status: "ready",
+      availableVersion: this.stateValue.availableVersion,
+      progress: 100,
+      detail: "Preparing to restart…",
+      actionLabel: "Restart and Install",
+      actionDisabled: true,
+    });
     try {
-      // Let the host opt into a full application quit before Squirrel asks
-      // Electron to restart. AgentUse otherwise treats app-initiated quits as
-      // requests to keep the menu-bar process running in the background.
-      this.options.beforeInstall?.();
-      this.autoUpdater.quitAndInstall(false, true);
+      // macOS Squirrel owns the quit transaction and cannot resume it after a
+      // prevented `before-quit` event. Finish host shutdown work before asking
+      // the native updater to close windows and replace the application.
+      await this.options.beforeInstall?.();
+      this.autoUpdater.quitAndInstall();
     } catch (error) {
+      this.installInProgress = false;
       this.setError(error);
     }
   }
