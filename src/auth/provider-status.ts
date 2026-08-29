@@ -69,19 +69,11 @@ export async function getProviderStatus(): Promise<ProviderStatus> {
     const providerAuth = await AuthStorage.getProviderAuth(provider.id);
     const sources: ProviderAuthSourceStatus[] = [];
 
-    if (providerAuth.oauth) {
-      sources.push({
-        priority: 1,
-        kind: 'oauth',
-        name: providerAuth.oauth.type === 'codex-oauth' ? 'ChatGPT OAuth' : 'OAuth',
-        stored: true,
-        active: true,
-      });
-    }
-
+    // Keep this order identical to provider construction. Anthropic accepts a
+    // Claude Code OAuth token from the environment before consulting storage;
+    // the other providers have no environment OAuth source.
     if (
       provider.id === 'anthropic'
-      && !providerAuth.oauth
       && process.env.CLAUDE_CODE_OAUTH_TOKEN
     ) {
       sources.push({
@@ -93,23 +85,35 @@ export async function getProviderStatus(): Promise<ProviderStatus> {
       });
     }
 
-    if (providerAuth.api) {
+    if (providerAuth.oauth) {
       sources.push({
-        priority: 2,
-        kind: 'api_key',
-        name: 'Stored API key',
+        priority: 1,
+        kind: 'oauth',
+        name: providerAuth.oauth.type === 'codex-oauth' ? 'ChatGPT OAuth' : 'OAuth',
         stored: true,
-        active: !sources.some((source) => source.priority === 1),
+        active: sources.length === 0,
       });
     }
 
+    // Runtime provider construction checks API-key environment variables
+    // before falling back to the stored API key.
     for (const envVar of provider.envVars) {
       if (envVar === 'CLAUDE_CODE_OAUTH_TOKEN' || !process.env[envVar]) continue;
       sources.push({
-        priority: 3,
+        priority: 2,
         kind: 'environment',
         name: envVar,
         stored: false,
+        active: sources.length === 0,
+      });
+    }
+
+    if (providerAuth.api) {
+      sources.push({
+        priority: 3,
+        kind: 'api_key',
+        name: 'Stored API key',
+        stored: true,
         active: sources.length === 0,
       });
     }

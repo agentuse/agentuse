@@ -66,7 +66,7 @@ const CaptureObjectSchema = z
   });
 
 /**
- * `capture: true` still parses, but its meaning narrowed in 0.18: it used to
+ * `capture: true` still parses, but its meaning narrowed in 0.19: it used to
  * mean free-form auto-capture; it now enables no automatic observation
  * channels. Human feedback becomes durable only through Learn/--remember.
  * Free-form observation capture is unreachable without explicitly writing
@@ -85,7 +85,7 @@ const CanonicalLearningSchema = z
   .object({
     capture: CaptureSchema.default(true),
     apply: z.boolean().default(true),
-    // Removed in 0.18, declared only to reject it with a mapping the author can
+    // Removed in 0.19, declared only to reject it with a mapping the author can
     // act on. The one faithful mapping (`capture.custom`) would keep free-form
     // policy capture alive automatically — exactly what the redesign exists to
     // stop — so the author must consciously rewrite it.

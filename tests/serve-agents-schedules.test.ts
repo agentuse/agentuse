@@ -105,6 +105,25 @@ describe('collectAgents', () => {
   });
 });
 
+describe('bare serve migration warning', () => {
+  it('explains how to re-adopt a current directory that contains agents', async () => {
+    const warning = await __testing.bareServeMigrationWarning(tmpDir);
+
+    expect(warning).toContain('v0.19 no longer adopts the current directory');
+    expect(warning).toContain('agentuse serve -C .');
+    expect(warning).toContain('daily.agentuse');
+  });
+
+  it('stays quiet when the current directory has no agents', async () => {
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentuse-empty-project-'));
+    try {
+      expect(await __testing.bareServeMigrationWarning(emptyDir)).toBeUndefined();
+    } finally {
+      fs.rmSync(emptyDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('Scheduler.listSerialized', () => {
   it('serializes schedules with a human description and ISO timestamps', () => {
     const scheduler = new Scheduler({

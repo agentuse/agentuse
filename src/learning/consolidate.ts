@@ -1887,7 +1887,7 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   // anything but entries.
   const permanentBefore = parseLearnedBlock(agentBefore);
   // Entries never vetted against the current contract: legacy ones with no
-  // hash (pre-0.18 files), and stale ones whose recorded hash no longer
+  // hash (pre-0.19 files), and stale ones whose recorded hash no longer
   // matches. Both are a reason to run on their own — the first tidy after an
   // upgrade is what backfills the hash and vets the legacy set.
   const currentHash = hashInstructions(options.agentInstructions);

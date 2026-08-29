@@ -141,7 +141,7 @@ describe("quarantined learnings in the store", () => {
     expect((await store.load())).toHaveLength(2);
   });
 
-  it("reads a pre-0.18 applied: counter and rewrites it under the new name", async () => {
+  it("reads a pre-0.19 applied: counter and rewrites it under the new name", async () => {
     // `injectedCount` is the same number under an honest name: it counts what
     // injection COST, not evidence a rule worked. Old files keep loading.
     mkdirSync(dirname(store.filePath), { recursive: true });

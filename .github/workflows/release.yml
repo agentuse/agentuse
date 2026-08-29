@@ -59,6 +59,17 @@ jobs:
             bun scripts/release-brief.ts
           fi
 
+  # Required native signal. This assembles the unsigned .app on macOS, compiles
+  # the Swift Settings helper, and smoke-tests the CLI embedded in the bundle.
+  desktop:
+    if: github.repository == 'agentuse/agentuse' || vars.RELEASE_REHEARSAL == 'true'
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: ./.github/actions/setup
+      - name: Desktop package gate
+        run: bun scripts/release.ts verify-desktop
+
   # Advisory. Drives a real browser, and by decision it never blocks a release,
   # so it is deliberately absent from publish's `needs`. A red X here is
   # information for the reviewer, not a stop sign.
@@ -78,7 +89,7 @@ jobs:
   # the repo it is running in.
   publish:
     if: github.repository == 'agentuse/agentuse' && github.event_name == 'push'
-    needs: verify
+    needs: [verify, desktop]
     runs-on: ubuntu-latest
     environment: release
     permissions:

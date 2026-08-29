@@ -232,7 +232,7 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
     // Legacy entries (no hash) and stale ones (hash mismatch) are checked
     // against the current contract: passes are re-stamped, failures quarantined
     // with the reason — never deleted. This is also what backfills the hash on
-    // a pre-0.18 store the first time capture runs after upgrade.
+    // a pre-0.19 store the first time capture runs after upgrade.
     let requarantined = 0;
     const justWritten = new Set(persisted.map((l) => l.id));
     const needsRevet = activeLearnings(stored).filter(

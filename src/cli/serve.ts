@@ -2788,6 +2788,21 @@ function resolveProjectFromPath(rawPath: string, idOverride?: string): Omit<Proj
   return { id, root, scopeRoot, envFile };
 }
 
+async function bareServeMigrationWarning(cwd: string): Promise<string | undefined> {
+  const [agentFile] = await glob("**/*.agentuse", {
+    cwd,
+    ignore: ["node_modules/**", "tmp/**", ".git/**"],
+    nodir: true,
+  });
+  if (!agentFile) return undefined;
+
+  return (
+    `Warning: no project was loaded. v0.19 no longer adopts the current directory ` +
+    `for a bare "agentuse serve" (found ${agentFile}). Restart with ` +
+    `"agentuse serve -C ." or add this directory to serve.projects.`
+  );
+}
+
 function loadServeProjectEnvironment(projectSeeds: Array<Omit<Project, 'agentFiles'>>): string[] {
   const loaded: string[] = [];
   if (projectSeeds.length === 1 && existsSync(projectSeeds[0].envFile)) {
@@ -2903,6 +2918,9 @@ export function createServeCommand(): Command {
             process.exit(1);
           }
         }
+      } else {
+        const migrationWarning = await bareServeMigrationWarning(process.cwd());
+        if (migrationWarning) console.error(chalk.yellow(migrationWarning));
       }
 
       loadedServeEnvFiles.push(...loadServeProjectEnvironment(projectSeeds));
@@ -7971,6 +7989,7 @@ export const __testing = {
   formatPsTable,
   formatAgentsTable,
   formatSchedulesTable,
+  bareServeMigrationWarning,
   canContinueApprovalSession,
   isEndedSessionStatus,
   approvalListCreatedAfter,

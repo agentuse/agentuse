@@ -429,7 +429,7 @@ export function createProviderCommand(): Command {
         process.stdout.write("\n");
       }
 
-      process.stdout.write("Priority: [1] OAuth → [2] Stored API key → [3] Environment variable\n");
+      process.stdout.write("Priority: [1] OAuth → [2] Environment API key → [3] Stored API key\n");
     });
 
   authCmd

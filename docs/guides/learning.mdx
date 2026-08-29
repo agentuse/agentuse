@@ -64,7 +64,7 @@ learnings file inside the AgentUse state directory, not in your repository.
 [Storage](#storage).
 
 <Note>
-  `capture: true` used to mean free-form auto-capture. As of v0.18.0 it enables
+  `capture: true` used to mean free-form auto-capture. As of v0.19.0 it enables
   no automatic observation channels. Human feedback is saved through the Learn
   checkbox, `--remember`, or manual add. See
   [Upgrading an existing agent](#upgrading-an-existing-agent).
@@ -211,7 +211,7 @@ that suspends on an approval gate is an error.
 | `model` | `string` | Model for the helper calls (capture, vet, and tidy-up). Defaults to the agent's own model. |
 
 <Warning>
-  **`criteria` was removed in v0.18.0** and is a hard parse error:
+  **`criteria` was removed in v0.19.0** and is a hard parse error:
 
   ```
   "criteria" was removed — free-form capture is opt-in now. To restore scoped
@@ -297,7 +297,7 @@ rules go **stale**:
 - The next capture or `agentuse learnings tidy` **re-vets** them against the
   current instructions: passes are re-stamped and start injecting again,
   failures are quarantined with the reason. Nothing is deleted.
-- Rules with **no hash at all**, anything captured before v0.18.0, are *not*
+- Rules with **no hash at all**, anything captured before v0.19.0, are *not*
   stale. They stay injectable until the first capture or tidy backfills them.
 
 `agentuse doctor` says so when it matters:
@@ -396,7 +396,7 @@ After a run finishes with an automatic channel configured:
 4. **Re-vet stored rules the contract has moved out from under**: anything
    stale, and anything with no hash at all, is checked against the current
    instructions and either re-stamped or quarantined. This is what backfills a
-   pre-v0.18.0 store the first time capture runs after an upgrade.
+   pre-v0.19.0 store the first time capture runs after an upgrade.
 
 The result is reported in the run's output and in the session log:
 
@@ -484,7 +484,7 @@ these contextual semantics.
   paid for on, and it is never evidence the rule worked. The effectiveness
   signal is `approvedRuns` (runs the rule was in force for that ended in an
   approval with no comment), and that is what
-  [graduation](#what-makes-a-learning-permanent) is gated on. The store field was named `applied:` before v0.18.0 and is read
+  [graduation](#what-makes-a-learning-permanent) is gated on. The store field was named `applied:` before v0.19.0 and is read
   as an alias; files are rewritten with `injected:` on the next save.
 </Note>
 
@@ -586,7 +586,7 @@ Learnings tab. Both run the same thing. It makes six kinds of change:
 
 The re-vet pass is why a tidy-up is worth running after you edit an agent file,
 even on a set that is comfortably under the cap: it is what gets stale rules
-injecting again, and what backfills a store captured before v0.18.0.
+injecting again, and what backfills a store captured before v0.19.0.
 
 That last change is the only thing that ever makes the permanent block smaller.
 Graduation alone only ever added to it, so on a long-running agent it accumulated
@@ -839,7 +839,7 @@ unknown tokens are ignored rather than rejected:
 - `src:` records who authored it, `auto` (an evaluator), `approval` (promoted from a reviewer comment), or `manual` (explicitly saved by a reviewer). Files without it load as `auto`.
 - `ch:` records the capture channel, one of `corrections`, `tool-errors`, `custom`, `agent`. Absent on entries written before channels existed.
 - `ih:` is the [instruction hash](#rules-are-stamped-with-the-instructions-they-were-checked-against) the rule was last vetted against. Absent on entries that predate it; those count as fresh, not stale, until a capture or tidy backfills them.
-- `injected:` counts injections into a run's prompt. `applied:` is the pre-v0.18.0 name and reads as an alias; the file is rewritten with `injected:` on the next save.
+- `injected:` counts injections into a run's prompt. `applied:` is the pre-v0.19.0 name and reads as an alias; the file is rewritten with `injected:` on the next save.
 - `tool:` and `sig:` are the `tool-errors` dedupe key, the tool and its normalized failure signature.
 - `sess:` is the session the rule was captured in.
 - `state:graduated` means the rule now lives in the agent file and this staged copy is on its way out. `state:quarantined` means it failed the vet and is never injected; the reason is on the `<!-- why: … -->` line beneath. Absent means active. A `state:retired` entry in an older file is skipped on read and dropped on the next write, so retired rules do not accumulate.

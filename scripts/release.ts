@@ -10,6 +10,7 @@
  *   bun scripts/release.ts preflight [bump]   assertions only, writes nothing
  *   bun scripts/release.ts prepare <bump>     date the changelog, bump, commit, tag
  *   bun scripts/release.ts verify             the blocking gate
+ *   bun scripts/release.ts verify-desktop     the required macOS package gate
  *   bun scripts/release.ts notes [version]    changelog section to stdout
  *   bun scripts/release.ts publish            npm publish (OIDC in CI, 2FA locally)
  *   bun scripts/release.ts finish [version]   create the GitHub Release
@@ -65,8 +66,12 @@ function capture(cmd: string, args: string[]): string {
 }
 
 /** Run with the caller's stdio, so npm's 2FA prompt and test output work. */
-function stream(cmd: string, args: string[]): void {
-  const result = spawnSync(cmd, args, { cwd: root, stdio: 'inherit' });
+function stream(cmd: string, args: string[], env?: NodeJS.ProcessEnv): void {
+  const result = spawnSync(cmd, args, {
+    cwd: root,
+    stdio: 'inherit',
+    env: env ? { ...process.env, ...env } : process.env,
+  });
   if (result.status !== 0) fail(`${cmd} ${args.join(' ')} exited ${result.status}`);
 }
 
@@ -394,6 +399,47 @@ function verify(): void {
   note(`\nGate passed: ${results.map((r) => `${r.name} ${r.seconds}s`).join(', ')}`);
 }
 
+/**
+ * Assemble the real macOS application in a separate required runner. The core
+ * gate stays portable, while this catches Swift helper, Electron packaging,
+ * workspace embedding, and executable-permission failures before publishing.
+ */
+function verifyDesktop(): void {
+  if (process.platform !== 'darwin') {
+    fail('The Desktop release gate requires macOS so it can compile the Swift Settings helper and assemble AgentUse.app.');
+  }
+
+  note('\n=== desktop root runtime build ===');
+  stream('bun', ['run', 'build'], { AGENTUSE_SKIP_SERVE_RESTART: '1' });
+
+  note('\n=== unsigned desktop package ===');
+  stream('pnpm', ['--filter', '@agentuse/desktop', 'dist:dir'], {
+    CSC_IDENTITY_AUTO_DISCOVERY: 'false',
+  });
+
+  const appDir = join(
+    root,
+    'apps',
+    'desktop',
+    'dist',
+    process.arch === 'arm64' ? 'mac-arm64' : 'mac',
+    'AgentUse.app',
+  );
+  const settingsApp = join(appDir, 'Contents', 'Frameworks', 'AgentUseSettings.app');
+  const embeddedCli = join(appDir, 'Contents', 'Resources', 'bin', 'agentuse');
+
+  if (!existsSync(appDir)) fail(`Desktop package did not produce ${appDir}.`);
+  if (!existsSync(settingsApp)) fail('Desktop package is missing the native AgentUseSettings.app helper.');
+  if (!existsSync(embeddedCli)) fail('Desktop package is missing its bundled agentuse CLI launcher.');
+
+  const embeddedVersion = capture(embeddedCli, ['--version']);
+  if (embeddedVersion !== manifest().version) {
+    fail(`Bundled Desktop CLI reports ${embeddedVersion}; package.json says ${manifest().version}.`);
+  }
+
+  note(`\nDesktop gate passed: ${appDir}`);
+}
+
 // -------------------------------------------------------------------- notes
 
 function notes(version: string): void {
@@ -509,6 +555,9 @@ function main(): void {
     case 'verify':
       verify();
       return;
+    case 'verify-desktop':
+      verifyDesktop();
+      return;
     case 'notes':
       notes(version);
       return;
@@ -520,7 +569,7 @@ function main(): void {
       return;
     default:
       fail(
-        `Usage: bun scripts/release.ts <preflight|prepare|verify|notes|publish|finish> [arg] [--any-branch]\n` +
+        `Usage: bun scripts/release.ts <preflight|prepare|verify|verify-desktop|notes|publish|finish> [arg] [--any-branch]\n` +
           (command ? `Unknown command "${command}".` : ''),
       );
   }

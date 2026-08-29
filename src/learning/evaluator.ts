@@ -243,7 +243,7 @@ ${event.result.text || '(No text output)'}`;
 
 export interface EvaluateExecutionOptions {
   event: AgentCompleteEvent;
-  /** The COMPLETE effective agent instructions. Passed whole: the pre-0.18
+  /** The COMPLETE effective agent instructions. Passed whole: the pre-0.19
    *  3,000-character body truncation blinded the evaluator to every rule past
    *  the cut on any real agent, which is how it "rediscovered" explicit
    *  contract rules as new learnings. */

@@ -827,7 +827,7 @@ export class LearningStore {
    * Every field except the date is optional and defaults, so learnings files
    * written before provenance (`src:`), the lifecycle (`state:`), the evidence
    * counters (`re:`, `ok:`), or the capture channels (`ch:`, `ih:`, `tool:`,
-   * `sig:`) still load. `applied:` is the pre-0.18 name for `injected:` and
+   * `sig:`) still load. `applied:` is the pre-0.19 name for `injected:` and
    * reads as an alias; the file is rewritten with the new name on next save.
    * Unknown tokens are ignored rather than rejected, which is what lets a newer
    * field be added without a migration.

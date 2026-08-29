@@ -65,6 +65,7 @@
     "test:coverage": "bun scripts/test-coverage.ts",
     "test:e2e": "bun run build:web && bun scripts/e2e-dashboard.ts",
     "test:release": "bun scripts/release.ts verify",
+    "test:release:desktop": "bun scripts/release.ts verify-desktop",
     "typecheck": "tsc --noEmit",
     "typecheck:scripts": "tsc --noEmit -p tsconfig.scripts.json",
     "smoke:cli": "node bin/cli.js --version",

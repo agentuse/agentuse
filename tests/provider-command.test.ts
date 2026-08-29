@@ -79,6 +79,7 @@ describe('createProviderCommand', () => {
 
     expect(output.join('')).toContain('OpenCode Go');
     expect(output.join('')).toContain('OPENCODE_GO_API_KEY');
+    expect(output.join('')).toContain('[2]');
   });
 
   it('lists provider status as JSON without exposing credential values', async () => {
@@ -97,13 +98,21 @@ describe('createProviderCommand', () => {
 
     (AuthStorage as any).AUTH_FILE = path.join(tempDir, 'auth.json');
     for (const name of envNames) delete process.env[name];
-    process.env.OPENROUTER_API_KEY = 'environment-secret';
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'environment-oauth-secret';
+    process.env.OPENAI_API_KEY = 'environment-secret';
+    process.env.OPENROUTER_API_KEY = 'openrouter-environment-secret';
     stdoutSpy = spyOn(process.stdout, 'write').mockImplementation(((chunk: string | Uint8Array) => {
       output.push(String(chunk));
       return true;
     }) as any);
 
     try {
+      await AuthStorage.setOAuth('anthropic', {
+        type: 'oauth',
+        refresh: 'stored-refresh-secret',
+        access: 'stored-oauth-secret',
+        expires: Date.now() + 60 * 60 * 1000,
+      });
       await AuthStorage.setApiKey('openai', { type: 'api', key: 'stored-secret' });
       await AuthStorage.setCustomProvider('local', {
         baseURL: 'http://localhost:11434/v1',
@@ -126,17 +135,46 @@ describe('createProviderCommand', () => {
       id: 'openai',
       name: 'OpenAI',
       configured: true,
-      sources: [{
-        priority: 2,
-        kind: 'api_key',
-        name: 'Stored API key',
-        stored: true,
-        active: true,
-      }],
+      sources: [
+        {
+          priority: 2,
+          kind: 'environment',
+          name: 'OPENAI_API_KEY',
+          stored: false,
+          active: true,
+        },
+        {
+          priority: 3,
+          kind: 'api_key',
+          name: 'Stored API key',
+          stored: true,
+          active: false,
+        },
+      ],
     });
-    expect(result.providers.find((provider: any) => provider.id === 'anthropic').configured).toBe(false);
+    expect(result.providers.find((provider: any) => provider.id === 'anthropic')).toEqual({
+      id: 'anthropic',
+      name: 'Anthropic',
+      configured: true,
+      sources: [
+        {
+          priority: 1,
+          kind: 'environment',
+          name: 'CLAUDE_CODE_OAUTH_TOKEN',
+          stored: false,
+          active: true,
+        },
+        {
+          priority: 1,
+          kind: 'oauth',
+          name: 'OAuth',
+          stored: true,
+          active: false,
+        },
+      ],
+    });
     expect(result.providers.find((provider: any) => provider.id === 'openrouter').sources).toEqual([{
-      priority: 3,
+      priority: 2,
       kind: 'environment',
       name: 'OPENROUTER_API_KEY',
       stored: false,
@@ -148,7 +186,11 @@ describe('createProviderCommand', () => {
       hasApiKey: true,
     }]);
     expect(text).not.toContain('stored-secret');
+    expect(text).not.toContain('environment-oauth-secret');
+    expect(text).not.toContain('stored-refresh-secret');
+    expect(text).not.toContain('stored-oauth-secret');
     expect(text).not.toContain('environment-secret');
+    expect(text).not.toContain('openrouter-environment-secret');
     expect(text).not.toContain('custom-secret');
   });
 
