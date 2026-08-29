@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell, Tray, type Event, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, Notification, shell, Tray, type Event, type IpcMainInvokeEvent } from "electron";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
@@ -22,6 +22,14 @@ import { createDesktopQuitPolicy } from "./quit-policy";
 import { isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, selectServer, serverUrl, type RegisteredServer } from "./runtime";
 import { createAgentUseTrayIcon } from "./tray-icon";
 import { defaultCliLinkPath, inspectCliAvailability, loginShellPath, packagedCliLauncherPath, toggleCliLink, type CliLinkState } from "./cli-link";
+import {
+  dashboardShortcutAccelerator,
+  DEFAULT_DASHBOARD_SHORTCUT,
+  desktopPreferencesPath,
+  normalizeDashboardShortcut,
+  readDashboardShortcut,
+  writeDashboardShortcut,
+} from "./dashboard-shortcut";
 import { getProviderStatus } from "../../../src/auth/provider-status";
 
 const require = createRequire(__filename);
@@ -53,6 +61,9 @@ let serverAcquisition: Promise<void> | undefined;
 let userLoginPath: Promise<string> | undefined;
 let desktopSetupStartedAt: number | undefined;
 let desktopCliLauncherAdded = false;
+let dashboardShortcut: string | null = DEFAULT_DASHBOARD_SHORTCUT;
+let registeredDashboardShortcut: string | undefined;
+let dashboardShortcutError: string | undefined;
 const pendingDesktopTelemetry: Array<{
   payload: Record<string, unknown>;
   clientSurface: "mac_app" | "mac_setup";
@@ -106,6 +117,10 @@ function resolveCliPath(): string {
 
 function onboardingStateFile(): string {
   return desktopOnboardingStatePath(app.getPath("userData"));
+}
+
+function desktopPreferencesFile(): string {
+  return desktopPreferencesPath(app.getPath("userData"));
 }
 
 function onboardingCliLinkState(link: CliLinkState) {
@@ -703,6 +718,30 @@ async function handleNativeSettingsCommand(line: string, child: ChildProcess): P
       });
       await pushNativeSettingsState(child);
       break;
+    case "setDashboardShortcut": {
+      try {
+        await updateDashboardShortcut(command.shortcut);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        dashboardShortcutError = detail;
+        sendNativeSettingsMessage({ type: "error", message: detail }, child);
+      } finally {
+        await pushNativeSettingsState(child);
+      }
+      break;
+    }
+    case "clearDashboardShortcut": {
+      try {
+        await updateDashboardShortcut(null);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        dashboardShortcutError = detail;
+        sendNativeSettingsMessage({ type: "error", message: detail }, child);
+      } finally {
+        await pushNativeSettingsState(child);
+      }
+      break;
+    }
     case "toggleCliLink": {
       try {
         await toggleCliLink(
@@ -774,6 +813,65 @@ function toggleDashboard(): void {
   void showPrimaryWindow();
 }
 
+async function initializeDashboardShortcut(): Promise<void> {
+  dashboardShortcut = await readDashboardShortcut(desktopPreferencesFile());
+  dashboardShortcutError = undefined;
+  if (!dashboardShortcut) return;
+  const accelerator = dashboardShortcutAccelerator(dashboardShortcut);
+  if (globalShortcut.register(accelerator, toggleDashboard)) {
+    registeredDashboardShortcut = dashboardShortcut;
+    return;
+  }
+  dashboardShortcutError = "That shortcut is already used by macOS or another app. Choose another shortcut.";
+}
+
+async function updateDashboardShortcut(value: string | null): Promise<void> {
+  const normalized = normalizeDashboardShortcut(value);
+  if (normalized === undefined) {
+    throw new Error("Choose a shortcut with at least one modifier and one supported key.");
+  }
+  if (normalized === null) {
+    await writeDashboardShortcut(desktopPreferencesFile(), null);
+    if (registeredDashboardShortcut) {
+      globalShortcut.unregister(dashboardShortcutAccelerator(registeredDashboardShortcut));
+    }
+    dashboardShortcut = null;
+    registeredDashboardShortcut = undefined;
+    dashboardShortcutError = undefined;
+    return;
+  }
+
+  if (registeredDashboardShortcut === normalized) {
+    await writeDashboardShortcut(desktopPreferencesFile(), normalized);
+    dashboardShortcut = normalized;
+    dashboardShortcutError = undefined;
+    return;
+  }
+
+  const accelerator = dashboardShortcutAccelerator(normalized);
+  if (!globalShortcut.register(accelerator, toggleDashboard)) {
+    throw new Error("That shortcut is already used by macOS or another app. Choose another shortcut.");
+  }
+  try {
+    await writeDashboardShortcut(desktopPreferencesFile(), normalized);
+  } catch (error) {
+    globalShortcut.unregister(accelerator);
+    throw error;
+  }
+  if (registeredDashboardShortcut) {
+    globalShortcut.unregister(dashboardShortcutAccelerator(registeredDashboardShortcut));
+  }
+  dashboardShortcut = normalized;
+  registeredDashboardShortcut = normalized;
+  dashboardShortcutError = undefined;
+}
+
+function unregisterDashboardShortcut(): void {
+  if (!registeredDashboardShortcut) return;
+  globalShortcut.unregister(dashboardShortcutAccelerator(registeredDashboardShortcut));
+  registeredDashboardShortcut = undefined;
+}
+
 async function readLogTail(logFile: string | undefined, maxBytes = 200_000): Promise<string> {
   if (!logFile) return "";
   try {
@@ -802,6 +900,8 @@ async function desktopSettingsState() {
   );
   const commonState = {
     launchAtLogin,
+    dashboardShortcut,
+    ...(dashboardShortcutError && { dashboardShortcutError }),
     cliStatus: cli.status,
     cliTitle: cli.title,
     cliDetail: displayHomePath(cli.detail),
@@ -984,6 +1084,7 @@ if (!app.requestSingleInstanceLock()) {
   // server gets the same graceful shutdown as the menu-bar Quit command.
   process.once("SIGTERM", requestFullQuit);
   app.on("second-instance", () => void showPrimaryWindow());
+  app.on("will-quit", unregisterDashboardShortcut);
   app.on("before-quit", (event) => {
     if (!quitPolicy.shouldTerminate()) {
       event.preventDefault();
@@ -1008,6 +1109,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     registerDesktopIpc();
     createTray();
+    await initializeDashboardShortcut();
     const onboardingReady = await isDesktopOnboardingReady();
     const hiddenLaunch = process.argv.includes("--hidden");
     queueDesktopTelemetry({

@@ -15,6 +15,8 @@ private struct SettingsState: Codable, Equatable {
     var actionLabel: String
     var actionDisabled: Bool
     var launchAtLogin: Bool
+    var dashboardShortcut: String?
+    var dashboardShortcutError: String?
     var cliStatus: String
     var cliTitle: String
     var cliDetail: String
@@ -31,6 +33,8 @@ private struct SettingsState: Codable, Equatable {
         actionLabel: "Start Server",
         actionDisabled: true,
         launchAtLogin: false,
+        dashboardShortcut: nil,
+        dashboardShortcutError: nil,
         cliStatus: "unavailable",
         cliTitle: "Add CLI launcher",
         cliDetail: "Creates an agentuse command for Terminal at ~/.local/bin/agentuse.",
@@ -51,10 +55,12 @@ private struct HostMessage: Decodable {
 private struct HelperCommand: Encodable {
     var type: String
     var enabled: Bool?
+    var shortcut: String?
 
-    init(type: String, enabled: Bool? = nil) {
+    init(type: String, enabled: Bool? = nil, shortcut: String? = nil) {
         self.type = type
         self.enabled = enabled
+        self.shortcut = shortcut
     }
 }
 
@@ -140,6 +146,18 @@ private final class SettingsModel: ObservableObject {
         HostConnection.shared.send(HelperCommand(type: "setLaunchAtLogin", enabled: enabled))
     }
 
+    func setDashboardShortcut(_ shortcut: String) {
+        guard !actionInFlight else { return }
+        actionInFlight = true
+        HostConnection.shared.send(HelperCommand(type: "setDashboardShortcut", shortcut: shortcut))
+    }
+
+    func clearDashboardShortcut() {
+        guard !actionInFlight else { return }
+        actionInFlight = true
+        HostConnection.shared.send(HelperCommand(type: "clearDashboardShortcut"))
+    }
+
     func toggleCliLink() {
         guard !state.cliActionDisabled, !actionInFlight else { return }
         actionInFlight = true
@@ -168,6 +186,136 @@ private struct StatusDot: View {
             .fill(color)
             .frame(width: 9, height: 9)
             .accessibilityHidden(true)
+    }
+}
+
+private func shortcutKey(from event: NSEvent) -> String? {
+    let namedKeys: [UInt16: String] = [
+        36: "Return", 48: "Tab", 49: "Space",
+        123: "Left", 124: "Right", 125: "Down", 126: "Up",
+        122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5",
+        97: "F6", 98: "F7", 100: "F8", 101: "F9", 109: "F10",
+        103: "F11", 111: "F12", 105: "F13", 107: "F14", 113: "F15",
+        106: "F16", 64: "F17", 79: "F18", 80: "F19", 90: "F20"
+    ]
+    if let named = namedKeys[event.keyCode] { return named }
+    guard let characters = event.charactersIgnoringModifiers?.uppercased(),
+          characters.count == 1,
+          let scalar = characters.unicodeScalars.first,
+          scalar.isASCII,
+          (CharacterSet.alphanumerics.contains(scalar)) else { return nil }
+    return characters
+}
+
+private func encodedShortcut(from event: NSEvent) -> String? {
+    let allowed: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+    let flags = event.modifierFlags.intersection(allowed)
+    guard !flags.isEmpty, let key = shortcutKey(from: event) else { return nil }
+    if flags == allowed { return "Hyper+\(key)" }
+    var parts: [String] = []
+    if flags.contains(.command) { parts.append("Command") }
+    if flags.contains(.control) { parts.append("Control") }
+    if flags.contains(.option) { parts.append("Option") }
+    if flags.contains(.shift) { parts.append("Shift") }
+    parts.append(key)
+    return parts.joined(separator: "+")
+}
+
+private func displayedShortcut(_ shortcut: String?) -> String {
+    guard let shortcut else { return "Record Shortcut…" }
+    let parts = shortcut.split(separator: "+").map(String.init)
+    guard let key = parts.last else { return "Record Shortcut…" }
+    if parts.first == "Hyper" { return "✦ \(key)" }
+    let symbols = parts.dropLast().compactMap { modifier -> String? in
+        switch modifier {
+        case "Command": "⌘"
+        case "Control": "⌃"
+        case "Option": "⌥"
+        case "Shift": "⇧"
+        default: nil
+        }
+    }.joined()
+    return "\(symbols) \(key)"
+}
+
+private final class ShortcutRecorderButton: NSButton {
+    var shortcut: String? {
+        didSet { if !isRecording { refreshTitle() } }
+    }
+    var onShortcut: ((String) -> Void)?
+    private var isRecording = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        bezelStyle = .rounded
+        setButtonType(.momentaryPushIn)
+        target = self
+        action = #selector(beginRecording)
+        refreshTitle()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+    }
+
+    override var acceptsFirstResponder: Bool { true }
+
+    @objc private func beginRecording() {
+        isRecording = true
+        title = "Press shortcut…"
+        window?.makeFirstResponder(self)
+    }
+
+    override func keyDown(with event: NSEvent) {
+        guard isRecording else {
+            super.keyDown(with: event)
+            return
+        }
+        let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        if event.keyCode == 53 && flags.isEmpty {
+            finishRecording()
+            return
+        }
+        guard let shortcut = encodedShortcut(from: event) else {
+            NSSound.beep()
+            return
+        }
+        self.shortcut = shortcut
+        finishRecording()
+        onShortcut?(shortcut)
+    }
+
+    override func resignFirstResponder() -> Bool {
+        finishRecording()
+        return super.resignFirstResponder()
+    }
+
+    private func finishRecording() {
+        isRecording = false
+        refreshTitle()
+    }
+
+    private func refreshTitle() {
+        title = displayedShortcut(shortcut)
+    }
+}
+
+private struct ShortcutRecorder: NSViewRepresentable {
+    var shortcut: String?
+    var enabled: Bool
+    var onShortcut: (String) -> Void
+
+    func makeNSView(context: Context) -> ShortcutRecorderButton {
+        let button = ShortcutRecorderButton(frame: .zero)
+        button.shortcut = shortcut
+        button.onShortcut = onShortcut
+        return button
+    }
+
+    func updateNSView(_ button: ShortcutRecorderButton, context: Context) {
+        button.shortcut = shortcut
+        button.onShortcut = onShortcut
+        button.isEnabled = enabled
     }
 }
 
@@ -201,6 +349,35 @@ private struct GeneralSettingsView: View {
                     )
                 )
                 .disabled(model.actionInFlight)
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Show or hide Dashboard")
+                            Text("Works from any app. Hyper (⌃⌥⌘⇧) appears as ✦.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 16)
+                        ShortcutRecorder(
+                            shortcut: model.state.dashboardShortcut,
+                            enabled: !model.actionInFlight,
+                            onShortcut: model.setDashboardShortcut
+                        )
+                        .frame(minWidth: 96)
+                        Button("Clear") {
+                            model.clearDashboardShortcut()
+                        }
+                        .disabled(model.state.dashboardShortcut == nil || model.actionInFlight)
+                    }
+                    if let error = model.state.dashboardShortcutError {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                }
             }
 
             Section("Command Line") {
@@ -324,7 +501,7 @@ private struct SettingsView: View {
         }
         .frame(minWidth: 560, idealWidth: 620, minHeight: 380, idealHeight: 440)
         .alert(
-            "Command Line Tool",
+            "AgentUse Settings",
             isPresented: Binding(
                 get: { model.errorMessage != nil },
                 set: { if !$0 { model.errorMessage = nil } }

@@ -11,11 +11,18 @@ describe("native settings protocol", () => {
       type: "setLaunchAtLogin",
       enabled: true,
     });
+    expect(parseNativeSettingsCommand('{"type":"setDashboardShortcut","shortcut":"Hyper+A"}')).toEqual({
+      type: "setDashboardShortcut",
+      shortcut: "Hyper+A",
+    });
+    expect(parseNativeSettingsCommand('{"type":"clearDashboardShortcut"}')).toEqual({ type: "clearDashboardShortcut" });
   });
 
   it("rejects malformed and unknown commands", () => {
     expect(parseNativeSettingsCommand("not json")).toBeUndefined();
     expect(parseNativeSettingsCommand('{"type":"setLaunchAtLogin","enabled":"yes"}')).toBeUndefined();
+    expect(parseNativeSettingsCommand('{"type":"setDashboardShortcut","shortcut":42}')).toBeUndefined();
+    expect(parseNativeSettingsCommand('{"type":"setDashboardShortcut","shortcut":null}')).toBeUndefined();
     expect(parseNativeSettingsCommand('{"type":"deleteEverything"}')).toBeUndefined();
   });
 
