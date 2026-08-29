@@ -618,7 +618,8 @@ private struct AboutSettingsView: View {
             Button("Check Again") {
                 model.performUpdateAction()
             }
-            .buttonStyle(.link)
+            .buttonStyle(.bordered)
+            .controlSize(.regular)
             .disabled(model.state.updateActionDisabled || model.actionInFlight)
         case "available", "ready":
             Button(model.state.updateActionLabel) {
@@ -640,71 +641,79 @@ private struct AboutSettingsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack {
             Spacer()
 
-            Image(nsImage: NSApplication.shared.applicationIconImage)
-                .resizable()
-                .frame(width: 96, height: 96)
-                .accessibilityHidden(true)
+            HStack(alignment: .top, spacing: 20) {
+                Image(nsImage: NSApplication.shared.applicationIconImage)
+                    .resizable()
+                    .frame(width: 80, height: 80)
+                    .accessibilityHidden(true)
 
-            VStack(spacing: 4) {
-                Text("AgentUse")
-                    .font(.title2)
-                    .fontWeight(.semibold)
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("AgentUse")
+                            .font(.title2)
+                            .fontWeight(.semibold)
 
-                Text("Version \(model.state.updateCurrentVersion)")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-
-            VStack(spacing: 12) {
-                HStack(spacing: 8) {
-                    if model.state.updateStatus == "checking" {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: statusSymbol)
-                            .foregroundStyle(statusColor)
-                            .accessibilityHidden(true)
+                        Text("Version \(model.state.updateCurrentVersion)")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
                     }
-                    Text(statusTitle)
-                        .font(.callout)
-                        .fontWeight(.medium)
-                }
 
-                Text(statusDetail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
+                    Divider()
 
-                if model.state.updateStatus == "downloading" {
-                    ProgressView(value: Double(model.state.updateProgress ?? 0), total: 100)
-                        .progressViewStyle(.linear)
-                        .frame(width: 220)
-                }
-
-                updateAction
-
-                if model.state.updateStatus == "error" {
-                    DisclosureGroup("Show Details", isExpanded: $showsErrorDetails) {
-                        ScrollView {
-                            Text(model.state.updateDetail)
-                                .font(.caption2.monospaced())
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            if model.state.updateStatus == "checking" {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: statusSymbol)
+                                    .foregroundStyle(statusColor)
+                                    .accessibilityHidden(true)
+                            }
+                            Text(statusTitle)
+                                .font(.headline)
                         }
-                        .frame(height: 72)
-                        .padding(.top, 4)
+
+                        Text(statusDetail)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .font(.caption)
-                    .frame(maxWidth: 320)
+
+                    if model.state.updateStatus == "downloading" {
+                        ProgressView(value: Double(model.state.updateProgress ?? 0), total: 100)
+                            .progressViewStyle(.linear)
+                            .frame(maxWidth: .infinity)
+                    }
+
+                    if model.state.updateStatus == "error" {
+                        DisclosureGroup("Show Details", isExpanded: $showsErrorDetails) {
+                            ScrollView {
+                                Text(model.state.updateDetail)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(height: 72)
+                            .padding(.top, 4)
+                        }
+                        .font(.caption)
+                    }
+
+                    HStack {
+                        Spacer()
+                        updateAction
+                    }
+                    .frame(minHeight: 28)
                 }
+                .frame(width: 340, alignment: .leading)
             }
-            .frame(maxWidth: 360)
+            .frame(maxWidth: 440, alignment: .leading)
 
             Spacer()
         }

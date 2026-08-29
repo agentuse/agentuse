@@ -73,6 +73,9 @@ describe("native settings packaged metadata", () => {
     expect(source).toContain('default: command = "checkForUpdates"');
     expect(source).toContain('case "upToDate": "You’re up to date"');
     expect(source).toContain('Button("Check Again")');
+    expect(source).not.toContain('.buttonStyle(.link)');
+    expect(source).toContain('HStack(alignment: .top, spacing: 20)');
+    expect(source).toContain('.frame(maxWidth: 440, alignment: .leading)');
     expect(source).toContain('ProgressView(value: Double(model.state.updateProgress ?? 0), total: 100)');
     expect(source).toContain('DisclosureGroup("Show Details"');
   });

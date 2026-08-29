@@ -48,27 +48,26 @@ Final result: passed
 
 ## Full-view comparison evidence
 
-The full native About tab preserves the existing application icon, app name,
-version, tab bar, window dimensions, and centered composition. Only the updater
-status region changes. The rebuilt helper was inspected through macOS
-accessibility and a native screenshot.
+The first implementation preserved the existing centered composition, but user
+review found that this produced a weak alignment grid and excessive empty space.
+That implementation is retained in the comparison image as rejected evidence,
+not as the final target.
 
 ## Focused-region comparison evidence
 
 The normalized side-by-side comparison shows the old status region on the left
-and the rebuilt status region on the right. The new version replaces the loose
-green dot and repeated version sentence with a semantic SF Symbol, a concise
-headline, calm supporting copy, and a low-emphasis link action. This matches the
-hierarchy of Sparkle's standard macOS updater UI without copying its window.
+and the rejected first implementation on the right. It improved status copy but
+made `Check Again` look like a text link and did not reproduce Sparkle's defining
+spatial structure.
 
 ## Required fidelity surfaces
 
 - Fonts and typography: Native system fonts are retained. The state headline
   uses callout/medium hierarchy; support and progress copy use caption styling;
   technical error details use a selectable monospaced caption.
-- Spacing and layout rhythm: The existing centered layout and app identity are
-  preserved. The updater region uses 8-point icon spacing and 12-point vertical
-  rhythm. Progress is constrained to 220 points and error details to 320 points.
+- Spacing and layout rhythm: The corrected implementation uses Sparkle's compact
+  icon-and-content header, a single left alignment grid, 20-point horizontal
+  separation, and 12-point grouping rhythm. Actions share a trailing button row.
 - Colors and visual tokens: Semantic system green, red, secondary, and accent
   colors replace the undifferentiated status dot. Colors remain appearance-aware.
 - Image quality and asset fidelity: The supplied application icon is unchanged.
@@ -79,7 +78,11 @@ hierarchy of Sparkle's standard macOS updater UI without copying its window.
 
 ## Findings
 
-No actionable P0, P1, or P2 issues remain.
+User review identified two P2 issues in the first implementation: the centered
+stack lacked a coherent alignment grid, and `Check Again` used link styling even
+though it is a direct action. Both were corrected in source. The follow-up native
+helper compiled and focused source tests passed; a new post-fix screenshot still
+needs acceptance before this report can return to `passed`.
 
 The first expanded-error capture exposed a P2 vertical overflow: long technical
 details reached the bottom edge of the window. The details scroll area was then
@@ -92,7 +95,7 @@ determinate bar, removing redundant progress signals.
 
 ## Interaction checks
 
-- Up-to-date: quiet Check Again link
+- Up-to-date: standard bordered Check Again button
 - Downloading: version headline, percentage, and determinate progress bar
 - Ready: prominent Restart and Install action with restart expectation
 - Error: friendly recovery copy, Try Again, and expandable selectable details
@@ -111,4 +114,4 @@ determinate bar, removing redundant progress signals.
 3. Post-fix evidence: success, downloading, ready, collapsed error, and expanded
    error states were recaptured in the compiled native Settings helper.
 
-final result: passed
+final result: implementation corrected; visual acceptance pending
