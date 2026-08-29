@@ -2,7 +2,8 @@
 
 ## [Unreleased]
 
-- **The macOS app can now update through public AgentUse GitHub Releases without surprise installs.** Settings → About checks quietly after launch or on demand, reports availability and offline errors in place, and requires separate **Download Update** and **Restart and Install** actions. Mac packaging now emits the DMG plus the ZIP, blockmaps, and `latest-mac.yml` metadata the updater requires; the first signed build and GitHub asset upload remain an explicit manual release step.
+- **The macOS app can now update from Settings → About.** AgentUse checks quietly, then lets you choose when to download, restart, and install an available update.
+- **App-owned local servers are now tied to the Mac app's lifecycle.** A crash or forced desktop termination triggers the server's normal graceful shutdown path, and any survivor is reconciled on the next launch only after its recorded desktop owner is confirmed dead. Servers started in Terminal or by another service remain untouched.
 
 ## [0.19.0] - 2026-08-29
 

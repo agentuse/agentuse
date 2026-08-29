@@ -99,3 +99,29 @@ For CI, set the electron-builder signing variables `CSC_LINK` and
 `APPLE_TEAM_ID`. Keep all signing credentials in CI secrets. Hardened runtime is
 enabled, and the packaged native Settings helper is placed under
 `Contents/Frameworks` before notarization.
+
+## Prepare an updater-enabled release
+
+The root package and Desktop app share one release version. Use the repository
+release script to prepare that version; do not edit the Desktop version
+separately:
+
+```bash
+bun scripts/release.ts prepare 0.19.1
+```
+
+Build the Mac release with the signing and notarization credentials above. The
+local build uses `--publish never`: creating packages must not upload or publish
+anything automatically.
+
+Before uploading, verify that the release output contains the signed and
+notarized DMG, the Mac ZIP, their blockmaps, and `latest-mac.yml`. Confirm that
+`latest-mac.yml` references both primary artifacts with the prepared version,
+and that the packaged app contains an `app-update.yml` feed pointing to the
+public `agentuse/agentuse` GitHub Releases repository.
+
+After the normal GitHub release exists, manually upload all of those Mac assets
+to that same public release. Test the completed feed from an older signed build:
+check for the update, download it, choose **Restart and Install**, and confirm
+the new version launches. Also repeat a check while offline and confirm the app
+continues working while the About tab reports the failure.
