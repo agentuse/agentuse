@@ -534,6 +534,38 @@ private struct LogsSettingsView: View {
     }
 }
 
+private struct AboutSettingsView: View {
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
+    }
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Spacer()
+
+            Image(nsImage: NSApplication.shared.applicationIconImage)
+                .resizable()
+                .frame(width: 96, height: 96)
+                .accessibilityHidden(true)
+
+            VStack(spacing: 4) {
+                Text("AgentUse")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+
+                Text("Version \(appVersion)")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(32)
+    }
+}
+
 private struct SettingsView: View {
     @StateObject private var model = SettingsModel()
 
@@ -544,6 +576,9 @@ private struct SettingsView: View {
 
             LogsSettingsView(model: model)
                 .tabItem { Label("Logs", systemImage: "doc.text") }
+
+            AboutSettingsView()
+                .tabItem { Label("About", systemImage: "info.circle") }
         }
         .frame(minWidth: 560, idealWidth: 620, minHeight: 440, idealHeight: 520)
         .alert(

@@ -5,13 +5,19 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 desktop_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
 source_file="$desktop_dir/native-settings/AgentUseSettings.swift"
 info_file="$desktop_dir/native-settings/Info.plist"
+icon_file="$desktop_dir/build/icon.icns"
 bundle_dir="$desktop_dir/dist/AgentUseSettings.app"
 output_file="$bundle_dir/Contents/MacOS/AgentUseSettings"
 build_dir=$(mktemp -d "${TMPDIR:-/tmp}/agentuse-native-settings.XXXXXX")
 trap 'rm -rf "$build_dir"' EXIT INT TERM
 
-mkdir -p "$bundle_dir/Contents/MacOS"
+mkdir -p "$bundle_dir/Contents/MacOS" "$bundle_dir/Contents/Resources"
 cp "$info_file" "$bundle_dir/Contents/Info.plist"
+cp "$icon_file" "$bundle_dir/Contents/Resources/AppIcon.icns"
+settings_version=$(node -p "require('$desktop_dir/package.json').version")
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $settings_version" "$bundle_dir/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" "$bundle_dir/Contents/Info.plist" 2>/dev/null \
+  || /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile AppIcon" "$bundle_dir/Contents/Info.plist"
 
 if [ "${AGENTUSE_SETTINGS_UNIVERSAL:-0}" = "1" ]; then
   xcrun swiftc -parse-as-library -O -module-cache-path "$build_dir/ModuleCache-arm64" -target arm64-apple-macosx13.0 "$source_file" -o "$build_dir/AgentUseSettings-arm64"
