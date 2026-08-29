@@ -29,12 +29,15 @@ describe("desktop CLI link", () => {
     expect((await toggleCliLink(link, launcher, join(link, ".."))).status).toBe("notInstalled");
   });
 
-  it("does not replace an existing command", async () => {
+  it("offers an explicit replacement for an existing command at the managed path", async () => {
     const { launcher, link } = fixture();
     mkdirSync(join(link, ".."), { recursive: true });
     writeFileSync(link, "existing command");
-    expect(inspectCliLink(link, launcher).status).toBe("conflict");
-    expect((await toggleCliLink(link, launcher, join(link, ".."))).status).toBe("conflict");
+    const conflict = inspectCliLink(link, launcher);
+    expect(conflict.status).toBe("conflict");
+    expect(conflict.actionLabel).toBe("Replace");
+    expect(conflict.actionDisabled).toBe(false);
+    expect((await toggleCliLink(link, launcher, join(link, ".."))).status).toBe("installed");
   });
 
   it("recognizes only a link to this app launcher", () => {
@@ -44,7 +47,7 @@ describe("desktop CLI link", () => {
     expect(inspectCliLink(link, launcher).status).toBe("conflict");
   });
 
-  it("detects a package-manager installation already on PATH", async () => {
+  it("allows the app launcher to be added when another installation is already on PATH", async () => {
     const { launcher, link } = fixture();
     const externalBin = join(link, "..", "..", "..", "npm-bin");
     const externalCommand = join(externalBin, "agentuse");
@@ -53,11 +56,11 @@ describe("desktop CLI link", () => {
     chmodSync(externalCommand, 0o755);
 
     const state = inspectCliAvailability(link, launcher, externalBin);
-    expect(state.status).toBe("external");
-    expect(state.detail).toBe(`Using ${externalCommand}`);
-    expect(state.actionDisabled).toBe(true);
-    expect((await toggleCliLink(link, launcher, externalBin)).status).toBe("external");
-    expect(inspectCliLink(link, launcher).status).toBe("notInstalled");
+    expect(state.status).toBe("notInstalled");
+    expect(state.commands).toEqual([externalCommand]);
+    expect(state.actionLabel).toBe("Add");
+    expect(state.actionDisabled).toBe(false);
+    expect((await toggleCliLink(link, launcher, externalBin)).status).toBe("installed");
   });
 
   it("warns when another installation precedes the app link", async () => {
@@ -71,8 +74,26 @@ describe("desktop CLI link", () => {
 
     const state = inspectCliAvailability(link, launcher, `${externalBin}:${join(link, "..")}`);
     expect(state.status).toBe("installed");
-    expect(state.title).toBe("Another command line tool takes priority");
     expect(state.detail).toContain(externalCommand);
     expect(state.actionLabel).toBe("Remove");
+    expect(state.commands).toEqual([externalCommand, link]);
+  });
+
+  it("lists every command path in login-shell resolution order", () => {
+    const { launcher, link } = fixture();
+    const firstBin = join(link, "..", "..", "..", "first-bin");
+    const secondBin = join(link, "..", "..", "..", "second-bin");
+    const firstCommand = join(firstBin, "agentuse");
+    const secondCommand = join(secondBin, "agentuse");
+    for (const command of [firstCommand, secondCommand]) {
+      mkdirSync(join(command, ".."), { recursive: true });
+      writeFileSync(command, "#!/bin/sh\n", { mode: 0o755 });
+      chmodSync(command, 0o755);
+    }
+
+    expect(inspectCliAvailability(link, launcher, `${firstBin}:${secondBin}`).commands).toEqual([
+      firstCommand,
+      secondCommand,
+    ]);
   });
 });

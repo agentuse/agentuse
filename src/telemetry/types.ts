@@ -183,6 +183,13 @@ export type WebUITelemetryEvent =
       clientSurface: WebUIClientSurface;
     }
   | {
+      event: 'desktop_app_launched';
+      clientSurface: 'mac_app';
+      launchMode: 'interactive' | 'login_item_hidden';
+      onboardingComplete: boolean;
+      loginItemEnabled: boolean;
+    }
+  | {
       event: 'onboarding_started' | 'onboarding_completed';
       onboardingRoute: OnboardingRoute;
       clientSurface: WebUIClientSurface;

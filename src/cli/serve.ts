@@ -229,6 +229,21 @@ function parseWebUITelemetryBody(
       clientSurface,
     };
   }
+  if (body.event === 'desktop_app_launched') {
+    if (clientSurface !== 'mac_app'
+      || (body.launch_mode !== 'interactive' && body.launch_mode !== 'login_item_hidden')
+      || typeof body.onboarding_complete !== 'boolean'
+      || typeof body.login_item_enabled !== 'boolean') {
+      return undefined;
+    }
+    return {
+      event: 'desktop_app_launched',
+      clientSurface,
+      launchMode: body.launch_mode,
+      onboardingComplete: body.onboarding_complete,
+      loginItemEnabled: body.login_item_enabled,
+    };
+  }
   if (typeof body.event !== 'string' || !ONBOARDING_TELEMETRY_EVENTS.has(body.event)
     || typeof body.onboarding_route !== 'string' || !ONBOARDING_ROUTES.has(body.onboarding_route as OnboardingRoute)) {
     return undefined;
@@ -269,6 +284,7 @@ function parseWebUITelemetryBody(
 
 function webUITelemetryDedupeKey(value: WebUITelemetryEvent): string {
   if (value.event === 'page_viewed') return `${value.clientSurface}:page:${value.page}`;
+  if (value.event === 'desktop_app_launched') return 'mac_app:desktop_app_launched';
   // A Desktop onboarding route moves from mac_setup to the shared mac_app UI.
   // Dedupe across that surface boundary so the route has one lifecycle event.
   return [value.onboardingRoute, value.event, 'step' in value ? value.step : ''].join(':');
@@ -289,7 +305,12 @@ function createWebUITelemetryGuard(now = Date.now()): WebUITelemetryGuard {
 }
 
 /** Daemon-wide guard: limits requests and deduplicates fixed event keys across tabs/reloads. */
-function acceptWebUITelemetry(guard: WebUITelemetryGuard, key: string, now = Date.now()): boolean {
+function acceptWebUITelemetry(
+  guard: WebUITelemetryGuard,
+  key: string,
+  now = Date.now(),
+  deduplicate = true,
+): boolean {
   const elapsed = Math.max(0, now - guard.lastRefillAt);
   guard.tokens = Math.min(
     WEB_UI_TELEMETRY_RATE_CAPACITY,
@@ -298,6 +319,7 @@ function acceptWebUITelemetry(guard: WebUITelemetryGuard, key: string, now = Dat
   guard.lastRefillAt = now;
   if (guard.tokens < 1) return false;
   guard.tokens -= 1;
+  if (!deduplicate) return true;
 
   const lastReportedAt = guard.events.get(key);
   if (lastReportedAt !== undefined && now - lastReportedAt < WEB_UI_TELEMETRY_DEDUPE_MS) return false;
@@ -4875,7 +4897,12 @@ export function createServeCommand(): Command {
               raw ? JSON.parse(raw) as Record<string, unknown> : {},
               webUIClientSurface(req.headers['x-agentuse-client']),
             );
-            if (event && acceptWebUITelemetry(webUITelemetryGuard, webUITelemetryDedupeKey(event))) {
+            if (event && acceptWebUITelemetry(
+              webUITelemetryGuard,
+              webUITelemetryDedupeKey(event),
+              Date.now(),
+              event.event !== 'desktop_app_launched',
+            )) {
               telemetry.captureWebUITelemetry(event);
             }
           } catch {

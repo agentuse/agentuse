@@ -1,17 +1,22 @@
 import { execFile } from "node:child_process";
-import { accessSync, constants, existsSync, lstatSync, readlinkSync, realpathSync } from "node:fs";
-import { mkdir, symlink, unlink } from "node:fs/promises";
+import { accessSync, constants, existsSync, lstatSync, readlinkSync } from "node:fs";
+import { mkdir, rename, symlink, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 
-export type CliLinkStatus = "installed" | "external" | "notInstalled" | "conflict" | "unavailable";
+export type CliLinkStatus = "installed" | "notInstalled" | "conflict" | "unavailable";
 
 export interface CliLinkState {
   status: CliLinkStatus;
   title: string;
   detail: string;
-  actionLabel: "Install" | "Remove";
+  actionLabel: "Add" | "Replace" | "Remove";
   actionDisabled: boolean;
+}
+
+export interface CliAvailabilityState extends CliLinkState {
+  /** Executable paths in the same order the login shell resolves them. */
+  commands: string[];
 }
 
 export function defaultCliLinkPath(): string {
@@ -43,15 +48,14 @@ export function loginShellPath(
 
 export function findCliExecutables(pathValue: string): string[] {
   const commands: string[] = [];
-  const resolvedCommands = new Set<string>();
+  const seenCommands = new Set<string>();
   for (const directory of pathValue.split(delimiter)) {
     if (!directory) continue;
     const candidate = join(resolve(directory), "agentuse");
+    if (seenCommands.has(candidate)) continue;
+    seenCommands.add(candidate);
     try {
       accessSync(candidate, constants.X_OK);
-      const resolvedCandidate = realpathSync(candidate);
-      if (resolvedCommands.has(resolvedCandidate)) continue;
-      resolvedCommands.add(resolvedCandidate);
       commands.push(candidate);
     } catch {
       // Missing and non-executable entries are not commands the shell can use.
@@ -73,9 +77,9 @@ export function inspectCliLink(linkPath: string, launcherPath: string): CliLinkS
   if (!existsSync(launcherPath)) {
     return {
       status: "unavailable",
-      title: "Command line tool unavailable",
+      title: "Add CLI launcher",
       detail: "Reinstall AgentUse to restore the bundled command line tool.",
-      actionLabel: "Install",
+      actionLabel: "Add",
       actionDisabled: true,
     };
   }
@@ -85,26 +89,29 @@ export function inspectCliLink(linkPath: string, launcherPath: string): CliLinkS
     if (entry.isSymbolicLink() && resolvedLinkTarget(linkPath) === resolve(launcherPath)) {
       return {
         status: "installed",
-        title: "Command line tool installed",
-        detail: `agentuse is linked at ${linkPath}`,
+        title: "Add CLI launcher",
+        detail: `Available at ${linkPath}.`,
         actionLabel: "Remove",
         actionDisabled: false,
       };
     }
+    const replaceable = entry.isFile() || entry.isSymbolicLink();
     return {
       status: "conflict",
-      title: "Another command already exists",
-      detail: `${linkPath} is not managed by this app.`,
-      actionLabel: "Install",
-      actionDisabled: true,
+      title: "Add CLI launcher",
+      detail: replaceable
+        ? `Replace the existing command at ${linkPath} with the bundled CLI.`
+        : `${linkPath} exists but is not a replaceable file.`,
+      actionLabel: "Replace",
+      actionDisabled: !replaceable,
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       return {
         status: "unavailable",
-        title: "Command line tool status unavailable",
+        title: "Add CLI launcher",
         detail: `AgentUse could not inspect ${linkPath}`,
-        actionLabel: "Install",
+        actionLabel: "Add",
         actionDisabled: true,
       };
     }
@@ -112,9 +119,9 @@ export function inspectCliLink(linkPath: string, launcherPath: string): CliLinkS
 
   return {
     status: "notInstalled",
-    title: "Command line tool not installed",
-    detail: `Add agentuse to ${dirname(linkPath)}`,
-    actionLabel: "Install",
+    title: "Add CLI launcher",
+    detail: `Creates an agentuse command for Terminal at ${linkPath}.`,
+    actionLabel: "Add",
     actionDisabled: false,
   };
 }
@@ -123,7 +130,7 @@ export function inspectCliAvailability(
   linkPath: string,
   launcherPath: string,
   pathValue: string,
-): CliLinkState {
+): CliAvailabilityState {
   const link = inspectCliLink(linkPath, launcherPath);
   const commands = findCliExecutables(pathValue);
   const firstCommand = commands[0];
@@ -133,8 +140,9 @@ export function inspectCliAvailability(
     const otherCount = commands.length - 1;
     return {
       ...link,
+      commands,
       detail: otherCount > 0
-        ? `Using ${linkPath}; ${otherCount} other installation${otherCount === 1 ? "" : "s"} also found.`
+        ? `Available at ${linkPath}; ${otherCount} other command${otherCount === 1 ? "" : "s"} also found on PATH.`
         : link.detail,
     };
   }
@@ -142,40 +150,37 @@ export function inspectCliAvailability(
   if (link.status === "installed") {
     return {
       ...link,
-      title: firstCommand ? "Another command line tool takes priority" : "Command line tool is not on PATH",
+      commands,
       detail: firstCommand
-        ? `Using ${firstCommand}; the app link remains at ${linkPath}.`
-        : `Linked at ${linkPath}, but that directory is not on your PATH.`,
+        ? `Added at ${linkPath}, but ${firstCommand} runs first.`
+        : `Added at ${linkPath}, but ~/.local/bin is not on your PATH.`,
     };
   }
 
-  if (firstCommand) {
-    const otherCount = commands.length - 1;
-    return {
-      status: "external",
-      title: "Command line tool already installed",
-      detail: otherCount > 0
-        ? `Using ${firstCommand}; ${otherCount} other installation${otherCount === 1 ? "" : "s"} also found.`
-        : `Using ${firstCommand}`,
-      actionLabel: "Install",
-      actionDisabled: true,
-    };
-  }
-
-  return link;
+  return { ...link, commands };
 }
 
 export async function toggleCliLink(
   linkPath: string,
   launcherPath: string,
   pathValue = process.env.PATH ?? "",
-): Promise<CliLinkState> {
+): Promise<CliAvailabilityState> {
   const current = inspectCliAvailability(linkPath, launcherPath, pathValue);
   if (current.status === "installed") {
     await unlink(linkPath);
   } else if (current.status === "notInstalled") {
     await mkdir(dirname(linkPath), { recursive: true });
     await symlink(launcherPath, linkPath);
+  } else if (current.status === "conflict" && !current.actionDisabled) {
+    await mkdir(dirname(linkPath), { recursive: true });
+    const replacement = join(dirname(linkPath), `.agentuse-link-${process.pid}-${Date.now()}`);
+    await symlink(launcherPath, replacement);
+    try {
+      await rename(replacement, linkPath);
+    } catch (error) {
+      await unlink(replacement).catch(() => {});
+      throw error;
+    }
   }
   return inspectCliAvailability(linkPath, launcherPath, pathValue);
 }

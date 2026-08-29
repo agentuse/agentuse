@@ -308,7 +308,7 @@
       }[state.launcher.status];
       launcherCopy.textContent = state.launcher.detail;
       launcherAction.hidden = state.launcher.status === "ready";
-      launcherAction.textContent = state.launcher.status === "outdated" ? "Repair" : state.launcher.status === "conflict" ? "Try again" : "Add";
+      launcherAction.textContent = state.launcher.status === "outdated" ? "Repair" : state.launcher.status === "conflict" ? "Replace" : "Add";
     }
 
     async function refresh() {

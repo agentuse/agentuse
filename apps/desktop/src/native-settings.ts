@@ -5,11 +5,12 @@ export interface DesktopSettingsState {
   actionLabel: "Start Server" | "Stop Server";
   actionDisabled: boolean;
   launchAtLogin: boolean;
-  cliStatus: "installed" | "external" | "notInstalled" | "conflict" | "unavailable";
+  cliStatus: "installed" | "notInstalled" | "conflict" | "unavailable";
   cliTitle: string;
   cliDetail: string;
-  cliActionLabel: "Install" | "Remove";
+  cliActionLabel: "Add" | "Replace" | "Remove";
   cliActionDisabled: boolean;
+  cliCommands: string[];
   logText: string;
   logFile?: string;
 }

@@ -20,6 +20,7 @@ private struct SettingsState: Codable, Equatable {
     var cliDetail: String
     var cliActionLabel: String
     var cliActionDisabled: Bool
+    var cliCommands: [String]
     var logText: String
     var logFile: String?
 
@@ -31,10 +32,11 @@ private struct SettingsState: Codable, Equatable {
         actionDisabled: true,
         launchAtLogin: false,
         cliStatus: "unavailable",
-        cliTitle: "Checking command line tool…",
-        cliDetail: "Looking for the AgentUse CLI.",
-        cliActionLabel: "Install",
+        cliTitle: "Add CLI launcher",
+        cliDetail: "Creates an agentuse command for Terminal at ~/.local/bin/agentuse.",
+        cliActionLabel: "Add",
         cliActionDisabled: true,
+        cliCommands: [],
         logText: "",
         logFile: nil
     )
@@ -202,22 +204,59 @@ private struct GeneralSettingsView: View {
             }
 
             Section("Command Line") {
-                HStack(spacing: 10) {
-                    Image(systemName: "terminal")
-                        .foregroundStyle(.secondary)
-                        .frame(width: 16)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(model.state.cliTitle)
-                        Text(model.state.cliDetail)
-                            .font(.caption)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "terminal")
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                            .frame(width: 16)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(model.state.cliTitle)
+                            Text(model.state.cliDetail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 16)
+                        Button(model.state.cliActionLabel) {
+                            model.toggleCliLink()
+                        }
+                        .disabled(model.state.cliActionDisabled || model.actionInFlight)
                     }
-                    Spacer(minLength: 16)
-                    Button(model.state.cliActionLabel) {
-                        model.toggleCliLink()
+
+                    Divider()
+                        .padding(.leading, 26)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Commands on PATH")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.secondary)
+
+                        if model.state.cliCommands.isEmpty {
+                            Text("No agentuse command was found on your PATH.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(Array(model.state.cliCommands.enumerated()), id: \.offset) { index, path in
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text("\(index + 1).")
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(.tertiary)
+                                        .frame(width: 18, alignment: .trailing)
+                                    Text(path)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .textSelection(.enabled)
+                                    Spacer(minLength: 8)
+                                    if index == 0 {
+                                        Text("Runs first")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            }
+                        }
                     }
-                    .disabled(model.state.cliActionDisabled || model.actionInFlight)
+                    .padding(.leading, 26)
                 }
             }
         }

@@ -600,20 +600,28 @@ class TelemetryManager {
     if (!this.enabled || !this.initialized || !this.client || !this.anonymousId) return;
 
     try {
-      const onboardingProperties = value.event === 'page_viewed' ? {} : {
-        onboarding_version: 1,
-        onboarding_route: value.onboardingRoute,
-        ...(value.durationMs !== undefined && { duration_ms: value.durationMs }),
-        ...(value.agentCount !== undefined && { agent_count: value.agentCount }),
-        ...(value.detectionMethod && { detection_method: value.detectionMethod }),
-        ...('step' in value && {
-          step: value.step,
-          ...(value.errorCode && { error_code: value.errorCode }),
-          ...(value.launchAtLoginEnabled !== undefined && { launch_at_login_enabled: value.launchAtLoginEnabled }),
-          ...(value.cliLauncherStatus && { cli_launcher_status: value.cliLauncherStatus }),
-          ...(value.providerReadiness && { provider_readiness: value.providerReadiness }),
-        }),
-      };
+      const eventProperties = value.event === 'page_viewed'
+        ? { page: value.page }
+        : value.event === 'desktop_app_launched'
+          ? {
+              launch_mode: value.launchMode,
+              onboarding_complete: value.onboardingComplete,
+              login_item_enabled: value.loginItemEnabled,
+            }
+          : {
+              onboarding_version: 1,
+              onboarding_route: value.onboardingRoute,
+              ...(value.durationMs !== undefined && { duration_ms: value.durationMs }),
+              ...(value.agentCount !== undefined && { agent_count: value.agentCount }),
+              ...(value.detectionMethod && { detection_method: value.detectionMethod }),
+              ...('step' in value && {
+                step: value.step,
+                ...(value.errorCode && { error_code: value.errorCode }),
+                ...(value.launchAtLoginEnabled !== undefined && { launch_at_login_enabled: value.launchAtLoginEnabled }),
+                ...(value.cliLauncherStatus && { cli_launcher_status: value.cliLauncherStatus }),
+                ...(value.providerReadiness && { provider_readiness: value.providerReadiness }),
+              }),
+            };
       this.client.capture({
         distinctId: this.anonymousId,
         event: value.event === 'page_viewed' ? 'web_ui_page_viewed' : value.event,
@@ -630,9 +638,8 @@ class TelemetryManager {
           is_docker: isDocker(),
           is_npx: isNpx(),
           is_local_dev: isLocalDev(),
-          ...(value.event === 'page_viewed' && { page: value.page }),
           client_surface: value.clientSurface,
-          ...onboardingProperties,
+          ...eventProperties,
         },
       });
     } catch {

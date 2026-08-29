@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { createServer, type AddressInfo } from "node:net";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { pendingApprovalCount, pendingApprovalTitle, pendingApprovalTooltip, type ApprovalBucketsPayload } from "./approval-status";
 import { bundledCliCommand } from "./bundled-cli";
@@ -52,30 +53,41 @@ let serverAcquisition: Promise<void> | undefined;
 let userLoginPath: Promise<string> | undefined;
 let desktopSetupStartedAt: number | undefined;
 let desktopCliLauncherAdded = false;
-const pendingDesktopOnboardingTelemetry: Array<Record<string, unknown>> = [];
+const pendingDesktopTelemetry: Array<{
+  payload: Record<string, unknown>;
+  clientSurface: "mac_app" | "mac_setup";
+}> = [];
 const quitPolicy = createDesktopQuitPolicy();
 
-function queueDesktopOnboardingTelemetry(payload: Record<string, unknown>): void {
-  pendingDesktopOnboardingTelemetry.push({ ...payload, onboarding_route: "desktop" });
+function queueDesktopTelemetry(
+  payload: Record<string, unknown>,
+  clientSurface: "mac_app" | "mac_setup" = "mac_setup",
+): void {
+  pendingDesktopTelemetry.push({ payload, clientSurface });
 }
 
-async function flushDesktopOnboardingTelemetry(): Promise<void> {
-  if (!dashboardUrl || pendingDesktopOnboardingTelemetry.length === 0) return;
+function queueDesktopOnboardingTelemetry(payload: Record<string, unknown>): void {
+  queueDesktopTelemetry({ ...payload, onboarding_route: "desktop" });
+}
+
+async function flushDesktopTelemetry(): Promise<void> {
+  if (!dashboardUrl || pendingDesktopTelemetry.length === 0) return;
   const telemetryUrl = new URL("/api/telemetry", dashboardUrl);
-  while (pendingDesktopOnboardingTelemetry.length > 0) {
+  while (pendingDesktopTelemetry.length > 0) {
     try {
+      const pending = pendingDesktopTelemetry[0];
       const response = await fetch(telemetryUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-AgentUse-Client": "mac_setup",
+          "X-AgentUse-Client": pending.clientSurface,
           ...(dashboardApiKey ? { Authorization: `Bearer ${dashboardApiKey}` } : {}),
         },
-        body: JSON.stringify(pendingDesktopOnboardingTelemetry[0]),
+        body: JSON.stringify(pending.payload),
         signal: AbortSignal.timeout(2_000),
       });
       if (!response.ok) return;
-      pendingDesktopOnboardingTelemetry.shift();
+      pendingDesktopTelemetry.shift();
     } catch {
       return;
     }
@@ -99,15 +111,20 @@ function onboardingStateFile(): string {
 function onboardingCliLinkState(link: CliLinkState) {
   return {
     path: defaultCliLinkPath(),
-    status: link.status === "installed" || link.status === "external"
+    status: link.status === "installed"
       ? "ready" as const
       : link.status === "notInstalled"
         ? "missing" as const
         : "conflict" as const,
     detail: link.status === "notInstalled"
       ? "Creates an agentuse command for Terminal. Make sure ~/.local/bin is in your PATH."
-      : link.detail,
+      : displayHomePath(link.detail),
   };
+}
+
+function displayHomePath(value: string): string {
+  const home = homedir();
+  return value === home ? "~" : value.replaceAll(`${home}/`, "~/");
 }
 
 async function desktopSetupState() {
@@ -160,10 +177,10 @@ function registerDesktopIpc(): void {
       const launcherPath = packagedCliLauncherPath(process.resourcesPath);
       const loginPath = await resolveUserLoginPath();
       const current = inspectCliAvailability(linkPath, launcherPath, loginPath);
-      if (current.status === "notInstalled") {
+      if (current.status === "notInstalled" || (current.status === "conflict" && !current.actionDisabled)) {
         await toggleCliLink(linkPath, launcherPath, loginPath);
         desktopCliLauncherAdded = true;
-      } else if (current.status !== "installed" && current.status !== "external") {
+      } else if (current.status !== "installed") {
         throw new Error(current.detail);
       }
       return desktopSetupState();
@@ -197,7 +214,7 @@ function registerDesktopIpc(): void {
         cli_launcher_status: cliLauncherStatus,
         ...(desktopSetupStartedAt !== undefined && { duration_ms: Date.now() - desktopSetupStartedAt }),
       });
-      await flushDesktopOnboardingTelemetry();
+      await flushDesktopTelemetry();
       await markDesktopOnboardingComplete(onboardingStateFile());
       const completedWindow = setupWindow;
       setupWindow = undefined;
@@ -483,8 +500,9 @@ function createWindow(): BrowserWindow {
   browser.webContents.on("will-attach-webview", (event) => event.preventDefault());
   // The web UI keeps its accessibility skip link in browsers. Electron gives
   // the first link automatic focus on launch, turning that normally hidden
-  // control into persistent app chrome, so remove it from desktop documents.
-  browser.webContents.on("dom-ready", () => void removeDesktopSkipLink(browser));
+  // control into persistent app chrome. Desktop also needs to correct the
+  // brand link when Chromium newly focuses it after a hide/show cycle.
+  browser.webContents.on("dom-ready", () => void prepareDesktopDocument(browser));
   // Electron emits the in-page event for History API changes made by the SPA.
   // Rebuild only the application menu so the tray menu and lifecycle stay put.
   browser.webContents.on("did-navigate", refreshApplicationMenu);
@@ -548,7 +566,7 @@ async function showDesktopSetup(): Promise<void> {
     // Start the local daemon behind setup so a user who leaves before Continue
     // is still represented in the onboarding funnel. Failures stay invisible;
     // Continue will retry through the normal dashboard path.
-    void ensureServer().then(flushDesktopOnboardingTelemetry).catch(() => {});
+    void ensureServer().then(flushDesktopTelemetry).catch(() => {});
   }
   if (process.platform === "darwin") await app.dock?.show();
   if (!setupWindow || setupWindow.isDestroyed()) {
@@ -569,9 +587,34 @@ async function showPrimaryWindow(): Promise<void> {
   await showDashboard();
 }
 
-async function removeDesktopSkipLink(browser: BrowserWindow): Promise<void> {
+async function prepareDesktopDocument(browser: BrowserWindow): Promise<void> {
   if (browser.isDestroyed() || browser.webContents.isDestroyed()) return;
-  await browser.webContents.executeJavaScript("document.querySelector('.skip-link')?.remove()").catch(() => {});
+  await browser.webContents.executeJavaScript(`(() => {
+    document.querySelector('.skip-link')?.remove();
+    if (window.__agentuseDesktopFocusGuardInstalled) return;
+    window.__agentuseDesktopFocusGuardInstalled = true;
+
+    let brandWasFocusedBeforeBlur = false;
+    const brandIsFocused = () => document.activeElement?.matches?.('.topbar .brand') === true;
+    const repairAccidentalBrandFocus = () => {
+      requestAnimationFrame(() => {
+        if (!brandIsFocused() || brandWasFocusedBeforeBlur) {
+          brandWasFocusedBeforeBlur = false;
+          return;
+        }
+        const main = document.querySelector('main');
+        if (!(main instanceof HTMLElement)) return;
+        if (!main.hasAttribute('tabindex')) main.setAttribute('tabindex', '-1');
+        main.focus({ preventScroll: true });
+      });
+    };
+
+    window.addEventListener('blur', () => {
+      brandWasFocusedBeforeBlur = brandIsFocused();
+    });
+    window.addEventListener('focus', repairAccidentalBrandFocus);
+    repairAccidentalBrandFocus();
+  })()`).catch(() => {});
 }
 
 async function showDashboard(requestedUrl?: string): Promise<void> {
@@ -592,7 +635,7 @@ async function showDashboard(requestedUrl?: string): Promise<void> {
   if (!window || window.isDestroyed()) window = createWindow();
   const targetUrl = requestedUrl ? notificationTargetUrl(requestedUrl) ?? dashboardUrl! : dashboardUrl!;
   if (window.webContents.getURL() !== targetUrl) await window.loadURL(targetUrl);
-  await removeDesktopSkipLink(window);
+  await prepareDesktopDocument(window);
   startApprovalPolling();
   startNotificationStream();
   void refreshPendingApprovals();
@@ -761,9 +804,10 @@ async function desktopSettingsState() {
     launchAtLogin,
     cliStatus: cli.status,
     cliTitle: cli.title,
-    cliDetail: cli.detail,
+    cliDetail: displayHomePath(cli.detail),
     cliActionLabel: cli.actionLabel,
     cliActionDisabled: cli.actionDisabled,
+    cliCommands: cli.commands.map(displayHomePath),
   };
   if (serverOperation === "starting") {
     return {
@@ -965,14 +1009,23 @@ if (!app.requestSingleInstanceLock()) {
     registerDesktopIpc();
     createTray();
     const onboardingReady = await isDesktopOnboardingReady();
-    if (process.argv.includes("--hidden") && onboardingReady) {
+    const hiddenLaunch = process.argv.includes("--hidden");
+    queueDesktopTelemetry({
+      event: "desktop_app_launched",
+      launch_mode: hiddenLaunch ? "login_item_hidden" : "interactive",
+      onboarding_complete: onboardingReady,
+      login_item_enabled: app.getLoginItemSettings().openAtLogin,
+    }, "mac_app");
+    if (hiddenLaunch && onboardingReady) {
       await ensureServer();
+      await flushDesktopTelemetry();
       startApprovalPolling();
       startNotificationStream();
       refreshMenus();
       return;
     }
     await showPrimaryWindow();
+    await flushDesktopTelemetry();
   }).catch((error: unknown) => {
     console.error("Could not open AgentUse desktop:", error);
     dialog.showErrorBox("AgentUse could not start", error instanceof Error ? error.message : String(error));

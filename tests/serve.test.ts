@@ -853,6 +853,10 @@ describe('serve telemetry attribution', () => {
     const accepted = Array.from({ length: 25 }, (_, index) =>
       acceptWebUITelemetry(floodGuard, `page-${index}`, 2_000));
     expect(accepted.filter(Boolean)).toHaveLength(20);
+
+    const launchGuard = createWebUITelemetryGuard(3_000);
+    expect(acceptWebUITelemetry(launchGuard, 'desktop-launch', 3_000, false)).toBe(true);
+    expect(acceptWebUITelemetry(launchGuard, 'desktop-launch', 3_001, false)).toBe(true);
   });
 
   it('allows same-origin browser telemetry on protected daemons without weakening API auth', async () => {
@@ -914,6 +918,26 @@ describe('serve telemetry attribution', () => {
     expect(parseWebUITelemetryBody({
       event: 'onboarding_started', onboarding_route: 'private-route',
     })).toBeUndefined();
+
+    expect(parseWebUITelemetryBody({
+      event: 'desktop_app_launched',
+      launch_mode: 'login_item_hidden',
+      onboarding_complete: true,
+      login_item_enabled: true,
+      private_path: '/Users/private',
+    }, 'mac_app')).toEqual({
+      event: 'desktop_app_launched',
+      clientSurface: 'mac_app',
+      launchMode: 'login_item_hidden',
+      onboardingComplete: true,
+      loginItemEnabled: true,
+    });
+    expect(parseWebUITelemetryBody({
+      event: 'desktop_app_launched',
+      launch_mode: 'interactive',
+      onboarding_complete: true,
+      login_item_enabled: false,
+    }, 'web')).toBeUndefined();
   });
 
   it('trusts only the fixed Mac client header value for telemetry segmentation', async () => {
