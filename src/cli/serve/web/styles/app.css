@@ -327,7 +327,7 @@ a, button, select, summary, label, input, textarea,
   letter-spacing: 0.12em; text-transform: uppercase;
   color: var(--muted);
 }
-.settings-group-hint { margin: 0 0 10px; font-size: 13px; line-height: 1.5; color: var(--muted-2); }
+.settings-group-hint { margin: 0 0 10px; font-size: 13px; line-height: 1.5; color: var(--muted-3); }
 .settings-group-hint:last-child { margin-bottom: 0; }
 .settings-row {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
@@ -337,7 +337,7 @@ a, button, select, summary, label, input, textarea,
 .settings-row:last-of-type { padding-bottom: 0; }
 .settings-row + .settings-row { border-top: 1px solid var(--line); padding-top: 10px; }
 .settings-row-label { font-size: 14px; color: var(--fg); }
-.settings-row-hint { margin-top: 2px; font-size: 12.5px; line-height: 1.45; color: var(--muted-2); }
+.settings-row-hint { margin-top: 2px; font-size: 12.5px; line-height: 1.45; color: var(--muted-3); }
 .settings-row-control { flex: none; }
 .settings-check-text { display: flex; flex-direction: column; }
 .settings-check-error { margin-top: 2px; font-size: 12.5px; line-height: 1.45; color: var(--red); }

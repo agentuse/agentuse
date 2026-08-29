@@ -259,6 +259,14 @@ describe('Topbar navigation', () => {
     expect(html).toContain('<a href="/" class="nav-item">home</a>');
     expect(html).toContain('<a href="/sessions" aria-current="page" class="nav-item active">sessions</a>');
   });
+
+  it('keeps reload in Dashboard preferences instead of duplicating it in the header', () => {
+    const html = renderToString(<Topbar />);
+
+    expect(html).toContain('aria-label="Dashboard preferences"');
+    expect(html).not.toContain('aria-label="Reload"');
+    expect(html).not.toContain('header-refresh');
+  });
 });
 
 describe('Session feed response', () => {

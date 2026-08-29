@@ -5,8 +5,11 @@ import { join } from "node:path";
 import {
   dashboardShortcutAccelerator,
   DEFAULT_DASHBOARD_SHORTCUT,
+  DEFAULT_DESKTOP_NOTIFICATION_PREFERENCES,
   normalizeDashboardShortcut,
   readDashboardShortcut,
+  readDesktopNotificationPreferences,
+  writeDesktopNotificationPreference,
   writeDashboardShortcut,
 } from "./dashboard-shortcut";
 
@@ -37,6 +40,25 @@ describe("dashboard shortcut", () => {
       expect(await readDashboardShortcut(path)).toBeNull();
       writeFileSync(path, "not json");
       expect(await readDashboardShortcut(path)).toBeNull();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("persists native notification choices without overwriting the shortcut", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "agentuse-notifications-"));
+    const path = join(directory, "desktop-preferences.json");
+    try {
+      expect(await readDesktopNotificationPreferences(path)).toEqual(DEFAULT_DESKTOP_NOTIFICATION_PREFERENCES);
+      await writeDashboardShortcut(path, "Command+Shift+A");
+      await writeDesktopNotificationPreference(path, "approvals", false);
+      expect(await readDesktopNotificationPreferences(path)).toEqual({ approvals: false, sessions: true });
+      expect(await readDashboardShortcut(path)).toBe("Command+Shift+A");
+
+      await writeDashboardShortcut(path, null);
+      expect(await readDesktopNotificationPreferences(path)).toEqual({ approvals: false, sessions: true });
+      await writeDesktopNotificationPreference(path, "sessions", false);
+      expect(await readDesktopNotificationPreferences(path)).toEqual({ approvals: false, sessions: false });
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

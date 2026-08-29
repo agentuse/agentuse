@@ -2,6 +2,13 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 export const DEFAULT_DASHBOARD_SHORTCUT = null;
+export const DEFAULT_DESKTOP_NOTIFICATION_PREFERENCES = Object.freeze({
+  approvals: true,
+  sessions: true,
+});
+
+export type DesktopNotificationCategory = keyof typeof DEFAULT_DESKTOP_NOTIFICATION_PREFERENCES;
+export type DesktopNotificationPreferences = Record<DesktopNotificationCategory, boolean>;
 
 const MODIFIER_ORDER = ["Command", "Control", "Option", "Shift"] as const;
 const MODIFIERS = new Set<string>([...MODIFIER_ORDER, "Hyper"]);
@@ -19,6 +26,7 @@ const NAMED_KEYS = new Set([
 interface DesktopPreferences {
   version: 1;
   dashboardShortcut: string | null;
+  notifications: DesktopNotificationPreferences;
 }
 
 export function desktopPreferencesPath(userDataDirectory: string): string {
@@ -50,19 +58,62 @@ export function dashboardShortcutAccelerator(shortcut: string): string {
 }
 
 export async function readDashboardShortcut(path: string): Promise<string | null> {
-  try {
-    const stored = JSON.parse(await readFile(path, "utf8")) as Partial<DesktopPreferences>;
-    const normalized = normalizeDashboardShortcut(stored.dashboardShortcut);
-    return normalized === undefined ? DEFAULT_DASHBOARD_SHORTCUT : normalized;
-  } catch {
-    return DEFAULT_DASHBOARD_SHORTCUT;
-  }
+  return (await readDesktopPreferences(path)).dashboardShortcut;
 }
 
 export async function writeDashboardShortcut(path: string, shortcut: string | null): Promise<void> {
   const normalized = normalizeDashboardShortcut(shortcut);
   if (normalized === undefined) throw new TypeError("Dashboard shortcut is invalid.");
-  const preferences: DesktopPreferences = { version: 1, dashboardShortcut: normalized };
+  const preferences = await readDesktopPreferences(path);
+  await writeDesktopPreferences(path, { ...preferences, dashboardShortcut: normalized });
+}
+
+export async function readDesktopNotificationPreferences(path: string): Promise<DesktopNotificationPreferences> {
+  return (await readDesktopPreferences(path)).notifications;
+}
+
+export async function writeDesktopNotificationPreference(
+  path: string,
+  category: DesktopNotificationCategory,
+  enabled: boolean,
+): Promise<void> {
+  const preferences = await readDesktopPreferences(path);
+  await writeDesktopPreferences(path, {
+    ...preferences,
+    notifications: { ...preferences.notifications, [category]: enabled },
+  });
+}
+
+async function readDesktopPreferences(path: string): Promise<DesktopPreferences> {
+  try {
+    const value = JSON.parse(await readFile(path, "utf8")) as unknown;
+    const stored = value && typeof value === "object" ? value as Record<string, unknown> : {};
+    const normalizedShortcut = normalizeDashboardShortcut(stored.dashboardShortcut);
+    const notifications = stored.notifications && typeof stored.notifications === "object"
+      ? stored.notifications as Record<string, unknown>
+      : {};
+    return {
+      version: 1,
+      dashboardShortcut: normalizedShortcut === undefined ? DEFAULT_DASHBOARD_SHORTCUT : normalizedShortcut,
+      notifications: {
+        approvals: typeof notifications.approvals === "boolean"
+          ? notifications.approvals
+          : DEFAULT_DESKTOP_NOTIFICATION_PREFERENCES.approvals,
+        sessions: typeof notifications.sessions === "boolean"
+          ? notifications.sessions
+          : DEFAULT_DESKTOP_NOTIFICATION_PREFERENCES.sessions,
+      },
+    };
+  } catch {
+    return {
+      version: 1,
+      dashboardShortcut: DEFAULT_DASHBOARD_SHORTCUT,
+      notifications: { ...DEFAULT_DESKTOP_NOTIFICATION_PREFERENCES },
+    };
+  }
+}
+
+async function writeDesktopPreferences(path: string, preferences: DesktopPreferences): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
   try {

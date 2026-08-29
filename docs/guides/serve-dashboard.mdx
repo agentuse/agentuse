@@ -38,15 +38,16 @@ distort the picture of what production is doing. They are still stored in full
 and remain inspectable: a mock session's page is reachable by id at any time, and
 the sessions list can show them on request.
 
-Sessions, Agents, Approvals, Schedules, Stores, and Settings remain directly
+Sessions, Agents, Approvals, Schedules, Stores, and Dashboard preferences remain directly
 addressable routes. A session page is the durable record for one run: its
 activity, approval gate, tool output, result, metrics, verification verdict,
 and follow-up controls stay together.
 
 ## Viewer preferences
 
-Dashboard preferences are local to each browser. They do not change agents or
-server configuration.
+Dashboard preferences are local to the current Dashboard. In a browser they are
+saved in that browser only; in AgentUse for Mac they are saved in the Dashboard
+on that Mac. They do not change agents or server configuration.
 
 - Home sections and metric tiles can be hidden and reordered
 - Results can use 1, 7, 14, or 30-day windows
@@ -74,13 +75,13 @@ token-only session link can still be installed. Cached static assets make repeat
 loads fast and tolerate a temporary network outage; live data and actions still
 require the daemon.
 
-If a deployment leaves a stale cached bundle after an update, open Settings and
-use **Clear cache & reload**. The service worker activates updates on the next
+If a browser deployment leaves a stale cached bundle after an update, open
+**Dashboard preferences** and use **Clear cached files & reload**. The service worker activates updates on the next
 open, and stale chunk failures trigger one controlled reload automatically.
 
 ## Web Push notifications
 
-Notification bells on Approvals, Sessions, and Settings control two independent
+Notification bells on Approvals, Sessions, and Dashboard preferences control two independent
 categories:
 
 - approval requests
@@ -103,7 +104,7 @@ truth.
 
 If permission is denied, AgentUse cannot reopen the browser prompt. Re-enable
 notifications in the browser or operating-system site settings, then return to
-Settings.
+Dashboard preferences.
 
 ## Badges and notification links
 

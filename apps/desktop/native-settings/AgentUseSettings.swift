@@ -15,6 +15,8 @@ private struct SettingsState: Codable, Equatable {
     var actionLabel: String
     var actionDisabled: Bool
     var launchAtLogin: Bool
+    var notificationApprovals: Bool
+    var notificationSessions: Bool
     var dashboardShortcut: String?
     var dashboardShortcutError: String?
     var cliStatus: String
@@ -33,6 +35,8 @@ private struct SettingsState: Codable, Equatable {
         actionLabel: "Start Server",
         actionDisabled: true,
         launchAtLogin: false,
+        notificationApprovals: true,
+        notificationSessions: true,
         dashboardShortcut: nil,
         dashboardShortcutError: nil,
         cliStatus: "unavailable",
@@ -55,11 +59,13 @@ private struct HostMessage: Decodable {
 private struct HelperCommand: Encodable {
     var type: String
     var enabled: Bool?
+    var category: String?
     var shortcut: String?
 
-    init(type: String, enabled: Bool? = nil, shortcut: String? = nil) {
+    init(type: String, enabled: Bool? = nil, category: String? = nil, shortcut: String? = nil) {
         self.type = type
         self.enabled = enabled
+        self.category = category
         self.shortcut = shortcut
     }
 }
@@ -144,6 +150,16 @@ private final class SettingsModel: ObservableObject {
         guard !actionInFlight else { return }
         actionInFlight = true
         HostConnection.shared.send(HelperCommand(type: "setLaunchAtLogin", enabled: enabled))
+    }
+
+    func setNotificationPreference(_ category: String, enabled: Bool) {
+        guard !actionInFlight else { return }
+        actionInFlight = true
+        HostConnection.shared.send(HelperCommand(
+            type: "setNotificationPreference",
+            enabled: enabled,
+            category: category
+        ))
     }
 
     func setDashboardShortcut(_ shortcut: String) {
@@ -436,6 +452,36 @@ private struct GeneralSettingsView: View {
                     .padding(.leading, 26)
                 }
             }
+
+            Section("Notifications") {
+                VStack(alignment: .leading, spacing: 2) {
+                    Toggle(
+                        "Pending approvals",
+                        isOn: Binding(
+                            get: { model.state.notificationApprovals },
+                            set: { model.setNotificationPreference("approvals", enabled: $0) }
+                        )
+                    )
+                    .disabled(model.actionInFlight)
+                    Text("A run is waiting on your decision.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Toggle(
+                        "Session completions",
+                        isOn: Binding(
+                            get: { model.state.notificationSessions },
+                            set: { model.setNotificationPreference("sessions", enabled: $0) }
+                        )
+                    )
+                    .disabled(model.actionInFlight)
+                    Text("A run finished, with its outcome.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
         .padding(.top, 8)
@@ -499,7 +545,7 @@ private struct SettingsView: View {
             LogsSettingsView(model: model)
                 .tabItem { Label("Logs", systemImage: "doc.text") }
         }
-        .frame(minWidth: 560, idealWidth: 620, minHeight: 380, idealHeight: 440)
+        .frame(minWidth: 560, idealWidth: 620, minHeight: 440, idealHeight: 520)
         .alert(
             "AgentUse Settings",
             isPresented: Binding(
@@ -544,7 +590,7 @@ private struct AgentUseSettingsApp: App {
             SettingsView()
         }
         .windowResizability(.contentSize)
-        .defaultSize(width: 620, height: 440)
+        .defaultSize(width: 620, height: 520)
         .commandsRemoved()
     }
 }

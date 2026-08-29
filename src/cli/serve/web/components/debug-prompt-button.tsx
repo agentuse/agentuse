@@ -30,6 +30,7 @@ declare global {
       cliCommand: string;
       serveAlreadyRunning: true;
       getProviderStatus: () => Promise<ProviderStatus>;
+      openSettings: () => Promise<void>;
     };
   }
 }

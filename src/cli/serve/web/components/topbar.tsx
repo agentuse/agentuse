@@ -26,34 +26,10 @@ function PaletteButton() {
   );
 }
 
-/**
- * Full-reload button. In an installed PWA (standalone, no browser chrome) this
- * is the only reliable way to pick up a new build: location.reload() does a
- * real navigation, which the service worker serves network-first, pulling the
- * latest shell + hashed assets.
- */
-function RefreshButton() {
-  return (
-    <button
-      type="button"
-      class="icon-btn header-refresh"
-      aria-label="Reload"
-      title="Reload the app"
-      onClick={() => location.reload()}
-    >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-        <polyline points="21 3 21 9 15 9" />
-      </svg>
-    </button>
-  );
-}
-
-/** Gear link to the settings page (theme, home sections, notifications,
- *  and the clear-cache recovery action for stale installed PWAs). */
+/** Gear link to Dashboard-local preferences and browser recovery controls. */
 function SettingsLink() {
   return (
-    <a class="icon-btn" href="/settings" aria-label="Settings" title="Settings">
+    <a class="icon-btn" href="/settings" aria-label="Dashboard preferences" title="Dashboard preferences">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="3" />
         <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
@@ -173,7 +149,6 @@ export function Topbar(props: { currentPage?: TopbarPage; right?: ComponentChild
       <div class="right">
         {props.right && <span class="topbar-context">{props.right}</span>}
         <PaletteButton />
-        <RefreshButton />
         <SettingsLink />
       </div>
     </header>

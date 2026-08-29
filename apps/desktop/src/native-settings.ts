@@ -5,6 +5,8 @@ export interface DesktopSettingsState {
   actionLabel: "Start Server" | "Stop Server";
   actionDisabled: boolean;
   launchAtLogin: boolean;
+  notificationApprovals: boolean;
+  notificationSessions: boolean;
   dashboardShortcut: string | null;
   dashboardShortcutError?: string;
   cliStatus: "installed" | "notInstalled" | "conflict" | "unavailable";
@@ -24,6 +26,7 @@ export type NativeSettingsCommand =
   | { type: "toggleCliLink" }
   | { type: "clearDashboardShortcut" }
   | { type: "setLaunchAtLogin"; enabled: boolean }
+  | { type: "setNotificationPreference"; category: "approvals" | "sessions"; enabled: boolean }
   | { type: "setDashboardShortcut"; shortcut: string };
 
 export type NativeSettingsMessage =
@@ -52,6 +55,11 @@ export function parseNativeSettingsCommand(line: string): NativeSettingsCommand 
     case "setLaunchAtLogin":
       return typeof command.enabled === "boolean"
         ? { type: command.type, enabled: command.enabled }
+        : undefined;
+    case "setNotificationPreference":
+      return (command.category === "approvals" || command.category === "sessions")
+        && typeof command.enabled === "boolean"
+        ? { type: command.type, category: command.category, enabled: command.enabled }
         : undefined;
     case "setDashboardShortcut":
       return typeof command.shortcut === "string"

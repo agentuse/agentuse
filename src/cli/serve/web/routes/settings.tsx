@@ -32,7 +32,7 @@ function Row(props: { label: string; hint?: string; children?: ComponentChildren
 
 /** Two per-category checkboxes when push can work here; otherwise a single
  *  explanation of what stands in the way (mirrors the push-bell dialogs). */
-function NotificationsGroup() {
+function BrowserNotificationsGroup() {
   const approvals = usePushBell('approvals');
   const sessions = usePushBell('sessions');
   const rows = [
@@ -52,12 +52,12 @@ function NotificationsGroup() {
           : null;
 
   return (
-    <Group title="Notifications">
+    <Group title="Browser notifications">
       {blockedHint
         ? <p class="settings-group-hint">{blockedHint}</p>
         : (
           <>
-            <p class="settings-group-hint">Push alerts to this device. Each device keeps its own choices.</p>
+            <p class="settings-group-hint">Alerts for this browser. Other browsers keep their own choices.</p>
             <div class="settings-checks">
               {rows.map((row) => (
                 <label class="settings-check" key={row.label}>
@@ -82,8 +82,9 @@ function NotificationsGroup() {
 }
 
 export default function Settings() {
-  useTitle(pageTitle('Settings'));
+  useTitle(pageTitle('Dashboard preferences'));
   const showDebug = debugSettingsEnabled(location.search);
+  const isDesktop = typeof window !== 'undefined' && Boolean(window.agentuseDesktop);
   const sessionList = useSessionListView();
   const homeSections = useHomeSections();
   const [clearing, setClearing] = useState(false);
@@ -115,10 +116,20 @@ export default function Settings() {
       <Topbar />
       <main>
         <header>
-          <div class="eyebrow">preferences</div>
-          <h1>Settings</h1>
-          <p class="lede">Stored in this browser, per device.</p>
+          <div class="eyebrow">dashboard</div>
+          <h1>Preferences</h1>
+          <p class="lede">{isDesktop ? 'Saved in the Dashboard on this Mac.' : 'Saved in this browser only.'}</p>
         </header>
+
+        {isDesktop && (
+          <Group title="AgentUse for Mac">
+            <Row label="App settings" hint="Server, launch at login, shortcut, CLI, native notifications, and logs.">
+              <button type="button" class="settings-item" onClick={() => void window.agentuseDesktop?.openSettings()}>
+                Open Mac Settings…
+              </button>
+            </Row>
+          </Group>
+        )}
 
         <Group title="Appearance">
           <Row label="Theme" hint="Light, dark, or follow the system.">
@@ -159,25 +170,27 @@ export default function Settings() {
           </Row>
         </Group>
 
-        <NotificationsGroup />
+        {!isDesktop && <BrowserNotificationsGroup />}
 
-        <Group title="Maintenance">
-          <Row label="Reload app" hint="Fetch and switch to the latest build.">
+        <Group title="Troubleshooting">
+          <Row label="Reload Dashboard" hint="Fetch and switch to the latest build.">
             <button type="button" class="settings-item" onClick={() => location.reload()}>
               Reload
             </button>
           </Row>
-          <Row label="Clear cache & reload" hint="Recovery for a stale app: purge the cached copy, then reload. Notification settings survive.">
-            <button
-              type="button"
-              class={`settings-item${clearing ? ' btn-busy' : ''}`}
-              onClick={clearCacheAndReload}
-              disabled={clearing}
-              aria-busy={clearing}
-            >
-              {clearing ? <><span class="btn-spinner" aria-hidden="true" />Clearing…</> : 'Clear cache'}
-            </button>
-          </Row>
+          {!isDesktop && (
+            <Row label="Clear cached files & reload" hint="Use if the Dashboard keeps showing an older version.">
+              <button
+                type="button"
+                class={`settings-item${clearing ? ' btn-busy' : ''}`}
+                onClick={clearCacheAndReload}
+                disabled={clearing}
+                aria-busy={clearing}
+              >
+                {clearing ? <><span class="btn-spinner" aria-hidden="true" />Clearing…</> : 'Clear cached files'}
+              </button>
+            </Row>
+          )}
         </Group>
 
         {showDebug && (

@@ -25,10 +25,14 @@ import { defaultCliLinkPath, inspectCliAvailability, loginShellPath, packagedCli
 import {
   dashboardShortcutAccelerator,
   DEFAULT_DASHBOARD_SHORTCUT,
+  DEFAULT_DESKTOP_NOTIFICATION_PREFERENCES,
   desktopPreferencesPath,
   normalizeDashboardShortcut,
   readDashboardShortcut,
+  readDesktopNotificationPreferences,
+  writeDesktopNotificationPreference,
   writeDashboardShortcut,
+  type DesktopNotificationPreferences,
 } from "./dashboard-shortcut";
 import { getProviderStatus } from "../../../src/auth/provider-status";
 import { loadGlobalConfig } from "../../../src/utils/global-config";
@@ -65,6 +69,7 @@ let userLoginPath: Promise<string> | undefined;
 let desktopSetupStartedAt: number | undefined;
 let desktopCliLauncherAdded = false;
 let dashboardShortcut: string | null = DEFAULT_DASHBOARD_SHORTCUT;
+let desktopNotificationPreferences: DesktopNotificationPreferences = { ...DEFAULT_DESKTOP_NOTIFICATION_PREFERENCES };
 let registeredDashboardShortcut: string | undefined;
 let dashboardShortcutError: string | undefined;
 const pendingDesktopTelemetry: Array<{
@@ -183,6 +188,10 @@ function registerDesktopIpc(): void {
   ipcMain.handle("agentuse:desktop:get-provider-status", async (event) => {
     assertDashboardSender(event);
     return getProviderStatus();
+  });
+  ipcMain.handle("agentuse:desktop:open-settings", async (event) => {
+    assertDashboardSender(event);
+    showSettings();
   });
   ipcMain.handle("agentuse:setup:get-state", async (event) => {
     assertSetupSender(event);
@@ -313,6 +322,7 @@ function notificationTargetUrl(url: string): string | undefined {
 }
 
 function showNativeNotification(event: NativeNotificationEvent): void {
+  if (!desktopNotificationPreferences[event.category]) return;
   if (!Notification.isSupported()) return;
   const key = event.payload.tag ?? `${event.category}:${event.payload.url}`;
   activeNotifications.get(key)?.close();
@@ -734,6 +744,20 @@ async function handleNativeSettingsCommand(line: string, child: ChildProcess): P
       });
       await pushNativeSettingsState(child);
       break;
+    case "setNotificationPreference":
+      try {
+        await writeDesktopNotificationPreference(desktopPreferencesFile(), command.category, command.enabled);
+        desktopNotificationPreferences = {
+          ...desktopNotificationPreferences,
+          [command.category]: command.enabled,
+        };
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        sendNativeSettingsMessage({ type: "error", message: `Could not update notifications: ${detail}` }, child);
+      } finally {
+        await pushNativeSettingsState(child);
+      }
+      break;
     case "setDashboardShortcut": {
       try {
         await updateDashboardShortcut(command.shortcut);
@@ -829,8 +853,11 @@ function toggleDashboard(): void {
   void showPrimaryWindow();
 }
 
-async function initializeDashboardShortcut(): Promise<void> {
-  dashboardShortcut = await readDashboardShortcut(desktopPreferencesFile());
+async function initializeDesktopPreferences(): Promise<void> {
+  [dashboardShortcut, desktopNotificationPreferences] = await Promise.all([
+    readDashboardShortcut(desktopPreferencesFile()),
+    readDesktopNotificationPreferences(desktopPreferencesFile()),
+  ]);
   dashboardShortcutError = undefined;
   if (!dashboardShortcut) return;
   const accelerator = dashboardShortcutAccelerator(dashboardShortcut);
@@ -916,6 +943,8 @@ async function desktopSettingsState() {
   );
   const commonState = {
     launchAtLogin,
+    notificationApprovals: desktopNotificationPreferences.approvals,
+    notificationSessions: desktopNotificationPreferences.sessions,
     dashboardShortcut,
     ...(dashboardShortcutError && { dashboardShortcutError }),
     cliStatus: cli.status,
@@ -1149,7 +1178,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     registerDesktopIpc();
     createTray();
-    await initializeDashboardShortcut();
+    await initializeDesktopPreferences();
     const onboardingReady = await isDesktopOnboardingReady();
     const hiddenLaunch = process.argv.includes("--hidden");
     queueDesktopTelemetry({
