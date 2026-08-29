@@ -13,6 +13,7 @@ import { Scheduler } from '../src/scheduler/scheduler';
  */
 
 let tmpDir: string;
+let migrationDir: string;
 
 const VALID_AGENT = `---
 name: Daily Report
@@ -41,10 +42,14 @@ beforeAll(() => {
   fs.writeFileSync(path.join(tmpDir, 'daily.agentuse'), VALID_AGENT);
   fs.writeFileSync(path.join(tmpDir, 'helper.agentuse'), PLAIN_AGENT);
   fs.writeFileSync(path.join(tmpDir, 'broken.agentuse'), INVALID_AGENT);
+
+  migrationDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentuse-migration-'));
+  fs.writeFileSync(path.join(migrationDir, 'daily.agentuse'), VALID_AGENT);
 });
 
 afterAll(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
+  fs.rmSync(migrationDir, { recursive: true, force: true });
 });
 
 function makeProject() {
@@ -107,7 +112,7 @@ describe('collectAgents', () => {
 
 describe('bare serve migration warning', () => {
   it('explains how to re-adopt a current directory that contains agents', async () => {
-    const warning = await __testing.bareServeMigrationWarning(tmpDir);
+    const warning = await __testing.bareServeMigrationWarning(migrationDir);
 
     expect(warning).toContain('v0.19 no longer adopts the current directory');
     expect(warning).toContain('agentuse serve -C .');
