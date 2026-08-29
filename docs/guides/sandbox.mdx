@@ -5,7 +5,9 @@ tag: Experimental
 ---
 
 <Warning>
-  The sandbox feature is experimental and may change in future versions.
+  The `sandbox` configuration and container execution contract are experimental
+  and may change without migration. This label is not a security guarantee; use
+  the isolation boundaries documented below when evaluating untrusted work.
 </Warning>
 
 The sandbox runs agent commands inside a Docker container while the **filesystem tool** handles all file I/O on the host. This separation means the agent can execute arbitrary shell commands safely without risking your host system, while file changes flow bidirectionally through bind mounts.

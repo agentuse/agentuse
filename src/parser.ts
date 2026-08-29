@@ -281,11 +281,11 @@ const AgentSchema = z.object({
   // log spam when the same or many agents are parsed repeatedly, e.g. in serve).
   // These run before the deprecated-key early return so a config using the old
   // mcp_servers key still gets manager/store/learning/sandbox notices.
-  if (data.type === 'manager') warnExperimentalOnce('manager', 'Manager agents (type: manager)');
-  if (data.store) warnExperimentalOnce('store', 'Store feature');
-  if (data.learning) warnExperimentalOnce('learning', 'Learning feature');
-  if (data.verify) warnExperimentalOnce('verify', 'Verify feature');
-  if (data.sandbox) warnExperimentalOnce('sandbox', 'Sandbox feature');
+  if (data.type === 'manager') warnExperimentalOnce('manager', 'Manager agent configuration and orchestration behavior');
+  if (data.store) warnExperimentalOnce('store', 'Store configuration and on-disk format');
+  if (data.learning) warnExperimentalOnce('learning', 'Learning configuration, capture behavior, and corrections format');
+  if (data.verify) warnExperimentalOnce('verify', 'Verify configuration, verdict contract, and redo behavior');
+  if (data.sandbox) warnExperimentalOnce('sandbox', 'Sandbox configuration and container execution contract');
 
   // Normalize the string shorthand so consumers always see an array.
   const dependsOn = data.dependsOn === undefined
