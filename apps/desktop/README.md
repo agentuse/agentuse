@@ -60,6 +60,17 @@ release, set `CSC_LINK`/`CSC_KEY_PASSWORD` for electron-builder and set
 hook will notarize the `.app`. Keep those credentials in CI secrets, never in
 this package or a user configuration file.
 
+For a manual release, prefer a validated local Keychain profile so credentials
+never enter the shell environment:
+
+```sh
+xcrun notarytool store-credentials agentuse-notary --apple-id <apple-id> --team-id <team-id>
+APPLE_KEYCHAIN_PROFILE=agentuse-notary pnpm desktop:package:mac
+```
+
+`notarytool` prompts securely for the app-specific password. electron-builder
+uses the Developer ID Application identity installed in the login Keychain.
+
 `agentuse` is a production workspace dependency. The packaging allowlist keeps
 its CLI, built dashboard, skills, and package metadata while excluding source,
 tests, prior desktop builds, and workspace caches. The desktop process therefore

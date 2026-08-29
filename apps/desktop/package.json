@@ -33,6 +33,7 @@
     "appId": "io.agentuse.desktop",
     "productName": "AgentUse",
     "asar": true,
+    "npmRebuild": false,
     "forceCodeSigning": false,
     "mac": {
       "category": "public.app-category.developer-tools",
