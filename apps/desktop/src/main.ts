@@ -3,7 +3,6 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import { open } from "node:fs/promises";
-import { createServer, type AddressInfo } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { pendingApprovalCount, pendingApprovalTitle, pendingApprovalTooltip, type ApprovalBucketsPayload } from "./approval-status";
@@ -21,6 +20,7 @@ import {
 import { createDesktopQuitPolicy, shouldWarnBeforeFullQuit } from "./quit-policy";
 import { isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, selectServer, serverUrl, type RegisteredServer } from "./runtime";
 import { createAgentUseTrayIcon } from "./tray-icon";
+import { selectLoopbackPort } from "./port-selection";
 import { defaultCliLinkPath, inspectCliAvailability, loginShellPath, packagedCliLauncherPath, toggleCliLink, type CliLinkState } from "./cli-link";
 import {
   dashboardShortcutAccelerator,
@@ -31,6 +31,7 @@ import {
   writeDashboardShortcut,
 } from "./dashboard-shortcut";
 import { getProviderStatus } from "../../../src/auth/provider-status";
+import { loadGlobalConfig } from "../../../src/utils/global-config";
 
 const require = createRequire(__filename);
 const APP_NAME = "AgentUse";
@@ -409,18 +410,6 @@ async function waitForServer(pid: number, apiKey?: string): Promise<RegisteredSe
   throw new Error("AgentUse server did not become ready within 15 seconds.");
 }
 
-async function findAvailableLoopbackPort(): Promise<number> {
-  return new Promise<number>((resolve, reject) => {
-    const reservation = createServer();
-    reservation.unref();
-    reservation.once("error", reject);
-    reservation.listen(0, "127.0.0.1", () => {
-      const address = reservation.address() as AddressInfo;
-      reservation.close((error) => error ? reject(error) : resolve(address.port));
-    });
-  });
-}
-
 async function acquireServer(): Promise<void> {
   const existing = selectServer(listRegisteredServers());
   if (existing) {
@@ -440,7 +429,7 @@ async function acquireServer(): Promise<void> {
 
   const cli = resolveCliPath();
   if (!existsSync(cli)) throw new Error(`AgentUse CLI was not found at ${cli}`);
-  const ownedPort = await findAvailableLoopbackPort();
+  const ownedPort = await selectLoopbackPort(loadGlobalConfig()?.serve?.port);
   ownedServer = spawn(process.execPath, [cli, "serve", "--host", "127.0.0.1", "--port", String(ownedPort)], {
     cwd: app.getPath("home"),
     detached: false,
