@@ -1,9 +1,34 @@
 ---
 title: Installation
-description: Install, upgrade, or remove the AgentUse CLI
+description: Install AgentUse for macOS or from the command line
 ---
 
+## macOS Desktop
+
+Download the signed DMG from the
+[latest GitHub release](https://github.com/agentuse/agentuse/releases/latest),
+open it, and move **AgentUse** to Applications. The app includes the AgentUse
+runtime and dashboard, so it does not require Node.js or a separate CLI
+installation.
+
+On first launch, Desktop setup offers two choices:
+
+- **Launch AgentUse at login** is selected by default and is applied when you
+  select **Continue**.
+- **Add CLI launcher** optionally creates `~/.local/bin/agentuse` for use in
+  Terminal. Setup remains available even if you skip it.
+
+After continuing, the app joins the same guided sample and first-agent flow as
+the Web UI.
+
+<Card title="macOS Desktop guide" icon="apple" href="/guides/macos-desktop">
+  Learn how the menu-bar app, CLI launcher, and login-shell PATH work together.
+</Card>
+
 ## Requirements
+
+These requirements apply to command-line installations. The macOS app bundles
+its own runtime.
 
 <CardGroup cols={2}>
   <Card title="Node.js" icon="node">
@@ -20,7 +45,7 @@ Check your Node.js version before installing:
 node --version
 ```
 
-## Install globally
+## Install the CLI globally
 
 A global installation gives you the `agentuse` command in every terminal.
 

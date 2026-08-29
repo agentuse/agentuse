@@ -1,12 +1,66 @@
 ---
 title: macOS Desktop App
 description: Run the AgentUse dashboard as a native macOS menu-bar app
-tag: Experimental
 ---
 
-The AgentUse desktop app wraps the same local dashboard and `agentuse serve`
-runtime used by the CLI. It does not maintain a separate agent configuration or
-renderer, so CLI runs and browser access continue to work independently.
+AgentUse for Mac keeps scheduled agents, approvals, and active runs available
+from the menu bar without leaving a Terminal window open. It can start quietly
+at login, opens the operations dashboard in its own window, and includes the
+complete AgentUse runtime, so Node.js and a separate CLI installation are not
+required. The app and CLI use the same projects and session history, letting you
+move between Desktop and Terminal without duplicate setup or configuration.
+
+## Install
+
+Download the signed DMG from the
+[latest GitHub release](https://github.com/agentuse/agentuse/releases/latest),
+open it, and move **AgentUse** to Applications. Open AgentUse from Applications
+to start setup.
+
+## First launch
+
+The Desktop setup screen has two independent options:
+
+- **Launch AgentUse at login** starts the app quietly in the menu bar so
+  schedules, approvals, and background runs remain available. It is selected
+  by default but is not added to macOS Login Items until you select
+  **Continue**.
+- **Add CLI launcher** creates `~/.local/bin/agentuse`, pointing to the CLI
+  bundled inside AgentUse.app. It is optional and never blocks **Continue**.
+
+After **Continue**, Desktop joins the same onboarding flow as the Web UI: create
+a project, run the credential-free sample, connect a runtime provider, and hand
+the first agent to your coding assistant. Desktop reads provider status from
+the same bundled runtime that will run the agent. If login is required, the
+coding agent stops and asks you to run it in Terminal rather than passing
+credentials or OAuth details through coding-agent chat.
+
+After you copy the first-agent prompt, onboarding stays on the current screen
+and checks for the new agent. When it appears, select **Open agent** to review
+and run it. If creation takes too long, you can copy the prompt again or check
+for the agent manually.
+
+## Command line launcher
+
+The optional launcher makes the bundled CLI available at:
+
+```text
+~/.local/bin/agentuse
+```
+
+`~/.local/bin` must be on your shell's `PATH` before a bare `agentuse` command
+can resolve to it. Desktop does not edit shell configuration automatically.
+
+Settings lists every executable named `agentuse` found on the login-shell
+`PATH`, in resolution order. The first path is the command the shell runs when
+you enter `agentuse`. You can add or replace the launcher at
+`~/.local/bin/agentuse` even when npm, pnpm, Bun, Yarn, Homebrew, or another
+installation exists elsewhere. Desktop never modifies those other
+installations.
+
+Use **Add**, **Replace**, or **Remove** in Settings to manage only the bundled
+launcher. If a different installation appears first, either call the displayed
+launcher path directly or change your shell's `PATH` order.
 
 ## How it behaves
 
@@ -19,12 +73,12 @@ Use the AgentUse menu-bar icon to:
 - quit AgentUse
 
 Settings shows whether the local server is running, lets you start or stop a
-server owned by the desktop app, configures launch at login, and displays the
-current server log. The Settings window uses native SwiftUI controls while the
-dashboard remains the existing web interface. A server started outside the app
-is identified as external and is never stopped by the desktop controls. Login
-launches start in the background so the menu-bar status and approvals are
-available without opening the dashboard window.
+server owned by the desktop app, configures launch at login and the CLI
+launcher, and displays the current server log. The Settings window uses native
+SwiftUI controls while the dashboard remains the existing web interface. A
+server started outside the app is identified as external and is never stopped
+by the desktop controls. Login launches start in the background so the menu-bar
+status and approvals are available without opening the dashboard window.
 
 **Quit AgentUse** or <kbd>Command</kbd>+<kbd>Q</kbd> stops a backend started by
 the app. A backend that was already running when the app launched is left alone.
@@ -34,43 +88,6 @@ The desktop window accepts only the loopback dashboard origin. Links to normal
 `http` or `https` sites open in the default browser; other external navigation
 is blocked. Electron renderer access to Node.js is disabled and context
 isolation is enabled.
-
-## Develop locally
-
-From the repository root, install workspace dependencies and build the existing
-CLI and web UI before starting Electron:
-
-```bash
-pnpm install
-bun run build
-pnpm desktop:dev
-```
-
-The desktop process attaches to a registered `agentuse serve` daemon when one
-is running. Otherwise it starts the compiled local CLI on a loopback port. The
-canonical browser dashboard remains available from the URL shown in the menu.
-
-## Build a macOS app
-
-```bash
-pnpm desktop:package:mac
-```
-
-To create an unsigned development build, run
-`CSC_IDENTITY_AUTO_DISCOVERY=false pnpm desktop:package:mac`. For distribution, set
-the standard electron-builder signing variables (`CSC_LINK` and
-`CSC_KEY_PASSWORD`) and the notarization variables (`APPLE_ID`,
-`APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`) in the release environment.
-The package configuration leaves hardened runtime enabled and provides a
-notarization hook without committing credentials.
-
-The Settings helper normally builds for the current Mac. When producing a
-universal Electron application, set `AGENTUSE_SETTINGS_UNIVERSAL=1` so its
-nested SwiftUI helper also contains both `arm64` and `x86_64` architectures.
-
-The packaged app includes the existing AgentUse runtime and dashboard assets;
-it does not require network access to render the local UI. Model providers and
-external tools still have their normal connectivity requirements.
 
 ## Troubleshooting
 
@@ -85,3 +102,7 @@ agentuse serve logs
 
 See [Operations Dashboard](/guides/serve-dashboard) for dashboard behavior and
 [CLI Commands](/reference/cli-commands) for the full `serve` reference.
+
+<Card title="Developing AgentUse for Mac" icon="code" href="/guides/macos-desktop-development">
+  Run the Desktop app from source, install local builds, and create signed releases.
+</Card>

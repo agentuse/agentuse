@@ -1,0 +1,101 @@
+---
+title: Developing AgentUse for Mac
+description: Run, package, sign, and notarize the AgentUse macOS app
+---
+
+This page is for contributors working on the AgentUse Desktop app. For normal
+installation and usage, see [macOS Desktop App](/guides/macos-desktop).
+
+## Requirements
+
+Desktop development requires:
+
+- Node.js 22 or later
+- Bun and pnpm
+- Xcode, including its command-line tools
+
+Xcode is required because the build compiles the native SwiftUI Settings helper
+and uses Apple's asset-catalog compiler for the app icon.
+
+## Run from source
+
+From the repository root, install workspace dependencies, build the CLI and Web
+UI, then start Electron:
+
+```bash
+pnpm install
+bun run build
+pnpm desktop:dev
+```
+
+The Desktop process attaches to a registered `agentuse serve` daemon when one
+is already running. Otherwise it starts the compiled local CLI on a loopback
+port. The browser dashboard remains available at the URL shown in the menu.
+
+Set `AGENTUSE_CLI_PATH` to test against a specific CLI build:
+
+```bash
+AGENTUSE_CLI_PATH=/absolute/path/to/bin/cli.js pnpm desktop:dev
+```
+
+## Install a local build
+
+For routine testing, install and launch one canonical app copy:
+
+```bash
+pnpm desktop:install-local
+```
+
+The installer builds in temporary staging, gracefully terminates running
+AgentUse Desktop copies, replaces `~/Applications/AgentUse.app`, and launches
+that copy. Avoid opening `apps/desktop/dist/*/AgentUse.app` directly; using one
+canonical installation prevents Launch Services from retaining several copies
+with the same bundle identifier.
+
+## Package the app
+
+Create a package for the current Mac architecture:
+
+```bash
+pnpm desktop:package:mac
+```
+
+For an unsigned development package:
+
+```bash
+CSC_IDENTITY_AUTO_DISCOVERY=false pnpm desktop:package:mac
+```
+
+The Settings helper builds for the current architecture by default. For a
+universal `arm64` and `x86_64` package, include both architectures in the nested
+SwiftUI helper:
+
+```bash
+AGENTUSE_SETTINGS_UNIVERSAL=1 pnpm desktop:package:mac
+```
+
+The package includes the AgentUse runtime, dashboard, built-in skills, and
+required metadata. Source, tests, prior Desktop builds, and workspace caches are
+excluded.
+
+## Sign and notarize a release
+
+For a manual release, store notarization credentials in the login Keychain so
+the app-specific password does not enter shell history:
+
+```bash
+xcrun notarytool store-credentials agentuse-notary \
+  --apple-id <apple-id> \
+  --team-id <team-id>
+
+APPLE_KEYCHAIN_PROFILE=agentuse-notary pnpm desktop:package:mac
+```
+
+`notarytool` prompts securely for the app-specific password. electron-builder
+uses the Developer ID Application identity installed in the login Keychain.
+
+For CI, set the electron-builder signing variables `CSC_LINK` and
+`CSC_KEY_PASSWORD`, plus `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and
+`APPLE_TEAM_ID`. Keep all signing credentials in CI secrets. Hardened runtime is
+enabled, and the packaged native Settings helper is placed under
+`Contents/Frameworks` before notarization.

@@ -36,7 +36,15 @@ you the runtime while keeping the agent under your control.
 
 ## Quick start
 
-Set up your first project without installing AgentUse globally:
+On macOS, download AgentUse from the
+[latest GitHub release](https://github.com/agentuse/agentuse/releases/latest),
+move it to Applications, and open it. The app includes the AgentUse runtime and
+guides you through Desktop setup before joining the same sample and first-agent
+flow as the Web UI. A separate Node.js or global CLI installation is not
+required.
+
+For Terminal, Linux, WSL, or a server, set up your first project without
+installing AgentUse globally:
 
 ```bash
 npx -y agentuse@latest setup
@@ -45,7 +53,8 @@ npx -y agentuse@latest setup
 Choose Browser for guided visual setup or Terminal for a headless Linux/SSH
 flow. Both create the same managed project under `~/.agentuse/projects`.
 
-For real agents, install the CLI and connect a model provider:
+Install the CLI globally if you want a persistent `agentuse` command in every
+terminal, then connect a model provider before the first real run:
 
 ```bash
 npm install -g agentuse
@@ -54,6 +63,9 @@ agentuse provider login
 
 API keys also work through environment variables such as
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `OPENROUTER_API_KEY`.
+
+See the [macOS Desktop guide](https://docs.agentuse.io/guides/macos-desktop)
+or the complete [Installation guide](https://docs.agentuse.io/installation).
 
 ## Define the agent in Markdown
 

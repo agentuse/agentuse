@@ -50,7 +50,8 @@
         "guides/store",
         "guides/learning",
         "guides/verify",
-        "guides/testing-agents"
+        "guides/testing-agents",
+        "guides/macos-desktop-development"
       ]
     },
     {

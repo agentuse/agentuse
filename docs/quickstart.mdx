@@ -3,7 +3,20 @@ title: Quick Start
 description: Set up AgentUse and run your first agent
 ---
 
-## Install AgentUse
+## Choose how to start
+
+### macOS Desktop
+
+Download AgentUse from the
+[latest GitHub release](https://github.com/agentuse/agentuse/releases/latest),
+move it to Applications, and open it. On the Desktop setup screen, choose
+whether AgentUse should launch at login and optionally add its bundled CLI
+launcher for Terminal. Select **Continue** to enter the guided setup.
+
+The app includes the runtime, so macOS Desktop users do not need to install
+Node.js or AgentUse globally.
+
+### Command line
 
 ```bash
 npm install -g agentuse
@@ -14,14 +27,15 @@ agentuse --version
   See [Installation](/installation) for pnpm, Bun, Docker, and development setup options.
 </Info>
 
-## Start setup
+Start the guided Web setup:
 
 ```bash
 agentuse setup
 ```
 
 Choose **Browser** for the guided setup. AgentUse opens its Web UI and keeps the
-server running in your terminal.
+server running in your terminal. Both routes now follow the same onboarding
+flow.
 
 <Steps>
   <Step title="Create a project">
@@ -38,26 +52,31 @@ server running in your terminal.
 
   <Step title="Connect a provider">
     In the sample result, select **Create my first agent**, describe the job you
-    want to automate, and copy the instructions into your coding agent. It will
-    check `agentuse provider list` and guide you through provider login if
-    needed. No agent file is written until a runtime provider is ready.
+    want to automate, and continue. Desktop reads provider status from its
+    bundled runtime; the Web handoff asks the coding agent to check the same
+    project with `agentuse provider list --json`. If no provider is ready, the
+    coding agent stops and asks you to run `agentuse provider login` in
+    Terminal. Provider login is not performed inside coding-agent chat.
   </Step>
 
   <Step title="Create your agent">
-    Your coding agent creates one focused agent in this project and validates
-    it without starting a real run.
+    Copy the prepared prompt into your coding agent. AgentUse stays on the
+    current screen and waits while the coding agent creates and validates one
+    focused agent without starting a real run.
   </Step>
 
   <Step title="Run it">
-    Return to the Web UI, open the new agent on the **Agents** page, review it,
-    and start its first real run.
+    When AgentUse detects the new agent, select **Open agent**, review it, and
+    start its first real run. If detection takes too long, you can copy the
+    prompt again or check manually without leaving onboarding.
   </Step>
 </Steps>
 
 <Warning>
   Your coding agent's own login does not authenticate the agents it creates.
-  If no AgentUse provider is ready, the onboarding flow will pause and guide
-  you through `agentuse provider login` before writing the agent file.
+  If no AgentUse provider is ready, onboarding pauses before writing an agent
+  file and asks you to run `agentuse provider login` in Terminal. Do not paste
+  API keys, authorization codes, or OAuth callback URLs into coding-agent chat.
 </Warning>
 
 ### Terminal or headless setup

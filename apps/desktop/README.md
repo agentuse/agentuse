@@ -13,9 +13,11 @@ toggles, typography, colors, and accessibility behavior. Electron remains the
 owner of server state and exchanges typed newline-delimited JSON messages with
 the helper over its standard input and output.
 
-Before offering to install that link, Settings resolves `agentuse` from the
-user's login-shell PATH. Existing npm, pnpm, yarn, bun, Homebrew, and other
-installations are reported by path and are never replaced or shadowed.
+Settings resolves every `agentuse` executable from the user's login-shell PATH
+and reports them in shell resolution order. The first path is what a bare
+`agentuse` command runs. Users can add or atomically replace the managed
+`~/.local/bin/agentuse` link regardless of other installations. Existing npm,
+pnpm, Yarn, Bun, Homebrew, and other paths are reported but never modified.
 
 ## Development
 
