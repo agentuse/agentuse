@@ -18,7 +18,7 @@ import {
   isDesktopOnboardingComplete,
   markDesktopOnboardingComplete,
 } from "./onboarding-state";
-import { createDesktopQuitPolicy } from "./quit-policy";
+import { createDesktopQuitPolicy, shouldWarnBeforeFullQuit } from "./quit-policy";
 import { isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, selectServer, serverUrl, type RegisteredServer } from "./runtime";
 import { createAgentUseTrayIcon } from "./tray-icon";
 import { defaultCliLinkPath, inspectCliAvailability, loginShellPath, packagedCliLauncherPath, toggleCliLink, type CliLinkState } from "./cli-link";
@@ -56,6 +56,7 @@ let displayedPendingApprovals = 0;
 let approvalRefreshInFlight = false;
 let isQuitting = false;
 let quitInProgress = false;
+let quitConfirmationInFlight = false;
 let serverOperation: "starting" | "stopping" | undefined;
 let serverAcquisition: Promise<void> | undefined;
 let userLoginPath: Promise<string> | undefined;
@@ -980,6 +981,30 @@ function requestFullQuit(): void {
   app.quit();
 }
 
+async function requestFullQuitFromMenuBar(): Promise<void> {
+  if (quitConfirmationInFlight) return;
+  if (!shouldWarnBeforeFullQuit(ownedServer)) {
+    requestFullQuit();
+    return;
+  }
+  quitConfirmationInFlight = true;
+  try {
+    const { response } = await dialog.showMessageBox({
+      type: "warning",
+      title: "Quit AgentUse?",
+      message: "Quit AgentUse and stop the local server?",
+      detail: "Quitting the menu-bar app also stops the server. Scheduled agents and approvals will be unavailable until AgentUse starts again. Active work will be given time to finish.\n\nTo close only the Dashboard, keep AgentUse running and hide the window instead.",
+      buttons: ["Keep AgentUse Running", "Quit and Stop Server"],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (response === 1) requestFullQuit();
+  } finally {
+    quitConfirmationInFlight = false;
+  }
+}
+
 function activeNavigationHistory() {
   if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return undefined;
   return window.webContents.navigationHistory;
@@ -1016,7 +1041,7 @@ function refreshTrayMenu(): void {
   trayMenu = Menu.buildFromTemplate(createTrayMenu({
     showDashboard: () => void showPrimaryWindow(),
     showSettings,
-    quit: requestFullQuit,
+    quit: () => void requestFullQuitFromMenuBar(),
   }));
 }
 

@@ -93,9 +93,16 @@ server started outside the app is identified as external and is never stopped
 by the desktop controls. Login launches start in the background so the menu-bar
 status and approvals are available without opening the dashboard window.
 
-**Quit AgentUse** or <kbd>Command</kbd>+<kbd>Q</kbd> stops a backend started by
-the app. A backend that was already running when the app launched is left alone.
-Only one desktop app instance can run at a time.
+Closing the Dashboard, using <kbd>Command</kbd>+<kbd>Q</kbd>, or choosing Quit
+from the Dock hides the app without stopping its backend. Only **Quit AgentUse**
+from the menu-bar item fully exits the app and stops a backend it started. A
+backend that was already running when the app launched is left alone. Only one
+desktop app instance can run at a time.
+
+When the app owns the running server, choosing **Quit AgentUse** from the
+menu-bar item asks for confirmation and explains that the server will stop with
+the app. Choose **Keep AgentUse Running** and hide the Dashboard window instead
+when schedules and approvals should remain available in the background.
 
 The desktop window accepts only the loopback dashboard origin. Links to normal
 `http` or `https` sites open in the default browser; other external navigation
