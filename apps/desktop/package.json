@@ -6,19 +6,20 @@
   "main": "dist/main.cjs",
   "type": "module",
   "scripts": {
-    "build": "sh scripts/build-icon.sh && esbuild src/main.ts src/preload.ts src/setup-preload.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --outdir=dist --out-extension:.js=.cjs && mkdir -p dist/assets/fonts && cp src/onboarding.html dist/onboarding.html && cp ../../src/cli/serve/web/fonts/Geist-Variable.woff2 dist/assets/fonts/Geist-Variable.woff2 && cp ../../src/cli/serve/web/fonts/GeistMono-Variable.woff2 dist/assets/fonts/GeistMono-Variable.woff2 && cp ../../docs/static/agentuse-logo-word-black.svg dist/assets/agentuse-wordmark-light.svg && cp ../../docs/static/agentuse-logo-word-white.svg dist/assets/agentuse-wordmark-dark.svg && sh scripts/build-native-settings.sh",
+    "build": "sh scripts/build-icon.sh && esbuild src/main.ts src/preload.ts src/setup-preload.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --external:electron-updater --outdir=dist --out-extension:.js=.cjs && mkdir -p dist/assets/fonts && cp src/onboarding.html dist/onboarding.html && cp ../../src/cli/serve/web/fonts/Geist-Variable.woff2 dist/assets/fonts/Geist-Variable.woff2 && cp ../../src/cli/serve/web/fonts/GeistMono-Variable.woff2 dist/assets/fonts/GeistMono-Variable.woff2 && cp ../../docs/static/agentuse-logo-word-black.svg dist/assets/agentuse-wordmark-light.svg && cp ../../docs/static/agentuse-logo-word-white.svg dist/assets/agentuse-wordmark-dark.svg && sh scripts/build-native-settings.sh",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "dev": "pnpm run build && electron .",
     "start": "electron .",
     "test": "bun test ./src",
     "predist:mac": "pnpm --dir ../.. run build",
-    "dist:mac": "pnpm run build && electron-builder --mac",
+    "dist:mac": "pnpm run build && electron-builder --mac --publish never",
     "package:mac": "pnpm run dist:mac",
     "dist:dir": "pnpm run build && electron-builder --mac --dir",
     "install:local": "sh scripts/install-local.sh"
   },
   "dependencies": {
-    "agentuse": "workspace:*"
+    "agentuse": "workspace:*",
+    "electron-updater": "^6.8.9"
   },
   "devDependencies": {
     "@electron/notarize": "^3.1.0",
@@ -38,7 +39,10 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "hardenedRuntime": true,
       "gatekeeperAssess": false
     },
@@ -78,6 +82,14 @@
     ],
     "extraMetadata": {
       "description": "AgentUse native dashboard shell"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "agentuse",
+        "repo": "agentuse",
+        "releaseType": "release"
+      }
+    ]
   }
 }

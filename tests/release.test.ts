@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'bun:test';
-import { assertTriggeredCommitBelongsToRemoteMain } from '../scripts/release.ts';
+import { assertManifestVersionsCoupled, assertTriggeredCommitBelongsToRemoteMain } from '../scripts/release.ts';
+
+describe('release version coupling', () => {
+  it('requires npm and Desktop to ship the same version', () => {
+    expect(() => assertManifestVersionsCoupled('0.19.1', '0.19.0')).toThrow(
+      'Package version 0.19.1 and Desktop version 0.19.0 differ',
+    );
+    expect(() => assertManifestVersionsCoupled('0.19.1', '0.19.1')).not.toThrow();
+  });
+});
 
 describe('release tag branch gate', () => {
   it('does nothing outside a CI tag run', () => {

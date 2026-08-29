@@ -79,6 +79,22 @@ function manifest(): { version: string; name: string; repository?: { url?: strin
   return JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 }
 
+function desktopManifest(): { version: string } {
+  return JSON.parse(readFileSync(join(root, 'apps', 'desktop', 'package.json'), 'utf8'));
+}
+
+export function assertManifestVersionsCoupled(
+  packageVersion = manifest().version,
+  desktopVersion = desktopManifest().version,
+): void {
+  if (packageVersion !== desktopVersion) {
+    fail(
+      `Package version ${packageVersion} and Desktop version ${desktopVersion} differ. ` +
+        'AgentUse npm and macOS releases must use the same version.',
+    );
+  }
+}
+
 function isCI(): boolean {
   return process.env.GITHUB_ACTIONS === 'true';
 }
@@ -253,6 +269,7 @@ function assertTagFree(version: string): void {
 
 function preflight(bump: string | undefined, anyBranch: boolean): string | null {
   assertCleanTree();
+  assertManifestVersionsCoupled();
   assertBranch(anyBranch);
   if (!anyBranch) assertRemotesInSync();
   assertChangelogReady();
@@ -366,6 +383,7 @@ function verify(): void {
   const steps: Array<{ name: string; run: () => void }> = [
     { name: 'tag commit / origin main history', run: assertTriggeredCommitBelongsToRemoteMain },
     { name: 'tag / package version', run: assertTriggeredTagMatchesManifest },
+    { name: 'npm / desktop version coupling', run: assertManifestVersionsCoupled },
     { name: 'typecheck', run: () => stream('bun', ['run', 'typecheck']) },
     { name: 'typecheck:scripts', run: () => stream('bun', ['run', 'typecheck:scripts']) },
     { name: 'desktop typecheck', run: () => stream('bun', ['run', 'desktop:typecheck']) },
@@ -412,9 +430,17 @@ function verifyDesktop(): void {
   note('\n=== desktop root runtime build ===');
   stream('bun', ['run', 'build'], { AGENTUSE_SKIP_SERVE_RESTART: '1' });
 
-  note('\n=== unsigned desktop package ===');
-  stream('pnpm', ['--filter', '@agentuse/desktop', 'dist:dir'], {
+  const desktopDist = join(root, 'apps', 'desktop', 'dist');
+  const latestMac = join(desktopDist, 'latest-mac.yml');
+  rmSync(latestMac, { force: true });
+
+  note('\n=== unsigned desktop package and update metadata ===');
+  stream('pnpm', ['--filter', '@agentuse/desktop', 'run', 'build']);
+  // Invoke the packager directly: the root runtime was built above, and the
+  // dist:mac lifecycle would run that same build a second time.
+  stream('pnpm', ['--filter', '@agentuse/desktop', 'exec', 'electron-builder', '--mac', '--publish', 'never'], {
     CSC_IDENTITY_AUTO_DISCOVERY: 'false',
+    AGENTUSE_SKIP_SERVE_RESTART: '1',
   });
 
   const appDir = join(
@@ -427,10 +453,24 @@ function verifyDesktop(): void {
   );
   const settingsApp = join(appDir, 'Contents', 'Frameworks', 'AgentUseSettings.app');
   const embeddedCli = join(appDir, 'Contents', 'Resources', 'bin', 'agentuse');
+  const updateMetadata = join(appDir, 'Contents', 'Resources', 'app-update.yml');
 
   if (!existsSync(appDir)) fail(`Desktop package did not produce ${appDir}.`);
   if (!existsSync(settingsApp)) fail('Desktop package is missing the native AgentUseSettings.app helper.');
   if (!existsSync(embeddedCli)) fail('Desktop package is missing its bundled agentuse CLI launcher.');
+  if (!existsSync(updateMetadata)) fail('Desktop package is missing app-update.yml for the public GitHub Releases feed.');
+  const updateFeed = readFileSync(updateMetadata, 'utf8');
+  for (const expected of ['provider: github', 'owner: agentuse', 'repo: agentuse']) {
+    if (!updateFeed.includes(expected)) fail(`Desktop app-update.yml is missing "${expected}".`);
+  }
+  if (!existsSync(latestMac)) fail('Desktop package did not produce latest-mac.yml.');
+  const latestMacFeed = readFileSync(latestMac, 'utf8');
+  const artifacts = Array.from(latestMacFeed.matchAll(/^\s+- url: (.+)$/gm), (match) => match[1]);
+  if (!artifacts.some((name) => name.endsWith('.dmg'))) fail('latest-mac.yml does not reference a DMG artifact.');
+  if (!artifacts.some((name) => name.endsWith('-mac.zip'))) fail('latest-mac.yml does not reference a Mac ZIP artifact.');
+  for (const artifact of artifacts) {
+    if (!existsSync(join(desktopDist, artifact))) fail(`latest-mac.yml references missing artifact ${artifact}.`);
+  }
 
   const embeddedVersion = capture(embeddedCli, ['--version']);
   if (embeddedVersion !== manifest().version) {

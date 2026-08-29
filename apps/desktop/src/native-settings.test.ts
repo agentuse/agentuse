@@ -24,6 +24,9 @@ describe("native settings protocol", () => {
       shortcut: "Hyper+A",
     });
     expect(parseNativeSettingsCommand('{"type":"clearDashboardShortcut"}')).toEqual({ type: "clearDashboardShortcut" });
+    expect(parseNativeSettingsCommand('{"type":"checkForUpdates"}')).toEqual({ type: "checkForUpdates" });
+    expect(parseNativeSettingsCommand('{"type":"downloadUpdate"}')).toEqual({ type: "downloadUpdate" });
+    expect(parseNativeSettingsCommand('{"type":"installUpdate"}')).toEqual({ type: "installUpdate" });
   });
 
   it("rejects malformed and unknown commands", () => {
@@ -34,8 +37,6 @@ describe("native settings protocol", () => {
     expect(parseNativeSettingsCommand('{"type":"setDashboardShortcut","shortcut":42}')).toBeUndefined();
     expect(parseNativeSettingsCommand('{"type":"setDashboardShortcut","shortcut":null}')).toBeUndefined();
     expect(parseNativeSettingsCommand('{"type":"deleteEverything"}')).toBeUndefined();
-    expect(parseNativeSettingsCommand('{"type":"checkForUpdates"}')).toBeUndefined();
-    expect(parseNativeSettingsCommand('{"type":"installUpdate"}')).toBeUndefined();
   });
 
   it("encodes one newline-delimited message", () => {
@@ -59,15 +60,31 @@ describe("native settings packaged metadata", () => {
     expect(script).toContain("CFBundleIconFile");
   });
 
-  it("renders an About tab that reads from the bundle info dictionary", async () => {
+  it("renders updater state and explicit actions in the About tab", async () => {
     const source = await Bun.file(join(desktopRoot, "native-settings", "AgentUseSettings.swift")).text();
     expect(source).toContain('Label("About", systemImage: "info.circle")');
     expect(source).toContain("NSApplication.shared.applicationIconImage");
     expect(source).toContain('object(forInfoDictionaryKey: "CFBundleShortVersionString")');
-    expect(source).toContain('Text("Version \\(appVersion)")');
+    expect(source).toContain('Text("Version \\(model.state.updateCurrentVersion)")');
     expect(source).not.toContain('Text("Build")');
     expect(source).not.toContain('object(forInfoDictionaryKey: "CFBundleVersion")');
-    expect(source).not.toContain("checkForUpdates");
-    expect(source).not.toContain("installUpdate");
+    expect(source).toContain('case "available": command = "downloadUpdate"');
+    expect(source).toContain('case "ready": command = "installUpdate"');
+    expect(source).toContain('default: command = "checkForUpdates"');
+  });
+});
+
+describe("desktop updater packaging", () => {
+  it("targets public GitHub Releases and always emits Mac ZIP metadata alongside the DMG", async () => {
+    const manifest = await Bun.file(join(desktopRoot, "package.json")).json();
+    expect(manifest.dependencies["electron-updater"]).toBeString();
+    expect(manifest.scripts["dist:mac"]).toContain("--publish never");
+    expect(manifest.build.mac.target).toEqual(["dmg", "zip"]);
+    expect(manifest.build.publish).toEqual([{
+      provider: "github",
+      owner: "agentuse",
+      repo: "agentuse",
+      releaseType: "release",
+    }]);
   });
 });

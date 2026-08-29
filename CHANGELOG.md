@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- **The macOS app can now update through public AgentUse GitHub Releases without surprise installs.** Settings → About checks quietly after launch or on demand, reports availability and offline errors in place, and requires separate **Download Update** and **Restart and Install** actions. Mac packaging now emits the DMG plus the ZIP, blockmaps, and `latest-mac.yml` metadata the updater requires; the first signed build and GitHub asset upload remain an explicit manual release step.
+
 ## [0.19.0] - 2026-08-29
 
 ### Added

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, Notification, shell, Tray, type Event, type IpcMainInvokeEvent } from "electron";
+import { autoUpdater } from "electron-updater";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
@@ -37,6 +38,7 @@ import {
 import { getProviderStatus } from "../../../src/auth/provider-status";
 import { loadGlobalConfig } from "../../../src/utils/global-config";
 import { initializeDesktopGlobalDefaults } from "./global-defaults";
+import { DesktopUpdater, type DesktopUpdateState } from "./updater";
 
 const require = createRequire(__filename);
 const APP_NAME = "AgentUse";
@@ -73,6 +75,7 @@ let dashboardShortcut: string | null = DEFAULT_DASHBOARD_SHORTCUT;
 let desktopNotificationPreferences: DesktopNotificationPreferences = { ...DEFAULT_DESKTOP_NOTIFICATION_PREFERENCES };
 let registeredDashboardShortcut: string | undefined;
 let dashboardShortcutError: string | undefined;
+let desktopUpdater: DesktopUpdater | undefined;
 const pendingDesktopTelemetry: Array<{
   payload: Record<string, unknown>;
   clientSurface: "mac_app" | "mac_setup";
@@ -798,6 +801,17 @@ async function handleNativeSettingsCommand(line: string, child: ChildProcess): P
       }
       break;
     }
+    case "checkForUpdates":
+      await desktopUpdater?.checkForUpdates();
+      await pushNativeSettingsState(child);
+      break;
+    case "downloadUpdate":
+      await desktopUpdater?.downloadUpdate();
+      await pushNativeSettingsState(child);
+      break;
+    case "installUpdate":
+      desktopUpdater?.installUpdate();
+      break;
   }
 }
 
@@ -954,6 +968,7 @@ async function desktopSettingsState() {
     cliActionLabel: cli.actionLabel,
     cliActionDisabled: cli.actionDisabled,
     cliCommands: cli.commands.map(displayHomePath),
+    ...desktopUpdateSettingsState(),
   };
   if (serverOperation === "starting") {
     return {
@@ -1000,6 +1015,39 @@ async function desktopSettingsState() {
     logText: await readLogTail(activeServer.logFile),
     logFile: activeServer.logFile,
   };
+}
+
+function desktopUpdateSettingsState() {
+  const state: DesktopUpdateState = desktopUpdater?.state ?? {
+    status: "unavailable",
+    currentVersion: app.getVersion(),
+    detail: "Update checks are not ready yet.",
+    actionLabel: "Check for Updates",
+    actionDisabled: true,
+  };
+  return {
+    updateStatus: state.status,
+    updateCurrentVersion: state.currentVersion,
+    ...(state.availableVersion && { updateAvailableVersion: state.availableVersion }),
+    ...(state.progress !== undefined && { updateProgress: state.progress }),
+    updateDetail: state.detail,
+    updateActionLabel: state.actionLabel,
+    updateActionDisabled: state.actionDisabled,
+  };
+}
+
+function initializeDesktopUpdater(): void {
+  desktopUpdater = new DesktopUpdater(autoUpdater, {
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    currentVersion: app.getVersion(),
+    onStateChange: () => void pushNativeSettingsState(),
+  });
+
+  // Checking is best-effort and deliberately detached from launch. With
+  // autoDownload disabled, discovery cannot download or install anything.
+  const timer = setTimeout(() => void desktopUpdater?.checkForUpdates(), 5_000);
+  timer.unref();
 }
 
 async function toggleServerFromSettings() {
@@ -1182,6 +1230,7 @@ if (!app.requestSingleInstanceLock()) {
     // status check, server authentication, or child-process construction.
     initializeDesktopGlobalDefaults();
     registerDesktopIpc();
+    initializeDesktopUpdater();
     createTray();
     await initializeDesktopPreferences();
     const onboardingReady = await isDesktopOnboardingReady();

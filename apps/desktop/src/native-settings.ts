@@ -17,6 +17,13 @@ export interface DesktopSettingsState {
   cliCommands: string[];
   logText: string;
   logFile?: string;
+  updateStatus: "unavailable" | "idle" | "checking" | "upToDate" | "available" | "downloading" | "ready" | "error";
+  updateCurrentVersion: string;
+  updateAvailableVersion?: string;
+  updateProgress?: number;
+  updateDetail: string;
+  updateActionLabel: "Check for Updates" | "Download Update" | "Restart and Install";
+  updateActionDisabled: boolean;
 }
 
 export type NativeSettingsCommand =
@@ -24,6 +31,9 @@ export type NativeSettingsCommand =
   | { type: "refresh" }
   | { type: "toggleServer" }
   | { type: "toggleCliLink" }
+  | { type: "checkForUpdates" }
+  | { type: "downloadUpdate" }
+  | { type: "installUpdate" }
   | { type: "clearDashboardShortcut" }
   | { type: "setLaunchAtLogin"; enabled: boolean }
   | { type: "setNotificationPreference"; category: "approvals" | "sessions"; enabled: boolean }
@@ -51,6 +61,9 @@ export function parseNativeSettingsCommand(line: string): NativeSettingsCommand 
     case "toggleServer":
     case "toggleCliLink":
     case "clearDashboardShortcut":
+    case "checkForUpdates":
+    case "downloadUpdate":
+    case "installUpdate":
       return { type: command.type };
     case "setLaunchAtLogin":
       return typeof command.enabled === "boolean"

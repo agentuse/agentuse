@@ -27,6 +27,13 @@ private struct SettingsState: Codable, Equatable {
     var cliCommands: [String]
     var logText: String
     var logFile: String?
+    var updateStatus: String
+    var updateCurrentVersion: String
+    var updateAvailableVersion: String?
+    var updateProgress: Int?
+    var updateDetail: String
+    var updateActionLabel: String
+    var updateActionDisabled: Bool
 
     static let loading = SettingsState(
         status: .starting,
@@ -46,7 +53,14 @@ private struct SettingsState: Codable, Equatable {
         cliActionDisabled: true,
         cliCommands: [],
         logText: "",
-        logFile: nil
+        logFile: nil,
+        updateStatus: "unavailable",
+        updateCurrentVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown",
+        updateAvailableVersion: nil,
+        updateProgress: nil,
+        updateDetail: "Update checks are not ready yet.",
+        updateActionLabel: "Check for Updates",
+        updateActionDisabled: true
     )
 }
 
@@ -178,6 +192,18 @@ private final class SettingsModel: ObservableObject {
         guard !state.cliActionDisabled, !actionInFlight else { return }
         actionInFlight = true
         HostConnection.shared.send(HelperCommand(type: "toggleCliLink"))
+    }
+
+    func performUpdateAction() {
+        guard !state.updateActionDisabled, !actionInFlight else { return }
+        let command: String
+        switch state.updateStatus {
+        case "available": command = "downloadUpdate"
+        case "ready": command = "installUpdate"
+        default: command = "checkForUpdates"
+        }
+        actionInFlight = true
+        HostConnection.shared.send(HelperCommand(type: command))
     }
 
     func refresh() {
@@ -535,8 +561,15 @@ private struct LogsSettingsView: View {
 }
 
 private struct AboutSettingsView: View {
-    private var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
+    @ObservedObject var model: SettingsModel
+
+    private var statusColor: Color {
+        switch model.state.updateStatus {
+        case "available", "ready": .accentColor
+        case "error": .red
+        case "upToDate": .green
+        default: .secondary
+        }
     }
 
     var body: some View {
@@ -553,11 +586,36 @@ private struct AboutSettingsView: View {
                     .font(.title2)
                     .fontWeight(.semibold)
 
-                Text("Version \(appVersion)")
+                Text("Version \(model.state.updateCurrentVersion)")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
+
+            VStack(spacing: 10) {
+                HStack(spacing: 7) {
+                    if model.state.updateStatus == "checking" || model.state.updateStatus == "downloading" {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Circle()
+                            .fill(statusColor)
+                            .frame(width: 8, height: 8)
+                            .accessibilityHidden(true)
+                    }
+                    Text(model.state.updateDetail)
+                        .font(.caption)
+                        .foregroundStyle(model.state.updateStatus == "error" ? .red : .secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Button(model.state.updateActionLabel) {
+                    model.performUpdateAction()
+                }
+                .disabled(model.state.updateActionDisabled || model.actionInFlight)
+            }
+            .frame(maxWidth: 360)
 
             Spacer()
         }
@@ -577,7 +635,7 @@ private struct SettingsView: View {
             LogsSettingsView(model: model)
                 .tabItem { Label("Logs", systemImage: "doc.text") }
 
-            AboutSettingsView()
+            AboutSettingsView(model: model)
                 .tabItem { Label("About", systemImage: "info.circle") }
         }
         .frame(minWidth: 560, idealWidth: 620, minHeight: 440, idealHeight: 520)
