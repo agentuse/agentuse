@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-08-29
+
 ### Added
 
 - **AgentUse for Mac is now available as a native menu-bar app with the complete AgentUse runtime and operations dashboard bundled inside.** It keeps schedules, approvals, and active runs available when the window is hidden; can start quietly at login; attaches to an existing local daemon or manages its own; and provides native Settings for server status, logs, login behavior, native notification categories, command-line access, and an optional global Dashboard shortcut. Hyper shortcuts are supported and displayed with `✦`. The optional `~/.local/bin/agentuse` launcher can be added, replaced, or removed without modifying other installations, and Settings lists every `agentuse` on the login-shell `PATH` in the order the shell resolves them. Quitting from the menu bar warns before stopping a server managed by the app, while closing the Dashboard keeps AgentUse running in the background.
