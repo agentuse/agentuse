@@ -4,6 +4,7 @@ import type { StoreItem } from "../../../../store/types";
 import type { SerializedSchedule } from "../../../../scheduler";
 import type { ProviderCatalogEntry } from "../../../../auth/provider-setup";
 import type { ProviderStatus } from "../../../../auth/provider-status";
+import type { AgentCreationProvider } from "../../../../agents/create";
 
 export type { SerializedSchedule };
 
@@ -93,7 +94,7 @@ export type OnboardingTelemetryPayload = {
   event: 'onboarding_started' | 'onboarding_completed';
   duration_ms?: number;
   agent_count?: number;
-  detection_method?: 'poll' | 'manual_check';
+  detection_method?: 'poll' | 'manual_check' | 'native_create';
 } | {
   event: 'onboarding_step_completed' | 'onboarding_step_failed';
   step: OnboardingTelemetryStep;
@@ -105,7 +106,7 @@ export type OnboardingTelemetryPayload = {
     | 'agent_check_failed';
   provider_readiness?: 'ready' | 'not_ready' | 'unknown';
   agent_count?: number;
-  detection_method?: 'poll' | 'manual_check';
+  detection_method?: 'poll' | 'manual_check' | 'native_create';
 };
 
 export function currentOnboardingRoute(): 'desktop' | 'web' {
@@ -578,6 +579,78 @@ export interface AgentsPayload {
 
 export function fetchAgents(): Promise<AgentsPayload> {
   return getJson('/api/agents');
+}
+
+export interface AgentCreationOptionsPayload {
+  success: true;
+  providers: AgentCreationProvider[];
+  projects: Array<{ id: string; path: string; scope?: string }>;
+  default: string | null;
+}
+
+export function fetchAgentCreationOptions(): Promise<AgentCreationOptionsPayload> {
+  return getJson('/api/agents/create');
+}
+
+export function createAgent(input: {
+  project: string;
+  name?: string;
+  objective: string;
+  model: string;
+}): Promise<{ success: true; agent: AgentRow }> {
+  return postJson('/api/agents', input);
+}
+
+export type AgentCreationProgressEvent =
+  | { type: 'status'; message: string }
+  | { type: 'draft'; text: string }
+  | { type: 'complete'; agent: AgentRow }
+  | { type: 'error'; error: { code: string; message: string } };
+
+/** Streams the model-authored draft and persistence milestones from serve. */
+export async function createAgentWithProgress(
+  input: { project: string; objective: string; model: string },
+  onProgress: (event: AgentCreationProgressEvent) => void,
+  signal?: AbortSignal,
+): Promise<AgentRow> {
+  const response = await fetch('/api/agents', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' },
+    body: JSON.stringify(input),
+    ...(signal && { signal }),
+  });
+  if (!response.ok || !response.body) {
+    const payload = await response.json().catch(() => null);
+    throw new ApiRequestError(
+      response.status,
+      payload?.error?.code ?? 'REQUEST_FAILED',
+      payload?.error?.message ?? `Request failed with status ${response.status}`,
+    );
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let created: AgentRow | null = null;
+  const acceptLine = (line: string) => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line) as AgentCreationProgressEvent;
+    onProgress(event);
+    if (event.type === 'complete') created = event.agent;
+    if (event.type === 'error') throw new ApiRequestError(400, event.error.code, event.error.message);
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) acceptLine(line);
+    if (done) break;
+  }
+  acceptLine(buffer);
+  if (!created) throw new ApiRequestError(500, 'INCOMPLETE_RESPONSE', 'Agent creation ended before the agent was saved');
+  return created;
 }
 
 export interface AgentDetailMeta {

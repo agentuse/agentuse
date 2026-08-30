@@ -4,6 +4,7 @@ import { fetchAgents, fetchProviderSetup, reportOnboardingTelemetry, type AgentR
 import { agentDetailHref } from '../lib/links';
 import type { ProviderStatus } from '../../../../auth/provider-status';
 import { hasConfiguredProvider, ProviderSetupDialog } from './provider-setup';
+import { AgentCreateDialog, type AgentCreationDraft } from './agent-create-dialog';
 
 export interface DebugPromptContext {
   sessionId: string;
@@ -264,6 +265,8 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
   const [providerStatusLoading, setProviderStatusLoading] = useState(false);
   const [providerStatusError, setProviderStatusError] = useState<string | null>(null);
   const [providerSetupOpen, setProviderSetupOpen] = useState(false);
+  const [agentCreateOpen, setAgentCreateOpen] = useState(false);
+  const [codingAgentDetail, setCodingAgentDetail] = useState('');
   const manualCheckRef = useRef(false);
 
   useEffect(() => {
@@ -287,6 +290,8 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
     setProviderStatus(undefined);
     setProviderStatusError(null);
     setProviderSetupOpen(false);
+    setAgentCreateOpen(false);
+    setCodingAgentDetail('');
     setWaitingStartedAt(onboarding ? readWaitingStartedAt(storageKey) : null);
   }, [onboarding, storageKey]);
 
@@ -383,7 +388,7 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
     try {
       const payload = await fetchProviderSetup();
       setProviderStatus(payload.status);
-      if (hasConfiguredProvider(payload.status)) setOpen(true);
+      if (hasConfiguredProvider(payload.status)) setAgentCreateOpen(true);
       else setProviderSetupOpen(true);
     } catch (error) {
       reportOnboardingTelemetry({
@@ -453,7 +458,7 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
           </span>
           {slow && (
             <span class="onboarding-agent-status-actions">
-              <button type="button" onClick={() => void openPrompt()}>Copy prompt again</button>
+              <button type="button" onClick={() => setOpen(true)}>Copy prompt again</button>
               <button
                 type="button"
                 onClick={() => {
@@ -509,16 +514,48 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
         } : {})}
         detailLabel={onboarding ? 'What would you like your first agent to do?' : 'Give the agent more detail on what to focus on'}
         placeholder={onboarding ? 'e.g. summarize new support tickets every morning' : 'e.g. the run timed out on the email step'}
+        {...(onboarding ? { initialDetail: codingAgentDetail } : {})}
         {...(onboarding ? { onCopied: beginWaiting } : {})}
         onClose={() => setOpen(false)}
       />
+      {onboarding && (
+        <AgentCreateDialog
+          open={agentCreateOpen}
+          title="create your first agent"
+          completeLabel="Finish setup"
+          {...(props.context.projectId ? { initialProjectId: props.context.projectId } : {})}
+          lockProject
+          onCreated={(agent) => {
+            setAgentCreateOpen(false);
+            setDetectedAgents([agent]);
+            setWaitingStartedAt(null);
+            writeWaitingStartedAt(storageKey, null);
+            reportOnboardingTelemetry({
+              event: 'onboarding_step_completed',
+              step: 'agent_detected',
+              agent_count: 1,
+              detection_method: 'native_create',
+            });
+            reportOnboardingTelemetry({ event: 'onboarding_completed', agent_count: 1, detection_method: 'native_create' });
+          }}
+          onCodingAgent={(draft: AgentCreationDraft) => {
+            setCodingAgentDetail([
+              draft.name ? `Agent name: ${draft.name}` : '',
+              draft.objective,
+            ].filter(Boolean).join('\n\n'));
+            setAgentCreateOpen(false);
+            setOpen(true);
+          }}
+          onClose={() => setAgentCreateOpen(false)}
+        />
+      )}
       <ProviderSetupDialog
         open={providerSetupOpen}
         title="create your first agent"
         onComplete={(payload) => {
           setProviderStatus(payload.status);
           setProviderSetupOpen(false);
-          setOpen(true);
+          setAgentCreateOpen(true);
         }}
         onClose={() => setProviderSetupOpen(false)}
       />

@@ -44,6 +44,7 @@ export function SendToCodingAgentDialog(props: {
   contextLabel?: string;
   contextValue?: string;
   contextHint?: string;
+  initialDetail?: string;
   onCopied?: () => void;
   onClose: () => void;
 }) {
@@ -63,6 +64,10 @@ export function SendToCodingAgentDialog(props: {
       else dialog.removeAttribute('open');
     }
   }, [props.open]);
+
+  useEffect(() => {
+    if (props.open) setDetail(props.initialDetail ?? '');
+  }, [props.open, props.initialDetail]);
 
   const copy = () => {
     void copyText(prompt).then((ok) => {

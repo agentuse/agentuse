@@ -21,6 +21,8 @@ export interface CompleteTextOptions {
   maxOutputTokens?: number;
   maxRetries?: number;
   abortSignal?: AbortSignal;
+  /** Optional live text observer for UI surfaces that expose helper progress. */
+  onTextDelta?: (text: string) => void;
 }
 
 /**
@@ -90,7 +92,9 @@ export async function completeText(modelString: string, options: CompleteTextOpt
       throw (chunk as { error: unknown }).error;
     }
     if (chunk.type === 'text-delta') {
-      text += (chunk as { text?: string }).text ?? '';
+      const delta = (chunk as { text?: string }).text ?? '';
+      text += delta;
+      if (delta) options.onTextDelta?.(delta);
     }
   }
   // Some provider streams end quietly on abort. Never turn their partial text

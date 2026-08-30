@@ -7,6 +7,7 @@ import {
   onboardingProviderReadiness,
 } from '../src/cli/serve/web/components/debug-prompt-button';
 import type { AgentRow } from '../src/cli/serve/web/lib/api';
+import { buildAgentCreationPrompt } from '../src/cli/serve/web/components/agent-create-dialog';
 
 describe('coding-agent handoff prompts', () => {
   it('requires the creator skill before reviewing or editing agent source', () => {
@@ -101,6 +102,32 @@ describe('coding-agent handoff prompts', () => {
     expect(prompt).toContain('CLI bundled inside AgentUse Desktop');
     expect(prompt).toContain('Do not substitute a package-manager installation or bare `agentuse`');
     expect(prompt).not.toContain('\n  agentuse ');
+  });
+
+  it('keeps validated coding-agent creation as an explicit persistent-flow escape hatch', () => {
+    const prompt = buildAgentCreationPrompt({
+      projectId: 'support',
+      projectPath: '/workspace/support',
+      name: 'Support Digest',
+      objective: 'Summarize new tickets and highlight urgent replies.',
+      model: 'openai:gpt-5.6-terra',
+    }, {
+      credentialStore: '/private/auth.json',
+      providers: [{ id: 'openai', name: 'OpenAI', configured: true, sources: [] }],
+      customProviders: [],
+    });
+
+    expect(prompt).toContain('agentuse skills get core --full');
+    expect(prompt).toContain('agentuse skills get creator --full');
+    expect(prompt).toContain('agentuse skills get tester --full');
+    expect(prompt).toContain('Do not overwrite an existing agent');
+    expect(prompt).toContain('agentuse doctor <agent-file>');
+    expect(prompt).toContain('agentuse test <agent-file>');
+    expect(prompt).toContain('Do not perform a real run');
+    expect(prompt).toContain('/workspace/support');
+    expect(prompt).toContain('Summarize new tickets');
+    expect(prompt).not.toContain('Preferred model');
+    expect(prompt).not.toContain('openai:gpt-5.6-terra');
   });
 });
 

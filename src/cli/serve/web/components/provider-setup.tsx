@@ -10,6 +10,7 @@ import {
   startProviderOAuth,
   type ProviderSetupPayload,
 } from '../lib/api';
+import { DashboardSelect } from './dashboard-select';
 
 export function hasConfiguredProvider(status: ProviderStatus | undefined): boolean {
   return Boolean(status?.providers.some((provider) => provider.configured)
@@ -80,13 +81,19 @@ function ProviderSetupForm(props: {
 
   return (
     <div class="provider-setup-form">
-      <label class="provider-field">
+      <div class="provider-field">
         <span>Provider</span>
-        <select value={provider} onChange={(event) => setProvider((event.target as HTMLSelectElement).value)} disabled={busy}>
-          {props.payload.catalog.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
-          {props.allowCustom && <option value="custom">Custom provider</option>}
-        </select>
-      </label>
+        <DashboardSelect
+          value={provider}
+          options={[
+            ...props.payload.catalog.map((item) => ({ value: item.id, label: item.name })),
+            ...(props.allowCustom ? [{ value: 'custom', label: 'Custom provider' }] : []),
+          ]}
+          onChange={setProvider}
+          ariaLabel="Provider"
+          disabled={busy}
+        />
+      </div>
 
       {provider === 'custom' ? (
         <div class="provider-custom-fields">

@@ -51,18 +51,21 @@ flow.
   </Step>
 
   <Step title="Connect a provider">
-    In the sample result, select **Create my first agent**, describe the job you
-    want to automate, and continue. Desktop reads provider status from its
-    bundled runtime; the Web handoff asks the coding agent to check the same
-    project with `agentuse provider list --json`. If no provider is ready, the
-    coding agent stops and asks you to run `agentuse provider login` in
-    Terminal. Provider login is not performed inside coding-agent chat.
+    In the sample result, select **Create my first agent**. If no provider is
+    ready, AgentUse opens the same provider setup used in Preferences before
+    any model call or agent file write.
   </Step>
 
   <Step title="Create your agent">
-    Copy the prepared prompt into your coding agent. AgentUse stays on the
-    current screen and waits while the coding agent creates and validates one
-    focused agent without starting a real run.
+    Describe what the agent should do, choose a creator model from a connected
+    provider, and select **Create agent**. That model is used only to design and
+    name a focused agent using AgentUse authoring guidance; it independently
+    chooses the best available runtime model for the job. AgentUse validates
+    both the generated source and runtime-model choice before persisting it in
+    the project and showing it immediately. If
+    you prefer to work hands-on, use **Copy prompt to coding agent** instead;
+    the prepared handoff carries your task and keeps the existing validation
+    workflow as an escape hatch.
   </Step>
 
   <Step title="Run it">
@@ -74,9 +77,9 @@ flow.
 
 <Warning>
   Your coding agent's own login does not authenticate the agents it creates.
-  If no AgentUse provider is ready, onboarding pauses before writing an agent
-  file and asks you to run `agentuse provider login` in Terminal. Do not paste
-  API keys, authorization codes, or OAuth callback URLs into coding-agent chat.
+  Connect the runtime provider in AgentUse onboarding or Preferences. Do not
+  paste API keys, authorization codes, or OAuth callback URLs into coding-agent
+  chat.
 </Warning>
 
 ### Terminal or headless setup

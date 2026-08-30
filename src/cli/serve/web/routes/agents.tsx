@@ -26,6 +26,7 @@ import { SchedulePill } from '../components/schedule-pill';
 import { OnboardingEmptyState } from '../components/onboarding-empty-state';
 import { FirstProjectEmptyState } from '../components/first-project-empty-state';
 import { agentDetailHref } from '../lib/links';
+import { NewAgentButton } from '../components/agent-create-dialog';
 
 /** Shared empty fallback, so a miss never hands a memoizing child a fresh array. */
 const NO_AGENTS: AgentRow[] = [];
@@ -851,7 +852,10 @@ export default function Agents({ project }: { project?: string } = {}) {
           {scoped
             ? <a class="back" href="/agents" onClick={goBack}>← all agents</a>
             : <div class="eyebrow">loaded agents</div>}
-          <h1 {...(scoped && aboutOf(project, '.')?.name ? { title: project } : {})}>{scoped ? projectLabel(project) : 'Agents'}</h1>
+          <div class="agents-title-row">
+            <h1 {...(scoped && aboutOf(project, '.')?.name ? { title: project } : {})}>{scoped ? projectLabel(project) : 'Agents'}</h1>
+            {!noProjects && !projectMissing && <NewAgentButton {...(scoped ? { initialProjectId: project } : {})} />}
+          </div>
           <p class="lede">{lede}</p>
           {scoped && (() => {
             // The scoped view is the project's detail surface: the ABOUT.md

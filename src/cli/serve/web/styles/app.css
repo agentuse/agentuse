@@ -2957,6 +2957,7 @@ dialog#decision-dialog::backdrop,
 .run-dialog::backdrop,
 .cca-dialog::backdrop,
 .provider-setup-dialog::backdrop,
+.agent-create-dialog::backdrop,
 .palette-backdrop {
   background: rgba(0,0,0,0.55);
   backdrop-filter: blur(4px);
@@ -2967,6 +2968,7 @@ dialog#decision-dialog::backdrop,
 :root[data-theme="light"] .run-dialog::backdrop,
 :root[data-theme="light"] .cca-dialog::backdrop,
 :root[data-theme="light"] .provider-setup-dialog::backdrop,
+:root[data-theme="light"] .agent-create-dialog::backdrop,
 :root[data-theme="light"] .palette-backdrop {
   background: rgba(0,0,0,0.30);
 }
@@ -3121,7 +3123,8 @@ dialog#decision-dialog form { margin: 0; padding: 0; }
 .page-agents .run-dialog .dialog-close,
 .page-agent-detail .run-dialog .dialog-close,
 .cca-dialog .dialog-close,
-.provider-setup-dialog .dialog-close {
+.provider-setup-dialog .dialog-close,
+.agent-create-dialog .dialog-close {
   min-height: 0; padding: 4px 8px;
   background: transparent; border: 0;
   color: var(--muted-2); font-size: 16px; line-height: 1;
@@ -3132,7 +3135,8 @@ dialog#decision-dialog form { margin: 0; padding: 0; }
 .page-agents .run-dialog .dialog-close:hover,
 .page-agent-detail .run-dialog .dialog-close:hover,
 .cca-dialog .dialog-close:hover,
-.provider-setup-dialog .dialog-close:hover { background: var(--panel-hover); color: var(--fg); border: 0; }
+.provider-setup-dialog .dialog-close:hover,
+.agent-create-dialog .dialog-close:hover { background: var(--panel-hover); color: var(--fg); border: 0; }
 .dialog-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 18px;
@@ -5481,6 +5485,56 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .provider-field input:focus,
 .provider-field select:focus { outline: 2px solid var(--cyan-border); outline-offset: 1px; border-color: transparent; }
+
+/* Shared dialog select. The host WebView paints native select popups outside
+   the dashboard theme, so provider/model/project choices use this listbox. */
+.dashboard-select { position: relative; width: 100%; }
+.dashboard-select-trigger {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; min-height: 40px; padding: 8px 11px;
+  border: 1px solid var(--line-strong); border-radius: 8px;
+  background: var(--panel); color: var(--fg);
+  font-family: var(--sans); font-size: var(--field-font-size); text-align: left; cursor: pointer;
+}
+.dashboard-select-trigger:focus-visible,
+.dashboard-select.is-open .dashboard-select-trigger { outline: 2px solid var(--cyan-border); outline-offset: 1px; border-color: transparent; }
+.dashboard-select-trigger:disabled { opacity: 0.55; cursor: default; }
+.dashboard-select-chevron {
+  flex: none; width: 7px; height: 7px; margin: -3px 2px 0 0;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg); transition: transform 120ms ease;
+}
+.dashboard-select.is-open .dashboard-select-chevron { margin-top: 3px; transform: rotate(225deg); }
+.dashboard-select-menu {
+  position: absolute; z-index: 100; top: calc(100% + 5px); left: 0; right: 0;
+  max-height: 240px; padding: 4px; overflow-y: auto;
+  border: 1px solid var(--line-strong); border-radius: 8px;
+  background: var(--bg); box-shadow: 0 16px 40px rgba(0,0,0,0.52);
+}
+.agent-create-model-row .dashboard-select-menu { top: auto; bottom: calc(100% + 5px); }
+.dashboard-select-option {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; min-height: 34px; padding: 7px 9px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--fg);
+  font-family: var(--sans); font-size: var(--field-font-size); text-align: left; cursor: pointer;
+}
+.dashboard-select-option.is-active { background: var(--panel-hover); }
+.dashboard-select-check { color: var(--cyan); opacity: 0; }
+.dashboard-select-option.is-selected .dashboard-select-check { opacity: 1; }
+/* Session detail has intentionally broad button defaults. Dialog scope wins
+   those defaults so the shared listbox keeps its compact field/row geometry. */
+:is(.provider-setup-dialog, .agent-create-dialog) .dashboard-select-trigger {
+  padding: 8px 11px; border-color: var(--line-strong); border-radius: 8px;
+  background: var(--panel); font-size: var(--field-font-size);
+}
+:is(.provider-setup-dialog, .agent-create-dialog) .dashboard-select-option {
+  min-height: 34px; padding: 7px 9px; border: 0; border-radius: 6px;
+  background: transparent; font-size: var(--field-font-size); transform: none;
+}
+:is(.provider-setup-dialog, .agent-create-dialog) .dashboard-select-option:hover,
+:is(.provider-setup-dialog, .agent-create-dialog) .dashboard-select-option.is-active {
+  border-color: transparent; background: var(--panel-hover); transform: none;
+}
 .provider-method-toggle {
   display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px;
   border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
@@ -5515,6 +5569,99 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 @media (max-width: 560px) {
   .provider-settings-row { flex-direction: column; align-items: stretch; }
   .provider-settings-control { justify-content: flex-start; }
+}
+
+/* Persistent agent creation: one shared surface for onboarding and Agents. */
+.agent-create-dialog {
+  width: min(620px, calc(100vw - 32px)); max-width: 100%; max-height: calc(100vh - 48px);
+  padding: 0; border: 1px solid var(--line-strong); border-radius: 12px;
+  background: var(--bg); color: var(--fg); box-shadow: 0 20px 60px rgba(0,0,0,0.5); overflow: hidden;
+}
+.agent-create-body { display: flex; flex-direction: column; gap: 16px; max-height: calc(100vh - 98px); padding: 18px; overflow: auto; }
+.agent-create-intro { display: grid; gap: 4px; }
+.agent-create-intro strong { font-size: 16px; font-weight: 560; }
+.agent-create-intro span,
+.agent-create-loading { margin: 0; color: var(--muted-3); font-size: 12.5px; line-height: 1.5; }
+.agent-create-form { display: flex; flex-direction: column; gap: 13px; }
+.agent-create-field { display: flex; flex-direction: column; gap: 7px; color: var(--fg); font-size: 12.5px; }
+.agent-create-field input,
+.agent-create-field select,
+.agent-create-field textarea {
+  width: 100%; box-sizing: border-box; padding: 8px 11px;
+  border: 1px solid var(--line-strong); border-radius: 8px;
+  background: var(--panel); color: var(--fg); font-family: var(--sans); font-size: var(--field-font-size);
+}
+.agent-create-field input,
+.agent-create-field select { min-height: 40px; }
+.agent-create-field textarea { min-height: 112px; resize: vertical; line-height: 1.5; }
+.agent-create-field input:focus,
+.agent-create-field select:focus,
+.agent-create-field textarea:focus { outline: 2px solid var(--cyan-border); outline-offset: 1px; border-color: transparent; }
+.agent-create-model-row { display: grid; grid-template-columns: minmax(150px, 0.7fr) minmax(0, 1.3fr); gap: 11px; }
+.agent-create-model-hint { margin-top: -5px; color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+.agent-create-project {
+  display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: baseline; gap: 4px 10px;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+}
+.agent-create-project > span { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+.agent-create-project > strong { font-size: 12.5px; font-weight: 560; }
+.agent-create-project > code { grid-column: 1 / -1; color: var(--muted-3); font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }
+.agent-create-error { margin: 0; color: var(--red); font-size: 12.5px; line-height: 1.45; }
+.agent-create-actions { display: flex; justify-content: flex-end; align-items: center; gap: 10px; padding-top: 3px; }
+.agent-create-handoff {
+  display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: center; gap: 16px;
+  margin-top: 3px; padding-top: 16px; border-top: 1px solid var(--line);
+}
+.agent-create-handoff-copy { display: grid; gap: 3px; min-width: 0; }
+.agent-create-handoff-copy strong { color: var(--fg); font-size: 12.5px; font-weight: 560; }
+.agent-create-handoff-copy > span { color: var(--muted-3); font-size: 11.5px; line-height: 1.45; }
+.agent-create-primary,
+.agent-create-escape {
+  min-height: 36px; padding: 7px 13px; border-radius: 8px; cursor: pointer; font-size: 12.5px; font-weight: 500;
+}
+.agent-create-dialog .agent-create-primary { border: 1px solid var(--primary-bg); background: var(--primary-bg); color: var(--primary-fg); }
+.agent-create-dialog .agent-create-primary:hover { border-color: var(--primary-bg-hover); background: var(--primary-bg-hover); }
+.agent-create-dialog .agent-create-escape { border: 1px solid var(--line-strong); background: var(--panel); color: var(--muted-3); }
+.agent-create-dialog .agent-create-escape:hover { border-color: var(--line-strong); background: var(--panel-hover); color: var(--fg); }
+.agent-create-primary:disabled,
+.agent-create-escape:disabled { opacity: 0.5; cursor: default; }
+.agent-create-progress { display: flex; flex-direction: column; gap: 10px; }
+.agent-create-progress-heading {
+  display: flex; align-items: center; gap: 8px; min-height: 24px;
+  color: var(--fg); font-size: 12.5px; font-weight: 560;
+}
+.agent-create-progress-heading .btn-spinner { width: 13px; height: 13px; }
+.agent-create-progress-mark {
+  display: inline-grid; place-items: center; width: 18px; height: 18px;
+  border: 1px solid var(--green-border); border-radius: 50%; background: var(--green-soft); color: var(--green);
+  font-family: var(--mono); font-size: 11px; font-weight: 700;
+}
+.agent-create-progress.is-error .agent-create-progress-mark { border-color: var(--red); background: transparent; color: var(--red); }
+.agent-create-log-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+.agent-create-log {
+  width: 100%; min-height: 250px; max-height: min(42vh, 380px); box-sizing: border-box; resize: vertical;
+  padding: 12px; border: 1px solid var(--line-strong); border-radius: 8px;
+  background: #090b0c; color: #b8c0c4; caret-color: transparent;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.55; white-space: pre; overflow: auto;
+}
+.agent-create-log:focus { outline: 1px solid var(--cyan-border); outline-offset: 1px; }
+.agent-create-progress-hint { color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+.agent-create-progress-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
+.page-agents .agents-title-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.page-agents .agents-title-row h1 { margin-bottom: 0; }
+.page-agents .new-agent-button {
+  display: inline-flex; align-items: center; gap: 6px; flex: none; min-height: 36px; padding: 7px 13px;
+  border: 1px solid transparent; border-radius: 8px; background: var(--primary-bg); color: var(--primary-fg);
+  font-family: var(--sans); font-size: 12.5px; font-weight: 620; cursor: pointer;
+}
+.page-agents .new-agent-button:hover { background: var(--primary-bg-hover); }
+.page-agents .new-agent-button:disabled { opacity: 0.65; cursor: default; }
+.new-agent-error { display: block; margin-top: 7px; color: var(--red); font-size: 11.5px; }
+@media (max-width: 560px) {
+  .agent-create-model-row { grid-template-columns: 1fr; }
+  .agent-create-actions { align-items: stretch; }
+  .agent-create-handoff { grid-template-columns: 1fr; gap: 10px; }
+  .agent-create-primary, .agent-create-escape { width: 100%; }
 }
 
 /* recent jobs: run history translated into skimmable outcomes */

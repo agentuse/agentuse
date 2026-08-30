@@ -3,10 +3,11 @@
  *
  * The daemon, project, global config, and XDG state are all disposable. The
  * fixture agents have no schedules and the browser never submits a run or an
- * approval, so this cannot call a provider or perform an external action.
+ * approval. Agent authoring uses a disposable loopback OpenAI-compatible mock,
+ * so this cannot call an external provider or perform an external action.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -18,8 +19,11 @@ const root = resolve(import.meta.dir, '..');
 const evidenceDir = join(root, 'tmp', 'e2e');
 const browserSession = `agentuse-dashboard-${process.pid}`;
 let daemon: ChildProcess | undefined;
+let authorDaemon: ChildProcess | undefined;
 let workspace: string | undefined;
 let daemonOutput = '';
+let authorDaemonOutput = '';
+let authorBaseUrl = '';
 
 function fail(message: string): never {
   throw new Error(message);
@@ -84,6 +88,25 @@ async function waitForDaemon(baseUrl: string): Promise<void> {
     await Bun.sleep(100);
   }
   fail(`serve did not become ready within 20 seconds:\n${daemonOutput}`);
+}
+
+async function waitForAuthorDaemon(): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (authorDaemon?.exitCode !== null) fail(`author server exited before startup:\n${authorDaemonOutput}`);
+    try {
+      if ((await fetch(`${authorBaseUrl}/requests`)).ok) return;
+    } catch {
+      // The socket is expected to refuse connections during startup.
+    }
+    await Bun.sleep(50);
+  }
+  fail(`author server did not become ready:\n${authorDaemonOutput}`);
+}
+
+async function authorRequestCount(): Promise<number> {
+  const response = await fetch(`${authorBaseUrl}/requests`);
+  return ((await response.json()) as { requests: number }).requests;
 }
 
 async function seedProject(projectRoot: string): Promise<string> {
@@ -232,6 +255,16 @@ async function main(): Promise<void> {
   const onboardingSessionId = await seedOnboardingProject(onboardingProjectRoot);
   const port = await freePort();
   const baseUrl = `http://127.0.0.1:${port}`;
+  const authorPort = await freePort();
+  authorBaseUrl = `http://127.0.0.1:${authorPort}`;
+  authorDaemon = spawn(process.execPath, ['scripts/e2e-author-server.ts', String(authorPort)], {
+    cwd: root,
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  authorDaemon.stdout?.on('data', (chunk) => { authorDaemonOutput += String(chunk); });
+  authorDaemon.stderr?.on('data', (chunk) => { authorDaemonOutput += String(chunk); });
+  await waitForAuthorDaemon();
   daemon = spawn(process.execPath, [
     'src/index.ts',
     'serve',
@@ -247,6 +280,7 @@ async function main(): Promise<void> {
       HOME: workspace,
       XDG_DATA_HOME: stateRoot,
       AGENTUSE_CONFIG: configPath,
+      OPENAI_BASE_URL: `${authorBaseUrl}/v1`,
       SLACK_APP_TOKEN: '',
       SLACK_BOT_TOKEN: '',
     },
@@ -320,6 +354,109 @@ async function main(): Promise<void> {
   browser(['screenshot', join(evidenceDir, 'onboarding-provider-gate.png')]);
   browser(['click', '.provider-setup-dialog .dialog-close']);
 
+  expectBrowser(
+    `fetch('/api/providers/api-key', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: 'openai', key: 'e2e-disposable-key' }) }).then((response) => response.json()).then((payload) => payload.success === true && !JSON.stringify(payload).includes('e2e-disposable-key'))`,
+    'provider setup persists a credential without returning its value',
+  );
+  browser(['eval', `(() => { const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.includes('Create my first agent')); button?.click(); return Boolean(button); })()`]);
+  browser(['wait', '--text', 'Describe the job']);
+  expectBrowser(
+    `document.querySelector('.agent-create-dialog[open]') !== null && document.querySelector('.cca-dialog[open]') === null`,
+    'provider-ready onboarding opens native persistent agent creation',
+  );
+  expectBrowser(
+    `document.querySelector('.agent-create-dialog input[placeholder="Support digest"]') === null && document.querySelector('.agent-create-handoff')?.innerText.includes('more hands-on') === true`,
+    'agent creation asks only for the job and separates the hands-on coding-agent path',
+  );
+  browser(['click', '.agent-create-dialog .dashboard-select-trigger[aria-label="Creator model"]']);
+  expectBrowser(
+    `(() => { const menu = document.querySelector('.agent-create-dialog .dashboard-select-menu'); const options = menu?.querySelectorAll('[role="option"]') ?? []; return Boolean(menu) && options.length > 1 && getComputedStyle(menu).backgroundColor !== 'rgb(255, 255, 255)'; })()`,
+    'agent creation uses a bounded dark model listbox instead of a native select popup',
+  );
+  browser(['screenshot', join(evidenceDir, 'onboarding-create-agent-model-picker.png')]);
+  browser(['click', '.agent-create-dialog .dashboard-select-trigger[aria-label="Creator model"]']);
+  browser(['eval', `(() => {
+    const set = (selector, value) => { const element = document.querySelector(selector); if (!element) return false; element.value = value; element.dispatchEvent(new Event('input', { bubbles: true })); return true; };
+    return set('.agent-create-field textarea', 'Summarize new support tickets every morning and highlight urgent replies.');
+  })()`]);
+  browser(['click', '.agent-create-escape']);
+  browser(['wait', '--text', 'Preview instructions']);
+  expectBrowser(
+    `document.querySelector('.cca-dialog[open]') !== null && document.querySelector('.cca-dialog textarea')?.value.includes('Summarize new support tickets') === true && !document.querySelector('.cca-dialog textarea')?.value.includes('Preferred model')`,
+    'coding-agent escape hatch preserves the native creation draft',
+  );
+  browser(['screenshot', join(evidenceDir, 'create-agent-coding-escape.png')]);
+  browser(['click', '.cca-dialog .dialog-close']);
+  browser(['eval', `(() => { const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.includes('Create my first agent')); button?.click(); return Boolean(button); })()`]);
+  browser(['wait', '--text', 'Describe the job']);
+  browser(['screenshot', join(evidenceDir, 'onboarding-create-agent.png')]);
+  browser(['click', '.agent-create-primary']);
+  browser(['wait', '--text', 'Creating your agent']);
+  expectBrowser(
+    `(async () => {
+      const deadline = Date.now() + 2_000;
+      while (Date.now() < deadline) {
+        if (document.querySelector('.agent-create-progress.is-creating') !== null && document.querySelector('.agent-create-log')?.value.includes('[model draft]') === true) return true;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      return false;
+    })()`,
+    'agent creation replaces the form with a live model-authored creation log',
+  );
+  browser(['screenshot', join(evidenceDir, 'onboarding-create-agent-progress.png')]);
+  browser(['wait', '--text', 'Creation complete']);
+  const creationError = JSON.parse(browser(['eval', `document.querySelector('.agent-create-error')?.textContent ?? ''`])) as string;
+  if (creationError) fail(`Model-backed onboarding creation failed: ${creationError}\nAuthor requests: ${await authorRequestCount()}\nDaemon output:\n${daemonOutput}`);
+  expectBrowser(
+    `document.querySelector('.agent-create-log')?.value.includes('[agentuse] Created Summarize New Support Tickets Every Morning') === true`,
+    'creation log carries the model draft through validation and persistence',
+  );
+  browser(['click', '.agent-create-progress-actions .agent-create-primary']);
+  const creationOutcome = JSON.parse(browser(['eval', '--stdin'], `(async () => {
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      if (document.body.innerText.includes('Your agent is ready')) return 'ready';
+      const error = document.querySelector('.agent-create-error')?.textContent;
+      if (error) return 'error:' + error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return 'timeout';
+  })()`)) as string;
+  if (creationOutcome !== 'ready') {
+    fail(`Model-backed onboarding creation ${creationOutcome}\nAuthor requests: ${await authorRequestCount()}\nDaemon output:\n${daemonOutput}`);
+  }
+  expectBrowser(
+    `document.body.innerText.includes('Summarize New Support Tickets Every Morning') && document.querySelector('.agent-create-dialog[open]') === null`,
+    'onboarding persists the first agent and renders its ready state',
+  );
+  const onboardingAgentSource = await readFile(join(onboardingProjectRoot, 'agents', 'summarize-new-support-tickets-every-morning.agentuse'), 'utf8');
+  if (!onboardingAgentSource.includes('model: openai:gpt-5.4-mini') || !onboardingAgentSource.includes('Summarize new support tickets')) {
+    fail(`Onboarding agent source was not persisted correctly:\n${onboardingAgentSource}`);
+  }
+
+  browser(['open', `${baseUrl}/agents/onboarding`]);
+  browser(['wait', '--text', 'Summarize New Support Tickets Every Morning']);
+  expectBrowser(`document.body.innerText.includes('New agent')`, 'Agents view exposes the persistent New agent action');
+  browser(['click', '.new-agent-button']);
+  browser(['wait', '--text', 'Describe the job']);
+  browser(['eval', `(() => {
+    const set = (selector, value) => { const element = document.querySelector(selector); if (!element) return false; element.value = value; element.dispatchEvent(new Event('input', { bubbles: true })); return true; };
+    return set('.agent-create-field textarea', 'Review yesterday’s work and identify the most important follow-up.');
+  })()`]);
+  browser(['click', '.agent-create-primary']);
+  browser(['wait', '--text', 'Creation complete']);
+  browser(['click', '.agent-create-progress-actions .agent-create-primary']);
+  browser(['wait', '--text', 'Review Yesterday Work']);
+  expectBrowser(
+    `location.pathname.includes('/agents/onboarding/') && document.body.innerText.includes('Review Yesterday Work')`,
+    'normal Agents view creates and opens a persistent agent',
+  );
+  const normalAgentSource = await readFile(join(onboardingProjectRoot, 'agents', 'review-yesterday-work.agentuse'), 'utf8');
+  if (!normalAgentSource.includes('Review yesterday’s work')) fail(`Normal agent source was not persisted correctly:\n${normalAgentSource}`);
+  const authorRequests = await authorRequestCount();
+  if (authorRequests < 2) fail(`Expected both native creations to call the selected model; observed ${authorRequests} author request(s)`);
+  console.log('  ✓ native creation uses the selected creator model and persists its independently chosen runtime model');
+
   browser(['open', `${baseUrl}/settings`]);
   browser(['wait', '1200']);
   expectBrowser(
@@ -379,5 +516,6 @@ try {
     ]);
     if (daemon.exitCode === null) daemon.kill('SIGKILL');
   }
+  if (authorDaemon && authorDaemon.exitCode === null) authorDaemon.kill('SIGTERM');
   if (workspace) await rm(workspace, { recursive: true, force: true });
 }

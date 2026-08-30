@@ -89,6 +89,13 @@ import {
   saveProviderApiKey,
   startProviderOAuth,
 } from "../auth/provider-setup";
+import {
+  AgentCreationError,
+  agentCreationProviders,
+  createAgentFile,
+  validateAgentCreationRequest,
+} from "../agents/create";
+import { authorAgentSource } from "../agents/author";
 import { openBrowser } from "../utils/open-browser";
 import {
   createIdempotentShutdown,
@@ -226,7 +233,7 @@ const ONBOARDING_ERROR_CODES = new Set([
 ]);
 const CLI_LAUNCHER_STATUSES = new Set(['already_available', 'added', 'skipped', 'conflict']);
 const PROVIDER_READINESS = new Set(['ready', 'not_ready', 'unknown']);
-const DETECTION_METHODS = new Set(['poll', 'manual_check']);
+const DETECTION_METHODS = new Set(['poll', 'manual_check', 'native_create']);
 
 function boundedTelemetryNumber(value: unknown, max: number): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
@@ -273,7 +280,7 @@ function parseWebUITelemetryBody(
     ...(durationMs === undefined ? {} : { durationMs }),
     ...(agentCount === undefined ? {} : { agentCount }),
     ...(typeof body.detection_method === 'string' && DETECTION_METHODS.has(body.detection_method)
-      ? { detectionMethod: body.detection_method as 'poll' | 'manual_check' }
+      ? { detectionMethod: body.detection_method as 'poll' | 'manual_check' | 'native_create' }
       : {}),
   };
   if (body.event === 'onboarding_started' || body.event === 'onboarding_completed') {
@@ -7102,6 +7109,126 @@ export function createServeCommand(): Command {
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "CUSTOM_PROVIDER_REMOVE_FAILED", (err as Error).message);
+          }
+          return;
+        }
+
+        if (isApi && routePath === "/agents/create" && req.method === "GET") {
+          try {
+            const snapshot = await providerSetupSnapshot();
+            sendJSON(res, 200, {
+              success: true,
+              providers: agentCreationProviders(snapshot.status),
+              projects: projects.map((project) => ({
+                id: project.id,
+                path: project.root,
+                ...(project.scopeRoot !== project.root && { scope: project.scopeRoot }),
+              })),
+              default: effectiveDefault ?? (projects.length === 1 ? projects[0]!.id : null),
+            });
+          } catch (err) {
+            sendError(res, 500, "AGENT_CREATE_OPTIONS_FAILED", (err as Error).message);
+          }
+          return;
+        }
+
+        if (isApi && routePath === "/agents" && req.method === "POST") {
+          const wantsProgress = req.headers.accept?.includes("application/x-ndjson") ?? false;
+          let progressStarted = false;
+          let progressFinished = false;
+          const abortController = new AbortController();
+          const writeProgress = (event: unknown): void => {
+            if (!progressStarted || res.destroyed || res.writableEnded) return;
+            res.write(`${JSON.stringify(event)}\n`);
+          };
+          res.on("finish", () => { progressFinished = true; });
+          res.on("close", () => {
+            if (progressStarted && !progressFinished) abortController.abort();
+          });
+          try {
+            const body = await parseJSONBody(req);
+            if (typeof body.project !== "string" || !body.project) {
+              sendError(res, 400, "PROJECT_REQUIRED", "Choose a project for this agent");
+              return;
+            }
+            const project = projects.find((candidate) => candidate.id === body.project);
+            if (!project) {
+              sendError(res, 404, "PROJECT_NOT_FOUND", `Project not found: ${body.project}`);
+              return;
+            }
+            const snapshot = await providerSetupSnapshot();
+            const providers = agentCreationProviders(snapshot.status);
+            const configuredProviders = providers.map((provider) => provider.id);
+            const request = validateAgentCreationRequest(
+              { objective: body.objective, model: body.model },
+              configuredProviders,
+            );
+            // The picker chooses the one-off authoring model. The author then
+            // chooses the finished agent's runtime model from every model the
+            // configured providers make available to this creation surface.
+            const availableModels = [...new Set([
+              ...providers.flatMap((provider) => provider.models),
+              request.model,
+            ])];
+            if (wantsProgress) {
+              res.writeHead(200, {
+                "Content-Type": "application/x-ndjson",
+                "Transfer-Encoding": "chunked",
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+              });
+              progressStarted = true;
+              res.flushHeaders();
+              writeProgress({ type: "status", message: `Preparing ${request.model} to design the agent` });
+            }
+            const authored = await authorAgentSource({ ...request, availableModels }, undefined, {
+              ...(wantsProgress && { abortSignal: abortController.signal }),
+              onProgress: writeProgress,
+            });
+            writeProgress({ type: "status", message: "Saving the validated agent to the project" });
+            const created = await createAgentFile(
+              project,
+              { objective: request.objective, model: authored.model, source: authored.source },
+              configuredProviders,
+            );
+
+            if (!project.agentFiles.includes(created.runPath)) {
+              project.agentFiles.push(created.runPath);
+              project.agentFiles.sort();
+              agentCounts.set(project.id, project.agentFiles.length);
+              updateRegistryCounts();
+            }
+            agentSummaryCache.delete(created.absolutePath);
+            agentSummaryCache.delete(resolveScopedAgentPath(project, created.runPath));
+            const collected = await collectAgents([project]);
+            const agent = collected.agents.find((candidate) => candidate.runPath === created.runPath);
+            if (!agent) throw new Error("The new agent could not be loaded after it was written");
+            if (wantsProgress) {
+              writeProgress({ type: "complete", agent });
+              res.end();
+            } else {
+              sendJSON(res, 201, { success: true, agent });
+            }
+          } catch (err) {
+            if (progressStarted) {
+              if (res.destroyed) return;
+              const code = err instanceof AgentCreationError ? err.code : "AGENT_CREATE_FAILED";
+              const message = (err as Error).message || "Could not create the agent";
+              writeProgress({ type: "error", error: { code, message } });
+              res.end();
+              return;
+            }
+            if (sendRequestParseError(res, err)) return;
+            if (err instanceof AgentCreationError) {
+              const status = err.code === "AGENT_EXISTS" ? 409
+                : err.code === "INVALID_GENERATED_AGENT" ? 422
+                : err.code === "GENERATION_FAILED" ? 502
+                : err.code === "CREATE_FAILED" ? 500
+                : 400;
+              sendError(res, status, err.code, err.message);
+              return;
+            }
+            sendError(res, 500, "AGENT_CREATE_FAILED", (err as Error).message);
           }
           return;
         }

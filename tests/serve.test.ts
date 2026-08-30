@@ -913,6 +913,11 @@ describe('serve telemetry attribution', () => {
       event: 'onboarding_completed', onboardingRoute: 'web', clientSurface: 'web', agentCount: 100, detectionMethod: 'poll',
     });
     expect(parseWebUITelemetryBody({
+      event: 'onboarding_completed', onboarding_route: 'web', agent_count: 1, detection_method: 'native_create',
+    })).toEqual({
+      event: 'onboarding_completed', onboardingRoute: 'web', clientSurface: 'web', agentCount: 1, detectionMethod: 'native_create',
+    });
+    expect(parseWebUITelemetryBody({
       event: 'onboarding_step_completed', onboarding_route: 'web', step: 'private-project-name',
     })).toBeUndefined();
     expect(parseWebUITelemetryBody({

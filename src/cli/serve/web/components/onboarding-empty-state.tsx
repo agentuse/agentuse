@@ -70,7 +70,7 @@ export function OnboardingEmptyState(props: {
         </li>
         <li>
           <span class="onboarding-step-number">04</span>
-          <span><strong>Create your agent</strong><small>Use your coding agent, then run it here</small></span>
+          <span><strong>Create your agent</strong><small>Create it here or hand off to a coding agent</small></span>
         </li>
       </ol>
     </section>

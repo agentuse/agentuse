@@ -195,7 +195,7 @@ export type WebUITelemetryEvent =
       clientSurface: WebUIClientSurface;
       durationMs?: number;
       agentCount?: number;
-      detectionMethod?: 'poll' | 'manual_check';
+      detectionMethod?: 'poll' | 'manual_check' | 'native_create';
     }
   | {
       event: 'onboarding_step_completed' | 'onboarding_step_failed';
@@ -214,7 +214,7 @@ export type WebUITelemetryEvent =
       cliLauncherStatus?: 'already_available' | 'added' | 'skipped' | 'conflict';
       providerReadiness?: 'ready' | 'not_ready' | 'unknown';
       agentCount?: number;
-      detectionMethod?: 'poll' | 'manual_check';
+      detectionMethod?: 'poll' | 'manual_check' | 'native_create';
     };
 
 export interface AddCommandResult {

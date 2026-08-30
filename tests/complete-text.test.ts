@@ -51,6 +51,18 @@ describe("completeText", () => {
     expect(calls[0]).not.toHaveProperty("temperature");
   });
 
+  it("reports live text deltas without changing the returned completion", async () => {
+    const deltas: string[] = [];
+    const text = await completeText("anthropic:claude-opus-4-8", {
+      instructions: "sys",
+      prompt: "hi",
+      onTextDelta: (delta) => deltas.push(delta),
+    });
+
+    expect(text).toBe("ok");
+    expect(deltas).toEqual(["ok"]);
+  });
+
   for (const model of ["openai:gpt-5", "gpt-5"]) {
     it(`uses Codex helper options for ${model}`, async () => {
       codexAccess.mockImplementation(async () => "oauth-token");
