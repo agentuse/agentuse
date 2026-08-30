@@ -24,6 +24,8 @@ agentuse skills installed [list|get|path] <name>   # project/user skills
 
 ## Load A Specialized Builtin Skill
 
+- `agentuse skills get automate`, turn a workflow from a coding-agent session
+  into one focused, validated AgentUse agent.
 - `agentuse skills get onboarding`, terminal or Web UI handoff from a confirmed
   project to one validated first agent and its first real run.
 - `agentuse skills get runner`, running, listing, sessions, serve, schedules.

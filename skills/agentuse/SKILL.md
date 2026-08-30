@@ -24,6 +24,7 @@ agentuse skills get creator --full
 `core` routes to the specialized builtin skills:
 
 ```bash
+agentuse skills get automate        # turn current work into a validated agent
 agentuse skills get runner          # run, list, sessions, serve, schedules
 agentuse skills get creator         # author and improve .agentuse files
 agentuse skills get onboarding      # guided first agent from terminal or Web UI

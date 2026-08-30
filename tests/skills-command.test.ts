@@ -62,6 +62,7 @@ ${body}
     expect(parsed.count).toBeGreaterThanOrEqual(1);
     expect(parsed.source).toBe('builtin');
     expect(parsed.skills.some((candidate: { name: string }) => candidate.name === 'core')).toBe(true);
+    expect(parsed.skills.some((candidate: { name: string }) => candidate.name === 'automate')).toBe(true);
     expect(parsed.skills.some((candidate: { name: string }) => candidate.name === 'runner')).toBe(true);
     expect(parsed.skills.some((candidate: { name: string }) => candidate.name === 'creator')).toBe(true);
     expect(parsed.skills.some((candidate: { name: string }) => candidate.name === 'code-review')).toBe(false);
@@ -114,8 +115,11 @@ ${body}
   });
 
   it('prints specialized builtin skills with get', async () => {
-    const output = await runSkillsCommand(['get', 'runner', 'creator']);
+    const output = await runSkillsCommand(['get', 'automate', 'runner', 'creator']);
 
+    expect(output).toContain('--- automate/SKILL.md ---');
+    expect(output).toContain('name: automate');
+    expect(output).toContain('coding-agent login is not an AgentUse runtime credential');
     expect(output).toContain('--- runner/SKILL.md ---');
     expect(output).toContain('name: runner');
     expect(output).toContain('--- creator/SKILL.md ---');
