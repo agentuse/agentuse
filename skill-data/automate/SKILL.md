@@ -26,17 +26,23 @@ automation system.
 
 ## Choose the execution mode
 
-Check whether the `agentuse` command is available.
+Choose the freshest available AgentUse command prefix:
 
-- When it is available, use the CLI-backed workflow below. Load the remaining
-  version-matched guidance as the workflow reaches those stages; do not rely on
-  syntax remembered from another version.
-- When it is unavailable, use the host bundle's
+- Prefer `npx -y agentuse@latest` when `npx` is available and the package can
+  execute under the host's network and sandbox policy.
+- Otherwise use `agentuse` when that command is installed.
+- When neither command can execute, use the host bundle's
   `references/creator.md` to author one portable `.agentuse` file. Do not try to
   install AgentUse silently. Skip provider discovery, model-catalog validation,
   doctor, mock testing, scheduling, and real execution because those require
   the runtime. The result is an artifact for later validation, not an activated
   automation.
+
+In CLI-backed mode, replace `agentuse` at the start of every command below with
+the selected command prefix. For example, the provider check becomes
+`npx -y agentuse@latest provider list --json` when using npm. Use one prefix
+consistently for skill loading, model discovery, validation, testing, session
+inspection, and the handoff commands.
 
 Choose the project deliberately:
 
@@ -48,7 +54,7 @@ Choose the project deliberately:
 - Honor a project path supplied by the user. Never relocate an existing
   AgentUse project or change unrelated global serve settings.
 
-In CLI-backed mode, before writing an agent, run:
+In CLI-backed mode, before writing an agent, run using the selected prefix:
 
 ```sh
 agentuse provider list --json
@@ -66,8 +72,8 @@ A coding-agent login is not an AgentUse runtime credential.
 
 ## Create and validate the agent
 
-In CLI-backed mode, load the current authoring and testing guidance before
-writing:
+In CLI-backed mode, load the current authoring and testing guidance with the
+selected prefix before writing:
 
 ```sh
 agentuse skills get creator --full

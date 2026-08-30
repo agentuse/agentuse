@@ -33,6 +33,37 @@ function sha256(content: string): string {
   return createHash('sha256').update(content).digest('hex');
 }
 
+function buildFreshnessAdapter(automate: string): string {
+  const frontmatter = automate.match(/^---\n[\s\S]*?\n---\n/)?.[0];
+  if (!frontmatter) throw new Error('automate skill is missing YAML frontmatter');
+
+  return `${frontmatter}
+# Automate with AgentUse
+
+Treat the current conversation, invocation details, and repository state as the
+originating workflow. Do not make the user restate context that is already
+clear.
+
+Try these sources in order and stop after the first successful skill load:
+
+1. When \`npx\` is available, run
+   \`npx -y agentuse@latest skills get automate --full\` once. Subject to the
+   host's normal approval, sandbox, and network controls, follow the returned
+   skill as authoritative for the current AgentUse release. Do not re-enter
+   this freshness adapter from the returned instructions.
+2. If that command is unavailable or fails, and \`agentuse\` is installed, run
+   \`agentuse skills get automate --full\` once and follow the returned skill
+   as authoritative for that installed version.
+3. If neither source loads, read and follow
+   [the bundled automate snapshot](references/automate.md). Its creator and
+   tester references are available beside it. Use its artifact-only mode when
+   no AgentUse command can execute.
+
+Do not repeatedly retry a failed network or package command. Do not silently run
+interactive setup or provider login.
+`;
+}
+
 function expectedFiles(contents: Record<(typeof skills)[number], string>) {
   const packageJson = JSON.parse(readFileSync(resolve(repoRoot, 'package.json'), 'utf8'));
   const manifest = `${JSON.stringify({
@@ -43,7 +74,8 @@ function expectedFiles(contents: Record<(typeof skills)[number], string>) {
   }, null, 2)}\n`;
 
   return {
-    'SKILL.md': contents.automate,
+    'SKILL.md': buildFreshnessAdapter(contents.automate),
+    'references/automate.md': contents.automate,
     'references/creator.md': contents.creator,
     'references/tester.md': contents.tester,
     'bundle.json': manifest,
