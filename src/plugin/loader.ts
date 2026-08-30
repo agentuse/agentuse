@@ -12,7 +12,7 @@ export interface ResolvedPackageManifest {
   agentuse: AgentUsePackageManifest;
 }
 
-export async function importPluginModule(entry: string): Promise<unknown> {
+export async function importExtensionModule(entry: string): Promise<unknown> {
   if (entry.endsWith('.ts') || entry.endsWith('.tsx')) {
     const result = await esbuild.build({
       entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', target: 'node22',
@@ -33,12 +33,12 @@ export async function importPluginModule(entry: string): Promise<unknown> {
 
 function validateEntries(root: string, entries: unknown): string[] {
   if (!Array.isArray(entries) || entries.length === 0 || entries.some((entry) => typeof entry !== 'string')) {
-    throw new Error('package.json agentuse.plugins must be a non-empty string array');
+    throw new Error('package.json agentuse.extensions must be a non-empty string array');
   }
   return entries.map((entry) => {
     const absolute = resolve(root, entry);
     const fromRoot = relative(root, absolute);
-    if (fromRoot.startsWith('..') || isAbsolute(fromRoot)) throw new Error(`Plugin entry must stay inside the package: ${entry}`);
+    if (fromRoot.startsWith('..') || isAbsolute(fromRoot)) throw new Error(`Extension entry must stay inside the package: ${entry}`);
     return entry;
   });
 }
@@ -49,7 +49,7 @@ export async function readPackageManifest(root: string): Promise<ResolvedPackage
   if (typeof value.name !== 'string' || typeof value.version !== 'string' || agentuse?.apiVersion !== 1) {
     throw new Error('package.json must define name, version, and agentuse.apiVersion: 1');
   }
-  const plugins = validateEntries(root, agentuse.plugins);
-  await Promise.all(plugins.map((entry) => stat(resolve(root, entry))));
-  return { name: value.name, version: value.version, agentuse: { ...agentuse, apiVersion: 1, plugins } as AgentUsePackageManifest };
+  const extensions = validateEntries(root, agentuse.extensions);
+  await Promise.all(extensions.map((entry) => stat(resolve(root, entry))));
+  return { name: value.name, version: value.version, agentuse: { ...agentuse, apiVersion: 1, extensions } as AgentUsePackageManifest };
 }

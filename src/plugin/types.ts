@@ -148,12 +148,12 @@ export type PluginEventHandler<E extends keyof PluginEvents> = (
   context: PluginEventContext,
 ) => PluginEventResults[E] | void | Promise<PluginEventResults[E] | void>;
 
-/** @deprecated Export an AgentUsePlugin and register handlers with api.on(). */
+/** @deprecated Export an AgentUseExtension and register handlers with api.on(). */
 export interface PluginHandlers {
   'agent:complete'?: (event: AgentCompleteEvent) => void | Promise<void>;
 }
 
-/** @deprecated Use AgentUsePlugin. */
+/** @deprecated Use AgentUseExtension. */
 export type Plugin = PluginHandlers;
 
 export interface Disposable {
@@ -182,7 +182,13 @@ export interface ProviderModelDefinition {
 
 export type ProviderModels =
   | ProviderModelDefinition[]
-  | { inherit: string; include?: string[]; exclude?: string[] }
+  | {
+      inherit: string;
+      include?: string[];
+      exclude?: string[];
+      /** Apply transport-specific metadata without renaming inherited models. */
+      patch?: Partial<Omit<ProviderModelDefinition, 'id' | 'name'>>;
+    }
   | ((context: ProviderDiscoveryContext) => ProviderModelDefinition[] | Promise<ProviderModelDefinition[]>);
 
 export interface ProviderDiscoveryContext {
@@ -376,6 +382,8 @@ export interface ProviderDefinition {
  */
 export interface ProviderAdapter {
   name: string;
+  /** Defaults to inheriting the adapted provider's model catalog unchanged. */
+  models?: ProviderModels;
   transport: ProviderTransport;
   auth?: { methods: ProviderAuthMethod[] };
   prompts?: ProviderPromptDefinition;
@@ -397,11 +405,12 @@ export interface AgentUsePluginAPI {
   readonly log: PluginLogger;
 }
 
-export type AgentUsePlugin = (api: AgentUsePluginAPI) => void | Promise<void>;
+/** Executable module contributed by an installed AgentUse plugin package. */
+export type AgentUseExtension = (api: AgentUsePluginAPI) => void | Promise<void>;
 
 export interface AgentUsePackageManifest {
   apiVersion: 1;
-  plugins: string[];
+  extensions: string[];
 }
 
 export interface InstalledPluginRecord {

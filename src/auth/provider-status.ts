@@ -21,6 +21,7 @@ export interface ProviderAuthStatus {
   name: string;
   configured: boolean;
   sources: ProviderAuthSourceStatus[];
+  actionRequired?: string;
 }
 
 export interface CustomProviderStatus {
@@ -71,17 +72,18 @@ export async function getProviderStatus(): Promise<ProviderStatus> {
   for (const provider of PROVIDERS) {
     const providerAuth = await AuthStorage.getProviderAuth(provider.id);
     const sources: ProviderAuthSourceStatus[] = [];
+    const adapters = await getProviderAdapters(provider.id);
 
-    // Conditional extensions are part of the built-in namespace. Their auth
+    // Conditional adapters are part of the built-in namespace. Their auth
     // sources lead the list because a selected OAuth transport wins over API.
-    for (const adapter of await getProviderAdapters(provider.id)) {
+    for (const adapter of adapters) {
       for (const source of await providerPluginAuthStatus(adapter.provider)) {
         sources.push({ ...source, active: sources.length === 0 });
       }
     }
 
-    // OAuth for a built-in namespace is otherwise owned by its extension.
-    // Without that extension installed, keep legacy credentials hidden rather
+    // OAuth for a built-in namespace is otherwise owned by its adapter.
+    // Without that adapter installed, keep legacy credentials hidden rather
     // than claiming the built-in API transport can use them.
     if (providerAuth.oauth && provider.id !== 'anthropic') {
       sources.push({
@@ -116,11 +118,20 @@ export async function getProviderStatus(): Promise<ProviderStatus> {
       });
     }
 
+    const hasClaudeAdapter = adapters.some(({ provider: adapted }) =>
+      adapted.auth?.methods.some((method) => method.environment?.includes('CLAUDE_CODE_OAUTH_TOKEN')),
+    );
+    const missingClaudeAdapter = provider.id === 'anthropic'
+      && !hasClaudeAdapter
+      && Boolean(providerAuth.oauth || process.env.CLAUDE_CODE_OAUTH_TOKEN);
     providers.push({
       id: provider.id,
       name: provider.name,
       configured: sources.length > 0,
       sources,
+      ...(missingClaudeAdapter && {
+        actionRequired: 'Claude subscription OAuth is present but its provider plugin is not installed',
+      }),
     });
   }
 

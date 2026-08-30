@@ -3,10 +3,18 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { PluginHost, PluginManager } from '../src/plugin';
-import { createCustomProviderModel, getActiveProviderAdapter, getProviderPatch, getProviderPlugin, resetProviderPluginCache } from '../src/plugin/provider-runtime';
+import {
+  createCustomProviderModel,
+  getActiveProviderAdapter,
+  getProviderPatch,
+  getProviderPlugin,
+  mergeProviderTransportHeaders,
+  resetProviderPluginCache,
+  resolveProviderAuth,
+} from '../src/plugin/provider-runtime';
 import { readPackageManifest } from '../src/plugin/loader';
 import type { AgentCompleteEvent, ProviderDefinition, ProviderRequest } from '../src/plugin/types';
-import type { AgentUsePlugin } from 'agentuse/plugin-api';
+import type { AgentUseExtension } from 'agentuse/plugin-api';
 import { resolveModelInfo } from '../src/utils/model-utils';
 import { AuthStorage } from '../src/auth/storage';
 import { getProviderStatus } from '../src/auth/provider-status';
@@ -19,16 +27,28 @@ const event: AgentCompleteEvent = {
 };
 
 describe('AgentUse activation API', () => {
+  it('merges Anthropic beta headers without losing SDK-provided features', () => {
+    const headers = new Headers({ 'anthropic-beta': 'prompt-caching-2024-07-31,oauth-2025-04-20' });
+    mergeProviderTransportHeaders(headers, {
+      'anthropic-beta': 'oauth-2025-04-20,interleaved-thinking-2025-05-14',
+      'x-plugin': 'enabled',
+    });
+    expect(headers.get('anthropic-beta')).toBe(
+      'prompt-caching-2024-07-31,oauth-2025-04-20,interleaved-thinking-2025-05-14',
+    );
+    expect(headers.get('x-plugin')).toBe('enabled');
+  });
+
   it('registers isolated event handlers and disposes the complete activation', async () => {
     const host = new PluginHost();
     const observed: string[] = [];
-    const plugin: AgentUsePlugin = (agentuse) => {
+    const extension: AgentUseExtension = (agentuse) => {
       agentuse.on('agent:complete', (value: AgentCompleteEvent) => { value.result.text = 'mutated'; });
       agentuse.on('agent:complete', (value: AgentCompleteEvent) => {
         observed.push(value.result.text);
       });
     };
-    const activation = await host.activate({ name: 'events', source: 'test', scope: 'local' }, plugin);
+    const activation = await host.activate({ name: 'events', source: 'test', scope: 'local' }, extension);
 
     await host.emit('agent:complete', event);
     expect(observed).toEqual(['original']);
@@ -301,11 +321,13 @@ describe('project-local activation scope', () => {
       export default function (agentuse) {
         agentuse.registerProvider('anthropic', {
           name: 'Claude subscription',
+          models: { inherit: 'anthropic', patch: { cost: { input: 0, output: 0 } } },
           transport: { kind: 'anthropic-messages', headers: { 'anthropic-beta': 'oauth' } },
           auth: { methods: [{
             id: 'subscription', type: 'oauth', name: 'Subscription OAuth',
             environment: ['TEST_CLAUDE_OAUTH'],
             async login() { return {}; },
+            async refresh() { throw new Error('stored credential must not refresh'); },
             resolve({ credential }, context) {
               const token = context.env.TEST_CLAUDE_OAUTH ?? credential?.access;
               return token ? { bearerToken: token, source: 'test' } : undefined;
@@ -330,11 +352,15 @@ describe('project-local activation scope', () => {
 
       process.env.TEST_CLAUDE_OAUTH = 'oauth-token';
       process.env.ANTHROPIC_API_KEY = 'api-key';
+      await AuthStorage.setPluginCredential('anthropic', 'subscription', {
+        type: 'oauth', access: 'expired', refresh: 'stale', expires: 0,
+      });
       expect(await getActiveProviderAdapter('anthropic', 'claude-test')).toMatchObject({
         id: 'anthropic',
         name: 'Claude subscription',
         transport: { headers: { 'anthropic-beta': 'oauth' } },
       });
+      expect(resolveModelInfo('anthropic:claude-sonnet-4-5')?.cost).toMatchObject({ input: 0, output: 0 });
       expect((await getProviderStatus()).providers.find((provider) => provider.id === 'anthropic')?.sources).toEqual([
         {
           priority: 1,
@@ -344,6 +370,13 @@ describe('project-local activation scope', () => {
           active: true,
         },
         {
+          priority: 1,
+          kind: 'oauth',
+          name: 'Subscription OAuth',
+          stored: true,
+          active: false,
+        },
+        {
           priority: 2,
           kind: 'environment',
           name: 'ANTHROPIC_API_KEY',
@@ -351,6 +384,10 @@ describe('project-local activation scope', () => {
           active: false,
         },
       ]);
+      delete process.env.TEST_CLAUDE_OAUTH;
+      await AuthStorage.removePluginCredential('anthropic', 'subscription');
+      expect(await getActiveProviderAdapter('anthropic', 'claude-test')).toBeUndefined();
+      expect(resolveModelInfo('anthropic:claude-sonnet-4-5')?.cost).toMatchObject({ input: 3, output: 15 });
     } finally {
       delete process.env.TEST_CLAUDE_OAUTH;
       if (originalAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
@@ -359,10 +396,49 @@ describe('project-local activation scope', () => {
     }
   });
 
+  it('atomically migrates legacy OAuth into the adapter credential slot', async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-oauth-migration-'));
+    const originalAuthFile = (AuthStorage as any).AUTH_FILE;
+    (AuthStorage as any).AUTH_FILE = path.join(root, 'auth.json');
+    const credential = {
+      type: 'oauth' as const,
+      access: 'legacy-access',
+      refresh: 'legacy-refresh',
+      expires: Date.now() + 60_000,
+    };
+    const provider: ProviderDefinition = {
+      id: 'anthropic',
+      name: 'Claude subscription',
+      models: [],
+      transport: { kind: 'anthropic-messages' },
+      auth: { methods: [{
+        id: 'subscription',
+        type: 'oauth',
+        name: 'Subscription OAuth',
+        async login() { return credential; },
+        resolve({ credential: stored }) {
+          const access = stored?.access;
+          return typeof access === 'string' ? { bearerToken: access, source: 'stored OAuth' } : undefined;
+        },
+      }] },
+    };
+
+    try {
+      await AuthStorage.setOAuth('anthropic', credential);
+      await expect(resolveProviderAuth(provider, 'subscription')).resolves.toMatchObject({
+        bearerToken: 'legacy-access',
+      });
+      expect(await AuthStorage.getPluginCredential('anthropic', 'subscription')).toEqual(credential);
+      expect(await AuthStorage.getOAuth('anthropic')).toBeUndefined();
+    } finally {
+      (AuthStorage as any).AUTH_FILE = originalAuthFile;
+    }
+  });
+
   it('rejects package entries that escape the repository', async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-package-path-'));
     await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
-      name: 'escape', version: '1.0.0', agentuse: { apiVersion: 1, plugins: ['../outside.js'] },
+      name: 'escape', version: '1.0.0', agentuse: { apiVersion: 1, extensions: ['../outside.js'] },
     }));
     await expect(readPackageManifest(root)).rejects.toThrow('stay inside the package');
   });
@@ -376,7 +452,7 @@ describe('project-local activation scope', () => {
     await fs.mkdir(pkg);
     await fs.mkdir(loose);
     await fs.writeFile(path.join(pkg, 'package.json'), JSON.stringify({
-      name: 'installed-events', version: '1.0.0', agentuse: { apiVersion: 1, plugins: ['./index.js'] },
+      name: 'installed-events', version: '1.0.0', agentuse: { apiVersion: 1, extensions: ['./index.js'] },
     }));
     await fs.writeFile(path.join(pkg, 'index.js'), `export default function (agentuse) {
       agentuse.on('agent:complete', () => { globalThis.__agentuseInstalledEventCount = (globalThis.__agentuseInstalledEventCount || 0) + 1; });

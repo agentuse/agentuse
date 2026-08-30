@@ -2,6 +2,7 @@ import { Command, Option } from "commander";
 import { AuthStorage } from "../auth/index.js";
 import readline from "readline";
 import { logger } from "../utils/logger";
+import { openBrowser as openBrowserUrl } from "../utils/open-browser";
 import {
   OPENCODE_GO_API_KEY_ENV,
   OPENCODE_GO_DISPLAY_NAME,
@@ -59,11 +60,22 @@ async function promptInput(question: string): Promise<string> {
   });
 }
 
+async function promptSecret(question: string): Promise<string> {
+  const { isCancel, password } = await import('@clack/prompts');
+  const answer = await password({ message: question.trim() });
+  if (isCancel(answer)) throw new Error('Interrupted');
+  return answer.trim();
+}
+
 function pluginAuthInteraction(): AuthInteraction {
   return {
-    openBrowser: ({ url }) => { process.stdout.write(`Open this URL in your browser:\n\n${url}\n\n`); },
+    openBrowser: async ({ url }) => {
+      if (!await openBrowserUrl(url)) process.stdout.write(`Open this URL in your browser:\n\n${url}\n\n`);
+    },
     showDeviceCode: ({ userCode, verificationUri }) => process.stdout.write(`Open ${verificationUri} and enter ${userCode}\n`),
-    prompt: ({ message }) => promptInput(message.endsWith(' ') ? message : `${message} `),
+    prompt: ({ message, secret }) => secret
+      ? promptSecret(message)
+      : promptInput(message.endsWith(' ') ? message : `${message} `),
     select: async ({ message, choices }) => {
       process.stdout.write(`${message}\n${choices.map((choice, index) => `  ${index + 1}. ${choice.label}`).join('\n')}\n`);
       const value = await promptInput('Select: ');
@@ -518,6 +530,7 @@ Use these only when an endpoint reports a protocol compatibility error.
           const priorityLabel = `[${source.priority}]`;
           process.stdout.write(`  ${priorityLabel} ${icon} ${source.name}${activeMarker}\n`);
         }
+        if (provider.actionRequired) process.stdout.write(`  ⚠️  ${provider.actionRequired}\n`);
         process.stdout.write("\n");
       }
 
@@ -526,7 +539,9 @@ Use these only when an endpoint reports a protocol compatibility error.
       if (unconfiguredProviders.length > 0) {
         process.stdout.write("Not configured:\n");
         for (const provider of unconfiguredProviders) {
-          process.stdout.write(`  ⚠️  ${provider.name} - run \`agentuse provider login ${provider.id}\`\n`);
+          process.stdout.write(provider.actionRequired
+            ? `  ⚠️  ${provider.name} - ${provider.actionRequired}\n`
+            : `  ⚠️  ${provider.name} - run \`agentuse provider login ${provider.id}\`\n`);
         }
         process.stdout.write("\n");
       }

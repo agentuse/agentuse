@@ -74,7 +74,7 @@ docker exec -it agentuse-dev agentuse run my-agent.agentuse
 | Variable | Description |
 |----------|-------------|
 | `ANTHROPIC_API_KEY` | Anthropic Claude API key |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Long-lived OAuth token from `claude setup-token` (valid 1 year) |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Claude subscription OAuth token; requires the Claude Code subscription provider plugin |
 | `OPENAI_API_KEY` | OpenAI API key |
 | `OPENROUTER_API_KEY` | OpenRouter API key |
 | `OPENCODE_GO_API_KEY` | OpenCode Go API key |
@@ -83,7 +83,7 @@ docker exec -it agentuse-dev agentuse run my-agent.agentuse
 | `AWS_BEARER_TOKEN_BEDROCK` | Amazon Bedrock API key (Bearer auth, alternative to SigV4) |
 
 <Note>
-  At least one AI provider authentication is required. For Anthropic, use either `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`.
+  At least one AI provider authentication is required. `ANTHROPIC_API_KEY` works with the built-in provider. `CLAUDE_CODE_OAUTH_TOKEN` works only when the Claude Code subscription provider plugin is installed in the container or mounted project scope.
 </Note>
 
 ### Using an Environment File

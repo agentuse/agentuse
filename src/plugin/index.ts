@@ -10,7 +10,7 @@ import type {
 } from './types';
 import type { PluginIdentity } from './internal-types';
 import { PluginHost } from './host';
-import { importPluginModule } from './loader';
+import { importExtensionModule } from './loader';
 import { logger } from '../utils/logger';
 import { enterPluginHost } from './context';
 import { getInstalledPluginHost } from './provider-runtime';
@@ -39,7 +39,7 @@ export class PluginManager {
         const files = await glob(pattern, { absolute: true });
         for (const file of files) {
           try {
-            const exported = await importPluginModule(file);
+            const exported = await importExtensionModule(file);
             const identity: PluginIdentity = {
               name: basename(file),
               source: file,
@@ -111,7 +111,7 @@ export type {
   AgentResumeEvent,
   AgentStartEvent,
   AgentSuspendEvent,
-  AgentUsePlugin,
+  AgentUseExtension,
   AgentUsePluginAPI,
   AuthInteraction,
   Plugin,

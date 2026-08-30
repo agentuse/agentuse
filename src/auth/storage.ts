@@ -379,6 +379,43 @@ export class AuthStorage {
     }
   }
 
+  /**
+   * Atomically move a legacy provider OAuth credential into a plugin-owned
+   * method slot. An existing plugin credential always wins.
+   */
+  static async migrateOAuthToPluginCredential(
+    providerID: string,
+    methodID: string,
+    sourceProviderID: string = providerID,
+  ): Promise<PluginCredential | undefined> {
+    return this.withAuthLock(async () => {
+      const data = await this.all() as Record<string, unknown>;
+      const destinationKey = this.pluginCredentialKey(providerID, methodID);
+      const destination = data[destinationKey];
+      if (destination && typeof destination === "object" && !Array.isArray(destination)) {
+        return destination as PluginCredential;
+      }
+
+      const sourceKey = `${sourceProviderID}:oauth`;
+      const current = data[sourceKey] ?? data[sourceProviderID];
+      if (!current || typeof current !== "object" || Array.isArray(current)) return undefined;
+      const type = (current as { type?: unknown }).type;
+      if (type !== "oauth" && type !== "codex-oauth") return undefined;
+
+      const normalized = this.normalizePluginCredential(current as PluginCredential);
+      data[destinationKey] = normalized;
+      delete data[sourceKey];
+      const legacy = data[sourceProviderID];
+      if (legacy && typeof legacy === "object" && !Array.isArray(legacy)) {
+        const legacyType = (legacy as { type?: unknown }).type;
+        if (legacyType === "oauth" || legacyType === "codex-oauth") delete data[sourceProviderID];
+      }
+      await this.writeAll(data as Record<string, AuthInfo>);
+      this.oauthCache.clear();
+      return normalized;
+    });
+  }
+
   static async setPluginCredential(providerID: string, methodID: string, credential: PluginCredential): Promise<void> {
     const normalized = this.normalizePluginCredential(credential);
     await this.mutate((data) => {

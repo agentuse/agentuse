@@ -54,7 +54,7 @@ describe('plugin lifecycle', () => {
     process.env.AGENTUSE_PLUGIN_HOME = home;
     await fs.mkdir(source);
     await fs.writeFile(path.join(source, 'package.json'), JSON.stringify({
-      name: 'lifecycle-provider', version: '1.0.0', agentuse: { apiVersion: 1, plugins: ['./index.js'] },
+      name: 'lifecycle-provider', version: '1.0.0', agentuse: { apiVersion: 1, extensions: ['./index.js'] },
     }));
     await fs.writeFile(path.join(source, 'index.js'), `export default function (agentuse) { agentuse.registerProvider({ id: 'lifecycle', name: 'Lifecycle', models: [], transport: { kind: 'custom', apiVersion: 1, async *stream() { yield { type: 'finish', reason: 'stop' }; } } }); }\n`);
     const git = (...args: string[]) => {
@@ -72,7 +72,7 @@ describe('plugin lifecycle', () => {
       expect(await fs.stat(installed.directory)).toBeTruthy();
 
       await fs.writeFile(path.join(source, 'package.json'), JSON.stringify({
-        name: 'lifecycle-provider', version: '1.1.0', agentuse: { apiVersion: 1, plugins: ['./index.js'] },
+        name: 'lifecycle-provider', version: '1.1.0', agentuse: { apiVersion: 1, extensions: ['./index.js'] },
       }));
       git('add', '.');
       git('commit', '-m', 'update');
@@ -96,7 +96,7 @@ describe('plugin lifecycle', () => {
     await fs.mkdir(source);
     await fs.mkdir(projectRoot);
     await fs.writeFile(path.join(source, 'package.json'), JSON.stringify({
-      name: 'project-events', version: '1.0.0', agentuse: { apiVersion: 1, plugins: ['./index.js'] },
+      name: 'project-events', version: '1.0.0', agentuse: { apiVersion: 1, extensions: ['./index.js'] },
     }));
     await fs.writeFile(path.join(source, 'index.js'), `export default function (agentuse) { agentuse.on('agent:complete', async () => { globalThis.__projectPackageEvent = true; }); }\n`);
     const git = (...args: string[]) => {

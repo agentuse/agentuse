@@ -1,11 +1,13 @@
 # Plugins
 
-AgentUse plugins are TypeScript or JavaScript modules that export one activation function. The function receives a stable API and registers events, providers, or provider patches. AgentUse waits for async activation before model discovery and execution begin.
+An AgentUse plugin is an installable package. A plugin can contribute executable extensions today, with other resource types such as skills and agents able to use the same package boundary in the future.
+
+An extension is a TypeScript or JavaScript module that exports one activation function. The function receives a stable API and registers events, providers, or provider patches. AgentUse waits for async activation before model discovery and execution begin.
 
 ```ts
-import type { AgentUsePlugin } from "agentuse/plugin-api";
+import type { AgentUseExtension } from "agentuse/plugin-api";
 
-const plugin: AgentUsePlugin = async (agentuse) => {
+const extension: AgentUseExtension = async (agentuse) => {
   agentuse.on("agent:complete", async (event) => {
     agentuse.log.info(`${event.agent.name} completed`);
   });
@@ -15,14 +17,14 @@ const plugin: AgentUsePlugin = async (agentuse) => {
   });
 };
 
-export default plugin;
+export default extension;
 ```
 
-Plugins run as trusted code with the same operating-system permissions as AgentUse. Review third-party packages before installing them.
+Extensions run as trusted code with the same operating-system permissions as AgentUse. Review third-party plugins before installing them.
 
-## Loose project and global plugins
+## Loose project and global extensions
 
-Single-file plugins are discovered automatically:
+Single-file extensions are discovered automatically from the existing plugin directories:
 
 - `.agentuse/plugins/*.{ts,js}` for the current project.
 - `$AGENTUSE_CONFIG_DIR/plugins/*.{ts,js}` for every project (defaults to `~/.agentuse/plugins/*.{ts,js}`).
@@ -39,7 +41,7 @@ export default {
 };
 ```
 
-It is equivalent to calling `agentuse.on("agent:complete", handler)`. New plugins should use the activation API.
+It is equivalent to calling `agentuse.on("agent:complete", handler)`. New extensions should use the activation API.
 
 ## Event API
 
@@ -200,6 +202,16 @@ Providers can declare models directly, inherit a built-in catalog, or discover m
 models: { inherit: "anthropic", include: ["claude-sonnet-*"] }
 ```
 
+An adapter can retain those model IDs while replacing transport-specific
+metadata such as subscription pricing:
+
+```ts
+models: {
+  inherit: "anthropic",
+  patch: { cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
+}
+```
+
 ```ts
 models: async ({ fetch, signal }) => {
   const response = await fetch("http://localhost:11434/v1/models", { signal });
@@ -234,7 +246,7 @@ transport: {
 }
 ```
 
-The custom boundary is owned and versioned by AgentUse; plugins do not import AI SDK types or receive internal provider factories. A request contains normalized messages, function tools, tool choice, common sampling options, provider options, and an abort signal.
+The custom boundary is owned and versioned by AgentUse; extensions do not import AI SDK types or receive internal provider factories. A request contains normalized messages, function tools, tool choice, common sampling options, provider options, and an abort signal.
 
 Custom streams emit these events:
 
@@ -281,7 +293,7 @@ auth: {
 
 Login interaction is UI-neutral and supports browser authorization, device codes, prompts, selections, and notifications. The same plugin therefore works in the terminal, desktop app, server, and CI environments.
 
-Credentials with a numeric `expires` property are refreshed five minutes before expiry. AgentUse serializes refreshes and persists the returned credential before resolving request authentication.
+Credentials with a numeric `expires` property are refreshed five minutes before expiry. AgentUse serializes refreshes and persists the returned credential before resolving request authentication. Declared environment credentials are resolved first, so an explicit process token is never blocked by an expired stored credential. When an adapter takes ownership of legacy provider OAuth, AgentUse moves it atomically into the adapter's method-specific credential slot.
 
 ### Provider-owned prompts
 
@@ -300,7 +312,7 @@ prompts: {
 }
 ```
 
-Non-portable contributions are removed when model fallback crosses providers. Their IDs are scoped to the registering provider; plugins do not need to compare raw system-message strings.
+Non-portable contributions are removed when model fallback crosses providers. Their IDs are scoped to the registering provider; extensions do not need to compare raw system-message strings.
 
 ### Built-in provider adapters, patches, and overrides
 
@@ -311,6 +323,10 @@ predicate returns `false`, the built-in provider continues unchanged:
 ```ts
 agentuse.registerProvider("openai", {
   name: "Acme SSO transport",
+  models: {
+    inherit: "openai",
+    patch: { cost: { input: 0, output: 0 } },
+  },
   transport: {
     kind: "openai-responses",
     baseURL: "https://models.acme.test/v1",
@@ -328,7 +344,9 @@ receives the normal provider runtime context, including scoped authentication,
 and is evaluated whenever AgentUse selects provider behavior. If several
 adapters match, the highest `priority` wins; equal priorities retain plugin
 registration order. The selected adapter owns transport, authentication,
-prompt contributions, and media capabilities for that request.
+model metadata, prompt contributions, and media capabilities for that request.
+If `models` is omitted, the existing provider catalog and model IDs are
+inherited unchanged.
 
 A plugin can patch a built-in endpoint without replacing its models:
 
@@ -367,12 +385,12 @@ A Git repository package declares its resources in `package.json`:
   },
   "agentuse": {
     "apiVersion": 1,
-    "plugins": ["./src/index.ts"]
+    "extensions": ["./src/index.ts"]
   }
 }
 ```
 
-Plugin entry paths must stay inside the package. Runtime dependencies belong in `dependencies`. Git installation uses `npm install --omit=dev --ignore-scripts`; package lifecycle scripts never run implicitly.
+Extension entry paths must stay inside the plugin package. Runtime dependencies belong in `dependencies`. Git installation uses `npm install --omit=dev --ignore-scripts`; package lifecycle scripts never run implicitly.
 
 ## Installing and managing packages
 

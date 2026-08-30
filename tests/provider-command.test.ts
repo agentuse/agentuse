@@ -200,6 +200,7 @@ describe('createProviderCommand', () => {
       name: 'Anthropic',
       configured: false,
       sources: [],
+      actionRequired: 'Claude subscription OAuth is present but its provider plugin is not installed',
     });
     expect(result.providers.find((provider: any) => provider.id === 'openrouter').sources).toEqual([{
       priority: 2,

@@ -22,7 +22,7 @@ import { logger } from '../utils/logger';
 import { findProjectRoot } from '../utils/project';
 import { PluginHost } from './host';
 import { currentInstalledPluginHost, currentPluginHost, currentPluginProjectRoot, enterInstalledPluginHost } from './context';
-import { importPluginModule, readPackageManifest, type ResolvedPackageManifest } from './loader';
+import { importExtensionModule, readPackageManifest, type ResolvedPackageManifest } from './loader';
 import type {
   AuthInteraction,
   InstalledPluginRecord,
@@ -87,9 +87,9 @@ export async function loadPluginPackageDirectory(
   const manifest = await readPackageManifest(root);
   const host = new PluginHost();
   try {
-    for (const entry of manifest.agentuse.plugins) {
+    for (const entry of manifest.agentuse.extensions) {
       const source = resolve(root, entry);
-      await host.activate({ name: manifest.name, version: manifest.version, source, scope }, await importPluginModule(source));
+      await host.activate({ name: manifest.name, version: manifest.version, source, scope }, await importExtensionModule(source));
     }
     await Promise.all(host.listProviders().map((provider) => discoverProviderModels(provider)));
     return { manifest, host };
@@ -119,14 +119,14 @@ export async function getInstalledPluginHost(): Promise<PluginHost> {
         const packageRegistrations: Array<{ dispose(): void | Promise<void> }> = [];
         try {
           const manifest = await readPackageManifest(record.directory);
-          for (const entry of manifest.agentuse.plugins) {
+          for (const entry of manifest.agentuse.extensions) {
             const source = resolve(record.directory, entry);
             packageRegistrations.push(await host.activate({
               name: manifest.name,
               version: manifest.version,
               source,
               scope: record.scope ?? 'global',
-            }, await importPluginModule(source)));
+            }, await importExtensionModule(source)));
           }
         } catch (error) {
           await Promise.allSettled(packageRegistrations.reverse().map((item) => item.dispose()));
@@ -151,20 +151,12 @@ export async function loadProviderPlugins(): Promise<ProviderDefinition[]> {
   const candidates = [...local, ...installed];
   const providers: ProviderDefinition[] = [];
   for (const provider of candidates) {
-    let discovered: ProviderModelDefinition[];
     try {
-      discovered = await discoverProviderModels(provider);
+      await cacheProviderMetadata(provider);
     } catch (error) {
       logger.warn(`Failed to discover models for plugin provider ${provider.id}: ${error instanceof Error ? error.message : String(error)}`);
       continue;
     }
-    const catalog = provider.models;
-    if (catalog && !Array.isArray(catalog) && typeof catalog === 'object' && 'inherit' in catalog) {
-      registryProviderCache.set(provider.id, catalog.inherit);
-    }
-    transportCache.set(provider.id, provider.transport);
-    resolvedModelCache.set(provider.id, new Map(discovered.map((model) => [model.id, model])));
-    resolvedModelsByProvider.set(provider, new Map(discovered.map((model) => [model.id, model])));
     providers.push(provider);
   }
   return providers;
@@ -178,7 +170,7 @@ function adapterProvider(providerId: string, adapter: ProviderAdapter): Provider
   return {
     id: providerId,
     name: adapter.name,
-    models: { inherit: providerId },
+    models: adapter.models ?? { inherit: providerId },
     transport: adapter.transport,
     ...(adapter.auth && { auth: adapter.auth }),
     ...(adapter.prompts && { prompts: adapter.prompts }),
@@ -204,8 +196,12 @@ export async function getActiveProviderAdapter(
 ): Promise<ProviderDefinition | undefined> {
   for (const candidate of await getProviderAdapters(id)) {
     const context = createProviderPluginContext(candidate.provider, modelId, signal);
-    if (await candidate.adapter.when(context)) return candidate.provider;
+    if (await candidate.adapter.when(context)) {
+      await cacheProviderMetadata(candidate.provider);
+      return candidate.provider;
+    }
   }
+  clearProviderMetadata(id);
   return undefined;
 }
 
@@ -216,8 +212,12 @@ export async function getProviderPatch(id: string) {
   return { ...installed, ...local, headers: { ...installed?.headers, ...local.headers } };
 }
 
-function registryModelDefinition(id: string, model: ModelInfo): ProviderModelDefinition {
-  return {
+function registryModelDefinition(
+  id: string,
+  model: ModelInfo,
+  patch?: Partial<Omit<ProviderModelDefinition, 'id' | 'name'>>,
+): ProviderModelDefinition {
+  const base: ProviderModelDefinition = {
     id,
     name: model.name,
     input: model.modalities.input.filter((item): item is 'text' | 'image' | 'pdf' | 'audio' =>
@@ -227,6 +227,13 @@ function registryModelDefinition(id: string, model: ModelInfo): ProviderModelDef
     maxOutputTokens: model.limit.output,
     cost: { input: model.cost.input, output: model.cost.output },
     capabilities: { tools: model.toolCall },
+  };
+  return {
+    ...base,
+    ...patch,
+    ...(patch?.cost && { cost: { ...base.cost, ...patch.cost } }),
+    ...(patch?.capabilities && { capabilities: { ...base.capabilities, ...patch.capabilities } }),
+    ...(patch?.compatibility && { compatibility: { ...base.compatibility, ...patch.compatibility } }),
   };
 }
 
@@ -248,7 +255,7 @@ export async function discoverProviderModels(provider: ProviderDefinition): Prom
       return Object.entries(inherited)
         .filter(([id]) => !spec.include || spec.include.some((pattern) => minimatch(id, pattern)))
         .filter(([id]) => !spec.exclude?.some((pattern) => minimatch(id, pattern)))
-        .map(([id, model]) => registryModelDefinition(id, model));
+        .map(([id, model]) => registryModelDefinition(id, model, spec.patch));
     })();
     discoveredModelsCache.set(provider, pending);
   }
@@ -276,6 +283,26 @@ export function loadedPluginModel(providerId: string, modelId: string): Provider
 const resolvedModelCache = new Map<string, Map<string, ProviderModelDefinition>>();
 const resolvedModelsByProvider = new WeakMap<ProviderDefinition, Map<string, ProviderModelDefinition>>();
 
+async function cacheProviderMetadata(provider: ProviderDefinition): Promise<void> {
+  const discovered = await discoverProviderModels(provider);
+  const catalog = provider.models;
+  if (catalog && !Array.isArray(catalog) && typeof catalog === 'object' && 'inherit' in catalog) {
+    registryProviderCache.set(provider.id, catalog.inherit);
+  }
+  transportCache.set(provider.id, provider.transport);
+  resolvedModelCache.set(provider.id, new Map(discovered.map((model) => [model.id, model])));
+  resolvedModelsByProvider.set(provider, new Map(discovered.map((model) => [model.id, model])));
+}
+
+function clearProviderMetadata(providerId: string): void {
+  // A standalone provider remains authoritative. This cleanup is for a
+  // conditional adapter that stopped matching after logout or env changes.
+  if (scopedProvider(providerId)) return;
+  registryProviderCache.delete(providerId);
+  transportCache.delete(providerId);
+  resolvedModelCache.delete(providerId);
+}
+
 function scopedProvider(providerId: string): ProviderDefinition | undefined {
   return currentPluginHost()?.getProvider(providerId) ?? currentInstalledPluginHost()?.getProvider(providerId);
 }
@@ -302,10 +329,10 @@ function authContext(name: string, signal?: AbortSignal): ProviderAuthContext {
 async function readCredential(providerId: string, method: ProviderAuthMethod): Promise<PluginCredential | undefined> {
   const current = await AuthStorage.getPluginCredential(providerId, method.id);
   if (current) return current;
-  const providerOAuth = await AuthStorage.getOAuth(providerId);
+  const providerOAuth = await AuthStorage.migrateOAuthToPluginCredential(providerId, method.id);
   if (providerOAuth) return providerOAuth as unknown as PluginCredential;
   for (const alias of method.credentialAliases ?? []) {
-    const oauth = await AuthStorage.getOAuth(alias);
+    const oauth = await AuthStorage.migrateOAuthToPluginCredential(providerId, method.id, alias);
     if (oauth) return oauth as unknown as PluginCredential;
   }
   return undefined;
@@ -331,6 +358,14 @@ export async function resolveProviderAuth(
   const method = methodId ? methods.find((item) => item.id === methodId) : methods[0];
   if (!method) return undefined;
   const context = authContext(provider.id, signal);
+
+  // Explicit environment credentials must win without touching or refreshing
+  // stale stored state.
+  if (method.environment?.some((name) => Boolean(context.env[name]))) {
+    const environmentAuth = await method.resolve({}, context);
+    if (environmentAuth) return environmentAuth;
+  }
+
   let credential = await readCredential(provider.id, method);
 
   if (credential && method.refresh && needsRefresh(credential)) {
@@ -410,6 +445,20 @@ export function createProviderPluginContext(
     modelId,
     auth: { resolve: (methodId) => resolveProviderAuth(provider, methodId, signal) },
   };
+}
+
+export function mergeProviderTransportHeaders(headers: Headers, additions: Record<string, string>): void {
+  for (const [name, value] of Object.entries(additions)) {
+    const existing = headers.get(name);
+    if (name.toLowerCase() !== 'anthropic-beta' || !existing) {
+      headers.set(name, value);
+      continue;
+    }
+    const values = [...existing.split(','), ...value.split(',')]
+      .map((item) => item.trim())
+      .filter(Boolean);
+    headers.set(name, [...new Set(values)].join(','));
+  }
 }
 
 function mergeAuthHeaders(headers: Headers, auth: ResolvedProviderAuth | undefined): void {
@@ -635,9 +684,21 @@ export async function createProviderPluginModel(provider: ProviderDefinition, mo
   const transport = provider.transport;
   const authenticatedFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const headers = new Headers(init?.headers);
-    for (const [name, value] of Object.entries(transport.headers ?? {})) headers.set(name, value);
+    mergeProviderTransportHeaders(headers, transport.headers ?? {});
     mergeAuthHeaders(headers, await context.auth.resolve());
-    return context.fetch(input, { ...init, headers, signal: init?.signal ?? context.signal });
+    if (initialAuth?.bearerToken && transport.baseURL) {
+      const actual = new URL(input instanceof Request ? input.url : input);
+      const expected = new URL(transport.baseURL);
+      if (actual.origin !== expected.origin) {
+        throw new Error(`Refusing to send ${provider.name} bearer credentials to ${actual.origin}`);
+      }
+    }
+    return context.fetch(input, {
+      ...init,
+      headers,
+      signal: init?.signal ?? context.signal,
+      ...(initialAuth?.bearerToken && { redirect: 'error' as const }),
+    });
   };
 
   if (transport.kind === 'anthropic-messages') {

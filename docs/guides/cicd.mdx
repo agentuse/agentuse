@@ -46,10 +46,10 @@ Add ONE of these secrets to your repository (**Settings → Secrets → Actions*
 | `OPENAI_API_KEY` | OpenAI | [platform.openai.com](https://platform.openai.com) | GPT models |
 | `OPENROUTER_API_KEY` | OpenRouter | [openrouter.ai](https://openrouter.ai) | Multi-provider |
 | `OPENCODE_GO_API_KEY` | OpenCode Go | [opencode.ai/auth](https://opencode.ai/auth) | Open coding models |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Pro/Max | `npx agentuse auth setup-github` | Subscription users |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Pro/Max | `npx agentuse auth setup-github` | Subscription users; provider plugin required |
 
 <Note>
-For Claude Pro/Max users, run `npx agentuse auth setup-github` in your project directory. Follow the instructions and the command will write the secret to GitHub for you.
+For Claude Pro/Max users, install the Claude Code subscription provider plugin in the project or runner image, then run `npx agentuse auth setup-github` in your project directory. The command writes the token secret to GitHub; the token alone does not install or activate its transport.
 </Note>
 
 ### 3. Done

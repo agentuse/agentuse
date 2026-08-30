@@ -86,20 +86,20 @@ export function toRegistryKey(modelString: string): string {
 
 /** Registry-compatible metadata for built-in and plugin-declared models. */
 export function resolveModelInfo(modelString: string): ModelInfo | undefined {
-  const registry = getModelFromRegistry(toRegistryKey(modelString));
-  if (registry) return registry;
   const { provider, modelId } = splitModelString(modelString);
   const plugin = loadedPluginModel(provider, modelId);
-  if (!plugin) return undefined;
-  return {
-    id: plugin.id,
-    name: plugin.name,
-    reasoning: Boolean(plugin.reasoning),
-    toolCall: plugin.capabilities?.tools ?? true,
-    modalities: { input: plugin.input, output: ['text'] },
-    limit: { context: plugin.contextWindow, output: plugin.maxOutputTokens },
-    cost: { input: plugin.cost?.input ?? 0, output: plugin.cost?.output ?? 0 },
-  };
+  if (plugin) {
+    return {
+      id: plugin.id,
+      name: plugin.name,
+      reasoning: Boolean(plugin.reasoning),
+      toolCall: plugin.capabilities?.tools ?? true,
+      modalities: { input: plugin.input, output: ['text'] },
+      limit: { context: plugin.contextWindow, output: plugin.maxOutputTokens },
+      cost: { input: plugin.cost?.input ?? 0, output: plugin.cost?.output ?? 0 },
+    };
+  }
+  return getModelFromRegistry(toRegistryKey(modelString));
 }
 
 export interface ValidationResult {

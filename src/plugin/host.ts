@@ -1,7 +1,7 @@
 import { BUILTIN_PROVIDERS } from '../providers/registry-sources';
 import { logger } from '../utils/logger';
 import {
-  type AgentUsePlugin,
+  type AgentUseExtension,
   type AgentUsePluginAPI,
   type Disposable,
   type PluginEventContext,
@@ -20,7 +20,7 @@ import {
 import type { PluginIdentity } from './internal-types';
 
 interface Registration<T> { owner: PluginIdentity; value: T }
-interface ActivatedPlugin { identity: PluginIdentity; disposables: Disposable[] }
+interface ActivatedExtension { identity: PluginIdentity; disposables: Disposable[] }
 
 function pluginLogger(identity: PluginIdentity): PluginLogger {
   const prefix = `[Plugin ${identity.name}]`;
@@ -76,7 +76,7 @@ function validateProviderAdapter(providerId: string, adapter: ProviderAdapter, i
   validateProvider({
     id: `adapter-${providerId}`,
     name: adapter.name,
-    models: [],
+    models: adapter.models ?? [],
     transport: adapter.transport,
     ...(adapter.auth && { auth: adapter.auth }),
     ...(adapter.prompts && { prompts: adapter.prompts }),
@@ -89,7 +89,7 @@ export class PluginHost {
   private providers = new Map<string, Registration<ProviderDefinition>>();
   private patches = new Map<string, Array<Registration<ProviderPatch>>>();
   private adapters = new Map<string, Array<Registration<ProviderAdapter>>>();
-  private activated: ActivatedPlugin[] = [];
+  private activated: ActivatedExtension[] = [];
 
   async activate(identity: PluginIdentity, exported: unknown): Promise<Disposable> {
     const disposables: Disposable[] = [];
@@ -149,14 +149,14 @@ export class PluginHost {
 
     try {
       if (typeof exported === 'function') {
-        await (exported as AgentUsePlugin)(api);
+        await (exported as AgentUseExtension)(api);
       } else if (isLegacyEventPlugin(exported)) {
         for (const [event, handler] of Object.entries(exported) as Array<[keyof PluginEvents, (event: any) => unknown]>) {
           api.on(event, async (payload) => { await handler(payload); });
         }
         log.debug('Loaded through the legacy event-object compatibility adapter');
       } else {
-        throw new Error('Invalid plugin format: default export must be an AgentUse activation function or legacy event-handler object');
+        throw new Error('Invalid extension format: default export must be an AgentUse activation function or legacy event-handler object');
       }
       const activated = { identity, disposables };
       this.activated.push(activated);
