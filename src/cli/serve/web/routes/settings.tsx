@@ -119,7 +119,9 @@ export default function Settings() {
         <header>
           <div class="eyebrow">dashboard</div>
           <h1>Preferences</h1>
-          <p class="lede">{isDesktop ? 'Saved in the Dashboard on this Mac.' : 'Saved in this browser only.'}</p>
+          <p class="lede">{isDesktop
+            ? 'Interface preferences are saved in the Dashboard on this Mac. Provider credentials are stored by AgentUse on this Mac.'
+            : 'Interface preferences are saved in this browser. Provider credentials are stored on the AgentUse server host.'}</p>
         </header>
 
         {isDesktop && (

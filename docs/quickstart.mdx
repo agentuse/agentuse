@@ -60,16 +60,17 @@ flow.
     Describe what the agent should do, choose a creator model from a connected
     provider, and select **Create agent**. That model is used only to design and
     name a focused agent using AgentUse authoring guidance; it independently
-    chooses the best available runtime model for the job. AgentUse validates
-    both the generated source and runtime-model choice before persisting it in
-    the project and showing it immediately. If
+    chooses a suitable runtime model from the connected providers. AgentUse
+    validates the generated source, runtime-model choice, and static safety
+    guardrails before persisting it in the project and showing it immediately.
+    The saved agent still needs your review before its first run. If
     you prefer to work hands-on, use **Copy prompt to coding agent** instead;
     the prepared handoff carries your task and keeps the existing validation
     workflow as an escape hatch.
   </Step>
 
   <Step title="Run it">
-    When AgentUse detects the new agent, select **Open agent**, review it, and
+    When AgentUse detects the new agent, select **Review agent**, review it, and
     start its first real run. If detection takes too long, you can copy the
     prompt again or check manually without leaving onboarding.
   </Step>

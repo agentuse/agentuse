@@ -22,7 +22,7 @@ export interface AgentCreationDraft {
 }
 
 function defaultModel(payload: AgentCreationOptionsPayload): string {
-  return payload.providers[0]?.models[0] ?? '';
+  return payload.providers[0]?.defaultModel ?? payload.providers[0]?.models[0] ?? '';
 }
 
 export function buildAgentCreationPrompt(draft: AgentCreationDraft, providerStatus?: ProviderStatus): string {
@@ -90,6 +90,7 @@ export function AgentCreateDialog(props: {
   const [projectId, setProjectId] = useState('');
   const [providerId, setProviderId] = useState('');
   const [model, setModel] = useState('');
+  const [agentName, setAgentName] = useState('');
   const [objective, setObjective] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -122,20 +123,20 @@ export function AgentCreateDialog(props: {
     setPhase('form');
     setLogText('');
     setCreatedAgent(null);
+    setProjectId('');
+    setProviderId('');
+    setModel('');
+    setAgentName('');
+    setObjective('');
     sawDraftRef.current = false;
     errorReportedRef.current = false;
     void fetchAgentCreationOptions().then((next) => {
       setPayload(next);
-      setProjectId((current) => {
-        if (current && next.projects.some((project) => project.id === current)) return current;
-        return props.initialProjectId && next.projects.some((project) => project.id === props.initialProjectId)
-          ? props.initialProjectId
-          : next.default ?? next.projects[0]?.id ?? '';
-      });
-      setProviderId((current) => next.providers.some((provider) => provider.id === current)
-        ? current
-        : next.providers[0]?.id ?? '');
-      setModel((current) => current || defaultModel(next));
+      setProjectId(props.initialProjectId && next.projects.some((project) => project.id === props.initialProjectId)
+        ? props.initialProjectId
+        : next.default ?? next.projects[0]?.id ?? '');
+      setProviderId(next.providers[0]?.id ?? '');
+      setModel(defaultModel(next) || (next.providers[0]?.custom ? `${next.providers[0].id}:` : ''));
     }, (caught) => setError((caught as Error).message || 'Could not load agent creation options.'));
   }, [props.open, props.initialProjectId]);
 
@@ -143,19 +144,22 @@ export function AgentCreateDialog(props: {
   const project = payload?.projects.find((item) => item.id === projectId);
   const customProvider = provider?.custom === true;
   const modelLabel = model.startsWith(`${providerId}:`) ? model.slice(providerId.length + 1) : model;
-  const canSubmit = Boolean(projectId && objective.trim() && model.trim() && !busy);
+  const modelReady = customProvider
+    ? model.startsWith(`${providerId}:`) && Boolean(model.slice(providerId.length + 1).trim())
+    : Boolean(model.trim());
+  const canSubmit = Boolean(projectId && objective.trim() && modelReady && !busy);
   const draft = useMemo<AgentCreationDraft>(() => ({
     projectId,
     projectPath: project?.path ?? '',
-    name: '',
+    name: agentName.trim(),
     objective: objective.trim(),
     model: model.trim(),
-  }), [projectId, project?.path, objective, model]);
+  }), [projectId, project?.path, agentName, objective, model]);
 
   const selectProvider = (nextProviderId: string) => {
     setProviderId(nextProviderId);
     const next = payload?.providers.find((item) => item.id === nextProviderId);
-    setModel(next?.models[0] ?? (next?.custom ? `${next.id}:` : ''));
+    setModel(next?.defaultModel ?? next?.models[0] ?? (next?.custom ? `${next.id}:` : ''));
   };
 
   const submit = async () => {
@@ -171,7 +175,12 @@ export function AgentCreateDialog(props: {
     errorReportedRef.current = false;
     try {
       const agent = await createAgentWithProgress(
-        { project: projectId, objective: objective.trim(), model: model.trim() },
+        {
+          project: projectId,
+          ...(agentName.trim() && { name: agentName.trim() }),
+          objective: objective.trim(),
+          model: model.trim(),
+        },
         (event) => {
           if (event.type === 'status') {
             setLogText((current) => `${current}\n[agentuse] ${event.message}\n`);
@@ -180,7 +189,7 @@ export function AgentCreateDialog(props: {
             sawDraftRef.current = true;
             setLogText((current) => `${current}${heading}${event.text}`);
           } else if (event.type === 'complete') {
-            setLogText((current) => `${current}\n[agentuse] Created ${event.agent.name}\n`);
+            setLogText((current) => `${current}\n[agentuse] Saved ${event.agent.name}\n`);
           } else {
             errorReportedRef.current = true;
             setError(event.error.message);
@@ -221,11 +230,11 @@ export function AgentCreateDialog(props: {
       <div class="dialog-head"><span id="agent-create-title" class="title">{props.title ?? 'new agent'}</span><button type="button" class="dialog-close" aria-label={busy ? 'Cancel agent creation' : 'Close'} onClick={close}>×</button></div>
       <div class="agent-create-body">
         <div class="agent-create-intro">
-          <strong>{phase === 'form' ? 'Create an agent' : phase === 'success' ? 'Agent created' : phase === 'error' ? 'Creation stopped' : 'Creating your agent'}</strong>
+          <strong>{phase === 'form' ? 'Create an agent' : phase === 'success' ? 'Agent saved' : phase === 'error' ? 'Creation stopped' : 'Creating your agent'}</strong>
           <span>{phase === 'form'
             ? 'Describe the job. Choose a model to design the agent.'
             : phase === 'success'
-              ? `${createdAgent?.name ?? 'Your agent'} is saved and ready to use.`
+              ? `${createdAgent?.name ?? 'Your agent'} is saved. Review its model, tools, and instructions before running it.`
               : phase === 'error'
                 ? 'Review what happened below, then return to the form and try again.'
                 : `${modelLabel} is designing the agent from your brief.`}</span>
@@ -238,7 +247,8 @@ export function AgentCreateDialog(props: {
             ) : project ? (
               <div class="agent-create-project"><span>Project</span><strong>{project.id}</strong><code>{project.path}</code></div>
             ) : null}
-            <label class="agent-create-field"><span>What should this agent do?</span><textarea value={objective} placeholder="Summarize new support tickets every morning and highlight urgent replies." disabled={busy} {...noAutofill} onInput={(event) => setObjective((event.target as HTMLTextAreaElement).value)} /></label>
+            <label class="agent-create-field"><span>What should this agent do?</span><textarea value={objective} placeholder="Summarize new support tickets and highlight urgent replies." disabled={busy} {...noAutofill} onInput={(event) => setObjective((event.target as HTMLTextAreaElement).value)} /></label>
+            <label class="agent-create-field"><span>Agent name <em>optional</em></span><input value={agentName} placeholder="Support Ticket Triage" disabled={busy} {...noAutofill} onInput={(event) => setAgentName((event.target as HTMLInputElement).value)} /></label>
             <div class="agent-create-model-row">
               <div class="agent-create-field"><span>Creator provider</span><DashboardSelect value={providerId} options={payload.providers.map((item) => ({ value: item.id, label: item.name }))} disabled={busy} onChange={selectProvider} ariaLabel="Creator provider" /></div>
               {customProvider ? (
@@ -247,7 +257,7 @@ export function AgentCreateDialog(props: {
                 <div class="agent-create-field"><span>Creator model</span><DashboardSelect value={model} options={(provider?.models ?? []).map((item) => ({ value: item, label: item.replace(`${providerId}:`, '') }))} disabled={busy} onChange={setModel} ariaLabel="Creator model" /></div>
               )}
             </div>
-            <span class="agent-create-model-hint">Used only to create the agent. It will choose the best available runtime model for the job.</span>
+            <span class="agent-create-model-hint">Used only to create the agent. It will choose a suitable connected runtime model for the job.</span>
             {error && <p class="agent-create-error" role="alert">{error}</p>}
             <div class="agent-create-actions">
               <button type="button" class="agent-create-primary" disabled={!canSubmit} aria-busy={busy} onClick={() => void submit()}>{busy ? `Designing with ${modelLabel}…` : 'Create agent'}</button>
@@ -264,7 +274,7 @@ export function AgentCreateDialog(props: {
               {phase === 'creating'
                 ? <span class="btn-spinner" aria-hidden="true" />
                 : <span class="agent-create-progress-mark" aria-hidden="true">{phase === 'success' ? '✓' : '!'}</span>}
-              <span>{phase === 'creating' ? `Working with ${modelLabel}` : phase === 'success' ? 'Creation complete' : 'Could not create the agent'}</span>
+              <span>{phase === 'creating' ? `Working with ${modelLabel}` : phase === 'success' ? 'Agent saved' : 'Could not create the agent'}</span>
             </div>
             <label class="agent-create-log-label" for="agent-create-log">Creation log</label>
             <textarea
@@ -280,7 +290,7 @@ export function AgentCreateDialog(props: {
             {phase === 'creating' && <span class="agent-create-progress-hint">Keep this window open while the model finishes the draft.</span>}
             <div class="agent-create-progress-actions">
               {phase === 'error' && <button type="button" class="agent-create-escape" onClick={backToEdit}>Back to edit</button>}
-              {phase === 'success' && createdAgent && <button type="button" class="agent-create-primary" onClick={() => props.onCreated(createdAgent)}>{props.completeLabel ?? 'Open agent'}</button>}
+              {phase === 'success' && createdAgent && <button type="button" class="agent-create-primary" onClick={() => props.onCreated(createdAgent)}>{props.completeLabel ?? 'Review agent'}</button>}
             </div>
           </div>
         )}

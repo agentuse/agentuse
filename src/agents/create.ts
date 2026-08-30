@@ -3,7 +3,7 @@ import { link, lstat, mkdir, open, realpath, unlink } from 'node:fs/promises';
 import { isAbsolute, join, relative } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import * as YAML from 'yaml';
-import { getSuggestedModelIds } from '../generated/models.js';
+import { getAllModelIds, getModelFromRegistry } from '../generated/models.js';
 import { parseAgentContent } from '../parser.js';
 import { OPENCODE_GO_MODELS, OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go.js';
 import type { ProviderStatus } from '../auth/provider-status.js';
@@ -35,6 +35,7 @@ export interface AgentCreationProvider {
   id: string;
   name: string;
   models: string[];
+  defaultModel?: string;
   custom?: true;
 }
 
@@ -53,7 +54,7 @@ const OBJECTIVE_MAX = 12_000;
 const MODEL_MAX = 500;
 const SOURCE_MAX = 64_000;
 
-function cleanName(value: unknown): string {
+export function validateAgentName(value: unknown): string {
   if (typeof value !== 'string') throw new AgentCreationError('INVALID_AGENT', 'Agent name is required');
   const name = value.trim().replace(/\s+/g, ' ');
   if (!name) throw new AgentCreationError('INVALID_AGENT', 'Agent name is required');
@@ -117,16 +118,19 @@ function providerFromModel(model: string): string {
 }
 
 export function validateAgentCreationRequest(
-  input: Pick<AgentCreationInput, 'objective' | 'model'>,
+  input: Pick<AgentCreationInput, 'name' | 'objective' | 'model'>,
   configuredProviders: readonly string[],
-): { objective: string; model: string } {
+): { name?: string; objective: string; model: string } {
   const objective = cleanObjective(input.objective);
   const model = cleanModel(input.model);
   const provider = providerFromModel(model);
   if (!configuredProviders.includes(provider)) {
     throw new AgentCreationError('MODEL_NOT_CONFIGURED', `Connect ${provider} before creating an agent with ${model}`);
   }
-  return { objective, model };
+  const name = input.name === undefined || input.name === null || (typeof input.name === 'string' && !input.name.trim())
+    ? undefined
+    : validateAgentName(input.name);
+  return { ...(name && { name }), objective, model };
 }
 
 function agentSlug(name: string): string {
@@ -150,21 +154,59 @@ function renderAgent(name: string, model: string, objective: string, description
   return `---\n${frontmatter}\n---\n\n${objective}\n`;
 }
 
-/** Providers and curated model choices available to the dashboard create flow. */
-export function agentCreationProviders(status: ProviderStatus): AgentCreationProvider[] {
-  const suggestions = getSuggestedModelIds();
+const BALANCED_CREATOR_DEFAULTS: Readonly<Record<string, string>> = {
+  anthropic: 'anthropic:claude-sonnet-5',
+  openai: 'openai:gpt-5.6-terra',
+  openrouter: 'openrouter:google/gemini-3.6-flash',
+  [OPENCODE_GO_PROVIDER_ID]: `${OPENCODE_GO_PROVIDER_ID}:glm-5.1`,
+};
+
+function registryModelsForProvider(providerId: string): string[] {
+  return getAllModelIds().filter((model) => {
+    if (!model.startsWith(`${providerId}:`)) return false;
+    const info = getModelFromRegistry(model);
+    return info?.modalities.output.length === 1 && info.modalities.output[0] === 'text';
+  });
+}
+
+function orderModels(models: readonly string[], preferredModel: string | undefined, balancedModel: string | undefined): string[] {
+  const priority = [preferredModel, balancedModel].filter((model): model is string => Boolean(model) && models.includes(model!));
+  return [...new Set([...priority, ...models])];
+}
+
+/** Providers and text-output models available to the dashboard create flow.
+ * The optional configured default wins when that provider can run it; otherwise
+ * each first-class provider starts on a deliberately balanced authoring model. */
+export function agentCreationProviders(status: ProviderStatus, preferredModel?: string): AgentCreationProvider[] {
   const providers: AgentCreationProvider[] = [];
   for (const provider of status.providers) {
     if (!provider.configured) continue;
-    const models = provider.id === OPENCODE_GO_PROVIDER_ID
+    const catalog = provider.id === OPENCODE_GO_PROVIDER_ID
       ? OPENCODE_GO_MODELS.map((model) => `${OPENCODE_GO_PROVIDER_ID}:${model.id}`)
-      : suggestions.filter((model) => model.startsWith(`${provider.id}:`));
-    providers.push({ id: provider.id, name: provider.name, models });
+      : registryModelsForProvider(provider.id);
+    const models = orderModels(catalog, preferredModel, BALANCED_CREATOR_DEFAULTS[provider.id]);
+    providers.push({
+      id: provider.id,
+      name: provider.name,
+      models,
+      ...(models[0] && { defaultModel: models[0] }),
+    });
   }
   for (const provider of status.customProviders) {
-    if (provider.hasApiKey) providers.push({ id: provider.id, name: provider.id, models: [], custom: true });
+    const defaultModel = preferredModel?.startsWith(`${provider.id}:`) ? preferredModel : undefined;
+    providers.push({
+      id: provider.id,
+      name: provider.id,
+      models: defaultModel ? [defaultModel] : [],
+      ...(defaultModel && { defaultModel }),
+      custom: true,
+    });
   }
-  return providers;
+  if (!preferredModel) return providers;
+  const preferredProvider = providerFromModel(preferredModel);
+  const preferredIndex = providers.findIndex((provider) => provider.id === preferredProvider);
+  if (preferredIndex <= 0) return providers;
+  return [providers[preferredIndex]!, ...providers.slice(0, preferredIndex), ...providers.slice(preferredIndex + 1)];
 }
 
 /**
@@ -178,10 +220,8 @@ export async function createAgentFile(
   input: AgentCreationInput,
   configuredProviders: readonly string[],
 ): Promise<CreatedAgentFile> {
-  const { objective, model } = validateAgentCreationRequest(input, configuredProviders);
-  const name = input.name === undefined || input.name === null || (typeof input.name === 'string' && !input.name.trim())
-    ? deriveAgentName(objective)
-    : cleanName(input.name);
+  const { name: requestedName, objective, model } = validateAgentCreationRequest(input, configuredProviders);
+  const name = requestedName ?? deriveAgentName(objective);
   let description = oneLineDescription(objective);
   let source = renderAgent(name, model, objective, description);
   let parsed;
@@ -196,7 +236,10 @@ export async function createAgentFile(
       }
       parsed = parseAgentContent(source, '');
       if (!parsed.name) throw new AgentCreationError('INVALID_AGENT', 'The generated agent must declare a name');
-      cleanName(parsed.name);
+      validateAgentName(parsed.name);
+      if (requestedName && parsed.name !== requestedName) {
+        throw new AgentCreationError('INVALID_AGENT', `The generated agent must use the requested name ${requestedName}`);
+      }
       if (!parsed.instructions.trim()) throw new AgentCreationError('INVALID_AGENT', 'The generated agent must include instructions');
       if (parsed.config.model !== model) {
         throw new AgentCreationError('INVALID_AGENT', `The generated agent must use the selected model ${model}`);
@@ -211,7 +254,7 @@ export async function createAgentFile(
     throw new AgentCreationError('INVALID_AGENT', (error as Error).message);
   }
 
-  const persistedName = cleanName(parsed.name);
+  const persistedName = validateAgentName(parsed.name);
   const slug = agentSlug(persistedName);
 
   const agentDir = project.scopeRoot === project.root ? join(project.scopeRoot, 'agents') : project.scopeRoot;
@@ -240,7 +283,7 @@ export async function createAgentFile(
   } catch (error) {
     await handle?.close().catch(() => undefined);
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-      throw new AgentCreationError('AGENT_EXISTS', `An agent named “${persistedName}” already exists at ${relative(realRoot, absolutePath)}`);
+      throw new AgentCreationError('AGENT_EXISTS', `An agent named “${persistedName}” already exists at ${relative(realRoot, absolutePath)}. Choose a different agent name and try again.`);
     }
     if (error instanceof AgentCreationError) throw error;
     throw new AgentCreationError('CREATE_FAILED', `Could not create agent: ${(error as Error).message}`);

@@ -14,6 +14,7 @@ import {
   startProviderOAuth,
 } from '../src/auth/provider-setup';
 import { AuthStorage } from '../src/auth/storage';
+import { hasConfiguredProvider } from '../src/cli/serve/web/components/provider-setup';
 
 const ENV_KEYS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'OPENCODE_GO_API_KEY'];
 
@@ -65,6 +66,14 @@ describe('Dashboard provider setup service', () => {
 
     await expect(saveCustomProvider({ name: 'openai', baseURL: 'http://localhost:11434/v1' })).rejects.toThrow('reserved');
     expect((await removeCustomProvider('local_models')).status.customProviders).toEqual([]);
+  });
+
+  it('treats a saved keyless custom endpoint as ready for agent creation', () => {
+    expect(hasConfiguredProvider({
+      credentialStore: '/redacted/path',
+      providers: [{ id: 'openai', name: 'OpenAI', configured: false, sources: [] }],
+      customProviders: [{ id: 'ollama', baseURL: 'http://localhost:11434/v1', hasApiKey: false }],
+    })).toBe(true);
   });
 
   it('returns the provider catalog and active environment sources without exposing values', async () => {

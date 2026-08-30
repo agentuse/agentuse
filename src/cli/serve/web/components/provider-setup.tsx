@@ -14,7 +14,7 @@ import { DashboardSelect } from './dashboard-select';
 
 export function hasConfiguredProvider(status: ProviderStatus | undefined): boolean {
   return Boolean(status?.providers.some((provider) => provider.configured)
-    || status?.customProviders.some((provider) => provider.hasApiKey));
+    || status?.customProviders.length);
 }
 
 function ProviderSetupForm(props: {
@@ -117,7 +117,7 @@ function ProviderSetupForm(props: {
               <a href={flow.url} target="_blank" rel="noreferrer">Open authorization page</a>
               <label class="provider-field"><span>{provider === 'openai' ? 'Callback URL or code' : 'Authorization code'}</span><input value={code} onInput={(event) => setCode((event.target as HTMLInputElement).value)} disabled={busy} /></label>
             </div>
-          ) : <p class="provider-method-hint">Continue in your browser. AgentUse stores the resulting OAuth credential in its local credential store.</p>}
+          ) : <p class="provider-method-hint">Continue in your browser. AgentUse stores the resulting OAuth credential on the server host in its shared credential store.</p>}
         </>
       )}
 
@@ -167,7 +167,7 @@ export function ProviderSetupDialog(props: {
     <dialog class="provider-setup-dialog" ref={dialogRef} aria-labelledby="provider-setup-title" onClose={props.onClose} onClick={(event) => { if (event.target === dialogRef.current) props.onClose(); }}>
       <div class="dialog-head"><span id="provider-setup-title" class="title">{props.title ?? 'connect a provider'}</span><button type="button" class="dialog-close" aria-label="Close" onClick={props.onClose}>×</button></div>
       <div class="provider-setup-body">
-        <div class="provider-setup-intro"><strong>Connect a model provider</strong><span>Your agents use this credential when they run from this Dashboard.</span></div>
+        <div class="provider-setup-intro"><strong>Connect a model provider</strong><span>Credentials are stored on the AgentUse server host and shared by projects that use its credential store.</span></div>
         {!payload && !error && <p class="provider-setup-loading">Loading providers…</p>}
         {error && <p class="provider-setup-error" role="alert">{error}</p>}
         {payload && <ProviderSetupForm key={props.initialProvider ?? 'default'} payload={payload} {...(props.initialProvider ? { initialProvider: props.initialProvider } : {})} {...(props.allowCustom !== undefined ? { allowCustom: props.allowCustom } : {})} onUpdated={setPayload} onComplete={props.onComplete} />}
@@ -207,7 +207,7 @@ export function ProviderSettingsGroup() {
     <>
       <section class="settings-group provider-settings-group">
         <h2 class="settings-group-title">Providers</h2>
-        <p class="settings-group-hint">Credentials available to agents running from this Dashboard.</p>
+        <p class="settings-group-hint">Stored on this AgentUse server host and shared by projects that use its credential store.</p>
         {!payload && !error && <p class="settings-group-hint">Loading providers…</p>}
         {error && <p class="settings-check-error" role="alert">{error}</p>}
         {providers.map(({ entry, status }) => {
@@ -227,7 +227,7 @@ export function ProviderSettingsGroup() {
         {payload?.status.customProviders.map((provider) => (
           <div class="settings-row provider-settings-row" key={provider.id}>
             <div class="settings-row-text"><div class="settings-row-label">{provider.id}</div><div class="settings-row-hint">{provider.baseURL}</div></div>
-            <div class="settings-row-control provider-settings-control"><span class={`provider-status${provider.hasApiKey ? ' is-ready' : ''}`}>{provider.hasApiKey ? 'Connected' : 'No key'}</span><button type="button" class="settings-item" disabled={busyKey === `custom:${provider.id}`} onClick={() => void removeCustom(provider.id)}>Remove</button></div>
+            <div class="settings-row-control provider-settings-control"><span class="provider-status is-ready">{provider.hasApiKey ? 'Connected' : 'Connected · keyless'}</span><button type="button" class="settings-item" disabled={busyKey === `custom:${provider.id}`} onClick={() => void removeCustom(provider.id)}>Remove</button></div>
           </div>
         ))}
         {payload && <div class="settings-row"><div class="settings-row-text"><div class="settings-row-label">Custom provider</div><div class="settings-row-hint">Add an OpenAI-compatible endpoint.</div></div><div class="settings-row-control"><button type="button" class="settings-item" onClick={() => setDialogProvider('custom')}>Add provider</button></div></div>}

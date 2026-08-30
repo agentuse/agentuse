@@ -1,12 +1,16 @@
 import { completeText, type CompleteTextOptions } from '../complete-text.js';
 import { parseAgentContent } from '../parser.js';
 import { helperSystemPrompt } from '../utils/anthropic.js';
-import { AgentCreationError } from './create.js';
+import { grantsArbitraryCode, grantsUnnamedSubcommands, looksEffectful } from '../tools/effectful-heuristic.js';
+import { match as wildcardMatch } from '../tools/wildcard.js';
+import { AgentCreationError, validateAgentName } from './create.js';
 
 const AUTHOR_MAX_OUTPUT_TOKENS = 6_000;
 const AUTHOR_MAX_SOURCE_CHARS = 64_000;
 
 export interface AgentAuthoringRequest {
+  /** Exact user-requested frontmatter name, when supplied. */
+  name?: string;
   objective: string;
   /** Model used for this one authoring call; it does not determine the agent runtime. */
   model: string;
@@ -38,7 +42,9 @@ function xmlText(value: string): string {
  * skill. It asks for the minimum executable contract, not a catalog of syntax. */
 export function buildAgentAuthoringPrompt(request: AgentAuthoringRequest): string {
   const availableModels = [...new Set(request.availableModels)];
+  const requestedName = request.name ? `\n<requested_name>\n${xmlText(request.name)}\n</requested_name>\n` : '';
   return `Create one production-ready AgentUse .agentuse file for this job:
+${requestedName}
 
 <requested_job>
 ${xmlText(request.objective)}
@@ -50,12 +56,13 @@ ${availableModels.map((model) => `- ${xmlText(model)}`).join('\n')}
 
 Authoring contract:
 - Return only the complete .agentuse source. The first bytes must be ---; no code fence or commentary.
-- Frontmatter must include a concise ASCII name, a short action-oriented description, and exactly one model from available_runtime_models.
+- Frontmatter must include a concise ASCII name, a short action-oriented description, and exactly one model from available_runtime_models. When requested_name is present, use it exactly as the frontmatter name.
 - Choose the runtime model independently from the model authoring this file. Pick by the hardest reasoning the finished agent performs, not by perceived importance: small/fast for mechanical high-volume work, mid-tier for most well-specified multi-step work, and top-tier only for open-ended judgment, planning, debugging, adversarial review, or difficult drafting. Prefer the least expensive tier that can do the job reliably.
 - Write the narrowest agent that can finish the requested job. Add frontmatter only when the job clearly requires it.
 - The body is the recurring prompt: state the outcome, required input, deliverable, and material boundaries. Let the runtime model choose ordinary methods.
 - If the job needs input or an integration that was not specified, accept it from the run prompt; do not invent credentials, paths, skills, tools, destinations, schedules, or subagents.
 - Declare only capabilities the job clearly needs. Gate irreversible bash actions in tools.bash.gated; never rely on prose as the safety boundary.
+- Do not add a schedule or notification channel in this guided flow. The user reviews and enables automation separately.
 - Do not add generic advice, speculative branches, runtime protocols, hidden HTML comments, or instructions to ask the user mid-run.`;
 }
 
@@ -65,7 +72,11 @@ function stripSingleFence(text: string): string {
   return (fenced?.[1] ?? trimmed).trim();
 }
 
-export function validateAuthoredAgentSource(response: string, availableModels: readonly string[]): AuthoredAgent {
+export function validateAuthoredAgentSource(
+  response: string,
+  availableModels: readonly string[],
+  requestedName?: string,
+): AuthoredAgent {
   const source = stripSingleFence(response);
   if (!source) throw new AgentCreationError('INVALID_GENERATED_AGENT', 'The selected model returned an empty agent');
   if (source.length > AUTHOR_MAX_SOURCE_CHARS) {
@@ -81,12 +92,38 @@ export function validateAuthoredAgentSource(response: string, availableModels: r
     throw new AgentCreationError('INVALID_GENERATED_AGENT', `The selected model returned invalid AgentUse source: ${(error as Error).message}`);
   }
   if (!parsed.name) throw new AgentCreationError('INVALID_GENERATED_AGENT', 'The selected model did not name the agent');
+  try {
+    validateAgentName(parsed.name);
+  } catch (error) {
+    throw new AgentCreationError('INVALID_GENERATED_AGENT', `The selected model used an invalid agent name: ${(error as Error).message}`);
+  }
+  if (requestedName && parsed.name !== requestedName) {
+    throw new AgentCreationError('INVALID_GENERATED_AGENT', `The selected model did not use the requested agent name ${requestedName}`);
+  }
   if (!parsed.config.description?.trim()) {
     throw new AgentCreationError('INVALID_GENERATED_AGENT', 'The selected model did not describe the agent');
   }
   if (!parsed.instructions.trim()) throw new AgentCreationError('INVALID_GENERATED_AGENT', 'The selected model did not write agent instructions');
   if (!availableModels.includes(parsed.config.model)) {
     throw new AgentCreationError('INVALID_GENERATED_AGENT', `The selected model chose a runtime model that is not available: ${parsed.config.model}`);
+  }
+  if (parsed.config.schedule) {
+    throw new AgentCreationError('INVALID_GENERATED_AGENT', 'The selected model added a schedule before the agent was reviewed');
+  }
+  if (parsed.config.channels) {
+    throw new AgentCreationError('INVALID_GENERATED_AGENT', 'The selected model added a notification channel before the agent was reviewed');
+  }
+  const trustedSkills = parsed.config.skills?.trusted === true
+    || Object.values(parsed.config.skills?.explicit ?? {}).some((skill) => skill.trusted === true);
+  if (trustedSkills) {
+    throw new AgentCreationError('INVALID_GENERATED_AGENT', 'The selected model trusted a skill before the agent was reviewed');
+  }
+  const gated = parsed.config.tools?.bash?.gated ?? [];
+  const unsafeCommand = (parsed.config.tools?.bash?.commands ?? []).find((command) =>
+    !gated.some((pattern) => wildcardMatch(command, pattern))
+      && (looksEffectful(command) || grantsArbitraryCode(command) || grantsUnnamedSubcommands(command)));
+  if (unsafeCommand) {
+    throw new AgentCreationError('INVALID_GENERATED_AGENT', `The selected model added an unsafe ungated command: ${unsafeCommand}`);
   }
   return { source: `${source}\n`, model: parsed.config.model };
 }
@@ -118,5 +155,5 @@ export async function authorAgentSource(
     throw new AgentCreationError('GENERATION_FAILED', `The selected model could not create the agent: ${(error as Error).message}`);
   }
   options.onProgress?.({ type: 'status', message: 'Validating the generated agent' });
-  return validateAuthoredAgentSource(response, request.availableModels);
+  return validateAuthoredAgentSource(response, request.availableModels, request.name);
 }

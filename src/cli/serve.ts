@@ -97,6 +97,7 @@ import {
 } from "../agents/create";
 import { authorAgentSource } from "../agents/author";
 import { openBrowser } from "../utils/open-browser";
+import { resolveAgentModel } from "../utils/model-alias";
 import {
   createIdempotentShutdown,
   DESKTOP_LIFETIME_FD_ENV,
@@ -2880,6 +2881,13 @@ export function createServeCommand(): Command {
       const appliedConfigEnv = applyGlobalConfigEnv(globalConfig);
       if (appliedConfigEnv.length > 0 && options.debug) {
         logger.debug(`Applied env from global config: ${appliedConfigEnv.join(', ')}`);
+      }
+      let preferredAgentCreationModel: string | undefined;
+      try {
+        preferredAgentCreationModel = resolveAgentModel(undefined)?.model;
+      } catch {
+        // A broken optional default should not hide otherwise usable connected
+        // providers. Agent parsing continues to report the configuration error.
       }
 
       // Precedence: explicit CLI flag > config > built-in default.
@@ -7118,7 +7126,7 @@ export function createServeCommand(): Command {
             const snapshot = await providerSetupSnapshot();
             sendJSON(res, 200, {
               success: true,
-              providers: agentCreationProviders(snapshot.status),
+              providers: agentCreationProviders(snapshot.status, preferredAgentCreationModel),
               projects: projects.map((project) => ({
                 id: project.id,
                 path: project.root,
@@ -7157,10 +7165,10 @@ export function createServeCommand(): Command {
               return;
             }
             const snapshot = await providerSetupSnapshot();
-            const providers = agentCreationProviders(snapshot.status);
+            const providers = agentCreationProviders(snapshot.status, preferredAgentCreationModel);
             const configuredProviders = providers.map((provider) => provider.id);
             const request = validateAgentCreationRequest(
-              { objective: body.objective, model: body.model },
+              { name: body.name, objective: body.objective, model: body.model },
               configuredProviders,
             );
             // The picker chooses the one-off authoring model. The author then
@@ -7188,7 +7196,12 @@ export function createServeCommand(): Command {
             writeProgress({ type: "status", message: "Saving the validated agent to the project" });
             const created = await createAgentFile(
               project,
-              { objective: request.objective, model: authored.model, source: authored.source },
+              {
+                ...(request.name && { name: request.name }),
+                objective: request.objective,
+                model: authored.model,
+                source: authored.source,
+              },
               configuredProviders,
             );
 

@@ -5,6 +5,21 @@ export interface DashboardSelectOption {
   label: string;
 }
 
+/** Find the next case-insensitive prefix match, wrapping once through the list. */
+export function findTypeaheadOption(
+  options: readonly DashboardSelectOption[],
+  query: string,
+  startIndex: number,
+): number {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (!normalized || options.length === 0) return -1;
+  for (let offset = 1; offset <= options.length; offset++) {
+    const index = (startIndex + offset + options.length) % options.length;
+    if (options[index]?.label.toLocaleLowerCase().startsWith(normalized)) return index;
+  }
+  return -1;
+}
+
 /** Theme-consistent single select for dashboard dialogs. Native select menus
  * are painted by the host WebView and ignore the dashboard color scheme. */
 export function DashboardSelect(props: {
@@ -19,6 +34,7 @@ export function DashboardSelect(props: {
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const typeaheadRef = useRef({ query: '', timestamp: 0 });
   const listboxId = useId();
   const selected = Math.max(0, props.options.findIndex((option) => option.value === props.value));
 
@@ -75,6 +91,19 @@ export function DashboardSelect(props: {
       closeList(true);
     } else if (event.key === 'Tab') {
       setOpen(false);
+    } else if (event.key.length === 1 && event.key !== ' ' && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      const now = Date.now();
+      const previous = typeaheadRef.current;
+      const query = now - previous.timestamp > 700 ? event.key : `${previous.query}${event.key}`;
+      let next = findTypeaheadOption(props.options, query, open ? active : selected);
+      const cycling = query.length > 1 && [...query].every((character) => character.toLocaleLowerCase() === query[0]?.toLocaleLowerCase());
+      if (next < 0 && cycling) next = findTypeaheadOption(props.options, event.key, open ? active : selected);
+      typeaheadRef.current = { query, timestamp: now };
+      if (next >= 0) {
+        event.preventDefault();
+        if (!open) setOpen(true);
+        setActive(next);
+      }
     }
   };
 

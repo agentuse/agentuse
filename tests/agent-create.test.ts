@@ -70,6 +70,24 @@ Review the tickets supplied in the run prompt and prioritize urgent replies.
     expect(await readFile(created.absolutePath, 'utf8')).toBe(`${authored.trim()}\n`);
   });
 
+  it('enforces an explicit name on model-authored source', async () => {
+    const target = await project();
+    const authored = `---
+name: A Different Name
+model: openai:gpt-5.6-terra
+description: Triage incoming support tickets
+---
+
+Triage support tickets.
+`;
+    await expect(createAgentFile(target, {
+      name: 'Support Triage',
+      objective: 'Triage support tickets.',
+      model: 'openai:gpt-5.6-terra',
+      source: authored,
+    }, ['openai'])).rejects.toThrow('must use the requested name Support Triage');
+  });
+
   it('writes directly into an explicitly served scope', async () => {
     const target = await project(true);
     const created = await createAgentFile(target, {
@@ -115,7 +133,7 @@ Review the tickets supplied in the run prompt and prioritize urgent replies.
     }, ['openai'])).rejects.toMatchObject({ code: 'CREATE_FAILED' });
   });
 
-  it('offers curated models only for configured providers', () => {
+  it('offers every compatible registry model, prefers a configured default, and accepts keyless custom providers', () => {
     const status: ProviderStatus = {
       credentialStore: '/redacted/path',
       providers: [
@@ -124,13 +142,44 @@ Review the tickets supplied in the run prompt and prioritize urgent replies.
         { id: 'openrouter', name: 'OpenRouter', configured: false, sources: [] },
         { id: 'opencode-go', name: 'OpenCode Go', configured: true, sources: [] },
       ],
-      customProviders: [{ id: 'local', baseURL: 'http://localhost:11434/v1', hasApiKey: true }],
+      customProviders: [{ id: 'local', baseURL: 'http://localhost:11434/v1', hasApiKey: false }],
     };
 
-    const options = agentCreationProviders(status);
+    const options = agentCreationProviders(status, 'openai:o3-mini');
     expect(options.map((provider) => provider.id)).toEqual(['openai', 'opencode-go', 'local']);
+    expect(options[0]?.defaultModel).toBe('openai:o3-mini');
+    expect(options[0]?.models[0]).toBe('openai:o3-mini');
+    expect(options[0]?.models).toContain('openai:gpt-4.1');
     expect(options[0]?.models).toContain('openai:gpt-5.6-terra');
     expect(options[1]?.models).toContain('opencode-go:kimi-k2.7-code');
     expect(options[2]).toMatchObject({ custom: true, models: [] });
+  });
+
+  it('starts first-class providers on a balanced creator model without a configured default', () => {
+    const options = agentCreationProviders({
+      credentialStore: '/redacted/path',
+      providers: [
+        { id: 'anthropic', name: 'Anthropic', configured: true, sources: [] },
+        { id: 'openai', name: 'OpenAI', configured: true, sources: [] },
+      ],
+      customProviders: [],
+    });
+
+    expect(options[0]?.defaultModel).toBe('anthropic:claude-sonnet-5');
+    expect(options[1]?.defaultModel).toBe('openai:gpt-5.6-terra');
+  });
+
+  it('starts on the provider that owns the configured default', () => {
+    const options = agentCreationProviders({
+      credentialStore: '/redacted/path',
+      providers: [
+        { id: 'anthropic', name: 'Anthropic', configured: true, sources: [] },
+        { id: 'openai', name: 'OpenAI', configured: true, sources: [] },
+      ],
+      customProviders: [],
+    }, 'openai:gpt-4.1');
+
+    expect(options.map((provider) => provider.id)).toEqual(['openai', 'anthropic']);
+    expect(options[0]?.defaultModel).toBe('openai:gpt-4.1');
   });
 });

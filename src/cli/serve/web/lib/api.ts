@@ -609,7 +609,7 @@ export type AgentCreationProgressEvent =
 
 /** Streams the model-authored draft and persistence milestones from serve. */
 export async function createAgentWithProgress(
-  input: { project: string; objective: string; model: string },
+  input: { project: string; name?: string; objective: string; model: string },
   onProgress: (event: AgentCreationProgressEvent) => void,
   signal?: AbortSignal,
 ): Promise<AgentRow> {

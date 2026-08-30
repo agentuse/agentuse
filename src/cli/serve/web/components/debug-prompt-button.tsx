@@ -408,15 +408,15 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
       <div class="onboarding-agent-status is-ready" role="status" aria-live="polite">
         <span class="onboarding-agent-status-icon" aria-hidden="true">✓</span>
         <span class="onboarding-agent-status-copy">
-          <strong>Your agent is ready</strong>
-          <span><code>{agent.name}</code> was added successfully.</span>
+          <strong>Your agent is saved</strong>
+          <span><code>{agent.name}</code> was added. Review it before the first run.</span>
         </span>
         <a
           class="onboarding-agent-status-primary"
           href={agentDetailHref(agent.projectId, agent.runPath)}
           onClick={() => reportOnboardingTelemetry({ event: 'onboarding_step_completed', step: 'agent_opened' })}
         >
-          Open agent
+          Review agent
         </a>
       </div>
     );
@@ -430,14 +430,14 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
       <div class="onboarding-agent-status is-ready" role="status" aria-live="polite">
         <span class="onboarding-agent-status-icon" aria-hidden="true">✓</span>
         <span class="onboarding-agent-status-copy">
-          <strong>Your agents are ready</strong>
-          <span>{detectedAgents.length} agents are available in this project.</span>
+          <strong>Your agents are saved</strong>
+          <span>{detectedAgents.length} agents are available in this project. Review them before running.</span>
         </span>
         <a
           class="onboarding-agent-status-primary"
           href={projectHref}
           onClick={() => reportOnboardingTelemetry({ event: 'onboarding_step_completed', step: 'agent_opened' })}
-        >Open agents</a>
+        >Review agents</a>
       </div>
     );
   }
