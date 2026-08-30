@@ -24,11 +24,19 @@ Ask one concise question only when a missing choice materially changes the
 agent or its safety boundary. Do not expand a focused workflow into a general
 automation system.
 
-## Prepare AgentUse
+## Choose the execution mode
 
-The host adapter has already confirmed that the `agentuse` command is
-available. Load the remaining version-matched guidance as the workflow reaches
-those stages; do not rely on syntax remembered from another version.
+Check whether the `agentuse` command is available.
+
+- When it is available, use the CLI-backed workflow below. Load the remaining
+  version-matched guidance as the workflow reaches those stages; do not rely on
+  syntax remembered from another version.
+- When it is unavailable, use the host bundle's
+  `references/creator.md` to author one portable `.agentuse` file. Do not try to
+  install AgentUse silently. Skip provider discovery, model-catalog validation,
+  doctor, mock testing, scheduling, and real execution because those require
+  the runtime. The result is an artifact for later validation, not an activated
+  automation.
 
 Choose the project deliberately:
 
@@ -40,7 +48,7 @@ Choose the project deliberately:
 - Honor a project path supplied by the user. Never relocate an existing
   AgentUse project or change unrelated global serve settings.
 
-Before writing an agent, run:
+In CLI-backed mode, before writing an agent, run:
 
 ```sh
 agentuse provider list --json
@@ -58,19 +66,27 @@ A coding-agent login is not an AgentUse runtime credential.
 
 ## Create and validate the agent
 
-Load the current authoring and testing guidance before writing:
+In CLI-backed mode, load the current authoring and testing guidance before
+writing:
 
 ```sh
 agentuse skills get creator --full
 agentuse skills get tester --full
 ```
 
+In artifact-only mode, read the bundled `references/creator.md` instead. Use a
+model family or role alias supported by that guidance, but label it as
+unverified because the live catalog is unavailable. Read
+`references/tester.md` only to understand what remains to be validated later;
+do not claim its checks ran.
+
 Create exactly one focused `.agentuse` file for the requested job. Use only
 capabilities required by the workflow. Validate the selected model with
 `agentuse models <provider>`. Put effectful shell commands under
 `tools.bash.gated`; prompt wording alone is not an approval boundary.
 
-Run the closed validation loop described by the installed tester skill:
+In CLI-backed mode, run the closed validation loop described by the installed
+tester skill:
 
 1. Run `agentuse doctor <agent-file>`.
 2. Run a mock test without real side effects.
@@ -95,3 +111,16 @@ Return a compact activation summary containing:
 
 Distinguish clearly between what was completed and what still requires the
 user.
+
+For artifact-only mode, explicitly say `Not runtime validated`, identify the
+missing AgentUse CLI as the reason, and provide these activation steps:
+
+```sh
+npx -y agentuse@latest doctor <agent-file>
+npx -y agentuse@latest test <agent-file> --mock-model <configured-cheap-model>
+npx -y agentuse@latest run <agent-file>
+```
+
+Do not run or recommend `agentuse setup` as a hidden prerequisite to creating
+the artifact. Provider login and any first real run remain human-owned follow-up
+actions.
