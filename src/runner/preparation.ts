@@ -54,6 +54,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     projectContext,
     userPrompt,
     abortSignal,
+    pluginManager,
     verbose = false,
     existingSessionId,
     rebuildMissingToolsSnapshot = false,
@@ -364,7 +365,8 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       sessionID,
       agentId,
       projectContext,
-      abortSignal
+      abortSignal,
+      pluginManager
     );
 
     if (verbose) {

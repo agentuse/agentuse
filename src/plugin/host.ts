@@ -156,7 +156,7 @@ export class PluginHost {
         }
         log.debug('Loaded through the legacy event-object compatibility adapter');
       } else {
-        throw new Error('Invalid extension format: default export must be an AgentUse activation function or legacy event-handler object');
+        throw new Error('Invalid plugin format: default export must be an AgentUse extension activation function or legacy event-handler object');
       }
       const activated = { identity, disposables };
       this.activated.push(activated);

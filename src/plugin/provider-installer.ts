@@ -23,6 +23,8 @@ export interface PluginInstallOptions {
 
 interface ResolvedSource { url: string; ref?: string }
 
+const FULL_COMMIT_REF = /^[0-9a-f]{40}$/i;
+
 function isLocalPath(source: string): boolean {
   return source.startsWith('./') || source.startsWith('../') || source.startsWith('/');
 }
@@ -69,6 +71,13 @@ export function normalizeGitHubPluginSource(source: string): string {
 
 export function resolvePluginSource(source: string): ResolvedSource {
   if (isLocalPath(source)) {
+    // Local checkouts may be pinned to a full commit for hermetic tests and
+    // project installs. Treat only an unambiguous full SHA as a suffix so paths
+    // containing ordinary @ characters remain valid.
+    const local = splitRef(source);
+    if (local.ref && FULL_COMMIT_REF.test(local.ref) && isLocalPath(local.source)) {
+      return { url: resolve(local.source), ref: local.ref };
+    }
     return { url: resolve(source) };
   }
   const withoutPrefix = source.startsWith('git:') && !source.startsWith('git://')
@@ -83,7 +92,10 @@ export function resolvePluginSource(source: string): ResolvedSource {
   try {
     const url = new URL(split.source);
     const parts = url.pathname.replace(/\.git$/, '').split('/').filter(Boolean);
-    const validProtocol = url.protocol === 'https:' || url.protocol === 'http:' || url.protocol === 'ssh:' || url.protocol === 'git:';
+    // Installed extensions execute with the user's permissions. Refuse
+    // unauthenticated plaintext transports so source cannot be replaced in
+    // transit before it is imported.
+    const validProtocol = url.protocol === 'https:' || url.protocol === 'ssh:';
     const validUsername = !url.username || (url.protocol === 'ssh:' && url.username === 'git');
     if (!validProtocol || url.hostname !== 'github.com' || !validUsername || url.password || url.search || url.hash || parts.length !== 2) throw new Error();
     return { url: split.source, ...(split.ref && { ref: split.ref }) };
@@ -147,10 +159,20 @@ async function cloneAndInspect(source: string, options?: PluginInstallOptions): 
   const staging = await mkdtemp(join(home, '.install-'));
   const resolvedSource = resolvePluginSource(source);
   try {
-    const args = ['clone', '--depth', '1'];
-    if (resolvedSource.ref) args.push('--branch', resolvedSource.ref);
-    args.push(resolvedSource.url, staging);
-    await exec('git', args, { maxBuffer: 10 * 1024 * 1024 });
+    if (resolvedSource.ref && FULL_COMMIT_REF.test(resolvedSource.ref)) {
+      // `git clone --branch` accepts branches and tags, not arbitrary commit
+      // objects. Initialize explicitly and fetch the requested commit so the
+      // documented owner/repo@commit form resolves to that exact revision.
+      await exec('git', ['init', staging], { maxBuffer: 10 * 1024 * 1024 });
+      await exec('git', ['-C', staging, 'remote', 'add', 'origin', resolvedSource.url], { maxBuffer: 10 * 1024 * 1024 });
+      await exec('git', ['-C', staging, 'fetch', '--depth', '1', 'origin', resolvedSource.ref], { maxBuffer: 10 * 1024 * 1024 });
+      await exec('git', ['-C', staging, 'checkout', '--detach', 'FETCH_HEAD'], { maxBuffer: 10 * 1024 * 1024 });
+    } else {
+      const args = ['clone', '--depth', '1'];
+      if (resolvedSource.ref) args.push('--branch', resolvedSource.ref);
+      args.push(resolvedSource.url, staging);
+      await exec('git', args, { maxBuffer: 10 * 1024 * 1024 });
+    }
     await installRuntimeDependencies(staging);
     const { manifest, host } = await loadPluginPackageDirectory(staging, options?.local ? 'project' : 'global');
     await host.dispose();
@@ -194,7 +216,8 @@ async function inspectLinkedPlugin(source: string, options: PluginInstallOptions
 
 export async function installPlugin(source: string, options?: PluginInstallOptions): Promise<InstalledPluginRecord> {
   const records = options?.local ? await readProjectPluginRecords(options) : await readInstalledPluginRecords();
-  if (options?.local && isLocalPath(source)) {
+  const resolvedLocal = isLocalPath(source) ? resolvePluginSource(source) : undefined;
+  if (options?.local && resolvedLocal && !resolvedLocal.ref) {
     const record = await inspectLinkedPlugin(source, options);
     const existing = records.find((item) => item.name === record.name);
     if (existing) throw new Error(`Plugin '${existing.name}' is already installed; run agentuse plugins update ${existing.name}`);

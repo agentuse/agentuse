@@ -14,6 +14,7 @@ import type { AgentRevisionSubmission } from '../agents/revision.js';
 import type { EffectWAL } from './effect-wal';
 import type { LiveToolOutputRelay } from './live-tool-output';
 import type { RunModelOverride } from '../utils/model-alias';
+import type { PluginManager } from '../plugin';
 
 export type UsageKind = 'cumulative' | 'step';
 
@@ -34,6 +35,8 @@ export interface PrepareAgentOptions {
   projectContext?: { projectRoot: string; stateRoot: string; cwd: string } | undefined;
   userPrompt?: string | undefined;
   abortSignal?: AbortSignal | undefined;
+  /** Plugin facade propagated into delegated agents for lifecycle and tool policy. */
+  pluginManager?: PluginManager | null | undefined;
   verbose?: boolean | undefined;
   existingSessionId?: string | undefined;
   /**

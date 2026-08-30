@@ -21,7 +21,16 @@ import type { ProviderAuthSourceStatus } from '../auth/provider-status';
 import { logger } from '../utils/logger';
 import { findProjectRoot } from '../utils/project';
 import { PluginHost } from './host';
-import { currentInstalledPluginHost, currentPluginHost, currentPluginProjectRoot, enterInstalledPluginHost } from './context';
+import {
+  clearActiveProviders,
+  currentActiveProvider,
+  currentInstalledPluginHost,
+  currentPluginHost,
+  currentPluginProjectRoot,
+  ensureProviderSelectionScope,
+  enterInstalledPluginHost,
+  selectActiveProvider,
+} from './context';
 import { importExtensionModule, readPackageManifest, type ResolvedPackageManifest } from './loader';
 import type {
   AuthInteraction,
@@ -103,9 +112,7 @@ const installedHosts = new Map<string, Promise<PluginHost>>();
 
 export function resetProviderPluginCache(): void {
   installedHosts.clear();
-  registryProviderCache.clear();
-  transportCache.clear();
-  resolvedModelCache.clear();
+  clearActiveProviders();
 }
 
 export async function getInstalledPluginHost(): Promise<PluginHost> {
@@ -143,6 +150,10 @@ export async function getInstalledPluginHost(): Promise<PluginHost> {
 }
 
 export async function loadProviderPlugins(): Promise<ProviderDefinition[]> {
+  // Run synchronously before the first await so the caller's continuation
+  // inherits the selection map even when AgentUse is used as a library without
+  // constructing a PluginManager.
+  ensureProviderSelectionScope();
   const local = currentPluginHost()?.listProviders() ?? [];
   const installedHost = await getInstalledPluginHost();
   enterInstalledPluginHost(installedHost);
@@ -198,11 +209,17 @@ export async function getActiveProviderAdapter(
     const context = createProviderPluginContext(candidate.provider, modelId, signal);
     if (await candidate.adapter.when(context)) {
       await cacheProviderMetadata(candidate.provider);
+      selectActiveProvider(id, candidate.provider);
       return candidate.provider;
     }
   }
-  clearProviderMetadata(id);
+  selectActiveProvider(id, undefined);
   return undefined;
+}
+
+/** Remove a conditional adapter selected earlier in this execution chain. */
+export function clearActiveProviderAdapter(id: string): void {
+  selectActiveProvider(id, undefined);
 }
 
 export async function getProviderPatch(id: string) {
@@ -262,14 +279,12 @@ export async function discoverProviderModels(provider: ProviderDefinition): Prom
   return pending;
 }
 
-const registryProviderCache = new Map<string, string>();
-const transportCache = new Map<string, ProviderDefinition['transport']>();
 const discoveredModelsCache = new WeakMap<ProviderDefinition, Promise<ProviderModelDefinition[]>>();
 
 export function loadedPluginRegistryProviderCached(id: string): string | undefined {
   const models = scopedProvider(id)?.models;
   if (models && !Array.isArray(models) && typeof models === 'object' && 'inherit' in models) return models.inherit;
-  return registryProviderCache.get(id);
+  return undefined;
 }
 
 export const loadedPluginRegistryProvider = loadedPluginRegistryProviderCached;
@@ -277,38 +292,27 @@ export const loadedPluginRegistryProvider = loadedPluginRegistryProviderCached;
 export function loadedPluginModel(providerId: string, modelId: string): ProviderModelDefinition | undefined {
   const provider = scopedProvider(providerId);
   if (provider) return resolvedModelsByProvider.get(provider)?.get(modelId);
-  return resolvedModelCache.get(providerId)?.get(modelId);
+  return undefined;
 }
 
-const resolvedModelCache = new Map<string, Map<string, ProviderModelDefinition>>();
 const resolvedModelsByProvider = new WeakMap<ProviderDefinition, Map<string, ProviderModelDefinition>>();
 
 async function cacheProviderMetadata(provider: ProviderDefinition): Promise<void> {
   const discovered = await discoverProviderModels(provider);
-  const catalog = provider.models;
-  if (catalog && !Array.isArray(catalog) && typeof catalog === 'object' && 'inherit' in catalog) {
-    registryProviderCache.set(provider.id, catalog.inherit);
-  }
-  transportCache.set(provider.id, provider.transport);
-  resolvedModelCache.set(provider.id, new Map(discovered.map((model) => [model.id, model])));
+  // Keep metadata attached to the provider definition itself. Conditional
+  // adapters are newly materialized per request, so a WeakMap cannot leak one
+  // project's transport or model patch into another project's selection.
   resolvedModelsByProvider.set(provider, new Map(discovered.map((model) => [model.id, model])));
 }
 
-function clearProviderMetadata(providerId: string): void {
-  // A standalone provider remains authoritative. This cleanup is for a
-  // conditional adapter that stopped matching after logout or env changes.
-  if (scopedProvider(providerId)) return;
-  registryProviderCache.delete(providerId);
-  transportCache.delete(providerId);
-  resolvedModelCache.delete(providerId);
-}
-
 function scopedProvider(providerId: string): ProviderDefinition | undefined {
-  return currentPluginHost()?.getProvider(providerId) ?? currentInstalledPluginHost()?.getProvider(providerId);
+  return currentPluginHost()?.getProvider(providerId)
+    ?? currentInstalledPluginHost()?.getProvider(providerId)
+    ?? currentActiveProvider(providerId);
 }
 
 export function loadedPluginProtocol(id: string): 'anthropic' | 'openai' | undefined {
-  const selectedTransport = scopedProvider(id)?.transport ?? transportCache.get(id);
+  const selectedTransport = scopedProvider(id)?.transport;
   const kind = selectedTransport?.kind;
   if (kind === 'anthropic-messages') return 'anthropic';
   if (kind === 'openai-responses' || kind === 'openai-chat-completions') return 'openai';

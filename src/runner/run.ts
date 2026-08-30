@@ -237,6 +237,7 @@ export async function runAgent(
       projectContext,
       userPrompt,
       abortSignal,
+      pluginManager,
       verbose,
       existingSessionId,
       ...(trigger && { trigger })

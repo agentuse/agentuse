@@ -1,12 +1,11 @@
-import { resolveModelProvider } from '../utils/model-utils';
-import { createProviderPluginContext, getActiveProviderAdapter, getProviderPlugin } from './provider-runtime';
-import type { ProviderDefinition } from './types';
-import type { PromptContribution } from './types';
-
-function modelId(model: string): string {
-  const colon = model.indexOf(':');
-  return colon === -1 ? model : model.slice(colon + 1);
-}
+import { resolveModelProvider, splitModelString } from '../utils/model-utils';
+import {
+  clearActiveProviderAdapter,
+  createProviderPluginContext,
+  getActiveProviderAdapter,
+  getProviderPlugin,
+} from './provider-runtime';
+import type { PromptContribution, ProviderDefinition } from './types';
 
 export interface ProviderSystemMessage {
   role: string;
@@ -17,13 +16,18 @@ export interface ProviderSystemMessage {
 async function systemContributions(model: string): Promise<PromptContribution[]> {
   const provider = await behaviorProvider(model);
   if (!provider?.prompts?.system) return [];
-  return provider.prompts.system(createProviderPluginContext(provider, modelId(model)));
+  return provider.prompts.system(createProviderPluginContext(provider, splitModelString(model).modelId));
 }
 
 async function behaviorProvider(model: string): Promise<ProviderDefinition | undefined> {
-  const providerId = resolveModelProvider(model);
-  return await getProviderPlugin(providerId)
-    ?? await getActiveProviderAdapter(providerId, modelId(model));
+  const parts = splitModelString(model);
+  const plugin = await getProviderPlugin(parts.provider);
+  if (plugin) return plugin;
+  if (parts.envPart !== undefined) {
+    clearActiveProviderAdapter(parts.provider);
+    return undefined;
+  }
+  return getActiveProviderAdapter(parts.provider, parts.modelId);
 }
 
 export async function applyProviderSystemMessages<T extends { role: string; content: string }>(
@@ -59,7 +63,7 @@ export async function providerHelperSystemPrompt(model: string, role: string): P
   const provider = await behaviorProvider(model);
   if (!provider?.prompts?.helper) return { instructions: role };
   const contributions = await provider.prompts.helper({
-    ...createProviderPluginContext(provider, modelId(model)),
+    ...createProviderPluginContext(provider, splitModelString(model).modelId),
     role,
   });
   if (contributions.length === 0) return { instructions: role };

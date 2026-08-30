@@ -31,6 +31,7 @@ import { usageToAssistantTokens } from './session/usage';
 import { resolveMaxSteps } from './utils/config';
 import { resolveVerifyPlacements, withGateVerify } from './verify/gate';
 import { composeSubagentResult } from './tools/report-outcome.js';
+import type { AgentReference, ModelFallbackEvent, PluginManager } from './plugin';
 
 // Constants
 const DEFAULT_MAX_SUBAGENT_DEPTH = 2;
@@ -126,7 +127,8 @@ export async function createSubAgentTool(
   parentSessionID?: string,
   parentAgentId?: string,
   projectContext?: { projectRoot: string; stateRoot: string; cwd: string },
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
+  pluginManager?: PluginManager | null
 ): Promise<Tool> {
   // Resolve the path relative to the base path if provided
   const resolvedPath = basePath ? resolve(basePath, agentPath) : agentPath;
@@ -380,7 +382,8 @@ export async function createSubAgentTool(
               subagentSessionID,
               agentId,
               projectContext,
-              abortSignal  // Pass parent's abort signal to nested subagents
+              abortSignal,  // Pass parent's abort signal to nested subagents
+              pluginManager
             );
 
             // Merge nested subagent tools into tools
@@ -441,6 +444,20 @@ export async function createSubAgentTool(
 
           // Create doom loop detector for sub-agent
           const doomLoopDetector = new DoomLoopDetector({ threshold: 3, action: 'error' });
+          const subagentReference: AgentReference = {
+            name: agent.name,
+            model: agent.config.model,
+            ...(agent.description && { description: agent.description }),
+            filePath: resolvedPath,
+          };
+
+          if (pluginManager) {
+            await pluginManager.emit('agent:start', {
+              agent: subagentReference,
+              ...(subagentSessionID && { sessionId: subagentSessionID }),
+              trigger: 'manual',
+            }, abortSignal);
+          }
 
           // Mirror this sub-agent's operational logs into ITS OWN session view.
           // Scoped via AsyncLocalStorage so they don't leak into the parent or a
@@ -467,6 +484,16 @@ export async function createSubAgentTool(
                 agentId,
                 ...(subagentMsgID && { messageID: subagentMsgID }),
                 effectWal,
+                ...(pluginManager && {
+                  pluginEvents: {
+                    toolCall: (event: Parameters<PluginManager['dispatchToolCall']>[0], signal?: AbortSignal) =>
+                      pluginManager.dispatchToolCall(event, signal),
+                    toolResult: (event: Parameters<PluginManager['dispatchToolResult']>[0], signal?: AbortSignal) =>
+                      pluginManager.dispatchToolResult(event, signal),
+                    modelFallback: (event: ModelFallbackEvent, signal?: AbortSignal) =>
+                      pluginManager.emit('model:fallback', event, signal),
+                  },
+                }),
                 // A leaf's headline is what the parent reads instead of the
                 // whole report, so nudge for it here too.
                 runOutcome: preparedTools.runOutcome
@@ -520,6 +547,14 @@ export async function createSubAgentTool(
               }
             }
             await subagentSessionManager.setSessionSuspended(subagentSessionID, agentId);
+            if (pluginManager) {
+              await pluginManager.emit('agent:suspend', {
+                agent: subagentReference,
+                sessionId: subagentSessionID,
+                reason: 'approval',
+                ...(result.approvalUrl && { approvalUrl: result.approvalUrl }),
+              }, abortSignal);
+            }
             // Bubble a pointer to this child only. The human-facing URL/token are
             // resolved at the root by getApprovalInfo descending childSessionID — we
             // deliberately do NOT propagate the child's own approval URL up.
@@ -567,9 +602,29 @@ export async function createSubAgentTool(
             outcome: preparedTools.runOutcome,
             text: result.text
           });
+          let output = composed.output;
+          if (pluginManager) {
+            const completionEvent = await pluginManager.emitAgentComplete({
+              agent: subagentReference,
+              ...(subagentSessionID && { sessionId: subagentSessionID }),
+              result: {
+                text: output,
+                duration: duration / 1000,
+                ...(result.usage?.totalTokens !== undefined && { tokens: result.usage.totalTokens }),
+                toolCalls: result.toolCalls?.length ?? 0,
+                ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces }),
+                ...(result.finishReason && { finishReason: result.finishReason }),
+                ...(result.finishReasons && { finishReasons: result.finishReasons }),
+                hasTextOutput: output.trim().length > 0,
+              },
+              isSubAgent: true,
+              consoleOutput: '',
+            }, abortSignal);
+            output = completionEvent.result.text;
+          }
 
           return {
-            output: composed.output,
+            output,
             metadata: {
               ...composed.metadata,
               toolCalls: result.toolCalls && result.toolCalls.length > 0 ? result.toolCalls : undefined,
@@ -611,6 +666,24 @@ export async function createSubAgentTool(
         // the persisted child error and the result bubbled to the parent manager.
         const errorMsg = formatSubagentErrorMessage(error, agent.config.model);
         logger.error(`[SubAgent] ${agent.name} failed: ${errorMsg}`);
+
+        if (pluginManager) {
+          await pluginManager.emit('agent:error', {
+            agent: {
+              name: agent.name,
+              model: agent.config.model,
+              ...(agent.description && { description: agent.description }),
+              filePath: resolvedPath,
+            },
+            ...(subagentSessionID && { sessionId: subagentSessionID }),
+            error: {
+              ...(error instanceof Error && error.name && { name: error.name }),
+              message: errorMsg,
+              code: error instanceof Error && error.name === 'AbortError' ? 'TIMEOUT' : 'EXECUTION_ERROR',
+            },
+            duration: (Date.now() - startTime) / 1000,
+          }, abortSignal);
+        }
 
         // Mark session as error if we have session info
         if (subagentSessionManager && subagentSessionID) {
@@ -661,7 +734,8 @@ export async function createSubAgentTools(
   parentSessionID?: string,
   parentAgentId?: string,
   projectContext?: { projectRoot: string; stateRoot: string; cwd: string },
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
+  pluginManager?: PluginManager | null
 ): Promise<Record<string, Tool>> {
   if (!subAgents || subAgents.length === 0) {
     return {};
@@ -682,7 +756,8 @@ export async function createSubAgentTools(
         parentSessionID,
         parentAgentId,
         projectContext,
-        abortSignal
+        abortSignal,
+        pluginManager
       );
       // Use custom name if provided, otherwise extract from filename
       let name = config.name;

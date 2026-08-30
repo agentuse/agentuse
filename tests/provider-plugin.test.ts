@@ -25,6 +25,8 @@ describe('GitHub plugin sources', () => {
     expect(() => normalizeGitHubPluginSource('https://example.com/owner/repo')).toThrow('GitHub');
     expect(() => normalizeGitHubPluginSource('https://token@github.com/owner/repo')).toThrow('GitHub');
     expect(() => normalizeGitHubPluginSource('https://github.com/owner/repo/tree/main')).toThrow('GitHub');
+    expect(() => normalizeGitHubPluginSource('http://github.com/owner/repo.git')).toThrow('GitHub');
+    expect(() => normalizeGitHubPluginSource('git://github.com/owner/repo.git')).toThrow('GitHub');
   });
 
   it('refuses to uninstall a path outside the managed plugin directory', async () => {
@@ -46,6 +48,45 @@ describe('GitHub plugin sources', () => {
 });
 
 describe('plugin lifecycle', () => {
+  it('installs a local checkout pinned to an exact commit', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-plugin-commit-test-'));
+    const source = path.join(root, 'source');
+    const home = path.join(root, 'home');
+    const oldHome = process.env.AGENTUSE_PLUGIN_HOME;
+    process.env.AGENTUSE_PLUGIN_HOME = home;
+    await fs.mkdir(source);
+    await fs.writeFile(path.join(source, 'package.json'), JSON.stringify({
+      name: 'commit-provider', version: '1.0.0', agentuse: { apiVersion: 1, extensions: ['./index.js'] },
+    }));
+    await fs.writeFile(path.join(source, 'index.js'), `export default function () {}\n`);
+    const git = (...args: string[]) => {
+      const result = spawnSync('git', args, { cwd: source, encoding: 'utf8' });
+      if (result.status !== 0) throw new Error(result.stderr);
+      return result.stdout.trim();
+    };
+    git('init');
+    git('config', 'user.email', 'test@example.com');
+    git('config', 'user.name', 'AgentUse Test');
+    git('add', '.');
+    git('commit', '-m', 'initial');
+    const pinned = git('rev-parse', 'HEAD');
+    await fs.writeFile(path.join(source, 'package.json'), JSON.stringify({
+      name: 'commit-provider', version: '2.0.0', agentuse: { apiVersion: 1, extensions: ['./index.js'] },
+    }));
+    git('add', '.');
+    git('commit', '-m', 'later');
+
+    try {
+      const installed = await installPlugin(`${source}@${pinned}`);
+      expect(installed).toMatchObject({ version: '1.0.0', commit: pinned, ref: pinned });
+    } finally {
+      if (oldHome === undefined) delete process.env.AGENTUSE_PLUGIN_HOME;
+      else process.env.AGENTUSE_PLUGIN_HOME = oldHome;
+      resetProviderPluginCache();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('installs, updates, and uninstalls an independently versioned Git repository', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-plugin-lifecycle-test-'));
     const source = path.join(root, 'source');

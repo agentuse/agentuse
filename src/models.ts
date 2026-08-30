@@ -19,7 +19,14 @@ import {
 } from './providers/opencode-go';
 import { BUILTIN_PROVIDERS } from './providers/registry-sources';
 import { transformOpenAICompatibleRequest } from './model-compatibility';
-import { createProviderPluginModel, getActiveProviderAdapter, getProviderPatch, getProviderPlugin, loadProviderPlugins } from './plugin/provider-runtime';
+import {
+  clearActiveProviderAdapter,
+  createProviderPluginModel,
+  getActiveProviderAdapter,
+  getProviderPatch,
+  getProviderPlugin,
+  loadProviderPlugins,
+} from './plugin/provider-runtime';
 import { providerMediaSupport } from './plugin/provider-behavior';
 
 /**
@@ -246,7 +253,13 @@ export async function createModel(modelString: string, options: { sessionId?: st
     return await maybeWrapWithDevTools(await createProviderPluginModel(plugin, config.modelName, options.sessionId));
   }
 
-  const adapter = await getActiveProviderAdapter(config.provider, config.modelName);
+  // An explicit :env / :suffix is an explicit request for API-key routing.
+  // Conditional OAuth adapters must not hijack it or discard its base URL.
+  const hasExplicitCredentials = Boolean(config.envVar || config.envSuffix);
+  if (hasExplicitCredentials) clearActiveProviderAdapter(config.provider);
+  const adapter = hasExplicitCredentials
+    ? undefined
+    : await getActiveProviderAdapter(config.provider, config.modelName);
   if (adapter) {
     logger.debug(`Using ${adapter.name} for ${config.provider}:${config.modelName}`);
     return await maybeWrapWithDevTools(await createProviderPluginModel(adapter, config.modelName, options.sessionId));

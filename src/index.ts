@@ -815,6 +815,7 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
         projectContext: { projectRoot: projectContext.projectRoot, stateRoot: projectContext.stateRoot, cwd: process.cwd() },
         userPrompt: additionalPrompt || undefined,
         abortSignal: abortController.signal,
+        pluginManager,
         verbose: options.debug,
         existingSessionId: options.sessionId
       });
@@ -2190,6 +2191,7 @@ async function runInternalWorker() {
         sessionManager,
         projectContext,
         abortSignal: abortController.signal,
+        pluginManager,
         verbose: debug ?? false,
         existingSessionId: sessionId,
       });
@@ -4162,6 +4164,7 @@ async function runInternalWorker() {
         projectContext,
         userPrompt: runPrompt,
         abortSignal: abortController.signal,
+        pluginManager,
         verbose: req.debug ?? false,
         existingSessionId,
         // A continuation adds a new user turn to an ended run, so it can repair

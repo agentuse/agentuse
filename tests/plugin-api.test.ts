@@ -8,6 +8,7 @@ import {
   getActiveProviderAdapter,
   getProviderPatch,
   getProviderPlugin,
+  loadedPluginProtocol,
   mergeProviderTransportHeaders,
   resetProviderPluginCache,
   resolveProviderAuth,
@@ -18,6 +19,7 @@ import type { AgentUseExtension } from 'agentuse/plugin-api';
 import { resolveModelInfo } from '../src/utils/model-utils';
 import { AuthStorage } from '../src/auth/storage';
 import { getProviderStatus } from '../src/auth/provider-status';
+import { createModel } from '../src/models';
 
 const event: AgentCompleteEvent = {
   agent: { name: 'test-agent', model: 'demo:test' },
@@ -396,6 +398,93 @@ describe('project-local activation scope', () => {
       if (originalAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
       else process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
       (AuthStorage as any).AUTH_FILE = originalAuthFile;
+    }
+  });
+
+  it('keeps conditional adapter metadata isolated across concurrent project scopes', async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-adapter-scope-'));
+    const installed = path.join(root, 'installed');
+    const pluginsA = path.join(root, 'plugins-a');
+    const pluginsB = path.join(root, 'plugins-b');
+    await Promise.all([fs.mkdir(installed), fs.mkdir(pluginsA), fs.mkdir(pluginsB)]);
+    const extension = (name: string, output: number, transport: string) => `
+      export default function (agentuse) {
+        agentuse.registerProvider('anthropic', {
+          name: ${JSON.stringify(name)},
+          models: [{ id: 'claude-scope', name: ${JSON.stringify(name)}, input: ['text'], reasoning: false, contextWindow: 1000, maxOutputTokens: ${output} }],
+          transport: { kind: ${JSON.stringify(transport)} },
+          when() { return true; }
+        });
+      }
+    `;
+    await Promise.all([
+      fs.writeFile(path.join(pluginsA, 'adapter.js'), extension('Project A', 111, 'anthropic-messages')),
+      fs.writeFile(path.join(pluginsB, 'adapter.js'), extension('Project B', 222, 'openai-responses')),
+    ]);
+    oldHome = process.env.AGENTUSE_PLUGIN_HOME;
+    process.env.AGENTUSE_PLUGIN_HOME = installed;
+    resetProviderPluginCache();
+
+    let ready = 0;
+    let release!: () => void;
+    const rendezvous = new Promise<void>((resolve) => { release = resolve; });
+    const run = async (plugins: string) => {
+      const manager = new PluginManager();
+      await manager.loadPlugins([plugins]);
+      const selected = await getActiveProviderAdapter('anthropic', 'claude-scope');
+      ready++;
+      if (ready === 2) release();
+      await rendezvous;
+      return {
+        name: selected?.name,
+        output: resolveModelInfo('anthropic:claude-scope')?.limit.output,
+        protocol: loadedPluginProtocol('anthropic'),
+      };
+    };
+
+    await expect(Promise.all([run(pluginsA), run(pluginsB)])).resolves.toEqual([
+      { name: 'Project A', output: 111, protocol: 'anthropic' },
+      { name: 'Project B', output: 222, protocol: 'openai' },
+    ]);
+  });
+
+  it('honors an explicit API-key suffix even when a provider adapter matches', async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-adapter-explicit-env-'));
+    const installed = path.join(root, 'installed');
+    const plugins = path.join(root, 'plugins');
+    await Promise.all([fs.mkdir(installed), fs.mkdir(plugins)]);
+    await fs.writeFile(path.join(plugins, 'adapter.js'), `
+      export default function (agentuse) {
+        agentuse.registerProvider('anthropic', {
+          name: 'Always-on adapter',
+          models: { inherit: 'anthropic' },
+          transport: { kind: 'anthropic-messages', baseURL: 'https://adapter.invalid' },
+          when() { return true; }
+        });
+      }
+    `);
+    oldHome = process.env.AGENTUSE_PLUGIN_HOME;
+    process.env.AGENTUSE_PLUGIN_HOME = installed;
+    const oldKey = process.env.ANTHROPIC_API_KEY_DEV;
+    const oldBase = process.env.ANTHROPIC_BASE_URL_DEV;
+    process.env.ANTHROPIC_API_KEY_DEV = 'explicit-key';
+    process.env.ANTHROPIC_BASE_URL_DEV = 'https://explicit.example.com';
+    resetProviderPluginCache();
+
+    try {
+      const manager = new PluginManager();
+      await manager.loadPlugins([plugins]);
+      expect(await getActiveProviderAdapter('anthropic', 'claude-3-haiku')).toMatchObject({
+        name: 'Always-on adapter',
+      });
+      const model = await createModel('anthropic:claude-3-haiku:dev');
+      expect((model as any).config.baseURL).toBe('https://explicit.example.com');
+      expect(loadedPluginProtocol('anthropic')).toBeUndefined();
+    } finally {
+      if (oldKey === undefined) delete process.env.ANTHROPIC_API_KEY_DEV;
+      else process.env.ANTHROPIC_API_KEY_DEV = oldKey;
+      if (oldBase === undefined) delete process.env.ANTHROPIC_BASE_URL_DEV;
+      else process.env.ANTHROPIC_BASE_URL_DEV = oldBase;
     }
   });
 
