@@ -32,11 +32,12 @@ Choose the freshest available AgentUse command prefix:
   execute under the host's network and sandbox policy.
 - Otherwise use `agentuse` when that command is installed.
 - When neither command can execute, use the host bundle's
-  `references/creator.md` to author one portable `.agentuse` file. Do not try to
-  install AgentUse silently. Skip provider discovery, model-catalog validation,
-  doctor, mock testing, scheduling, and real execution because those require
-  the runtime. The result is an artifact for later validation, not an activated
-  automation.
+  `references/core.md` for general CLI and project semantics, then
+  `references/creator.md` to author one portable `.agentuse` file. Do not try
+  to install AgentUse silently. Skip provider discovery, model-catalog
+  validation, doctor, mock testing, scheduling, and real execution because
+  those require the runtime. The result is an artifact for later validation,
+  not an activated automation.
 
 In CLI-backed mode, replace `agentuse` at the start of every command below with
 the selected command prefix. For example, the provider check becomes
@@ -72,19 +73,20 @@ A coding-agent login is not an AgentUse runtime credential.
 
 ## Create and validate the agent
 
-In CLI-backed mode, load the current authoring and testing guidance with the
-selected prefix before writing:
+In CLI-backed mode, load the current core, authoring, and testing guidance with
+the selected prefix before writing:
 
 ```sh
+agentuse skills get core --full
 agentuse skills get creator --full
 agentuse skills get tester --full
 ```
 
-In artifact-only mode, read the bundled `references/creator.md` instead. Use a
-model family or role alias supported by that guidance, but label it as
-unverified because the live catalog is unavailable. Read
-`references/tester.md` only to understand what remains to be validated later;
-do not claim its checks ran.
+In artifact-only mode, read the bundled `references/core.md` and
+`references/creator.md` instead. Use a model family or role alias supported by
+that guidance, but label it as unverified because the live catalog is
+unavailable. Read `references/tester.md` only to understand what remains to be
+validated later; do not claim its checks ran.
 
 Create exactly one focused `.agentuse` file for the requested job. Use only
 capabilities required by the workflow. Validate the selected model with

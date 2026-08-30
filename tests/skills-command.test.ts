@@ -119,6 +119,7 @@ ${body}
 
     expect(output).toContain('--- automate/SKILL.md ---');
     expect(output).toContain('name: automate');
+    expect(output).toContain('agentuse skills get core --full');
     expect(output).toContain('coding-agent login is not an AgentUse runtime credential');
     expect(output).toContain('npx -y agentuse@latest');
     expect(output).toContain('Not runtime validated');

@@ -16,7 +16,7 @@ const targets = [
   resolve(thirdPartyRoot, 'pi/skills/automate'),
 ];
 
-const skills = ['automate', 'creator', 'tester'] as const;
+const skills = ['automate', 'core', 'creator', 'tester'] as const;
 
 async function getSkill(name: string): Promise<string> {
   const process = Bun.spawn(
@@ -55,9 +55,9 @@ Try these sources in order and stop after the first successful skill load:
    \`agentuse skills get automate --full\` once and follow the returned skill
    as authoritative for that installed version.
 3. If neither source loads, read and follow
-   [the bundled automate snapshot](references/automate.md). Its creator and
-   tester references are available beside it. Use its artifact-only mode when
-   no AgentUse command can execute.
+   [the bundled automate snapshot](references/automate.md). Its core, creator,
+   and tester references are available beside it. Use its artifact-only mode
+   when no AgentUse command can execute.
 
 Do not repeatedly retry a failed network or package command. Do not silently run
 interactive setup or provider login.
@@ -76,6 +76,7 @@ function expectedFiles(contents: Record<(typeof skills)[number], string>) {
   return {
     'SKILL.md': buildFreshnessAdapter(contents.automate),
     'references/automate.md': contents.automate,
+    'references/core.md': contents.core,
     'references/creator.md': contents.creator,
     'references/tester.md': contents.tester,
     'bundle.json': manifest,
