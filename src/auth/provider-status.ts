@@ -4,6 +4,7 @@ import {
   OPENCODE_GO_DISPLAY_NAME,
   OPENCODE_GO_PROVIDER_ID,
 } from '../providers/opencode-go.js';
+import { loadProviderPlugins, providerPluginAuthStatus } from '../plugin/provider-runtime.js';
 
 export type ProviderAuthSourceKind = 'oauth' | 'api_key' | 'environment';
 
@@ -40,7 +41,7 @@ const PROVIDERS = [
   {
     id: 'anthropic',
     name: 'Anthropic',
-    envVars: ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'],
+    envVars: ['ANTHROPIC_API_KEY'],
   },
   {
     id: 'openai',
@@ -71,23 +72,9 @@ export async function getProviderStatus(): Promise<ProviderStatus> {
     const providerAuth = await AuthStorage.getProviderAuth(provider.id);
     const sources: ProviderAuthSourceStatus[] = [];
 
-    // Keep this order identical to provider construction. Anthropic accepts a
-    // Claude Code OAuth token from the environment before consulting storage;
-    // the other providers have no environment OAuth source.
-    if (
-      provider.id === 'anthropic'
-      && process.env.CLAUDE_CODE_OAUTH_TOKEN
-    ) {
-      sources.push({
-        priority: 1,
-        kind: 'environment',
-        name: 'CLAUDE_CODE_OAUTH_TOKEN',
-        stored: false,
-        active: true,
-      });
-    }
-
-    if (providerAuth.oauth) {
+    // Claude subscription OAuth belongs to the installable claude-code
+    // provider. The plugin reads this legacy slot as a migration fallback.
+    if (providerAuth.oauth && provider.id !== 'anthropic') {
       sources.push({
         priority: 1,
         kind: 'oauth',
@@ -100,7 +87,7 @@ export async function getProviderStatus(): Promise<ProviderStatus> {
     // Runtime provider construction checks API-key environment variables
     // before falling back to the stored API key.
     for (const envVar of provider.envVars) {
-      if (envVar === 'CLAUDE_CODE_OAUTH_TOKEN' || !process.env[envVar]) continue;
+      if (!process.env[envVar]) continue;
       sources.push({
         priority: 2,
         kind: 'environment',
@@ -123,6 +110,17 @@ export async function getProviderStatus(): Promise<ProviderStatus> {
     providers.push({
       id: provider.id,
       name: provider.name,
+      configured: sources.length > 0,
+      sources,
+    });
+  }
+
+  for (const plugin of await loadProviderPlugins()) {
+    if (!plugin.auth) continue;
+    const sources = await providerPluginAuthStatus(plugin);
+    providers.push({
+      id: plugin.id,
+      name: plugin.name,
       configured: sources.length > 0,
       sources,
     });

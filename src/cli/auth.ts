@@ -18,6 +18,7 @@ import {
   saveProviderApiKey,
   startProviderOAuth,
 } from "../auth/provider-setup.js";
+import { getProviderPlugin, loadProviderPlugins, loginProviderPlugin, logoutProviderPlugin } from '../plugin/provider-runtime.js';
 
 const GITHUB_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
@@ -111,7 +112,7 @@ export function createProviderCommand(): Command {
       
       process.stdout.write("PRIORITY ORDER:\n");
       process.stdout.write("─".repeat(40) + "\n");
-      process.stdout.write("1. OAuth tokens (Anthropic OAuth or OpenAI Codex OAuth)\n");
+      process.stdout.write("1. OAuth tokens (OpenAI Codex or installed provider plugins)\n");
       process.stdout.write("2. Stored API keys (via auth login)\n");
       process.stdout.write("3. Environment variables\n\n");
       
@@ -238,14 +239,18 @@ Use these only when an endpoint reports a protocol compatibility error.
         process.stdout.write("🔐 AgentUse Authentication\n\n");
 
         if (!provider) {
+          const pluginProviders = (await loadProviderPlugins()).filter((plugin) => plugin.auth);
           process.stdout.write("Available providers:\n");
-          process.stdout.write("  1. anthropic    - Anthropic Claude (supports OAuth for Claude Max)\n");
+          process.stdout.write("  1. anthropic    - Anthropic Claude API\n");
           process.stdout.write("  2. openai       - OpenAI GPT models\n");
           process.stdout.write("  3. openrouter   - OpenRouter (access to multiple models)\n");
           process.stdout.write(`  4. ${OPENCODE_GO_PROVIDER_ID}  - ${OPENCODE_GO_DISPLAY_NAME} open coding models\n`);
+          pluginProviders.forEach((plugin, index) => {
+            process.stdout.write(`  ${index + 5}. ${plugin.id}  - ${plugin.name} (plugin)\n`);
+          });
           process.stdout.write("\n");
           
-          const selection = await promptInput("Select provider (1-4 or name): ");
+          const selection = await promptInput(`Select provider (1-${pluginProviders.length + 4} or name): `);
           
           // Handle numbered selection
           switch (selection) {
@@ -262,7 +267,7 @@ Use these only when an endpoint reports a protocol compatibility error.
               provider = OPENCODE_GO_PROVIDER_ID;
               break;
             default:
-              provider = selection;
+              provider = pluginProviders[Number(selection) - 5]?.id ?? selection;
           }
         }
 
@@ -280,8 +285,26 @@ Use these only when an endpoint reports a protocol compatibility error.
             await handleGenericLogin(OPENCODE_GO_PROVIDER_ID, `${OPENCODE_GO_DISPLAY_NAME} API Key`);
             break;
           default:
-            logger.warn(`Unknown provider: ${provider}`);
-            process.exit(1);
+            {
+              const plugin = await getProviderPlugin(provider.toLowerCase());
+              if (!plugin?.auth) {
+                logger.warn(`Unknown provider: ${provider}`);
+                process.exit(1);
+              }
+              await loginProviderPlugin(plugin, {
+                openBrowser: ({ url }) => { process.stdout.write(`Open this URL in your browser:\n\n${url}\n\n`); },
+                showDeviceCode: ({ userCode, verificationUri }) => process.stdout.write(`Open ${verificationUri} and enter ${userCode}\n`),
+                prompt: ({ message }) => promptInput(message.endsWith(' ') ? message : `${message} `),
+                select: async ({ message, choices }) => {
+                  process.stdout.write(`${message}\n${choices.map((choice, index) => `  ${index + 1}. ${choice.label}`).join('\n')}\n`);
+                  const value = await promptInput('Select: ');
+                  const selected = choices[Number(value) - 1] ?? choices.find((choice) => choice.value === value);
+                  if (!selected) throw new Error('Invalid authentication method');
+                  return selected.value;
+                },
+                notify: (message) => process.stdout.write(`${message}\n`),
+              });
+            }
         }
       } catch (error) {
         logger.error("Login failed", error as Error);
@@ -297,6 +320,14 @@ Use these only when an endpoint reports a protocol compatibility error.
     .option("--oauth", "Remove only OAuth credentials")
     .option("--api", "Remove only API key credentials")
     .action(async (provider?: string, options?: { oauth?: boolean; api?: boolean }) => {
+      if (provider) {
+        const plugin = await getProviderPlugin(provider.toLowerCase());
+        if (plugin?.auth) {
+          await logoutProviderPlugin(plugin);
+          process.stdout.write(`✅ Logged out from ${plugin.name}\n`);
+          return;
+        }
+      }
       const knownProviders = AUTH_PROVIDERS;
 
       // Build list of stored credentials
@@ -610,27 +641,7 @@ Use these only when an endpoint reports a protocol compatibility error.
 }
 
 async function handleAnthropicLogin() {
-  process.stdout.write("Anthropic login methods:\n");
-  process.stdout.write("  1. Claude Pro/Max Plan (OAuth) (Experimental)\n");
-  process.stdout.write("  2. Anthropic Console (OAuth)\n");
-  process.stdout.write("  3. Manual API Key\n");
-  process.stdout.write("\n");
-
-  const method = await promptInput("Select method (1-3): ");
-
-  switch (method) {
-    case "1":
-      await handleAnthropicOAuth("max");
-      break;
-    case "2":
-      await handleAnthropicOAuth("console");
-      break;
-    case "3":
-      await handleGenericLogin("anthropic", "Anthropic API Key");
-      break;
-    default:
-      logger.warn("Invalid selection");
-  }
+  await handleGenericLogin("anthropic", "Anthropic API Key");
 }
 
 async function handleOpenAILogin() {
@@ -689,52 +700,6 @@ async function handleCodexOAuth() {
     } catch {
       logger.warn("Invalid code or authorization failed");
     }
-  } catch (error) {
-    logger.error("Authentication failed", error as Error);
-  }
-}
-
-async function handleAnthropicOAuth(mode: "max" | "console") {
-  // Some weird bug where program exits without this delay (from OpenCode)
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  
-  process.stdout.write(`\n🔄 Starting ${mode === "max" ? "Claude Pro/Max" : "Console"} OAuth flow...\n\n`);
-
-  try {
-    const flow = await startProviderOAuth('anthropic', mode);
-    
-    // Always show the URL prominently  
-    process.stdout.write(`\n${"=".repeat(80)}\n`);
-    process.stdout.write(`📋 AUTHORIZATION URL:\n`);
-    process.stdout.write(`${flow.authorizationUrl}\n`);
-    process.stdout.write(`${"=".repeat(80)}\n\n`);
-
-    process.stdout.write("📝 Steps:\n");
-    process.stdout.write("   1. Visit the URL above in your browser\n");
-    process.stdout.write("   2. Sign in to Claude and authorize the application\n");
-    process.stdout.write("   3. Copy the authorization code you receive\n");
-    process.stdout.write("   4. Paste it below\n\n");
-
-    const code = await promptInput("📝 Paste the authorization code here: ");
-    
-    if (!code || code.length === 0) {
-      logger.warn("No code provided");
-      return;
-    }
-
-    process.stdout.write("🔄 Exchanging code for tokens...\n");
-
-    try {
-      await completeProviderOAuth(flow.flowId, code);
-      process.stdout.write("✅ Login successful\n");
-
-      if (mode === "max") {
-        process.stdout.write("🎉 Successfully authenticated with Claude Max!\n");
-      }
-    } catch {
-      logger.warn("Invalid code");
-    }
-
   } catch (error) {
     logger.error("Authentication failed", error as Error);
   }

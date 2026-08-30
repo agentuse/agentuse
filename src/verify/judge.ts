@@ -13,7 +13,7 @@ import { dirname, resolve } from 'path';
 import { tool } from 'ai';
 import { z } from 'zod';
 import { completeText } from '../complete-text.js';
-import { helperSystemPrompt } from '../utils/anthropic.js';
+import { providerHelperSystemPrompt as helperSystemPrompt } from '../plugin/provider-behavior.js';
 import { parseAgent } from '../parser.js';
 import { connectMCP, type MCPServersConfig } from '../mcp.js';
 import { executeAgentCore } from '../runner/execution.js';
@@ -161,7 +161,7 @@ async function judgeBuiltin(
   // completeText streams so the ChatGPT Codex backend works too. On Anthropic
   // the judge role rides as a second system block, because the identity line
   // has to stand alone — see helperSystemPrompt.
-  const system = helperSystemPrompt(
+  const system = await helperSystemPrompt(
     judgeModel,
     'You are a strict evaluator that judges agent output against criteria and ends your reply with a JSON verdict object.',
   );

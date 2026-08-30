@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'bun:test';
 import { createModel, AuthenticationError } from '../src/models';
-import { AnthropicAuth } from '../src/auth/anthropic';
 import { CodexAuth } from '../src/auth/codex';
 import { AuthStorage } from '../src/auth/storage';
 import fs from 'fs/promises';
@@ -128,18 +127,10 @@ describe('createModel base URL configuration', () => {
       });
     });
 
-    it('applies base URL for OAuth authentication', async () => {
-      const originalAccess = AnthropicAuth.access;
-      AnthropicAuth.access = async () => 'oauth-token';
-
-      try {
-        await withEnv({ ANTHROPIC_BASE_URL: 'https://oauth.anthropic.local' }, async () => {
-          const model = await createModel('anthropic:claude-3-opus');
-          expect(model.config.baseURL).toBe('https://oauth.anthropic.local');
-        });
-      } finally {
-        AnthropicAuth.access = originalAccess;
-      }
+    it('does not use subscription OAuth for Anthropic API models', async () => {
+      await withEnv({ ANTHROPIC_API_KEY_DEV: undefined }, async () => {
+        await expect(createModel('anthropic:claude-3-opus:dev')).rejects.toBeInstanceOf(AuthenticationError);
+      });
     });
   });
 });

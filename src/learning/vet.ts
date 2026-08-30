@@ -1,5 +1,5 @@
 import { completeText } from '../complete-text';
-import { helperSystemPrompt } from '../utils/anthropic';
+import { providerHelperSystemPrompt as helperSystemPrompt } from '../plugin/provider-behavior';
 import { logger } from '../utils/logger';
 import { splitInstructions } from './contract';
 import type { Learning, LearningDraft } from './types';
@@ -113,7 +113,7 @@ Be strict: a candidate must EARN "pass". When genuinely uncertain between "pass"
 Respond with ONLY a JSON array, one object per candidate:
 [{"id": "<candidate id>", "verdict": "pass|duplicate|contradiction${traceSummary ? '|ungrounded' : ''}", "detail": "<required for every non-pass verdict: the quoted text or reason>"}]`;
 
-  const system = helperSystemPrompt(
+  const system = await helperSystemPrompt(
     model,
     'You vet candidate agent rules against the agent\'s authoritative instructions and reply with a JSON array of verdicts only.',
   );

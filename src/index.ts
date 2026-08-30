@@ -29,6 +29,7 @@ import { createAddCommand } from './cli/add';
 import { createDoctorCommand } from './cli/doctor';
 import { createLearningsCommand } from './cli/learnings';
 import { createSchedulesCommand } from './cli/schedules';
+import { addPluginCommands } from './cli/plugins';
 import { BUILTIN_PROVIDERS } from './providers/registry-sources';
 import { resolveModelProvider } from './utils/model-utils';
 import { applyRunModelOverride, resolveModelString, type RunModelOverride } from './utils/model-alias';
@@ -243,6 +244,9 @@ program.addCommand(createDoctorCommand());
 
 // Add learnings command
 program.addCommand(createLearningsCommand());
+
+// Canonical plugin namespace. Pi-style top-level commands remain hidden aliases.
+addPluginCommands(program);
 
 // Add benchmark command (hidden from help)
 program.addCommand(createBenchmarkCommand(), { hidden: true });
@@ -772,7 +776,7 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
       let pluginManager: PluginManager | null = null;
       try {
         pluginManager = new PluginManager();
-        await pluginManager.loadPlugins(projectContext.pluginDirs);
+        await pluginManager.loadPlugins(projectContext.pluginDirs, projectContext.projectRoot);
         if (projectContext.pluginDirs.length > 0) {
           logger.debug(`Loading plugins from: ${projectContext.pluginDirs.join(', ')}`);
         }
@@ -2164,7 +2168,7 @@ async function runInternalWorker() {
       try {
         const pluginContext = resolveProjectContext(projectRoot, { projectRoot });
         pluginManager = new PluginManager();
-        await pluginManager.loadPlugins(pluginContext.pluginDirs);
+        await pluginManager.loadPlugins(pluginContext.pluginDirs, pluginContext.projectRoot);
       } catch {
         pluginManager = null;
       }
@@ -4136,7 +4140,7 @@ async function runInternalWorker() {
       try {
         const pluginContext = resolveProjectContext(req.projectRoot, { projectRoot: req.projectRoot });
         pluginManager = new PluginManager();
-        await pluginManager.loadPlugins(pluginContext.pluginDirs);
+        await pluginManager.loadPlugins(pluginContext.pluginDirs, pluginContext.projectRoot);
       } catch {
         pluginManager = null;
       }

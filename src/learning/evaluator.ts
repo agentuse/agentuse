@@ -2,7 +2,7 @@ import { completeText } from '../complete-text';
 import type { AgentCompleteEvent, ToolCallTrace } from '../plugin/types';
 import type { Learning, LearningCategory, LearningDraft } from './types';
 import { logger } from '../utils/logger';
-import { helperSystemPrompt } from '../utils/anthropic';
+import { providerHelperSystemPrompt as helperSystemPrompt } from '../plugin/provider-behavior';
 import { splitInstructions } from './contract';
 import { generateLearningId } from './store';
 
@@ -181,7 +181,7 @@ Pick the best category: tip | warning | pattern | tool-usage | error-fix.
 Respond with ONLY a JSON object, no other text ("supersedes" is optional):
 {"category": "tip", "title": "short title (max 6 words)", "instruction": "the additional instruction", "supersedes": "id of the rule this replaces"}`;
 
-  const system = helperSystemPrompt(
+  const system = await helperSystemPrompt(
     agentModel,
     'You turn an explicitly saved human comment into concise, appropriately scoped guidance for similar future situations, grounded in the run, and reply with a JSON object only.',
   );
@@ -332,7 +332,7 @@ If no learnings are applicable, respond with an empty array: []`;
   // moment a Codex-authed user triggers learning. The role reaches Anthropic
   // models as a second system block rather than being dropped for the identity
   // line — see helperSystemPrompt.
-  const system = helperSystemPrompt(
+  const system = await helperSystemPrompt(
     model,
     'You extract concise, high-signal learnings from an agent run and reply with a JSON array only. Each learning is one instruction the agent can act on, stated in a sentence or two — never a document, and never a retelling of what happened.',
   );

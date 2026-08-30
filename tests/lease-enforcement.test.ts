@@ -128,7 +128,7 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
     };
   }
 
-  async function runCore(tools: Record<string, unknown>): Promise<AgentChunk[]> {
+  async function runCore(tools: Record<string, unknown>, pluginEvents?: any): Promise<AgentChunk[]> {
     const chunks: AgentChunk[] = [];
     const generator = executeAgentCore(agent, tools as any, {
       userMessage: 'go',
@@ -138,12 +138,44 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
       sessionID,
       agentId,
       effectWal: wal,
+      ...(pluginEvents && { pluginEvents }),
     });
     for await (const chunk of generator) {
       chunks.push(chunk);
     }
     return chunks;
   }
+
+  test('plugin interceptors mutate tool input and replace the model-facing result', async () => {
+    const { model } = makeModel([
+      turn([toolCallPart('bash-1', 'tools__bash', { command: 'echo original' })]),
+      turn([
+        { type: 'text-start', id: 't1' },
+        { type: 'text-delta', id: 't1', delta: 'done' },
+        { type: 'text-end', id: 't1' },
+      ], 'stop'),
+    ]);
+    currentModel = model;
+    const observedResults: any[] = [];
+
+    const chunks = await runCore(makeTools(), {
+      toolCall: async (event: any) => {
+        event.input.command = 'echo mutated';
+        return {};
+      },
+      toolResult: async (event: any) => {
+        observedResults.push(event);
+        return { ...event, output: 'plugin-visible-result', isError: false };
+      },
+    });
+
+    expect(observedResults[0]?.input.command).toBe('echo mutated');
+    expect(JSON.stringify(observedResults[0]?.output)).toContain('mutated');
+    const result = chunks.find(
+      (chunk) => chunk.type === 'tool-result' && (chunk as any).toolCallId === 'bash-1'
+    );
+    expect(JSON.stringify((result as any)?.toolResult)).toContain('plugin-visible-result');
+  });
 
   function readWAL(): Array<Record<string, unknown>> {
     const file = path.join(sessionDir, EFFECT_WAL_FILENAME);

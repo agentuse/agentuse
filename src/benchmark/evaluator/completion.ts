@@ -1,6 +1,6 @@
 import { completeText } from '../../complete-text.js';
 import type { OutputValidation } from '../types.js';
-import { helperSystemPrompt } from '../../utils/anthropic.js';
+import { providerHelperSystemPrompt as helperSystemPrompt } from '../../plugin/provider-behavior.js';
 
 export interface CompletionEvalResult {
   valid: boolean;
@@ -91,7 +91,7 @@ Respond ONLY with the JSON object, no other text.`;
     // backend, which rejects the non-streaming generateText() path. The judge
     // role survives on Anthropic as a second system block — see
     // helperSystemPrompt.
-    const system = helperSystemPrompt(
+    const system = await helperSystemPrompt(
       judgeModelString,
       'You are a strict evaluator that judges agent output against criteria and replies with a JSON object only.',
     );

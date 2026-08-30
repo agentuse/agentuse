@@ -7,7 +7,7 @@ import { completeText } from '../complete-text';
 import { logger } from '../utils/logger';
 import { unifiedDiff } from '../utils/diff';
 import { getProjectDirSync } from '../storage/paths';
-import { helperSystemPrompt, type HelperSystemPrompt } from '../utils/anthropic';
+import { providerHelperSystemPrompt as helperSystemPrompt, type HelperSystemPrompt } from '../plugin/provider-behavior';
 import { LearningStore, withLearningFileLock } from './store';
 import { activeLearnings, effectiveCap, rankLearnings } from './ranking';
 import { hashInstructions, isStaleAgainst } from './contract';
@@ -1901,7 +1901,7 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   // and the model that will follow these instructions should be the one that
   // writes them.
   const model = options.model ?? options.config?.model ?? options.agentModel;
-  const system = helperSystemPrompt(
+  const system = await helperSystemPrompt(
     model,
     'You consolidate an agent\'s stored corrections into a smaller set without losing meaning, and reply with a JSON object only.',
   );

@@ -239,12 +239,14 @@ Run `agentuse models` to see every alias and what it currently resolves to.
 
 ## Plugins
 
-Plugins are TypeScript or JavaScript modules loaded from these directories:
+Loose plugins are TypeScript or JavaScript modules loaded from these directories:
 
 1. `.agentuse/plugins/*.{ts,js}`
 2. `$AGENTUSE_CONFIG_DIR/plugins/*.{ts,js}` (defaults to `~/.agentuse/plugins/*.{ts,js}`)
 
 Project plugins load before user-global plugins.
+
+Installed global packages are recorded under `~/.local/share/agentuse/plugins`. Plugins installed with `agentuse plugins install -l` live under `.agentuse/packages` and are recorded in `.agentuse/plugins.json`.
 
 See [Plugins](/guides/plugins) for the plugin API.
 

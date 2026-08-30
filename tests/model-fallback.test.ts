@@ -81,6 +81,7 @@ describe('model alias fallback execution', () => {
   });
 
   it('falls back on a transient error before model output', async () => {
+    const fallbackEvents: any[] = [];
     streamTextMock
       .mockImplementationOnce(() => ({
         stream: (async function* () { yield { type: 'error', error: new Error('429 rate limit') }; })(),
@@ -94,7 +95,13 @@ describe('model alias fallback execution', () => {
       }));
 
     const runAgent = agent();
-    const chunks = await drain(executeAgentCore(runAgent, {}, options));
+    const chunks = await drain(executeAgentCore(runAgent, {}, {
+      ...options,
+      sessionID: 'session-1',
+      pluginEvents: {
+        modelFallback: async (next) => { fallbackEvents.push(next); },
+      },
+    }));
 
     expect(createModelMock.mock.calls.map((call) => call[0])).toEqual([
       'anthropic:claude-opus-5',
@@ -103,6 +110,13 @@ describe('model alias fallback execution', () => {
     expect(chunks.filter((chunk) => chunk.type === 'error')).toHaveLength(0);
     expect(chunks.find((chunk) => chunk.type === 'text')?.text).toBe('recovered');
     expect(runAgent.config.model).toBe('openai:gpt-5.6');
+    expect(fallbackEvents).toEqual([expect.objectContaining({
+      sessionId: 'session-1',
+      from: 'anthropic:claude-opus-5',
+      to: 'openai:gpt-5.6',
+      reason: '429 rate limit',
+      attempt: 2,
+    })]);
     const fallbackConfig = streamTextMock.mock.calls[1][0] as any;
     expect(fallbackConfig.messages.some((message: any) =>
       message.content === "You are Claude Code, Anthropic's official CLI for Claude."

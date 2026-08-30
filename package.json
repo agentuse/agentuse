@@ -33,12 +33,18 @@
   "bin": {
     "agentuse": "./bin/cli.js"
   },
+  "typesVersions": {
+    "*": {
+      "plugin-api": ["src/plugin/types.ts"]
+    }
+  },
   "files": [
     "bin/cli.js",
     "dist",
     "!dist/**/*.map",
     "skills",
     "skill-data",
+    "src/plugin/types.ts",
     "README.md",
     "LICENSE"
   ],

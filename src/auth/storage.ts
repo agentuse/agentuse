@@ -2,6 +2,7 @@ import fs from "fs/promises";
 import path from "path";
 import type { AuthInfo, OAuthTokens, CodexOAuthTokens, ApiKeyAuth, ProviderAuth, CustomProviderAuth } from "./types.js";
 import { getAgentuseDataDir } from "../utils/data-dir.js";
+import type { PluginCredential } from "../plugin/types.js";
 
 export function resolveAuthFilePath(): string {
   return path.join(getAgentuseDataDir(), "auth.json");
@@ -347,6 +348,66 @@ export class AuthStorage {
       if (legacy && legacy.type === "api") {
         delete data[providerID];
       }
+    });
+  }
+
+  private static pluginCredentialKey(providerID: string, methodID: string): string {
+    return `${providerID}:plugin:${methodID}`;
+  }
+
+  private static normalizePluginCredential(credential: PluginCredential): PluginCredential {
+    const serialized = JSON.stringify(credential);
+    if (serialized === undefined) throw new Error("Plugin credential must be JSON-serializable");
+    const normalized = JSON.parse(serialized) as unknown;
+    if (!normalized || typeof normalized !== "object" || Array.isArray(normalized)) {
+      throw new Error("Plugin credential must be a JSON object");
+    }
+    return normalized as PluginCredential;
+  }
+
+  /** Opaque credentials owned by a provider auth method, persisted by core. */
+  static async getPluginCredential(providerID: string, methodID: string): Promise<PluginCredential | undefined> {
+    try {
+      const content = await fs.readFile(this.AUTH_FILE, "utf-8");
+      const data = JSON.parse(content) as Record<string, unknown>;
+      const value = data[this.pluginCredentialKey(providerID, methodID)];
+      return value && typeof value === "object" && !Array.isArray(value)
+        ? value as PluginCredential
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  static async setPluginCredential(providerID: string, methodID: string, credential: PluginCredential): Promise<void> {
+    const normalized = this.normalizePluginCredential(credential);
+    await this.mutate((data) => {
+      data[this.pluginCredentialKey(providerID, methodID)] = normalized as AuthInfo;
+    });
+  }
+
+  static async updatePluginCredential<T>(
+    providerID: string,
+    methodID: string,
+    callback: (credential: PluginCredential | undefined) => Promise<{ value: T; next?: PluginCredential }>,
+  ): Promise<T> {
+    return this.withAuthLock(async () => {
+      const data = await this.all() as Record<string, unknown>;
+      const key = this.pluginCredentialKey(providerID, methodID);
+      const raw = data[key];
+      const current = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as PluginCredential : undefined;
+      const { value, next } = await callback(current);
+      if (next) {
+        data[key] = this.normalizePluginCredential(next);
+        await this.writeAll(data as Record<string, AuthInfo>);
+      }
+      return value;
+    });
+  }
+
+  static async removePluginCredential(providerID: string, methodID: string): Promise<void> {
+    await this.mutate((data) => {
+      delete data[this.pluginCredentialKey(providerID, methodID)];
     });
   }
 

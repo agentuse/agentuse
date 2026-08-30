@@ -309,11 +309,7 @@ describe("evaluateExecution", () => {
     expect(prompt).toContain("When the search tool returns no results, narrow the query before widening it.");
   });
 
-  it("tells an Anthropic model what job it is doing, and asks for it short", async () => {
-    // The system prompt used to be a ternary: identity OR role. Every agent in
-    // an Anthropic-authed fleet took the identity branch, so the extractor was
-    // never told it was extracting, and the one place conciseness could be
-    // demanded outside the buried user prompt went unused.
+  it("gives an Anthropic API model the evaluator role directly", async () => {
     completeTextMock.mockImplementation(async () => "[]");
 
     await evaluateExecution({
@@ -324,9 +320,9 @@ describe("evaluateExecution", () => {
     });
 
     const [, opts] = completeTextMock.mock.calls[0] as unknown as [string, { instructions: string; extraSystem?: string }];
-    expect(opts.instructions).toBe("You are Claude Code, Anthropic's official CLI for Claude.");
-    expect(opts.extraSystem).toContain("high-signal learnings");
-    expect(opts.extraSystem).toContain("never a document");
+    expect(opts.instructions).toContain("high-signal learnings");
+    expect(opts.instructions).toContain("never a document");
+    expect(opts.extraSystem).toBeUndefined();
   });
 
   it("only accepts a supersedes id the model was actually shown", async () => {

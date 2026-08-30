@@ -74,7 +74,7 @@ describe('buildAutonomousAgentPrompt', () => {
 
 describe('prepareAgentExecution', () => {
   describe('system messages', () => {
-    it('should include Claude Code message for Anthropic models', async () => {
+    it('should not include the subscription identity for Anthropic API models', async () => {
       const agent = createMockAgent({
         config: { model: 'anthropic:claude-sonnet-4-0' }
       });
@@ -84,10 +84,8 @@ describe('prepareAgentExecution', () => {
         mcpClients: []
       });
 
-      expect(result.systemMessages.length).toBeGreaterThanOrEqual(2);
-      expect(result.systemMessages[0].content).toBe(
-        "You are Claude Code, Anthropic's official CLI for Claude."
-      );
+      expect(result.systemMessages.length).toBe(1);
+      expect(result.systemMessages[0].content).not.toContain('Claude Code');
       expect(result.systemMessages[0].role).toBe('system');
     });
 
@@ -466,7 +464,7 @@ describe('prepareAgentExecution', () => {
   });
 
   describe('model detection', () => {
-    it('should detect anthropic in model string with prefix', async () => {
+    it('does not infer subscription behavior from an Anthropic prefix', async () => {
       const agent = createMockAgent({
         config: { model: 'anthropic:claude-sonnet-4-0' }
       });
@@ -476,13 +474,12 @@ describe('prepareAgentExecution', () => {
         mcpClients: []
       });
 
-      // Should have Claude Code message for anthropic
       expect(result.systemMessages.some(m =>
         m.content.includes("Claude Code")
-      )).toBe(true);
+      )).toBe(false);
     });
 
-    it('should detect anthropic in model string without prefix', async () => {
+    it('does not infer provider behavior from a bare model substring', async () => {
       const agent = createMockAgent({
         config: { model: 'claude-anthropic-model' } // anthropic in the string
       });
@@ -492,10 +489,9 @@ describe('prepareAgentExecution', () => {
         mcpClients: []
       });
 
-      // Should have Claude Code message
       expect(result.systemMessages.some(m =>
         m.content.includes("Claude Code")
-      )).toBe(true);
+      )).toBe(false);
     });
   });
 });

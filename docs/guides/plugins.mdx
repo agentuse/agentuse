@@ -1,262 +1,379 @@
-# Plugin System
+# Plugins
 
-## Why Plugins?
+AgentUse plugins are TypeScript or JavaScript modules that export one activation function. The function receives a stable API and registers events, providers, or provider patches. AgentUse waits for async activation before model discovery and execution begin.
 
-The plugin system is the only way to programmatically extend agent functionality beyond the built-in capabilities. While agents themselves are markdown-based and declarative, plugins provide a JavaScript/TypeScript interface for:
+```ts
+import type { AgentUsePlugin } from "agentuse/plugin-api";
 
-- **Custom integrations**: Connect agents to your existing systems, databases, or APIs
-- **Observability**: Add monitoring, logging, or analytics to track agent performance
-- **Automation workflows**: Trigger actions based on agent completion or failure
-- **Development tools**: Build debugging utilities or testing frameworks
-- **Cross-agent functionality**: Share logic across all agents without modifying each one
+const plugin: AgentUsePlugin = async (agentuse) => {
+  agentuse.on("agent:complete", async (event) => {
+    agentuse.log.info(`${event.agent.name} completed`);
+  });
 
-Without plugins, you would be limited to the tools and capabilities built into AgentUse. Plugins bridge the gap between AgentUse's declarative agent definitions and your custom programmatic needs.
-
-## Quick Start
-
-1. Create a plugin directory:
-```bash
-mkdir -p .agentuse/plugins
-```
-
-2. Add a plugin file (`.js` or `.ts`):
-```javascript
-// .agentuse/plugins/my-plugin.js
-export default {
-  'agent:complete': async (event) => {
-    console.log(`Agent ${event.agent.name} completed!`);
-  }
-};
-```
-
-3. Run your agent normally - plugins auto-load!
-
-## Plugin Locations
-
-Plugins are automatically loaded from:
-- `./.agentuse/plugins/*.{ts,js}` - Project-specific plugins (loaded first)
-- `$AGENTUSE_CONFIG_DIR/plugins/*.{ts,js}` - User-global plugins (loaded second; defaults to `~/.agentuse/plugins/*.{ts,js}`)
-
-**Note:** Project-specific plugins take precedence and are loaded before global plugins. All plugins with the same event handler will execute in the order they are loaded.
-
-## Plugin Structure
-
-Each plugin must export a default object with event handlers:
-
-```typescript
-export default {
-  'agent:complete': async (event) => {
-    // Handle agent completion
-  }
-};
-```
-
-## Available Events
-
-### `agent:complete`
-
-Fired when an agent successfully completes execution.
-
-Event data:
-```typescript
-{
-  agent: {
-    name: string;         // Agent name
-    model: string;        // Model used (e.g., "anthropic:claude-sonnet-5")
-    description?: string; // Agent description from YAML frontmatter
-    filePath?: string;    // Path to agent file
-  };
-  result: {
-    text: string;         // Final output text
-    duration: number;     // Execution time in seconds
-    tokens?: number;      // Total tokens used
-    toolCalls: number;    // Number of tool calls made
-    toolCallTraces?: ToolCallTrace[];  // Detailed timing for each tool/sub-agent/LLM call
-  };
-  isSubAgent: boolean;    // True if this is a sub-agent
-  consoleOutput: string;  // Full console output including logs and results
-}
-```
-
-### ToolCallTrace Interface
-
-The `toolCallTraces` array provides detailed performance information for each operation during agent execution:
-
-```typescript
-interface ToolCallTrace {
-  name: string;           // Tool, sub-agent, or model name
-  type: 'tool' | 'subagent' | 'llm';
-  startTime: number;      // Unix timestamp in ms
-  duration: number;       // Duration in ms
-  tokens?: number;        // Total tokens used (for sub-agents and LLM calls)
-  promptTokens?: number;  // Input tokens (for LLM calls)
-  completionTokens?: number; // Output tokens (for LLM calls)
-}
-```
-
-**Trace Types:**
-- `tool`: Function tool calls (bash commands, file operations, etc.)
-- `subagent`: Sub-agent executions
-- `llm`: Direct LLM model calls
-
-**Use Cases:**
-- Performance monitoring and optimization
-- Cost tracking for token usage
-- Debugging slow operations
-- Analytics and reporting
-
-## Example: Slack Notifications
-
-```javascript
-// .agentuse/plugins/slack.js
-export default {
-  'agent:complete': async (event) => {
-    const webhookUrl = process.env.SLACK_WEBHOOK_URL;
-    
-    // Skip if no webhook or if sub-agent
-    if (!webhookUrl || event.isSubAgent) {
-      return;
-    }
-    
-    await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        text: `✅ Agent "${event.agent.name}" completed`,
-        attachments: [{
-          color: 'good',
-          fields: [
-            { title: 'Duration', value: `${event.result.duration.toFixed(1)}s`, short: true },
-            { title: 'Tokens', value: event.result.tokens?.toString() || 'N/A', short: true },
-            { title: 'Tool Calls', value: event.result.toolCalls.toString(), short: true }
-          ]
-        }]
-      })
-    });
-  }
-};
-```
-
-Set your webhook URL:
-```bash
-export SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
-```
-
-## Example: Performance Trace Reporting
-
-Display detailed performance traces for agent executions using `toolCallTraces`:
-
-```javascript
-// .agentuse/plugins/trace-reporter.js
-export default {
-  'agent:complete': async (event) => {
-    // Only process if traces are available and not a sub-agent
-    if (!event.result.toolCallTraces || event.isSubAgent) {
-      return;
-    }
-
-    console.log("\n📊 Performance Traces:");
-
-    // Display each trace with appropriate icon
-    for (const trace of event.result.toolCallTraces) {
-      const icon =
-        trace.type === 'llm' ? '🧠' :
-        trace.type === 'subagent' ? '🤖' : '🔧';
-
-      console.log(`  ${icon} ${trace.name}: ${trace.duration}ms`);
-
-      if (trace.tokens) {
-        console.log(`     └─ Tokens: ${trace.tokens}`);
-      }
-    }
-
-    // Summary statistics
-    const llmCalls = event.result.toolCallTraces.filter(t => t.type === 'llm');
-    const toolCalls = event.result.toolCallTraces.filter(t => t.type === 'tool');
-    const subagentCalls = event.result.toolCallTraces.filter(t => t.type === 'subagent');
-
-    console.log("\n📈 Summary:");
-    console.log(`  LLM calls: ${llmCalls.length} (${llmCalls.reduce((sum, t) => sum + t.duration, 0)}ms total)`);
-    console.log(`  Tool calls: ${toolCalls.length} (${toolCalls.reduce((sum, t) => sum + t.duration, 0)}ms total)`);
-    console.log(`  Sub-agents: ${subagentCalls.length} (${subagentCalls.reduce((sum, t) => sum + t.duration, 0)}ms total)`);
-  }
-};
-```
-
-This plugin outputs performance information like:
-```
-📊 Performance Traces:
-  🧠 anthropic:claude-sonnet-5: 1234ms
-     └─ Tokens: 450
-  🔧 bash: 567ms
-  🤖 code-reviewer: 8901ms
-     └─ Tokens: 1200
-  🧠 anthropic:claude-sonnet-5: 2345ms
-     └─ Tokens: 320
-
-📈 Summary:
-  LLM calls: 2 (3579ms total)
-  Tool calls: 1 (567ms total)
-  Sub-agents: 1 (8901ms total)
-```
-
-<Tip>
-  **Ready to Use**: Find this complete plugin in `templates/plugins/trace-reporter.js`. Copy it to `.agentuse/plugins/` to start tracking performance.
-</Tip>
-
-## Advanced Performance Monitoring Ideas
-
-You can extend the basic trace reporting with more advanced features:
-
-- **Slow Operation Detection**: Warn about operations taking longer than 5 seconds
-- **Token Usage Tracking**: Monitor prompt and completion tokens with cost estimates
-- **Operation Breakdown**: Categorize calls by type (tool, sub-agent, LLM)
-- **Historical Logging**: Save performance data to `.agentuse/performance.log`
-- **Smart Filtering**: Skip sub-agent executions to avoid duplicate logging
-- **Cost Analysis**: Calculate estimated costs based on token usage
-- **Performance Thresholds**: Set alerts for operations exceeding time or token limits
-- **Dashboards**: Export data to monitoring services like Datadog or Grafana
-- **Comparative Analysis**: Compare performance across different models or agent versions
-
-## TypeScript Support
-
-For TypeScript plugins, import the types:
-
-```typescript
-// .agentuse/plugins/my-plugin.ts
-import type { PluginHandlers } from 'agentuse/plugin/types';
-
-const plugin: PluginHandlers = {
-  'agent:complete': async (event) => {
-    // Full type safety and intellisense
-    console.log(`Agent ${event.agent.name} completed!`);
-    console.log(`Console output: ${event.consoleOutput}`);
-  }
+  agentuse.registerProvider({
+    // provider definition
+  });
 };
 
 export default plugin;
 ```
 
-## Error Handling
+Plugins run as trusted code with the same operating-system permissions as AgentUse. Review third-party packages before installing them.
 
-- Plugin loading errors are caught and logged as warnings, but don't prevent the agent from running
-- Invalid plugin formats (non-object default exports) are skipped with a warning message
-- Plugin execution errors are caught and logged but don't fail agent execution
-- Missing plugin directories are handled gracefully
-- Plugins can be disabled by removing/renaming the file
+## Loose project and global plugins
 
-## Best Practices
+Single-file plugins are discovered automatically:
 
-1. Check `event.isSubAgent` to avoid duplicate notifications
-2. Use environment variables for configuration
-3. Keep plugins focused on a single responsibility
-4. Handle errors gracefully within your plugin
-5. Use TypeScript for better type safety
+- `.agentuse/plugins/*.{ts,js}` for the current project.
+- `$AGENTUSE_CONFIG_DIR/plugins/*.{ts,js}` for every project (defaults to `~/.agentuse/plugins/*.{ts,js}`).
 
-## Implementation Details
+Project registrations are scoped to the current asynchronous execution, so concurrent server runs from different projects do not share project providers or event handlers.
 
-- Plugins are loaded using dynamic imports with absolute paths
-- Plugin handlers are executed asynchronously in parallel
-- Multiple plugins can handle the same event
-- Console output is captured during agent execution and made available to plugins
-- Plugin require cache is cleared for hot-reloading during development
+The historical event-object format remains supported:
+
+```ts
+export default {
+  "agent:complete": async (event) => {
+    console.log(event.result.text);
+  },
+};
+```
+
+It is equivalent to calling `agentuse.on("agent:complete", handler)`. New plugins should use the activation API.
+
+## Event API
+
+`agentuse.on(event, handler)` returns a disposable registration. Handlers run sequentially in registration order and receive a context containing an abort signal. Logging stays on the activation API so handlers can close over `agentuse.log`.
+
+```ts
+const registration = agentuse.on("agent:complete", async (event, context) => {
+  agentuse.log.info(`${event.agent.name}: ${event.result.text}`);
+});
+
+await registration.dispose();
+```
+
+There are three intercepting events and five observational events:
+
+| Event | Can affect execution? | Purpose |
+| --- | --- | --- |
+| `tool:call` | Mutate `event.input`; return `{ block, reason, terminate }` | Inspect, rewrite, or deny a tool call before AgentUse policy and execution |
+| `tool:result` | Return `{ output, isError }` | Rewrite the result passed back to the model or recover/convert an error |
+| `agent:complete` | Return `{ text }` | Rewrite the final outward response before channels and callers receive it |
+| `agent:start` | No | Observe an execution starting |
+| `agent:error` | No | Observe a terminal execution error |
+| `agent:suspend` | No | Observe suspension for human approval |
+| `agent:resume` | No | Observe an approval or continuation resume |
+| `model:fallback` | No | Observe a model fallback before the next attempt |
+
+Observational events and non-input fields are immutable snapshots. `tool:call` is the deliberate exception: every handler shares the same mutable `input` object, so later handlers, AgentUse approval policy, and the tool see prior mutations. Return-based transformations from `tool:result` and `agent:complete` are also chained through later handlers. A handler failure is logged and does not prevent later handlers from running.
+
+### Intercepting tools
+
+```ts
+agentuse.on("tool:call", async (event) => {
+  if (event.toolName === "search") {
+    event.input.limit ??= 10;
+  }
+
+  if (event.toolName === "bash" && event.input.command === "forbidden") {
+    return { block: true, reason: "Blocked by project policy", terminate: true };
+  }
+});
+
+agentuse.on("tool:result", async (event) => {
+  if (event.toolName === "search" && !event.isError) {
+    return { output: redactSecrets(event.output) };
+  }
+});
+```
+
+`block` denies the tool call. `reason` is returned to the model. `terminate` stops the agent loop after the denied result instead of allowing another model turn.
+
+### Transforming the final response
+
+```ts
+agentuse.on("agent:complete", async (event) => {
+  return { text: addFooter(event.result.text) };
+});
+```
+
+The replacement becomes the returned and delivered final text. The session timeline remains the raw streamed execution trace.
+
+### Event shapes
+
+```ts
+interface AgentReference {
+  name: string;
+  model: string;
+  description?: string;
+  filePath?: string;
+}
+
+interface AgentCompleteEvent {
+  agent: AgentReference;
+  result: {
+    text: string;
+    duration: number;
+    tokens?: number;
+    toolCalls: number;
+    toolCallTraces?: ToolCallTrace[];
+    finishReason?: string;
+    finishReasons?: string[];
+    hasTextOutput: boolean;
+  };
+  isSubAgent: boolean;
+  consoleOutput: string;
+}
+
+interface AgentStartEvent {
+  agent: AgentReference;
+  sessionId?: string;
+  trigger: "scheduled" | "manual" | "slack" | "api" | "onboarding";
+}
+
+interface AgentErrorEvent {
+  agent: AgentReference;
+  sessionId?: string;
+  error: { name?: string; message: string; code?: string };
+  duration: number;
+}
+
+interface AgentSuspendEvent {
+  agent: AgentReference;
+  sessionId: string;
+  reason: "approval";
+  toolCallId?: string;
+  approvalUrl?: string;
+}
+
+interface AgentResumeEvent {
+  agent: AgentReference;
+  sessionId: string;
+  reason: "approval" | "continue";
+}
+
+interface ModelFallbackEvent {
+  agent: AgentReference;
+  sessionId?: string;
+  from: string;
+  to: string;
+  reason: string;
+  attempt: number;
+}
+```
+
+## Provider API
+
+Register a provider with a unique model prefix, model catalog, transport, and optional authentication and prompt behavior:
+
+```ts
+agentuse.registerProvider({
+  id: "acme",
+  name: "Acme Models",
+  models: [
+    {
+      id: "acme-large",
+      name: "Acme Large",
+      input: ["text", "image"],
+      reasoning: true,
+      contextWindow: 128_000,
+      maxOutputTokens: 16_384,
+      cost: { input: 0, output: 0 },
+      capabilities: { tools: true },
+    },
+  ],
+  transport: {
+    kind: "openai-responses",
+    baseURL: "https://models.acme.test/v1",
+  },
+});
+```
+
+Models are addressed as `acme:acme-large`. Declared model limits and modalities participate in validation, context compaction, output-token limits, media tools, and `agentuse models`.
+
+### Model catalogs
+
+Providers can declare models directly, inherit a built-in catalog, or discover models asynchronously during activation:
+
+```ts
+models: { inherit: "anthropic", include: ["claude-sonnet-*"] }
+```
+
+```ts
+models: async ({ fetch, signal }) => {
+  const response = await fetch("http://localhost:11434/v1/models", { signal });
+  return convertModels(await response.json());
+}
+```
+
+### Transports
+
+AgentUse includes declarative transports:
+
+- `anthropic-messages`
+- `openai-responses`
+- `openai-chat-completions`
+
+Use `custom` when a provider needs a different protocol or a subprocess-backed runtime:
+
+```ts
+transport: {
+  kind: "custom",
+  apiVersion: 1,
+  async *stream(request, context) {
+    for await (const event of runCustomProtocol({
+      modelId: context.modelId,
+      messages: request.messages,
+      tools: request.tools,
+      signal: request.signal,
+    })) {
+      yield event;
+    }
+  },
+}
+```
+
+The custom boundary is owned and versioned by AgentUse; plugins do not import AI SDK types or receive internal provider factories. A request contains normalized messages, function tools, tool choice, common sampling options, provider options, and an abort signal.
+
+Custom streams emit these events:
+
+- `warning` before any response output.
+- `text-delta` and `reasoning-delta`, with optional stable block IDs.
+- `tool-call` with an ID, name, and structured input.
+- Optional `response-metadata` or `error` events.
+- Exactly one terminal `finish` event with a normalized reason and optional token usage.
+
+AgentUse adapts this contract to its internal model runtime. A stream that ends without `finish` is rejected.
+
+### Authentication
+
+AgentUse core owns restrictive credential-file permissions, credential persistence, cross-process refresh locking, status reporting, and deletion. Plugins return opaque credentials and implement provider-specific login, refresh, and request resolution.
+
+```ts
+auth: {
+  methods: [{
+    id: "oauth",
+    type: "oauth",
+    name: "Acme SSO",
+    environment: ["ACME_TOKEN"],
+
+    async login(interaction, context) {
+      await interaction.openBrowser({ url: authorizationUrl });
+      const code = await interaction.prompt({
+        message: "Paste the authorization code:",
+        secret: true,
+      });
+      return exchangeCode(code, context.signal);
+    },
+
+    async refresh(credential, context) {
+      return refreshToken(credential, context.signal);
+    },
+
+    resolve({ credential }, context) {
+      const token = context.env.ACME_TOKEN ?? credential?.access;
+      return token ? { bearerToken: token, source: "Acme OAuth" } : undefined;
+    },
+  }],
+}
+```
+
+Login interaction is UI-neutral and supports browser authorization, device codes, prompts, selections, and notifications. The same plugin therefore works in the terminal, desktop app, server, and CI environments.
+
+Credentials with a numeric `expires` property are refreshed five minutes before expiry. AgentUse serializes refreshes and persists the returned credential before resolving request authentication.
+
+### Provider-owned prompts
+
+Prompt contributions have stable IDs and ownership metadata:
+
+```ts
+prompts: {
+  system() {
+    return [{
+      id: "identity",
+      content: "You are the Acme coding agent.",
+      position: "prepend",
+      portable: false,
+    }];
+  },
+}
+```
+
+Non-portable contributions are removed when model fallback crosses providers. Their IDs are scoped to the registering provider; plugins do not need to compare raw system-message strings.
+
+### Built-in provider patches and overrides
+
+A plugin can patch a built-in endpoint without replacing its models:
+
+```ts
+agentuse.registerProvider("anthropic", {
+  baseURL: "https://proxy.acme.test/anthropic",
+  headers: { "X-Acme-Tenant": "engineering" },
+});
+```
+
+A complete replacement must be explicit:
+
+```ts
+agentuse.registerProvider({
+  id: "anthropic",
+  name: "Acme Anthropic",
+  override: true,
+  models: { inherit: "anthropic" },
+  transport: { kind: "anthropic-messages" },
+});
+```
+
+Accidental built-in ID collisions are rejected. Registrations are removed when their plugin host is disposed.
+
+## Distributed packages
+
+A Git repository package declares its resources in `package.json`:
+
+```json
+{
+  "name": "@example/agentuse-provider",
+  "version": "1.0.0",
+  "keywords": ["agentuse-plugin"],
+  "peerDependencies": {
+    "agentuse": "*"
+  },
+  "agentuse": {
+    "apiVersion": 1,
+    "plugins": ["./src/index.ts"]
+  }
+}
+```
+
+Plugin entry paths must stay inside the package. Runtime dependencies belong in `dependencies`. Git installation uses `npm install --omit=dev --ignore-scripts`; package lifecycle scripts never run implicitly.
+
+## Installing and managing packages
+
+```bash
+agentuse plugins install owner/repository
+agentuse plugins install git:github.com/owner/repository@v1
+agentuse plugins install https://github.com/owner/repository.git
+agentuse plugins install ./local-git-checkout
+
+agentuse plugins list
+agentuse plugins update
+agentuse plugins update @example/agentuse-provider
+agentuse plugins remove @example/agentuse-provider
+agentuse plugins uninstall @example/agentuse-provider  # alias
+```
+
+Use `-l` for project scope:
+
+```bash
+agentuse plugins install -l owner/repository
+agentuse plugins list -l
+agentuse plugins update -l
+agentuse plugins remove -l @example/agentuse-provider
+```
+
+Global packages live under `~/.local/share/agentuse/plugins`. Project packages live under `.agentuse/packages` with records in `.agentuse/plugins.json`. `agentuse plugins list --all-scopes` displays both.
+
+Git tags, branches, and commits can be selected with `@ref`. Updates retain the configured ref. Installation and updates clone into staging, install safe runtime dependencies, compile and activate every entry, and only then replace the active checkout. A failed validation leaves the working version in place.
+
+The shorter `agentuse install|update|list|remove` commands remain as compatibility aliases.

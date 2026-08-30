@@ -951,6 +951,23 @@ agentuse models bump ./agents
 
 ---
 
+## agentuse plugins
+
+Install and manage trusted AgentUse packages from Git repositories.
+
+```bash
+agentuse plugins install owner/repository
+agentuse plugins install git:github.com/owner/repository@v1
+agentuse plugins list [--json] [--all-scopes]
+agentuse plugins update [name]
+agentuse plugins remove <name>
+agentuse plugins uninstall <name>                  # alias
+```
+
+Add `-l` to any subcommand to use project-local package settings. `install` accepts `owner/repo`, `github:owner/repo`, `git:github.com/owner/repo@ref`, HTTPS or SSH GitHub URLs, and local Git checkout paths. `update` without a name updates every plugin in the selected scope. The shorter `agentuse install|update|list|remove` commands remain as compatibility aliases.
+
+---
+
 ## agentuse provider
 
 Manage providers and authentication credentials. (`auth` still works as a hidden alias.)
@@ -958,7 +975,7 @@ Manage providers and authentication credentials. (`auth` still works as a hidden
 ### provider login
 
 ```bash
-agentuse provider login [provider]   # anthropic, openai, openrouter, opencode-go
+agentuse provider login [provider]   # built-ins plus installed provider plugins
 agentuse provider login opencode-go
 ```
 

@@ -7,7 +7,7 @@ import { parseAgent, type ParsedAgent } from '../parser';
 import { resolveFilesystemMounts, type ResolvedMount } from '../tools/path-validator.js';
 import { logger } from '../utils/logger';
 import { LearningStore, effectiveCap, hashInstructions, isStaleAgainst, partitionLearnings } from '../learning/index.js';
-import { addAnthropicIdentity, isAnthropicModel } from '../utils/anthropic';
+import { applyProviderSystemMessages } from '../plugin/provider-behavior';
 
 /**
  * Options for building system messages
@@ -140,11 +140,7 @@ export async function buildSystemMessages(options: BuildSystemMessagesOptions): 
     logger.debug(`[Sandbox] Injected sandbox system prompt (${mounts.length} mount(s))`);
   }
 
-  // Prepend Anthropic identity if needed
-  systemMessages = addAnthropicIdentity(systemMessages, agent.config.model);
-  if (isAnthropicModel(agent.config.model) && !isSubAgent) {
-    logger.debug("Using Anthropic system prompt: You are Claude Code...");
-  }
+  systemMessages = await applyProviderSystemMessages(systemMessages, agent.config.model);
 
   return { messages: systemMessages };
 }

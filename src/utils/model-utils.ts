@@ -7,6 +7,7 @@ import { getSuggestedModelIds, getModelFromRegistry, type ModelInfo } from '../g
 import { logger } from './logger';
 import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go';
 import { BUILTIN_PROVIDERS } from '../providers/registry-sources';
+import { loadedPluginModel, loadedPluginRegistryProvider } from '../plugin/provider-runtime';
 
 /**
  * Resolve a model string to its canonical provider.
@@ -80,7 +81,25 @@ export function joinModelString(parts: {
  */
 export function toRegistryKey(modelString: string): string {
   const { provider, modelId } = splitModelString(modelString);
-  return `${provider}:${modelId}`;
+  return `${loadedPluginRegistryProvider(provider) ?? provider}:${modelId}`;
+}
+
+/** Registry-compatible metadata for built-in and plugin-declared models. */
+export function resolveModelInfo(modelString: string): ModelInfo | undefined {
+  const registry = getModelFromRegistry(toRegistryKey(modelString));
+  if (registry) return registry;
+  const { provider, modelId } = splitModelString(modelString);
+  const plugin = loadedPluginModel(provider, modelId);
+  if (!plugin) return undefined;
+  return {
+    id: plugin.id,
+    name: plugin.name,
+    reasoning: Boolean(plugin.reasoning),
+    toolCall: plugin.capabilities?.tools ?? true,
+    modalities: { input: plugin.input, output: ['text'] },
+    limit: { context: plugin.contextWindow, output: plugin.maxOutputTokens },
+    cost: { input: plugin.cost?.input ?? 0, output: plugin.cost?.output ?? 0 },
+  };
 }
 
 export interface ValidationResult {
@@ -99,7 +118,7 @@ export function validateModel(modelString: string): ValidationResult {
   }
 
   // Check if model exists in registry (strip any :env auth suffix first)
-  const model = getModelFromRegistry(toRegistryKey(modelString));
+  const model = resolveModelInfo(modelString);
   if (model) {
     return { valid: true, model };
   }

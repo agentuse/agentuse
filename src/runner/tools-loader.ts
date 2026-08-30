@@ -14,8 +14,7 @@ import { createStore, createStoreTools, type Store } from '../store/index.js';
 import { createReportIncompleteTool, createReportCompleteTool, type RunOutcome } from '../tools/report-outcome.js';
 import { createSandbox, createSandboxTools, type SandboxInstance } from '../sandbox.js';
 import { resolveFilesystemMounts, type ResolvedMount } from '../tools/path-validator.js';
-import { getModelFromRegistry } from '../generated/models.js';
-import { toRegistryKey } from '../utils/model-utils';
+import { resolveModelInfo } from '../utils/model-utils';
 import { resolveMediaToolResultSupport } from '../models.js';
 import { logger } from '../utils/logger';
 import type { ParsedAgent } from '../parser';
@@ -179,7 +178,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
       // leave filesystem_read returning payloads the selected transport rejects.
       const modelCandidates = agent.config.modelCandidates ?? [agent.config.model];
       const candidateModalities = modelCandidates.map(
-        (model) => getModelFromRegistry(toRegistryKey(model))?.modalities.input
+        (model) => resolveModelInfo(model)?.modalities.input
       );
       const modelInputModalities = candidateModalities.every(Array.isArray)
         ? candidateModalities.slice(1).reduce(

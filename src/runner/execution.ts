@@ -1,10 +1,9 @@
-import { streamText, isStepCount, type ModelMessage, type ToolSet } from 'ai';
+import { streamText, isStepCount, type ModelMessage, type Tool, type ToolSet } from 'ai';
 import { repairSmuggledXmlToolCall } from './tool-call-repair';
 import { createHash } from 'crypto';
 import type { ParsedAgent } from '../parser';
 import { createModel } from '../models';
-import { getModelFromRegistry } from '../generated/models';
-import { resolveModelProvider, toRegistryKey } from '../utils/model-utils';
+import { resolveModelInfo, resolveModelProvider } from '../utils/model-utils';
 import { BUILTIN_PROVIDERS } from '../providers/registry-sources';
 import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go';
 import {
@@ -48,7 +47,14 @@ import {
   SUBMIT_PROJECT_SUGGESTIONS_TOOL,
   type ProjectSuggestionsSubmission,
 } from '../onboarding/submit-project-suggestions.js';
-import { ANTHROPIC_IDENTITY_PROMPT, addAnthropicIdentity } from '../utils/anthropic';
+import { applyProviderSystemMessages, providerUsesAnthropicProtocol } from '../plugin/provider-behavior';
+import { loadedPluginProtocol, loadedPluginRegistryProvider } from '../plugin/provider-runtime';
+import type {
+  ModelFallbackEvent,
+  ToolCallEvent,
+  ToolCallEventResult,
+  ToolResultEvent,
+} from '../plugin/types';
 import {
   availableModelCandidates,
   clearModelCooldown,
@@ -110,34 +116,36 @@ const CUSTOM_PROVIDER_MAX_OUTPUT_TOKENS = 16384;
 export function resolveMaxOutputTokens(agent: ParsedAgent): number | undefined {
   const provider = resolveModelProvider(agent.config.model);
   const isCustomProvider =
-    !BUILTIN_PROVIDERS.includes(provider) || provider === OPENCODE_GO_PROVIDER_ID;
+    (!BUILTIN_PROVIDERS.includes(provider) && !loadedPluginRegistryProvider(provider))
+    || provider === OPENCODE_GO_PROVIDER_ID;
 
   const override = agent.config.maxOutputTokens;
   const anthropicThinkingMax =
-    provider === 'anthropic' ? resolveAnthropicThinking(agent)?.maxOutputTokens : undefined;
+    isAnthropicModel(agent.config.model) ? resolveAnthropicThinking(agent)?.maxOutputTokens : undefined;
   if (anthropicThinkingMax) {
     if (!override) return anthropicThinkingMax;
     // The documented use of `maxOutputTokens` is "my agent must emit a large
     // single response"; letting the thinking ceiling silently override it would
     // cap the visible answer at budget + reserve no matter what the author set.
-    const registryOutput = getModelFromRegistry(toRegistryKey(agent.config.model))?.limit?.output;
+    const registryOutput = resolveModelInfo(agent.config.model)?.limit?.output;
     const clamped = registryOutput ? Math.min(override, registryOutput) : override;
     return Math.max(clamped, anthropicThinkingMax);
   }
 
   if (isCustomProvider) return override ?? CUSTOM_PROVIDER_MAX_OUTPUT_TOKENS;
 
-  const registryOutput = getModelFromRegistry(toRegistryKey(agent.config.model))?.limit?.output;
+  const registryOutput = resolveModelInfo(agent.config.model)?.limit?.output;
   if (override) return registryOutput ? Math.min(override, registryOutput) : override;
 
-  if (provider === 'anthropic' && registryOutput && registryOutput > 0) {
+  if (isAnthropicModel(agent.config.model) && registryOutput && registryOutput > 0) {
     return Math.min(registryOutput, DEFAULT_MAX_OUTPUT_TOKENS);
   }
   return undefined;
 }
 
 function isAnthropicModel(model: string): boolean {
-  return resolveModelProvider(model) === 'anthropic';
+  const provider = resolveModelProvider(model);
+  return provider === 'anthropic' || loadedPluginProtocol(provider) === 'anthropic';
 }
 
 function defaultOpenAIPromptCacheKey(agent: ParsedAgent): string {
@@ -160,7 +168,7 @@ export function openAIOptionsWithCacheDefaults(agent: ParsedAgent): Record<strin
   // Responses API rejects reasoningSummary on non-reasoning models (gpt-4o), and
   // an unknown model is treated as non-reasoning (a broken run is worse than an
   // opt-in-able missing summary). Explicit user config always wins.
-  const isReasoningModel = getModelFromRegistry(toRegistryKey(agent.config.model))?.reasoning === true;
+  const isReasoningModel = resolveModelInfo(agent.config.model)?.reasoning === true;
   return {
     promptCacheKey: configured.promptCacheKey ?? defaultOpenAIPromptCacheKey(agent),
     ...(isReasoningModel && { reasoningSummary: 'auto' }),
@@ -182,7 +190,7 @@ export function resolveAnthropicThinking(
   const maxOutputTokens = Math.max(
     budgetTokens + 1,
     Math.min(
-      getModelFromRegistry(toRegistryKey(agent.config.model))?.limit?.output ?? Number.MAX_SAFE_INTEGER,
+      resolveModelInfo(agent.config.model)?.limit?.output ?? Number.MAX_SAFE_INTEGER,
       budgetTokens + ANTHROPIC_THINKING_ANSWER_RESERVE
     )
   );
@@ -207,9 +215,8 @@ export function resolveReasoning(agent: ParsedAgent): {
   if (requestedReasoning) {
     return resolveReasoningCompatibility(agent.config.model, requestedReasoning);
   }
-  const provider = resolveModelProvider(agent.config.model);
   const anthropicThinkingBudget =
-    provider === 'anthropic' ? resolveAnthropicThinking(agent)?.budgetTokens : undefined;
+    isAnthropicModel(agent.config.model) ? resolveAnthropicThinking(agent)?.budgetTokens : undefined;
   return anthropicThinkingBudget ? { anthropicThinkingBudget } : {};
 }
 
@@ -503,6 +510,11 @@ type ExecuteAgentCoreOptions = {
   runOutcome?: RunOutcome;
   agentSourceSubmission?: AgentSourceSubmission;
   projectSuggestionsSubmission?: ProjectSuggestionsSubmission;
+  pluginEvents?: {
+    toolCall?(event: ToolCallEvent, signal?: AbortSignal): Promise<ToolCallEventResult>;
+    toolResult?(event: ToolResultEvent, signal?: AbortSignal): Promise<ToolResultEvent>;
+    modelFallback?(event: ModelFallbackEvent, signal?: AbortSignal): Promise<void>;
+  };
 };
 
 type ExecuteAgentAttemptOptions = ExecuteAgentCoreOptions & {
@@ -511,12 +523,11 @@ type ExecuteAgentAttemptOptions = ExecuteAgentCoreOptions & {
   approvalLeaseStore: LeaseStore;
 };
 
-function systemMessagesForModel(
+async function systemMessagesForModel(
   messages: Array<{ role: string; content: string }>,
   model: string
-): Array<{ role: string; content: string }> {
-  const providerNeutral = messages.filter((message) => message.content !== ANTHROPIC_IDENTITY_PROMPT);
-  return addAnthropicIdentity(providerNeutral, model);
+): Promise<Array<{ role: string; content: string }>> {
+  return applyProviderSystemMessages(messages, model);
 }
 
 function providerOptionsForModel(providerOptions: unknown, model: string): unknown {
@@ -524,8 +535,9 @@ function providerOptionsForModel(providerOptions: unknown, model: string): unkno
     return providerOptions;
   }
   const provider = resolveModelProvider(model);
-  const selected = (providerOptions as Record<string, unknown>)[provider];
-  return selected === undefined ? undefined : { [provider]: selected };
+  const optionProvider = loadedPluginProtocol(provider) ?? provider;
+  const selected = (providerOptions as Record<string, unknown>)[optionProvider];
+  return selected === undefined ? undefined : { [optionProvider]: selected };
 }
 
 /** Rebuild provider-specific history metadata when fallback crosses providers. */
@@ -568,6 +580,60 @@ function isMeaningfulModelChunk(chunk: AgentChunk): boolean {
     || chunk.type === 'tool-call'
     || chunk.type === 'tool-result'
     || chunk.type === 'suspended';
+}
+
+function recordInput(input: unknown): Record<string, unknown> {
+  return input && typeof input === 'object' && !Array.isArray(input)
+    ? input as Record<string, unknown>
+    : { value: input };
+}
+
+function pluginResultError(output: unknown): Error {
+  if (output instanceof Error) return output;
+  if (typeof output === 'string') return new Error(output);
+  try {
+    return new Error(JSON.stringify(output));
+  } catch {
+    return new Error(String(output));
+  }
+}
+
+/** Transform the actual model-facing result after core clamping/artifact handling. */
+function withPluginToolResults(
+  tools: ToolSet,
+  transform?: ExecuteAgentCoreOptions['pluginEvents'] extends infer P
+    ? P extends { toolResult?: infer T } ? T : never
+    : never,
+): ToolSet {
+  if (!transform) return tools;
+  return Object.fromEntries(Object.entries(tools).map(([name, tool]) => {
+    const originalExecute = (tool as Tool).execute;
+    if (typeof originalExecute !== 'function') return [name, tool];
+    return [name, {
+      ...tool,
+      execute: async (input: unknown, callOptions?: { toolCallId?: string; abortSignal?: AbortSignal }) => {
+        const eventBase = {
+          toolCallId: callOptions?.toolCallId ?? 'unknown',
+          toolName: name,
+          input: recordInput(input),
+        };
+        let output: unknown;
+        let isError = false;
+        try {
+          output = await (originalExecute as (...args: any[]) => unknown)(input, callOptions);
+        } catch (error) {
+          if (isSuspendSignal(error)) throw error;
+          output = error;
+          isError = true;
+        }
+        const next = await transform({ ...eventBase, output, isError }, callOptions?.abortSignal);
+        if (!next.isError) return next.output;
+        throw next.output === output && output instanceof Error
+          ? output
+          : pluginResultError(next.output);
+      },
+    }];
+  })) as ToolSet;
 }
 
 async function persistSelectedModel(
@@ -622,7 +688,7 @@ export async function* executeAgentCore(
     const model = candidates[index]!;
     const attemptSystemMessages = model === initiallyPreparedModel
       ? options.systemMessages
-      : systemMessagesForModel(options.systemMessages, model);
+      : await systemMessagesForModel(options.systemMessages, model);
     if (model === initiallyPreparedModel) agent.config.model = model;
     else await persistSelectedModel(agent, model, attemptSystemMessages, options);
     const attemptAgent: ParsedAgent = {
@@ -666,10 +732,23 @@ export async function* executeAgentCore(
     }
 
     if (fallbackError !== undefined) {
+      const nextModel = candidates[index + 1]!;
       logger.warn(
-        `Model ${model} failed before producing output; falling back to ${candidates[index + 1]}: ` +
+        `Model ${model} failed before producing output; falling back to ${nextModel}: ` +
         toErrorMessage(fallbackError)
       );
+      await options.pluginEvents?.modelFallback?.({
+        agent: {
+          name: agent.name,
+          model,
+          ...(agent.description && { description: agent.description }),
+        },
+        ...(options.sessionID && { sessionId: options.sessionID }),
+        from: model,
+        to: nextModel,
+        reason: toErrorMessage(fallbackError),
+        attempt: index + 2,
+      }, options.abortSignal);
       continue;
     }
 
@@ -792,7 +871,8 @@ async function* executeAgentAttempt(
 
   try {
   // Initialize context manager if enabled
-  const usesAnthropicCacheControl = isAnthropicModel(agent.config.model);
+  const usesAnthropicCacheControl = isAnthropicModel(agent.config.model)
+    || await providerUsesAnthropicProtocol(agent.config.model);
   const initialMessages: any[] = prepareThinkingReplay(agent.config.model, options.messages ?? [
     ...options.systemMessages,
     usesAnthropicCacheControl
@@ -810,9 +890,12 @@ async function* executeAgentAttempt(
   const walledTools = options.effectWal
     ? wrapToolsWithWAL(streamTools, options.effectWal)
     : streamTools;
-  const modelFacingTools = limitModelFacingToolOutputs(
-    walledTools,
-    buildToolOutputArtifactWriter(options)
+  const modelFacingTools = withPluginToolResults(
+    limitModelFacingToolOutputs(
+      walledTools,
+      buildToolOutputArtifactWriter(options)
+    ),
+    options.pluginEvents?.toolResult,
   );
 
   if (ContextManager.isEnabled()) {
@@ -906,6 +989,13 @@ async function* executeAgentAttempt(
       await recordCompactionFailure(error);
     }
   };
+
+  let pluginTerminateRequested = false;
+
+  // `stopWhen` predicate: stop after the current step when a plugin explicitly
+  // asks to terminate. A blocking interceptor normally sets both `block` and
+  // `terminate`, producing a denied tool result and preventing another turn.
+  const stopOnPluginTerminate = (): boolean => pluginTerminateRequested;
 
   // `stopWhen` predicate: stop the step loop the moment a step carries a
   // SuspendSignal tool-error. This runs synchronously inside the SDK's own
@@ -1107,8 +1197,8 @@ async function* executeAgentAttempt(
       // native control (Anthropic thinking budget / OpenAI reasoningEffort).
       ...(reasoning && { reasoning }),
       stopWhen: contextManager
-        ? [isStepCount(remainingSteps), stopForCompaction, stopOnSuspend, stopOnDeliveredOutcome, stopOnDeliveredAgentSource, stopOnDeliveredProjectSuggestions]
-        : [isStepCount(remainingSteps), stopOnSuspend, stopOnDeliveredOutcome, stopOnDeliveredAgentSource, stopOnDeliveredProjectSuggestions],
+        ? [isStepCount(remainingSteps), stopForCompaction, stopOnSuspend, stopOnDeliveredOutcome, stopOnDeliveredAgentSource, stopOnDeliveredProjectSuggestions, stopOnPluginTerminate]
+        : [isStepCount(remainingSteps), stopOnSuspend, stopOnDeliveredOutcome, stopOnDeliveredAgentSource, stopOnDeliveredProjectSuggestions, stopOnPluginTerminate],
       abortSignal: effectiveAbortSignal,
       // Deterministic fix for the XML-drift failure mode (fields smuggled into
       // neighboring strings as <parameter> markup); anything else falls through
@@ -1171,6 +1261,7 @@ async function* executeAgentAttempt(
         ) as ToolSet
       : { ...modelFacingTools };
     const awaitHumanPresent = !!(toolsForStream as any).await_human;
+    let coreToolApproval: ((opts: { toolCall: { toolName: string; toolCallId?: string; input?: any } }) => unknown) | undefined;
     if (awaitHumanPresent || effectPatterns.length > 0) {
       // Barrier state, scoped to this streamText. Real gates suspend and end the
       // stream. Machine preflight/verify decisions and mocked gates resolve
@@ -1205,7 +1296,7 @@ async function* executeAgentAttempt(
         );
       }
 
-      streamConfig.toolApproval = (opts: { toolCall: { toolName: string; toolCallId?: string; input?: any } }) => {
+      coreToolApproval = (opts: { toolCall: { toolName: string; toolCallId?: string; input?: any } }) => {
         const { toolName, toolCallId: callId, input } = opts.toolCall;
 
         // The gate itself: mark the step gated, then run and suspend. Returning
@@ -1356,6 +1447,35 @@ async function* executeAgentAttempt(
         }
 
         return undefined;
+      };
+    }
+
+    if (options.pluginEvents?.toolCall || coreToolApproval) {
+      streamConfig.toolApproval = async (opts: {
+        toolCall: { toolName: string; toolCallId?: string; input?: any };
+      }) => {
+        if (options.pluginEvents?.toolCall) {
+          const input = recordInput(opts.toolCall.input);
+          // Tool inputs are object schemas throughout AgentUse. Keep the exact
+          // object reference so Pi-style in-place mutations reach core policy
+          // checks and the eventual execute call.
+          if (opts.toolCall.input !== input && opts.toolCall.input && typeof opts.toolCall.input === 'object') {
+            opts.toolCall.input = input;
+          }
+          const decision = await options.pluginEvents.toolCall({
+            toolCallId: opts.toolCall.toolCallId ?? 'unknown',
+            toolName: opts.toolCall.toolName,
+            input,
+          }, effectiveAbortSignal);
+          if (decision.terminate) pluginTerminateRequested = true;
+          if (decision.block) {
+            return {
+              type: 'denied' as const,
+              reason: decision.reason ?? `Tool '${opts.toolCall.toolName}' was blocked by a plugin`,
+            };
+          }
+        }
+        return await coreToolApproval?.(opts);
       };
     }
 

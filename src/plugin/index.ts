@@ -1,21 +1,34 @@
 import { glob } from 'glob';
-import { tmpdir } from 'os';
-import { join, dirname, extname } from 'path';
-import { pathToFileURL } from 'url';
-import { mkdtemp, stat, writeFile, rm } from 'fs/promises';
-import * as esbuild from 'esbuild';
-import { createHash, randomBytes } from 'crypto';
-import type { AgentCompleteEvent, PluginHandlers } from './types';
+import { basename, join } from 'path';
+import type {
+  AgentCompleteEvent,
+  PluginEvents,
+  PluginHandlers,
+  ToolCallEvent,
+  ToolCallEventResult,
+  ToolResultEvent,
+} from './types';
+import type { PluginIdentity } from './internal-types';
+import { PluginHost } from './host';
+import { importPluginModule } from './loader';
 import { logger } from '../utils/logger';
+import { enterPluginHost } from './context';
+import { getInstalledPluginHost } from './provider-runtime';
 import { getGlobalConfigDir } from '../utils/global-config';
 
+/** Per-execution facade over the unified plugin host. */
 export class PluginManager {
+  readonly host = new PluginHost();
+  /** @deprecated Compatibility for existing diagnostics/tests. */
   private plugins: Array<{ path: string; handlers: PluginHandlers }> = [];
+  private hostManagedPaths = new Set<string>();
 
-  async loadPlugins(customDirs?: string[]): Promise<void> {
-    // Define plugin search paths
+  async loadPlugins(customDirs?: string[], projectRoot?: string): Promise<void> {
+    // enterWith keeps project registrations isolated to this async execution
+    // chain, including concurrent serve requests for different projects.
+    enterPluginHost(this.host, projectRoot);
     const pluginPaths = customDirs && customDirs.length > 0
-      ? customDirs.map(dir => join(dir, '*.{ts,js}'))
+      ? customDirs.map((dir) => join(dir, '*.{ts,js}'))
       : [
           './.agentuse/plugins/*.{ts,js}',
           join(getGlobalConfigDir(), 'plugins/*.{ts,js}')
@@ -24,96 +37,101 @@ export class PluginManager {
     for (const pattern of pluginPaths) {
       try {
         const files = await glob(pattern, { absolute: true });
-
         for (const file of files) {
           try {
-            let module: any;
-            const ext = extname(file);
-
-            if (ext === '.ts') {
-              // TypeScript: Bundle with esbuild and write to temp file
-              const result = await esbuild.build({
-                entryPoints: [file],
-                bundle: true,
-                platform: 'node',
-                format: 'esm',
-                target: 'node18',
-                sourcemap: 'inline',
-                absWorkingDir: dirname(file),
-                write: false,
-                external: ['node:*']
-              });
-
-              const code = result.outputFiles[0].text;
-              // Give every compile its own directory. Besides preventing
-              // write/remove races and predictable symlink targets, this avoids
-              // Bun caching failed dynamic-import resolution for later files in
-              // one shared os.tmpdir() directory.
-              const hash = createHash('md5').update(file).digest('hex').substring(0, 8);
-              const nonce = randomBytes(6).toString('hex');
-              const tempDir = await mkdtemp(join(tmpdir(), 'agentuse-plugin-'));
-              const tempFile = join(tempDir, `${hash}-${nonce}.mjs`);
-
-              try {
-                // Write the compiled code to temp file (exclusive: never follow
-                // or clobber an existing path).
-                await writeFile(tempFile, code, { flag: 'wx' });
-
-                // Import from the temp file
-                const tempUrl = pathToFileURL(tempFile).href + '?t=' + Date.now();
-                module = await import(tempUrl);
-              } finally {
-                // Clean up the complete per-load directory.
-                await rm(tempDir, { recursive: true, force: true }).catch(() => {});
-              }
-            } else {
-              // JavaScript: Dynamic import with cache busting
-              const fileStat = await stat(file);
-              const url = pathToFileURL(file).href + '?v=' + fileStat.mtimeMs;
-              module = await import(url);
+            const exported = await importPluginModule(file);
+            const identity: PluginIdentity = {
+              name: basename(file),
+              source: file,
+              scope: file.startsWith(join(getGlobalConfigDir(), 'plugins')) ? 'global' : 'project',
+            };
+            await this.host.activate(identity, exported);
+            if (exported && typeof exported === 'object') {
+              this.plugins.push({ path: file, handlers: exported as PluginHandlers });
+              this.hostManagedPaths.add(file);
             }
-
-            const plugin = module.default;
-
-            // Validate it's an object with handler functions
-            if (plugin && typeof plugin === 'object') {
-              this.plugins.push({ path: file, handlers: plugin });
-              logger.debug(`Loaded plugin: ${file}`);
-            } else {
-              logger.warn(`Invalid plugin format in ${file}: must export default object with event handlers`);
-            }
+            logger.debug(`Loaded plugin: ${file}`);
           } catch (error) {
-            logger.warn(`Failed to load plugin ${file}: ${(error as Error).message}`);
+            logger.warn(`Failed to load plugin ${file}: ${error instanceof Error ? error.message : String(error)}`);
           }
         }
       } catch (error) {
-        // Glob pattern might not match anything, that's okay
-        if ((error as any).code !== 'ENOENT') {
-          logger.debug(`Plugin search path ${pattern} not found or inaccessible`);
-        }
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') logger.debug(`Plugin search path ${pattern} not found or inaccessible`);
       }
     }
-
-    if (this.plugins.length > 0) {
-      logger.info(`Loaded ${this.plugins.length} plugin(s)`);
-    }
+    if (this.plugins.length > 0) logger.info(`Loaded ${this.plugins.length} plugin(s)`);
   }
 
-  async emitAgentComplete(event: AgentCompleteEvent): Promise<void> {
-    for (const { path, handlers } of this.plugins) {
-      if (handlers['agent:complete']) {
-        const pluginName = path.split('/').pop() || path;
-        try {
-          await handlers['agent:complete'](event);
-          logger.info(`Plugin '${pluginName}' executed successfully`);
-        } catch (error) {
-          logger.info(`Plugin '${pluginName}' failed: ${(error as Error).message}`);
-          logger.warn(`Plugin error in ${path}: ${(error as Error).message}`);
-        }
+  async emit<E extends Exclude<keyof PluginEvents, 'agent:complete' | 'tool:call' | 'tool:result'>>(
+    name: E,
+    event: PluginEvents[E],
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await this.host.emit(name, event, signal);
+    await (await getInstalledPluginHost()).emit(name, event, signal);
+  }
+
+  async dispatchToolCall(event: ToolCallEvent, signal?: AbortSignal): Promise<ToolCallEventResult> {
+    const local = await this.host.dispatchToolCall(event, signal);
+    if (local.block) return local;
+    const installed = await (await getInstalledPluginHost()).dispatchToolCall(event, signal);
+    return { ...local, ...installed };
+  }
+
+  async dispatchToolResult(event: ToolResultEvent, signal?: AbortSignal): Promise<ToolResultEvent> {
+    const local = await this.host.dispatchToolResult(event, signal);
+    return (await getInstalledPluginHost()).dispatchToolResult(local, signal);
+  }
+
+  async emitAgentComplete(event: AgentCompleteEvent, signal?: AbortSignal): Promise<AgentCompleteEvent> {
+    let current = await this.host.dispatchAgentComplete(event, signal);
+    current = await (await getInstalledPluginHost()).dispatchAgentComplete(current, signal);
+    // Preserve the old class's directly mutable diagnostic surface. Some
+    // embedders inject handlers here instead of using loadPlugins().
+    const legacyEvent = structuredClone(current);
+    for (const plugin of this.plugins) {
+      if (this.hostManagedPaths.has(plugin.path)) continue;
+      try {
+        await plugin.handlers['agent:complete']?.(legacyEvent);
+      } catch (error) {
+        logger.info(`Plugin '${plugin.path}' failed: ${error instanceof Error ? error.message : String(error)}`);
+        logger.warn(`Plugin error in ${plugin.path}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
+    return current;
   }
 }
 
-// Export types for plugin authors
-export type { AgentCompleteEvent, PluginHandlers, Plugin } from './types';
+export { PluginHost } from './host';
+export type {
+  AgentCompleteEvent,
+  AgentCompleteEventResult,
+  AgentErrorEvent,
+  AgentReference,
+  AgentResumeEvent,
+  AgentStartEvent,
+  AgentSuspendEvent,
+  AgentUsePlugin,
+  AgentUsePluginAPI,
+  AuthInteraction,
+  Plugin,
+  PluginHandlers,
+  ModelFallbackEvent,
+  ProviderDefinition,
+  ProviderFinishReason,
+  ProviderMessage,
+  ProviderMessagePart,
+  ProviderModelDefinition,
+  ProviderOptions,
+  ProviderRequest,
+  ProviderStreamEvent,
+  ProviderToolChoice,
+  ProviderToolDefinition,
+  ProviderTransport,
+  ProviderUsage,
+  ToolCallEvent,
+  ToolCallEventResult,
+  ToolCallTrace,
+  ToolResultEvent,
+  ToolResultEventResult,
+} from './types';

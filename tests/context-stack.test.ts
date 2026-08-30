@@ -44,7 +44,7 @@ function message(overrides: {
 }
 
 describe('session context stack', () => {
-  it('names each system message by its opening, with identity folded away', () => {
+  it('names each system message by its opening without knowing provider-owned prompt text', () => {
     const identity = "You are Claude Code, Anthropic's official CLI for Claude.";
     const core = 'You are an autonomous AI agent outputting to CLI/terminal. When given a task:';
     const payload = buildSessionContextPayload({
@@ -63,13 +63,14 @@ describe('session context stack', () => {
 
     const system = payload.layers.filter((l) => l.kind === 'system');
     expect(system.map((l) => l.label)).toEqual([
+      'System message 1',
       'AgentUse system prompt',
       'Manager instructions',
       'Sandbox environment',
-      'System message 4',
+      'System message 5',
     ]);
-    // Identity gets no row of its own, but its weight is not lost.
-    expect(system[0]!.chars).toBe(core.length + identity.length);
+    expect(system[0]!.chars).toBe(identity.length);
+    expect(system[1]!.chars).toBe(core.length);
   });
 
   it('does not ship system prompt bodies, only their weight', () => {

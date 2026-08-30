@@ -2,7 +2,7 @@ import type { ParsedAgent } from '../parser';
 import { announceSessionFinished, announceSessionStarted } from './announce';
 import type { MCPConnection } from '../mcp';
 import type { SessionInfo, SessionManager, SessionTrigger } from '../session';
-import type { AgentCompleteEvent, PluginManager } from '../plugin';
+import type { AgentCompleteEvent, AgentReference, ModelFallbackEvent, PluginManager } from '../plugin';
 import { AuthenticationError } from '../models';
 import { logger, runWithLogSink } from '../utils/logger';
 import { toErrorMessage } from '../utils/error-message';
@@ -66,6 +66,40 @@ function mergeSlackRunChannelHandles(
     merged.set(`${persisted.channel}:${persisted.ts}`, persisted);
   }
   return Array.from(merged.values());
+}
+
+function agentReference(agent: ParsedAgent, agentFilePath?: string): AgentReference {
+  return {
+    name: agent.name,
+    model: agent.config.model,
+    ...(agent.description && { description: agent.description }),
+    ...(agentFilePath && { filePath: agentFilePath }),
+  };
+}
+
+function buildAgentCompleteEvent(options: {
+  agent: ParsedAgent;
+  agentFilePath?: string;
+  result: RunAgentResult;
+  startTime?: number;
+  consoleOutput: string;
+}): AgentCompleteEvent {
+  const { agent, agentFilePath, result, startTime, consoleOutput } = options;
+  return {
+    agent: agentReference(agent, agentFilePath),
+    result: {
+      text: result.text || '',
+      duration: startTime ? (Date.now() - startTime) / 1000 : 0,
+      ...(result.usage?.totalTokens !== undefined && { tokens: result.usage.totalTokens }),
+      toolCalls: result.toolCallCount || 0,
+      ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces }),
+      ...(result.finishReason && { finishReason: result.finishReason }),
+      ...(result.finishReasons && { finishReasons: result.finishReasons }),
+      hasTextOutput: result.hasTextOutput,
+    },
+    isSubAgent: false,
+    consoleOutput,
+  };
 }
 
 async function persistRunChannelHandles(options: {
@@ -227,6 +261,21 @@ export async function runAgent(
     sessionID = prepSessionID;
     agentId = prepAgentId;
 
+    if (pluginManager) {
+      if (existingSessionId) {
+        await pluginManager.emit('agent:resume', {
+          agent: agentReference(agent, agentFilePath),
+          sessionId: prepSessionID ?? existingSessionId,
+          reason: sessionLogUserPrompt?.trim() ? 'continue' : 'approval',
+        }, abortSignal);
+      }
+      await pluginManager.emit('agent:start', {
+        agent: agentReference(agent, agentFilePath),
+        ...(prepSessionID && { sessionId: prepSessionID }),
+        trigger: trigger ?? 'manual',
+      }, abortSignal);
+    }
+
     // The session row now exists on disk as `running`. Poke the daemon so its
     // dashboards pick it up: runs it launched itself invalidate inline, but a
     // run started from a terminal has no other way to announce itself.
@@ -291,6 +340,16 @@ export async function runAgent(
       ...(prepAgentId && { agentId: prepAgentId }),
       ...(assistantMsgID && { messageID: assistantMsgID }),
       ...(effectWal && { effectWal }),
+      ...(pluginManager && {
+        pluginEvents: {
+          toolCall: (event: Parameters<PluginManager['dispatchToolCall']>[0], signal?: AbortSignal) =>
+            pluginManager.dispatchToolCall(event, signal),
+          toolResult: (event: Parameters<PluginManager['dispatchToolResult']>[0], signal?: AbortSignal) =>
+            pluginManager.dispatchToolResult(event, signal),
+          modelFallback: (event: ModelFallbackEvent, signal?: AbortSignal) =>
+            pluginManager.emit('model:fallback', event, signal),
+        },
+      }),
       // Lets the segment loop see whether an outcome was declared, so it can
       // spend its one nudge before the run ends without a headline.
       ...(preparation.runOutcome && { runOutcome: preparation.runOutcome }),
@@ -460,6 +519,14 @@ export async function runAgent(
         ...(result.approvalUrl && { approvalUrl: result.approvalUrl }),
         ...(result.contextUsage && { contextUsage: result.contextUsage })
       };
+      if (pluginManager && prepSessionID) {
+        await pluginManager.emit('agent:suspend', {
+          agent: agentReference(agent, agentFilePath),
+          sessionId: prepSessionID,
+          reason: 'approval',
+          ...(result.approvalUrl && { approvalUrl: result.approvalUrl }),
+        }, abortSignal);
+      }
       await suspendRunChannels({
         agent,
         result: suspendedResult,
@@ -503,33 +570,6 @@ export async function runAgent(
     // again (idempotent) in the finally.
     if (preparation) await preparation.releaseStoreLock();
 
-    // Mark the session completed even when a provider omits final usage data.
-    // Short continuation replies can otherwise leave the approval page polling
-    // a finished-looking run as still live.
-    if (sessionManager && prepSessionID && assistantMsgID && prepAgentId) {
-      try {
-        await persistAssistantRunState({
-          sessionManager,
-          sessionId: prepSessionID,
-          agentId: prepAgentId,
-          messageId: assistantMsgID,
-          result,
-          completedAt: Date.now(),
-          ...(priorTokens && { priorTokens })
-        });
-        if (incomplete) {
-          await sessionManager.setSessionError(prepSessionID, prepAgentId, {
-            code: 'INCOMPLETE',
-            message: incomplete.reason
-          });
-        } else {
-          await sessionManager.setSessionCompleted(prepSessionID, prepAgentId);
-        }
-      } catch (error) {
-        logger.debug(`Failed to mark session ${incomplete ? 'incomplete' : 'completed'}: ${(error as Error).message}`);
-      }
-    }
-
     const runResult: RunAgentResult = {
       status: incomplete ? 'failed' : 'completed',
       ...(incomplete && { incomplete }),
@@ -555,6 +595,46 @@ export async function runAgent(
       ...(result.contextUsage && { contextUsage: result.contextUsage })
     };
 
+    const consoleOutput = captureActive ? logger.stopCapture() : '';
+    captureActive = false;
+    let completionEvent = buildAgentCompleteEvent({
+      agent,
+      result: runResult,
+      consoleOutput,
+      ...(agentFilePath !== undefined && { agentFilePath }),
+      ...(startTime !== undefined && { startTime }),
+    });
+    if (pluginManager) completionEvent = await pluginManager.emitAgentComplete(completionEvent, abortSignal);
+    runResult.text = completionEvent.result.text;
+    runResult.hasTextOutput = completionEvent.result.text.trim().length > 0;
+
+    // Mark the session completed even when a provider omits final usage data.
+    // The session parts remain the raw execution trace; the transformed text is
+    // the outward result delivered to callers and channels.
+    if (sessionManager && prepSessionID && assistantMsgID && prepAgentId) {
+      try {
+        await persistAssistantRunState({
+          sessionManager,
+          sessionId: prepSessionID,
+          agentId: prepAgentId,
+          messageId: assistantMsgID,
+          result,
+          completedAt: Date.now(),
+          ...(priorTokens && { priorTokens })
+        });
+        if (incomplete) {
+          await sessionManager.setSessionError(prepSessionID, prepAgentId, {
+            code: 'INCOMPLETE',
+            message: incomplete.reason
+          });
+        } else {
+          await sessionManager.setSessionCompleted(prepSessionID, prepAgentId);
+        }
+      } catch (error) {
+        logger.debug(`Failed to mark session ${incomplete ? 'incomplete' : 'completed'}: ${(error as Error).message}`);
+      }
+    }
+
     // Poke the serve daemon (if any) so subscribed devices get a Web Push.
     void announceSessionFinished({
       status: incomplete ? 'failed' : 'completed',
@@ -562,8 +642,6 @@ export async function runAgent(
       ...(prepSessionID && { sessionId: prepSessionID }),
     });
 
-    const consoleOutput = captureActive ? logger.stopCapture() : '';
-    captureActive = false;
     // A declared-incomplete run notifies as a failure — that is the whole point
     // of the declaration: the completion card would read as a green "done".
     await sendRunChannelMessages({
@@ -586,7 +664,7 @@ export async function runAgent(
         projectRoot: projectContext.projectRoot,
       }),
       ...(startTime !== undefined && { startTime }),
-      ...(pluginManager !== undefined && { pluginManager }),
+      completionEvent,
       ...(sessionManager !== undefined && { sessionManager }),
       ...(prepSessionID !== undefined && { sessionId: prepSessionID }),
       ...(prepAgentId !== undefined && { agentId: prepAgentId }),
@@ -597,6 +675,21 @@ export async function runAgent(
     // Return metrics for plugin system
     return runResult;
   } catch (error: unknown) {
+    if (pluginManager) {
+      const errorCode = error instanceof AuthenticationError ? 'AUTH_ERROR' :
+        (error instanceof Error && error.name === 'AbortError') ? 'TIMEOUT' :
+        'EXECUTION_ERROR';
+      await pluginManager.emit('agent:error', {
+        agent: agentReference(agent, agentFilePath),
+        ...(sessionID && { sessionId: sessionID }),
+        error: {
+          ...(error instanceof Error && error.name && { name: error.name }),
+          message: toErrorMessage(error),
+          code: errorCode,
+        },
+        duration: startTime ? (Date.now() - startTime) / 1000 : 0,
+      }, abortSignal);
+    }
     // Log error to session if available (for visibility in `agentuse sessions`)
     if (sessionManager && sessionID && agentId) {
       try {
@@ -686,6 +779,8 @@ export async function runPostLifecycle(options: {
   result: RunAgentResult;
   startTime?: number;
   consoleOutput: string;
+  /** Already-dispatched completion event from runAgent. */
+  completionEvent?: AgentCompleteEvent;
   /** Session refs used to persist a learning marker into the session log. */
   sessionManager?: SessionManager;
   sessionId?: string;
@@ -696,31 +791,17 @@ export async function runPostLifecycle(options: {
   learningsInjectedIds?: string[];
 }) {
   const { pluginManager, agent, agentFilePath, result, startTime, consoleOutput } = options;
-  const duration = startTime ? (Date.now() - startTime) / 1000 : 0;
-  const event: AgentCompleteEvent = {
-    agent: {
-      name: agent.name,
-      model: agent.config.model,
-      ...(agent.description && { description: agent.description }),
-      ...(agentFilePath && { filePath: agentFilePath })
-    },
-    result: {
-      text: result.text || '',
-      duration,
-      ...(result.usage?.totalTokens !== undefined && { tokens: result.usage.totalTokens }),
-      toolCalls: result.toolCallCount || 0,
-      ...(result.toolCallTraces && { toolCallTraces: result.toolCallTraces }),
-      ...(result.finishReason && { finishReason: result.finishReason }),
-      ...(result.finishReasons && { finishReasons: result.finishReasons }),
-      hasTextOutput: result.hasTextOutput
-    },
-    isSubAgent: false,
-    consoleOutput
-  };
+  let event = options.completionEvent ?? buildAgentCompleteEvent({
+    agent,
+    result,
+    consoleOutput,
+    ...(agentFilePath !== undefined && { agentFilePath }),
+    ...(startTime !== undefined && { startTime }),
+  });
 
-  if (pluginManager) {
+  if (pluginManager && !options.completionEvent) {
     try {
-      await pluginManager.emitAgentComplete(event);
+      event = await pluginManager.emitAgentComplete(event);
     } catch (pluginError) {
       logger.warn(`Plugin event error: ${(pluginError as Error).message}`);
     }

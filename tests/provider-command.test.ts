@@ -198,23 +198,8 @@ describe('createProviderCommand', () => {
     expect(result.providers.find((provider: any) => provider.id === 'anthropic')).toEqual({
       id: 'anthropic',
       name: 'Anthropic',
-      configured: true,
-      sources: [
-        {
-          priority: 1,
-          kind: 'environment',
-          name: 'CLAUDE_CODE_OAUTH_TOKEN',
-          stored: false,
-          active: true,
-        },
-        {
-          priority: 1,
-          kind: 'oauth',
-          name: 'OAuth',
-          stored: true,
-          active: false,
-        },
-      ],
+      configured: false,
+      sources: [],
     });
     expect(result.providers.find((provider: any) => provider.id === 'openrouter').sources).toEqual([{
       priority: 2,

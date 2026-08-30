@@ -3,7 +3,6 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import type { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { wrapLanguageModel } from 'ai';
-import { AnthropicAuth } from './auth/anthropic';
 import { CodexAuth } from './auth/codex';
 import { AuthStorage } from './auth/storage';
 import { normalizeCustomProviderBaseURL } from './auth/custom-provider-models';
@@ -20,6 +19,8 @@ import {
 } from './providers/opencode-go';
 import { BUILTIN_PROVIDERS } from './providers/registry-sources';
 import { transformOpenAICompatibleRequest } from './model-compatibility';
+import { createProviderPluginModel, getProviderPatch, getProviderPlugin, loadProviderPlugins } from './plugin/provider-runtime';
+import { providerMediaSupport } from './plugin/provider-behavior';
 
 /**
  * Check if DevTools is enabled via environment variable
@@ -142,6 +143,8 @@ export interface MediaToolResultSupport {
 export async function resolveMediaToolResultSupport(
   modelString: string
 ): Promise<MediaToolResultSupport> {
+  const pluginSupport = await providerMediaSupport(modelString);
+  if (pluginSupport) return pluginSupport;
   const config = parseModelConfig(modelString);
   switch (config.provider) {
     case 'anthropic':
@@ -225,6 +228,9 @@ export function parseModelConfig(modelString: string): ModelConfig {
  * Create AI model instance based on configuration
  */
 export async function createModel(modelString: string) {
+  // Provider registration is async (plugins may discover models during
+  // activation), so complete it before synchronous registry helpers run.
+  await loadProviderPlugins();
   // Load custom provider names for sync validation (cached after first call)
   await loadCustomProviderNames();
 
@@ -234,58 +240,20 @@ export async function createModel(modelString: string) {
   // wherever a model can be named.
   const resolvedString = resolveModelString(modelString).model;
 
+  const plugin = await getProviderPlugin(parseModelConfig(resolvedString).provider);
+  if (plugin) {
+    const config = parseModelConfig(resolvedString);
+    return await maybeWrapWithDevTools(await createProviderPluginModel(plugin, config.modelName));
+  }
+
   // Validate model and warn if not in registry (non-blocking)
   warnIfModelNotInRegistry(resolvedString);
 
   const config = parseModelConfig(resolvedString);
+  const providerPatch = await getProviderPatch(config.provider);
   
   if (config.provider === 'anthropic') {
-    const baseURL = resolveBaseURL(config, 'anthropic');
-    // Check for OAuth token first (handles refresh automatically). A stored
-    // login that cannot be refreshed right now is held, not raised: an API key
-    // in the environment still wins, and only an empty API key path reports it.
-    let oauthToken: string | undefined;
-    let oauthRefreshError: Error | undefined;
-    try {
-      oauthToken = await AnthropicAuth.access();
-    } catch (error) {
-      oauthRefreshError = error instanceof Error ? error : new Error(String(error));
-      logger.debug(`Anthropic OAuth unavailable: ${oauthRefreshError.message}`);
-    }
-    if (oauthToken) {
-      logger.debug('Using Anthropic OAuth token for authentication');
-      // For OAuth, we need to use a custom fetch to set Bearer token
-      const anthropicOptions: Record<string, any> = {
-        apiKey: '', // Empty API key for OAuth
-        fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
-          const access = await AnthropicAuth.access();
-          if (!access) {
-            throw new Error('Anthropic OAuth token expired');
-          }
-          const headers: Record<string, string> = {
-            ...((init?.headers || {}) as Record<string, string>),
-            'authorization': `Bearer ${access}`,
-            'anthropic-beta': 'oauth-2025-04-20',
-          };
-          // Remove x-api-key header since we're using Bearer auth
-          if ('x-api-key' in headers) {
-            delete headers['x-api-key'];
-          }
-          return fetch(input as RequestInfo | URL, {
-            ...init,
-            headers,
-          });
-        },
-      };
-
-      if (baseURL) {
-        anthropicOptions.baseURL = baseURL;
-      }
-
-      const anthropic = createAnthropic(anthropicOptions);
-      return await maybeWrapWithDevTools(anthropic.chat(config.modelName));
-    }
-
+    const baseURL = providerPatch?.baseURL ?? resolveBaseURL(config, 'anthropic');
     // Fall back to API key authentication
     let apiKey: string | undefined;
     if (config.envVar) {
@@ -329,10 +297,7 @@ export async function createModel(modelString: string) {
         throw new AuthenticationError(
           'anthropic',
           'ANTHROPIC_API_KEY',
-          oauthRefreshError
-            ? `${oauthRefreshError.message}. Stored credentials were kept - retry, ` +
-              'or run `agentuse auth login anthropic` if it persists'
-            : 'No authentication found for Anthropic. Run `agentuse auth login anthropic` or set ANTHROPIC_API_KEY'
+          'No authentication found for Anthropic. Run `agentuse provider login anthropic` or set ANTHROPIC_API_KEY'
         );
       }
     }
@@ -340,7 +305,10 @@ export async function createModel(modelString: string) {
     if (!apiKey) {
       throw new Error('Failed to obtain API key for Anthropic');
     }
-    const anthropicOptions: { apiKey: string; baseURL?: string } = { apiKey };
+    const anthropicOptions: { apiKey: string; baseURL?: string; headers?: Record<string, string> } = {
+      apiKey,
+      ...(providerPatch?.headers && { headers: providerPatch.headers }),
+    };
     if (baseURL) {
       anthropicOptions.baseURL = baseURL;
     }
@@ -379,7 +347,8 @@ export async function createModel(modelString: string) {
 
       const openai = createOpenAI({
         apiKey: 'codex-oauth', // Placeholder, custom fetch overrides auth
-        baseURL: 'https://chatgpt.com/backend-api/codex',
+        baseURL: providerPatch?.baseURL ?? 'https://chatgpt.com/backend-api/codex',
+        ...(providerPatch?.headers && { headers: providerPatch.headers }),
         fetch: codexFetch as typeof fetch,
       });
 
@@ -439,8 +408,11 @@ export async function createModel(modelString: string) {
     if (!apiKey) {
       throw new Error('Failed to obtain API key for OpenAI');
     }
-    const baseURL = resolveBaseURL(config, 'openai');
-    const openaiOptions: { apiKey: string; baseURL?: string } = { apiKey };
+    const baseURL = providerPatch?.baseURL ?? resolveBaseURL(config, 'openai');
+    const openaiOptions: { apiKey: string; baseURL?: string; headers?: Record<string, string> } = {
+      apiKey,
+      ...(providerPatch?.headers && { headers: providerPatch.headers }),
+    };
     if (baseURL) {
       openaiOptions.baseURL = baseURL;
     }
@@ -512,7 +484,8 @@ export async function createModel(modelString: string) {
     const openrouter = createOpenAICompatible({
       name: 'openrouter',
       apiKey,
-      baseURL: 'https://openrouter.ai/api/v1',
+      baseURL: providerPatch?.baseURL ?? 'https://openrouter.ai/api/v1',
+      ...(providerPatch?.headers && { headers: providerPatch.headers }),
     });
     return await maybeWrapWithDevTools(openrouter(config.modelName));
 

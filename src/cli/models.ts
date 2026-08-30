@@ -17,6 +17,8 @@ import {
   resolveModelString,
 } from '../utils/model-alias';
 import { loadModelSettings } from '../utils/global-config';
+import { discoverProviderModels, loadProviderPlugins } from '../plugin/provider-runtime';
+import type { ProviderDefinition, ProviderModelDefinition } from '../plugin/types';
 import {
   currentModelsFromRegistry,
   findCurrentModel,
@@ -36,13 +38,16 @@ export function createModelsCommand(): Command {
       const registryProviders = Object.keys(MODELS) as Provider[];
       const customProviders = await AuthStorage.getCustomProviders();
       const customNames = Object.keys(customProviders);
+      const pluginProviders = await loadProviderPlugins();
+      const pluginNames = pluginProviders.map((item) => item.id);
       const isCustomFilter = Boolean(provider && customNames.includes(provider));
+      const isPluginFilter = Boolean(provider && pluginNames.includes(provider));
       const isOpenCodeGoFilter = provider === OPENCODE_GO_PROVIDER_ID;
 
       // Validate provider
-      if (provider && !registryProviders.includes(provider as Provider) && !isCustomFilter) {
+      if (provider && !registryProviders.includes(provider as Provider) && !isCustomFilter && !isPluginFilter) {
         console.error(chalk.red(`Unknown provider: ${provider}`));
-        console.log(chalk.gray(`Available providers: ${[...registryProviders, ...customNames].join(', ')}`));
+        console.log(chalk.gray(`Available providers: ${[...registryProviders, ...pluginNames, ...customNames].join(', ')}`));
         process.exit(1);
       }
 
@@ -52,7 +57,7 @@ export function createModelsCommand(): Command {
       // from the generic loop unless --all renders its full bucket there.
       let providers: Provider[];
       if (provider) {
-        providers = isCustomFilter ? [] : [provider as Provider];
+        providers = isCustomFilter || isPluginFilter ? [] : [provider as Provider];
       } else if (options.all) {
         providers = registryProviders;
       } else {
@@ -110,6 +115,22 @@ export function createModelsCommand(): Command {
         console.log();
       }
 
+      const visiblePluginProviders = isPluginFilter
+        ? pluginProviders.filter((item) => item.id === provider)
+        : provider ? [] : pluginProviders;
+      for (const pluginProvider of visiblePluginProviders) {
+        const entries = await visiblePluginModelEntries(pluginProvider, options.all ?? false);
+        console.log(chalk.cyan.bold(pluginProvider.name) + chalk.gray(` (${pluginProvider.id})`));
+        for (const model of entries) {
+          const fullId = `${pluginProvider.id}:${model.id}`;
+          const info = pluginModelInfo(model);
+          if (options.verbose) printVerboseModel(fullId, info);
+          else printCompactModel(fullId, info);
+        }
+        if (entries.length === 0) console.log(chalk.gray(`  Use: ${pluginProvider.id}:<model-name>`));
+        console.log();
+      }
+
       // Show custom providers
       const displayCustom = isCustomFilter
         ? Object.entries(customProviders).filter(([name]) => name === provider)
@@ -142,6 +163,25 @@ export function createModelsCommand(): Command {
   modelsCommand.addCommand(createUnpinCommand());
 
   return modelsCommand;
+}
+
+async function visiblePluginModelEntries(provider: ProviderDefinition, all: boolean): Promise<ProviderModelDefinition[]> {
+  const models = await discoverProviderModels(provider);
+  if (all || typeof provider.models === 'function' || Array.isArray(provider.models)) return models;
+  const inheritedFrom = provider.models.inherit;
+  return models.filter((model) => SUGGESTED_MODEL_IDS.includes(`${inheritedFrom}:${model.id}`));
+}
+
+function pluginModelInfo(model: ProviderModelDefinition): ModelInfo {
+  return {
+    id: model.id,
+    name: model.name,
+    reasoning: Boolean(model.reasoning),
+    toolCall: model.capabilities?.tools ?? true,
+    modalities: { input: model.input, output: ['text'] },
+    limit: { context: model.contextWindow, output: model.maxOutputTokens },
+    cost: { input: model.cost?.input ?? 0, output: model.cost?.output ?? 0 },
+  };
 }
 
 /**

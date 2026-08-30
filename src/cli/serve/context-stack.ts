@@ -1,4 +1,3 @@
-import { ANTHROPIC_IDENTITY_PROMPT } from '../../utils/anthropic';
 import type { CorrectionsPart, Message, Part, SessionInfo, ToolsSnapshot } from '../../session/types';
 import type {
   ContextCorrectionCounts,
@@ -305,15 +304,6 @@ function makeLayer(
 }
 
 /**
- * The runtime prepends a one-line identity string for Anthropic models. At ~15
- * tokens it is noise as its own row, so its weight is folded into the AgentUse
- * system prompt instead of being listed separately.
- */
-function isIdentityMessage(content: string): boolean {
-  return content.trim() === ANTHROPIC_IDENTITY_PROMPT.trim();
-}
-
-/**
  * What the run itself added to the window after the opening prompt: the
  * model's own words, and the results its tool calls returned.
  *
@@ -425,9 +415,9 @@ export function buildRunTraffic(parts: Part[]): {
 }
 
 /**
- * Name a system message by its opening. These are the three the runtime can
- * emit once identity is folded away (core, manager, sandbox); anything
- * unrecognised still gets a layer, just a generic label.
+ * Name core-owned system messages by their opening. Provider-owned and other
+ * unrecognised messages still get a layer with a generic label; core does not
+ * need to know their prompt text.
  */
 function describeSystemMessage(content: string, index: number): { label: string; note?: string } {
   if (content.startsWith('You are an autonomous AI agent')) {
@@ -452,16 +442,13 @@ export function buildSessionContextPayload(options: {
   const { session, message, tools, parts = [] } = options;
   const layers: ContextStackLayer[] = [];
 
-  const rawSystem = message?.assistant.system ?? [];
-  const identityChars = rawSystem.filter(isIdentityMessage).reduce((sum, c) => sum + c.length, 0);
-  const systemMessages = rawSystem.filter((c) => !isIdentityMessage(c));
+  const systemMessages = message?.assistant.system ?? [];
 
   for (const [i, content] of systemMessages.entries()) {
     const { label, note } = describeSystemMessage(content, i);
     // System prompts are fixed runtime text the reader did not write, so the
-    // row carries its weight but not its body. Only the first row absorbs the
-    // folded-in identity line.
-    const chars = content.length + (i === 0 ? identityChars : 0);
+    // row carries its weight but not its body.
+    const chars = content.length;
     layers.push({
       id: `system-${i}`,
       kind: 'system',
@@ -469,18 +456,6 @@ export function buildSessionContextPayload(options: {
       ...(note ? { note } : {}),
       chars,
       estTokens: estimateTokens(chars),
-    });
-  }
-
-  // An identity line with nothing to fold into still has to be accounted for.
-  if (systemMessages.length === 0 && identityChars > 0) {
-    layers.push({
-      id: 'system-0',
-      kind: 'system',
-      label: 'AgentUse system prompt',
-      note: 'Built in.',
-      chars: identityChars,
-      estTokens: estimateTokens(identityChars),
     });
   }
 
