@@ -13,6 +13,7 @@ export interface ToolCallTrace {
 
 export interface AgentCompleteEvent {
   agent: { name: string; model: string; description?: string; filePath?: string };
+  sessionId?: string;
   result: {
     text: string;
     duration: number;
@@ -244,6 +245,8 @@ export interface AuthInteraction {
 export interface ProviderRuntimeContext extends ProviderDiscoveryContext {
   providerId: string;
   modelId: string;
+  /** Stable AgentUse session identity when the provider call belongs to an agent run. */
+  sessionId?: string;
   auth: { resolve(methodId?: string): Promise<ResolvedProviderAuth | undefined> };
 }
 

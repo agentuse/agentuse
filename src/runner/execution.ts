@@ -772,7 +772,9 @@ async function* executeAgentAttempt(
   // v7 telemetry integration). Idempotent; complements the effect WAL.
   registerSDKTelemetryOnce();
 
-  const model = await createModel(agent.config.model);
+  const model = await createModel(agent.config.model, {
+    ...(options.sessionID && { sessionId: options.sessionID }),
+  });
 
   // Internal abort: tripped the instant a suspension begins so the AI SDK stops
   // the step loop and in-flight tool executes receive the signal (bash kills its

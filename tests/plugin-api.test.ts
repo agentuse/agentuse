@@ -170,6 +170,7 @@ describe('AgentUse activation API', () => {
 
   it('adapts the stable custom stream contract without exposing AI SDK types to plugins', async () => {
     let observed: ProviderRequest | undefined;
+    let observedSessionId: string | undefined;
     const provider: ProviderDefinition = {
       id: 'native-stream',
       name: 'Native Stream',
@@ -177,8 +178,9 @@ describe('AgentUse activation API', () => {
       transport: {
         kind: 'custom',
         apiVersion: 1,
-        async *stream(request) {
+        async *stream(request, context) {
           observed = request;
+          observedSessionId = context.sessionId;
           yield { type: 'warning', feature: 'temperature', message: 'Ignored' };
           yield { type: 'reasoning-delta', delta: 'Think' };
           yield { type: 'text-delta', delta: 'Hello' };
@@ -193,7 +195,7 @@ describe('AgentUse activation API', () => {
         },
       },
     };
-    const model = createCustomProviderModel(provider, 'model');
+    const model = createCustomProviderModel(provider, 'model', 'session-123');
     const result = await model.doGenerate({
       prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }],
       temperature: 0.5,
@@ -201,6 +203,7 @@ describe('AgentUse activation API', () => {
     });
 
     expect(observed?.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }]);
+    expect(observedSessionId).toBe('session-123');
     expect(observed?.tools[0]).toMatchObject({ type: 'function', name: 'done' });
     expect(result.content).toEqual([
       { type: 'reasoning', text: 'Think' },

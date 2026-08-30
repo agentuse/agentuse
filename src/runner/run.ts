@@ -83,10 +83,12 @@ function buildAgentCompleteEvent(options: {
   result: RunAgentResult;
   startTime?: number;
   consoleOutput: string;
+  sessionId?: string;
 }): AgentCompleteEvent {
-  const { agent, agentFilePath, result, startTime, consoleOutput } = options;
+  const { agent, agentFilePath, result, startTime, consoleOutput, sessionId } = options;
   return {
     agent: agentReference(agent, agentFilePath),
+    ...(sessionId && { sessionId }),
     result: {
       text: result.text || '',
       duration: startTime ? (Date.now() - startTime) / 1000 : 0,
@@ -601,6 +603,7 @@ export async function runAgent(
       agent,
       result: runResult,
       consoleOutput,
+      ...(prepSessionID && { sessionId: prepSessionID }),
       ...(agentFilePath !== undefined && { agentFilePath }),
       ...(startTime !== undefined && { startTime }),
     });
@@ -795,6 +798,7 @@ export async function runPostLifecycle(options: {
     agent,
     result,
     consoleOutput,
+    ...(options.sessionId && { sessionId: options.sessionId }),
     ...(agentFilePath !== undefined && { agentFilePath }),
     ...(startTime !== undefined && { startTime }),
   });

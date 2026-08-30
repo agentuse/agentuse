@@ -227,7 +227,7 @@ export function parseModelConfig(modelString: string): ModelConfig {
 /**
  * Create AI model instance based on configuration
  */
-export async function createModel(modelString: string) {
+export async function createModel(modelString: string, options: { sessionId?: string } = {}) {
   // Provider registration is async (plugins may discover models during
   // activation), so complete it before synchronous registry helpers run.
   await loadProviderPlugins();
@@ -243,13 +243,13 @@ export async function createModel(modelString: string) {
 
   const plugin = await getProviderPlugin(config.provider);
   if (plugin) {
-    return await maybeWrapWithDevTools(await createProviderPluginModel(plugin, config.modelName));
+    return await maybeWrapWithDevTools(await createProviderPluginModel(plugin, config.modelName, options.sessionId));
   }
 
   const adapter = await getActiveProviderAdapter(config.provider, config.modelName);
   if (adapter) {
     logger.debug(`Using ${adapter.name} for ${config.provider}:${config.modelName}`);
-    return await maybeWrapWithDevTools(await createProviderPluginModel(adapter, config.modelName));
+    return await maybeWrapWithDevTools(await createProviderPluginModel(adapter, config.modelName, options.sessionId));
   }
 
   // Validate model and warn if not in registry (non-blocking)

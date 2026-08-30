@@ -438,11 +438,13 @@ export function createProviderPluginContext(
   provider: ProviderDefinition,
   modelId: string,
   signal?: AbortSignal,
+  sessionId?: string,
 ): ProviderRuntimeContext {
   return {
     ...authContext(provider.id, signal),
     providerId: provider.id,
     modelId,
+    ...(sessionId && { sessionId }),
     auth: { resolve: (methodId) => resolveProviderAuth(provider, methodId, signal) },
   };
 }
@@ -521,14 +523,15 @@ async function customEvents(
   provider: ProviderDefinition,
   modelId: string,
   options: LanguageModelV3CallOptions,
+  sessionId?: string,
 ): Promise<AsyncIterable<ProviderStreamEvent>> {
   if (provider.transport.kind !== 'custom') throw new Error(`Provider '${provider.id}' is not a custom transport`);
   const request = customRequest(options);
-  return provider.transport.stream(request, createProviderPluginContext(provider, modelId, request.signal));
+  return provider.transport.stream(request, createProviderPluginContext(provider, modelId, request.signal, sessionId));
 }
 
 /** Internal bridge from the stable plugin stream contract to the AI SDK. */
-export function createCustomProviderModel(provider: ProviderDefinition, modelId: string): LanguageModelV3 {
+export function createCustomProviderModel(provider: ProviderDefinition, modelId: string, sessionId?: string): LanguageModelV3 {
   if (provider.transport.kind !== 'custom') throw new Error(`Provider '${provider.id}' is not a custom transport`);
   return {
     specificationVersion: 'v3',
@@ -555,7 +558,7 @@ export function createCustomProviderModel(provider: ProviderDefinition, modelId:
             openReasoning.clear();
           };
           try {
-            for await (const event of await customEvents(provider, modelId, options)) {
+            for await (const event of await customEvents(provider, modelId, options, sessionId)) {
               if (event.type === 'warning') {
                 if (started) throw new Error('Custom provider warnings must be emitted before response output');
                 warnings.push(customWarning(event));
@@ -619,7 +622,7 @@ export function createCustomProviderModel(provider: ProviderDefinition, modelId:
       const reasoningBlocks = new Map<string, { type: 'reasoning'; text: string }>();
       let response: LanguageModelV3GenerateResult['response'];
       let finish: Extract<ProviderStreamEvent, { type: 'finish' }> | undefined;
-      for await (const event of await customEvents(provider, modelId, options)) {
+      for await (const event of await customEvents(provider, modelId, options, sessionId)) {
         if (event.type === 'warning') {
           warnings.push(customWarning(event));
         } else if (event.type === 'text-delta') {
@@ -672,10 +675,10 @@ export function createCustomProviderModel(provider: ProviderDefinition, modelId:
   };
 }
 
-export async function createProviderPluginModel(provider: ProviderDefinition, modelId: string): Promise<LanguageModel> {
+export async function createProviderPluginModel(provider: ProviderDefinition, modelId: string, sessionId?: string): Promise<LanguageModel> {
   await loadProviderPlugins();
-  if (provider.transport.kind === 'custom') return createCustomProviderModel(provider, modelId);
-  const context = createProviderPluginContext(provider, modelId);
+  if (provider.transport.kind === 'custom') return createCustomProviderModel(provider, modelId, sessionId);
+  const context = createProviderPluginContext(provider, modelId, undefined, sessionId);
 
   const initialAuth = await context.auth.resolve();
   if (provider.auth && !initialAuth) {
