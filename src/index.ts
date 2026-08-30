@@ -39,6 +39,7 @@ import { basename, resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import * as readline from 'readline';
 import { PluginManager } from './plugin';
+import { getProviderPlugin } from './plugin/provider-runtime';
 import { version as packageVersion } from '../package.json';
 import { existsSync as existsSyncFs } from 'fs';
 import { createHash } from 'crypto';
@@ -652,9 +653,15 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
         // built-in or configured custom provider.
         const provider = resolveModelProvider(overrideModel);
         if (!BUILTIN_PROVIDERS.includes(provider)) {
-          // Check if it's a custom provider
-          const customProvider = await AuthStorage.getCustomProvider(provider);
-          if (!customProvider) {
+          // Installed plugin providers share the same model namespace as
+          // configured OpenAI-compatible providers. Load package plugins before
+          // rejecting the override so `agentuse run -m pi:...` follows the same
+          // provider discovery path as `agentuse models pi`.
+          const [pluginProvider, customProvider] = await Promise.all([
+            getProviderPlugin(provider),
+            AuthStorage.getCustomProvider(provider),
+          ]);
+          if (!pluginProvider && !customProvider) {
             throw new Error(`Unknown provider '${provider}'. Built-in: ${BUILTIN_PROVIDERS.join(', ')}. Add custom providers with: agentuse provider add <name> --url <url>`);
           }
         }
