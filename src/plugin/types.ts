@@ -418,6 +418,8 @@ export interface InstalledPluginRecord {
   version: string;
   source: string;
   directory: string;
+  /** Local project plugin loaded directly from its working directory. */
+  linked?: true;
   scope: 'global' | 'project';
   projectRoot?: string;
   commit?: string;

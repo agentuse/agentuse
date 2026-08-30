@@ -89,7 +89,7 @@ describe('plugin lifecycle', () => {
     }
   });
 
-  it('installs and removes a project-scoped package independently from global packages', async () => {
+  it('links, reloads, and removes a project-scoped working directory without copying it', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-project-plugin-test-'));
     const source = path.join(root, 'source');
     const projectRoot = path.join(root, 'project');
@@ -99,20 +99,13 @@ describe('plugin lifecycle', () => {
       name: 'project-events', version: '1.0.0', agentuse: { apiVersion: 1, extensions: ['./index.js'] },
     }));
     await fs.writeFile(path.join(source, 'index.js'), `export default function (agentuse) { agentuse.on('agent:complete', async () => { globalThis.__projectPackageEvent = true; }); }\n`);
-    const git = (...args: string[]) => {
-      const result = spawnSync('git', args, { cwd: source, encoding: 'utf8' });
-      if (result.status !== 0) throw new Error(result.stderr);
-    };
-    git('init');
-    git('config', 'user.email', 'test@example.com');
-    git('config', 'user.name', 'AgentUse Test');
-    git('add', '.');
-    git('commit', '-m', 'initial');
     try {
-      const installed = await installPlugin(source, { local: true, projectRoot });
-      expect(installed).toMatchObject({ name: 'project-events', scope: 'project', projectRoot });
+      const localSource = `./${path.relative(process.cwd(), source)}`;
+      const installed = await installPlugin(localSource, { local: true, projectRoot });
+      expect(installed).toMatchObject({
+        name: 'project-events', scope: 'project', projectRoot, source: localSource, directory: source, linked: true,
+      });
       expect(await readProjectPluginRecords({ local: true, projectRoot })).toHaveLength(1);
-      expect(installed.directory.startsWith(path.join(projectRoot, '.agentuse', 'packages'))).toBe(true);
 
       const { PluginManager } = await import('../src/plugin');
       const manager = new PluginManager();
@@ -127,8 +120,15 @@ describe('plugin lifecycle', () => {
       expect((globalThis as any).__projectPackageEvent).toBe(true);
       delete (globalThis as any).__projectPackageEvent;
 
+      await fs.writeFile(path.join(source, 'package.json'), JSON.stringify({
+        name: 'project-events', version: '1.1.0', agentuse: { apiVersion: 1, extensions: ['./index.js'] },
+      }));
+      const [updated] = await updatePlugins('project-events', { local: true, projectRoot });
+      expect(updated).toMatchObject({ version: '1.1.0', directory: source, linked: true });
+
       await removePlugin('project-events', { local: true, projectRoot });
       expect(await readProjectPluginRecords({ local: true, projectRoot })).toEqual([]);
+      expect(await fs.stat(source)).toBeTruthy();
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

@@ -66,7 +66,7 @@ export function createListCommand(name = 'list'): Command {
         return;
       }
       for (const plugin of plugins) {
-        process.stdout.write(`${plugin.name}@${plugin.version}  ${plugin.scope}  ${plugin.source}${plugin.ref ? `@${plugin.ref}` : ''}${plugin.commit ? `  ${plugin.commit.slice(0, 8)}` : ''}\n`);
+        process.stdout.write(`${plugin.name}@${plugin.version}  ${plugin.scope}${plugin.linked ? ' linked' : ''}  ${plugin.source}${plugin.ref ? `@${plugin.ref}` : ''}${plugin.commit ? `  ${plugin.commit.slice(0, 8)}` : ''}\n`);
       }
     });
 }

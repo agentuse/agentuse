@@ -23,6 +23,10 @@ export interface PluginInstallOptions {
 
 interface ResolvedSource { url: string; ref?: string }
 
+function isLocalPath(source: string): boolean {
+  return source.startsWith('./') || source.startsWith('../') || source.startsWith('/');
+}
+
 function projectRoot(options?: PluginInstallOptions): string {
   return resolve(options?.projectRoot ?? findProjectRoot(process.cwd()));
 }
@@ -64,7 +68,7 @@ export function normalizeGitHubPluginSource(source: string): string {
 }
 
 export function resolvePluginSource(source: string): ResolvedSource {
-  if (source.startsWith('./') || source.startsWith('../') || source.startsWith('/')) {
+  if (isLocalPath(source)) {
     return { url: resolve(source) };
   }
   const withoutPrefix = source.startsWith('git:') && !source.startsWith('git://')
@@ -170,13 +174,38 @@ async function cloneAndInspect(source: string, options?: PluginInstallOptions): 
   }
 }
 
+async function inspectLinkedPlugin(source: string, options: PluginInstallOptions): Promise<InstalledPluginRecord> {
+  const directory = resolve(source);
+  const { manifest, host } = await loadPluginPackageDirectory(directory, 'project');
+  await host.dispose();
+  const now = new Date().toISOString();
+  return {
+    name: manifest.name,
+    version: manifest.version,
+    source,
+    directory,
+    linked: true,
+    scope: 'project',
+    projectRoot: projectRoot(options),
+    installedAt: now,
+    updatedAt: now,
+  };
+}
+
 export async function installPlugin(source: string, options?: PluginInstallOptions): Promise<InstalledPluginRecord> {
   const records = options?.local ? await readProjectPluginRecords(options) : await readInstalledPluginRecords();
+  if (options?.local && isLocalPath(source)) {
+    const record = await inspectLinkedPlugin(source, options);
+    const existing = records.find((item) => item.name === record.name);
+    if (existing) throw new Error(`Plugin '${existing.name}' is already installed; run agentuse plugins update ${existing.name}`);
+    await writeRegistry([...records, record], options);
+    return record;
+  }
   const candidate = await cloneAndInspect(source, options);
   const existing = records.find((item) => item.name === candidate.record.name);
   if (existing) {
     await rm(candidate.staging, { recursive: true, force: true });
-    throw new Error(`Plugin '${existing.name}' is already installed; run agentuse update ${existing.name}`);
+    throw new Error(`Plugin '${existing.name}' is already installed; run agentuse plugins update ${existing.name}`);
   }
   const slug = candidate.record.name.replace(/[^A-Za-z0-9_.-]/g, '-');
   const directory = join(installHome(options), `${slug}-${createHash('sha256').update(candidate.record.name).digest('hex').slice(0, 8)}`);
@@ -204,6 +233,22 @@ export async function updatePlugins(name?: string, options?: PluginInstallOption
   const updated = [...records];
   const results: InstalledPluginRecord[] = [];
   for (const current of targets) {
+    if (current.linked) {
+      const { manifest, host } = await loadPluginPackageDirectory(current.directory, 'project');
+      await host.dispose();
+      if (manifest.name !== current.name) {
+        throw new Error(`Linked plugin changed name from '${current.name}' to '${manifest.name}'`);
+      }
+      const next: InstalledPluginRecord = {
+        ...current,
+        version: manifest.version,
+        updatedAt: new Date().toISOString(),
+      };
+      updated[updated.findIndex((item) => item.name === current.name)] = next;
+      await writeRegistry(updated, options);
+      results.push(next);
+      continue;
+    }
     assertManagedDirectory(current, options);
     const candidate = await cloneAndInspect(current.source, options);
     if (candidate.record.name !== current.name) {
@@ -237,6 +282,10 @@ export async function removePlugin(name: string, options?: PluginInstallOptions)
   const records = options?.local ? await readProjectPluginRecords(options) : await readInstalledPluginRecords();
   const record = records.find((item) => item.name === name);
   if (!record) throw new Error(`Plugin '${name}' is not installed`);
+  if (record.linked) {
+    await writeRegistry(records.filter((item) => item.name !== name), options);
+    return record;
+  }
   assertManagedDirectory(record, options);
   const staged = `${record.directory}.remove-${process.pid}-${randomBytes(3).toString('hex')}`;
   await rename(record.directory, staged);
