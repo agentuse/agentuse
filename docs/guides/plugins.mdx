@@ -302,7 +302,33 @@ prompts: {
 
 Non-portable contributions are removed when model fallback crosses providers. Their IDs are scoped to the registering provider; plugins do not need to compare raw system-message strings.
 
-### Built-in provider patches and overrides
+### Built-in provider adapters, patches, and overrides
+
+A plugin can conditionally contribute a transport to an existing provider
+namespace. The adapter is evaluated before the built-in transport; when its
+predicate returns `false`, the built-in provider continues unchanged:
+
+```ts
+agentuse.registerProvider("openai", {
+  name: "Acme SSO transport",
+  transport: {
+    kind: "openai-responses",
+    baseURL: "https://models.acme.test/v1",
+  },
+  auth: { methods: [acmeSso] },
+  async when(context) {
+    return Boolean(await context.auth.resolve("sso"));
+  },
+  priority: 100,
+});
+```
+
+Registering an adapter does not activate it by itself. Its `when` function
+receives the normal provider runtime context, including scoped authentication,
+and is evaluated whenever AgentUse selects provider behavior. If several
+adapters match, the highest `priority` wins; equal priorities retain plugin
+registration order. The selected adapter owns transport, authentication,
+prompt contributions, and media capabilities for that request.
 
 A plugin can patch a built-in endpoint without replacing its models:
 

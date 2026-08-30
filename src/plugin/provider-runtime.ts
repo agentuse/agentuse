@@ -31,6 +31,7 @@ import type {
   ProviderAuthContext,
   ProviderAuthMethod,
   ProviderDefinition,
+  ProviderAdapter,
   ProviderFinishReason,
   ProviderModelDefinition,
   ProviderRequest,
@@ -171,6 +172,41 @@ export async function loadProviderPlugins(): Promise<ProviderDefinition[]> {
 
 export async function getProviderPlugin(id: string): Promise<ProviderDefinition | undefined> {
   return (await loadProviderPlugins()).find((provider) => provider.id === id);
+}
+
+function adapterProvider(providerId: string, adapter: ProviderAdapter): ProviderDefinition {
+  return {
+    id: providerId,
+    name: adapter.name,
+    models: { inherit: providerId },
+    transport: adapter.transport,
+    ...(adapter.auth && { auth: adapter.auth }),
+    ...(adapter.prompts && { prompts: adapter.prompts }),
+    ...(adapter.media && { media: adapter.media }),
+  };
+}
+
+/** Higher-priority conditional adapters win; ties preserve local-first registration order. */
+export async function getProviderAdapters(id: string): Promise<Array<{ adapter: ProviderAdapter; provider: ProviderDefinition }>> {
+  const installedHost = await getInstalledPluginHost();
+  enterInstalledPluginHost(installedHost);
+  const local = currentPluginHost()?.getProviderAdapters(id) ?? [];
+  const installed = installedHost.getProviderAdapters(id);
+  return [...local, ...installed]
+    .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
+    .map((adapter) => ({ adapter, provider: adapterProvider(id, adapter) }));
+}
+
+export async function getActiveProviderAdapter(
+  id: string,
+  modelId: string,
+  signal?: AbortSignal,
+): Promise<ProviderDefinition | undefined> {
+  for (const candidate of await getProviderAdapters(id)) {
+    const context = createProviderPluginContext(candidate.provider, modelId, signal);
+    if (await candidate.adapter.when(context)) return candidate.provider;
+  }
+  return undefined;
 }
 
 export async function getProviderPatch(id: string) {

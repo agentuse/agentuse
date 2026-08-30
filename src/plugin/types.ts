@@ -370,6 +370,20 @@ export interface ProviderDefinition {
   override?: boolean;
 }
 
+/**
+ * A conditional transport contributed to an existing provider namespace.
+ * Adapters leave the built-in provider untouched unless `when` selects them.
+ */
+export interface ProviderAdapter {
+  name: string;
+  transport: ProviderTransport;
+  auth?: { methods: ProviderAuthMethod[] };
+  prompts?: ProviderPromptDefinition;
+  media?: { image: boolean; pdf: boolean };
+  priority?: number;
+  when(context: ProviderRuntimeContext): boolean | Promise<boolean>;
+}
+
 export interface ProviderPatch {
   baseURL?: string;
   headers?: Record<string, string>;
@@ -378,7 +392,7 @@ export interface ProviderPatch {
 export interface AgentUsePluginAPI {
   on<E extends keyof PluginEvents>(event: E, handler: PluginEventHandler<E>): Disposable;
   registerProvider(provider: ProviderDefinition): Disposable;
-  registerProvider(providerId: string, patch: ProviderPatch): Disposable;
+  registerProvider(providerId: string, patch: ProviderPatch | ProviderAdapter): Disposable;
   unregisterProvider(providerId: string): void;
   readonly log: PluginLogger;
 }

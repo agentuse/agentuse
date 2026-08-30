@@ -4,7 +4,7 @@ import {
   OPENCODE_GO_DISPLAY_NAME,
   OPENCODE_GO_PROVIDER_ID,
 } from '../providers/opencode-go.js';
-import { loadProviderPlugins, providerPluginAuthStatus } from '../plugin/provider-runtime.js';
+import { getProviderAdapters, loadProviderPlugins, providerPluginAuthStatus } from '../plugin/provider-runtime.js';
 
 export type ProviderAuthSourceKind = 'oauth' | 'api_key' | 'environment';
 
@@ -72,8 +72,17 @@ export async function getProviderStatus(): Promise<ProviderStatus> {
     const providerAuth = await AuthStorage.getProviderAuth(provider.id);
     const sources: ProviderAuthSourceStatus[] = [];
 
-    // Claude subscription OAuth belongs to the installable claude-code
-    // provider. The plugin reads this legacy slot as a migration fallback.
+    // Conditional extensions are part of the built-in namespace. Their auth
+    // sources lead the list because a selected OAuth transport wins over API.
+    for (const adapter of await getProviderAdapters(provider.id)) {
+      for (const source of await providerPluginAuthStatus(adapter.provider)) {
+        sources.push({ ...source, active: sources.length === 0 });
+      }
+    }
+
+    // OAuth for a built-in namespace is otherwise owned by its extension.
+    // Without that extension installed, keep legacy credentials hidden rather
+    // than claiming the built-in API transport can use them.
     if (providerAuth.oauth && provider.id !== 'anthropic') {
       sources.push({
         priority: 1,

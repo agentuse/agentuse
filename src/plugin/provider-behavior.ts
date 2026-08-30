@@ -1,5 +1,6 @@
 import { resolveModelProvider } from '../utils/model-utils';
-import { createProviderPluginContext, getProviderPlugin } from './provider-runtime';
+import { createProviderPluginContext, getActiveProviderAdapter, getProviderPlugin } from './provider-runtime';
+import type { ProviderDefinition } from './types';
 import type { PromptContribution } from './types';
 
 function modelId(model: string): string {
@@ -13,10 +14,16 @@ export interface ProviderSystemMessage {
   providerContribution?: { providerId: string; id: string; portable: boolean };
 }
 
-async function systemContributions(providerId: string, model: string): Promise<PromptContribution[]> {
-  const provider = await getProviderPlugin(providerId);
+async function systemContributions(model: string): Promise<PromptContribution[]> {
+  const provider = await behaviorProvider(model);
   if (!provider?.prompts?.system) return [];
   return provider.prompts.system(createProviderPluginContext(provider, modelId(model)));
+}
+
+async function behaviorProvider(model: string): Promise<ProviderDefinition | undefined> {
+  const providerId = resolveModelProvider(model);
+  return await getProviderPlugin(providerId)
+    ?? await getActiveProviderAdapter(providerId, modelId(model));
 }
 
 export async function applyProviderSystemMessages<T extends { role: string; content: string }>(
@@ -28,7 +35,7 @@ export async function applyProviderSystemMessages<T extends { role: string; cont
     return !owned || owned.portable;
   });
   const providerId = resolveModelProvider(model);
-  const additions = await systemContributions(providerId, model);
+  const additions = await systemContributions(model);
   const tagged = additions.map((contribution): ProviderSystemMessage => ({
     role: 'system',
     content: contribution.content,
@@ -49,7 +56,7 @@ export interface HelperSystemPrompt {
 }
 
 export async function providerHelperSystemPrompt(model: string, role: string): Promise<HelperSystemPrompt> {
-  const provider = await getProviderPlugin(resolveModelProvider(model));
+  const provider = await behaviorProvider(model);
   if (!provider?.prompts?.helper) return { instructions: role };
   const contributions = await provider.prompts.helper({
     ...createProviderPluginContext(provider, modelId(model)),
@@ -64,9 +71,9 @@ export async function providerHelperSystemPrompt(model: string, role: string): P
 }
 
 export async function providerMediaSupport(model: string): Promise<{ image: boolean; pdf: boolean } | undefined> {
-  return (await getProviderPlugin(resolveModelProvider(model)))?.media;
+  return (await behaviorProvider(model))?.media;
 }
 
 export async function providerUsesAnthropicProtocol(model: string): Promise<boolean> {
-  return (await getProviderPlugin(resolveModelProvider(model)))?.transport.kind === 'anthropic-messages';
+  return (await behaviorProvider(model))?.transport.kind === 'anthropic-messages';
 }

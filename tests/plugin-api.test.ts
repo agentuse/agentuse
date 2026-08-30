@@ -3,11 +3,13 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { PluginHost, PluginManager } from '../src/plugin';
-import { createCustomProviderModel, getProviderPatch, getProviderPlugin, resetProviderPluginCache } from '../src/plugin/provider-runtime';
+import { createCustomProviderModel, getActiveProviderAdapter, getProviderPatch, getProviderPlugin, resetProviderPluginCache } from '../src/plugin/provider-runtime';
 import { readPackageManifest } from '../src/plugin/loader';
 import type { AgentCompleteEvent, ProviderDefinition, ProviderRequest } from '../src/plugin/types';
 import type { AgentUsePlugin } from 'agentuse/plugin-api';
 import { resolveModelInfo } from '../src/utils/model-utils';
+import { AuthStorage } from '../src/auth/storage';
+import { getProviderStatus } from '../src/auth/provider-status';
 
 const event: AgentCompleteEvent = {
   agent: { name: 'test-agent', model: 'demo:test' },
@@ -127,6 +129,11 @@ describe('AgentUse activation API', () => {
         transport: { kind: 'custom', apiVersion: 1, async *stream() { yield { type: 'finish', reason: 'stop' }; } },
       });
       agentuse.registerProvider('openai', { baseURL: 'https://proxy.test/v1', headers: { 'X-Test': 'yes' } });
+      agentuse.registerProvider('anthropic', {
+        name: 'Subscription transport',
+        transport: { kind: 'anthropic-messages' },
+        when: () => true,
+      });
       agentuse.registerProvider({
         id: 'anthropic', override: true, name: 'Replacement', models: [],
         transport: { kind: 'custom', apiVersion: 1, async *stream() { yield { type: 'finish', reason: 'stop' }; } },
@@ -138,6 +145,7 @@ describe('AgentUse activation API', () => {
     expect(host.getProviderPatch('openai')).toEqual({
       baseURL: 'https://proxy.test/v1', headers: { 'X-Test': 'yes' },
     });
+    expect(host.getProviderAdapters('anthropic')).toHaveLength(1);
   });
 
   it('adapts the stable custom stream contract without exposing AI SDK types to plugins', async () => {
@@ -234,6 +242,12 @@ describe('AgentUse activation API', () => {
         transport: { kind: 'custom', async createModel() {} },
       });
     })).rejects.toThrow('must define apiVersion: 1 and stream()');
+
+    await expect(host.activate({ name: 'bad-extension', source: 'test', scope: 'local' }, (agentuse: any) => {
+      agentuse.registerProvider('not-built-in', {
+        name: 'Invalid extension', transport: { kind: 'openai-responses' }, when: () => true,
+      });
+    })).rejects.toThrow('can only extend a built-in provider');
   });
 });
 
@@ -275,6 +289,74 @@ describe('project-local activation scope', () => {
       name: 'Model', limit: { context: 1000, output: 100 },
     });
     expect(await getProviderPatch('scoped-provider')).toBeUndefined();
+  });
+
+  it('activates a built-in provider adapter only when its credential predicate matches', async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-extension-plugin-'));
+    const plugins = path.join(root, 'plugins');
+    const installed = path.join(root, 'installed');
+    await fs.mkdir(plugins);
+    await fs.mkdir(installed);
+    await fs.writeFile(path.join(plugins, 'local.js'), `
+      export default function (agentuse) {
+        agentuse.registerProvider('anthropic', {
+          name: 'Claude subscription',
+          transport: { kind: 'anthropic-messages', headers: { 'anthropic-beta': 'oauth' } },
+          auth: { methods: [{
+            id: 'subscription', type: 'oauth', name: 'Subscription OAuth',
+            environment: ['TEST_CLAUDE_OAUTH'],
+            async login() { return {}; },
+            resolve({ credential }, context) {
+              const token = context.env.TEST_CLAUDE_OAUTH ?? credential?.access;
+              return token ? { bearerToken: token, source: 'test' } : undefined;
+            }
+          }] },
+          async when(context) { return Boolean(await context.auth.resolve('subscription')); }
+        });
+      }
+    `);
+    oldHome = process.env.AGENTUSE_PLUGIN_HOME;
+    process.env.AGENTUSE_PLUGIN_HOME = installed;
+    delete process.env.TEST_CLAUDE_OAUTH;
+    const originalAuthFile = (AuthStorage as any).AUTH_FILE;
+    const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
+    (AuthStorage as any).AUTH_FILE = path.join(root, 'auth.json');
+    resetProviderPluginCache();
+
+    try {
+      const manager = new PluginManager();
+      await manager.loadPlugins([plugins]);
+      expect(await getActiveProviderAdapter('anthropic', 'claude-test')).toBeUndefined();
+
+      process.env.TEST_CLAUDE_OAUTH = 'oauth-token';
+      process.env.ANTHROPIC_API_KEY = 'api-key';
+      expect(await getActiveProviderAdapter('anthropic', 'claude-test')).toMatchObject({
+        id: 'anthropic',
+        name: 'Claude subscription',
+        transport: { headers: { 'anthropic-beta': 'oauth' } },
+      });
+      expect((await getProviderStatus()).providers.find((provider) => provider.id === 'anthropic')?.sources).toEqual([
+        {
+          priority: 1,
+          kind: 'environment',
+          name: 'TEST_CLAUDE_OAUTH',
+          stored: false,
+          active: true,
+        },
+        {
+          priority: 2,
+          kind: 'environment',
+          name: 'ANTHROPIC_API_KEY',
+          stored: false,
+          active: false,
+        },
+      ]);
+    } finally {
+      delete process.env.TEST_CLAUDE_OAUTH;
+      if (originalAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+      else process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
+      (AuthStorage as any).AUTH_FILE = originalAuthFile;
+    }
   });
 
   it('rejects package entries that escape the repository', async () => {

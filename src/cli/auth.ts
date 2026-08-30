@@ -18,7 +18,8 @@ import {
   saveProviderApiKey,
   startProviderOAuth,
 } from "../auth/provider-setup.js";
-import { getProviderPlugin, loadProviderPlugins, loginProviderPlugin, logoutProviderPlugin } from '../plugin/provider-runtime.js';
+import { getProviderAdapters, getProviderPlugin, loadProviderPlugins, loginProviderPlugin, logoutProviderPlugin, providerPluginAuthStatus } from '../plugin/provider-runtime.js';
+import type { AuthInteraction } from '../plugin/types.js';
 
 const GITHUB_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
@@ -56,6 +57,22 @@ async function promptInput(question: string): Promise<string> {
       resolve(answer.trim());
     });
   });
+}
+
+function pluginAuthInteraction(): AuthInteraction {
+  return {
+    openBrowser: ({ url }) => { process.stdout.write(`Open this URL in your browser:\n\n${url}\n\n`); },
+    showDeviceCode: ({ userCode, verificationUri }) => process.stdout.write(`Open ${verificationUri} and enter ${userCode}\n`),
+    prompt: ({ message }) => promptInput(message.endsWith(' ') ? message : `${message} `),
+    select: async ({ message, choices }) => {
+      process.stdout.write(`${message}\n${choices.map((choice, index) => `  ${index + 1}. ${choice.label}`).join('\n')}\n`);
+      const value = await promptInput('Select: ');
+      const selected = choices[Number(value) - 1] ?? choices.find((choice) => choice.value === value);
+      if (!selected) throw new Error('Invalid authentication method');
+      return selected.value;
+    },
+    notify: (message) => process.stdout.write(`${message}\n`),
+  };
 }
 
 
@@ -291,19 +308,7 @@ Use these only when an endpoint reports a protocol compatibility error.
                 logger.warn(`Unknown provider: ${provider}`);
                 process.exit(1);
               }
-              await loginProviderPlugin(plugin, {
-                openBrowser: ({ url }) => { process.stdout.write(`Open this URL in your browser:\n\n${url}\n\n`); },
-                showDeviceCode: ({ userCode, verificationUri }) => process.stdout.write(`Open ${verificationUri} and enter ${userCode}\n`),
-                prompt: ({ message }) => promptInput(message.endsWith(' ') ? message : `${message} `),
-                select: async ({ message, choices }) => {
-                  process.stdout.write(`${message}\n${choices.map((choice, index) => `  ${index + 1}. ${choice.label}`).join('\n')}\n`);
-                  const value = await promptInput('Select: ');
-                  const selected = choices[Number(value) - 1] ?? choices.find((choice) => choice.value === value);
-                  if (!selected) throw new Error('Invalid authentication method');
-                  return selected.value;
-                },
-                notify: (message) => process.stdout.write(`${message}\n`),
-              });
+              await loginProviderPlugin(plugin, pluginAuthInteraction());
             }
         }
       } catch (error) {
@@ -321,11 +326,23 @@ Use these only when an endpoint reports a protocol compatibility error.
     .option("--api", "Remove only API key credentials")
     .action(async (provider?: string, options?: { oauth?: boolean; api?: boolean }) => {
       if (provider) {
-        const plugin = await getProviderPlugin(provider.toLowerCase());
+        const providerId = provider.toLowerCase();
+        const plugin = await getProviderPlugin(providerId);
         if (plugin?.auth) {
           await logoutProviderPlugin(plugin);
           process.stdout.write(`✅ Logged out from ${plugin.name}\n`);
           return;
+        }
+        if (!options?.api) {
+          const adapter = (await getProviderAdapters(providerId)).find((candidate) => candidate.provider.auth);
+          if (adapter) {
+            const sources = await providerPluginAuthStatus(adapter.provider);
+            if (sources.some((source) => source.kind === 'oauth')) {
+              await logoutProviderPlugin(adapter.provider);
+              process.stdout.write(`✅ Logged out from ${adapter.provider.name}\n`);
+              return;
+            }
+          }
         }
       }
       const knownProviders = AUTH_PROVIDERS;
@@ -641,7 +658,23 @@ Use these only when an endpoint reports a protocol compatibility error.
 }
 
 async function handleAnthropicLogin() {
-  await handleGenericLogin("anthropic", "Anthropic API Key");
+  const adapter = (await getProviderAdapters('anthropic')).find((candidate) => candidate.provider.auth);
+  if (!adapter) {
+    await handleGenericLogin("anthropic", "Anthropic API Key");
+    return;
+  }
+
+  process.stdout.write("Anthropic login methods:\n");
+  process.stdout.write(`  1. ${adapter.provider.name} (OAuth)\n`);
+  process.stdout.write("  2. Anthropic API Key\n\n");
+  const method = await promptInput("Select method (1-2): ");
+  if (method === '1') {
+    await loginProviderPlugin(adapter.provider, pluginAuthInteraction());
+  } else if (method === '2') {
+    await handleGenericLogin("anthropic", "Anthropic API Key");
+  } else {
+    logger.warn("Invalid selection");
+  }
 }
 
 async function handleOpenAILogin() {

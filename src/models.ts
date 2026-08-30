@@ -19,7 +19,7 @@ import {
 } from './providers/opencode-go';
 import { BUILTIN_PROVIDERS } from './providers/registry-sources';
 import { transformOpenAICompatibleRequest } from './model-compatibility';
-import { createProviderPluginModel, getProviderPatch, getProviderPlugin, loadProviderPlugins } from './plugin/provider-runtime';
+import { createProviderPluginModel, getActiveProviderAdapter, getProviderPatch, getProviderPlugin, loadProviderPlugins } from './plugin/provider-runtime';
 import { providerMediaSupport } from './plugin/provider-behavior';
 
 /**
@@ -239,17 +239,22 @@ export async function createModel(modelString: string) {
   // themselves — benchmarks, the verify judge, compaction — so an alias works
   // wherever a model can be named.
   const resolvedString = resolveModelString(modelString).model;
+  const config = parseModelConfig(resolvedString);
 
-  const plugin = await getProviderPlugin(parseModelConfig(resolvedString).provider);
+  const plugin = await getProviderPlugin(config.provider);
   if (plugin) {
-    const config = parseModelConfig(resolvedString);
     return await maybeWrapWithDevTools(await createProviderPluginModel(plugin, config.modelName));
+  }
+
+  const adapter = await getActiveProviderAdapter(config.provider, config.modelName);
+  if (adapter) {
+    logger.debug(`Using ${adapter.name} for ${config.provider}:${config.modelName}`);
+    return await maybeWrapWithDevTools(await createProviderPluginModel(adapter, config.modelName));
   }
 
   // Validate model and warn if not in registry (non-blocking)
   warnIfModelNotInRegistry(resolvedString);
 
-  const config = parseModelConfig(resolvedString);
   const providerPatch = await getProviderPatch(config.provider);
   
   if (config.provider === 'anthropic') {

@@ -14,6 +14,7 @@ import {
   type ToolCallEventResult,
   type ToolResultEvent,
   type ProviderDefinition,
+  type ProviderAdapter,
   type ProviderPatch,
 } from './types';
 import type { PluginIdentity } from './internal-types';
@@ -65,10 +66,29 @@ function validateProvider(provider: ProviderDefinition, identity: PluginIdentity
   }
 }
 
+function validateProviderAdapter(providerId: string, adapter: ProviderAdapter, identity: PluginIdentity): void {
+  if (!BUILTIN_PROVIDERS.includes(providerId)) {
+    throw new Error(`Plugin ${identity.name} can only extend a built-in provider; '${providerId}' is not built in`);
+  }
+  if (!adapter.name || !adapter.transport || typeof adapter.when !== 'function') {
+    throw new Error(`Provider adapter '${providerId}' must define name, transport, and when()`);
+  }
+  validateProvider({
+    id: `adapter-${providerId}`,
+    name: adapter.name,
+    models: [],
+    transport: adapter.transport,
+    ...(adapter.auth && { auth: adapter.auth }),
+    ...(adapter.prompts && { prompts: adapter.prompts }),
+    ...(adapter.media && { media: adapter.media }),
+  }, identity);
+}
+
 export class PluginHost {
   private events = new Map<keyof PluginEvents, Array<Registration<PluginEventHandler<any>>>>();
   private providers = new Map<string, Registration<ProviderDefinition>>();
   private patches = new Map<string, Array<Registration<ProviderPatch>>>();
+  private adapters = new Map<string, Array<Registration<ProviderAdapter>>>();
   private activated: ActivatedPlugin[] = [];
 
   async activate(identity: PluginIdentity, exported: unknown): Promise<Disposable> {
@@ -88,9 +108,19 @@ export class PluginHost {
         disposables.push(result);
         return result;
       },
-      registerProvider: ((providerOrId: ProviderDefinition | string, patch?: ProviderPatch) => {
+      registerProvider: ((providerOrId: ProviderDefinition | string, patch?: ProviderPatch | ProviderAdapter) => {
         if (typeof providerOrId === 'string') {
           if (!patch) throw new Error(`Provider patch for '${providerOrId}' is missing`);
+          if ('transport' in patch) {
+            validateProviderAdapter(providerOrId, patch, identity);
+            const registration: Registration<ProviderAdapter> = { owner: identity, value: patch };
+            this.adapters.set(providerOrId, [...(this.adapters.get(providerOrId) ?? []), registration]);
+            const result = disposable(() => {
+              this.adapters.set(providerOrId, (this.adapters.get(providerOrId) ?? []).filter((item) => item !== registration));
+            });
+            disposables.push(result);
+            return result;
+          }
           const registration: Registration<ProviderPatch> = { owner: identity, value: patch };
           this.patches.set(providerOrId, [...(this.patches.get(providerOrId) ?? []), registration]);
           const result = disposable(() => {
@@ -113,6 +143,7 @@ export class PluginHost {
       unregisterProvider: (providerId) => {
         if (this.providers.get(providerId)?.owner === identity) this.providers.delete(providerId);
         this.patches.set(providerId, (this.patches.get(providerId) ?? []).filter((item) => item.owner !== identity));
+        this.adapters.set(providerId, (this.adapters.get(providerId) ?? []).filter((item) => item.owner !== identity));
       },
     };
 
@@ -142,6 +173,11 @@ export class PluginHost {
   getProvider(providerId: string): ProviderDefinition | undefined { return this.providers.get(providerId)?.value; }
   getProviderOwner(providerId: string): PluginIdentity | undefined { return this.providers.get(providerId)?.owner; }
   listProviders(): ProviderDefinition[] { return [...this.providers.values()].map((item) => item.value); }
+  getProviderAdapters(providerId: string): ProviderAdapter[] {
+    return (this.adapters.get(providerId) ?? [])
+      .map((item) => item.value)
+      .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+  }
 
   getProviderPatch(providerId: string): ProviderPatch | undefined {
     const values = this.patches.get(providerId) ?? [];
