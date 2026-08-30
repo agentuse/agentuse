@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { SendToCodingAgentDialog } from './send-to-coding-agent-dialog';
-import { fetchAgents, reportOnboardingTelemetry, type AgentRow } from '../lib/api';
+import { fetchAgents, fetchProviderSetup, reportOnboardingTelemetry, type AgentRow } from '../lib/api';
 import { agentDetailHref } from '../lib/links';
 import type { ProviderStatus } from '../../../../auth/provider-status';
+import { hasConfiguredProvider, ProviderSetupDialog } from './provider-setup';
 
 export interface DebugPromptContext {
   sessionId: string;
@@ -36,7 +37,15 @@ declare global {
 }
 
 function currentOnboardingExecutionContext(providerStatus?: ProviderStatus): OnboardingExecutionContext | undefined {
-  if (typeof window === 'undefined' || !window.agentuseDesktop) return undefined;
+  if (typeof window === 'undefined') return undefined;
+  if (!window.agentuseDesktop) {
+    return {
+      surface: 'web',
+      cliCommand: 'agentuse',
+      serveAlreadyRunning: true,
+      ...(providerStatus ? { providerStatus } : {}),
+    };
+  }
   return {
     surface: window.agentuseDesktop.surface,
     cliCommand: window.agentuseDesktop.cliCommand,
@@ -171,20 +180,20 @@ export function buildOnboardingPrompt(
       '',
       'Do not substitute a package-manager installation or bare `agentuse`.',
     );
-    if (execution.providerStatus) {
-      lines.push(
-        '',
-        '## Provider Status from AgentUse Desktop',
-        '',
-        'AgentUse Desktop read this status from the same runtime environment that will run the agent:',
-        '',
-        '```json',
-        JSON.stringify(execution.providerStatus, null, 2),
-        '```',
-        '',
-        'Use this status as authoritative. Do not replace it with credentials from the coding agent itself.',
-      );
-    }
+  }
+  if (execution?.providerStatus) {
+    lines.push(
+      '',
+      '## Provider Status from AgentUse',
+      '',
+      'AgentUse read this status from the same runtime environment that will run the agent:',
+      '',
+      '```json',
+      JSON.stringify(execution.providerStatus, null, 2),
+      '```',
+      '',
+      'Use this status as authoritative. Do not replace it with credentials from the coding agent itself.',
+    );
   }
   lines.push(
     '',
@@ -196,26 +205,14 @@ export function buildOnboardingPrompt(
     `${cli} skills get onboarding --full`,
     '```',
   );
-  if (execution?.surface === 'desktop' && execution.providerStatus) {
+  if (execution?.providerStatus) {
     lines.push(
       '',
-      '2. Use the provider status supplied above. A provider is ready for Desktop only when it has `configured: true` and at least one source with `stored: true`.',
+      '2. Use the provider status supplied above. A provider is ready when it has `configured: true`, or a custom provider reports `hasApiKey: true`.',
       '',
-      '3. If no provider is ready, stop. Tell me to open Terminal and run this exact command myself:',
+      '3. If no provider is ready, stop and tell me to connect one in AgentUse Dashboard Preferences. Do not ask me to paste credentials into chat.',
       '',
-      '```sh',
-      `${cli} provider login`,
-      '```',
-      '',
-      'Do not run this interactive login command for me. Do not ask me to paste API keys, authorization codes, authorization URLs, or callback URLs into this chat.',
-      '',
-      '4. Wait until I say login is finished, then confirm the updated status from the same Desktop profile:',
-      '',
-      '```sh',
-      `${cli} provider list --json`,
-      '```',
-      '',
-      '5. If a stored provider is now confirmed, continue and use only a model from that provider.',
+      '4. If a provider is ready, continue and use only a model from that provider.',
     );
   } else {
     lines.push(
@@ -266,6 +263,7 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | undefined>(undefined);
   const [providerStatusLoading, setProviderStatusLoading] = useState(false);
   const [providerStatusError, setProviderStatusError] = useState<string | null>(null);
+  const [providerSetupOpen, setProviderSetupOpen] = useState(false);
   const manualCheckRef = useRef(false);
 
   useEffect(() => {
@@ -288,6 +286,7 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
     setCheckError(null);
     setProviderStatus(undefined);
     setProviderStatusError(null);
+    setProviderSetupOpen(false);
     setWaitingStartedAt(onboarding ? readWaitingStartedAt(storageKey) : null);
   }, [onboarding, storageKey]);
 
@@ -375,15 +374,17 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
   }, [providerStatus, storageKey]);
 
   const openPrompt = useCallback(async () => {
-    if (!onboarding || typeof window === 'undefined' || !window.agentuseDesktop) {
+    if (!onboarding) {
       setOpen(true);
       return;
     }
     setProviderStatusLoading(true);
     setProviderStatusError(null);
     try {
-      setProviderStatus(await window.agentuseDesktop.getProviderStatus());
-      setOpen(true);
+      const payload = await fetchProviderSetup();
+      setProviderStatus(payload.status);
+      if (hasConfiguredProvider(payload.status)) setOpen(true);
+      else setProviderSetupOpen(true);
     } catch (error) {
       reportOnboardingTelemetry({
         event: 'onboarding_step_failed',
@@ -510,6 +511,16 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
         placeholder={onboarding ? 'e.g. summarize new support tickets every morning' : 'e.g. the run timed out on the email step'}
         {...(onboarding ? { onCopied: beginWaiting } : {})}
         onClose={() => setOpen(false)}
+      />
+      <ProviderSetupDialog
+        open={providerSetupOpen}
+        title="create your first agent"
+        onComplete={(payload) => {
+          setProviderStatus(payload.status);
+          setProviderSetupOpen(false);
+          setOpen(true);
+        }}
+        onClose={() => setProviderSetupOpen(false)}
       />
     </>
   );

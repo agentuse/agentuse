@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { initStorage } from '../src/storage';
 import { SessionManager } from '../src/session';
+import { ONBOARDING_AGENT_ID, ONBOARDING_AGENT_NAME, ONBOARDING_MODEL } from '../src/onboarding';
 
 const root = resolve(import.meta.dir, '..');
 const evidenceDir = join(root, 'tmp', 'e2e');
@@ -184,6 +185,27 @@ Review renewal recommendations and request approval before acting.
   return sessionId;
 }
 
+async function seedOnboardingProject(projectRoot: string): Promise<string> {
+  await mkdir(projectRoot, { recursive: true });
+  await writeFile(join(projectRoot, 'ABOUT.md'), `---\nname: Getting Started\ndescription: Empty onboarding workspace\n---\n`);
+  await initStorage(projectRoot);
+  const manager = new SessionManager();
+  const onboardingSessionId = await manager.createSession({
+    agent: {
+      id: ONBOARDING_AGENT_ID,
+      name: ONBOARDING_AGENT_NAME,
+      isSubAgent: false,
+    },
+    model: ONBOARDING_MODEL,
+    version: 'e2e',
+    config: {},
+    project: { root: projectRoot, cwd: projectRoot },
+    trigger: 'onboarding',
+  });
+  await manager.setSessionCompleted(onboardingSessionId, ONBOARDING_AGENT_ID);
+  return onboardingSessionId;
+}
+
 async function main(): Promise<void> {
   const dependencyCheck = spawnSync('agent-browser', ['--version'], { encoding: 'utf8' });
   if (dependencyCheck.status !== 0) {
@@ -193,6 +215,7 @@ async function main(): Promise<void> {
   workspace = await mkdtemp(join(tmpdir(), 'agentuse-dashboard-e2e-'));
   await mkdir(evidenceDir, { recursive: true });
   const projectRoot = join(workspace, 'project');
+  const onboardingProjectRoot = join(workspace, 'onboarding');
   const stateRoot = join(workspace, 'state');
   const configPath = join(workspace, 'config.json');
   await mkdir(projectRoot, { recursive: true });
@@ -205,7 +228,8 @@ async function main(): Promise<void> {
   }));
 
   process.env.XDG_DATA_HOME = stateRoot;
-  const sessionId = await seedProject(projectRoot);
+  const approvalSessionId = await seedProject(projectRoot);
+  const onboardingSessionId = await seedOnboardingProject(onboardingProjectRoot);
   const port = await freePort();
   const baseUrl = `http://127.0.0.1:${port}`;
   daemon = spawn(process.execPath, [
@@ -213,12 +237,14 @@ async function main(): Promise<void> {
     'serve',
     '--port', String(port),
     '--directory', projectRoot,
+    '--directory', onboardingProjectRoot,
     '--no-auth',
     '--no-log-file',
   ], {
     cwd: root,
     env: {
       ...process.env,
+      HOME: workspace,
       XDG_DATA_HOME: stateRoot,
       AGENTUSE_CONFIG: configPath,
       SLACK_APP_TOKEN: '',
@@ -262,7 +288,7 @@ async function main(): Promise<void> {
   );
   browser(['screenshot', join(evidenceDir, 'agents-graph.png'), '--full']);
 
-  browser(['open', `${baseUrl}/sessions/${encodeURIComponent(sessionId)}`]);
+  browser(['open', `${baseUrl}/sessions/${encodeURIComponent(approvalSessionId)}`]);
   browser(['wait', '1200']);
   const sessionBody = browser(['eval', 'document.body.innerText']);
   if (!sessionBody.toLowerCase().includes('pick one')) {
@@ -279,12 +305,43 @@ async function main(): Promise<void> {
   );
   browser(['screenshot', join(evidenceDir, 'approval-options.png'), '--full']);
 
+  browser(['open', `${baseUrl}/sessions/${encodeURIComponent(onboardingSessionId)}?project=onboarding`]);
+  browser(['wait', '1200']);
+  const onboardingBody = browser(['eval', 'document.body.innerText']);
+  if (!onboardingBody.includes('Create my first agent')) {
+    fail(`Completed onboarding session did not render its first-agent handoff. Page text:\n${onboardingBody}\nDaemon output:\n${daemonOutput}`);
+  }
+  browser(['eval', `(() => { const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.includes('Create my first agent')); button?.click(); return Boolean(button); })()`]);
+  browser(['wait', '--text', 'Connect a model provider']);
+  expectBrowser(
+    `document.querySelector('.provider-setup-dialog[open]') !== null && document.querySelector('.cca-dialog[open]') === null`,
+    'completed sample handoff gates agent creation on provider setup',
+  );
+  browser(['screenshot', join(evidenceDir, 'onboarding-provider-gate.png')]);
+  browser(['click', '.provider-setup-dialog .dialog-close']);
+
   browser(['open', `${baseUrl}/settings`]);
   browser(['wait', '1200']);
   expectBrowser(
     `document.body.innerText.toLowerCase().includes('pending approvals') && document.body.innerText.toLowerCase().includes('session completions')`,
     'PWA notification preferences are visible',
   );
+  expectBrowser(
+    `document.body.innerText.toLowerCase().includes('providers') && document.body.innerText.includes('Anthropic') && document.body.innerText.includes('OpenRouter')`,
+    'provider status is integrated into Preferences',
+  );
+  expectBrowser(
+    `fetch('/api/providers').then((response) => response.json()).then((payload) => payload.success === true && payload.catalog.length >= 4 && !JSON.stringify(payload).includes('access_token'))`,
+    'provider API returns a redacted catalog and status snapshot',
+  );
+  browser(['eval', `(() => { const rows = [...document.querySelectorAll('.provider-settings-row')]; const row = rows.find((item) => item.textContent?.includes('OpenRouter')); const button = row && [...row.querySelectorAll('button')].find((item) => item.textContent?.includes('Connect')); button?.click(); return Boolean(button); })()`]);
+  browser(['wait', '--text', 'Connect a model provider']);
+  expectBrowser(
+    `document.querySelector('.provider-setup-dialog[open]') !== null && document.querySelector('.provider-setup-dialog input[type="password"]') !== null`,
+    'provider setup dialog opens from Preferences without writing credentials',
+  );
+  browser(['screenshot', join(evidenceDir, 'settings-provider-dialog.png')]);
+  browser(['click', '.provider-setup-dialog .dialog-close']);
   expectBrowser(
     `document.querySelector('link[rel="manifest"]')?.getAttribute('href') === '/manifest.webmanifest'`,
     'dashboard shell links the web app manifest',

@@ -2,6 +2,8 @@ import type { AgentSummary, ApprovalLogEntry, ApprovalPageInfo, ApprovalSummary,
 import type { StoreBrowserRows, StoreBrowserSummary } from "../../stores";
 import type { StoreItem } from "../../../../store/types";
 import type { SerializedSchedule } from "../../../../scheduler";
+import type { ProviderCatalogEntry } from "../../../../auth/provider-setup";
+import type { ProviderStatus } from "../../../../auth/provider-status";
 
 export type { SerializedSchedule };
 
@@ -646,6 +648,46 @@ export function runAgentDetached(agent: string, project: string | undefined, pro
 /** Start the zero-file, demo-model first-run guide from an empty dashboard. */
 export function runOnboardingDetached(project?: string): Promise<DetachedRunResponse> {
   return postJson('/api/onboarding/run', project ? { project } : {});
+}
+
+export interface ProviderSetupPayload {
+  success: true;
+  catalog: readonly ProviderCatalogEntry[];
+  status: ProviderStatus;
+}
+
+export function fetchProviderSetup(): Promise<ProviderSetupPayload> {
+  return getJson('/api/providers');
+}
+
+export function saveProviderApiKey(provider: string, key: string): Promise<ProviderSetupPayload> {
+  return postJson('/api/providers/api-key', { provider, key });
+}
+
+export function startProviderOAuth(provider: string, mode?: 'max' | 'console'): Promise<{
+  success: true;
+  flowId: string;
+  provider: 'anthropic' | 'openai';
+  authorizationUrl: string;
+  expiresAt: number;
+}> {
+  return postJson('/api/providers/oauth/start', { provider, ...(mode ? { mode } : {}) });
+}
+
+export function completeProviderOAuth(flowId: string, code: string): Promise<ProviderSetupPayload> {
+  return postJson('/api/providers/oauth/complete', { flowId, code });
+}
+
+export function removeProviderCredential(provider: string, kind: 'oauth' | 'api_key'): Promise<ProviderSetupPayload> {
+  return postJson('/api/providers/remove', { provider, kind });
+}
+
+export function saveCustomProvider(name: string, baseURL: string, key?: string): Promise<ProviderSetupPayload> {
+  return postJson('/api/providers/custom', { name, baseURL, ...(key ? { key } : {}) });
+}
+
+export function removeCustomProvider(name: string): Promise<ProviderSetupPayload> {
+  return postJson('/api/providers/custom/remove', { name });
 }
 
 export interface SchedulesPayload {

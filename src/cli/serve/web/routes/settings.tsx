@@ -8,6 +8,7 @@ import { useSessionListView } from '../hooks/use-session-list-view';
 import { HOME_SECTIONS, useHomeSections } from '../hooks/use-home-sections';
 import { usePushBell } from '../hooks/use-push';
 import { debugSettingsEnabled, requestUpdatePreview } from '../lib/update-preview';
+import { ProviderSettingsGroup } from '../components/provider-setup';
 
 function Group(props: { title: string; children: ComponentChildren }) {
   return (
@@ -130,6 +131,8 @@ export default function Settings() {
             </Row>
           </Group>
         )}
+
+        <ProviderSettingsGroup />
 
         <Group title="Appearance">
           <Row label="Theme" hint="Light, dark, or follow the system.">

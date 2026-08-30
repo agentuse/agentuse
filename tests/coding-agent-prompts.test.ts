@@ -87,21 +87,17 @@ describe('coding-agent handoff prompts', () => {
     expect(prompt).toContain('## AgentUse CLI');
     expect(prompt).toContain(`\`\`\`sh\n${bundledCli}\n\`\`\``);
     expect(prompt).toContain(`\`\`\`sh\n${bundledCli} skills get onboarding --full\n\`\`\``);
-    expect(prompt).toContain(`\`\`\`sh\n${bundledCli} provider list --json\n\`\`\``);
-    expect(prompt).toContain(`\`\`\`sh\n${bundledCli} provider login\n\`\`\``);
-    expect(prompt).toContain('open Terminal and run this exact command myself');
-    expect(prompt).toContain('Do not run this interactive login command for me');
-    expect(prompt).toContain('callback URLs into this chat');
+    expect(prompt).toContain('connect one in AgentUse Dashboard Preferences');
+    expect(prompt).toContain('Do not ask me to paste credentials into chat');
     expect(prompt).toContain('AgentUse Desktop owns the running `serve` process');
-    expect(prompt).toContain('## Provider Status from AgentUse Desktop');
+    expect(prompt).toContain('## Provider Status from AgentUse');
     expect(prompt).toContain('"credentialStore": "/tmp/fresh-home/.local/share/agentuse/auth.json"');
     expect(prompt).toContain('"configured": false');
     expect(prompt).toContain('Use this status as authoritative');
-    expect(prompt).toContain('at least one source with `stored: true`');
+    expect(prompt).toContain('A provider is ready when it has `configured: true`');
     expect(prompt).not.toContain('Before creating a file, check the available AgentUse providers');
-    expect(prompt.indexOf('## Provider Status from AgentUse Desktop')).toBeLessThan(
-      prompt.indexOf(`${bundledCli} provider list --json`),
-    );
+    expect(prompt).not.toContain(`${bundledCli} provider login`);
+    expect(prompt).not.toContain(`${bundledCli} provider list --json`);
     expect(prompt).toContain('CLI bundled inside AgentUse Desktop');
     expect(prompt).toContain('Do not substitute a package-manager installation or bare `agentuse`');
     expect(prompt).not.toContain('\n  agentuse ');
