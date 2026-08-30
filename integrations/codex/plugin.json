@@ -1,0 +1,34 @@
+{
+  "name": "agentuse",
+  "version": "__CODEX_VERSION__",
+  "description": "Turn completed Codex work into a tested, reusable AgentUse agent.",
+  "author": {
+    "name": "AgentUse"
+  },
+  "homepage": "https://docs.agentuse.io/",
+  "license": "Apache-2.0",
+  "keywords": [
+    "agentuse",
+    "automation",
+    "agents",
+    "scheduling"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "AgentUse",
+    "shortDescription": "Turn completed work into a reusable agent.",
+    "longDescription": "Use Automate to convert a workflow from the current Codex conversation into a focused AgentUse agent, prepare missing runtime setup, and validate the result before its first real run.",
+    "developerName": "AgentUse",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://docs.agentuse.io/",
+    "defaultPrompt": [
+      "Use $automate to make the workflow we just completed repeatable.",
+      "Use $automate to create a weekday automation for this task.",
+      "Use $automate to turn this process into a tested AgentUse agent."
+    ]
+  }
+}

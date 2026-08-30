@@ -22,6 +22,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { buildIntegrationArtifacts } from './build-integrations.ts';
 import { sectionFor, unreleasedBody } from './lib/changelog.ts';
 
 const root = resolve(import.meta.dir, '..');
@@ -388,6 +389,7 @@ function verify(): void {
     { name: 'typecheck:scripts', run: () => stream('bun', ['run', 'typecheck:scripts']) },
     { name: 'desktop typecheck', run: () => stream('bun', ['run', 'desktop:typecheck']) },
     { name: 'desktop tests', run: () => stream('bun', ['run', 'desktop:test']) },
+    { name: 'integration artifacts', run: () => stream('bun', ['run', 'integrations:check']) },
     { name: 'build', run: () => stream('bun', ['run', 'build']) },
     { name: 'tests + coverage', run: () => stream('bun', ['run', 'test:coverage']) },
   ];
@@ -553,6 +555,10 @@ function publish(): void {
  * anyway.
  */
 function finish(version: string): void {
+  const packageVersion = manifest().version;
+  if (version !== packageVersion) {
+    fail(`Cannot build integration packages for v${version}; package.json is ${packageVersion}.`);
+  }
   const section = sectionFor(root, version);
   if (section === null) fail(`CHANGELOG.md has no ## [${version}] section, so the Release would have an empty body.`);
 
@@ -567,10 +573,22 @@ function finish(version: string): void {
   const bodyPath = join(root, 'tmp', `release-notes-${version}.md`);
   writeFileSync(bodyPath, `${section}\n`);
   try {
-    const args = ['release', 'create', `v${version}`, '-R', repo, '--title', `v${version}`, '--notes-file', bodyPath];
+    const integrationArtifacts = buildIntegrationArtifacts();
+    const args = [
+      'release',
+      'create',
+      `v${version}`,
+      ...Object.values(integrationArtifacts.archives),
+      '-R',
+      repo,
+      '--title',
+      `v${version}`,
+      '--notes-file',
+      bodyPath,
+    ];
     if (distTag(version) !== 'latest') args.push('--prerelease');
     stream('gh', args);
-    note(`GitHub Release v${version} created on ${repo}.`);
+    note(`GitHub Release v${version} created on ${repo} with AgentUse integration packages.`);
   } finally {
     if (existsSync(bodyPath)) rmSync(bodyPath, { force: true });
   }

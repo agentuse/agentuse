@@ -1,0 +1,20 @@
+{
+  "name": "agentuse-development",
+  "interface": {
+    "displayName": "AgentUse Development"
+  },
+  "plugins": [
+    {
+      "name": "agentuse",
+      "source": {
+        "source": "local",
+        "path": "./plugins/agentuse"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

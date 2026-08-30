@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- **Codex, Claude Code, Pi, and portable Agent Skills integrations now build directly from AgentUse's canonical builtin skills.** One deterministic build produces self-contained local marketplaces, an npm-ready Pi package, and stable release archives without checking generated copies into sibling repositories. The release gate verifies archive structure, version coupling, bundled checksums, and byte-identical guidance before GitHub Release creation attaches all four packages.
+
 ## [0.20.0] - 2026-09-02
 
 ### Added

@@ -1,0 +1,12 @@
+{
+  "name": "@agentuse/pi-automate",
+  "version": "__AGENTUSE_VERSION__",
+  "description": "Turn completed Pi work into a tested, reusable AgentUse agent.",
+  "license": "Apache-2.0",
+  "keywords": ["pi-package", "agentuse", "automation", "agents", "scheduling"],
+  "pi": {
+    "prompts": ["./prompts"],
+    "skills": ["./skills"]
+  },
+  "files": ["prompts", "skills", "README.md", "LICENSE"]
+}

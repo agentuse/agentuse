@@ -1,0 +1,17 @@
+{
+  "name": "agentuse-development",
+  "description": "Local development marketplace for AgentUse coding-agent integrations.",
+  "owner": {
+    "name": "AgentUse"
+  },
+  "plugins": [
+    {
+      "name": "agentuse",
+      "source": "./plugins/agentuse",
+      "description": "Turn completed Claude Code work into a tested, reusable AgentUse agent.",
+      "version": "__AGENTUSE_VERSION__",
+      "category": "productivity",
+      "tags": ["agentuse", "automation", "agents", "scheduling"]
+    }
+  ]
+}

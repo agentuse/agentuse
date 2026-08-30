@@ -272,6 +272,14 @@ agentuse skills get creator
 agentuse skills get tester
 ```
 
+AgentUse also builds self-contained `$automate` integrations for Codex, Claude
+Code, Pi, and generic Agent Skills hosts directly from this repository. Release
+archives are generated from the same canonical builtin skills:
+
+```bash
+bun run integrations:build
+```
+
 Validate an agent's configuration before running it:
 
 ```bash

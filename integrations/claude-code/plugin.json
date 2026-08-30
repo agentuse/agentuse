@@ -1,0 +1,11 @@
+{
+  "name": "agentuse",
+  "version": "__AGENTUSE_VERSION__",
+  "description": "Turn completed Claude Code work into a tested, reusable AgentUse agent.",
+  "author": {
+    "name": "AgentUse"
+  },
+  "homepage": "https://docs.agentuse.io/",
+  "license": "Apache-2.0",
+  "keywords": ["agentuse", "automation", "agents", "scheduling"]
+}
