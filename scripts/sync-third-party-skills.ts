@@ -11,6 +11,7 @@ const thirdPartyRoot = rootFlag >= 0
   : defaultThirdPartyRoot;
 
 const targets = [
+  resolve(thirdPartyRoot, 'shared/generated/skills/automate'),
   resolve(thirdPartyRoot, 'codex/plugins/agentuse/skills/automate'),
   resolve(thirdPartyRoot, 'claude-code/plugins/agentuse/skills/automate'),
   resolve(thirdPartyRoot, 'pi/skills/automate'),
