@@ -61,6 +61,19 @@ async function postJson<T>(path: string, body: Record<string, unknown>): Promise
   return payload as T;
 }
 
+async function deleteJson<T>(path: string): Promise<T> {
+  const response = await fetch(path, { method: 'DELETE', headers: { Accept: 'application/json' } });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new ApiRequestError(
+      response.status,
+      payload?.error?.code ?? 'REQUEST_FAILED',
+      payload?.error?.message ?? `Request failed with status ${response.status}`
+    );
+  }
+  return payload as T;
+}
+
 export type WebUIPage = 'home' | 'agents' | 'schedules' | 'sessions' | 'approvals' | 'stores' | 'settings' | 'learnings' | 'other';
 
 export function webUIPageForPath(pathname: string): WebUIPage {
@@ -566,6 +579,10 @@ export function attachExistingProject(path: string): Promise<{ success: true; pr
   return postJson('/api/projects/attach', { path });
 }
 
+export function removeProject(id: string): Promise<{ success: true }> {
+  return deleteJson(`/api/projects/${encodeURIComponent(id)}`);
+}
+
 export async function pickProjectFolder(): Promise<string | null> {
   if (typeof window !== 'undefined' && window.agentuseDesktop?.chooseProjectFolder) {
     return window.agentuseDesktop.chooseProjectFolder();
@@ -638,6 +655,41 @@ export interface ProjectDiscoveryPayload {
 
 export function discoverProjectAgents(project: string, model?: string): Promise<ProjectDiscoveryPayload> {
   return postJson('/api/agents/discover', { project, ...(model ? { model } : {}) });
+}
+
+export interface OnboardingJobHandle {
+  id: string;
+  sessionId: string;
+  projectId: string;
+  kind: 'project-discovery' | 'agent-creation';
+  status: 'running' | 'completed' | 'error';
+  model: string;
+  createdAt: number;
+  sessionToken?: string;
+}
+
+export type OnboardingJob = OnboardingJobHandle & {
+  result?: ProjectDiscoveryPayload | { success: true; agent: AgentRow };
+  error?: { code: string; message: string };
+};
+
+export function startProjectDiscoverySession(project: string, model: string): Promise<{ success: true; job: OnboardingJobHandle }> {
+  return postJson('/api/onboarding/discovery', { project, model });
+}
+
+export function startOnboardingAgentCreation(input: {
+  project: string;
+  name: string;
+  description: string;
+  objective: string;
+  model: string;
+  schedule: string;
+}): Promise<{ success: true; job: OnboardingJobHandle }> {
+  return postJson('/api/onboarding/creation', input);
+}
+
+export function fetchOnboardingJob(id: string): Promise<{ success: true; job: OnboardingJob }> {
+  return getJson(`/api/onboarding/jobs/${encodeURIComponent(id)}`);
 }
 
 export type AgentCreationProgressEvent =

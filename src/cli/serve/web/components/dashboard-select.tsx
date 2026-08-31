@@ -28,6 +28,7 @@ export function DashboardSelect(props: {
   onChange: (value: string) => void;
   ariaLabel: string;
   disabled?: boolean;
+  placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
@@ -107,7 +108,9 @@ export function DashboardSelect(props: {
     }
   };
 
-  const label = props.options.find((option) => option.value === props.value)?.label ?? props.value;
+  const label = props.options.find((option) => option.value === props.value)?.label
+    ?? props.placeholder
+    ?? props.value;
   const activeOptionId = open && props.options[active] ? `${listboxId}-option-${active}` : undefined;
 
   return (

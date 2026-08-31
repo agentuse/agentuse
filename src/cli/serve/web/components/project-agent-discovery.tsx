@@ -1,28 +1,39 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useReducer, useState } from 'preact/hooks';
 import { agentDetailHref, projectDiscoveryHref } from '../lib/links';
 import {
-  createAgentWithProgress,
-  discoverProjectAgents,
+  fetchOnboardingJob,
   fetchAgentCreationOptions,
   fetchProviderSetup,
-  type AgentCreationOptionsPayload,
+  startOnboardingAgentCreation,
+  startProjectDiscoverySession,
+  type AgentRow,
   type ProjectAgentSuggestion,
   type ProjectDiscoveryPayload,
   type ProviderSetupPayload,
 } from '../lib/api';
-import {
-  AgentCreateDialog,
-  AgentCreationProgressPanel,
-  creationModelLabel,
-  type AgentCreationProgressPhase,
-} from './agent-create-dialog';
+import { AgentCreateDialog, creationModelLabel } from './agent-create-dialog';
 import { DashboardSelect } from './dashboard-select';
+import { OnboardingSessionLog } from './onboarding-session-log';
+import {
+  initialProjectDiscoveryState,
+  onboardingCurrentStep,
+  onboardingDiscovery,
+  onboardingSuggestion,
+  parseProjectDiscoveryResume,
+  projectDiscoveryReducer,
+  resumableProjectDiscoveryState,
+} from './onboarding-machine';
+import { OnboardingShell } from './onboarding-shell';
 import { hasConfiguredProvider, ProviderSetupDialog } from './provider-setup';
 
-type DiscoveryStage = 'provider' | 'ready' | 'scanning' | 'scan-error' | 'suggestions' | 'creating' | 'creation-error';
+type OnboardingModal = 'provider' | 'direct-create' | null;
 
 function setProviderRouteState(projectId: string, open: boolean): void {
   history.replaceState(null, '', projectDiscoveryHref(projectId, { ...(open && { connectProvider: true }) }));
+}
+
+function likelyCreatorCapabilityFailure(error: string): boolean {
+  return /AgentUse source|submit_agent_source|generated agent|agent configuration/i.test(error);
 }
 
 export function ProjectAgentDiscovery(props: {
@@ -32,292 +43,319 @@ export function ProjectAgentDiscovery(props: {
   compact?: boolean;
   existingAgents?: boolean;
 }) {
-  const [stage, setStage] = useState<DiscoveryStage>('provider');
-  const [providerPayload, setProviderPayload] = useState<ProviderSetupPayload | null>(null);
-  const [creationOptions, setCreationOptions] = useState<AgentCreationOptionsPayload | null>(null);
-  const [providerOpen, setProviderOpen] = useState(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('provider') === 'connect');
-  const [discovery, setDiscovery] = useState<ProjectDiscoveryPayload | null>(null);
-  const [model, setModel] = useState<string | null>(null);
-  const [directCreateOpen, setDirectCreateOpen] = useState(false);
-  const [creatingId, setCreatingId] = useState<string | null>(null);
-  const [retrySuggestion, setRetrySuggestion] = useState<ProjectAgentSuggestion | null>(null);
-  const [retryScan, setRetryScan] = useState(false);
-  const [creationPhase, setCreationPhase] = useState<AgentCreationProgressPhase | null>(null);
-  const [creationLog, setCreationLog] = useState('');
-  const creationRequestRef = useRef<AbortController | null>(null);
-  const sawCreationDraftRef = useRef(false);
-  const creationErrorReportedRef = useRef(false);
-  const [error, setError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(projectDiscoveryReducer, initialProjectDiscoveryState);
+  const [modal, setModal] = useState<OnboardingModal>(() => typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('provider') === 'connect'
+    ? 'provider'
+    : null);
+  const resumeKey = `agentuse:onboarding:${props.projectId}`;
+
+  const clearResume = () => {
+    if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(resumeKey);
+  };
 
   useEffect(() => {
-    void Promise.all([fetchProviderSetup(), fetchAgentCreationOptions()]).then(([providers, options]) => {
-      setProviderPayload(providers);
-      setCreationOptions(options);
-      setModel(options.providers[0]?.defaultModel ?? options.providers[0]?.models[0] ?? null);
-      setStage(hasConfiguredProvider(providers.status) ? 'ready' : 'provider');
-    }).catch((caught) => setError((caught as Error).message || 'Could not check provider setup.'));
-  }, []);
+    void Promise.all([fetchProviderSetup(), fetchAgentCreationOptions()]).then(([provider, options]) => {
+      dispatch({ type: 'BOOT_SUCCEEDED', provider, options });
+      const resume = typeof sessionStorage === 'undefined'
+        ? null
+        : parseProjectDiscoveryResume(sessionStorage.getItem(resumeKey));
+      if (resume) dispatch({ type: 'RESTORE', resume });
+    }).catch((caught) => dispatch({
+      type: 'BOOT_FAILED',
+      error: (caught as Error).message || 'Could not check provider setup.',
+    }));
+  }, [resumeKey]);
 
-  const scan = async (nextModel = model) => {
-    if (stage === 'scanning' || stage === 'creating') return;
-    setRetryScan(false);
-    setRetrySuggestion(null);
-    setStage('scanning');
-    setError(null);
+  useEffect(() => {
+    const resume = resumableProjectDiscoveryState(state);
+    if (resume && typeof sessionStorage !== 'undefined') sessionStorage.setItem(resumeKey, JSON.stringify(resume));
+  }, [resumeKey, state]);
+
+  const activeJob = state.type === 'scanning' || state.type === 'creating' ? state.job : null;
+  useEffect(() => {
+    if (!activeJob) return;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const poll = async () => {
+      try {
+        const { job } = await fetchOnboardingJob(activeJob.id);
+        if (disposed) return;
+        if (job.status === 'running') {
+          timer = setTimeout(() => void poll(), 700);
+          return;
+        }
+        if (job.status === 'error') {
+          const message = job.error?.message || 'The onboarding agent did not finish successfully.';
+          if (job.kind === 'project-discovery') dispatch({ type: 'SCAN_FAILED', error: message });
+          else dispatch({ type: 'CREATION_FAILED', error: message });
+          return;
+        }
+        if (job.kind === 'project-discovery') {
+          dispatch({ type: 'SCAN_SUCCEEDED', discovery: job.result as ProjectDiscoveryPayload });
+          return;
+        }
+        const agent = (job.result as { success: true; agent: AgentRow }).agent;
+        clearResume();
+        window.location.href = agentDetailHref(agent.projectId, agent.runPath, {
+          tab: 'source',
+          spotlightRun: !props.existingAgents,
+        });
+      } catch (caught) {
+        if (disposed) return;
+        const message = (caught as Error).message || 'Could not reconnect to the onboarding session.';
+        if (state.type === 'scanning') dispatch({ type: 'SCAN_FAILED', error: message });
+        else if (state.type === 'creating') dispatch({ type: 'CREATION_FAILED', error: message });
+      }
+    };
+    void poll();
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [activeJob?.id]);
+
+  const setup = 'setup' in state ? state.setup : null;
+  const model = setup?.model ?? null;
+  const discovery = onboardingDiscovery(state);
+  const selectedSuggestion = onboardingSuggestion(state);
+
+  const openProvider = () => {
+    setModal('provider');
+    setProviderRouteState(props.projectId, true);
+  };
+
+  const providerConnected = async (provider: ProviderSetupPayload) => {
+    setModal(null);
+    setProviderRouteState(props.projectId, false);
     try {
-      const result = await discoverProjectAgents(props.projectId, nextModel ?? undefined);
-      setDiscovery(result);
-      setModel(result.model);
-      setStage('suggestions');
+      const options = await fetchAgentCreationOptions();
+      dispatch({ type: 'PROVIDER_CONNECTED', provider, options });
     } catch (caught) {
-      setError((caught as Error).message || 'Could not scan this project.');
-      setStage('scan-error');
+      dispatch({ type: 'BOOT_FAILED', error: (caught as Error).message || 'Could not refresh available models.' });
+    }
+  };
+
+  const scan = async () => {
+    if (!model || (state.type !== 'ready' && state.type !== 'scan-failed')) return;
+    dispatch({ type: 'SCAN_STARTED' });
+    try {
+      const { job } = await startProjectDiscoverySession(props.projectId, model);
+      dispatch({ type: 'SCAN_SESSION_STARTED', job });
+    } catch (caught) {
+      dispatch({ type: 'SCAN_FAILED', error: (caught as Error).message || 'Could not scan this project.' });
     }
   };
 
   const create = async (suggestion: ProjectAgentSuggestion) => {
-    if (!model || creatingId) return;
-    const controller = new AbortController();
-    creationRequestRef.current = controller;
-    setCreatingId(suggestion.id);
-    setRetrySuggestion(suggestion);
-    setCreationPhase('creating');
-    setCreationLog('[agentuse] Starting agent creation\n');
-    sawCreationDraftRef.current = false;
-    creationErrorReportedRef.current = false;
-    setStage('creating');
-    setError(null);
+    if (!model || state.type === 'creating' || !onboardingDiscovery(state)) return;
+    dispatch({ type: 'CREATION_STARTED', suggestion });
     try {
-      const agent = await createAgentWithProgress({
-        project: props.projectId, name: suggestion.name, description: suggestion.description, objective: suggestion.objective, model, schedule: suggestion.schedule, guided: true,
-      }, (event) => {
-        if (event.type === 'status') {
-          setCreationLog((current) => `${current}\n[agentuse] ${event.message}\n`);
-        } else if (event.type === 'draft') {
-          const heading = sawCreationDraftRef.current ? '' : '\n[model draft]\n';
-          sawCreationDraftRef.current = true;
-          setCreationLog((current) => `${current}${heading}${event.text}`);
-        } else if (event.type === 'complete') {
-          setCreationLog((current) => `${current}\n[agentuse] Saved ${event.agent.name}\n`);
-        } else {
-          creationErrorReportedRef.current = true;
-          setCreationLog((current) => `${current}\n[error] ${event.error.message}\n`);
-        }
-      }, controller.signal);
-      setCreationPhase('success');
-      window.location.href = agentDetailHref(agent.projectId, agent.runPath, {
-        tab: 'source',
-        spotlightRun: !props.existingAgents,
+      const { job } = await startOnboardingAgentCreation({
+        project: props.projectId,
+        name: suggestion.name,
+        description: suggestion.description,
+        objective: suggestion.objective,
+        model,
+        schedule: suggestion.schedule,
       });
+      dispatch({ type: 'CREATION_SESSION_STARTED', job });
     } catch (caught) {
-      if ((caught as Error).name === 'AbortError') return;
-      const message = (caught as Error).message || 'Could not create this agent.';
-      if (!creationErrorReportedRef.current) setCreationLog((current) => `${current}\n[error] ${message}\n`);
-      setCreationPhase('error');
-      setCreatingId(null);
-      setStage('creation-error');
-    } finally {
-      creationRequestRef.current = null;
+      dispatch({ type: 'CREATION_FAILED', error: (caught as Error).message || 'Could not create this agent.' });
     }
   };
 
-  const continueToScan = () => {
-    if (hasConfiguredProvider(providerPayload?.status)) {
-      if (retrySuggestion) void create(retrySuggestion);
-      else void scan();
-    } else {
-      setProviderOpen(true);
-      setProviderRouteState(props.projectId, true);
+  const continueFromSetup = () => {
+    if (!setup || !hasConfiguredProvider(setup.provider.status)) {
+      openProvider();
+      return;
     }
+    if (state.type !== 'ready') return;
+    if (state.intent.type === 'retry-create') void create(state.intent.suggestion);
+    else void scan();
   };
 
-  const chooseAnotherModel = (kind: 'scan' | 'create') => {
-    setRetryScan(kind === 'scan');
-    if (kind === 'scan') setRetrySuggestion(null);
-    setCreationPhase(null);
-    setError(null);
-    setStage('ready');
-  };
-
-  const currentStep = stage === 'provider' || stage === 'ready' ? 2 : stage === 'scanning' || stage === 'scan-error' ? 3 : 4;
-  const modelOptions = creationOptions?.providers.flatMap((provider) => provider.models.map((candidate) => ({
+  const currentStep = onboardingCurrentStep(state);
+  const modelOptions = setup?.options.providers.flatMap((provider) => provider.models.map((candidate) => ({
     value: candidate,
     label: `${provider.name} · ${creationModelLabel(candidate, provider.id)}`,
   }))) ?? [];
-  const selectedProvider = creationOptions?.providers.find((provider) => model
+  const selectedProvider = setup?.options.providers.find((provider) => model
     ? provider.models.includes(model) || (provider.custom && model.startsWith(`${provider.id}:`))
     : false);
-  const selectedModelLabel = model
-    ? creationModelLabel(model, selectedProvider?.id ?? '')
-    : 'the selected model';
-  const isCreationStage = stage === 'creating' || stage === 'creation-error';
+  const selectedModelLabel = model ? creationModelLabel(model, selectedProvider?.id ?? '') : 'the selected model';
+  const isCreationStage = state.type === 'creating' || state.type === 'creation-failed';
+  const retryingCreation = state.type === 'ready' && state.intent.type === 'retry-create';
+  const retryingScan = state.type === 'ready' && state.intent.type === 'retry-scan';
+  const projectLabel = props.projectName ?? props.projectId;
+
   return (
-    <section class={`onboarding-empty project-discovery${props.compact ? ' is-compact' : ''}`} aria-labelledby="project-discovery-title">
-      <div class="onboarding-copy">
-        <div class="eyebrow">{isCreationStage ? `Creating ${retrySuggestion?.name ?? 'your agent'}` : props.existingAgents ? 'Add another useful agent' : 'Your first useful agent'}</div>
+    <>
+      <OnboardingShell
+        className="project-discovery"
+        compact={props.compact}
+        labelledBy="project-discovery-title"
+        stepsLabel="First useful agent setup steps"
+        steps={[
+          { number: '01', title: 'Choose project', detail: projectLabel },
+          { number: '02', title: 'Connect provider', detail: hasConfiguredProvider(setup?.provider.status) ? 'Provider ready' : 'Required before project scan', current: currentStep === 2 },
+          { number: '03', title: 'Scan project', detail: 'Read-only, bounded project context', current: currentStep === 3 },
+          { number: '04', title: props.existingAgents ? 'Create another agent' : 'Create an agent', detail: 'Review Source, then run it', current: currentStep === 4 },
+        ]}
+      >
+        <div class="eyebrow">{isCreationStage ? `Creating ${selectedSuggestion?.name ?? 'your agent'}` : props.existingAgents ? 'Add another useful agent' : 'Your first useful agent'}</div>
         <h2 id="project-discovery-title">
-          {isCreationStage ? 'The model is writing your agent' : stage === 'suggestions' ? 'Pick the work worth repeating' : 'Find useful work in this project'}
+          {isCreationStage ? 'The model is writing your agent' : state.type === 'suggestions' ? 'Pick the work worth repeating' : 'Find useful work in this project'}
         </h2>
         <p class="onboarding-lede">
-          {stage === 'provider'
-            ? 'Connect a model provider so AgentUse can inspect this project and propose agents grounded in the work already here.'
-            : stage === 'ready'
-              ? retrySuggestion
-                ? 'Choose a more capable model, then try creating the same agent again. The project and selected idea are preserved.'
-                : retryScan
-                  ? 'Choose a more capable model, then scan the same project again.'
-                  : 'AgentUse will read a bounded project snapshot—file names and common project docs—and propose three safe, recurring agents.'
-              : stage === 'scanning' || stage === 'scan-error'
-                ? 'Scan this project with the selected provider and model. If it fails, change the model without restarting onboarding.'
-                : isCreationStage
-                  ? 'The live creation log stays visible. AgentUse adds validated configuration after the model finishes the instructions.'
-                  : discovery?.summary ?? 'Choose one suggestion to create it.'}
+          {state.type === 'booting'
+            ? 'Checking your providers and available models…'
+            : state.type === 'boot-error'
+              ? 'AgentUse could not prepare this onboarding flow.'
+              : state.type === 'provider-required'
+                ? 'Connect a model provider so AgentUse can inspect this project and propose agents grounded in the work already here.'
+                : state.type === 'ready'
+                  ? retryingCreation
+                    ? 'Choose a more capable model, then try creating the same agent again. The project and selected idea are preserved.'
+                    : retryingScan
+                      ? 'Choose a more capable model, then scan the same project again.'
+                      : 'A read-only AgentUse session will intelligently explore a sanitized project view and propose three safe, recurring agents.'
+                  : state.type === 'scanning' || state.type === 'scan-failed'
+                    ? 'Watch the AgentUse session inspect relevant files. If it fails, change the model without restarting onboarding.'
+                    : isCreationStage
+                      ? 'The live AgentUse session stays visible while the Creator skill designs and validates the complete agent.'
+                      : discovery?.summary ?? 'Choose one suggestion to create it.'}
         </p>
 
         <div class="onboarding-project">
           <span>Project selected</span>
-          <strong>{props.projectName ?? props.projectId}</strong>
+          <strong>{projectLabel}</strong>
           <code title={props.projectPath}>{props.projectPath}</code>
-          {(stage === 'scanning' || stage === 'scan-error') && <small>{'Secrets, .git, dependencies, and generated files are excluded.'}</small>}
-          {discovery && <small>{`Read-only scan · ${discovery.inspectedFiles} project files mapped`}</small>}
+          {(state.type === 'scanning' || state.type === 'scan-failed') && <small>{'Secrets, .git, dependencies, and generated files are excluded.'}</small>}
+          {discovery && <small>{discovery.inspectedFiles > 400
+            ? 'Read-only view · up to 400 files available to the model'
+            : `Read-only view · ${discovery.inspectedFiles} files available to the model`}</small>}
         </div>
 
-        {stage === 'ready' && (
+        {state.type === 'ready' && (
           <div class="discovery-model-field">
-            <span>{retrySuggestion ? 'Creator model' : 'Analysis model'}</span>
+            <span>{retryingCreation ? 'Creator model' : 'Analysis model'}</span>
             <div class="discovery-model-control">
               <DashboardSelect
                 value={model ?? ''}
                 options={modelOptions}
                 disabled={modelOptions.length === 0}
-                onChange={setModel}
-                ariaLabel={retrySuggestion ? 'Creator model' : 'Analysis model'}
+                onChange={(next) => dispatch({ type: 'MODEL_SELECTED', model: next })}
+                ariaLabel={retryingCreation ? 'Creator model' : 'Analysis model'}
+                placeholder="Choose a model…"
               />
-              <button type="button" class="onboarding-secondary" onClick={() => {
-                setProviderOpen(true);
-                setProviderRouteState(props.projectId, true);
-              }}>Add provider</button>
+              <button type="button" class="onboarding-secondary" onClick={openProvider}>Add provider</button>
             </div>
-            <small>{retrySuggestion ? 'Used to create the selected agent. Its runtime model is chosen separately.' : 'Generates project suggestions only. The agent’s runtime model is chosen separately when the agent is created.'}</small>
+            <small>{retryingCreation ? 'Used to create the selected agent. Its runtime model is chosen separately.' : 'Generates project suggestions only. The agent’s runtime model is chosen separately when the agent is created.'}</small>
             <details class="discovery-sharing-details">
               <summary>What exactly gets sent to the model?</summary>
               <ul>
-                <li>Up to 160 file paths, mapped no more than four folders deep.</li>
-                <li>Selected README, ABOUT, and common manifest content, capped at 12,000 characters per file.</li>
-                <li>Approximately 48,000 characters of project context in total.</li>
-                <li>No <code>.env</code>, keys, credentials, dependency folders, build output, or source-code contents.</li>
+                <li>The model receives read-only list, search, and read tools over a temporary sanitized copy.</li>
+                <li>It chooses which project files matter, up to 400 text files and approximately 2 MB in total.</li>
+                <li><code>.env</code>, keys, credentials, dependencies, generated output, Git data, and binary files are blocked.</li>
+                <li>Recognizable credential values inside otherwise allowed text files are redacted.</li>
               </ul>
-              <p>The scan only reads project context and returns suggestions. It does not modify the project.</p>
+              <p>The session log shows which paths the model lists, searches, and reads. The scan cannot modify the project.</p>
             </details>
           </div>
         )}
-        {(stage === 'provider' || stage === 'ready') && (
+
+        {(state.type === 'provider-required' || state.type === 'ready') && (
           <div class="onboarding-actions">
-            <button type="button" class="onboarding-primary" disabled={stage === 'ready' && !model} onClick={continueToScan}>
-              {stage === 'provider' ? 'Connect provider' : retrySuggestion ? 'Try creating again' : retryScan ? 'Scan again' : 'Scan this project'}
+            <button type="button" class="onboarding-primary" disabled={state.type === 'ready' && !model} onClick={continueFromSetup}>
+              {state.type === 'provider-required' ? 'Connect provider' : !model ? 'Choose a model to continue' : retryingCreation ? 'Try creating again' : retryingScan ? 'Scan again' : 'Scan this project'}
             </button>
-            {stage === 'ready' && !retrySuggestion && (
-              <button type="button" class="onboarding-skip-link" disabled={!model} onClick={() => setDirectCreateOpen(true)}>
-                Skip scan and create an agent directly
-              </button>
-            )}
-            {stage === 'ready' && retrySuggestion && <a class="onboarding-skip-link" href="/agents">Skip for now — open the agent dashboard</a>}
-            <span class="onboarding-assurance">{retrySuggestion ? 'Project and selected idea preserved' : 'Read-only scan · You choose what gets created'}</span>
+            {state.type === 'ready' && !retryingCreation && <button type="button" class="onboarding-skip-link" disabled={!model} onClick={() => setModal('direct-create')}>Skip scan and create an agent directly</button>}
+            {retryingCreation && <a class="onboarding-skip-link" href="/agents" onClick={clearResume}>Skip for now — open the agent dashboard</a>}
+            <span class="onboarding-assurance">{retryingCreation ? 'Project and selected idea preserved' : 'Read-only scan · You choose what gets created'}</span>
           </div>
         )}
-        {stage === 'scanning' && (
-          <div class="discovery-progress" role="status">
-            <span class="btn-spinner" aria-hidden="true" />
-            <span>Looking for repeated decisions, checks, and reporting work</span>
-          </div>
-        )}
-        {stage === 'scan-error' && (
+
+        {state.type === 'booting' && <div class="discovery-progress" role="status"><span class="btn-spinner" aria-hidden="true" /><span>Loading providers and models</span></div>}
+        {state.type === 'boot-error' && <div class="onboarding-error" role="alert">{state.error}</div>}
+        {state.type === 'scanning' && !state.job && <div class="discovery-progress" role="status"><span class="btn-spinner" aria-hidden="true" /><span>Starting project discovery session</span></div>}
+        {state.type === 'scanning' && state.job && <OnboardingSessionLog job={state.job} title={`Scanning with ${selectedModelLabel}`} />}
+
+        {state.type === 'scan-failed' && (
           <div class="discovery-recovery" aria-live="polite">
-            <div class="discovery-failure" role="alert">
-              <strong>Couldn’t scan this project</strong>
-              <span>The selected model didn’t return usable, evidence-backed suggestions. It may not be capable enough for this task.</span>
-            </div>
+            {state.job && <OnboardingSessionLog job={state.job} title="Project scan session" />}
+            <div class="discovery-failure" role="alert"><strong>Couldn’t scan this project</strong><span>The selected model didn’t return usable, evidence-backed suggestions. It may not be capable enough for this task.</span></div>
             <div class="onboarding-actions">
               <button type="button" class="onboarding-primary" onClick={() => void scan()}>Try again</button>
-              <button type="button" class="onboarding-secondary" onClick={() => chooseAnotherModel('scan')}>Choose another model</button>
-              <button type="button" class="onboarding-skip-link" disabled={!model} onClick={() => setDirectCreateOpen(true)}>Skip scan</button>
+              <button type="button" class="onboarding-secondary" onClick={() => dispatch({ type: 'CHOOSE_MODEL_AFTER_SCAN' })}>Choose another model</button>
+              <button type="button" class="onboarding-skip-link" disabled={!model} onClick={() => setModal('direct-create')}>Skip scan</button>
             </div>
           </div>
         )}
-        {discovery && stage === 'suggestions' && (
+
+        {state.type === 'suggestions' && (
           <div class="agent-suggestion-list">
-            {discovery.suggestions.map((suggestion, index) => (
+            {state.discovery.suggestions.map((suggestion, index) => (
               <article class="agent-suggestion-card" key={suggestion.id}>
                 <div class="agent-suggestion-rank">0{index + 1}</div>
                 <div class="agent-suggestion-content">
                   <h3>{suggestion.name}</h3>
                   <p>{suggestion.description}</p>
-                  <div class="agent-suggestion-meta">
-                    <span>{suggestion.scheduleHuman}</span>
-                    <span>{suggestion.evidence[0]}</span>
-                  </div>
+                  <div class="agent-suggestion-meta"><span>{suggestion.scheduleHuman}</span></div>
                 </div>
                 <button type="button" class="onboarding-primary" onClick={() => void create(suggestion)}>Create agent</button>
               </article>
             ))}
             <div class="agent-suggestion-footer">
               <p class="agent-suggestion-note">The selected schedule is added to the agent Source. Run it once now to review the result; you can change or remove the schedule anytime.</p>
-              <a class="onboarding-skip-link" href="/agents">Skip for now — open the agent dashboard</a>
+              <a class="onboarding-skip-link" href="/agents" onClick={clearResume}>Skip for now — open the agent dashboard</a>
             </div>
           </div>
         )}
-        {isCreationStage && creationPhase && (
+
+        {isCreationStage && (
           <div class="discovery-creation" aria-live="polite">
-            <AgentCreationProgressPanel
-              phase={creationPhase}
-              modelLabel={selectedModelLabel}
-              logText={creationLog}
-              error={stage === 'creation-error' ? 'The selected model did not produce usable agent instructions. It may not be capable enough for this task.' : null}
-            />
-            {stage === 'creation-error' && retrySuggestion && (
-              <div class="onboarding-actions">
-                <button type="button" class="onboarding-primary" onClick={() => void create(retrySuggestion)}>Try again</button>
-                <button type="button" class="onboarding-secondary" onClick={() => chooseAnotherModel('create')}>Choose another model</button>
-                <a class="onboarding-skip-link" href="/agents">Skip for now</a>
+            {state.job
+              ? <OnboardingSessionLog job={state.job} title={`Creating with ${selectedModelLabel}`} />
+              : state.type === 'creating'
+                ? <div class="discovery-progress" role="status"><span class="btn-spinner" aria-hidden="true" /><span>Starting AgentUse Creator session</span></div>
+                : null}
+            {state.type === 'creation-failed' && (
+              <div class="discovery-recovery">
+                <div class="discovery-failure" role="alert">
+                  <strong>Couldn’t create this agent</strong>
+                  <span>{state.error}</span>
+                  {likelyCreatorCapabilityFailure(state.error) && <small>The selected model may not be capable enough for this task.</small>}
+                </div>
+                <div class="onboarding-actions">
+                  <button type="button" class="onboarding-primary" onClick={() => void create(state.suggestion)}>Try again</button>
+                  <button type="button" class="onboarding-secondary" onClick={() => dispatch({ type: 'CHOOSE_MODEL_AFTER_CREATION' })}>Choose another model</button>
+                  <a class="onboarding-skip-link" href="/agents" onClick={clearResume}>Skip for now</a>
+                </div>
               </div>
             )}
           </div>
         )}
-        {error && stage !== 'scan-error' && stage !== 'creation-error' && <div class="onboarding-error" role="alert">{error}</div>}
-      </div>
-
-      <ol class="onboarding-steps" aria-label="First useful agent setup steps">
-        <li><span class="onboarding-step-number">01</span><span><strong>Choose project</strong><small>{props.projectName ?? props.projectId}</small></span></li>
-        <li class={currentStep === 2 ? 'is-current' : ''}><span class="onboarding-step-number">02</span><span><strong>Connect provider</strong><small>{hasConfiguredProvider(providerPayload?.status) ? 'Provider ready' : 'Required before project scan'}</small></span></li>
-        <li class={currentStep === 3 ? 'is-current' : ''}><span class="onboarding-step-number">03</span><span><strong>Scan project</strong><small>Read-only, bounded project context</small></span></li>
-        <li class={currentStep === 4 ? 'is-current' : ''}><span class="onboarding-step-number">04</span><span><strong>{props.existingAgents ? 'Create another agent' : 'Create an agent'}</strong><small>Review Source, then run it</small></span></li>
-      </ol>
+      </OnboardingShell>
 
       <ProviderSetupDialog
-        open={providerOpen}
+        open={modal === 'provider'}
         title="connect before scanning"
-        onComplete={(next) => {
-          setProviderPayload(next);
-          setProviderOpen(false);
-          setProviderRouteState(props.projectId, false);
-          window.location.replace(projectDiscoveryHref(props.projectId));
-        }}
-        onClose={() => { setProviderOpen(false); setProviderRouteState(props.projectId, false); }}
+        onComplete={(provider) => { void providerConnected(provider); }}
+        onClose={() => { setModal(null); setProviderRouteState(props.projectId, false); }}
       />
       <AgentCreateDialog
-        open={directCreateOpen}
+        open={modal === 'direct-create'}
         title="create an agent directly"
         initialProjectId={props.projectId}
         {...(model ? { initialModel: model } : {})}
         lockProject
         onCreated={(agent) => {
-          window.location.href = agentDetailHref(agent.projectId, agent.runPath, {
-            tab: 'source',
-            spotlightRun: !props.existingAgents,
-          });
+          clearResume();
+          window.location.href = agentDetailHref(agent.projectId, agent.runPath, { tab: 'source', spotlightRun: !props.existingAgents });
         }}
-        onClose={() => setDirectCreateOpen(false)}
+        onClose={() => setModal(null)}
       />
-    </section>
+    </>
   );
 }

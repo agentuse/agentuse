@@ -314,6 +314,12 @@ a, button, select, summary, label, input, textarea,
 }
 .page-settings h1 { margin: 0 0 8px; font-family: var(--sans); font-size: 34px; line-height: 1.12; font-weight: 500; }
 .page-settings .lede { margin: 0; color: var(--muted-3); font-family: var(--sans); font-size: 15px; }
+.settings-tabs { display: flex; gap: 4px; margin-bottom: 14px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.settings-tabs button { flex: 1; min-height: 34px; padding: 6px 12px; border: 0; border-radius: 7px; background: transparent; color: var(--muted-2); font: inherit; font-size: 13px; cursor: pointer; }
+.settings-tabs button:hover { color: var(--fg); background: var(--panel-hover); }
+.settings-tabs button[aria-selected="true"] { background: var(--bg); color: var(--fg); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.settings-tabs button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 1px; }
+.settings-tab-panel:focus { outline: none; }
 .settings-group {
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -383,6 +389,19 @@ a, button, select, summary, label, input, textarea,
 }
 .settings-item:hover { border-color: var(--line-strong); background: var(--panel-hover); }
 .settings-item:disabled { opacity: 0.6; cursor: default; }
+.project-settings-list { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.project-settings-row { display: flex; align-items: center; gap: 16px; padding: 12px 0; }
+.project-settings-row + .project-settings-row { border-top: 1px solid var(--line); }
+.project-settings-copy { display: grid; gap: 3px; min-width: 0; flex: 1; }
+.project-settings-copy a { width: fit-content; color: var(--fg); font-size: 14px; font-weight: 560; text-decoration: none; }
+.project-settings-copy a:hover { color: var(--cyan); }
+.project-settings-copy code { overflow: hidden; color: var(--muted-3); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.project-settings-copy small { color: var(--muted); font-size: 11.5px; }
+.project-settings-empty { padding: 14px 0; color: var(--muted-3); font-size: 13px; }
+.project-settings-remove { flex: none; padding: 6px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--muted-2); font: inherit; font-size: 12px; cursor: pointer; }
+.project-settings-remove:hover:not(:disabled) { background: color-mix(in srgb, var(--red) 10%, transparent); color: var(--red); }
+.project-settings-remove:disabled { cursor: default; opacity: 0.6; }
+.project-settings-error { margin-top: 10px; color: var(--red); font-size: 12.5px; line-height: 1.45; }
 /* Home-section visibility checkboxes (per-viewer, persisted in localStorage). */
 .settings-checks { display: flex; flex-direction: column; gap: 2px; }
 .settings-check {
@@ -3950,6 +3969,23 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   box-shadow: var(--surface-shadow);
 }
 .page-home .home-onboarding { padding-top: 56px; }
+.page-onboarding { min-height: 100vh; background: var(--bg); }
+.onboarding-route-header {
+  position: fixed; z-index: 20; inset: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
+  height: 58px; padding: 0 clamp(20px, 3.5vw, 54px); pointer-events: none;
+}
+.onboarding-route-brand,
+.onboarding-route-exit { pointer-events: auto; }
+.onboarding-route-brand { color: var(--fg); font: 800 14px/1 var(--sans); letter-spacing: -0.05em; text-decoration: none; }
+.onboarding-route-exit { color: var(--muted-2); font: 500 12px/1 var(--sans); text-decoration: none; }
+.onboarding-route-exit:hover { color: var(--cyan); }
+.onboarding-route-main { display: flex; min-height: 100vh; width: 100%; padding: 58px 0 0; }
+.page-onboarding .onboarding-empty {
+  width: 100%; min-height: calc(100vh - 58px); margin: 0; padding: clamp(42px, 6vw, 92px) clamp(28px, 8vw, 132px);
+  gap: clamp(44px, 7vw, 112px); border: 0; border-radius: 0; background: transparent; box-shadow: none;
+}
+.page-onboarding .onboarding-copy { align-self: center; }
+.page-onboarding .onboarding-steps { align-self: center; }
 .onboarding-copy { min-width: 0; }
 .onboarding-empty h1,
 .onboarding-empty h2 {
@@ -4003,7 +4039,8 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   transition: background 120ms ease, transform 120ms ease, opacity 120ms ease;
 }
 .page-home a.onboarding-primary,
-.page-agents a.onboarding-primary { color: var(--primary-fg); border-bottom: 0; }
+.page-agents a.onboarding-primary,
+.page-onboarding a.onboarding-primary { color: var(--primary-fg); border-bottom: 0; }
 .onboarding-primary:hover:not(:disabled) { background: var(--primary-bg-hover); transform: translateY(-1px); }
 .onboarding-primary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
 .onboarding-primary:disabled { cursor: default; opacity: 0.7; }
@@ -4120,6 +4157,24 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .discovery-creation .onboarding-actions { margin-top: 14px; }
 .project-discovery .agent-create-progress { padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .project-discovery .agent-create-log { min-height: 270px; max-height: min(46vh, 420px); }
+.onboarding-session-log { margin-top: 24px; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 11px; background: var(--panel); }
+.onboarding-session-log > header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 11px; align-items: center; padding: 13px 14px; border-bottom: 1px solid var(--line); }
+.onboarding-session-log > header strong,
+.onboarding-session-log > header small { display: block; }
+.onboarding-session-log > header strong { color: var(--fg); font: 600 12.5px/1.35 var(--sans); }
+.onboarding-session-log > header small { margin-top: 2px; color: var(--muted); font: 10.5px/1.3 var(--mono); }
+.onboarding-session-log > header a { color: var(--cyan); font: 500 11.5px/1.3 var(--sans); text-decoration: none; }
+.onboarding-session-state { width: 9px; height: 9px; border: 1px solid var(--muted); border-radius: 50%; }
+.onboarding-session-state.is-running { border-color: var(--cyan); border-top-color: transparent; animation: log-spin .75s linear infinite; }
+.onboarding-session-lines { min-height: 220px; max-height: min(48vh, 520px); overflow: auto; padding: 10px 0; background: color-mix(in srgb, var(--bg) 62%, var(--panel)); }
+.onboarding-session-line { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 12px; padding: 7px 14px; border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); }
+.onboarding-session-line > span { padding-top: 2px; color: var(--cyan); font: 10px/1.35 var(--mono); overflow-wrap: anywhere; }
+.onboarding-session-line pre { margin: 0; color: var(--muted-3); font: 11.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.onboarding-session-placeholder,
+.onboarding-session-error { padding: 18px 14px; color: var(--muted); font: 11.5px/1.5 var(--mono); }
+.onboarding-session-error { color: var(--red); }
+.onboarding-session-expand { width: 100%; padding: 10px 14px; border: 0; border-top: 1px solid var(--line); background: transparent; color: var(--muted-2); font: 500 11px/1 var(--sans); cursor: pointer; }
+.onboarding-session-expand:hover { color: var(--cyan); }
 .agent-suggestion-list { display: grid; gap: 10px; margin-top: 26px; }
 .agent-suggestion-card { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 15px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .agent-suggestion-rank { align-self: start; padding-top: 3px; color: var(--cyan); font: 10px/1 var(--mono); }
@@ -4145,6 +4200,8 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
     padding: 32px 24px;
   }
   .page-home .home-onboarding { padding-top: 32px; }
+  .onboarding-route-header { position: absolute; }
+  .page-onboarding .onboarding-empty { min-height: calc(100vh - 58px); padding: 34px 22px 48px; }
   .onboarding-empty h1,
   .onboarding-empty h2,
   .page-agents .onboarding-empty.is-compact h2 { font-size: 34px; }
@@ -4157,6 +4214,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   .discovery-model-control { grid-template-columns: 1fr; }
   .agent-suggestion-card { grid-template-columns: 24px minmax(0, 1fr); }
   .agent-suggestion-card .onboarding-primary { grid-column: 2; justify-self: start; }
+  .onboarding-session-line { grid-template-columns: 68px minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) {
   .onboarding-primary { transition: none; }
