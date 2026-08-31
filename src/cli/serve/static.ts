@@ -198,18 +198,6 @@ export class WebAssets {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script>
-    // iOS Safari auto-zooms the viewport when a focused field's font-size is
-    // under 16px. Since iOS 10, Safari ignores maximum-scale for user pinch
-    // zoom (accessibility) but still honors it for that focus auto-zoom, so
-    // capping it here lets fields use design-sized text. iOS-only: Android
-    // Chrome would genuinely lose pinch zoom under maximum-scale=1.
-    if (/iP(hone|ad|od)/.test(navigator.userAgent) ||
-        (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)) {
-      document.querySelector('meta[name="viewport"]')
-        .setAttribute("content", "width=device-width, initial-scale=1, maximum-scale=1");
-    }
-  </script>
   <meta name="color-scheme" content="dark light">
   <title>${escapeHtml(brand ? `${brand} · AgentUse` : "AgentUse")}</title>
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fafaf9">
