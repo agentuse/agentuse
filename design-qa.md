@@ -193,7 +193,6 @@ dimmed.
   completion behavior, without changing the spotlight interaction.
 
 final result: passed
-
 ---
 
 # Design QA — Project-aware first agent onboarding
@@ -258,3 +257,55 @@ reason.
 2. Source capture was attempted in the selected built-in browser and blocked by browser URL policy. No alternate browser surface or policy workaround was used.
 
 final result: blocked
+
+---
+
+# Design QA — Two-step first-agent tutorial
+
+- Source visual truth: `/Users/llch/Desktop/CleanShot 2026-08-31 at 13.22.42.png`
+- Implementation screenshots: `/private/tmp/agentuse-tutorial-step-1.png`, `/private/tmp/agentuse-tutorial-step-2.png`
+- Combined comparison: `/private/tmp/agentuse-tutorial-comparison.png`
+- Viewport: 1580 × 889 CSS pixels in the in-app browser
+- Source pixels: 1062 × 292 at supplied density
+- Implementation pixels: 1580 × 889 at browser density
+- Normalization: source scaled to 1580 × 435 and compared with matching top implementation regions
+- State: first-agent Run tutorial followed by paused Schedule tutorial
+
+## Full-view and focused comparison evidence
+
+The implementation preserves the source's dimmed page, rectangular green
+spotlight, white pointer card, typography hierarchy, compact copy, and green
+text action. The second step applies the same treatment to the complete Schedule
+row. Both controls, pointers, cards, labels, and actions are readable in the
+combined normalized comparison, so no smaller focused crop was required.
+
+## Required fidelity surfaces
+
+- Fonts and typography: existing application typography is preserved; the step
+  counter uses the established small monospace treatment.
+- Spacing and layout rhythm: the new card follows the existing spotlight
+  padding, radius, pointer, and action alignment.
+- Colors and visual tokens: existing overlay, surface, border, and green accent
+  tokens are reused.
+- Image quality and assets: no image assets are introduced or replaced.
+- Copy and content: the flow separates the initial manual run from later
+  autonomous scheduling and states that the schedule remains paused.
+
+## Interaction verification
+
+- Step 1 highlights Run but keeps it locked; only `Next` advances the flow.
+- Step 2 highlights Schedule, disables its switch, and exposes `Finish`.
+- Background clicks do not navigate while either overlay is active.
+- Refreshing `onboarding=first-agent-schedule` restores step 2.
+- Finishing removes onboarding URL state, closes the dialog, and re-enables the
+  schedule switch. Run is unlocked and focused as the next action.
+- Browser console errors checked: none.
+
+## Findings and comparison history
+
+1. Pass 1 found no actionable P0, P1, or P2 differences; no visual fixes were
+   required after comparison.
+2. The implementation includes more of the normal application shell than the
+   tightly cropped source reference. This is expected rather than design drift.
+
+final result: passed

@@ -373,12 +373,12 @@ export default function AgentDetail() {
   const runPath = (params.agent ?? '').split('/').map(decodeURIComponent).join('/');
   const entryState = agentDetailViewState(typeof window === 'undefined' ? '' : window.location.search);
   const [tab, setTab] = useState<AgentDetailTab>(entryState.tab);
-  const [spotlightRun, setSpotlightRun] = useState(entryState.spotlightRun);
+  const [tutorialStep, setTutorialStep] = useState(entryState.tutorialStep);
   const [runOpen, setRunOpen] = useState(false);
   const [scheduleBusy, setScheduleBusy] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const runButtonRef = useRef<HTMLButtonElement>(null);
-  const spotlightDismissRef = useRef<HTMLButtonElement>(null);
+  const tutorialActionRef = useRef<HTMLButtonElement>(null);
   // Reported up out of the Learnings tab. The tab is mounted from the start, so
   // this arrives on load without anyone opening it — which is the point: an
   // agent whose learnings stopped being read must say so on the page you land
@@ -398,12 +398,20 @@ export default function AgentDetail() {
     if (data && data.source === undefined && tab === 'source') setTab('jobs');
   }, [data, tab]);
 
-  const dismissSpotlight = () => {
-    setSpotlightRun(false);
+  const updateTutorialStep = (next: 'run' | 'schedule' | null) => {
+    setTutorialStep(next);
     if (typeof window === 'undefined') return;
     const url = new URL(window.location.href);
-    url.searchParams.delete('onboarding');
+    if (next === 'run') url.searchParams.set('onboarding', 'first-agent');
+    else if (next === 'schedule') url.searchParams.set('onboarding', 'first-agent-schedule');
+    else url.searchParams.delete('onboarding');
     window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  };
+
+  const advanceTutorial = () => updateTutorialStep(data?.schedule ? 'schedule' : null);
+  const finishTutorial = () => {
+    updateTutorialStep(null);
+    requestAnimationFrame(() => runButtonRef.current?.focus());
   };
 
   const toggleSchedule = async () => {
@@ -421,14 +429,23 @@ export default function AgentDetail() {
   };
 
   useEffect(() => {
-    if (!spotlightRun) return;
-    runButtonRef.current?.focus();
+    if (!tutorialStep) return;
+    const initial = tutorialStep === 'run' ? runButtonRef.current : tutorialActionRef.current;
+    initial?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') dismissSpotlight();
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        return;
+      }
       if (event.key !== 'Tab') return;
-      const first = runButtonRef.current;
-      const last = spotlightDismissRef.current;
+      const first = tutorialStep === 'run' ? runButtonRef.current : tutorialActionRef.current;
+      const last = tutorialActionRef.current;
       if (!first || !last) return;
+      if (first === last) {
+        event.preventDefault();
+        first.focus();
+        return;
+      }
       if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last.focus();
@@ -439,7 +456,11 @@ export default function AgentDetail() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [spotlightRun, data]);
+  }, [tutorialStep, data]);
+
+  useEffect(() => {
+    if (data && tutorialStep === 'schedule' && !data.schedule) finishTutorial();
+  }, [data, tutorialStep]);
 
   return (
     <div class="page-agent-detail">
@@ -462,25 +483,27 @@ export default function AgentDetail() {
                 <div class="hero-path"><code>{data.path}</code></div>
               </div>
               <div class="hero-actions">
-                {spotlightRun && <div class="first-agent-spotlight-backdrop" aria-hidden="true" />}
+                {tutorialStep && <div class="first-agent-spotlight-backdrop" aria-hidden="true" />}
                 <div class="run-cta-row">
-                  <div class={`run-spotlight-anchor${spotlightRun ? ' is-active' : ''}`}>
+                  <div class={`run-spotlight-anchor${tutorialStep === 'run' ? ' is-active' : ''}`}>
                     <button
                       ref={runButtonRef}
                       type="button"
                       class={`run-cta${busy ? ' btn-busy' : ''}`}
                       disabled={busy}
                       aria-busy={busy}
-                      {...(spotlightRun ? { 'aria-describedby': 'first-agent-spotlight-copy' } : {})}
-                      onClick={() => { dismissSpotlight(); void run(); }}
+                      aria-disabled={tutorialStep === 'run'}
+                      {...(tutorialStep === 'run' ? { 'aria-describedby': 'first-agent-run-tutorial-copy' } : {})}
+                      onClick={() => { if (!tutorialStep) void run(); }}
                     >
                       {busy ? <><span class="btn-spinner" aria-hidden="true" />Starting…</> : '▶ Run agent'}
                     </button>
-                    {spotlightRun && (
+                    {tutorialStep === 'run' && (
                       <div class="first-agent-spotlight-card" role="dialog" aria-modal="true" aria-label="Run your first agent">
+                        <small>1 of 2</small>
                         <strong>Your agent is ready</strong>
-                        <span id="first-agent-spotlight-copy">Run it once to make sure it works.</span>
-                        <button ref={spotlightDismissRef} type="button" onClick={dismissSpotlight}>Got it</button>
+                        <span id="first-agent-run-tutorial-copy">Run it once to make sure it works.</span>
+                        <button ref={tutorialActionRef} type="button" onClick={advanceTutorial}>Next</button>
                       </div>
                     )}
                   </div>
@@ -495,22 +518,32 @@ export default function AgentDetail() {
                   </button>
                 </div>
                 {data.schedule && (
-                  <div class="agent-schedule-control">
-                    <span class="agent-schedule-copy">
-                      <strong>Schedule</strong>
-                      <span>{data.scheduleHuman ?? data.schedule}</span>
-                    </span>
-                    <button
-                      type="button"
-                      class={`schedule-switch${data.scheduleEnabled === false ? '' : ' is-on'}`}
-                      role="switch"
-                      aria-checked={data.scheduleEnabled !== false}
-                      disabled={scheduleBusy}
-                      onClick={() => void toggleSchedule()}
-                    >
-                      <span aria-hidden="true" />
-                      {scheduleBusy ? 'Saving…' : data.scheduleEnabled === false ? 'Paused' : 'On'}
-                    </button>
+                  <div class={`schedule-spotlight-anchor${tutorialStep === 'schedule' ? ' is-active' : ''}`}>
+                    <div class="agent-schedule-control" {...(tutorialStep === 'schedule' ? { 'aria-describedby': 'first-agent-schedule-tutorial-copy' } : {})}>
+                      <span class="agent-schedule-copy">
+                        <strong>Schedule</strong>
+                        <span>{data.scheduleHuman ?? data.schedule}</span>
+                      </span>
+                      <button
+                        type="button"
+                        class={`schedule-switch${data.scheduleEnabled === false ? '' : ' is-on'}`}
+                        role="switch"
+                        aria-checked={data.scheduleEnabled !== false}
+                        disabled={scheduleBusy || tutorialStep === 'schedule'}
+                        onClick={() => void toggleSchedule()}
+                      >
+                        <span aria-hidden="true" />
+                        {scheduleBusy ? 'Saving…' : data.scheduleEnabled === false ? 'Paused' : 'On'}
+                      </button>
+                    </div>
+                    {tutorialStep === 'schedule' && (
+                      <div class="first-agent-spotlight-card schedule-spotlight-card" role="dialog" aria-modal="true" aria-label="Enable your agent schedule when ready">
+                        <small>2 of 2</small>
+                        <strong>Make it autonomous when you’re ready</strong>
+                        <span id="first-agent-schedule-tutorial-copy">After a few good manual runs, turn on the schedule. Until then, it stays paused.</span>
+                        <button ref={tutorialActionRef} type="button" onClick={finishTutorial}>Finish</button>
+                      </div>
+                    )}
                   </div>
                 )}
                 {runError && !runOpen && <span class="run-err">{runError}</span>}

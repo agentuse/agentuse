@@ -5421,6 +5421,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agent-detail .run-cta:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); }
 .page-agent-detail .run-cta:disabled { opacity: 0.5; cursor: not-allowed; }
+.page-agent-detail .run-cta[aria-disabled="true"] { cursor: default; }
+.page-agent-detail .run-cta[aria-disabled="true"]:hover {
+  background: var(--primary-bg);
+  border-color: var(--primary-bg);
+}
 .page-agent-detail .first-agent-spotlight-backdrop {
   position: fixed;
   inset: 0;
@@ -5430,6 +5435,18 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agent-detail .run-spotlight-anchor { position: relative; }
 .page-agent-detail .run-spotlight-anchor.is-active { z-index: 901; }
 .page-agent-detail .run-spotlight-anchor.is-active::before {
+  content: "";
+  position: absolute;
+  inset: -10px;
+  z-index: -1;
+  border: 2px solid var(--green);
+  border-radius: 10px;
+  background: var(--bg);
+  box-shadow: 0 0 0 4px var(--green-soft);
+}
+.page-agent-detail .schedule-spotlight-anchor { position: relative; width: 100%; }
+.page-agent-detail .schedule-spotlight-anchor.is-active { z-index: 901; }
+.page-agent-detail .schedule-spotlight-anchor.is-active::before {
   content: "";
   position: absolute;
   inset: -10px;
@@ -5466,6 +5483,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   transform: rotate(45deg);
 }
 .page-agent-detail .first-agent-spotlight-card strong { font-size: var(--font-size-body); font-weight: 600; }
+.page-agent-detail .first-agent-spotlight-card > small { color: var(--green); font: 600 var(--font-size-micro)/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
 .page-agent-detail .first-agent-spotlight-card > span { color: var(--muted-3); font-size: var(--font-size-supporting); }
 .page-agent-detail .first-agent-spotlight-card button {
   justify-self: end;
@@ -5477,6 +5495,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   font: 600 var(--font-size-caption) var(--sans);
   cursor: pointer;
 }
+.page-agent-detail .schedule-spotlight-card { top: calc(100% + 24px); right: -2px; }
 .page-agent-detail .run-cta-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 /* Secondary to "Run agent": same run action, one-off instruction appended. */
 .page-agent-detail .run-cta-alt {
@@ -5506,6 +5525,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agent-detail .schedule-switch.is-on > span { background: var(--green); }
 .page-agent-detail .schedule-switch.is-on > span::after { transform: translateX(10px); }
 .page-agent-detail .schedule-switch:disabled { cursor: default; opacity: 0.65; }
+.page-agent-detail .schedule-spotlight-anchor.is-active .schedule-switch:disabled { opacity: 1; }
 .page-agent-detail .run-err { color: var(--red); font-size: var(--font-size-caption); max-width: 220px; text-align: right; }
 
 /* capabilities: plain sentences first (#156), the raw chip grid one expand away */
@@ -5950,6 +5970,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
     width: min(284px, calc(100vw - 32px));
   }
   .page-agent-detail .first-agent-spotlight-card::before { right: auto; left: 48px; }
+  .page-agent-detail .schedule-spotlight-card { right: auto; left: -2px; }
   .page-agent-detail .run-err { text-align: left; }
   .page-agent-detail .cap-row { grid-template-columns: 1fr; gap: 6px; }
 }

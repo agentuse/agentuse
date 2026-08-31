@@ -6,6 +6,7 @@
  */
 
 export type AgentDetailTab = 'jobs' | 'learnings' | 'source';
+export type AgentTutorialStep = 'run' | 'schedule' | null;
 
 export interface AgentDetailLinkOptions {
   tab?: AgentDetailTab;
@@ -28,11 +29,17 @@ export function agentDetailHref(
 }
 
 /** Read the agent-detail entry state from a deep link. */
-export function agentDetailViewState(search: string): { tab: AgentDetailTab; spotlightRun: boolean } {
+export function agentDetailViewState(search: string): { tab: AgentDetailTab; tutorialStep: AgentTutorialStep } {
   const params = new URLSearchParams(search);
   const requested = params.get('tab');
   const tab: AgentDetailTab = requested === 'learnings' || requested === 'source' ? requested : 'jobs';
-  return { tab, spotlightRun: params.get('onboarding') === 'first-agent' };
+  const onboarding = params.get('onboarding');
+  const tutorialStep: AgentTutorialStep = onboarding === 'first-agent'
+    ? 'run'
+    : onboarding === 'first-agent-schedule'
+      ? 'schedule'
+      : null;
+  return { tab, tutorialStep };
 }
 
 /** Stable onboarding destination used across provider setup reloads and app

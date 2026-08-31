@@ -15,18 +15,22 @@ describe('agent detail links', () => {
     expect(href).toBe('/agents/my-agents/agents/daily.agentuse?tab=source&onboarding=first-agent');
     expect(agentDetailViewState('?tab=source&onboarding=first-agent')).toEqual({
       tab: 'source',
-      spotlightRun: true,
+      tutorialStep: 'run',
+    });
+    expect(agentDetailViewState('?tab=source&onboarding=first-agent-schedule')).toEqual({
+      tab: 'source',
+      tutorialStep: 'schedule',
     });
   });
 
   it('opens later created agents on Source without an onboarding spotlight', () => {
     const href = agentDetailHref('my-agents', 'agents/daily.agentuse', { tab: 'source' });
     expect(href).toBe('/agents/my-agents/agents/daily.agentuse?tab=source');
-    expect(agentDetailViewState('?tab=source')).toEqual({ tab: 'source', spotlightRun: false });
+    expect(agentDetailViewState('?tab=source')).toEqual({ tab: 'source', tutorialStep: null });
   });
 
   it('falls back to Recent jobs for an unknown tab', () => {
-    expect(agentDetailViewState('?tab=unknown')).toEqual({ tab: 'jobs', spotlightRun: false });
+    expect(agentDetailViewState('?tab=unknown')).toEqual({ tab: 'jobs', tutorialStep: null });
   });
 });
 
