@@ -30,8 +30,19 @@ import { sessionContextFetchKey } from '../src/cli/serve/web/routes/session-cont
 import { learningsTidyHref } from '../src/cli/serve/web/lib/links';
 import type { LearningSummary, SessionLearning, TidyResult } from '../src/cli/serve/web/lib/api';
 import { RecentJobRow, recentJobSummary } from '../src/cli/serve/web/routes/agent-detail';
+import { isTerminalOnboardingSessionStatus } from '../src/cli/serve/web/components/project-agent-discovery';
 
 const noop = () => {};
+
+describe('onboarding session completion', () => {
+  it('uses terminal session events to trigger final-result retrieval', () => {
+    expect(isTerminalOnboardingSessionStatus('running')).toBe(false);
+    expect(isTerminalOnboardingSessionStatus('suspended')).toBe(false);
+    expect(isTerminalOnboardingSessionStatus('completed')).toBe(true);
+    expect(isTerminalOnboardingSessionStatus('error')).toBe(true);
+    expect(isTerminalOnboardingSessionStatus('timeout')).toBe(true);
+  });
+});
 
 describe('session log search', () => {
   const entry: ApprovalLogEntry = {

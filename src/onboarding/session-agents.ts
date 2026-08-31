@@ -82,7 +82,7 @@ export function buildAgentCreatorSessionAgent(input: {
     name: 'onboarding-agent-creator',
     model: input.model,
     description: 'Turn a reviewed project suggestion into a production AgentUse agent',
-    timeout: '2m',
+    timeout: '5m',
     maxSteps: 12,
     tools: { filesystem: [{ path: input.safeViewRoot, permissions: ['read'] }] },
     skills: { auto: false },
@@ -121,6 +121,7 @@ Source constraints:
 - Preserve the reviewed name and schedule exactly.
 - Choose the runtime model independently from the model authoring this file, copying one value byte-for-byte from available_runtime_models.
 - Keep the agent read-only on its first run. Declare only the project filesystem read capability it needs; do not add bash, channels, approval gates, external destinations, trusted skills, or speculative integrations.
+- When filesystem access is needed, tools.filesystem must be an array with one item shaped { path: "\${root}", permissions: ["read"] }. Never put a read/write/edit mapping under tools.filesystem.
 - Keep concrete, verified project paths that make the recurring work useful.
 - The body must be a concise recurring prompt with the outcome, inputs to inspect, judgment to perform, deliverable, and material boundaries.`);
 }

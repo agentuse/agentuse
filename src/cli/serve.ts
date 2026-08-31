@@ -7647,13 +7647,18 @@ export function createServeCommand(): Command {
               projectRoot: project.root,
               newSessionId: sessionId,
               trigger: 'onboarding',
-              timeout: 150,
+              timeout: 300,
               maxSteps: 20,
               debug: options.debug,
             }).then(async (execution) => {
               if (!execution.success) {
                 job.status = 'error';
-                job.error = execution.error;
+                job.error = execution.error?.code === 'TIMEOUT'
+                  ? {
+                      ...execution.error,
+                      message: 'The creator ran out of time before it could validate the agent. Try again or choose another model.',
+                    }
+                  : execution.error;
                 return;
               }
               try {

@@ -103,6 +103,9 @@ describe('onboarding session agents', () => {
     expect(creator.instructions).toContain('openai:gpt-5.6-luna');
     expect(creator.instructions).toContain('Submit the complete raw .agentuse file through submit_agent_source');
     expect(creator.instructions).toContain('Do not stream it as a normal assistant message');
+    expect(creator.instructions).toContain('tools.filesystem must be an array');
+    expect(creator.instructions).toContain('{ path: "${root}", permissions: ["read"] }');
+    expect(creator.config.timeout).toBe(300);
     expect(creator.config.metadata?.requestedName).toBe('Docs drift');
     expect(creator.config.metadata?.requestedSchedule).toBe('0 9 * * 1');
   });

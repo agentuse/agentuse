@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ApprovalLogEntry } from '../../types';
 import { useApprovalStream } from '../hooks/use-approval-stream';
 import type { OnboardingJobHandle } from '../lib/api';
@@ -22,11 +22,14 @@ function entryLine(entry: ApprovalLogEntry): { label: string; text: string } | n
 export function OnboardingSessionLog(props: {
   job: OnboardingJobHandle;
   title: string;
+  onStatus?: (status: string) => void;
+  onFatalError?: (message: string) => void;
 }) {
   const [status, setStatus] = useState<string>(props.job.status);
   const [entries, setEntries] = useState<ApprovalLogEntry[]>([]);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const linesRef = useRef<HTMLDivElement>(null);
 
   useApprovalStream({
     sessionId: props.job.sessionId,
@@ -36,7 +39,10 @@ export function OnboardingSessionLog(props: {
     logsLimit: 160,
     nudge: 0,
     handlers: {
-      onStatus: (next) => setStatus(next),
+      onStatus: (next) => {
+        setStatus(next);
+        props.onStatus?.(next);
+      },
       onLogs: (next) => setEntries(next),
       onLog: (entry) => setEntries((current) => {
         const index = current.findIndex((candidate) => candidate.id === entry.id);
@@ -45,25 +51,32 @@ export function OnboardingSessionLog(props: {
         copy[index] = entry;
         return copy;
       }),
-      onFatalError: (_code, message) => setStreamError(message),
+      onFatalError: (_code, message) => {
+        setStreamError(message);
+        props.onFatalError?.(message);
+      },
     },
   });
 
   const lines = useMemo(() => entries.map(entryLine).filter((entry): entry is { label: string; text: string } => Boolean(entry)), [entries]);
   const visible = expanded ? lines : lines.slice(-12);
-  const params = new URLSearchParams({ project: props.job.projectId });
-  if (props.job.sessionToken) params.set('token', props.job.sessionToken);
-  const fullHref = `/sessions/${encodeURIComponent(props.job.sessionId)}?${params.toString()}`;
   const running = status === 'running' || status === 'waiting' || status === 'suspended';
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const element = linesRef.current;
+      if (element) element.scrollTop = element.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [entries, expanded, streamError]);
 
   return (
     <section class="onboarding-session-log" aria-live="polite" aria-label={props.title}>
       <header>
         <span class={`onboarding-session-state${running ? ' is-running' : ''}`} aria-hidden="true" />
         <div><strong>{props.title}</strong><small>{running ? 'Live AgentUse session' : `Session ${status}`}</small></div>
-        <a href={fullHref}>View full session</a>
       </header>
-      <div class="onboarding-session-lines">
+      <div class="onboarding-session-lines" ref={linesRef}>
         {visible.length === 0 && !streamError
           ? <div class="onboarding-session-placeholder">Starting the agent and preparing its tools…</div>
           : visible.map((line, index) => (
