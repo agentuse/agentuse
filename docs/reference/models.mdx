@@ -16,7 +16,8 @@ This page lists recommended models for AgentUse, organized by provider.
 **Default models:**
 - **Anthropic**: `anthropic:claude-sonnet-5` (balanced performance)
 - **OpenAI**: `openai:gpt-5.6` (latest GPT)
-- **OpenRouter**: `openrouter:z-ai/glm-5.2` (open source)
+- **OpenRouter**: `openrouter:z-ai/glm-5.3` (open source)
+- **OpenCode Go**: `opencode-go:gpt-5.6-luna` (open coding models)
 - **Amazon Bedrock**: `bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0`
 
 ## Version Aliases
@@ -44,22 +45,38 @@ that exists for real always wins, so nothing you pin can be reinterpreted.
 | `openai:gpt-luna` | `openai:gpt-5.6-luna` |
 | `openai:gpt-terra` | `openai:gpt-5.6-terra` |
 | `openai:gpt-pro` | `openai:gpt-5.5-pro` |
-| `openai:gpt-nano` | `openai:gpt-5.4-nano` |
 | `openai:gpt-mini` | `openai:gpt-5.4-mini` |
+| `openai:gpt-nano` | `openai:gpt-5.4-nano` |
 | `openai:gpt-codex` | `openai:gpt-5.3-codex` |
-| `openai:gpt-codex-spark` | `openai:gpt-5.3-codex-spark` |
 | `openai:gpt-chat-latest` | `openai:gpt-5.3-chat-latest` |
-| `openrouter:z-ai/glm` | `openrouter:z-ai/glm-5.2` |
+| `openai:gpt-codex-spark` | `openai:gpt-5.3-codex-spark` |
+| `openrouter:z-ai/glm` | `openrouter:z-ai/glm-5.3` |
+| `openrouter:z-ai/glm-flash` | `openrouter:z-ai/glm-5.3-flash` |
 | `openrouter:z-ai/glm-turbo` | `openrouter:z-ai/glm-5v-turbo` |
-| `openrouter:x-ai/grok` | `openrouter:x-ai/grok-4.5` |
+| `openrouter:x-ai/grok` | `openrouter:x-ai/grok-4.6` |
 | `openrouter:deepseek/deepseek-pro` | `openrouter:deepseek/deepseek-v4-pro` |
 | `openrouter:deepseek/deepseek-flash` | `openrouter:deepseek/deepseek-v4-flash` |
-| `openrouter:qwen/qwen-max` | `openrouter:qwen/qwen3.7-max` |
-| `openrouter:google/gemini-flash` | `openrouter:google/gemini-3.6-flash` |
+| `openrouter:qwen/qwen-max` | `openrouter:qwen/qwen3.8-max` |
+| `openrouter:google/gemini-flash` | `openrouter:google/gemini-3.7-flash` |
 | `openrouter:google/gemini-pro-preview` | `openrouter:google/gemini-3.1-pro-preview` |
 | `openrouter:minimax/minimax` | `openrouter:minimax/minimax-m3` |
 | `openrouter:moonshotai/kimi` | `openrouter:moonshotai/kimi-k3` |
 | `openrouter:google/gemini-flash-preview` | `openrouter:google/gemini-3-flash-preview` |
+| `opencode-go:gpt-luna` | `opencode-go:gpt-5.6-luna` |
+| `opencode-go:glm` | `opencode-go:glm-5.3` |
+| `opencode-go:glm-flash` | `opencode-go:glm-5.3-flash` |
+| `opencode-go:grok` | `opencode-go:grok-4.6` |
+| `opencode-go:hy-preview` | `opencode-go:hy4-preview` |
+| `opencode-go:deepseek-pro` | `opencode-go:deepseek-v4-pro` |
+| `opencode-go:deepseek-flash` | `opencode-go:deepseek-v4-flash` |
+| `opencode-go:qwen-max` | `opencode-go:qwen3.8-max` |
+| `opencode-go:qwen-flash` | `opencode-go:qwen3.8-flash` |
+| `opencode-go:qwen-plus` | `opencode-go:qwen3.7-plus` |
+| `opencode-go:kimi` | `opencode-go:kimi-k3` |
+| `opencode-go:minimax` | `opencode-go:minimax-m3` |
+| `opencode-go:kimi-code` | `opencode-go:kimi-k2.7-code` |
+| `opencode-go:mimo` | `opencode-go:mimo-v2.5` |
+| `opencode-go:mimo-pro` | `opencode-go:mimo-v2.5-pro` |
 
 Run `agentuse models` to see what each alias resolves to on your install, and
 `agentuse models unpin` to convert pinned ids in your agent files into aliases.
@@ -101,28 +118,51 @@ cooldown. See [Model defaults and aliases](/reference/configuration-files#model-
 | `openai:gpt-5.6-luna` | GPT-5.6 Luna | 922,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.6-terra` | GPT-5.6 Terra | 922,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.5-pro` | GPT-5.5 Pro | 922,000 | 128,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5.4-nano` | GPT-5.4 nano | 272,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.4-mini` | GPT-5.4 mini | 272,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-5.4-nano` | GPT-5.4 nano | 272,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.3-codex` | GPT-5.3 Codex | 272,000 | 128,000 | Reasoning, Vision, Tools |
-| `openai:gpt-5.3-codex-spark` | GPT-5.3 Codex Spark | 100,000 | 32,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.3-chat-latest` | GPT-5.3 Chat (latest) | 128,000 | 16,384 | Vision, Tools |
+| `openai:gpt-5.3-codex-spark` | GPT-5.3 Codex Spark | 100,000 | 32,000 | Reasoning, Vision, Tools |
 
 ### OpenRouter
 
 | Model ID | Name | Input Context | Output | Capabilities |
 |----------|------|---------|--------|--------------|
-| `openrouter:z-ai/glm-5.2` | GLM-5.2 | 1,048,576 | 128,000 | Reasoning, Tools |
+| `openrouter:z-ai/glm-5.3` | GLM-5.3 | 1,310,720 | 131,072 | Reasoning, Tools |
+| `openrouter:z-ai/glm-5.3-flash` | GLM-5.3-Flash | 1,310,720 | 131,072 | Reasoning, Vision, Tools |
+| `openrouter:z-ai/glm-5.2:free` | GLM 5.2 (free) | 256,000 | 230,400 | Reasoning, Tools |
 | `openrouter:z-ai/glm-5v-turbo` | GLM-5V-Turbo | 202,752 | 131,072 | Reasoning, Vision, Tools |
-| `openrouter:x-ai/grok-4.5` | Grok 4.5 | 500,000 | 500,000 | Reasoning, Vision, Tools |
+| `openrouter:x-ai/grok-4.6` | Grok 4.6 | 500,000 | 450,000 | Reasoning, Vision, Tools |
 | `openrouter:deepseek/deepseek-v4-pro` | DeepSeek V4 Pro | 1,048,576 | 384,000 | Reasoning, Tools |
-| `openrouter:deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | 1,048,576 | 393,216 | Reasoning, Tools |
-| `openrouter:qwen/qwen3.7-max` | Qwen3.7 Max | 1,000,000 | 65,536 | Reasoning, Tools |
-| `openrouter:qwen/qwen3.7-plus` | Qwen3.7 Plus | 1,000,000 | 65,536 | Reasoning, Vision, Tools |
-| `openrouter:google/gemini-3.6-flash` | Gemini 3.6 Flash | 1,048,576 | 65,536 | Reasoning, Vision, Tools |
+| `openrouter:deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | 1,048,576 | 384,000 | Reasoning, Tools |
+| `openrouter:qwen/qwen3.8-max` | Qwen3.8 Max | 1,000,000 | 131,072 | Reasoning, Vision, Tools |
+| `openrouter:qwen/qwen3.7-plus` | Qwen3.7 Plus | 1,000,000 | 131,072 | Reasoning, Vision, Tools |
+| `openrouter:google/gemini-3.7-flash` | Gemini 3.7 Flash | 1,048,576 | 65,536 | Reasoning, Vision, Tools |
 | `openrouter:google/gemini-3.1-pro-preview` | Gemini 3.1 Pro Preview | 1,048,576 | 65,536 | Reasoning, Vision, Tools |
 | `openrouter:minimax/minimax-m3` | MiniMax-M3 | 1,048,576 | 512,000 | Reasoning, Vision, Tools |
-| `openrouter:moonshotai/kimi-k3` | Kimi K3 | 1,048,576 | 1,048,576 | Reasoning, Vision, Tools |
-| `openrouter:google/gemini-3-flash-preview` | Gemini 3 Flash Preview | 1,048,576 | 65,535 | Reasoning, Vision, Tools |
+| `openrouter:moonshotai/kimi-k3` | Kimi K3 | 1,048,576 | 943,718 | Reasoning, Vision, Tools |
+| `openrouter:minimax/minimax-m3:free` | MiniMax M3 (free) | 1,048,576 | 943,718 | Reasoning, Vision, Tools |
+| `openrouter:google/gemini-3-flash-preview` | Gemini 3 Flash Preview | 1,048,576 | 65,536 | Reasoning, Vision, Tools |
+
+### OpenCode Go
+
+| Model ID | Name | Input Context | Output | Capabilities |
+|----------|------|---------|--------|--------------|
+| `opencode-go:gpt-5.6-luna` | GPT-5.6 Luna | 922,000 | 128,000 | Reasoning, Vision, Tools |
+| `opencode-go:glm-5.3` | GLM-5.3 | 1,000,000 | 131,072 | Reasoning, Tools |
+| `opencode-go:glm-5.3-flash` | GLM-5.3-Flash (2x usage) | 1,000,000 | 131,072 | Reasoning, Vision, Tools |
+| `opencode-go:grok-4.6` | Grok 4.6 | 500,000 | 500,000 | Reasoning, Vision, Tools |
+| `opencode-go:hy4-preview` | Hy4 preview | 1,024,000 | 64,000 | Reasoning, Tools |
+| `opencode-go:deepseek-v4-pro` | DeepSeek V4 Pro (New) | 1,000,000 | 384,000 | Reasoning, Tools |
+| `opencode-go:deepseek-v4-flash` | DeepSeek V4 Flash | 1,000,000 | 384,000 | Reasoning, Tools |
+| `opencode-go:qwen3.8-max` | Qwen3.8 Max | 1,000,000 | 131,072 | Reasoning, Vision, Tools |
+| `opencode-go:qwen3.8-flash` | Qwen3.8 Flash | 1,000,000 | 131,072 | Reasoning, Vision, Tools |
+| `opencode-go:qwen3.7-plus` | Qwen3.7 Plus | 1,000,000 | 65,536 | Reasoning, Vision, Tools |
+| `opencode-go:kimi-k3` | Kimi K3 | 1,048,576 | 131,072 | Reasoning, Vision, Tools |
+| `opencode-go:minimax-m3` | MiniMax-M3 | 1,000,000 | 131,072 | Reasoning, Vision, Tools |
+| `opencode-go:kimi-k2.7-code` | Kimi K2.7 Code | 262,144 | 262,144 | Reasoning, Vision, Tools |
+| `opencode-go:mimo-v2.5` | MiMo V2.5 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
+| `opencode-go:mimo-v2.5-pro` | MiMo V2.5 Pro | 1,048,576 | 128,000 | Reasoning, Tools |
 
 ### Amazon Bedrock
 

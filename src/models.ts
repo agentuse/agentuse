@@ -159,7 +159,7 @@ export async function resolveMediaToolResultSupport(
       // carry image + pdf in tool results — so don't stringify media for them.
       if (
         config.provider === OPENCODE_GO_PROVIDER_ID &&
-        getOpenCodeGoProtocol(config.modelName) === 'anthropic'
+        ['anthropic', 'openai-responses'].includes(getOpenCodeGoProtocol(config.modelName))
       ) {
         return { image: true, pdf: true };
       }
@@ -570,6 +570,11 @@ export async function createModel(modelString: string) {
     if (protocol === 'anthropic') {
       const anthropic = createAnthropic({ apiKey, baseURL });
       return await maybeWrapWithDevTools(anthropic.chat(config.modelName));
+    }
+
+    if (protocol === 'openai-responses') {
+      const openai = createOpenAI({ apiKey, baseURL });
+      return await maybeWrapWithDevTools(openai.responses(config.modelName));
     }
 
     const provider = createOpenAICompatible({

@@ -6,7 +6,7 @@ import { createModel } from '../models';
 import { getModelFromRegistry } from '../generated/models';
 import { resolveModelProvider, toRegistryKey } from '../utils/model-utils';
 import { BUILTIN_PROVIDERS } from '../providers/registry-sources';
-import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go';
+import { getOpenCodeGoProtocol, OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go';
 import { CodexAuth } from '../auth/codex';
 import { logger } from '../utils/logger';
 import { ContextManager } from '../context-manager';
@@ -1027,6 +1027,14 @@ async function* executeAgentAttempt(
       } else {
         providerOptions = { openai: openaiOptions };
       }
+    } else if (
+      provider === OPENCODE_GO_PROVIDER_ID &&
+      getOpenCodeGoProtocol(agent.config.model.slice(`${OPENCODE_GO_PROVIDER_ID}:`.length).split(':')[0]) === 'openai-responses'
+    ) {
+      // OpenCode Go's Responses models can run without server-side retention.
+      // Send complete multi-step history so tool-result turns do not depend on
+      // an upstream stored response (which Grok may reject under ZDR).
+      providerOptions = { openai: { store: false } };
     } else if (provider === 'anthropic' && anthropicThinkingBudget) {
       // Extended thinking is an explicit opt-in (it bills new output tokens).
       // When enabled, Claude streams its reasoning, which the session trace

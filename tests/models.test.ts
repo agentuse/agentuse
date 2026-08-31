@@ -334,4 +334,19 @@ describe('createModel OpenCode Go', () => {
       });
     });
   });
+
+  it.each(['grok-4.6', 'gpt-5.6-luna'])('routes %s through the OpenAI Responses endpoint', async (modelId) => {
+    await withTempAuthStorage(async () => {
+      await withEnv({
+        ...opencodeGoEnvKeys,
+        OPENCODE_GO_API_KEY: 'go-key',
+      }, async () => {
+        const model = await createModel(`opencode-go:${modelId}`);
+        expect(model).toBeDefined();
+        expect(model.modelId).toBe(modelId);
+        expect(String(model.provider)).toContain('openai.responses');
+        expect(model.config.url({ path: '' })).toBe('https://opencode.ai/zen/go/v1');
+      });
+    });
+  });
 });

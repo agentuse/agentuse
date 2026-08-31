@@ -71,7 +71,7 @@ interface SeriesDef {
   /** models.dev provider ID to read from. */
   source: string;
   /** Provider bucket in our generated registry. */
-  ourProvider: 'anthropic' | 'openai' | 'openrouter';
+  ourProvider: 'anthropic' | 'openai' | 'openrouter' | 'opencode-go';
   /** Floor bucket — models in the same series share one rolling major-version window. */
   series: string;
   /** Family/line match only — never version-pinned. */
@@ -127,6 +127,50 @@ const SERIES: SeriesDef[] = [
     source: 'openrouter', ourProvider: 'openrouter', series: 'grok',
     filter: id => /^x-ai\/grok-\d+(\.\d+)?$/.test(id),
   },
+
+  // --- OpenCode Go (latest flagship in each product line) ---
+  // Keep these family-based, like OpenRouter, so regenerating replaces stale
+  // versions instead of continuously growing the onboarding dropdown.
+  {
+    source: 'opencode-go', ourProvider: 'opencode-go', series: 'opencode-go-gpt',
+    filter: id => /^gpt-\d+(\.\d+)?-[a-z][a-z0-9-]*$/.test(id),
+  },
+  {
+    source: 'opencode-go', ourProvider: 'opencode-go', series: 'opencode-go-glm',
+    filter: id => /^glm-\d+(\.\d+)?(-flash)?$/.test(id),
+  },
+  {
+    source: 'opencode-go', ourProvider: 'opencode-go', series: 'opencode-go-grok',
+    filter: id => /^grok-\d+(\.\d+)?$/.test(id),
+  },
+  {
+    source: 'opencode-go', ourProvider: 'opencode-go', series: 'opencode-go-deepseek',
+    filter: id => /^deepseek-v\d+(-pro|-flash)?$/.test(id),
+  },
+  {
+    source: 'opencode-go', ourProvider: 'opencode-go', series: 'opencode-go-qwen',
+    filter: id => /^qwen\d+(\.\d+)?-(max|plus|flash)$/.test(id),
+  },
+  {
+    source: 'opencode-go', ourProvider: 'opencode-go', series: 'opencode-go-kimi',
+    filter: id => /^kimi-k\d+(\.\d+)?$/.test(id),
+  },
+  {
+    source: 'opencode-go', ourProvider: 'opencode-go', series: 'opencode-go-kimi-code',
+    filter: id => /^kimi-k\d+(\.\d+)?-code$/.test(id),
+  },
+  {
+    source: 'opencode-go', ourProvider: 'opencode-go', series: 'opencode-go-minimax',
+    filter: id => /^minimax-m\d+(\.\d+)?$/.test(id),
+  },
+  {
+    source: 'opencode-go', ourProvider: 'opencode-go', series: 'opencode-go-mimo',
+    filter: id => /^mimo-v\d+(\.\d+)?(-pro)?$/.test(id),
+  },
+  {
+    source: 'opencode-go', ourProvider: 'opencode-go', series: 'opencode-go-hy',
+    filter: id => /^hy\d+(-preview)?$/.test(id),
+  },
 ];
 
 interface ModelData {
@@ -145,8 +189,8 @@ interface ProviderModels {
 }
 
 // Provider bucket -> its models. The full registry's buckets are dynamic
-// (driven by REGISTRY_PROVIDER_SOURCES); the curated registry only ever fills
-// the anthropic/openai/openrouter buckets that SERIES targets.
+// (driven by REGISTRY_PROVIDER_SOURCES); the curated registry fills the
+// first-class provider buckets targeted by SERIES.
 type Registry = Record<string, ProviderModels>;
 
 async function fetchModelsDevData(): Promise<Record<string, { models: Record<string, ModelData> }>> {
@@ -163,11 +207,12 @@ function buildRegistry(apiData: Record<string, { models: Record<string, ModelDat
     anthropic: {},
     openai: {},
     openrouter: {},
+    'opencode-go': {},
   };
 
   // 1. Collect filter-matched candidates, tagged with their series + retention window.
   interface Candidate {
-    ourProvider: 'anthropic' | 'openai' | 'openrouter';
+    ourProvider: 'anthropic' | 'openai' | 'openrouter' | 'opencode-go';
     series: string;
     keepMajors: number;
     major: number;
@@ -246,6 +291,7 @@ function buildRegistry(apiData: Record<string, { models: Record<string, ModelDat
     anthropic: Object.keys(registry.anthropic).length,
     openai: Object.keys(registry.openai).length,
     openrouter: Object.keys(registry.openrouter).length,
+    'opencode-go': Object.keys(registry['opencode-go']).length,
   };
 
   if (counts.anthropic === 0) {
@@ -256,6 +302,9 @@ function buildRegistry(apiData: Record<string, { models: Record<string, ModelDat
   }
   if (counts.openrouter === 0) {
     console.warn('Warning: No OpenRouter models found in API');
+  }
+  if (counts['opencode-go'] === 0) {
+    console.warn('Warning: No OpenCode Go models found in API');
   }
 
   return registry;
@@ -517,11 +566,19 @@ function generateDocsPage(registry: Registry, fullRegistry: Registry): string {
     rows.push(formatModelRow('openrouter', id, model));
   }
 
+  rows.push('\n### OpenCode Go\n');
+  rows.push('| Model ID | Name | Input Context | Output | Capabilities |');
+  rows.push('|----------|------|---------|--------|--------------|');
+  for (const [id, model] of Object.entries(registry['opencode-go'])) {
+    rows.push(formatModelRow('opencode-go', id, model));
+  }
+
   const anthropicKeys = Object.keys(registry.anthropic).filter(id => !/\d{8}$/.test(id));
   const openaiKeys = Object.keys(registry.openai).filter(id => !/\d{8}$/.test(id));
   const defaultAnthropic = anthropicKeys.find(id => id.includes('sonnet')) ?? anthropicKeys[0];
   const defaultOpenai = openaiKeys.find(id => /^gpt-\d+(\.\d+)?$/.test(id)) ?? openaiKeys[0];
   const defaultOpenrouter = Object.keys(registry.openrouter)[0];
+  const defaultOpenCodeGo = Object.keys(registry['opencode-go'])[0];
   const anthropicAliases = anthropicKeys
     .map((id) => deriveModelAlias(id))
     .filter((a): a is string => Boolean(a));
@@ -548,6 +605,7 @@ This page lists recommended models for AgentUse, organized by provider.
 - **Anthropic**: \`anthropic:${defaultAnthropic}\` (balanced performance)
 - **OpenAI**: \`openai:${defaultOpenai}\` (latest GPT)
 - **OpenRouter**: \`openrouter:${defaultOpenrouter}\` (open source)
+- **OpenCode Go**: \`opencode-go:${defaultOpenCodeGo}\` (open coding models)
 - **Amazon Bedrock**: \`bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0\`
 
 ## Version Aliases
@@ -583,6 +641,9 @@ reference it with the \`@\` sigil (see [Configuration Files](/reference/configur
 model: "@fast"
 ---
 \`\`\`
+
+Named aliases may also define ordered fallback candidates and an in-memory
+cooldown. See [Model defaults and aliases](/reference/configuration-files#model-defaults-and-aliases).
 
 ## Recommended Models
 

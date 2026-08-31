@@ -180,6 +180,9 @@ Triage support tickets.
     expect(options[0]?.models).not.toContain('openai:o3-mini');
     expect(options[0]?.models).not.toContain('openai:gpt-4.1-nano');
     expect(options[0]?.models).toContain('openai:gpt-5.6-terra');
+    expect(options[1]?.defaultModel).toBe('opencode-go:glm-5.3');
+    expect(options[1]?.models[0]).toBe('opencode-go:glm-5.3');
+    expect(options[1]?.models).not.toContain('opencode-go:glm-5.1');
     expect(options[1]?.models).toContain('opencode-go:kimi-k2.7-code');
     expect(options[2]).toMatchObject({ custom: true, models: [] });
   });

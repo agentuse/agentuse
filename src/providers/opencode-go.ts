@@ -4,7 +4,7 @@ export const OPENCODE_GO_API_KEY_ENV = 'OPENCODE_GO_API_KEY';
 export const OPENCODE_GO_BASE_URL_ENV = 'OPENCODE_GO_BASE_URL';
 export const OPENCODE_GO_BASE_URL = 'https://opencode.ai/zen/go/v1';
 
-export type OpenCodeGoProtocol = 'anthropic' | 'openai-compatible';
+export type OpenCodeGoProtocol = 'anthropic' | 'openai-compatible' | 'openai-responses';
 
 export interface OpenCodeGoModel {
   id: string;
@@ -13,6 +13,8 @@ export interface OpenCodeGoModel {
 }
 
 export const OPENCODE_GO_MODELS: OpenCodeGoModel[] = [
+  { id: 'grok-4.6', name: 'Grok 4.6', protocol: 'openai-responses' },
+  { id: 'gpt-5.6-luna', name: 'GPT 5.6 Luna', protocol: 'openai-responses' },
   { id: 'glm-5.1', name: 'GLM-5.1', protocol: 'openai-compatible' },
   { id: 'glm-5', name: 'GLM-5', protocol: 'openai-compatible' },
   { id: 'kimi-k2.7-code', name: 'Kimi K2.7 Code', protocol: 'openai-compatible' },
@@ -34,6 +36,12 @@ const OPENCODE_GO_ANTHROPIC_COMPATIBLE_MODELS = new Set(
 );
 
 export function getOpenCodeGoProtocol(modelName: string): OpenCodeGoProtocol {
+  // OpenCode Go exposes these through the native OpenAI Responses API, not
+  // its OpenAI-compatible Chat Completions endpoint.
+  if (modelName.startsWith('grok-') || /^gpt-\d/.test(modelName)) {
+    return 'openai-responses';
+  }
+
   if (
     OPENCODE_GO_ANTHROPIC_COMPATIBLE_MODELS.has(modelName) ||
     modelName.startsWith('minimax-') ||

@@ -264,6 +264,28 @@ describe('executeAgentCore Anthropic cache control', () => {
     });
   });
 
+  it('keeps OpenCode Go Responses tool turns stateless', async () => {
+    for await (const _ of executeAgentCore(
+      {
+        name: 'opencode-go-responses',
+        config: { model: 'opencode-go:grok-4.6' },
+      } as any,
+      {
+        read_file: { description: 'Read a file' } as any,
+      },
+      {
+        userMessage: 'Inspect the project',
+        systemMessages: [{ role: 'system', content: 'primary instructions' }],
+        maxSteps: 3,
+      }
+    )) {
+      // Consume the stream.
+    }
+
+    const streamConfig = streamTextMock.mock.calls[0][0] as any;
+    expect(streamConfig.providerOptions).toEqual({ openai: { store: false } });
+  });
+
   it('preserves explicit OpenAI prompt cache options', async () => {
     for await (const _ of executeAgentCore(
       {

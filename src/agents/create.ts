@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import * as YAML from 'yaml';
 import { getModelFromRegistry, getSuggestedModelIds } from '../generated/models.js';
 import { parseAgentContent } from '../parser.js';
-import { OPENCODE_GO_MODELS, OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go.js';
+import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go.js';
 import type { ProviderStatus } from '../auth/provider-status.js';
 import { parseScheduleExpression } from '../scheduler/parser.js';
 
@@ -200,7 +200,7 @@ const BALANCED_CREATOR_DEFAULTS: Readonly<Record<string, string>> = {
   anthropic: 'anthropic:claude-sonnet-5',
   openai: 'openai:gpt-5.6-terra',
   openrouter: 'openrouter:google/gemini-3.6-flash',
-  [OPENCODE_GO_PROVIDER_ID]: `${OPENCODE_GO_PROVIDER_ID}:glm-5.1`,
+  [OPENCODE_GO_PROVIDER_ID]: `${OPENCODE_GO_PROVIDER_ID}:glm-5.3`,
 };
 
 /** ChatGPT OAuth uses the Codex endpoint, whose model surface is intentionally
@@ -235,9 +235,7 @@ export function agentCreationProviders(status: ProviderStatus, preferredModel?: 
   const providers: AgentCreationProvider[] = [];
   for (const provider of status.providers) {
     if (!provider.configured) continue;
-    const catalog = provider.id === OPENCODE_GO_PROVIDER_ID
-      ? OPENCODE_GO_MODELS.map((model) => `${OPENCODE_GO_PROVIDER_ID}:${model.id}`)
-      : registryModelsForProvider(provider);
+    const catalog = registryModelsForProvider(provider);
     const models = orderModels(catalog, preferredModel, BALANCED_CREATOR_DEFAULTS[provider.id]);
     providers.push({
       id: provider.id,
