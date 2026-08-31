@@ -23,9 +23,7 @@ import { RunInstructionDialog } from '../components/run-instruction-dialog';
 import { AgentGraphView } from '../components/agent-graph-view';
 import { GroupRail } from '../components/group-rail';
 import { SchedulePill } from '../components/schedule-pill';
-import { OnboardingEmptyState } from '../components/onboarding-empty-state';
-import { FirstProjectEmptyState } from '../components/first-project-empty-state';
-import { agentDetailHref } from '../lib/links';
+import { agentDetailHref, projectDiscoveryHref } from '../lib/links';
 import { NewAgentButton } from '../components/agent-create-dialog';
 
 /** Shared empty fallback, so a miss never hands a memoizing child a fresh array. */
@@ -214,6 +212,11 @@ function projectAnchor(projectId: string): string {
 /** Link to the focused single-project agents view (/agents/:project). */
 export function agentsProjectHref(projectId: string): string {
   return `/agents/${encodeURIComponent(projectId)}`;
+}
+
+function LegacyOnboardingRedirect(props: { projectId: string }) {
+  useEffect(() => { window.location.replace(projectDiscoveryHref(props.projectId)); }, [props.projectId]);
+  return <Loading label="Opening onboarding…" />;
 }
 
 /**
@@ -794,15 +797,7 @@ export default function Agents({ project }: { project?: string } = {}) {
   const lastRunFor = (a: AgentRow) => runsFor(a)[0];
   const rowCtx: RowCtx = { pins, columns: renderColumns, runsFor, lastRunFor };
   const allAgents = query ? loadedAgents.filter((a) => matchesAgentFilter(a, query)) : loadedAgents;
-  const onboardingProject = scoped ? project : (info.data?.default ?? info.data?.projects[0]?.id);
   const noProjects = info.data?.projects.length === 0;
-  const onboardingProjectInfo = info.data?.projects.find((item) => item.id === onboardingProject);
-  const onboardingSession = sessionRows.find((session) =>
-    session.trigger === 'onboarding' && session.project === onboardingProject);
-  const showOnboarding = Boolean(
-    data && info.data && !query && !projectMissing && onboardingProject &&
-    onboardingProjectInfo?.agentCount === 0 && loadedAgents.length === 0
-  );
   const byProject = new Map<string, AgentRow[]>();
   for (const agent of allAgents) {
     const list = byProject.get(agent.projectId);
@@ -830,8 +825,6 @@ export default function Agents({ project }: { project?: string } = {}) {
         ? `${allAgents.length} of ${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} match ${filterLabel}.`
         : noProjects
           ? 'Create a project to keep your first agents and runs together.'
-        : showOnboarding
-          ? scoped ? `No agents in this ${term('project')} yet.` : 'No agents yet.'
         : scoped
           ? `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} in this ${term('project')}.`
           : `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} across ${byProject.size} ${term('project', byProject.size)}.`;
@@ -841,7 +834,17 @@ export default function Agents({ project }: { project?: string } = {}) {
       ? `No ${term('project')} “${project}” is loaded here.`
       : scoped
         ? `This ${term('project')} has no agents.`
-        : 'No agents loaded yet.';
+      : 'No agents loaded yet.';
+
+  const discoveryProjectId = location.query.onboarding === 'discover' && typeof location.query.project === 'string'
+    ? location.query.project
+    : undefined;
+  const discoveryProject = discoveryProjectId
+    ? info.data?.projects.find((candidate) => candidate.id === discoveryProjectId)
+    : undefined;
+  if (discoveryProject) {
+    return <LegacyOnboardingRedirect projectId={discoveryProject.id} />;
+  }
 
   return (
     <div class="page-agents">
@@ -985,15 +988,7 @@ export default function Agents({ project }: { project?: string } = {}) {
           </section>
         )}
         {noProjects && !scoped
-          ? <FirstProjectEmptyState compact />
-          : showOnboarding
-          ? <OnboardingEmptyState
-              compact
-              {...(onboardingProject ? { projectId: onboardingProject } : {})}
-              {...(onboardingProjectInfo?.about?.name ? { projectName: onboardingProjectInfo.about.name } : {})}
-              {...(onboardingProjectInfo?.path ? { projectPath: onboardingProjectInfo.path } : {})}
-              {...(onboardingSession ? { session: onboardingSession } : {})}
-            />
+          ? <div class="panel"><div class="empty">No projects loaded. <a href="/onboarding">Start onboarding</a> to create or choose one.</div></div>
           : byProject.size === 0
           ? <div class="panel">{loading && !data
             ? <Loading label="Loading agents…" />

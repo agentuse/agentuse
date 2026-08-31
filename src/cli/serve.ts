@@ -10,7 +10,7 @@ import { createInterface, type Interface as ReadlineInterface } from "readline";
 import chalk from "chalk";
 import * as dotenv from "dotenv";
 import { parseAgent } from "../parser";
-import { formatScheduleHuman } from "../scheduler/parser";
+import { formatScheduleHuman, parseScheduleExpression } from "../scheduler/parser";
 import { type AgentChunk } from "../runner";
 import { findProjectRoot, resolveProjectContext } from "../utils/project";
 import { logger, LogLevel, executionLog, approvalLog } from "../utils/logger";
@@ -37,7 +37,7 @@ import { getCachedAvailableUpdate, refreshUpdateCacheInBackground } from "../upd
 import { registerServer, unregisterServer, updateServer, listServers, formatUptime, getDefaultLogFilePath, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { acquireSchedulerLock, releaseSchedulerLock } from "../utils/scheduler-lock";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
-import { loadGlobalConfig, applyGlobalConfigEnv, expandHome, getGlobalConfigPath, getGlobalEnvPath, getManagedProjectsRoot, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
+import { loadGlobalConfig, applyGlobalConfigEnv, expandHome, getGlobalConfigPath, getGlobalEnvPath, getManagedProjectsRoot, loadGlobalEnv, persistServeProject, type GlobalConfig } from "../utils/global-config";
 import { createManagedProjectTransaction, ManagedProjectError } from "../utils/managed-project";
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
 import { getSlackWebClient } from "../slack/lifecycle";
@@ -93,10 +93,14 @@ import {
   AgentCreationError,
   agentCreationProviders,
   createAgentFile,
+  createGuidedProjectAgentFile,
   validateAgentCreationRequest,
 } from "../agents/create";
-import { authorAgentSource } from "../agents/author";
+import { authorAgentSource, authorGuidedAgentInstructions } from "../agents/author";
+import { discoverProjectAgents } from "../agents/discover";
 import { openBrowser } from "../utils/open-browser";
+import { pickLocalProjectFolder } from "../utils/folder-picker";
+import { canUseHostFolderPicker } from "../utils/local-request";
 import { resolveAgentModel } from "../utils/model-alias";
 import {
   createIdempotentShutdown,
@@ -2643,6 +2647,7 @@ function isHeaderGateExemptRoute(routePath: string, isApi: boolean): boolean {
 function isSpaPageRoute(routePath: string): boolean {
   switch (routePath) {
     case '/':
+    case '/onboarding':
     case '/agents':
     case '/schedules':
     case '/stores':
@@ -3492,19 +3497,16 @@ export function createServeCommand(): Command {
         watchProject(project);
       }
 
-      /** Attach the first managed project without restarting the daemon. The
-       * request handler persists its config entry only after this succeeds. */
-      const attachManagedProject = async (id: string, projectRoot: string): Promise<{ project: Project; rollback: () => Promise<void> }> => {
-        const envLocal = resolve(projectRoot, '.env.local');
-        const seed: Omit<Project, 'agentFiles'> = {
-          id,
-          root: projectRoot,
-          scopeRoot: projectRoot,
-          envFile: existsSync(envLocal) ? envLocal : resolve(projectRoot, '.env'),
-        };
-        await initStorage(projectRoot);
+      /** Attach the first project without restarting the daemon. The request
+       * handler persists its config entry only after this succeeds. */
+      const attachProject = async (seed: Omit<Project, 'agentFiles'>): Promise<{ project: Project; rollback: () => Promise<void> }> => {
+        await initStorage(seed.root);
         const worker = await spawnProjectWorker(seed);
-        const project: Project = { ...seed, agentFiles: [] };
+        const agentFiles = await glob("**/*.agentuse", {
+          cwd: seed.scopeRoot,
+          ignore: ["node_modules/**", "tmp/**", ".git/**"],
+        });
+        const project: Project = { ...seed, agentFiles };
         let watcher: FileWatcher | undefined;
         const rollback = async (): Promise<void> => {
           if (watcher) {
@@ -3513,32 +3515,32 @@ export function createServeCommand(): Command {
             if (watcherIndex >= 0) fileWatchers.splice(watcherIndex, 1);
           }
           worker.shutdown();
-          workers.delete(id);
-          workerReadyAt.delete(id);
+          workers.delete(seed.id);
+          workerReadyAt.delete(seed.id);
           const seedIndex = projectSeeds.indexOf(seed);
           if (seedIndex >= 0) projectSeeds.splice(seedIndex, 1);
           const projectIndex = projects.indexOf(project);
           if (projectIndex >= 0) projects.splice(projectIndex, 1);
-          projectsById.delete(id);
-          agentCounts.delete(id);
-          pathSeen.delete(projectRoot);
-          idSeen.delete(id);
+          projectsById.delete(seed.id);
+          agentCounts.delete(seed.id);
+          pathSeen.delete(seed.root);
+          idSeen.delete(seed.id);
           multiProject = projects.length > 1;
           updateRegistryCounts();
         };
         try {
           projectSeeds.push(seed);
           projects.push(project);
-          projectsById.set(id, project);
-          agentCounts.set(id, 0);
-          pathSeen.set(projectRoot, id);
-          idSeen.set(id, projectRoot);
+          projectsById.set(seed.id, project);
+          agentCounts.set(seed.id, agentFiles.length);
+          pathSeen.set(seed.root, seed.id);
+          idSeen.set(seed.id, seed.root);
           multiProject = projects.length > 1;
           if (projects.length === 1) effectiveDefault = undefined;
           watcher = watchProject(project);
           updateRegistryCounts();
           orphanReconcileLoop.runNow();
-          logger.info(`Project ${id}: ${projectRoot}`);
+          logger.info(`Project ${seed.id}: ${seed.scopeRoot}`);
           return { project, rollback };
         } catch (error) {
           await rollback();
@@ -5131,6 +5133,9 @@ export function createServeCommand(): Command {
               version: packageVersion,
               ...(update && { update }),
               brand: { name: brandNameCfg ?? "AgentUse" },
+              capabilities: {
+                projectFolderPicker: canUseHostFolderPicker(effectiveHost, req.socket.remoteAddress, req.headers.host),
+              },
               default: defaultProject,
               projects: projectInfo,
             }));
@@ -7167,17 +7172,23 @@ export function createServeCommand(): Command {
             const snapshot = await providerSetupSnapshot();
             const providers = agentCreationProviders(snapshot.status, preferredAgentCreationModel);
             const configuredProviders = providers.map((provider) => provider.id);
+            const availableModels = [...new Set(providers.flatMap((provider) => provider.models))];
             const request = validateAgentCreationRequest(
               { name: body.name, objective: body.objective, model: body.model },
               configuredProviders,
+              availableModels,
             );
-            // The picker chooses the one-off authoring model. The author then
-            // chooses the finished agent's runtime model from every model the
-            // configured providers make available to this creation surface.
-            const availableModels = [...new Set([
-              ...providers.flatMap((provider) => provider.models),
-              request.model,
-            ])];
+            const schedule = body.schedule === undefined ? undefined : (() => {
+              if (typeof body.schedule !== 'string' || !body.schedule.trim()) {
+                throw new AgentCreationError('INVALID_AGENT', 'Choose a valid schedule for this agent');
+              }
+              parseScheduleExpression(body.schedule);
+              return body.schedule.trim();
+            })();
+            const guided = body.guided === true;
+            if (guided && (typeof body.description !== 'string' || !body.description.trim() || body.description.trim().length > 240)) {
+              throw new AgentCreationError('INVALID_AGENT', 'The reviewed suggestion must include a concise description');
+            }
             if (wantsProgress) {
               res.writeHead(200, {
                 "Content-Type": "application/x-ndjson",
@@ -7187,23 +7198,46 @@ export function createServeCommand(): Command {
               });
               progressStarted = true;
               res.flushHeaders();
-              writeProgress({ type: "status", message: `Preparing ${request.model} to design the agent` });
+              writeProgress({
+                type: "status",
+                message: guided
+                  ? `Preparing ${request.model} to write the agent instructions`
+                  : `Preparing ${request.model} to design the agent`,
+              });
             }
-            const authored = await authorAgentSource({ ...request, availableModels }, undefined, {
-              ...(wantsProgress && { abortSignal: abortController.signal }),
-              onProgress: writeProgress,
-            });
-            writeProgress({ type: "status", message: "Saving the validated agent to the project" });
-            const created = await createAgentFile(
-              project,
-              {
-                ...(request.name && { name: request.name }),
-                objective: request.objective,
-                model: authored.model,
-                source: authored.source,
-              },
-              configuredProviders,
-            );
+            let created: Awaited<ReturnType<typeof createAgentFile>>;
+            if (guided) {
+              const instructions = await authorGuidedAgentInstructions({ objective: request.objective, model: request.model }, undefined, {
+                ...(wantsProgress && { abortSignal: abortController.signal }),
+                onProgress: writeProgress,
+              });
+              writeProgress({ type: "status", message: "Adding validated configuration, schedule, and read-only project access" });
+              created = await createGuidedProjectAgentFile(project, {
+                ...request,
+                schedule,
+                description: body.description,
+                instructions,
+              }, configuredProviders);
+              writeProgress({ type: "status", message: "Validated and saved the agent to the project" });
+            } else {
+              // The picker chooses the one-off authoring model. The author
+              // chooses the runtime model from the available set.
+              const authored = await authorAgentSource({ ...request, availableModels, ...(schedule && { schedule }) }, undefined, {
+                ...(wantsProgress && { abortSignal: abortController.signal }),
+                onProgress: writeProgress,
+              });
+              writeProgress({ type: "status", message: "Saving the validated agent to the project" });
+              created = await createAgentFile(
+                project,
+                {
+                  ...(request.name && { name: request.name }),
+                  objective: request.objective,
+                  model: authored.model,
+                  source: authored.source,
+                },
+                configuredProviders,
+              );
+            }
 
             if (!project.agentFiles.includes(created.runPath)) {
               project.agentFiles.push(created.runPath);
@@ -7260,7 +7294,13 @@ export function createServeCommand(): Command {
             const { managed, value: project } = await createManagedProjectTransaction(
               body.name,
               async (staged) => {
-                const attached = await attachManagedProject(staged.id, staged.root);
+                const envLocal = resolve(staged.root, '.env.local');
+                const attached = await attachProject({
+                  id: staged.id,
+                  root: staged.root,
+                  scopeRoot: staged.root,
+                  envFile: existsSync(envLocal) ? envLocal : resolve(staged.root, '.env'),
+                });
                 return { value: attached.project, rollback: attached.rollback };
               },
             );
@@ -7284,6 +7324,93 @@ export function createServeCommand(): Command {
             }
           } finally {
             projectCreationInFlight = false;
+          }
+          return;
+        }
+
+        if (req.method === "POST" && routePath === "/projects/attach") {
+          if (projects.length > 0 || projectCreationInFlight) {
+            sendError(res, 409, "PROJECT_ALREADY_CONFIGURED", "A project is already configured for this server");
+            return;
+          }
+          projectCreationInFlight = true;
+          let rollback: (() => Promise<void>) | undefined;
+          try {
+            const body = await parseJSONBody(req);
+            if (typeof body.path !== 'string' || !body.path.trim()) {
+              sendError(res, 400, "INVALID_PROJECT", "Enter the folder path for an existing project");
+              return;
+            }
+            const seed = resolveProjectFromPath(body.path);
+            const attached = await attachProject(seed);
+            rollback = attached.rollback;
+            persistServeProject({ id: seed.id, path: seed.scopeRoot });
+            sendJSON(res, 201, {
+              success: true,
+              project: {
+                id: attached.project.id,
+                path: attached.project.scopeRoot,
+                agentCount: attached.project.agentFiles.length,
+                scheduleCount: 0,
+              },
+            });
+          } catch (err) {
+            await rollback?.().catch(() => {});
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "INVALID_PROJECT", (err as Error).message);
+          } finally {
+            projectCreationInFlight = false;
+          }
+          return;
+        }
+
+        if (req.method === "POST" && routePath === "/projects/pick-folder") {
+          if (!canUseHostFolderPicker(effectiveHost, req.socket.remoteAddress, req.headers.host)) {
+            sendError(res, 403, "FOLDER_PICKER_LOCAL_ONLY", "The folder chooser is only available on a local AgentUse server");
+            return;
+          }
+          if (!req.headers['content-type']?.startsWith('application/json')) {
+            sendError(res, 415, "JSON_REQUIRED", "The folder chooser requires a same-origin JSON request");
+            return;
+          }
+          try {
+            const path = await pickLocalProjectFolder();
+            sendJSON(res, 200, { success: true, path });
+          } catch (err) {
+            sendError(res, 500, "FOLDER_PICKER_FAILED", (err as Error).message);
+          }
+          return;
+        }
+
+        if (isApi && routePath === "/agents/discover" && req.method === "POST") {
+          try {
+            const body = await parseJSONBody(req);
+            if (typeof body.project !== 'string' || !body.project) {
+              sendError(res, 400, "PROJECT_REQUIRED", "Choose a project to scan");
+              return;
+            }
+            const project = projectsById.get(body.project);
+            if (!project) {
+              sendError(res, 404, "PROJECT_NOT_FOUND", `Project not found: ${body.project}`);
+              return;
+            }
+            const snapshot = await providerSetupSnapshot();
+            const providers = agentCreationProviders(snapshot.status, preferredAgentCreationModel);
+            const models = [...new Set(providers.flatMap((provider) => provider.models))];
+            if (models.length === 0) {
+              sendError(res, 409, "PROVIDER_REQUIRED", "Connect a model provider before scanning this project");
+              return;
+            }
+            if (body.model !== undefined && (typeof body.model !== 'string' || !models.includes(body.model))) {
+              sendError(res, 400, "INVALID_DISCOVERY_MODEL", "Choose a currently available model for project analysis");
+              return;
+            }
+            const model = typeof body.model === 'string' ? body.model : models[0]!;
+            const result = await discoverProjectAgents(project.scopeRoot, model);
+            sendJSON(res, 200, { success: true, model, ...result });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 502, "PROJECT_DISCOVERY_FAILED", (err as Error).message);
           }
           return;
         }

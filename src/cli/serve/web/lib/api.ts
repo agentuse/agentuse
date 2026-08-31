@@ -548,6 +548,9 @@ export interface InfoPayload {
     command: string;
   };
   default: string | null;
+  capabilities?: {
+    projectFolderPicker: boolean;
+  };
   projects: ProjectInfo[];
 }
 
@@ -557,6 +560,18 @@ export function fetchInfo(): Promise<InfoPayload> {
 
 export function createManagedProject(name: string): Promise<{ success: true; project: ProjectInfo }> {
   return postJson('/api/projects', { name });
+}
+
+export function attachExistingProject(path: string): Promise<{ success: true; project: ProjectInfo }> {
+  return postJson('/api/projects/attach', { path });
+}
+
+export async function pickProjectFolder(): Promise<string | null> {
+  if (typeof window !== 'undefined' && window.agentuseDesktop?.chooseProjectFolder) {
+    return window.agentuseDesktop.chooseProjectFolder();
+  }
+  const result = await postJson<{ success: true; path: string | null }>('/api/projects/pick-folder', {});
+  return result.path;
 }
 
 export type AgentRow = AgentSummary;
@@ -597,8 +612,32 @@ export function createAgent(input: {
   name?: string;
   objective: string;
   model: string;
+  schedule?: string;
 }): Promise<{ success: true; agent: AgentRow }> {
   return postJson('/api/agents', input);
+}
+
+export interface ProjectAgentSuggestion {
+  id: string;
+  name: string;
+  description: string;
+  objective: string;
+  schedule: string;
+  scheduleHuman: string;
+  evidence: string[];
+}
+
+export interface ProjectDiscoveryPayload {
+  success: true;
+  model: string;
+  projectName: string;
+  summary: string;
+  inspectedFiles: number;
+  suggestions: ProjectAgentSuggestion[];
+}
+
+export function discoverProjectAgents(project: string, model?: string): Promise<ProjectDiscoveryPayload> {
+  return postJson('/api/agents/discover', { project, ...(model ? { model } : {}) });
 }
 
 export type AgentCreationProgressEvent =
@@ -609,7 +648,7 @@ export type AgentCreationProgressEvent =
 
 /** Streams the model-authored draft and persistence milestones from serve. */
 export async function createAgentWithProgress(
-  input: { project: string; name?: string; objective: string; model: string },
+  input: { project: string; name?: string; description?: string; objective: string; model: string; schedule?: string; guided?: boolean },
   onProgress: (event: AgentCreationProgressEvent) => void,
   signal?: AbortSignal,
 ): Promise<AgentRow> {

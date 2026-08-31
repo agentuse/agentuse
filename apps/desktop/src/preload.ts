@@ -7,11 +7,13 @@ export interface AgentUseDesktopContext {
   serveAlreadyRunning: true;
   getProviderStatus: () => Promise<ProviderStatus>;
   openSettings: () => Promise<void>;
+  chooseProjectFolder: () => Promise<string | null>;
 }
 
-const context = ipcRenderer.sendSync("agentuse:desktop-context") as Omit<AgentUseDesktopContext, "getProviderStatus" | "openSettings">;
+const context = ipcRenderer.sendSync("agentuse:desktop-context") as Omit<AgentUseDesktopContext, "getProviderStatus" | "openSettings" | "chooseProjectFolder">;
 contextBridge.exposeInMainWorld("agentuseDesktop", Object.freeze({
   ...context,
   getProviderStatus: () => ipcRenderer.invoke("agentuse:desktop:get-provider-status") as Promise<ProviderStatus>,
   openSettings: () => ipcRenderer.invoke("agentuse:desktop:open-settings") as Promise<void>,
+  chooseProjectFolder: () => ipcRenderer.invoke("agentuse:desktop:choose-project-folder") as Promise<string | null>,
 } satisfies AgentUseDesktopContext));

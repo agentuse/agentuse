@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
   authorAgentSource,
+  authorGuidedAgentInstructions,
   buildAgentAuthoringPrompt,
   validateAuthoredAgentSource,
 } from '../src/agents/author';
@@ -21,6 +22,24 @@ Return a concise triage report with urgent items first.
 `;
 
 describe('model-backed agent authoring', () => {
+  it('streams a structured Markdown body for guided creation without model-authored frontmatter', async () => {
+    const deltas: string[] = [];
+    const body = `## Goal\nReview documentation drift.\n\n## What to inspect\nRead docs and manifests.\n\n## Output\nReturn a Markdown report.\n\n## Boundaries\nDo not modify files.`;
+    const instructions = await authorGuidedAgentInstructions({
+      objective: 'Review project documentation drift.',
+      model: 'opencode-go:minimax-m3',
+    }, async (_model, options) => {
+      expect(options.prompt).toContain('exactly these sections');
+      expect(options.prompt).toContain('Do not invent dashboard cards');
+      options.onTextDelta?.(body);
+      return body;
+    }, { onProgress: (event) => { if (event.type === 'draft') deltas.push(event.text); } });
+
+    expect(deltas).toEqual([body]);
+    expect(instructions).toBe(`${body}\n`);
+    expect(instructions).not.toContain('model:');
+  });
+
   it('builds a concise minimum-viable-agent prompt with bounded user input', () => {
     const prompt = buildAgentAuthoringPrompt({
       name: 'Support Digest',
@@ -31,11 +50,14 @@ describe('model-backed agent authoring', () => {
 
     expect(prompt).toContain('<requested_job>');
     expect(prompt).toContain('<requested_name>\nSupport Digest\n</requested_name>');
-    expect(prompt).toContain('use it exactly as the frontmatter name');
+    expect(prompt).toContain('Preserve requested_name exactly');
     expect(prompt).toContain('&lt;tickets&gt;');
     expect(prompt).toContain('&lt;/requested_job&gt;');
     expect(prompt).toContain('<available_runtime_models>');
     expect(prompt).toContain('- opencode-go:glm-5.1');
+    expect(prompt).toContain('copied byte-for-byte');
+    expect(prompt).toContain('auth-filtered list is exhaustive');
+    expect(prompt).toContain('never use outside model knowledge or aliases');
     expect(prompt).toContain('Choose the runtime model independently');
     expect(prompt).toContain('hardest reasoning');
     expect(prompt).not.toContain('model: openai:gpt-5.6');
@@ -57,6 +79,9 @@ describe('model-backed agent authoring', () => {
       calledModel = model;
       expect(options.prompt).toContain('Triage support requests.');
       expect(options.instructions).toBeTruthy();
+      expect(options.instructions).toContain('# AgentUse Creator');
+      expect(options.instructions).toContain('## Minimum Viable Agent');
+      expect(options.instructions).toContain('## Gotchas');
       options.onTextDelta?.(source);
       return `\n\`\`\`markdown\n${source}\`\`\`\n`;
     }, { onProgress: (event) => progress.push(event.type) });
@@ -64,6 +89,48 @@ describe('model-backed agent authoring', () => {
     expect(calledModel).toBe('openai:gpt-5.6');
     expect(authored).toEqual({ source: `${source.trim()}\n`, model: 'opencode-go:glm-5.1' });
     expect(progress).toEqual(['status', 'draft', 'status']);
+  });
+
+  it('streams a repair pass when the first draft is invalid AgentUse source', async () => {
+    const invalid = source.replace(
+      'description: Triage support requests and surface urgent replies',
+      'description: Triage support requests and surface urgent replies\ntools:\n  filesystem: .',
+    );
+    const prompts: string[] = [];
+    const statuses: string[] = [];
+    const authored = await authorAgentSource({
+      objective: 'Triage support requests.',
+      model: 'opencode-go:minimax-m3',
+      availableModels: ['opencode-go:glm-5.1'],
+    }, async (_model, options) => {
+      prompts.push(options.prompt);
+      options.onTextDelta?.(prompts.length === 1 ? invalid : source);
+      return prompts.length === 1 ? invalid : source;
+    }, {
+      onProgress: (event) => { if (event.type === 'status') statuses.push(event.message); },
+    });
+
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain('tools.filesystem');
+    expect(prompts[1]).toContain('<invalid_source>');
+    expect(statuses).toContain('The first draft needs a format repair; asking the model to correct it');
+    expect(authored.model).toBe('opencode-go:glm-5.1');
+  });
+
+  it('loads the full Creator skill in Anthropic-compatible secondary system guidance', async () => {
+    const authored = await authorAgentSource({
+      objective: 'Triage support requests.',
+      model: 'anthropic:claude-sonnet-5',
+      availableModels: ['opencode-go:glm-5.1'],
+    }, async (_model, options) => {
+      expect(options.instructions).toBe("You are Claude Code, Anthropic's official CLI for Claude.");
+      expect(options.extraSystem).toContain('# AgentUse Creator');
+      expect(options.extraSystem).toContain('## Minimum Viable Agent');
+      expect(options.extraSystem).toContain('## Gotchas');
+      return source;
+    });
+
+    expect(authored.model).toBe('opencode-go:glm-5.1');
   });
 
   it('requires the model to preserve a requested name', async () => {
@@ -115,5 +182,24 @@ tools:
     );
     expect(() => validateAuthoredAgentSource(trusted, ['opencode-go:glm-5.1']))
       .toThrow('trusted a skill before the agent was reviewed');
+  });
+
+  it('accepts only the exact schedule selected from project discovery', () => {
+    const scheduled = source.replace(
+      'description: Triage support requests and surface urgent replies',
+      'description: Triage support requests and surface urgent replies\nschedule: "0 9 * * 1"',
+    );
+    const prompt = buildAgentAuthoringPrompt({
+      name: 'Support Triage',
+      objective: 'Triage support requests.',
+      model: 'openai:gpt-5.6-terra',
+      availableModels: ['opencode-go:glm-5.1'],
+      schedule: '0 9 * * 1',
+    });
+    expect(prompt).toContain('<requested_schedule>\n0 9 * * 1\n</requested_schedule>');
+    expect(validateAuthoredAgentSource(scheduled, ['opencode-go:glm-5.1'], 'Support Triage', '0 9 * * 1').model)
+      .toBe('opencode-go:glm-5.1');
+    expect(() => validateAuthoredAgentSource(scheduled, ['opencode-go:glm-5.1'], 'Support Triage', '0 8 * * 1'))
+      .toThrow('did not use the requested schedule');
   });
 });

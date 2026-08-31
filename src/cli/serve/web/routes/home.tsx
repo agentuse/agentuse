@@ -11,8 +11,6 @@ import { useSessionTail } from '../hooks/use-session-tail';
 import { useTitle } from '../hooks/use-title';
 import { Topbar } from '../components/topbar';
 import { UpdateBanner } from '../components/update-banner';
-import { OnboardingEmptyState } from '../components/onboarding-empty-state';
-import { FirstProjectEmptyState } from '../components/first-project-empty-state';
 import { Loading } from '../components/loading';
 import { pendingNewestFirst, PendingApprovalRow } from '../components/pending-approval-card';
 import { displayAgentName, formatApprovalTime, formatRelativeTime, displayStatusLabel, humanizeMetric, runTone, type RunTone } from '../lib/format';
@@ -57,6 +55,11 @@ function formatElapsed(ms: number): string {
 }
 
 const LIVE_STATUSES = new Set(['running', 'resuming', 'continuing']);
+
+function OnboardingRedirect() {
+  useEffect(() => { window.location.replace('/onboarding'); }, []);
+  return <Loading label="Opening onboarding…" />;
+}
 
 function isLiveRow(row: SessionRow): boolean {
   // A suspended parent parked on a running delegated child is live work ("running
@@ -723,10 +726,8 @@ export default function Home() {
   };
 
   const sections = useHomeSections();
-  // The guided demo is product education, not fleet activity. Keep it
-  // discoverable for "continue setup" while excluding it from operational
-  // counts, attention queues, charts, and the activity feed.
-  const onboardingSession = liveHome.sessions.find((session) => session.trigger === 'onboarding');
+  // The guided demo is product education, not fleet activity, so exclude it
+  // from operational counts, attention queues, charts, and the activity feed.
   const operationalSessions = liveHome.sessions.filter((session) => session.trigger !== 'onboarding');
   const running = operationalSessions.filter(isLiveRow);
   // subagentActive rows are live work (counted in `running`), not blocked on a
@@ -785,8 +786,6 @@ export default function Home() {
   const projects = data?.projects ?? [];
   const noProjects = Boolean(data) && projects.length === 0;
   const noAgents = Boolean(data) && projects.length > 0 && projects.every((project) => project.agentCount === 0);
-  const onboardingProject = data?.default ?? projects[0]?.id;
-  const onboardingProjectInfo = projects.find((project) => project.id === onboardingProject);
   const runningByProject = new Map<string, number>();
   for (const row of running) runningByProject.set(row.project, (runningByProject.get(row.project) ?? 0) + 1);
 
@@ -802,27 +801,7 @@ export default function Home() {
   const successPct = ended24h > 0 ? Math.round(((ended24h - failed24h) / ended24h) * 100) : null;
 
   if (noProjects || noAgents) {
-    return (
-      <div class="page-home" data-ambient="idle">
-        <div class="home-ambient" aria-hidden="true"></div>
-        <Topbar currentPage="home" />
-        <main class="home-boot home-onboarding">
-          {(previewRequested && data)
-            ? <UpdateBanner update={previewUpdate(data.version)} persistDismissal={false} />
-            : data?.update && <UpdateBanner update={data.update} />}
-          {noProjects
-            ? <FirstProjectEmptyState />
-            : <OnboardingEmptyState
-                {...(onboardingProject ? { projectId: onboardingProject } : {})}
-                {...(onboardingProjectInfo?.about?.name ? { projectName: onboardingProjectInfo.about.name } : {})}
-                {...(onboardingProjectInfo?.path ? { projectPath: onboardingProjectInfo.path } : {})}
-                {...(onboardingSession ? { session: onboardingSession } : {})}
-              />}
-          {error && <div class="errors" role="alert">Failed to load: {error.message}</div>}
-          {liveHome.error && <div class="errors" role="alert">Failed to load sessions: {liveHome.error.message}</div>}
-        </main>
-      </div>
-    );
+    return <OnboardingRedirect />;
   }
 
   return (

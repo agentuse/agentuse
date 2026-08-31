@@ -2,7 +2,13 @@ import { afterEach, describe, expect, it } from 'bun:test';
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { agentCreationProviders, createAgentFile, deriveAgentName } from '../src/agents/create';
+import {
+  agentCreationProviders,
+  createAgentFile,
+  createGuidedProjectAgentFile,
+  deriveAgentName,
+  validateAgentCreationRequest,
+} from '../src/agents/create';
 import { parseAgent } from '../src/parser';
 import type { ProviderStatus } from '../src/auth/provider-status';
 
@@ -38,6 +44,28 @@ describe('persistent dashboard agent creation', () => {
     const parsed = await parseAgent(created.absolutePath);
     expect(parsed.name).toBe('Summarize New Support Tickets Every Morning');
     expect(parsed.config.model).toBe('openai:gpt-5.6-terra');
+  });
+
+  it('creates a reviewed project suggestion deterministically with read-only project access', async () => {
+    const target = await project();
+    const created = await createGuidedProjectAgentFile(target, {
+      name: 'Docs Drift Detector',
+      objective: 'Inspect project documentation and report concrete drift. Do not modify files.',
+      description: 'Find documentation that has drifted from the project.',
+      instructions: '## Goal\nFind documentation drift.\n\n## Output\nReturn a concise Markdown report.',
+      model: 'opencode-go:minimax-m3',
+      schedule: '0 8 * * 3',
+    }, ['opencode-go']);
+
+    const source = await readFile(created.absolutePath, 'utf8');
+    expect(source).toContain('name: Docs Drift Detector');
+    expect(source).toContain('model: opencode-go:minimax-m3');
+    expect(source).toContain("schedule: 0 8 * * 3");
+    const parsed = await parseAgent(created.absolutePath);
+    expect(parsed.config.schedule).toBe('0 8 * * 3');
+    expect(parsed.config.tools?.filesystem).toEqual([{ path: '${root}', permissions: ['read'] }]);
+    expect(parsed.config.description).toBe('Find documentation that has drifted from the project.');
+    expect(parsed.instructions).toContain('## Goal');
   });
 
   it('derives concise stable names from the first useful task clause', () => {
@@ -133,7 +161,7 @@ Triage support tickets.
     }, ['openai'])).rejects.toMatchObject({ code: 'CREATE_FAILED' });
   });
 
-  it('offers every compatible registry model, prefers a configured default, and accepts keyless custom providers', () => {
+  it('offers recommended models, ignores stale defaults, and accepts keyless custom providers', () => {
     const status: ProviderStatus = {
       credentialStore: '/redacted/path',
       providers: [
@@ -147,9 +175,10 @@ Triage support tickets.
 
     const options = agentCreationProviders(status, 'openai:o3-mini');
     expect(options.map((provider) => provider.id)).toEqual(['openai', 'opencode-go', 'local']);
-    expect(options[0]?.defaultModel).toBe('openai:o3-mini');
-    expect(options[0]?.models[0]).toBe('openai:o3-mini');
-    expect(options[0]?.models).toContain('openai:gpt-4.1');
+    expect(options[0]?.defaultModel).toBe('openai:gpt-5.6-terra');
+    expect(options[0]?.models[0]).toBe('openai:gpt-5.6-terra');
+    expect(options[0]?.models).not.toContain('openai:o3-mini');
+    expect(options[0]?.models).not.toContain('openai:gpt-4.1-nano');
     expect(options[0]?.models).toContain('openai:gpt-5.6-terra');
     expect(options[1]?.models).toContain('opencode-go:kimi-k2.7-code');
     expect(options[2]).toMatchObject({ custom: true, models: [] });
@@ -169,7 +198,36 @@ Triage support tickets.
     expect(options[1]?.defaultModel).toBe('openai:gpt-5.6-terra');
   });
 
-  it('starts on the provider that owns the configured default', () => {
+  it('offers only Codex-compatible fast, balanced, and best models for ChatGPT OAuth', () => {
+    const options = agentCreationProviders({
+      credentialStore: '/redacted/path',
+      providers: [
+        {
+          id: 'openai',
+          name: 'OpenAI',
+          configured: true,
+          sources: [{ priority: 1, kind: 'oauth', name: 'ChatGPT OAuth', stored: true, active: true }],
+        },
+      ],
+      customProviders: [],
+    });
+
+    expect(options[0]?.models).toEqual([
+      'openai:gpt-5.6-terra',
+      'openai:gpt-5.6-luna',
+      'openai:gpt-5.6-sol',
+    ]);
+    expect(options[0]?.defaultModel).toBe('openai:gpt-5.6-terra');
+  });
+
+  it('rejects a stale creator model even when its provider is configured', () => {
+    expect(() => validateAgentCreationRequest({
+      objective: 'Say bye world.',
+      model: 'openai:gpt-4.1-nano',
+    }, ['openai'], ['openai:gpt-5.6-terra'])).toThrow('Choose a currently supported model');
+  });
+
+  it('starts on the preferred provider but falls back from its stale default', () => {
     const options = agentCreationProviders({
       credentialStore: '/redacted/path',
       providers: [
@@ -180,6 +238,7 @@ Triage support tickets.
     }, 'openai:gpt-4.1');
 
     expect(options.map((provider) => provider.id)).toEqual(['openai', 'anthropic']);
-    expect(options[0]?.defaultModel).toBe('openai:gpt-4.1');
+    expect(options[0]?.defaultModel).toBe('openai:gpt-5.6-terra');
+    expect(options[0]?.models).not.toContain('openai:gpt-4.1');
   });
 });

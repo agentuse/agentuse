@@ -210,6 +210,16 @@ function registerDesktopIpc(): void {
     assertDashboardSender(event);
     showSettings();
   });
+  ipcMain.handle("agentuse:desktop:choose-project-folder", async (event) => {
+    assertDashboardSender(event);
+    if (!window || window.isDestroyed()) return null;
+    const result = await dialog.showOpenDialog(window, {
+      title: "Choose a project folder",
+      buttonLabel: "Choose project",
+      properties: ["openDirectory", "createDirectory"],
+    });
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  });
   ipcMain.handle("agentuse:setup:get-state", async (event) => {
     assertSetupSender(event);
     return desktopSetupState();

@@ -3,10 +3,11 @@ import { link, lstat, mkdir, open, realpath, unlink } from 'node:fs/promises';
 import { isAbsolute, join, relative } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import * as YAML from 'yaml';
-import { getAllModelIds, getModelFromRegistry } from '../generated/models.js';
+import { getModelFromRegistry, getSuggestedModelIds } from '../generated/models.js';
 import { parseAgentContent } from '../parser.js';
 import { OPENCODE_GO_MODELS, OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go.js';
 import type { ProviderStatus } from '../auth/provider-status.js';
+import { parseScheduleExpression } from '../scheduler/parser.js';
 
 export interface AgentCreationProject {
   id: string;
@@ -120,12 +121,16 @@ function providerFromModel(model: string): string {
 export function validateAgentCreationRequest(
   input: Pick<AgentCreationInput, 'name' | 'objective' | 'model'>,
   configuredProviders: readonly string[],
+  availableModels?: readonly string[],
 ): { name?: string; objective: string; model: string } {
   const objective = cleanObjective(input.objective);
   const model = cleanModel(input.model);
   const provider = providerFromModel(model);
   if (!configuredProviders.includes(provider)) {
     throw new AgentCreationError('MODEL_NOT_CONFIGURED', `Connect ${provider} before creating an agent with ${model}`);
+  }
+  if (availableModels && !availableModels.includes(model)) {
+    throw new AgentCreationError('INVALID_AGENT', `Choose a currently supported model instead of ${model}`);
   }
   const name = input.name === undefined || input.name === null || (typeof input.name === 'string' && !input.name.trim())
     ? undefined
@@ -154,6 +159,43 @@ function renderAgent(name: string, model: string, objective: string, description
   return `---\n${frontmatter}\n---\n\n${objective}\n`;
 }
 
+/** Build the reviewed project-discovery suggestion without another model call.
+ * AgentUse owns the schema and safety boundary; the scan already authored the
+ * useful instructions. */
+export async function createGuidedProjectAgentFile(
+  project: AgentCreationProject,
+  input: Pick<AgentCreationInput, 'name' | 'objective' | 'model'> & { schedule: unknown; description: unknown; instructions: unknown },
+  configuredProviders: readonly string[],
+): Promise<CreatedAgentFile> {
+  const request = validateAgentCreationRequest(input, configuredProviders);
+  if (typeof input.schedule !== 'string' || !input.schedule.trim()) {
+    throw new AgentCreationError('INVALID_AGENT', 'Choose a valid schedule for this agent');
+  }
+  const schedule = input.schedule.trim();
+  parseScheduleExpression(schedule);
+  if (typeof input.description !== 'string' || !input.description.trim()) {
+    throw new AgentCreationError('INVALID_AGENT', 'The reviewed suggestion must include a description');
+  }
+  const description = input.description.trim();
+  if (description.length > 240) throw new AgentCreationError('INVALID_AGENT', 'The reviewed suggestion description is too long');
+  if (typeof input.instructions !== 'string' || !input.instructions.trim()) {
+    throw new AgentCreationError('INVALID_AGENT', 'The selected model returned empty agent instructions');
+  }
+  const instructions = input.instructions.trim();
+  const name = request.name ?? deriveAgentName(request.objective);
+  const frontmatter = YAML.stringify({
+    name,
+    model: request.model,
+    description,
+    schedule,
+    tools: {
+      filesystem: [{ path: '${root}', permissions: ['read'] }],
+    },
+  }, { lineWidth: 0 }).trimEnd();
+  const source = `---\n${frontmatter}\n---\n\n${instructions}\n`;
+  return createAgentFile(project, { ...request, source }, configuredProviders);
+}
+
 const BALANCED_CREATOR_DEFAULTS: Readonly<Record<string, string>> = {
   anthropic: 'anthropic:claude-sonnet-5',
   openai: 'openai:gpt-5.6-terra',
@@ -161,9 +203,21 @@ const BALANCED_CREATOR_DEFAULTS: Readonly<Record<string, string>> = {
   [OPENCODE_GO_PROVIDER_ID]: `${OPENCODE_GO_PROVIDER_ID}:glm-5.1`,
 };
 
-function registryModelsForProvider(providerId: string): string[] {
-  return getAllModelIds().filter((model) => {
-    if (!model.startsWith(`${providerId}:`)) return false;
+/** ChatGPT OAuth uses the Codex endpoint, whose model surface is intentionally
+ * smaller than the OpenAI API registry. Keep creation to one clear fast,
+ * balanced, and best option that this transport can actually run. */
+const CHATGPT_OAUTH_CREATION_MODELS = [
+  'openai:gpt-5.6-luna',
+  'openai:gpt-5.6-terra',
+  'openai:gpt-5.6-sol',
+] as const;
+
+function registryModelsForProvider(provider: ProviderStatus['providers'][number]): string[] {
+  const activeSource = provider.sources.find((source) => source.active);
+  const candidates = provider.id === 'openai' && activeSource?.kind === 'oauth' && activeSource.name === 'ChatGPT OAuth'
+    ? CHATGPT_OAUTH_CREATION_MODELS
+    : getSuggestedModelIds().filter((model) => model.startsWith(`${provider.id}:`));
+  return candidates.filter((model) => {
     const info = getModelFromRegistry(model);
     return info?.modalities.output.length === 1 && info.modalities.output[0] === 'text';
   });
@@ -183,7 +237,7 @@ export function agentCreationProviders(status: ProviderStatus, preferredModel?: 
     if (!provider.configured) continue;
     const catalog = provider.id === OPENCODE_GO_PROVIDER_ID
       ? OPENCODE_GO_MODELS.map((model) => `${OPENCODE_GO_PROVIDER_ID}:${model.id}`)
-      : registryModelsForProvider(provider.id);
+      : registryModelsForProvider(provider);
     const models = orderModels(catalog, preferredModel, BALANCED_CREATOR_DEFAULTS[provider.id]);
     providers.push({
       id: provider.id,

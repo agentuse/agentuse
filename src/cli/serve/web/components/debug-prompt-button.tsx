@@ -33,6 +33,7 @@ declare global {
       serveAlreadyRunning: true;
       getProviderStatus: () => Promise<ProviderStatus>;
       openSettings: () => Promise<void>;
+      chooseProjectFolder: () => Promise<string | null>;
     };
   }
 }
@@ -322,6 +323,13 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
           detection_method: detectionMethod,
           ...(durationMs !== undefined && { duration_ms: durationMs }),
         });
+        if (matches.length === 1) {
+          const agent = matches[0];
+          reportOnboardingTelemetry({ event: 'onboarding_step_completed', step: 'agent_opened' });
+          writeWaitingStartedAt(storageKey, null);
+          window.location.href = agentDetailHref(agent.projectId, agent.runPath, { tab: 'source', spotlightRun: true });
+          return;
+        }
         setDetectedAgents(matches);
         setWaitingStartedAt(null);
         writeWaitingStartedAt(storageKey, null);
@@ -522,7 +530,6 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
         <AgentCreateDialog
           open={agentCreateOpen}
           title="create your first agent"
-          completeLabel="Finish setup"
           {...(props.context.projectId ? { initialProjectId: props.context.projectId } : {})}
           lockProject
           onCreated={(agent) => {
@@ -537,6 +544,8 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
               detection_method: 'native_create',
             });
             reportOnboardingTelemetry({ event: 'onboarding_completed', agent_count: 1, detection_method: 'native_create' });
+            reportOnboardingTelemetry({ event: 'onboarding_step_completed', step: 'agent_opened' });
+            window.location.href = agentDetailHref(agent.projectId, agent.runPath, { tab: 'source', spotlightRun: true });
           }}
           onCodingAgent={(draft: AgentCreationDraft) => {
             setCodingAgentDetail([

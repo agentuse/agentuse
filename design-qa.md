@@ -115,3 +115,146 @@ determinate bar, removing redundant progress signals.
    error states were recaptured in the compiled native Settings helper.
 
 final result: implementation corrected; visual acceptance pending
+
+---
+
+# Design QA — First onboarding agent Run spotlight
+
+- Source visual truth: `/Users/llch/.codex/generated_images/01a0558d-3840-7192-99a1-f86fa6a3f7a5/exec-7bede736-639b-4ae2-8ab3-ba271415f3d4.png`
+- Implementation screenshot: `/private/tmp/agentuse-first-agent-spotlight-final-v3.png`
+- Normalized comparison: `/private/tmp/agentuse-first-agent-spotlight-comparison-v2.png`
+- Requested viewport: 1440 × 1024 CSS pixels
+- Browser capture: 1454 × 1034 CSS pixels at 0.99 device pixel ratio; 1469 × 1044 screenshot pixels
+- Source dimensions: 1486 × 1058 pixels
+- Normalization: source and implementation were independently resized to 1440 × 1024, then placed side by side without cropping
+- State: light theme, first onboarding agent, Source selected, Run spotlight open
+
+## Full-view comparison evidence
+
+The normalized side-by-side comparison confirms the selected hierarchy: the
+entire agent-detail screen is dimmed while a single rectangular cutout preserves
+the primary Run agent action. The implementation keeps the shipping AgentUse
+navigation, agent metadata, capabilities, and source renderer instead of the
+mock's invented shell. This is intentional product fidelity rather than design
+drift.
+
+## Focused-region comparison evidence
+
+The upper-right action region was readable at full-view scale, so no separate
+crop was required. The implementation matches the target's green primary
+button, rectangular highlight, anchored pointer, white instruction surface,
+headline, supporting copy, and right-aligned Got it action. Per the user's
+clarification, only Run agent is inside the cutout; Run with instruction remains
+dimmed.
+
+## Required fidelity surfaces
+
+- Fonts and typography: Existing self-hosted Geist and Geist Mono remain in
+  place. The coachmark uses the product's 15px/600 headline and 13px supporting
+  hierarchy with no wrapping or truncation at desktop or 393px mobile width.
+- Spacing and layout rhythm: The cutout uses a 10px inset, 10px radius, and a
+  24px anchored card gap. The 284px card remains inside the viewport on desktop
+  and mobile; the mobile capture measured 14px left and 298px right edges.
+- Colors and visual tokens: The implementation uses the existing `--green`,
+  `--surface`, `--line-strong`, and theme-aware foreground tokens. A 62% neutral
+  overlay reproduces the target's dimmed-page hierarchy without a radial glow.
+- Image quality and asset fidelity: The feature has no raster imagery or custom
+  icon assets. It retains the existing text-based Run control; no source assets
+  were replaced with CSS drawings or placeholders.
+- Copy and content: The visible copy matches the selected target: “Your agent is
+  ready”, “Run it once to make sure it works.”, and “Got it”. Source remains the
+  selected third tab.
+
+## Findings and comparison history
+
+1. First implementation pass: the 68% overlay was visually darker than the
+   selected mock, and keyboard focus could remain behind the blocking overlay.
+2. Fixes: reduced the overlay to 62%, focused Run agent after agent data renders,
+   added Escape dismissal, and trapped focus between Run agent and Got it.
+3. Responsive pass: the anchored card could extend left on narrow screens. It
+   now left-aligns with the spotlight below 640px and fits within the viewport.
+4. Post-fix evidence: desktop and 393px mobile captures show a rectangular
+   cutout, readable coachmark, no overflow, no console warnings/errors, and the
+   correct Source selection.
+
+## Interaction checks
+
+- Got it dismisses the overlay and removes `onboarding=first-agent` from the URL.
+- Escape performs the same dismissal and URL cleanup.
+- A normal `?tab=source` detail link renders no spotlight, preserving later New
+  Agent creation behavior.
+- Focus begins on Run agent and the modal coachmark exposes only Run agent and
+  Got it as its keyboard loop.
+
+## Follow-up polish
+
+- No actionable P0, P1, or P2 differences remain.
+- P3: actual onboarding copy can be revisited after observing first-run
+  completion behavior, without changing the spotlight interaction.
+
+final result: passed
+
+---
+
+# Design QA — Project-aware first agent onboarding
+
+- Source visual truth: `/Users/llch/.codex/visualizations/2026/08/31/01a0558d-3840-7192-99a1-f86fa6a3f7a5/first-useful-agent-flow.html`
+- Implementation screenshot: `/Users/llch/.codex/visualizations/2026/08/31/01a0558d-3840-7192-99a1-f86fa6a3f7a5/implementation-first-screen.png`
+- Provider-gate screenshot: `/Users/llch/.codex/visualizations/2026/08/31/01a0558d-3840-7192-99a1-f86fa6a3f7a5/implementation-provider-gate.png`
+- Viewport: 1198 × 1134 CSS pixels
+- Implementation pixels: 1210 × 1210 full-page capture at 0.99 device pixel ratio
+- State: isolated local server with no user config or provider credentials; first project choice and provider-gated existing-project branch
+
+## Full-view comparison evidence
+
+The implementation was captured in the built-in browser and visually inspected.
+It preserves the selected mock's four-part progression—project choice, provider
+connection, read-only scan, and click-to-create suggestions—inside the existing
+AgentUse dashboard design system. The first screen keeps both requested project
+choices above the fold and gives the existing-project route the recommended
+visual treatment.
+
+The source artifact is an HTML mockup. The built-in browser's security policy
+blocked opening its `file:` URL, so a normalized side-by-side source-versus-
+implementation image could not be produced in this pass. Per the Product Design
+QA gate, this prevents a visual-fidelity pass even though implementation
+screenshots and interaction evidence are available.
+
+## Focused region comparison evidence
+
+The provider gate was captured separately because it is the highest-risk
+interaction transition. It shows the selected project behind a modal provider
+connection step and confirms the scan cannot start before authentication. A
+focused source comparison is unavailable for the same blocked source-rendering
+reason.
+
+## Required fidelity surfaces
+
+- Fonts and typography: existing AgentUse Geist/Geist Mono hierarchy is retained; card and step copy wraps without clipping at the tested viewport.
+- Spacing and layout rhythm: the existing two-column onboarding shell, 12px card gaps, and compact progress rail remain coherent with the dashboard.
+- Colors and visual tokens: only existing foreground, muted, cyan, panel, line, and primary-action tokens are used.
+- Image quality and asset fidelity: this flow has no image assets; no placeholder artwork, custom SVG, emoji, or CSS illustration was introduced.
+- Copy and content: the implementation makes the read-only boundary, provider prerequisite, evidence-backed suggestions, schedule behavior, and Source/run handoff explicit.
+
+## Interaction checks
+
+- Both project-choice cards are keyboard-addressable buttons.
+- Existing-project path validation and runtime attachment succeeded against a temporary project.
+- Provider connection is required and the setup dialog opens before scanning.
+- Browser console contained no warnings or errors.
+- Model scan parsing, bounded context exclusions, exact schedule validation, creation redirect, and first-run Source spotlight are covered by automated tests.
+
+## Findings
+
+- [P2] Source comparison unavailable
+  Location: full onboarding flow.
+  Evidence: implementation is browser-rendered, but the selected HTML mockup could not be opened under the browser URL policy.
+  Impact: exact visual drift across the scan and suggestion states cannot be certified from a normalized side-by-side comparison.
+  Fix: provide or capture the selected mockup as a PNG, then compare each matching state at the same viewport.
+
+## Comparison history
+
+1. Implementation first screen and provider gate were captured and inspected; no broken layout, clipping, or console errors were found.
+2. Source capture was attempted in the selected built-in browser and blocked by browser URL policy. No alternate browser surface or policy workaround was used.
+
+final result: blocked

@@ -134,6 +134,7 @@ describe('header-gate exemption (capability routes)', () => {
     // The page is where a tidy-up reports progress and offers its undo, so it is
     // linked to and reloaded directly; without this it 404s on a hard load.
     expect(__testing.isSpaPageRoute('/learnings/tidy')).toBe(true);
+    expect(__testing.isSpaPageRoute('/onboarding')).toBe(true);
     expect(__testing.isSpaPageRoute('/learnings')).toBe(false);
   });
 

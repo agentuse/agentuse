@@ -25,6 +25,73 @@ function defaultModel(payload: AgentCreationOptionsPayload): string {
   return payload.providers[0]?.defaultModel ?? payload.providers[0]?.models[0] ?? '';
 }
 
+function initialModelSelection(payload: AgentCreationOptionsPayload, requestedModel?: string): { providerId: string; model: string } {
+  const requestedProvider = requestedModel
+    ? payload.providers.find((provider) => provider.models.includes(requestedModel)
+      || (provider.custom && requestedModel.startsWith(`${provider.id}:`)))
+    : undefined;
+  if (requestedProvider && requestedModel) return { providerId: requestedProvider.id, model: requestedModel };
+
+  const provider = payload.providers[0];
+  return {
+    providerId: provider?.id ?? '',
+    model: defaultModel(payload) || (provider?.custom ? `${provider.id}:` : ''),
+  };
+}
+
+const CHATGPT_CREATOR_MODEL_LABELS: Readonly<Record<string, string>> = {
+  'openai:gpt-5.6-luna': 'Fast · GPT-5.6 Luna',
+  'openai:gpt-5.6-terra': 'Balanced · GPT-5.6 Terra',
+  'openai:gpt-5.6-sol': 'Best · GPT-5.6 Sol',
+};
+
+export function creationModelLabel(model: string, providerId: string): string {
+  return CHATGPT_CREATOR_MODEL_LABELS[model] ?? model.replace(`${providerId}:`, '');
+}
+
+export type AgentCreationProgressPhase = 'creating' | 'success' | 'error';
+
+/** Shared streamed creation log used by both manual and discovery-based creation. */
+export function AgentCreationProgressPanel(props: {
+  phase: AgentCreationProgressPhase;
+  modelLabel: string;
+  logText: string;
+  error?: string | null;
+  onBack?: () => void;
+}) {
+  const logRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const log = logRef.current;
+    if (log) log.scrollTop = log.scrollHeight;
+  }, [props.logText]);
+  return (
+    <div class={`agent-create-progress is-${props.phase}`}>
+      <div class="agent-create-progress-heading" role="status" aria-live="polite">
+        {props.phase === 'creating'
+          ? <span class="btn-spinner" aria-hidden="true" />
+          : <span class="agent-create-progress-mark" aria-hidden="true">{props.phase === 'success' ? '✓' : '!'}</span>}
+        <span>{props.phase === 'creating' ? `Working with ${props.modelLabel}` : props.phase === 'success' ? 'Agent saved' : 'Could not create the agent'}</span>
+      </div>
+      <label class="agent-create-log-label" for="agent-create-log">Creation log</label>
+      <textarea
+        id="agent-create-log"
+        ref={logRef}
+        class="agent-create-log"
+        value={props.logText}
+        readOnly
+        spellcheck={false}
+        aria-label="Agent creation log"
+      />
+      {props.phase === 'error' && props.error && <p class="agent-create-error" role="alert">{props.error}</p>}
+      {props.phase === 'creating' && <span class="agent-create-progress-hint">Keep this window open while the model finishes the draft.</span>}
+      {props.phase === 'success' && <span class="agent-create-progress-hint">Opening your agent…</span>}
+      {props.phase === 'error' && props.onBack && (
+        <div class="agent-create-progress-actions"><button type="button" class="agent-create-escape" onClick={props.onBack}>Back to edit</button></div>
+      )}
+    </div>
+  );
+}
+
 export function buildAgentCreationPrompt(draft: AgentCreationDraft, providerStatus?: ProviderStatus): string {
   const lines = [
     '# Create an AgentUse Agent',
@@ -75,14 +142,13 @@ export function AgentCreateDialog(props: {
   open: boolean;
   title?: string;
   initialProjectId?: string;
+  initialModel?: string;
   lockProject?: boolean;
-  completeLabel?: string;
   onCreated: (agent: AgentRow) => void;
-  onCodingAgent: (draft: AgentCreationDraft) => void;
+  onCodingAgent?: (draft: AgentCreationDraft) => void;
   onClose: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const logRef = useRef<HTMLTextAreaElement>(null);
   const requestRef = useRef<AbortController | null>(null);
   const sawDraftRef = useRef(false);
   const errorReportedRef = useRef(false);
@@ -111,11 +177,6 @@ export function AgentCreateDialog(props: {
   }, [props.open]);
 
   useEffect(() => {
-    const log = logRef.current;
-    if (log) log.scrollTop = log.scrollHeight;
-  }, [logText]);
-
-  useEffect(() => {
     if (!props.open) return;
     setPayload(null);
     setError(null);
@@ -131,14 +192,15 @@ export function AgentCreateDialog(props: {
     sawDraftRef.current = false;
     errorReportedRef.current = false;
     void fetchAgentCreationOptions().then((next) => {
+      const initialSelection = initialModelSelection(next, props.initialModel);
       setPayload(next);
       setProjectId(props.initialProjectId && next.projects.some((project) => project.id === props.initialProjectId)
         ? props.initialProjectId
         : next.default ?? next.projects[0]?.id ?? '');
-      setProviderId(next.providers[0]?.id ?? '');
-      setModel(defaultModel(next) || (next.providers[0]?.custom ? `${next.providers[0].id}:` : ''));
+      setProviderId(initialSelection.providerId);
+      setModel(initialSelection.model);
     }, (caught) => setError((caught as Error).message || 'Could not load agent creation options.'));
-  }, [props.open, props.initialProjectId]);
+  }, [props.open, props.initialProjectId, props.initialModel]);
 
   const provider = payload?.providers.find((item) => item.id === providerId);
   const project = payload?.projects.find((item) => item.id === projectId);
@@ -200,6 +262,7 @@ export function AgentCreateDialog(props: {
       );
       setCreatedAgent(agent);
       setPhase('success');
+      props.onCreated(agent);
     } catch (caught) {
       if ((caught as Error).name === 'AbortError') return;
       const message = (caught as Error).message || 'Could not create the agent.';
@@ -254,7 +317,7 @@ export function AgentCreateDialog(props: {
               {customProvider ? (
                 <label class="agent-create-field"><span>Creator model ID</span><input value={model} placeholder={`${providerId}:model-name`} disabled={busy} {...noAutofill} onInput={(event) => setModel((event.target as HTMLInputElement).value)} /></label>
               ) : (
-                <div class="agent-create-field"><span>Creator model</span><DashboardSelect value={model} options={(provider?.models ?? []).map((item) => ({ value: item, label: item.replace(`${providerId}:`, '') }))} disabled={busy} onChange={setModel} ariaLabel="Creator model" /></div>
+                <div class="agent-create-field"><span>Creator model</span><DashboardSelect value={model} options={(provider?.models ?? []).map((item) => ({ value: item, label: creationModelLabel(item, providerId) }))} disabled={busy} onChange={setModel} ariaLabel="Creator model" /></div>
               )}
             </div>
             <span class="agent-create-model-hint">Used only to create the agent. It will choose a suitable connected runtime model for the job.</span>
@@ -262,37 +325,22 @@ export function AgentCreateDialog(props: {
             <div class="agent-create-actions">
               <button type="button" class="agent-create-primary" disabled={!canSubmit} aria-busy={busy} onClick={() => void submit()}>{busy ? `Designing with ${modelLabel}…` : 'Create agent'}</button>
             </div>
-            <div class="agent-create-handoff">
-              <span class="agent-create-handoff-copy"><strong>Want more control?</strong><span>If you’re more hands-on, copy the setup prompt to your coding agent instead.</span></span>
-              <button type="button" class="agent-create-escape" disabled={busy || !projectId} onClick={() => props.onCodingAgent(draft)}>Copy prompt to coding agent</button>
-            </div>
+            {props.onCodingAgent && (
+              <div class="agent-create-handoff">
+                <span class="agent-create-handoff-copy"><strong>Want more control?</strong><span>If you’re more hands-on, copy the setup prompt to your coding agent instead.</span></span>
+                <button type="button" class="agent-create-escape" disabled={busy || !projectId} onClick={() => props.onCodingAgent?.(draft)}>Copy prompt to coding agent</button>
+              </div>
+            )}
           </div>
         )}
         {payload && phase !== 'form' && (
-          <div class={`agent-create-progress is-${phase}`}>
-            <div class="agent-create-progress-heading" role="status" aria-live="polite">
-              {phase === 'creating'
-                ? <span class="btn-spinner" aria-hidden="true" />
-                : <span class="agent-create-progress-mark" aria-hidden="true">{phase === 'success' ? '✓' : '!'}</span>}
-              <span>{phase === 'creating' ? `Working with ${modelLabel}` : phase === 'success' ? 'Agent saved' : 'Could not create the agent'}</span>
-            </div>
-            <label class="agent-create-log-label" for="agent-create-log">Creation log</label>
-            <textarea
-              id="agent-create-log"
-              ref={logRef}
-              class="agent-create-log"
-              value={logText}
-              readOnly
-              spellcheck={false}
-              aria-label="Agent creation log"
-            />
-            {phase === 'error' && error && <p class="agent-create-error" role="alert">{error}</p>}
-            {phase === 'creating' && <span class="agent-create-progress-hint">Keep this window open while the model finishes the draft.</span>}
-            <div class="agent-create-progress-actions">
-              {phase === 'error' && <button type="button" class="agent-create-escape" onClick={backToEdit}>Back to edit</button>}
-              {phase === 'success' && createdAgent && <button type="button" class="agent-create-primary" onClick={() => props.onCreated(createdAgent)}>{props.completeLabel ?? 'Review agent'}</button>}
-            </div>
-          </div>
+          <AgentCreationProgressPanel
+            phase={phase}
+            modelLabel={modelLabel}
+            logText={logText}
+            error={error}
+            onBack={backToEdit}
+          />
         )}
         {!payload && error && <p class="agent-create-error" role="alert">{error}</p>}
       </div>
@@ -333,7 +381,9 @@ export function NewAgentButton(props: { initialProjectId?: string }) {
         open={createOpen}
         {...(props.initialProjectId ? { initialProjectId: props.initialProjectId } : {})}
         {...(props.initialProjectId ? { lockProject: true } : {})}
-        onCreated={(agent) => { window.location.href = agentDetailHref(agent.projectId, agent.runPath); }}
+        onCreated={(agent) => {
+          window.location.href = agentDetailHref(agent.projectId, agent.runPath, { tab: 'source' });
+        }}
         onCodingAgent={(nextDraft) => { setDraft(nextDraft); setCreateOpen(false); setCodingOpen(true); }}
         onClose={() => setCreateOpen(false)}
       />

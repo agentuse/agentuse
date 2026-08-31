@@ -7,9 +7,19 @@ import {
   onboardingProviderReadiness,
 } from '../src/cli/serve/web/components/debug-prompt-button';
 import type { AgentRow } from '../src/cli/serve/web/lib/api';
-import { buildAgentCreationPrompt } from '../src/cli/serve/web/components/agent-create-dialog';
+import {
+  buildAgentCreationPrompt,
+  creationModelLabel,
+} from '../src/cli/serve/web/components/agent-create-dialog';
 
 describe('coding-agent handoff prompts', () => {
+  it('presents ChatGPT creator models as clear product tiers', () => {
+    expect(creationModelLabel('openai:gpt-5.6-luna', 'openai')).toBe('Fast · GPT-5.6 Luna');
+    expect(creationModelLabel('openai:gpt-5.6-terra', 'openai')).toBe('Balanced · GPT-5.6 Terra');
+    expect(creationModelLabel('openai:gpt-5.6-sol', 'openai')).toBe('Best · GPT-5.6 Sol');
+    expect(creationModelLabel('anthropic:claude-sonnet-5', 'anthropic')).toBe('claude-sonnet-5');
+  });
+
   it('requires the creator skill before reviewing or editing agent source', () => {
     const prompt = buildCodingAgentPrompt({
       project: 'demo',

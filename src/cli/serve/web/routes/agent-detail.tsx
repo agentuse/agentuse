@@ -1,5 +1,5 @@
 import type { ComponentChildren, VNode } from 'preact';
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import { useRoute } from 'preact-iso';
 import type { AgentDetailMeta, SessionRow } from '../lib/api';
 import { fetchAgentDetail, fetchSessions } from '../lib/api';
@@ -16,6 +16,7 @@ import { RunInstructionDialog } from '../components/run-instruction-dialog';
 import { LogContent } from '../components/content';
 import { formatApprovalTime, formatRelativeTime, displayStatusLabel, errorText } from '../lib/format';
 import { pageTitle } from '../lib/brand';
+import { agentDetailViewState, type AgentDetailTab } from '../lib/links';
 
 /**
  * Split an `.agentuse` file into its YAML frontmatter and Markdown body.
@@ -359,9 +360,7 @@ function SourcePanel(props: { source: string; runPath: string; project: string; 
   );
 }
 
-type AgentTab = 'jobs' | 'learnings' | 'source';
-
-const AGENT_TABS: { id: AgentTab; label: string }[] = [
+const AGENT_TABS: { id: AgentDetailTab; label: string }[] = [
   { id: 'jobs', label: 'Recent jobs' },
   { id: 'learnings', label: 'Learnings' },
   { id: 'source', label: 'Source' },
@@ -371,8 +370,12 @@ export default function AgentDetail() {
   const { params } = useRoute();
   const project = decodeURIComponent(params.project ?? '');
   const runPath = (params.agent ?? '').split('/').map(decodeURIComponent).join('/');
-  const [tab, setTab] = useState<AgentTab>('jobs');
+  const entryState = agentDetailViewState(typeof window === 'undefined' ? '' : window.location.search);
+  const [tab, setTab] = useState<AgentDetailTab>(entryState.tab);
+  const [spotlightRun, setSpotlightRun] = useState(entryState.spotlightRun);
   const [runOpen, setRunOpen] = useState(false);
+  const runButtonRef = useRef<HTMLButtonElement>(null);
+  const spotlightDismissRef = useRef<HTMLButtonElement>(null);
   // Reported up out of the Learnings tab. The tab is mounted from the start, so
   // this arrives on load without anyone opening it — which is the point: an
   // agent whose learnings stopped being read must say so on the page you land
@@ -387,6 +390,39 @@ export default function AgentDetail() {
   useTitle(pageTitle(data ? data.name : 'Agent'));
   const { run, busy, error: runError } = useRunAgent(runPath, project);
   const goBack = useSmartBack('/agents');
+
+  useEffect(() => {
+    if (data && data.source === undefined && tab === 'source') setTab('jobs');
+  }, [data, tab]);
+
+  const dismissSpotlight = () => {
+    setSpotlightRun(false);
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('onboarding');
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  };
+
+  useEffect(() => {
+    if (!spotlightRun) return;
+    runButtonRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') dismissSpotlight();
+      if (event.key !== 'Tab') return;
+      const first = runButtonRef.current;
+      const last = spotlightDismissRef.current;
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [spotlightRun, data]);
 
   return (
     <div class="page-agent-detail">
@@ -409,10 +445,28 @@ export default function AgentDetail() {
                 <div class="hero-path"><code>{data.path}</code></div>
               </div>
               <div class="hero-actions">
+                {spotlightRun && <div class="first-agent-spotlight-backdrop" aria-hidden="true" />}
                 <div class="run-cta-row">
-                  <button type="button" class={`run-cta${busy ? ' btn-busy' : ''}`} disabled={busy} aria-busy={busy} onClick={() => void run()}>
-                    {busy ? <><span class="btn-spinner" aria-hidden="true" />Starting…</> : '▶ Run agent'}
-                  </button>
+                  <div class={`run-spotlight-anchor${spotlightRun ? ' is-active' : ''}`}>
+                    <button
+                      ref={runButtonRef}
+                      type="button"
+                      class={`run-cta${busy ? ' btn-busy' : ''}`}
+                      disabled={busy}
+                      aria-busy={busy}
+                      {...(spotlightRun ? { 'aria-describedby': 'first-agent-spotlight-copy' } : {})}
+                      onClick={() => { dismissSpotlight(); void run(); }}
+                    >
+                      {busy ? <><span class="btn-spinner" aria-hidden="true" />Starting…</> : '▶ Run agent'}
+                    </button>
+                    {spotlightRun && (
+                      <div class="first-agent-spotlight-card" role="dialog" aria-modal="true" aria-label="Run your first agent">
+                        <strong>Your agent is ready</strong>
+                        <span id="first-agent-spotlight-copy">Run it once to make sure it works.</span>
+                        <button ref={spotlightDismissRef} type="button" onClick={dismissSpotlight}>Got it</button>
+                      </div>
+                    )}
+                  </div>
                   <button
                     type="button"
                     class="run-cta-alt"

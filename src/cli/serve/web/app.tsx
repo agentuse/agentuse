@@ -8,6 +8,7 @@ import { GlobalApprovalsProvider } from './hooks/use-global-approvals';
 import { reloadOnChunkError } from './lib/lazy-route';
 
 const Home = lazy(reloadOnChunkError(() => import('./routes/home')));
+const Onboarding = lazy(reloadOnChunkError(() => import('./routes/onboarding')));
 const Agents = lazy(reloadOnChunkError(() => import('./routes/agents')));
 const AgentDetail = lazy(reloadOnChunkError(() => import('./routes/agent-detail')));
 const Schedules = lazy(reloadOnChunkError(() => import('./routes/schedules')));
@@ -75,6 +76,7 @@ export function App() {
           }}
           >
           <Route path="/" component={Home} />
+          <Route path="/onboarding" component={Onboarding} />
           <Route path="/agents" component={Agents} />
           <Route path="/agents/:project" component={Agents} />
           <Route path="/agents/:project/:agent*" component={AgentDetail} />
