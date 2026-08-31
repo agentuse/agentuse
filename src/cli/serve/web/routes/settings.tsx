@@ -126,41 +126,43 @@ function ProjectsSettingsGroup() {
   };
 
   return (
-    <Group title="Projects">
-      <p class="settings-group-hint">Projects available to this AgentUse server. Removing one disconnects it without deleting its folder or files.</p>
-      <div class="project-settings-list" aria-live="polite">
-        {loading && <div class="project-settings-empty">Loading projects…</div>}
-        {!loading && info?.projects.length === 0 && <div class="project-settings-empty">No projects are connected yet.</div>}
-        {info?.projects.map((project) => {
-          const label = project.about?.name ?? project.id;
-          return (
-            <div class="project-settings-row" key={project.id}>
-              <div class="project-settings-copy">
-                <a href={`/agents/${encodeURIComponent(project.id)}`}>{label}</a>
-                <code title={project.scope ?? project.path}>{project.scope ?? project.path}</code>
-                <small>{project.agentCount} {project.agentCount === 1 ? 'agent' : 'agents'} · {project.scheduleCount} {project.scheduleCount === 1 ? 'schedule' : 'schedules'}{info.default === project.id ? ' · Default' : ''}</small>
+    <>
+      <Group title="Create or connect a project">
+        <div class="guided-creation-settings">
+          <p class="settings-group-hint">Start a new project or connect a folder you already work in, then discover useful recurring work and build an agent step by step.</p>
+          <button type="button" class="settings-item" onClick={() => location.assign('/onboarding')}>
+            Add a Project
+          </button>
+        </div>
+      </Group>
+      <Group title="Projects">
+        <p class="settings-group-hint">Projects available to this AgentUse server. Removing one disconnects it without deleting its folder or files.</p>
+        <div class="project-settings-list" aria-live="polite">
+          {loading && <div class="project-settings-empty">Loading projects…</div>}
+          {!loading && info?.projects.length === 0 && <div class="project-settings-empty">No projects are connected yet.</div>}
+          {info?.projects.map((project) => {
+            const label = project.about?.name ?? project.id;
+            return (
+              <div class="project-settings-row" key={project.id}>
+                <div class="project-settings-copy">
+                  <a href={`/agents/${encodeURIComponent(project.id)}`}>{label}</a>
+                  <code title={project.scope ?? project.path}>{project.scope ?? project.path}</code>
+                  <small>{project.agentCount} {project.agentCount === 1 ? 'agent' : 'agents'} · {project.scheduleCount} {project.scheduleCount === 1 ? 'schedule' : 'schedules'}{info.default === project.id ? ' · Default' : ''}</small>
+                </div>
+                <button
+                  type="button"
+                  class="project-settings-remove"
+                  disabled={removing !== null}
+                  aria-busy={removing === project.id}
+                  onClick={() => void remove(project.id, label)}
+                >{removing === project.id ? 'Removing…' : 'Remove'}</button>
               </div>
-              <button
-                type="button"
-                class="project-settings-remove"
-                disabled={removing !== null}
-                aria-busy={removing === project.id}
-                onClick={() => void remove(project.id, label)}
-              >{removing === project.id ? 'Removing…' : 'Remove'}</button>
-            </div>
-          );
-        })}
-      </div>
-      <Row
-        label="Guided agent creation"
-        hint="Create a new project or choose one you already work on, then discover useful recurring work and build an agent step by step."
-      >
-        <button type="button" class="settings-item" onClick={() => location.assign('/onboarding')}>
-          Start guided creation
-        </button>
-      </Row>
-      {error && <div class="project-settings-error" role="alert">{error}</div>}
-    </Group>
+            );
+          })}
+        </div>
+        {error && <div class="project-settings-error" role="alert">{error}</div>}
+      </Group>
+    </>
   );
 }
 

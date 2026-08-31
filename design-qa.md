@@ -193,6 +193,56 @@ dimmed.
   completion behavior, without changing the spotlight interaction.
 
 final result: passed
+
+---
+
+# Design QA — Guided creation Settings card
+
+- Source visual truth: `/Users/llch/Library/Application Support/CleanShot/media/media_UJl0INmRXT/CleanShot 2026-08-31 at 14.02.42.png`
+- Implementation screenshot: `/private/tmp/agentuse-settings-guided-card-844x620.png`
+- Normalized implementation: `/private/tmp/agentuse-settings-guided-card-normalized.png`
+- Combined comparison: `/private/tmp/agentuse-settings-guided-card-comparison.png`
+- CSS viewport: 844 × 620
+- Source pixels: 844 × 620
+- Implementation pixels: 1041 × 764 at the browser's native density, normalized to 844 × 620
+- State: light theme, Settings → Projects, two connected projects
+
+## Comparison evidence
+
+The combined before-and-after view confirms that Guided agent creation moved
+from the project-list footer into a distinct card above the administrative
+project inventory. The Settings width, tabs, typography, panel treatment,
+project rows, and action copy remain consistent with the source. The browser
+capture includes the shipping top navigation that was outside the source crop.
+
+The guided card and project-list boundary remain clearly readable at full-view
+scale, so a smaller focused crop was not required.
+
+## Required fidelity surfaces
+
+- Fonts and typography: existing Geist and Geist Mono hierarchy is unchanged.
+- Spacing and layout rhythm: the cards use the established 14px group gap and
+  identical panel padding, border, and radius.
+- Colors and visual tokens: existing panel, line, muted, foreground, and button
+  tokens are reused.
+- Image quality and assets: this settings screen contains no image assets.
+- Copy and content: the action is framed as “Create or connect a project” with
+  an “Add a Project” CTA; the Projects card contains only project-management
+  information and controls.
+
+## Interaction checks
+
+- Projects remains the selected settings tab.
+- Add a Project is an accessible button targeting `/onboarding`.
+- Project links and Remove controls remain present in their own card.
+- Browser console errors checked: none.
+
+## Findings and comparison history
+
+1. Pass 1 found no actionable P0, P1, or P2 visual or interaction issues.
+2. No post-comparison fixes were required.
+
+final result: passed
 ---
 
 # Design QA — Project-aware first agent onboarding

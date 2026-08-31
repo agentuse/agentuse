@@ -401,6 +401,9 @@ a, button, select, summary, label, input, textarea,
 }
 .settings-item:hover { border-color: var(--line-strong); background: var(--panel-hover); }
 .settings-item:disabled { opacity: 0.6; cursor: default; }
+.guided-creation-settings { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.guided-creation-settings .settings-group-hint { max-width: 62ch; margin-bottom: 0; }
+.guided-creation-settings .settings-item { flex: none; }
 .project-settings-list { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .project-settings-row { display: flex; align-items: center; gap: 16px; padding: 12px 0; }
 .project-settings-row + .project-settings-row { border-top: 1px solid var(--line); }
@@ -414,6 +417,9 @@ a, button, select, summary, label, input, textarea,
 .project-settings-remove:hover:not(:disabled) { background: color-mix(in srgb, var(--red) 10%, transparent); color: var(--red); }
 .project-settings-remove:disabled { cursor: default; opacity: 0.6; }
 .project-settings-error { margin-top: 10px; color: var(--red); font-size: var(--font-size-caption); line-height: 1.45; }
+@media (max-width: 560px) {
+  .guided-creation-settings { align-items: flex-start; flex-direction: column; gap: 10px; }
+}
 /* Home-section visibility checkboxes (per-viewer, persisted in localStorage). */
 .settings-checks { display: flex; flex-direction: column; gap: 2px; }
 .settings-check {
