@@ -6,7 +6,12 @@ import { createModel } from '../models';
 import { getModelFromRegistry } from '../generated/models';
 import { resolveModelProvider, toRegistryKey } from '../utils/model-utils';
 import { BUILTIN_PROVIDERS } from '../providers/registry-sources';
-import { getOpenCodeGoProtocol, OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go';
+import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go';
+import {
+  resolveModelRouteCompatibility,
+  resolveReasoningCompatibility,
+  type ReasoningLevel,
+} from '../model-compatibility';
 import { CodexAuth } from '../auth/codex';
 import { logger } from '../utils/logger';
 import { ContextManager } from '../context-manager';
@@ -193,11 +198,14 @@ export function resolveAnthropicThinking(
  * exported for testing.
  */
 export function resolveReasoning(agent: ParsedAgent): {
-  reasoning?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  reasoning?: Exclude<ReasoningLevel, 'max'>;
+  providerOptions?: Record<string, Record<string, unknown>>;
   anthropicThinkingBudget?: number;
 } {
-  const reasoning = agent.config.reasoning;
-  if (reasoning) return { reasoning };
+  const requestedReasoning = agent.config.reasoning;
+  if (requestedReasoning) {
+    return resolveReasoningCompatibility(agent.config.model, requestedReasoning);
+  }
   const provider = resolveModelProvider(agent.config.model);
   const anthropicThinkingBudget =
     provider === 'anthropic' ? resolveAnthropicThinking(agent)?.budgetTokens : undefined;
@@ -212,6 +220,19 @@ function withAnthropicCacheControl(providerOptions: any): any {
       cacheControl: ANTHROPIC_CACHE_CONTROL,
     },
   };
+}
+
+function mergeProviderOptions(
+  base: Record<string, Record<string, unknown>> | undefined,
+  extra: Record<string, Record<string, unknown>> | undefined
+): Record<string, Record<string, unknown>> | undefined {
+  if (!base) return extra;
+  if (!extra) return base;
+  const merged = { ...base };
+  for (const [provider, options] of Object.entries(extra)) {
+    merged[provider] = { ...(base[provider] ?? {}), ...options };
+  }
+  return merged;
 }
 
 function hasAnthropicCacheControl(providerOptions: any): boolean {
@@ -990,12 +1011,16 @@ async function* executeAgentAttempt(
     // Reasoning config. The top-level `reasoning` (provider-agnostic) becomes the
     // SDK's `reasoning` param; the legacy `anthropic.thinking.budgetTokens` is
     // used only when `reasoning` is unset (see resolveReasoning).
-    const { reasoning, anthropicThinkingBudget } = resolveReasoning(agent);
-    if (reasoning) {
+    const {
+      reasoning,
+      providerOptions: reasoningProviderOptions,
+      anthropicThinkingBudget,
+    } = resolveReasoning(agent);
+    if (agent.config.reasoning) {
       logger.debug(
-        reasoning === 'none'
+        agent.config.reasoning === 'none'
           ? 'Reasoning disabled (reasoning: none).'
-          : `Reasoning enabled. Effort at: ${reasoning}`
+          : `Reasoning enabled. Requested effort: ${agent.config.reasoning}; resolved effort: ${reasoning ?? 'native'}`
       );
     } else if (anthropicThinkingBudget) {
       logger.debug(`Reasoning enabled via anthropic.thinking budget: ${anthropicThinkingBudget} tokens.`);
@@ -1029,7 +1054,7 @@ async function* executeAgentAttempt(
       }
     } else if (
       provider === OPENCODE_GO_PROVIDER_ID &&
-      getOpenCodeGoProtocol(agent.config.model.slice(`${OPENCODE_GO_PROVIDER_ID}:`.length).split(':')[0]) === 'openai-responses'
+      !resolveModelRouteCompatibility(agent.config.model).supportsStore
     ) {
       // OpenCode Go's Responses models can run without server-side retention.
       // Send complete multi-step history so tool-result turns do not depend on
@@ -1042,6 +1067,7 @@ async function* executeAgentAttempt(
       // top-level options carry only the thinking directive.
       providerOptions = { anthropic: { thinking: { type: 'enabled', budgetTokens: anthropicThinkingBudget } } };
     }
+    providerOptions = mergeProviderOptions(providerOptions, reasoningProviderOptions);
 
     // Cap each segment to the remaining step budget so compaction restarts do
     // not multiply the effective step limit (each streamText call counts steps

@@ -378,7 +378,7 @@ Write a draft.`;
     });
 
     it('accepts all OpenAI reasoning effort levels', () => {
-      const levels = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+      const levels = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 
       for (const level of levels) {
         const content = `---

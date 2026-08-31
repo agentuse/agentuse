@@ -286,6 +286,49 @@ describe('executeAgentCore Anthropic cache control', () => {
     expect(streamConfig.providerOptions).toEqual({ openai: { store: false } });
   });
 
+  it('merges OpenCode Go stateless routing with native max effort', async () => {
+    for await (const _ of executeAgentCore(
+      {
+        name: 'opencode-go-max',
+        config: { model: 'opencode-go:gpt-5.6-luna', reasoning: 'max' },
+      } as any,
+      {},
+      {
+        userMessage: 'Inspect the project',
+        systemMessages: [{ role: 'system', content: 'primary instructions' }],
+        maxSteps: 3,
+      }
+    )) {
+      // Consume the stream.
+    }
+
+    const streamConfig = streamTextMock.mock.calls[0][0] as any;
+    expect(streamConfig.reasoning).toBeUndefined();
+    expect(streamConfig.providerOptions).toEqual({
+      openai: { store: false, reasoningEffort: 'max' },
+    });
+  });
+
+  it('sends normalized GPT-5.6 minimal through the common SDK option', async () => {
+    for await (const _ of executeAgentCore(
+      {
+        name: 'openai-minimal',
+        config: { model: 'openai:gpt-5.6', reasoning: 'minimal' },
+      } as any,
+      {},
+      {
+        userMessage: 'Inspect the project',
+        systemMessages: [{ role: 'system', content: 'primary instructions' }],
+        maxSteps: 3,
+      }
+    )) {
+      // Consume the stream.
+    }
+
+    const streamConfig = streamTextMock.mock.calls[0][0] as any;
+    expect(streamConfig.reasoning).toBe('low');
+  });
+
   it('preserves explicit OpenAI prompt cache options', async () => {
     for await (const _ of executeAgentCore(
       {

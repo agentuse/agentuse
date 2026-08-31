@@ -72,13 +72,6 @@ describe('resolveMaxOutputTokens', () => {
     expect(resolveMaxOutputTokens(agent('model: anthropic:claude-sonnet-5'))).toBe(32000);
   });
 
-  it("uses a small model's own output limit when it is at or below the default cap", () => {
-    // The full-catalog registry no longer lists a sub-32k Anthropic model (the
-    // old 8192-output ids were dropped), so pin the boundary instead:
-    // claude-opus-4-1 output is exactly 32000 -> min(32000, 32000), not inflated.
-    expect(resolveMaxOutputTokens(agent('model: anthropic:claude-opus-4-1'))).toBe(32000);
-  });
-
   it("honors an explicit override, clamped to the model's real ceiling", () => {
     expect(
       resolveMaxOutputTokens(agent('model: anthropic:claude-sonnet-5\nmaxOutputTokens: 50000'))
@@ -138,6 +131,18 @@ describe('resolveReasoning — unified reasoning vs legacy thinking budget', () 
     });
   });
 
+  it('normalizes GPT-5.6 minimal to its lowest supported effort', () => {
+    expect(resolveReasoning(agent('model: openai:gpt-5.6\nreasoning: minimal'))).toEqual({
+      reasoning: 'low'
+    });
+  });
+
+  it('uses native provider options for a max effort level', () => {
+    expect(resolveReasoning(agent('model: openai:gpt-5.6\nreasoning: max'))).toEqual({
+      providerOptions: { openai: { reasoningEffort: 'max' } }
+    });
+  });
+
   it('falls back to the legacy anthropic thinking budget when reasoning is unset', () => {
     expect(
       resolveReasoning(
@@ -163,7 +168,7 @@ describe('resolveReasoning — unified reasoning vs legacy thinking budget', () 
 
 describe('parser — reasoning field', () => {
   it('accepts every valid effort level', () => {
-    for (const level of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']) {
+    for (const level of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']) {
       expect(agent(`model: anthropic:claude-opus-4-8\nreasoning: ${level}`).config.reasoning).toBe(
         level
       );

@@ -334,15 +334,16 @@ Additional instructions or context.
   </Note>
 </ParamField>
 
-<ParamField path="reasoning" type='"none" | "minimal" | "low" | "medium" | "high" | "xhigh"' required={false}>
-  Provider-agnostic reasoning effort, the recommended knob. AgentUse passes it to
-  the AI SDK as the top-level `reasoning` level, which each provider maps to its
-  own control: Anthropic to a thinking budget (a percentage of `maxOutputTokens`),
-  OpenAI to `reasoningEffort`. One setting that works across Claude and OpenAI.
+<ParamField path="reasoning" type='"none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"' required={false}>
+  Provider-agnostic reasoning effort, the recommended knob. AgentUse normalizes
+  the requested level to the selected model's supported vocabulary, then uses
+  the AI SDK or a native provider option to apply it. For example, GPT-5.6 maps
+  `minimal` to `low`, while modern Claude uses adaptive thinking. One setting
+  works across Claude and OpenAI without forwarding incompatible values.
 
   ```yaml
   model: anthropic:claude-opus-5
-  reasoning: high   # none | minimal | low | medium | high | xhigh
+  reasoning: high   # none | minimal | low | medium | high | xhigh | max
   ```
 
   Use `medium`/`high` for genuine judgment (hard calls under competing
@@ -353,7 +354,7 @@ Additional instructions or context.
   <Note>
     Prefer this over the provider-specific `openai.reasoningEffort` /
     `anthropic.thinking.budgetTokens` below, which are escape hatches for exact
-    control and are honored only when the top-level `reasoning` is unset.
+    wire-level control and are honored only when the top-level `reasoning` is unset.
     Being top-level, it also avoids the "wrong-level key silently dropped" trap a
     misplaced `thinking:` hits.
   </Note>
@@ -364,7 +365,7 @@ Additional instructions or context.
   here is the exact-control alternative to the top-level `reasoning` above.
 
   **Supported Options:**
-  - `reasoningEffort`: Controls thinking effort for reasoning models (`'none'`, `'minimal'`, `'low'`, `'medium'`, `'high'`, `'xhigh'`)
+  - `reasoningEffort`: Controls thinking effort for reasoning models (`'none'`, `'minimal'`, `'low'`, `'medium'`, `'high'`, `'xhigh'`, `'max'`)
   - `reasoningSummary`: Requests a streamed natural-language summary of the model's reasoning (`'auto'` or `'detailed'`), so the reasoning shows up inline in the [session trace](/reference/session-storage). **Defaults to `'auto'` on reasoning-capable models** (the reasoning tokens are billed either way, so the summary is near-free visibility). Non-reasoning models (e.g. `gpt-4o`) omit it.
   - `textVerbosity`: Controls response length and detail (`'low'`, `'medium'`, `'high'`)
   - `promptCacheKey`: Optional OpenAI prompt-cache routing key. AgentUse sets a stable default per agent when omitted.
@@ -899,7 +900,7 @@ Assist the user with their request using all available capabilities.
 7. **Tool Restrictions**: `disallowedTools` must be an array of strings (supports wildcards)
 8. **OpenAI Options**:
    - `openai` field is only valid for OpenAI models
-   - `reasoningEffort` must be one of: `'none'`, `'minimal'`, `'low'`, `'medium'`, `'high'`, `'xhigh'`
+   - `reasoningEffort` must be one of: `'none'`, `'minimal'`, `'low'`, `'medium'`, `'high'`, `'xhigh'`, `'max'`
    - `textVerbosity` must be one of: `'low'`, `'medium'`, `'high'`
    - `promptCacheKey` must be a non-empty string of 64 characters or fewer
    - `promptCacheRetention` must be one of: `'in_memory'`, `'24h'`

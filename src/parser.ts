@@ -1,5 +1,6 @@
 import matter from 'gray-matter';
 import { z } from 'zod';
+import { REASONING_LEVELS } from './model-compatibility';
 import { readFile } from 'fs/promises';
 import { resolve, basename } from 'path';
 import { logger } from './utils/logger';
@@ -194,9 +195,9 @@ const AgentSchema = z.object({
   // provider-specific `anthropic.thinking` / `openai.reasoningEffort` below.
   // It engages (and bills) reasoning tokens at output rates. `none` explicitly
   // disables reasoning; omit the key to use the model default.
-  reasoning: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
+  reasoning: z.enum(REASONING_LEVELS).optional(),
   openai: z.object({
-    reasoningEffort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
+    reasoningEffort: z.enum(REASONING_LEVELS).optional(),
     // Request a streamed natural-language summary of the model's reasoning
     // (Responses API). Without it, reasoning is encrypted and never surfaces as
     // text — so this is what makes reasoning visible in the session trace.

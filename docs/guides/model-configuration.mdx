@@ -449,14 +449,15 @@ Configure provider-specific settings for fine-tuned model behavior:
 ### Reasoning Effort (recommended, provider-agnostic)
 
 The simplest way to control how hard a model thinks is the top-level
-`reasoning`. It works across providers, AgentUse maps one level to each
-one's native control (Anthropic thinking budget, OpenAI reasoning effort), so you
-set a single value and it works whether the agent runs on Claude or GPT-5:
+`reasoning`. AgentUse normalizes the level to the selected model's supported
+vocabulary, then applies the corresponding provider control. For example,
+GPT-5.6 maps `minimal` to `low`, while modern Claude uses adaptive thinking, so
+one setting works whether the agent runs on Claude or GPT-5:
 
 ```yaml
 ---
 model: anthropic:claude-opus-5
-reasoning: high   # none | minimal | low | medium | high | xhigh
+reasoning: high   # none | minimal | low | medium | high | xhigh | max
 ---
 ```
 
@@ -466,7 +467,7 @@ debugging), `low`/`minimal` for lighter work, omit for the model default, and
 **output rates**.
 
 Reach for `reasoning` first. The provider-specific `openai.reasoningEffort`
-and `anthropic.thinking.budgetTokens` below are escape hatches for exact control,
+and `anthropic.thinking.budgetTokens` below are escape hatches for exact wire-level control,
 honored only when the top-level `reasoning` is unset. Being top-level,
 `reasoning` also avoids a subtle trap: a provider-specific key placed at
 the wrong nesting level is silently dropped (the agent parses and runs with the
@@ -480,7 +481,7 @@ For OpenAI models (especially GPT-5), you can control thinking effort and verbos
 ---
 model: openai:gpt-5.6
 openai:
-  reasoningEffort: high      # Options: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh'
+  reasoningEffort: high      # Options: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'
   reasoningSummary: auto     # Options: 'auto', 'detailed' — surface reasoning in the session trace
   textVerbosity: low         # Options: 'low', 'medium', 'high'
   promptCacheRetention: 24h  # Optional: extended prompt caching on supported models
