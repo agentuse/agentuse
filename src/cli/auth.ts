@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { AnthropicAuth, AuthStorage, CodexAuth } from "../auth/index.js";
 import readline from "readline";
 import { logger } from "../utils/logger";
@@ -124,17 +124,28 @@ export function createProviderCommand(): Command {
       process.stdout.write("• AWS Bedrock: https://console.aws.amazon.com/iam (create access key with AmazonBedrockFullAccess)\n");
     });
 
-  authCmd
+  const addProviderCommand = authCmd
     .command("add <name>")
     .description("Add a custom provider endpoint (OpenAI-compatible)")
     .requiredOption("--url <url>", "Base URL of the OpenAI-compatible endpoint")
     .option("--key <key>", "Optional API key for the endpoint")
-    .option("--no-developer-role", "Endpoint does not accept developer-role messages")
-    .option("--no-reasoning-effort", "Endpoint does not accept reasoning_effort")
-    .option("--no-stream-usage", "Endpoint does not return usage in streaming responses")
-    .option("--no-store", "Endpoint does not accept the store request field")
-    .option("--max-tokens-field <field>", "Token limit field: max_tokens or max_completion_tokens")
-    .action(async (name: string, options: {
+    .addOption(new Option("--no-developer-role").hideHelp())
+    .addOption(new Option("--no-reasoning-effort").hideHelp())
+    .addOption(new Option("--no-stream-usage").hideHelp())
+    .addOption(new Option("--no-store").hideHelp())
+    .addOption(new Option("--max-tokens-field <field>").hideHelp())
+    .addHelpText("after", `
+Advanced compatibility overrides (custom endpoints only):
+  --no-developer-role           Endpoint rejects developer-role messages
+  --no-reasoning-effort         Endpoint rejects reasoning_effort
+  --no-stream-usage             Endpoint omits usage from streaming responses
+  --no-store                    Endpoint rejects the store field
+  --max-tokens-field <field>    max_tokens or max_completion_tokens
+
+Use these only when an endpoint reports a protocol compatibility error.
+`);
+
+  addProviderCommand.action(async (name: string, options: {
       url: string;
       key?: string;
       developerRole: boolean;

@@ -19,6 +19,22 @@ describe('createProviderCommand', () => {
     stdoutSpy?.mockRestore();
   });
 
+  it('keeps custom compatibility flags in an advanced add-command help section', () => {
+    const command = createProviderCommand();
+    const addCommand = command.commands.find(candidate => candidate.name() === 'add');
+    expect(addCommand).toBeDefined();
+
+    const output: string[] = [];
+    addCommand!.configureOutput({ writeOut: text => output.push(text) });
+    addCommand!.outputHelp();
+    const help = output.join('');
+
+    expect(help).toContain('Usage: provider add [options] <name>');
+    expect(help).toContain('Advanced compatibility overrides (custom endpoints only):');
+    expect(help).toContain('--no-reasoning-effort');
+    expect(help).toContain('Use these only when an endpoint reports a protocol compatibility error.');
+  });
+
   it('rejects bedrock as a reserved custom provider name', async () => {
     const command = createProviderCommand();
     errorSpy = spyOn(logger, 'error').mockImplementation(() => {});
