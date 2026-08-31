@@ -30,7 +30,7 @@ function Slot(props: { schedule: SerializedSchedule; multiProject: boolean }) {
       : <span class={schedule.lastResult && !schedule.lastResult.success ? 'failed' : 'ok'}>{lastRunText}</span>)
     : null;
   return (
-    <div class={`slot${schedule.nextRun ? '' : ' disabled'}`}>
+    <div class={`slot${schedule.nextRun ? '' : ' paused'}`}>
       <div class="slot-time">{time}</div>
       <div class="slot-main">
         {multiProject && <div class="slot-proj">{schedule.projectId}</div>}
@@ -55,9 +55,9 @@ export default function Schedules() {
   const multiProject = new Set(schedules.map((s) => s.projectId)).size > 1;
 
   const days = new Map<string, SerializedSchedule[]>();
-  const disabled: SerializedSchedule[] = [];
+  const paused: SerializedSchedule[] = [];
   for (const schedule of schedules) {
-    if (!schedule.nextRun) { disabled.push(schedule); continue; }
+    if (!schedule.nextRun) { paused.push(schedule); continue; }
     const label = dayLabel(Date.parse(schedule.nextRun));
     const list = days.get(label);
     if (list) list.push(schedule);
@@ -75,7 +75,7 @@ export default function Schedules() {
   // is not silently misread as the server's or the reader's other timezone.
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-  const hasContent = days.size > 0 || disabled.length > 0;
+  const hasContent = days.size > 0 || paused.length > 0;
 
   return (
     <div class="page-schedules">
@@ -90,7 +90,7 @@ export default function Schedules() {
         {hasContent
           ? <>
             {[...days.entries()].map(([label, list]) => renderDay(label, list))}
-            {disabled.length > 0 && renderDay('Disabled', disabled, 'day-disabled')}
+            {paused.length > 0 && renderDay('Paused', paused, 'day-paused')}
           </>
           : <div class="panel">{loading && !data
             ? <Loading label="Loading schedules…" />

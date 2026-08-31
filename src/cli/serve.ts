@@ -19,6 +19,7 @@ import { getSessionStorageDir, initStorage } from "../storage/index.js";
 import { findGateSnapshotFile } from "../session/gate-artifacts.js";
 import { getXdgDataDir } from "../storage/paths.js";
 import { Scheduler, type Schedule, type SerializedSchedule } from "../scheduler";
+import { loadPausedSchedules, normalizeScheduleAgentPath, setSchedulePaused } from '../scheduler/state.js';
 import { FileWatcher } from "../watcher";
 import {
   telemetry,
@@ -3343,6 +3344,22 @@ export function createServeCommand(): Command {
         onExecute: executeScheduledAgent,
       });
 
+      const pausedSchedulesByProject = new Map<string, Set<string>>();
+      for (const seed of projectSeeds) {
+        try {
+          pausedSchedulesByProject.set(seed.id, await loadPausedSchedules(seed.root));
+        } catch (error) {
+          logger.warn(`Could not load schedule state for ${seed.id}: ${(error as Error).message}`);
+          pausedSchedulesByProject.set(seed.id, new Set());
+        }
+      }
+      const scheduleIsEnabled = (
+        project: Project | Omit<Project, 'agentFiles'>,
+        agentPath: string,
+      ): boolean => !pausedSchedulesByProject
+        .get(project.id)
+        ?.has(normalizeScheduleAgentPath(toProjectRelativeAgentPath(project, agentPath)));
+
       // Per-project scheduler lock (see utils/scheduler-lock.ts): the daemon
       // registry above only sees daemons sharing this XDG data dir, so a
       // daemon launched with a different one (isolated test daemons) would
@@ -3387,7 +3404,7 @@ export function createServeCommand(): Command {
             const agentPath = resolveScopedAgentPath(seed, agentFile);
             const agent = await parseAgent(agentPath);
             if (agent.config.schedule && canArmSchedules(seed.id, seed.root)) {
-              scheduler.add(seed.id, agentFile, agent.config.schedule, agent.config.name);
+              scheduler.add(seed.id, agentFile, agent.config.schedule, agent.config.name, scheduleIsEnabled(seed, agentFile));
               logger.debug(`Loaded schedule for ${seed.id}: ${agentFile}`);
             }
           } catch (err) {
@@ -3473,7 +3490,7 @@ export function createServeCommand(): Command {
               const agentPath = resolveScopedAgentPath(project, relativePath);
               const agent = await parseAgent(agentPath);
               const schedule = agent.config.schedule && canArmSchedules(project.id, project.root)
-                ? scheduler.add(project.id, relativePath, agent.config.schedule, agent.config.name)
+                ? scheduler.add(project.id, relativePath, agent.config.schedule, agent.config.name, scheduleIsEnabled(project, relativePath))
                 : undefined;
               printHotReload(project.id, "added", relativePath, schedule);
             } catch (err) {
@@ -3502,7 +3519,8 @@ export function createServeCommand(): Command {
                 project.id,
                 relativePath,
                 agent.config.schedule && canArmSchedules(project.id, project.root) ? agent.config.schedule : undefined,
-                agent.config.name
+                agent.config.name,
+                scheduleIsEnabled(project, relativePath)
               );
               printHotReload(project.id, "changed", relativePath, schedule);
 
@@ -3592,6 +3610,12 @@ export function createServeCommand(): Command {
           projectSeeds.push(seed);
           projects.push(project);
           projectsById.set(seed.id, project);
+          try {
+            pausedSchedulesByProject.set(seed.id, await loadPausedSchedules(seed.root));
+          } catch (error) {
+            logger.warn(`Could not load schedule state for ${seed.id}: ${(error as Error).message}`);
+            pausedSchedulesByProject.set(seed.id, new Set());
+          }
           agentCounts.set(seed.id, agentFiles.length);
           pathSeen.set(seed.root, seed.id);
           idSeen.set(seed.id, seed.root);
@@ -3602,7 +3626,7 @@ export function createServeCommand(): Command {
               const agentPath = resolveScopedAgentPath(seed, agentFile);
               const agent = await parseAgent(agentPath);
               if (agent.config.schedule && canArmSchedules(seed.id, seed.root)) {
-                scheduler.add(seed.id, agentFile, agent.config.schedule, agent.config.name);
+                scheduler.add(seed.id, agentFile, agent.config.schedule, agent.config.name, scheduleIsEnabled(seed, agentFile));
               }
             } catch (err) {
               logger.warn(`Failed to load agent ${seed.id}/${agentFile}: ${(err as Error).message}`);
@@ -5249,7 +5273,12 @@ export function createServeCommand(): Command {
           }
           try {
             const detail = await collectAgentDetail(project, requestedPath);
-            sendJSON(res, 200, { success: true, ...(effectiveHideAgentSource ? redactAgentDetailSource(detail) : detail) });
+            const visible = effectiveHideAgentSource ? redactAgentDetailSource(detail) : detail;
+            sendJSON(res, 200, {
+              success: true,
+              ...visible,
+              ...(detail.schedule && { scheduleEnabled: scheduleIsEnabled(project, requestedPath) }),
+            });
           } catch (err) {
             sendError(res, 500, "AGENT_READ_FAILED", (err as Error).message);
           }
@@ -5262,6 +5291,36 @@ export function createServeCommand(): Command {
             sendJSON(res, 200, { success: true, schedules });
             return;
           }
+        }
+
+        if (isApi && req.method === 'POST' && routePath === '/schedules/state') {
+          try {
+            const body = await parseJSONBody(req);
+            if (typeof body.project !== 'string' || typeof body.path !== 'string' || typeof body.paused !== 'boolean') {
+              sendError(res, 400, 'INVALID_SCHEDULE_STATE', 'Project, agent path, and paused state are required');
+              return;
+            }
+            const project = projectsById.get(body.project);
+            if (!project || !project.agentFiles.includes(body.path)) {
+              sendError(res, 404, 'AGENT_NOT_FOUND', 'Scheduled agent not found');
+              return;
+            }
+            const parsed = await parseAgent(resolveScopedAgentPath(project, body.path));
+            if (!parsed.config.schedule) {
+              sendError(res, 409, 'SCHEDULE_NOT_FOUND', 'This agent does not declare a schedule');
+              return;
+            }
+            const statePath = toProjectRelativeAgentPath(project, body.path);
+            const paused = await setSchedulePaused(project.root, statePath, body.paused);
+            pausedSchedulesByProject.set(project.id, paused);
+            scheduler.setEnabled(project.id, body.path, !body.paused);
+            wakeListHubs();
+            sendJSON(res, 200, { success: true, paused: body.paused, scheduleEnabled: !body.paused });
+          } catch (error) {
+            if (sendRequestParseError(res, error)) return;
+            sendError(res, 500, 'SCHEDULE_STATE_FAILED', (error as Error).message);
+          }
+          return;
         }
 
         if (req.method === "GET" && routePath === '/stores') {
@@ -7485,6 +7544,7 @@ export function createServeCommand(): Command {
             const projectIndex = projects.indexOf(project);
             if (projectIndex >= 0) projects.splice(projectIndex, 1);
             projectsById.delete(project.id);
+            pausedSchedulesByProject.delete(project.id);
             agentCounts.delete(project.id);
             pathSeen.delete(project.root);
             idSeen.delete(project.id);
@@ -7725,6 +7785,13 @@ export function createServeCommand(): Command {
                   model: authored.model,
                   source: authored.source,
                 }, configuredProviders);
+                // Onboarding proposes a real cadence but requires one reviewed
+                // manual run before autonomous execution. This local override
+                // never changes the authored schedule declaration.
+                const statePath = toProjectRelativeAgentPath(project, created.runPath);
+                const paused = await setSchedulePaused(project.root, statePath, true);
+                pausedSchedulesByProject.set(project.id, paused);
+                scheduler.setEnabled(project.id, created.runPath, false);
                 if (!project.agentFiles.includes(created.runPath)) {
                   project.agentFiles.push(created.runPath);
                   project.agentFiles.sort();

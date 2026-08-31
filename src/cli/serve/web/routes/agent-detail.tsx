@@ -2,7 +2,7 @@ import type { ComponentChildren, VNode } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useRoute } from 'preact-iso';
 import type { AgentDetailMeta, SessionRow } from '../lib/api';
-import { fetchAgentDetail, fetchSessions } from '../lib/api';
+import { fetchAgentDetail, fetchSessions, setAgentSchedulePaused } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { useRunAgent } from '../hooks/use-run-agent';
@@ -102,7 +102,7 @@ function joinNames(items: string[]): string {
  * closing "Nothing else." is true; the raw chip grid stays one expand away.
  * Translate, don't hide.
  */
-function capabilitySentences(meta: AgentDetailMeta, scheduleHuman: string | undefined): string[] {
+function capabilitySentences(meta: AgentDetailMeta, scheduleHuman: string | undefined, scheduleEnabled: boolean | undefined): string[] {
   const sentences: string[] = [];
   if (meta.filesystem && meta.filesystem.length > 0) {
     sentences.push(`Can ${joinNames(meta.filesystem)} files in its allowed folders.`);
@@ -119,14 +119,15 @@ function capabilitySentences(meta: AgentDetailMeta, scheduleHuman: string | unde
   if (meta.approval) sentences.push('Risky actions wait for human approval.');
   else if (meta.awaitHuman) sentences.push('Can pause to ask a human.');
   if (scheduleHuman) {
-    sentences.push(`Runs on a schedule: ${scheduleHuman.charAt(0).toLowerCase()}${scheduleHuman.slice(1)}.`);
+    const cadence = `${scheduleHuman.charAt(0).toLowerCase()}${scheduleHuman.slice(1)}`;
+    sentences.push(scheduleEnabled === false ? `Its schedule is paused: ${cadence}.` : `Runs on a schedule: ${cadence}.`);
   }
   if (sentences.length === 0) return ['No tools beyond the model.'];
   sentences.push('Nothing else.');
   return sentences;
 }
 
-function Capabilities(props: { meta: AgentDetailMeta; model: string; schedule: string | undefined; scheduleHuman: string | undefined; metadata: Record<string, unknown> | undefined }) {
+function Capabilities(props: { meta: AgentDetailMeta; model: string; schedule: string | undefined; scheduleHuman: string | undefined; scheduleEnabled: boolean | undefined; metadata: Record<string, unknown> | undefined }) {
   const { meta } = props;
   const skillChips: VNode[] = [];
   if (meta.skills.explicit.length > 0) {
@@ -168,7 +169,7 @@ function Capabilities(props: { meta: AgentDetailMeta; model: string; schedule: s
 
   return (
     <div class="cap-panel">
-      <p class="cap-summary">{capabilitySentences(meta, props.scheduleHuman ?? props.schedule).join(' ')}</p>
+      <p class="cap-summary">{capabilitySentences(meta, props.scheduleHuman ?? props.schedule, props.scheduleEnabled).join(' ')}</p>
       <details class="cap-raw">
         <summary>Full capability list</summary>
         <div class="cap-grid">
@@ -374,6 +375,8 @@ export default function AgentDetail() {
   const [tab, setTab] = useState<AgentDetailTab>(entryState.tab);
   const [spotlightRun, setSpotlightRun] = useState(entryState.spotlightRun);
   const [runOpen, setRunOpen] = useState(false);
+  const [scheduleBusy, setScheduleBusy] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
   const runButtonRef = useRef<HTMLButtonElement>(null);
   const spotlightDismissRef = useRef<HTMLButtonElement>(null);
   // Reported up out of the Learnings tab. The tab is mounted from the start, so
@@ -382,7 +385,7 @@ export default function AgentDetail() {
   // on, not on the one you would only visit if you already suspected it.
   const [strandedAt, setStrandedAt] = useState<string | null>(null);
 
-  const { data, error, loading } = useFetch(
+  const { data, error, loading, refetch } = useFetch(
     `agent-detail:${project}:${runPath}`,
     () => fetchAgentDetail(project, runPath)
   );
@@ -401,6 +404,20 @@ export default function AgentDetail() {
     const url = new URL(window.location.href);
     url.searchParams.delete('onboarding');
     window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  };
+
+  const toggleSchedule = async () => {
+    if (!data?.schedule || scheduleBusy) return;
+    setScheduleBusy(true);
+    setScheduleError(null);
+    try {
+      await setAgentSchedulePaused(project, runPath, data.scheduleEnabled !== false);
+      refetch();
+    } catch (error) {
+      setScheduleError((error as Error).message);
+    } finally {
+      setScheduleBusy(false);
+    }
   };
 
   useEffect(() => {
@@ -477,11 +494,31 @@ export default function AgentDetail() {
                     Run with instruction…
                   </button>
                 </div>
+                {data.schedule && (
+                  <div class="agent-schedule-control">
+                    <span class="agent-schedule-copy">
+                      <strong>Schedule</strong>
+                      <span>{data.scheduleHuman ?? data.schedule}</span>
+                    </span>
+                    <button
+                      type="button"
+                      class={`schedule-switch${data.scheduleEnabled === false ? '' : ' is-on'}`}
+                      role="switch"
+                      aria-checked={data.scheduleEnabled !== false}
+                      disabled={scheduleBusy}
+                      onClick={() => void toggleSchedule()}
+                    >
+                      <span aria-hidden="true" />
+                      {scheduleBusy ? 'Saving…' : data.scheduleEnabled === false ? 'Paused' : 'On'}
+                    </button>
+                  </div>
+                )}
                 {runError && !runOpen && <span class="run-err">{runError}</span>}
+                {scheduleError && <span class="run-err">{scheduleError}</span>}
               </div>
             </header>
 
-            <Capabilities meta={data.meta} model={data.model} schedule={data.schedule} scheduleHuman={data.scheduleHuman} metadata={data.metadata} />
+            <Capabilities meta={data.meta} model={data.model} schedule={data.schedule} scheduleHuman={data.scheduleHuman} scheduleEnabled={data.scheduleEnabled} metadata={data.metadata} />
 
             <StrandedLearningsBanner strandedAt={strandedAt} />
 

@@ -27,6 +27,7 @@ import { createAgentsCommand } from './cli/agents';
 import { createAddCommand } from './cli/add';
 import { createDoctorCommand } from './cli/doctor';
 import { createLearningsCommand } from './cli/learnings';
+import { createSchedulesCommand } from './cli/schedules';
 import { BUILTIN_PROVIDERS } from './providers/registry-sources';
 import { resolveModelProvider } from './utils/model-utils';
 import { applyRunModelOverride, resolveModelString, type RunModelOverride } from './utils/model-alias';
@@ -229,6 +230,9 @@ program.addCommand(createSkillsCommand());
 
 // Add agents command
 program.addCommand(createAgentsCommand());
+
+// Add deployment-local schedule controls.
+program.addCommand(createSchedulesCommand());
 
 // Add add command
 program.addCommand(createAddCommand());

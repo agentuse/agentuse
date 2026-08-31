@@ -177,6 +177,21 @@ describe("Scheduler", () => {
       expect(schedule.nextRun).toBeInstanceOf(Date);
     });
 
+    it('keeps a paused schedule visible without arming it, then resumes it', () => {
+      const schedule = scheduler.add('test-project', 'paused.agentuse', '0 9 * * *', 'Paused', false);
+      expect(schedule.enabled).toBe(false);
+      expect(schedule.nextRun).toBeNull();
+      expect(scheduler.listSerialized()[0]?.enabled).toBe(false);
+
+      scheduler.setEnabled('test-project', 'paused.agentuse', true);
+      expect(schedule.enabled).toBe(true);
+      expect(schedule.nextRun).toBeInstanceOf(Date);
+
+      scheduler.setEnabled('test-project', 'paused.agentuse', false);
+      expect(schedule.enabled).toBe(false);
+      expect(schedule.nextRun).toBeNull();
+    });
+
     it("assigns deterministic bounded jitter per scheduled agent", () => {
       const first = calculateScheduleJitterMs("test-project", "agent1.agentuse", "0 9 * * *", 120_000);
       const second = calculateScheduleJitterMs("test-project", "agent1.agentuse", "0 9 * * *", 120_000);

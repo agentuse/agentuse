@@ -769,6 +769,7 @@ export interface AgentDetailPayload {
   model: string;
   schedule?: string;
   scheduleHuman?: string;
+  scheduleEnabled?: boolean;
   metadata?: Record<string, unknown>;
   /** Raw `.agentuse` text; absent when the deployment hides agent source (serve.hideAgentSource). */
   source?: string;
@@ -779,6 +780,10 @@ export interface AgentDetailPayload {
 /** Capabilities summary + raw `.agentuse` source for the agent hub page. */
 export function fetchAgentDetail(project: string, runPath: string): Promise<AgentDetailPayload> {
   return getJson('/api/agents/detail', { project, path: runPath });
+}
+
+export function setAgentSchedulePaused(project: string, path: string, paused: boolean): Promise<{ success: true; paused: boolean; scheduleEnabled: boolean }> {
+  return postJson('/api/schedules/state', { project, path, paused });
 }
 
 export interface DetachedRunResponse {

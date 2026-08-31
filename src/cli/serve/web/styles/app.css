@@ -5477,6 +5477,24 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agent-detail .run-cta-alt:hover { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
 .page-agent-detail .run-cta-alt:disabled { opacity: 0.5; cursor: not-allowed; }
+.page-agent-detail .agent-schedule-control {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  width: 100%; min-width: 290px; padding-top: 8px; border-top: 1px solid var(--line);
+}
+.page-agent-detail .agent-schedule-copy { display: grid; gap: 2px; min-width: 0; text-align: left; }
+.page-agent-detail .agent-schedule-copy strong { color: var(--fg); font-size: 12px; font-weight: 600; }
+.page-agent-detail .agent-schedule-copy > span { color: var(--muted); font-size: 11.5px; line-height: 1.35; }
+.page-agent-detail .schedule-switch {
+  display: inline-flex; align-items: center; gap: 7px; flex: none;
+  padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 999px;
+  background: var(--panel); color: var(--muted-3); font: 600 11px var(--sans); cursor: pointer;
+}
+.page-agent-detail .schedule-switch > span { position: relative; width: 24px; height: 14px; border-radius: 999px; background: var(--muted); }
+.page-agent-detail .schedule-switch > span::after { content: ""; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--bg); transition: transform 120ms ease; }
+.page-agent-detail .schedule-switch.is-on { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
+.page-agent-detail .schedule-switch.is-on > span { background: var(--green); }
+.page-agent-detail .schedule-switch.is-on > span::after { transform: translateX(10px); }
+.page-agent-detail .schedule-switch:disabled { cursor: default; opacity: 0.65; }
 .page-agent-detail .run-err { color: var(--red); font-size: 12px; max-width: 220px; text-align: right; }
 
 /* capabilities: plain sentences first (#156), the raw chip grid one expand away */
@@ -5913,6 +5931,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 @media (max-width: 640px) {
   .page-agent-detail .hero { flex-direction: column; gap: 16px; }
   .page-agent-detail .hero-actions { align-items: flex-start; }
+  .page-agent-detail .agent-schedule-control { min-width: 0; width: min(100%, 360px); }
   .page-agent-detail .run-cta-row { justify-content: flex-start; }
   .page-agent-detail .first-agent-spotlight-card {
     right: auto;
@@ -6072,13 +6091,13 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-schedules .slot-side { text-align: right; font-family: var(--mono); color: var(--muted); font-size: 11.5px; white-space: nowrap; }
 .page-schedules .slot-side .ok { color: var(--green); border-bottom-color: var(--green-border); }
 .page-schedules .slot-side .failed { color: var(--red); border-bottom-color: var(--red-border); }
-/* Disabled schedules stay legible but recede: the whole day card dims and the
+/* Paused schedules stay legible but recede: the whole day card dims and the
    row's own text drops a step, so an off schedule never reads as a live one. */
-.page-schedules .day-title.day-disabled { color: var(--muted-2); }
-.page-schedules .day-title.day-disabled + .timetable { opacity: 0.7; }
-.page-schedules .slot.disabled .slot-time { color: var(--muted-2); }
-.page-schedules .slot.disabled .slot-agent { color: var(--muted-3); }
-.page-schedules .slot.disabled .slot-side, .page-schedules .slot.disabled .slot-side .ok { color: var(--muted-2); }
+.page-schedules .day-title.day-paused { color: var(--muted-2); }
+.page-schedules .day-title.day-paused + .timetable { opacity: 0.7; }
+.page-schedules .slot.paused .slot-time { color: var(--muted-2); }
+.page-schedules .slot.paused .slot-agent { color: var(--muted-3); }
+.page-schedules .slot.paused .slot-side, .page-schedules .slot.paused .slot-side .ok { color: var(--muted-2); }
 @media (max-width: 640px) {
   .page-schedules .slot { grid-template-columns: 44px minmax(0, 1fr); padding: 12px 14px; }
   .page-schedules .slot-side { grid-column: 2; text-align: left; margin-top: 2px; }
@@ -7353,10 +7372,10 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   .page-sessions .filter-field-agent { grid-column: auto; }
 }
 
-/* Disabled schedules group header: reads as a status, not a date. Text stays at
+/* Paused schedules group header: reads as a status, not a date. Text stays at
    the readable --muted; only the decorative ⋮ ornament drops to --muted-2. */
-.page-schedules .day-title.day-disabled { color: var(--muted); font-style: italic; }
-.page-schedules .day-title.day-disabled::before { color: var(--muted-2); }
+.page-schedules .day-title.day-paused { color: var(--muted); font-style: italic; }
+.page-schedules .day-title.day-paused::before { color: var(--muted-2); }
 
 /* Trailing "open" affordance inside a subagent card link: quiet until the card
    is hovered, then it brightens and nudges to signal it navigates. */
