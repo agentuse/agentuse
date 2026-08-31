@@ -20,6 +20,7 @@ import {
   markDesktopOnboardingComplete,
 } from "./onboarding-state";
 import { createDesktopQuitPolicy, deferDesktopQuitAfterDrain, shouldWarnBeforeFullQuit } from "./quit-policy";
+import { shouldHideDashboardWindow } from "./dashboard-presentation";
 import { isAbandonedDesktopServer, isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, selectServer, serverUrl, type RegisteredServer } from "./runtime";
 import { createAgentUseTrayIcon } from "./tray-icon";
 import { selectLoopbackPort } from "./port-selection";
@@ -928,11 +929,11 @@ function showSettings(): void {
 }
 
 function toggleDashboard(): void {
-  if (setupWindow && !setupWindow.isDestroyed() && setupWindow.isVisible()) {
+  if (setupWindow && !setupWindow.isDestroyed() && shouldHideDashboardWindow(setupWindow)) {
     setupWindow.hide();
     return;
   }
-  if (window && !window.isDestroyed() && window.isVisible()) {
+  if (window && !window.isDestroyed() && shouldHideDashboardWindow(window)) {
     window.hide();
     return;
   }
