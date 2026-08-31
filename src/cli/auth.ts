@@ -129,7 +129,20 @@ export function createProviderCommand(): Command {
     .description("Add a custom provider endpoint (OpenAI-compatible)")
     .requiredOption("--url <url>", "Base URL of the OpenAI-compatible endpoint")
     .option("--key <key>", "Optional API key for the endpoint")
-    .action(async (name: string, options: { url: string; key?: string }) => {
+    .option("--no-developer-role", "Endpoint does not accept developer-role messages")
+    .option("--no-reasoning-effort", "Endpoint does not accept reasoning_effort")
+    .option("--no-stream-usage", "Endpoint does not return usage in streaming responses")
+    .option("--no-store", "Endpoint does not accept the store request field")
+    .option("--max-tokens-field <field>", "Token limit field: max_tokens or max_completion_tokens")
+    .action(async (name: string, options: {
+      url: string;
+      key?: string;
+      developerRole: boolean;
+      reasoningEffort: boolean;
+      streamUsage: boolean;
+      store: boolean;
+      maxTokensField?: string;
+    }) => {
       // Validate name doesn't conflict with built-in providers
       if (BUILTIN_PROVIDERS.includes(name.toLowerCase())) {
         logger.error(`Cannot use reserved provider name '${name}'. Reserved: ${BUILTIN_PROVIDERS.join(", ")}`);
@@ -150,9 +163,25 @@ export function createProviderCommand(): Command {
         process.exit(1);
       }
 
+      if (options.maxTokensField && !["max_tokens", "max_completion_tokens"].includes(options.maxTokensField)) {
+        logger.error("--max-tokens-field must be max_tokens or max_completion_tokens");
+        process.exit(1);
+      }
+
+      const compatibility = {
+        ...(options.developerRole === false && { supportsDeveloperRole: false }),
+        ...(options.reasoningEffort === false && { supportsReasoningEffort: false }),
+        ...(options.streamUsage === false && { supportsUsageInStreaming: false }),
+        ...(options.store === false && { supportsStore: false }),
+        ...(options.maxTokensField && {
+          maxTokensField: options.maxTokensField as "max_tokens" | "max_completion_tokens",
+        }),
+      };
+
       await AuthStorage.setCustomProvider(name, {
         baseURL: options.url,
         ...(options.key && { key: options.key }),
+        ...(Object.keys(compatibility).length > 0 && { compatibility }),
       });
 
       process.stdout.write(`✅ Added custom provider '${name}'\n`);

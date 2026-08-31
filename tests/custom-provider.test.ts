@@ -23,6 +23,19 @@ describe("CustomProviderAuth schema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("validates optional request compatibility flags", () => {
+    const result = CustomProviderAuth.safeParse({
+      type: "custom",
+      baseURL: "http://localhost:11434/v1",
+      compatibility: {
+        supportsReasoningEffort: false,
+        supportsUsageInStreaming: false,
+        maxTokensField: "max_completion_tokens",
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
   it("rejects missing baseURL", () => {
     const result = CustomProviderAuth.safeParse({
       type: "custom",
@@ -79,6 +92,25 @@ describe("AuthStorage custom provider methods", () => {
       expect(provider).toBeDefined();
       expect(provider!.baseURL).toBe("http://localhost:8080/v1");
       expect(provider!.key).toBeUndefined();
+    });
+
+    it("stores request compatibility flags", async () => {
+      await AuthStorage.setCustomProvider("strict", {
+        baseURL: "http://localhost:8080/v1",
+        compatibility: {
+          supportsReasoningEffort: false,
+          supportsUsageInStreaming: false,
+          maxTokensField: "max_completion_tokens",
+        },
+      });
+
+      expect(await AuthStorage.getCustomProvider("strict")).toMatchObject({
+        compatibility: {
+          supportsReasoningEffort: false,
+          supportsUsageInStreaming: false,
+          maxTokensField: "max_completion_tokens",
+        },
+      });
     });
 
     it("overwrites existing custom provider", async () => {

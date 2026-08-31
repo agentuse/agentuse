@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 import {
   REASONING_LEVELS,
+  prepareThinkingReplay,
   resolveModelRouteCompatibility,
   resolveReasoningCompatibility,
+  transformOpenAICompatibleRequest,
 } from '../src/model-compatibility';
 
 describe('model compatibility registry', () => {
@@ -21,6 +23,51 @@ describe('model compatibility registry', () => {
   it('uses native provider options for GPT-5.6 max', () => {
     expect(resolveReasoningCompatibility('openai:gpt-5.6-terra', 'max')).toEqual({
       providerOptions: { openai: { reasoningEffort: 'max' } },
+    });
+  });
+
+  it('uses OpenRouter reasoning objects for every effort level', () => {
+    expect(resolveReasoningCompatibility('openrouter:openai/gpt-5.6-luna', 'minimal')).toEqual({
+      providerOptions: { openrouter: { reasoning: { effort: 'low' } } },
+    });
+    expect(resolveReasoningCompatibility('openrouter:openai/gpt-5.6-sol', 'max')).toEqual({
+      providerOptions: { openrouter: { reasoning: { effort: 'max' } } },
+    });
+    expect(resolveReasoningCompatibility('openrouter:anthropic/claude-sonnet-4.6', 'none')).toEqual({
+      providerOptions: { openrouter: { reasoning: { enabled: false } } },
+    });
+  });
+
+  it('adds empty signatures only for Anthropic-compatible thinking replay', () => {
+    const messages = [{
+      role: 'assistant',
+      content: [{ type: 'reasoning', text: 'consider this' }, { type: 'text', text: 'done' }],
+    }];
+    expect(prepareThinkingReplay('opencode-go:qwen3.7-plus', messages)).toEqual([{
+      role: 'assistant',
+      content: [
+        { type: 'reasoning', text: 'consider this', providerOptions: { anthropic: { signature: '' } } },
+        { type: 'text', text: 'done' },
+      ],
+    }]);
+    expect(prepareThinkingReplay('anthropic:claude-sonnet-4-6', messages)).toBe(messages);
+    expect(prepareThinkingReplay('opencode-go:glm-5.3', messages)).toBe(messages);
+  });
+
+  it('applies configured OpenAI-compatible request deviations together', () => {
+    expect(transformOpenAICompatibleRequest({
+      max_tokens: 2048,
+      reasoning_effort: 'minimal',
+      store: false,
+      messages: [{ role: 'developer', content: 'rules' }, { role: 'user', content: 'hello' }],
+    }, {
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+      supportsStore: false,
+      maxTokensField: 'max_completion_tokens',
+    })).toEqual({
+      max_completion_tokens: 2048,
+      messages: [{ role: 'system', content: 'rules' }, { role: 'user', content: 'hello' }],
     });
   });
 

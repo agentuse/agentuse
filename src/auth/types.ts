@@ -30,6 +30,13 @@ export const CustomProviderAuth = z.object({
   type: z.literal("custom"),
   baseURL: z.string(),
   key: z.string().optional(),
+  compatibility: z.object({
+    supportsDeveloperRole: z.boolean().optional(),
+    supportsReasoningEffort: z.boolean().optional(),
+    supportsUsageInStreaming: z.boolean().optional(),
+    supportsStore: z.boolean().optional(),
+    maxTokensField: z.enum(["max_tokens", "max_completion_tokens"]).optional(),
+  }).optional(),
 });
 
 export const AuthInfo = z.discriminatedUnion("type", [

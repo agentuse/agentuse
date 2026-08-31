@@ -17,6 +17,8 @@ export type SDKReasoningLevel = Exclude<ReasoningLevel, 'max'>;
 export interface ModelRouteCompatibility {
   /** False means each request must contain the complete conversation history. */
   supportsStore: boolean;
+  /** Compatible Anthropic routes may replay unsigned thinking with an empty signature. */
+  allowEmptyThinkingSignature?: boolean;
 }
 
 export interface ResolvedReasoningCompatibility {
@@ -24,6 +26,13 @@ export interface ResolvedReasoningCompatibility {
   reasoning?: SDKReasoningLevel;
   /** Native options for capabilities the AI SDK common enum cannot express. */
   providerOptions?: Record<string, Record<string, unknown>>;
+}
+
+export interface OpenAICompatibleCapabilities {
+  supportsDeveloperRole?: boolean | undefined;
+  supportsReasoningEffort?: boolean | undefined;
+  supportsStore?: boolean | undefined;
+  maxTokensField?: 'max_tokens' | 'max_completion_tokens' | undefined;
 }
 
 interface ModelIdentity {
@@ -43,7 +52,7 @@ function parseModelIdentity(modelString: string): ModelIdentity {
 }
 
 function isGPT56(model: string): boolean {
-  return /^gpt-5\.6(?:-|$)/.test(model);
+  return /^gpt-5\.6(?:-|$)/.test(model.split('/').at(-1) ?? model);
 }
 
 function isModernAdaptiveClaude(model: string): boolean {
@@ -70,6 +79,9 @@ export function resolveModelRouteCompatibility(modelString: string): ModelRouteC
     // provider-side response retention between tool turns.
     return { supportsStore: false };
   }
+  if (provider === OPENCODE_GO_PROVIDER_ID && getOpenCodeGoProtocol(model) === 'anthropic') {
+    return { supportsStore: true, allowEmptyThinkingSignature: true };
+  }
   return { supportsStore: true };
 }
 
@@ -80,6 +92,17 @@ export function resolveReasoningCompatibility(
 ): ResolvedReasoningCompatibility {
   if (!requested) return {};
   const { provider, model } = parseModelIdentity(modelString);
+
+  // OpenRouter's unified API expects its own reasoning object rather than the
+  // OpenAI-compatible reasoning_effort field. Keep this route-specific so the
+  // same base model can still use its native provider's request shape.
+  if (provider === 'openrouter') {
+    if (requested === 'none') {
+      return { providerOptions: { openrouter: { reasoning: { enabled: false } } } };
+    }
+    const effort = isGPT56(model) && requested === 'minimal' ? 'low' : requested;
+    return { providerOptions: { openrouter: { reasoning: { effort } } } };
+  }
 
   // GPT-5.6 removed `minimal`; low is the closest supported tier. The native
   // max tier is not yet represented by AI SDK 7's common reasoning enum.
@@ -109,4 +132,58 @@ export function resolveReasoningCompatibility(
   // or silently degrading to a provider's medium default.
   if (requested === 'max') return { reasoning: 'xhigh' };
   return { reasoning: requested };
+}
+
+/**
+ * Preserve thinking blocks when replaying history to Anthropic-compatible
+ * gateways that accept unsigned thinking. Native Anthropic is deliberately
+ * excluded: it requires the original cryptographic signature.
+ */
+export function prepareThinkingReplay<T>(modelString: string, messages: T[]): T[] {
+  if (!resolveModelRouteCompatibility(modelString).allowEmptyThinkingSignature) return messages;
+
+  return messages.map((message: any) => {
+    if (message?.role !== 'assistant' || !Array.isArray(message.content)) return message;
+    let changed = false;
+    const content = message.content.map((part: any) => {
+      if (part?.type !== 'reasoning' || part.providerOptions?.anthropic?.signature != null) {
+        return part;
+      }
+      changed = true;
+      return {
+        ...part,
+        providerOptions: {
+          ...(part.providerOptions ?? {}),
+          anthropic: {
+            ...(part.providerOptions?.anthropic ?? {}),
+            signature: '',
+          },
+        },
+      };
+    });
+    return changed ? { ...message, content } : message;
+  });
+}
+
+/** Apply only explicitly configured deviations from the OpenAI-compatible baseline. */
+export function transformOpenAICompatibleRequest(
+  body: Record<string, unknown>,
+  compatibility: OpenAICompatibleCapabilities
+): Record<string, unknown> {
+  const transformed = { ...body };
+  if (compatibility.supportsReasoningEffort === false) delete transformed.reasoning_effort;
+  if (compatibility.supportsStore === false) delete transformed.store;
+  if (
+    compatibility.maxTokensField === 'max_completion_tokens' &&
+    transformed.max_tokens !== undefined
+  ) {
+    transformed.max_completion_tokens = transformed.max_tokens;
+    delete transformed.max_tokens;
+  }
+  if (compatibility.supportsDeveloperRole === false && Array.isArray(transformed.messages)) {
+    transformed.messages = transformed.messages.map((message: any) =>
+      message?.role === 'developer' ? { ...message, role: 'system' } : message
+    );
+  }
+  return transformed;
 }

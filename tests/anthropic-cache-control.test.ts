@@ -286,6 +286,47 @@ describe('executeAgentCore Anthropic cache control', () => {
     expect(streamConfig.providerOptions).toEqual({ openai: { store: false } });
   });
 
+  it('replays unsigned thinking only on Anthropic-compatible OpenCode Go routes', async () => {
+    const history = [{
+      role: 'assistant',
+      content: [{ type: 'reasoning', text: 'private work' }, { type: 'text', text: 'result' }],
+    }];
+    for await (const _ of executeAgentCore(
+      { name: 'thinking-replay', config: { model: 'opencode-go:qwen3.7-plus' } } as any,
+      {},
+      {
+        userMessage: 'Continue',
+        systemMessages: [],
+        messages: history as any,
+        maxSteps: 3,
+      }
+    )) {
+      // Consume the stream.
+    }
+
+    const streamConfig = streamTextMock.mock.calls[0][0] as any;
+    expect(streamConfig.messages[0].content[0].providerOptions).toEqual({
+      anthropic: { signature: '' },
+    });
+  });
+
+  it('passes OpenRouter reasoning as the provider-native object', async () => {
+    for await (const _ of executeAgentCore(
+      {
+        name: 'openrouter-reasoning',
+        config: { model: 'openrouter:openai/gpt-5.6-luna', reasoning: 'minimal' },
+      } as any,
+      {},
+      { userMessage: 'Run', systemMessages: [], maxSteps: 3 }
+    )) {
+      // Consume the stream.
+    }
+
+    const streamConfig = streamTextMock.mock.calls[0][0] as any;
+    expect(streamConfig.reasoning).toBeUndefined();
+    expect(streamConfig.providerOptions.openrouter).toEqual({ reasoning: { effort: 'low' } });
+  });
+
   it('merges OpenCode Go stateless routing with native max effort', async () => {
     for await (const _ of executeAgentCore(
       {

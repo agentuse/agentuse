@@ -18,6 +18,7 @@ import {
   resolveOpenCodeGoBaseURL,
 } from './providers/opencode-go';
 import { BUILTIN_PROVIDERS } from './providers/registry-sources';
+import { transformOpenAICompatibleRequest } from './model-compatibility';
 
 /**
  * Check if DevTools is enabled via environment variable
@@ -505,12 +506,14 @@ export async function createModel(modelString: string) {
       throw new Error('Failed to obtain API key for OpenRouter');
     }
     
-    // OpenRouter uses OpenAI SDK with custom baseURL
-    const openrouter = createOpenAI({
+    // OpenRouter is OpenAI-compatible but accepts route-specific extensions
+    // such as `reasoning: { effort }`; the compatible adapter preserves them.
+    const openrouter = createOpenAICompatible({
+      name: 'openrouter',
       apiKey,
       baseURL: 'https://openrouter.ai/api/v1',
     });
-    return await maybeWrapWithDevTools(openrouter.chat(config.modelName));
+    return await maybeWrapWithDevTools(openrouter(config.modelName));
 
   } else if (config.provider === OPENCODE_GO_PROVIDER_ID) {
     let apiKey: string | undefined;
@@ -666,6 +669,13 @@ export async function createModel(modelString: string) {
         name: config.provider,
         baseURL,
         apiKey,
+        ...(customProvider.compatibility?.supportsUsageInStreaming === false && {
+          includeUsage: false,
+        }),
+        ...(customProvider.compatibility && {
+          transformRequestBody: (body: Record<string, unknown>) =>
+            transformOpenAICompatibleRequest(body, customProvider.compatibility!),
+        }),
       });
       return await maybeWrapWithDevTools(provider(config.modelName));
     }

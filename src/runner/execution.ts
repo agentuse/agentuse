@@ -10,6 +10,7 @@ import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go';
 import {
   resolveModelRouteCompatibility,
   resolveReasoningCompatibility,
+  prepareThinkingReplay,
   type ReasoningLevel,
 } from '../model-compatibility';
 import { CodexAuth } from '../auth/codex';
@@ -792,12 +793,12 @@ async function* executeAgentAttempt(
   try {
   // Initialize context manager if enabled
   const usesAnthropicCacheControl = isAnthropicModel(agent.config.model);
-  const initialMessages: any[] = options.messages ?? [
+  const initialMessages: any[] = prepareThinkingReplay(agent.config.model, options.messages ?? [
     ...options.systemMessages,
     usesAnthropicCacheControl
       ? buildUserMessage(options.userMessage, options.cacheableUserMessage)
       : { role: 'user', content: options.userMessage }
-  ];
+  ]);
   let messages = usesAnthropicCacheControl
     ? applyAnthropicCacheControlToMessages(initialMessages)
     : initialMessages;
