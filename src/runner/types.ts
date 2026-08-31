@@ -7,6 +7,9 @@ import type { SessionManager } from '../session';
 import type { ActiveContextUsage, ContextSnapshot, SessionTrigger } from '../session/types';
 import type { AssistantTokens } from '../session/usage';
 import type { RunOutcome } from '../tools/report-outcome.js';
+import type { AgentSourceSubmission } from '../onboarding/submit-agent-source.js';
+import type { ProjectSuggestionsSubmission } from '../onboarding/submit-project-suggestions.js';
+import type { ProjectDiscoveryResult } from '../agents/discover.js';
 import type { EffectWAL } from './effect-wal';
 import type { LiveToolOutputRelay } from './live-tool-output';
 import type { RunModelOverride } from '../utils/model-alias';
@@ -72,6 +75,10 @@ export interface PreparedAgentExecution {
    * sets it.
    */
   runOutcome?: RunOutcome | undefined;
+  /** Mutable structured handoff used only by the in-memory onboarding creator. */
+  agentSourceSubmission?: AgentSourceSubmission | undefined;
+  /** Mutable structured handoff used only by in-memory onboarding discovery. */
+  projectSuggestionsSubmission?: ProjectSuggestionsSubmission | undefined;
   doomLoopDetector: DoomLoopDetector;
   /**
    * Per-session effect WAL (tool executes + bash spawn/exit records), already
@@ -178,4 +185,8 @@ export interface RunAgentResult {
    * `text`.
    */
   complete?: { headline: string; details?: string; artifacts?: string[] };
+  /** Validated source delivered through the creator-only submit tool. */
+  agentSource?: string;
+  /** Validated suggestions delivered through the discovery-only submit tool. */
+  projectDiscovery?: ProjectDiscoveryResult;
 }

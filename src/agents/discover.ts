@@ -1,5 +1,7 @@
-import { readFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { constants } from 'node:fs';
+import { lstat, mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, isAbsolute, join, relative } from 'node:path';
 import { glob } from 'glob';
 import { completeText, type CompleteTextOptions } from '../complete-text.js';
 import { formatScheduleHuman, parseScheduleExpression } from '../scheduler/parser.js';
@@ -9,15 +11,130 @@ import { validateAgentName } from './create.js';
 const MAX_CONTEXT_CHARS = 48_000;
 const MAX_FILE_CHARS = 12_000;
 const MAX_FILES = 160;
+const ADAPTIVE_MAX_FILES = 400;
+const ADAPTIVE_MAX_FILE_BYTES = 64_000;
+const ADAPTIVE_MAX_TOTAL_BYTES = 2_000_000;
 const CONTEXT_FILES = [
   'README.md', 'README.mdx', 'package.json', 'pyproject.toml', 'Cargo.toml',
   'go.mod', 'Gemfile', 'Makefile', 'AGENTS.md', 'CLAUDE.md',
 ] as const;
 const IGNORED = [
   '.git/**', 'node_modules/**', 'vendor/**', 'dist/**', 'build/**', 'coverage/**',
-  '.next/**', '.turbo/**', 'tmp/**', '.env', '.env.*', '**/*.pem', '**/*.key',
-  '**/*secret*', '**/*credential*',
+  '.next/**', '.turbo/**', 'tmp/**', '.cache/**', '.venv/**', 'venv/**',
+  '.env', '.env.*', '**/*.pem', '**/*.key', '**/*.p12', '**/*.pfx',
+  '**/*secret*', '**/*credential*', '**/.npmrc', '**/.pypirc', '**/.netrc',
 ];
+
+const SAFE_ENV_EXAMPLES = new Set(['.env.example', '.env.sample', '.env.template', '.env.defaults']);
+const SENSITIVE_BASENAMES = /^(?:id_[a-z0-9_-]+|credentials?|secrets?|auth|tokens?)(?:\.[a-z0-9_-]+)?$/iu;
+const SENSITIVE_EXTENSIONS = /\.(?:pem|key|p12|pfx|jks|keystore)$/iu;
+const SECRET_ASSIGNMENT = /\b([A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE[_-]?KEY)[A-Z0-9_]*)\b(\s*[:=]\s*)(["']?)([^\s,"'}]+)\3/giu;
+const PRIVATE_KEY_BLOCK = /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/gu;
+const KNOWN_SECRET_TOKEN = /\b(?:gh[opusr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b/gu;
+
+export function isProjectDiscoveryPathAllowed(path: string): boolean {
+  const normalized = path.replace(/\\/g, '/');
+  const name = basename(normalized);
+  if (SAFE_ENV_EXAMPLES.has(name.toLowerCase())) return true;
+  if (name === '.env' || name.toLowerCase().startsWith('.env.')) return false;
+  if (SENSITIVE_BASENAMES.test(name) || SENSITIVE_EXTENSIONS.test(name)) return false;
+  const segments = normalized.toLowerCase().split('/');
+  return !segments.some((segment) => ['.git', 'node_modules', 'vendor', 'dist', 'build', 'coverage', '.next', '.turbo', '.cache', '.venv', 'venv'].includes(segment));
+}
+
+export function redactProjectDiscoveryText(text: string): string {
+  return text
+    .replace(PRIVATE_KEY_BLOCK, '[REDACTED PRIVATE KEY]')
+    .replace(SECRET_ASSIGNMENT, (_match, name: string, separator: string) => `${name}${separator}[REDACTED]`)
+    .replace(KNOWN_SECRET_TOKEN, '[REDACTED CREDENTIAL]');
+}
+
+export interface ProjectDiscoveryView {
+  root: string;
+  projectName: string;
+  inspectedFiles: number;
+  availableFiles: string[];
+  cleanup(): Promise<void>;
+}
+
+async function readBoundedDiscoveryFile(projectRoot: string, relativePath: string, maxBytes: number): Promise<Buffer | undefined> {
+  if (!relativePath || isAbsolute(relativePath) || relativePath.split(/[\\/]/u).includes('..')) return undefined;
+  const sourcePath = join(projectRoot, relativePath);
+  try {
+    const sourceStats = await lstat(sourcePath);
+    if (!sourceStats.isFile() || sourceStats.isSymbolicLink()) return undefined;
+    const resolvedSource = await realpath(sourcePath);
+    const fromRoot = relative(projectRoot, resolvedSource);
+    if (fromRoot === '..' || fromRoot.startsWith('../') || fromRoot.startsWith('..\\') || isAbsolute(fromRoot)) return undefined;
+  } catch {
+    return undefined;
+  }
+
+  let handle;
+  try {
+    handle = await open(sourcePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const openedStats = await handle.stat();
+    if (!openedStats.isFile()) return undefined;
+    const buffer = Buffer.alloc(Math.min(maxBytes, ADAPTIVE_MAX_FILE_BYTES));
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, bytesRead);
+  } catch {
+    return undefined;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+/** Build a capability-safe temporary view for an adaptive onboarding agent.
+ * The model can list, search, and read this view, never the real project. The
+ * view excludes sensitive/generated paths and redacts common credential forms
+ * inside otherwise useful text files. */
+export async function prepareProjectDiscoveryView(projectRoot: string): Promise<ProjectDiscoveryView> {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'agentuse-onboarding-project-')));
+  const resolvedProjectRoot = await realpath(projectRoot);
+  const candidates = (await glob('**/*', {
+    cwd: resolvedProjectRoot,
+    nodir: true,
+    dot: true,
+    maxDepth: 8,
+    ignore: IGNORED,
+  })).sort();
+  const availableFiles: string[] = [];
+  let usedBytes = 0;
+  try {
+    for (const relativePath of candidates) {
+      if (availableFiles.length >= ADAPTIVE_MAX_FILES || usedBytes >= ADAPTIVE_MAX_TOTAL_BYTES) break;
+      if (!isProjectDiscoveryPathAllowed(relativePath)) continue;
+      const remaining = ADAPTIVE_MAX_TOTAL_BYTES - usedBytes;
+      const buffer = await readBoundedDiscoveryFile(resolvedProjectRoot, relativePath, remaining);
+      if (!buffer) continue;
+      if (buffer.includes(0)) continue;
+      const text = redactProjectDiscoveryText(buffer.toString('utf8'));
+      if (!text.trim()) continue;
+      const destination = join(root, relativePath);
+      await mkdir(join(destination, '..'), { recursive: true });
+      await writeFile(destination, text, 'utf8');
+      availableFiles.push(relativePath);
+      usedBytes += Buffer.byteLength(text);
+    }
+    await writeFile(join(root, 'AGENTUSE_PROJECT_INDEX.txt'), [
+      `Project: ${basename(resolvedProjectRoot)}`,
+      `Sanitized read-only view: ${availableFiles.length} files`,
+      '',
+      ...availableFiles,
+    ].join('\n'), 'utf8');
+    return {
+      root,
+      projectName: basename(resolvedProjectRoot),
+      inspectedFiles: availableFiles.length,
+      availableFiles,
+      cleanup: () => rm(root, { recursive: true, force: true }),
+    };
+  } catch (error) {
+    await rm(root, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+}
 
 export interface ProjectAgentSuggestion {
   id: string;

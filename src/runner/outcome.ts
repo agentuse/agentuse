@@ -19,8 +19,9 @@ export const OUTCOME_NUDGE_PROMPT =
 
 /**
  * Whether to spend the run's single outcome nudge. True only when the model has
- * genuinely finished its turn (`stop`, not a tool-call continuation or a
- * step-budget cutoff), declared neither verdict, and budget remains.
+ * genuinely finished its turn (`stop`, or a provider-specific clean `other`;
+ * not a tool-call continuation or a step-budget cutoff), declared neither
+ * verdict, and budget remains.
  *
  * `outcome: undefined` means the tools were never loaded (hand-built
  * preparations in tests), so there is nothing to observe and nothing to ask for.
@@ -36,7 +37,7 @@ export function shouldRequestOutcome(state: {
   if (!state.outcome) return false;
   if (state.alreadyAsked || state.suspended) return false;
   if (state.outcome.complete || state.outcome.incomplete) return false;
-  if (state.segmentFinishReason !== 'stop') return false;
+  if (state.segmentFinishReason !== 'stop' && state.segmentFinishReason !== 'other') return false;
   // At the ceiling the extra segment cannot run, and a step-limited run reports
   // 'stop' too — nudging there would claim a budget the run does not have.
   return state.stepCount < state.maxSteps;
@@ -107,6 +108,8 @@ export function runResultJson(result: RunAgentResult, duration: number) {
         headline: result.complete.headline,
         ...(result.complete.artifacts?.length && { artifacts: result.complete.artifacts }),
       }),
+      ...(result.agentSource && { agentSource: result.agentSource }),
+      ...(result.projectDiscovery && { projectDiscovery: result.projectDiscovery }),
       ...(result.finishReason && { finishReason: result.finishReason }),
       duration,
       ...(result.usage && {

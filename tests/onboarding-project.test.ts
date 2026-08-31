@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { FIRST_PROJECT_DEFAULT_NAME, managedProjectSlug, terminalFirstAgentPrompt, validateManagedProjectName } from '../src/onboarding';
-import { getManagedProjectsRoot } from '../src/utils/global-config';
+import { getManagedProjectsRoot, removeServeProject } from '../src/utils/global-config';
 import { createManagedProject, createManagedProjectTransaction, rollbackManagedProject } from '../src/utils/managed-project';
 import { createSetupCommand, resolveSetupSurface, webSetupServeArgs } from '../src/cli/setup';
 
@@ -54,6 +54,32 @@ describe('managed onboarding projects', () => {
     const first = await createManagedProject('my-agents', { configPath });
     expect(first.root).toBe(projectRoot);
     await expect(createManagedProject('my-agents', { configPath })).rejects.toThrow('already exists');
+  });
+
+  it('disconnects a saved project without deleting files or unrelated config', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agentuse-onboarding-'));
+    roots.push(root);
+    const configPath = join(root, 'config.json');
+    const keepPath = join(root, 'keep');
+    const removePath = join(root, 'remove');
+    writeFileSync(configPath, JSON.stringify({
+      future: { keep: true },
+      serve: {
+        port: 14444,
+        default: 'remove',
+        projects: [{ id: 'keep', path: keepPath }, { id: 'remove', path: removePath }],
+      },
+    }));
+    writeFileSync(removePath, 'project data');
+
+    removeServeProject({ id: 'remove', path: removePath }, configPath);
+
+    const saved = JSON.parse(readFileSync(configPath, 'utf8'));
+    expect(saved.future).toEqual({ keep: true });
+    expect(saved.serve.port).toBe(14444);
+    expect(saved.serve.projects).toEqual([{ id: 'keep', path: keepPath }]);
+    expect(saved.serve.default).toBeUndefined();
+    expect(readFileSync(removePath, 'utf8')).toBe('project data');
   });
 
   it('can stage an unregistered project and roll it back after attachment failure', async () => {

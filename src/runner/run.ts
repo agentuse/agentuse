@@ -293,7 +293,13 @@ export async function runAgent(
       ...(effectWal && { effectWal }),
       // Lets the segment loop see whether an outcome was declared, so it can
       // spend its one nudge before the run ends without a headline.
-      ...(preparation.runOutcome && { runOutcome: preparation.runOutcome })
+      ...(preparation.runOutcome && { runOutcome: preparation.runOutcome }),
+      ...(preparation.agentSourceSubmission && {
+        agentSourceSubmission: preparation.agentSourceSubmission,
+      }),
+      ...(preparation.projectSuggestionsSubmission && {
+        projectSuggestionsSubmission: preparation.projectSuggestionsSubmission,
+      }),
     };
 
     const haveSessionScope = Boolean(sessionManager && prepSessionID && assistantMsgID && prepAgentId);
@@ -528,6 +534,10 @@ export async function runAgent(
       status: incomplete ? 'failed' : 'completed',
       ...(incomplete && { incomplete }),
       ...(complete && { complete }),
+      ...(preparation.agentSourceSubmission?.source && { agentSource: preparation.agentSourceSubmission.source }),
+      ...(preparation.projectSuggestionsSubmission?.result && {
+        projectDiscovery: preparation.projectSuggestionsSubmission.result,
+      }),
       // report_complete IS the report, so its headline + details become the
       // run's output for every consumer. Streamed prose is the fallback for a
       // run that never called it.

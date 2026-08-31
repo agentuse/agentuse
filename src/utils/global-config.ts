@@ -223,6 +223,45 @@ export function persistServeProject(
   renameSync(temporaryPath, configPath);
 }
 
+/** Remove one saved project without disturbing unrelated or newer config fields.
+ * Project files are deliberately left in place; this only changes what `serve`
+ * loads on startup. Matching both id and resolved path handles legacy entries
+ * that did not persist an explicit id. */
+export function removeServeProject(
+  project: { id: string; path: string },
+  configPath = getGlobalConfigPath(),
+): void {
+  if (!existsSync(configPath)) return;
+  const raw = JSON.parse(readFileSync(configPath, 'utf8')) as unknown;
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    fail(configPath, 'root must be a JSON object');
+  }
+  const root = raw as Record<string, unknown>;
+  const existingServe = root.serve;
+  if (existingServe === undefined) return;
+  if (existingServe === null || typeof existingServe !== 'object' || Array.isArray(existingServe)) {
+    fail(configPath, '`serve` must be an object');
+  }
+  const serve = { ...(existingServe as Record<string, unknown>) };
+  const existingProjects = serve.projects;
+  if (existingProjects !== undefined && !Array.isArray(existingProjects)) {
+    fail(configPath, '`serve.projects` must be an array');
+  }
+  const targetPath = path.resolve(project.path);
+  serve.projects = ((existingProjects as unknown[] | undefined) ?? []).filter((value) => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return true;
+    const candidate = value as Record<string, unknown>;
+    if (candidate.id === project.id) return false;
+    return typeof candidate.path !== 'string' || path.resolve(expandHome(candidate.path)) !== targetPath;
+  });
+  if (serve.default === project.id) delete serve.default;
+  root.serve = serve;
+
+  const temporaryPath = `${configPath}.${process.pid}.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify(root, null, 2)}\n`, { mode: 0o600 });
+  renameSync(temporaryPath, configPath);
+}
+
 export function getGlobalEnvPath(): string {
   const override = process.env.AGENTUSE_ENV;
   if (override && override.length > 0) return path.resolve(override);

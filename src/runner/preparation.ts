@@ -445,6 +445,10 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     ...(priorTokens && { priorTokens }),
     agentId,
     runOutcome: loadedTools.runOutcome,
+    ...(loadedTools.agentSourceSubmission && { agentSourceSubmission: loadedTools.agentSourceSubmission }),
+    ...(loadedTools.projectSuggestionsSubmission && {
+      projectSuggestionsSubmission: loadedTools.projectSuggestionsSubmission,
+    }),
     doomLoopDetector,
     effectWal,
     liveToolOutput,

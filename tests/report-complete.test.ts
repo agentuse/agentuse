@@ -122,6 +122,39 @@ describe('outcome precedence: one slot, two writers', () => {
     expect(json.success).toBe(true);
     expect(json.result).toMatchObject({ headline: 'Posted 10/10', artifacts: ['/tmp/out.md'] });
   });
+
+  it('carries a validated onboarding source across the worker boundary', () => {
+    const source = '---\nname: Docs drift\nmodel: openai:gpt-5.6-luna\n---\n\nReport drift.\n';
+    const json = runResultJson({
+      status: 'completed',
+      complete: { headline: 'Created Docs drift' },
+      agentSource: source,
+      text: '✅ Complete: Created Docs drift',
+      toolCallCount: 2,
+      hasTextOutput: true,
+    }, 10);
+
+    expect(json.result.agentSource).toBe(source);
+  });
+
+  it('carries validated project suggestions across the worker boundary', () => {
+    const projectDiscovery = {
+      projectName: 'demo',
+      summary: 'A demo project.',
+      inspectedFiles: 10,
+      suggestions: [],
+    };
+    const json = runResultJson({
+      status: 'completed',
+      complete: { headline: 'Proposed three agents' },
+      projectDiscovery,
+      text: 'done',
+      toolCallCount: 2,
+      hasTextOutput: true,
+    }, 10);
+
+    expect(json.result.projectDiscovery).toEqual(projectDiscovery);
+  });
 });
 
 describe('shouldRequestOutcome', () => {
@@ -136,6 +169,7 @@ describe('shouldRequestOutcome', () => {
 
   it('asks when a turn ended with no verdict and budget remains', () => {
     expect(shouldRequestOutcome(base)).toBe(true);
+    expect(shouldRequestOutcome({ ...base, segmentFinishReason: 'other' })).toBe(true);
   });
 
   it('stays quiet once either verdict is declared', () => {

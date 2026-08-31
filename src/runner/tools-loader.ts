@@ -23,6 +23,16 @@ import { approvalToolDefaults, isApprovalEnabled } from './approval';
 import { ToolConfigError, type EffectAuditSink, type LiveToolOutputSink, type ToolOutputArtifactSink } from '../tools/types.js';
 import { isMockMode, mockScope, wrapToolsWithLLMMock, wrapToolsWithGatedMock } from './mock-tools';
 import { withIntentParam } from './tool-intent';
+import {
+  agentSourceSubmissionContract,
+  createSubmitAgentSourceTool,
+  type AgentSourceSubmission,
+} from '../onboarding/submit-agent-source.js';
+import {
+  createSubmitProjectSuggestionsTool,
+  projectSuggestionsSubmissionContract,
+  type ProjectSuggestionsSubmission,
+} from '../onboarding/submit-project-suggestions.js';
 
 /**
  * Options for loading agent tools
@@ -67,6 +77,10 @@ export interface LoadedAgentTools {
    * marking the session completed or error/INCOMPLETE.
    */
   runOutcome: RunOutcome;
+  /** Validated source submitted by the private onboarding creator tool. */
+  agentSourceSubmission?: AgentSourceSubmission | undefined;
+  /** Validated suggestions submitted by the private onboarding discovery tool. */
+  projectSuggestionsSubmission?: ProjectSuggestionsSubmission | undefined;
   /** Store instance (if configured) - caller must call store.releaseLock() when done */
   store?: Store | undefined;
   /** Sandbox instance (if configured) - caller must call sandboxInstance.kill() when done */
@@ -281,9 +295,39 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
   // surface that shows an outcome before the body. They share one mutable ref,
   // read by the caller after the stream finishes.
   const runOutcome: RunOutcome = {};
+  const agentSourceContract = agentSourceSubmissionContract(agent.config.metadata);
+  const agentSourceSubmission: AgentSourceSubmission | undefined = agentSourceContract ? {} : undefined;
+  const projectSuggestionsContract = projectSuggestionsSubmissionContract(agent.config.metadata);
+  const projectSuggestionsSubmission: ProjectSuggestionsSubmission | undefined = projectSuggestionsContract ? {} : undefined;
+  const baseReportComplete = createReportCompleteTool(runOutcome);
+  const guardedReportComplete: Tool = agentSourceSubmission || projectSuggestionsSubmission
+    ? {
+        ...baseReportComplete,
+        execute: async (input: unknown, options: unknown) => {
+          if (agentSourceSubmission && !agentSourceSubmission.source) {
+            throw new Error('No valid agent source has been submitted. Call submit_agent_source first, correct any validation error, and only then call report_complete.');
+          }
+          if (projectSuggestionsSubmission && !projectSuggestionsSubmission.result) {
+            throw new Error('No valid project suggestions have been submitted. Call submit_project_suggestions first, correct any validation error, and only then call report_complete.');
+          }
+          return (baseReportComplete.execute as (input: unknown, options: unknown) => unknown)(input, options);
+        },
+      }
+    : baseReportComplete;
   const outcomeTools: Record<string, Tool> = {
     report_incomplete: createReportIncompleteTool(runOutcome),
-    report_complete: createReportCompleteTool(runOutcome),
+    report_complete: guardedReportComplete,
+  };
+  const onboardingTools: Record<string, Tool> = {
+    ...(agentSourceContract && agentSourceSubmission && {
+      submit_agent_source: createSubmitAgentSourceTool(agentSourceSubmission, agentSourceContract),
+    }),
+    ...(projectSuggestionsContract && projectSuggestionsSubmission && {
+      submit_project_suggestions: createSubmitProjectSuggestionsTool(
+        projectSuggestionsSubmission,
+        projectSuggestionsContract,
+      ),
+    }),
   };
 
   // Single ordered merge point for every tool source. New sources (e.g. a future
@@ -296,6 +340,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     skillTools,
     storeTools,
     sandboxTools,
+    onboardingTools,
     outcomeTools,
   ];
 
@@ -335,6 +380,8 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     sandboxTools,
     all,
     runOutcome,
+    ...(agentSourceSubmission && { agentSourceSubmission }),
+    ...(projectSuggestionsSubmission && { projectSuggestionsSubmission }),
     store,
     sandboxInstance,
     bindSessionId: (id: string) => {

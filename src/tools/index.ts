@@ -1,5 +1,5 @@
 import type { Tool } from 'ai';
-import { createReadTool, createWriteTool, createEditTool } from './filesystem.js';
+import { createReadTool, createListTool, createSearchTool, createWriteTool, createEditTool } from './filesystem.js';
 import { createBashTool } from './bash.js';
 import { createAwaitHumanTool } from './await-human.js';
 import { createArtifactTool, createListArtifactsTool, type ArtifactToolContext } from './artifacts.js';
@@ -34,6 +34,8 @@ export function getTools(
 
     if (hasRead) {
       tools['tools__filesystem_read'] = createReadTool(config.filesystem, context);
+      tools['tools__filesystem_list'] = createListTool(config.filesystem, context);
+      tools['tools__filesystem_search'] = createSearchTool(config.filesystem, context);
     }
 
     if (hasWrite) {

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
+import { glob } from 'glob';
 import { PathValidator, type PathResolverContext } from './path-validator.js';
 import { fuzzyReplace } from './edit-replacers.js';
 import { grantsPermission, type FilesystemPathConfig, type ToolOutput, type ToolErrorOutput } from './types.js';
@@ -22,6 +23,9 @@ import {
 // cap (32MB PDF) and any realistic text read, so it only turns would-be OOM
 // crashes into a clean error and never rejects a normal file.
 const FILESYSTEM_READ_MAX_BYTES = 256 * 1024 * 1024;
+const FILESYSTEM_LIST_MAX_ENTRIES = 500;
+const FILESYSTEM_SEARCH_MAX_MATCHES = 100;
+const FILESYSTEM_SEARCH_MAX_FILE_BYTES = 256 * 1024;
 
 /**
  * Format file content with line numbers (cat -n style)
@@ -211,6 +215,113 @@ Use absolute paths within these directories. Other paths will be rejected.`;
         };
       }
       return { type: 'json', value: output };
+    },
+  };
+}
+
+/** List files below an already-authorized read root. This does not widen the
+ * filesystem capability: every returned path is checked through the same
+ * PathValidator used by filesystem_read. It gives tool-driven agents a bounded
+ * way to choose what to inspect instead of requiring a precomputed file dump. */
+export function createListTool(
+  configs: FilesystemPathConfig[],
+  context: PathResolverContext,
+): Tool {
+  const validator = new PathValidator(configs, context);
+  return {
+    description: `List files recursively below a read-authorized directory.
+
+Results are sorted and capped at ${FILESYSTEM_LIST_MAX_ENTRIES} entries. Only paths already granted to filesystem_read can be listed.`,
+    inputSchema: z.object({
+      directory_path: z.string().describe('Absolute path to an authorized directory'),
+      pattern: z.string().optional().describe('Optional glob relative to the directory, for example **/*.ts'),
+      limit: z.number().int().positive().max(FILESYSTEM_LIST_MAX_ENTRIES).optional(),
+    }),
+    execute: async ({ directory_path, pattern, limit }: { directory_path: string; pattern?: string; limit?: number }): Promise<ToolOutput> => {
+      const validation = validator.validate(directory_path, 'read');
+      if (!validation.allowed) return { output: JSON.stringify({ success: false, error: validation.error || 'Path validation failed' }) };
+      try {
+        const stats = await fs.stat(validation.resolvedPath);
+        if (!stats.isDirectory()) return { output: JSON.stringify({ success: false, error: `Not a directory: ${validation.resolvedPath}` }) };
+        const cap = Math.min(limit ?? FILESYSTEM_LIST_MAX_ENTRIES, FILESYSTEM_LIST_MAX_ENTRIES);
+        const candidates = (await glob(pattern?.trim() || '**/*', {
+          cwd: validation.resolvedPath,
+          nodir: true,
+          dot: true,
+        })).sort();
+        const files: string[] = [];
+        for (const relativePath of candidates) {
+          const candidate = path.join(validation.resolvedPath, relativePath);
+          const checked = validator.validate(candidate, 'read');
+          if (!checked.allowed) continue;
+          files.push(relativePath);
+          if (files.length >= cap) break;
+        }
+        return { output: JSON.stringify({ success: true, directory: validation.resolvedPath, files, truncated: candidates.length > files.length }) };
+      } catch (error) {
+        return { output: JSON.stringify({ success: false, error: error instanceof Error ? error.message : String(error) }) };
+      }
+    },
+  };
+}
+
+/** Search text files below an authorized read root. Reads are byte- and
+ * result-bounded, and every candidate is revalidated so symlinks cannot escape
+ * the configured capability. */
+export function createSearchTool(
+  configs: FilesystemPathConfig[],
+  context: PathResolverContext,
+): Tool {
+  const validator = new PathValidator(configs, context);
+  return {
+    description: `Search text inside files below a read-authorized directory.
+
+The query is a literal case-insensitive string. Results include path, line number, and a short matching line, capped at ${FILESYSTEM_SEARCH_MAX_MATCHES} matches.`,
+    inputSchema: z.object({
+      directory_path: z.string().describe('Absolute path to an authorized directory'),
+      query: z.string().min(1).max(500).describe('Literal text to find'),
+      pattern: z.string().optional().describe('Optional file glob, for example **/*.{ts,tsx}'),
+      limit: z.number().int().positive().max(FILESYSTEM_SEARCH_MAX_MATCHES).optional(),
+    }),
+    execute: async ({ directory_path, query, pattern, limit }: { directory_path: string; query: string; pattern?: string; limit?: number }): Promise<ToolOutput> => {
+      const validation = validator.validate(directory_path, 'read');
+      if (!validation.allowed) return { output: JSON.stringify({ success: false, error: validation.error || 'Path validation failed' }) };
+      try {
+        const stats = await fs.stat(validation.resolvedPath);
+        if (!stats.isDirectory()) return { output: JSON.stringify({ success: false, error: `Not a directory: ${validation.resolvedPath}` }) };
+        const cap = Math.min(limit ?? FILESYSTEM_SEARCH_MAX_MATCHES, FILESYSTEM_SEARCH_MAX_MATCHES);
+        const candidates = (await glob(pattern?.trim() || '**/*', {
+          cwd: validation.resolvedPath,
+          nodir: true,
+          dot: true,
+        })).sort();
+        const needle = query.toLocaleLowerCase();
+        const matches: Array<{ path: string; line: number; text: string }> = [];
+        for (const relativePath of candidates) {
+          if (matches.length >= cap) break;
+          const candidate = path.join(validation.resolvedPath, relativePath);
+          const checked = validator.validate(candidate, 'read');
+          if (!checked.allowed) continue;
+          let stat;
+          try { stat = await fs.stat(checked.resolvedPath); } catch { continue; }
+          if (!stat.isFile() || stat.size > FILESYSTEM_SEARCH_MAX_FILE_BYTES) continue;
+          let content: string;
+          try {
+            const buffer = await fs.readFile(checked.resolvedPath);
+            if (buffer.includes(0)) continue;
+            content = buffer.toString('utf8');
+          } catch { continue; }
+          const lines = content.split('\n');
+          for (let index = 0; index < lines.length && matches.length < cap; index += 1) {
+            const line = lines[index]!;
+            if (!line.toLocaleLowerCase().includes(needle)) continue;
+            matches.push({ path: relativePath, line: index + 1, text: line.length > 300 ? `${line.slice(0, 300)}…` : line });
+          }
+        }
+        return { output: JSON.stringify({ success: true, directory: validation.resolvedPath, query, matches, truncated: matches.length >= cap }) };
+      } catch (error) {
+        return { output: JSON.stringify({ success: false, error: error instanceof Error ? error.message : String(error) }) };
+      }
     },
   };
 }

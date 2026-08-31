@@ -37,7 +37,7 @@ import { getCachedAvailableUpdate, refreshUpdateCacheInBackground } from "../upd
 import { registerServer, unregisterServer, updateServer, listServers, formatUptime, getDefaultLogFilePath, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { acquireSchedulerLock, releaseSchedulerLock } from "../utils/scheduler-lock";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
-import { loadGlobalConfig, applyGlobalConfigEnv, expandHome, getGlobalConfigPath, getGlobalEnvPath, getManagedProjectsRoot, loadGlobalEnv, persistServeProject, type GlobalConfig } from "../utils/global-config";
+import { loadGlobalConfig, applyGlobalConfigEnv, expandHome, getGlobalConfigPath, getGlobalEnvPath, getManagedProjectsRoot, loadGlobalEnv, persistServeProject, removeServeProject, type GlobalConfig } from "../utils/global-config";
 import { createManagedProjectTransaction, ManagedProjectError } from "../utils/managed-project";
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
 import { getSlackWebClient } from "../slack/lifecycle";
@@ -96,8 +96,13 @@ import {
   createGuidedProjectAgentFile,
   validateAgentCreationRequest,
 } from "../agents/create";
-import { authorAgentSource, authorGuidedAgentInstructions } from "../agents/author";
-import { discoverProjectAgents } from "../agents/discover";
+import { authorAgentSource, authorGuidedAgentInstructions, validateAuthoredAgentSource } from "../agents/author";
+import { discoverProjectAgents, prepareProjectDiscoveryView, type ProjectDiscoveryResult } from "../agents/discover";
+import { loadBuiltinSkillSource } from "../skill/builtin";
+import {
+  buildAgentCreatorSessionAgent,
+  buildProjectDiscoverySessionAgent,
+} from "../onboarding/session-agents";
 import { openBrowser } from "../utils/open-browser";
 import { pickLocalProjectFolder } from "../utils/folder-picker";
 import { canUseHostFolderPicker } from "../utils/local-request";
@@ -415,6 +420,10 @@ interface WorkerExecuteResult {
     toolCalls: number;
     sessionId?: string;
     approvalUrl?: string;
+    /** Validated source returned by the creator-only submission tool. */
+    agentSource?: string;
+    /** Validated suggestions returned by the discovery-only submission tool. */
+    projectDiscovery?: ProjectDiscoveryResult;
   };
 }
 
@@ -429,6 +438,18 @@ interface WorkerExecuteError {
   };
   /** Final output remains useful when report_incomplete ends the run. */
   result?: WorkerExecuteResult['result'];
+}
+
+interface OnboardingModelJob {
+  id: string;
+  sessionId: string;
+  projectId: string;
+  kind: 'project-discovery' | 'agent-creation';
+  status: 'running' | 'completed' | 'error';
+  model: string;
+  createdAt: number;
+  result?: unknown;
+  error?: { code: string; message: string };
 }
 
 function workerExecutionErrorResponse(error: WorkerExecuteError): {
@@ -3054,6 +3075,21 @@ export function createServeCommand(): Command {
       // .env / .env.local on each execute request, so per-project env stays
       // isolated from the parent process and from sibling projects.
       const workers = new Map<string, AgentWorker>();
+      const onboardingJobs = new Map<string, OnboardingModelJob>();
+      const pruneOnboardingJobs = (): void => {
+        const cutoff = Date.now() - 60 * 60 * 1000;
+        for (const [id, job] of onboardingJobs) {
+          if (job.status !== 'running' && job.createdAt < cutoff) onboardingJobs.delete(id);
+        }
+        if (onboardingJobs.size <= 100) return;
+        const settled = [...onboardingJobs.values()]
+          .filter((job) => job.status !== 'running')
+          .sort((a, b) => a.createdAt - b.createdAt);
+        for (const job of settled) {
+          if (onboardingJobs.size <= 100) break;
+          onboardingJobs.delete(job.id);
+        }
+      };
       const activeCascadeRecoveries = new Set<string>();
       // Recover sessions a dead worker left stuck 'running' with no live process.
       // A replacement's first pass intentionally skips released predecessors
@@ -3365,6 +3401,16 @@ export function createServeCommand(): Command {
       // Mutable per-project agent counts (updated by hot reload)
       const agentCounts = new Map<string, number>(projects.map((p) => [p.id, p.agentFiles.length]));
 
+      /** Shape used when onboarding selects a project. Existing loaded projects
+       * and newly attached projects must enter the same UI state. */
+      const onboardingProjectInfo = async (project: Project) => ({
+        id: project.id,
+        path: project.scopeRoot,
+        agentCount: agentCounts.get(project.id) ?? project.agentFiles.length,
+        scheduleCount: scheduler.list().filter((item) => item.projectId === project.id).length,
+        ...await readAbout(project.root).then((about) => (about ? { about } : {})),
+      });
+
       const updateRegistryCounts = () => {
         const entries: ServerProjectEntry[] = projects.map((p) => ({
           id: p.id,
@@ -3399,7 +3445,8 @@ export function createServeCommand(): Command {
 
       // One file watcher per project
       const fileWatchers: FileWatcher[] = [];
-      let projectCreationInFlight = false;
+      const projectWatchers = new Map<string, FileWatcher>();
+      let projectMutationInFlight = false;
       const watchProject = (project: Project): FileWatcher => {
         const watcher = new FileWatcher({
           projectRoot: project.root,
@@ -3491,15 +3538,20 @@ export function createServeCommand(): Command {
 
         watcher.start();
         fileWatchers.push(watcher);
+        projectWatchers.set(project.id, watcher);
         return watcher;
       };
       for (const project of projects) {
         watchProject(project);
       }
 
-      /** Attach the first project without restarting the daemon. The request
-       * handler persists its config entry only after this succeeds. */
+      /** Attach a project without restarting the daemon. The request handler
+       * persists its config entry only after this succeeds. */
       const attachProject = async (seed: Omit<Project, 'agentFiles'>): Promise<{ project: Project; rollback: () => Promise<void> }> => {
+        const pathOwner = pathSeen.get(seed.root);
+        if (pathOwner) throw new Error(`This project is already loaded as "${pathOwner}"`);
+        const idPath = idSeen.get(seed.id);
+        if (idPath) throw new Error(`A project named "${seed.id}" is already loaded from ${idPath}`);
         await initStorage(seed.root);
         const worker = await spawnProjectWorker(seed);
         const agentFiles = await glob("**/*.agentuse", {
@@ -3513,10 +3565,18 @@ export function createServeCommand(): Command {
             await watcher.close().catch(() => {});
             const watcherIndex = fileWatchers.indexOf(watcher);
             if (watcherIndex >= 0) fileWatchers.splice(watcherIndex, 1);
+            projectWatchers.delete(seed.id);
           }
           worker.shutdown();
           workers.delete(seed.id);
           workerReadyAt.delete(seed.id);
+          for (const schedule of scheduler.list().filter((item) => item.projectId === seed.id)) {
+            scheduler.removeByAgentPath(seed.id, schedule.agentPath);
+          }
+          if (schedulerLocksHeld.has(seed.id)) {
+            releaseSchedulerLock(seed.root);
+            schedulerLocksHeld.delete(seed.id);
+          }
           const seedIndex = projectSeeds.indexOf(seed);
           if (seedIndex >= 0) projectSeeds.splice(seedIndex, 1);
           const projectIndex = projects.indexOf(project);
@@ -3537,6 +3597,17 @@ export function createServeCommand(): Command {
           idSeen.set(seed.id, seed.root);
           multiProject = projects.length > 1;
           if (projects.length === 1) effectiveDefault = undefined;
+          for (const agentFile of agentFiles) {
+            try {
+              const agentPath = resolveScopedAgentPath(seed, agentFile);
+              const agent = await parseAgent(agentPath);
+              if (agent.config.schedule && canArmSchedules(seed.id, seed.root)) {
+                scheduler.add(seed.id, agentFile, agent.config.schedule, agent.config.name);
+              }
+            } catch (err) {
+              logger.warn(`Failed to load agent ${seed.id}/${agentFile}: ${(err as Error).message}`);
+            }
+          }
           watcher = watchProject(project);
           updateRegistryCounts();
           orphanReconcileLoop.runNow();
@@ -7281,11 +7352,11 @@ export function createServeCommand(): Command {
         }
 
         if (req.method === "POST" && routePath === "/projects") {
-          if (projects.length > 0 || projectCreationInFlight) {
-            sendError(res, 409, "PROJECT_ALREADY_CONFIGURED", "A project is already configured for this server");
+          if (projectMutationInFlight) {
+            sendError(res, 409, "PROJECT_MUTATION_IN_PROGRESS", "Another project change is already in progress");
             return;
           }
-          projectCreationInFlight = true;
+          projectMutationInFlight = true;
           try {
             const body = await parseJSONBody(req);
             // Runtime attachment is staged before config registration. A failed
@@ -7323,17 +7394,17 @@ export function createServeCommand(): Command {
               sendError(res, err instanceof ManagedProjectError ? 500 : 400, "INVALID_PROJECT", (err as Error).message);
             }
           } finally {
-            projectCreationInFlight = false;
+            projectMutationInFlight = false;
           }
           return;
         }
 
         if (req.method === "POST" && routePath === "/projects/attach") {
-          if (projects.length > 0 || projectCreationInFlight) {
-            sendError(res, 409, "PROJECT_ALREADY_CONFIGURED", "A project is already configured for this server");
+          if (projectMutationInFlight) {
+            sendError(res, 409, "PROJECT_MUTATION_IN_PROGRESS", "Another project change is already in progress");
             return;
           }
-          projectCreationInFlight = true;
+          projectMutationInFlight = true;
           let rollback: (() => Promise<void>) | undefined;
           try {
             const body = await parseJSONBody(req);
@@ -7342,24 +7413,90 @@ export function createServeCommand(): Command {
               return;
             }
             const seed = resolveProjectFromPath(body.path);
+            const loadedProjectId = pathSeen.get(seed.root);
+            if (loadedProjectId) {
+              const loadedProject = projectsById.get(loadedProjectId);
+              if (!loadedProject) throw new Error(`Loaded project metadata is missing for "${loadedProjectId}"`);
+              sendJSON(res, 200, {
+                success: true,
+                project: await onboardingProjectInfo(loadedProject),
+              });
+              return;
+            }
             const attached = await attachProject(seed);
             rollback = attached.rollback;
             persistServeProject({ id: seed.id, path: seed.scopeRoot });
             sendJSON(res, 201, {
               success: true,
-              project: {
-                id: attached.project.id,
-                path: attached.project.scopeRoot,
-                agentCount: attached.project.agentFiles.length,
-                scheduleCount: 0,
-              },
+              project: await onboardingProjectInfo(attached.project),
             });
           } catch (err) {
             await rollback?.().catch(() => {});
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_PROJECT", (err as Error).message);
           } finally {
-            projectCreationInFlight = false;
+            projectMutationInFlight = false;
+          }
+          return;
+        }
+
+        if (req.method === "DELETE" && routePath.startsWith("/projects/")) {
+          if (projectMutationInFlight) {
+            sendError(res, 409, "PROJECT_MUTATION_IN_PROGRESS", "Another project change is already in progress");
+            return;
+          }
+          const projectId = decodeURIComponent(routePath.slice('/projects/'.length));
+          const project = projectsById.get(projectId);
+          if (!project) {
+            sendError(res, 404, "PROJECT_NOT_FOUND", `Unknown project id: "${projectId}"`);
+            return;
+          }
+          const worker = workers.get(project.id);
+          if (worker && worker.activeRequestCount() > 0) {
+            sendError(res, 409, "PROJECT_BUSY", "This project has active work. Wait for it to finish before removing the project.");
+            return;
+          }
+
+          projectMutationInFlight = true;
+          try {
+            // Persist first: if config cannot be updated, the live project stays
+            // fully attached. Removing a project never deletes its directory.
+            removeServeProject({ id: project.id, path: project.scopeRoot });
+
+            const watcher = projectWatchers.get(project.id);
+            if (watcher) {
+              await watcher.close().catch(() => {});
+              projectWatchers.delete(project.id);
+              const watcherIndex = fileWatchers.indexOf(watcher);
+              if (watcherIndex >= 0) fileWatchers.splice(watcherIndex, 1);
+            }
+            for (const schedule of scheduler.list().filter((item) => item.projectId === project.id)) {
+              scheduler.removeByAgentPath(project.id, schedule.agentPath);
+            }
+            if (schedulerLocksHeld.has(project.id)) {
+              releaseSchedulerLock(project.root);
+              schedulerLocksHeld.delete(project.id);
+            }
+            worker?.shutdown();
+            workers.delete(project.id);
+            workerReadyAt.delete(project.id);
+            const seedIndex = projectSeeds.findIndex((item) => item.id === project.id);
+            if (seedIndex >= 0) projectSeeds.splice(seedIndex, 1);
+            const projectIndex = projects.indexOf(project);
+            if (projectIndex >= 0) projects.splice(projectIndex, 1);
+            projectsById.delete(project.id);
+            agentCounts.delete(project.id);
+            pathSeen.delete(project.root);
+            idSeen.delete(project.id);
+            if (effectiveDefault === project.id || projects.length < 2) effectiveDefault = undefined;
+            multiProject = projects.length > 1;
+            updateRegistryCounts();
+            orphanReconcileLoop.runNow();
+            sendJSON(res, 200, { success: true });
+          } catch (err) {
+            sendError(res, 500, "PROJECT_REMOVE_FAILED", (err as Error).message);
+          } finally {
+            projectMutationInFlight = false;
           }
           return;
         }
@@ -7378,6 +7515,256 @@ export function createServeCommand(): Command {
             sendJSON(res, 200, { success: true, path });
           } catch (err) {
             sendError(res, 500, "FOLDER_PICKER_FAILED", (err as Error).message);
+          }
+          return;
+        }
+
+        const onboardingJobMatch = isApi && req.method === 'GET'
+          ? routePath.match(/^\/onboarding\/jobs\/([^/?#]+)$/)
+          : null;
+        if (onboardingJobMatch) {
+          pruneOnboardingJobs();
+          const job = onboardingJobs.get(decodeURIComponent(onboardingJobMatch[1]!));
+          if (!job) {
+            sendError(res, 404, 'ONBOARDING_JOB_NOT_FOUND', 'This onboarding job is no longer available');
+            return;
+          }
+          sendJSON(res, 200, { success: true, job });
+          return;
+        }
+
+        if (isApi && routePath === '/onboarding/discovery' && req.method === 'POST') {
+          try {
+            const body = await parseJSONBody(req);
+            if (typeof body.project !== 'string' || !body.project) {
+              sendError(res, 400, 'PROJECT_REQUIRED', 'Choose a project to scan');
+              return;
+            }
+            const project = projectsById.get(body.project);
+            if (!project) {
+              sendError(res, 404, 'PROJECT_NOT_FOUND', `Project not found: ${body.project}`);
+              return;
+            }
+            const worker = workers.get(project.id);
+            if (!worker) {
+              sendError(res, 500, 'WORKER_UNAVAILABLE', `No worker for project ${project.id}`);
+              return;
+            }
+            const providerSnapshot = await providerSetupSnapshot();
+            const providers = agentCreationProviders(providerSnapshot.status, preferredAgentCreationModel);
+            const models = [...new Set(providers.flatMap((provider) => provider.models))];
+            if (models.length === 0) {
+              sendError(res, 409, 'PROVIDER_REQUIRED', 'Connect a model provider before scanning this project');
+              return;
+            }
+            if (typeof body.model !== 'string' || !models.includes(body.model)) {
+              sendError(res, 400, 'INVALID_DISCOVERY_MODEL', 'Choose a currently available model for project analysis');
+              return;
+            }
+
+            const view = await prepareProjectDiscoveryView(project.scopeRoot);
+            const sessionId = ulid();
+            const job: OnboardingModelJob = {
+              id: sessionId,
+              sessionId,
+              projectId: project.id,
+              kind: 'project-discovery',
+              status: 'running',
+              model: body.model,
+              createdAt: Date.now(),
+            };
+            pruneOnboardingJobs();
+            onboardingJobs.set(job.id, job);
+            const agentContent = buildProjectDiscoverySessionAgent({
+              model: body.model,
+              projectName: view.projectName,
+              inspectedFiles: view.inspectedFiles,
+              safeViewRoot: view.root,
+            });
+            void worker.execute({
+              agentContent,
+              agentName: 'onboarding-project-discovery',
+              projectRoot: project.root,
+              newSessionId: sessionId,
+              trigger: 'onboarding',
+              timeout: 150,
+              maxSteps: 20,
+              debug: options.debug,
+            }).then(async (execution) => {
+              if (!execution.success) {
+                job.status = 'error';
+                job.error = execution.error;
+                return;
+              }
+              try {
+                const discovery = execution.result.projectDiscovery;
+                if (!discovery) {
+                  throw new Error('The discovery agent finished without submitting suggestions through submit_project_suggestions');
+                }
+                job.status = 'completed';
+                job.result = { success: true, model: body.model, ...discovery };
+              } catch (error) {
+                job.status = 'error';
+                job.error = { code: 'PROJECT_DISCOVERY_INVALID', message: (error as Error).message };
+              }
+            }).catch((error) => {
+              job.status = 'error';
+              job.error = { code: 'PROJECT_DISCOVERY_FAILED', message: (error as Error).message };
+            }).finally(() => {
+              void view.cleanup();
+              wakeListHubs();
+            });
+            wakeListHubs();
+            const sessionToken = apiKey ? sessionViewToken(sessionId, apiKey) : undefined;
+            sendJSON(res, 202, {
+              success: true,
+              job: { ...job, ...(sessionToken && { sessionToken }) },
+            });
+          } catch (error) {
+            if (sendRequestParseError(res, error)) return;
+            sendError(res, 500, 'PROJECT_DISCOVERY_START_FAILED', (error as Error).message);
+          }
+          return;
+        }
+
+        if (isApi && routePath === '/onboarding/creation' && req.method === 'POST') {
+          try {
+            const body = await parseJSONBody(req);
+            if (typeof body.project !== 'string' || !body.project) {
+              sendError(res, 400, 'PROJECT_REQUIRED', 'Choose a project for this agent');
+              return;
+            }
+            const project = projectsById.get(body.project);
+            if (!project) {
+              sendError(res, 404, 'PROJECT_NOT_FOUND', `Project not found: ${body.project}`);
+              return;
+            }
+            const worker = workers.get(project.id);
+            if (!worker) {
+              sendError(res, 500, 'WORKER_UNAVAILABLE', `No worker for project ${project.id}`);
+              return;
+            }
+            const providerSnapshot = await providerSetupSnapshot();
+            const providers = agentCreationProviders(providerSnapshot.status, preferredAgentCreationModel);
+            const configuredProviders = providers.map((provider) => provider.id);
+            const availableModels = [...new Set(providers.flatMap((provider) => provider.models))];
+            const request = validateAgentCreationRequest(
+              { name: body.name, objective: body.objective, model: body.model },
+              configuredProviders,
+              availableModels,
+            );
+            if (!request.name) throw new AgentCreationError('INVALID_AGENT', 'The reviewed suggestion must include an agent name');
+            if (typeof body.description !== 'string' || !body.description.trim() || body.description.trim().length > 240) {
+              throw new AgentCreationError('INVALID_AGENT', 'The reviewed suggestion must include a concise description');
+            }
+            if (typeof body.schedule !== 'string' || !body.schedule.trim()) {
+              throw new AgentCreationError('INVALID_AGENT', 'Choose a valid schedule for this agent');
+            }
+            const schedule = body.schedule.trim();
+            parseScheduleExpression(schedule);
+            const [view, creatorSkill] = await Promise.all([
+              prepareProjectDiscoveryView(project.scopeRoot),
+              loadBuiltinSkillSource('creator'),
+            ]);
+            const sessionId = ulid();
+            const job: OnboardingModelJob = {
+              id: sessionId,
+              sessionId,
+              projectId: project.id,
+              kind: 'agent-creation',
+              status: 'running',
+              model: request.model,
+              createdAt: Date.now(),
+            };
+            pruneOnboardingJobs();
+            onboardingJobs.set(job.id, job);
+            const agentContent = buildAgentCreatorSessionAgent({
+              model: request.model,
+              safeViewRoot: view.root,
+              creatorSkill,
+              requestedName: request.name,
+              description: body.description.trim(),
+              objective: request.objective,
+              schedule,
+              availableModels,
+            });
+            void worker.execute({
+              agentContent,
+              agentName: 'onboarding-agent-creator',
+              projectRoot: project.root,
+              newSessionId: sessionId,
+              trigger: 'onboarding',
+              timeout: 150,
+              maxSteps: 12,
+              debug: options.debug,
+            }).then(async (execution) => {
+              if (!execution.success) {
+                job.status = 'error';
+                job.error = execution.error;
+                return;
+              }
+              try {
+                if (!execution.result.agentSource) {
+                  throw new AgentCreationError(
+                    'GENERATION_FAILED',
+                    'The creator finished without submitting an agent through submit_agent_source',
+                  );
+                }
+                // Defense in depth at the process boundary. The tool already ran
+                // this validation inside the model session, but only the serve
+                // process owns persistence into the real project.
+                const authored = validateAuthoredAgentSource(
+                  execution.result.agentSource,
+                  availableModels,
+                  request.name,
+                  schedule,
+                );
+                const created = await createAgentFile(project, {
+                  name: request.name,
+                  objective: request.objective,
+                  model: authored.model,
+                  source: authored.source,
+                }, configuredProviders);
+                if (!project.agentFiles.includes(created.runPath)) {
+                  project.agentFiles.push(created.runPath);
+                  project.agentFiles.sort();
+                  agentCounts.set(project.id, project.agentFiles.length);
+                  updateRegistryCounts();
+                }
+                agentSummaryCache.delete(created.absolutePath);
+                agentSummaryCache.delete(resolveScopedAgentPath(project, created.runPath));
+                const collected = await collectAgents([project]);
+                const agent = collected.agents.find((candidate) => candidate.runPath === created.runPath);
+                if (!agent) throw new Error('The new agent could not be loaded after it was written');
+                job.status = 'completed';
+                job.result = { success: true, agent };
+              } catch (error) {
+                job.status = 'error';
+                job.error = {
+                  code: error instanceof AgentCreationError ? error.code : 'AGENT_CREATE_FAILED',
+                  message: (error as Error).message,
+                };
+              }
+            }).catch((error) => {
+              job.status = 'error';
+              job.error = { code: 'AGENT_CREATE_FAILED', message: (error as Error).message };
+            }).finally(() => {
+              void view.cleanup();
+              wakeListHubs();
+            });
+            wakeListHubs();
+            const sessionToken = apiKey ? sessionViewToken(sessionId, apiKey) : undefined;
+            sendJSON(res, 202, {
+              success: true,
+              job: { ...job, ...(sessionToken && { sessionToken }) },
+            });
+          } catch (error) {
+            if (sendRequestParseError(res, error)) return;
+            if (error instanceof AgentCreationError) {
+              sendError(res, 400, error.code, error.message);
+            } else {
+              sendError(res, 500, 'AGENT_CREATE_START_FAILED', (error as Error).message);
+            }
           }
           return;
         }

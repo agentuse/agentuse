@@ -32,6 +32,16 @@ import { stripToolBlocks, hasReasoningParts, lastAssistantMessage } from '../ses
 import { OUTCOME_NUDGE_PROMPT, shouldRequestOutcome } from './outcome';
 import { REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL } from '../tools/report-outcome.js';
 import type { RunOutcome } from '../tools/report-outcome.js';
+import {
+  SUBMIT_AGENT_SOURCE_NUDGE_PROMPT,
+  SUBMIT_AGENT_SOURCE_TOOL,
+  type AgentSourceSubmission,
+} from '../onboarding/submit-agent-source.js';
+import {
+  SUBMIT_PROJECT_SUGGESTIONS_NUDGE_PROMPT,
+  SUBMIT_PROJECT_SUGGESTIONS_TOOL,
+  type ProjectSuggestionsSubmission,
+} from '../onboarding/submit-project-suggestions.js';
 import { ANTHROPIC_IDENTITY_PROMPT, addAnthropicIdentity } from '../utils/anthropic';
 import {
   availableModelCandidates,
@@ -42,6 +52,17 @@ import {
 
 // Constants
 const MAX_RETRIES = 3;
+// Agent creation has the same two-phase contract as project discovery. Keep
+// three turns for submit/validation repair and one for report_complete so a
+// model cannot spend the entire budget browsing the project and then lose the
+// only accepted delivery path.
+const AGENT_SOURCE_DELIVERY_RESERVE = 4;
+const AGENT_SOURCE_OUTCOME_RESERVE = 1;
+// Project discovery must retain enough model turns to hand its findings back
+// through the validated tool. Exploration gets the main budget; delivery keeps
+// three turns for submit/validation repair and one for report_complete.
+const PROJECT_SUGGESTIONS_DELIVERY_RESERVE = 4;
+const PROJECT_SUGGESTIONS_OUTCOME_RESERVE = 1;
 
 // Trailing-debounce window for context snapshots. Long enough that a burst of
 // model steps collapses into one write, short enough that a crash between rest
@@ -458,6 +479,8 @@ type ExecuteAgentCoreOptions = {
   messageID?: string;
   effectWal?: EffectWAL;
   runOutcome?: RunOutcome;
+  agentSourceSubmission?: AgentSourceSubmission;
+  projectSuggestionsSubmission?: ProjectSuggestionsSubmission;
 };
 
 type ExecuteAgentAttemptOptions = ExecuteAgentCoreOptions & {
@@ -885,7 +908,11 @@ async function* executeAgentAttempt(
     return used > 0 && used >= contextManager.compactionThresholdTokens();
   };
 
-  // `stopWhen` predicate: end the run the moment report_complete lands. During
+  // `stopWhen` predicate: end the run the moment report_complete lands and its
+  // execute function actually records a completed outcome. Checking the shared
+  // slot matters for guarded completion tools: a rejected report_complete call
+  // must return its tool error to the model and leave room for correction.
+  // During
   // the outcome-recovery segment, either verdict ends the run: that segment is
   // mechanically restricted to the two outcome tools and has no bookkeeping
   // left to perform. The tool executes before this runs, so its result is still
@@ -899,9 +926,32 @@ async function* executeAgentAttempt(
     return content.some((part: any) =>
       (part?.type === 'tool-result' || part?.type === 'tool-call') &&
       (
-        part?.toolName === REPORT_COMPLETE_TOOL ||
+        (part?.toolName === REPORT_COMPLETE_TOOL && !!options.runOutcome?.complete) ||
         (outcomeNudgeSpent && part?.toolName === REPORT_INCOMPLETE_TOOL)
       )
+    );
+  };
+
+  // The creator recovery segment exposes one schema-backed delivery tool. End
+  // that segment as soon as its execute function accepts a valid source, then
+  // let the ordinary outcome recovery ask for report_complete separately.
+  const stopOnDeliveredAgentSource = ({ steps }: { steps: Array<{ content?: unknown }> }): boolean => {
+    if (!agentSourceSubmissionRecoveryActive || !options.agentSourceSubmission?.source) return false;
+    const content = steps[steps.length - 1]?.content;
+    if (!Array.isArray(content)) return false;
+    return content.some((part: any) =>
+      (part?.type === 'tool-result' || part?.type === 'tool-call') &&
+      part?.toolName === SUBMIT_AGENT_SOURCE_TOOL
+    );
+  };
+
+  const stopOnDeliveredProjectSuggestions = ({ steps }: { steps: Array<{ content?: unknown }> }): boolean => {
+    if (!projectSuggestionsRecoveryActive || !options.projectSuggestionsSubmission?.result) return false;
+    const content = steps[steps.length - 1]?.content;
+    if (!Array.isArray(content)) return false;
+    return content.some((part: any) =>
+      (part?.type === 'tool-result' || part?.type === 'tool-call') &&
+      part?.toolName === SUBMIT_PROJECT_SUGGESTIONS_TOOL
     );
   };
 
@@ -987,8 +1037,23 @@ async function* executeAgentAttempt(
 
     // Cap each segment to the remaining step budget so compaction restarts do
     // not multiply the effective step limit (each streamText call counts steps
-    // from zero).
-    const remainingSteps = Math.max(1, options.maxSteps - stepCount);
+    // from zero). Onboarding's structured-output flows reserve their final
+    // turns for delivery: exploration cannot consume them, and the forced
+    // submission segment must still leave one turn for the final outcome call.
+    const agentSourceReserve = options.agentSourceSubmission
+      && !options.agentSourceSubmission.source
+      ? agentSourceSubmissionRecoveryActive
+        ? AGENT_SOURCE_OUTCOME_RESERVE
+        : AGENT_SOURCE_DELIVERY_RESERVE
+      : 0;
+    const projectSuggestionsReserve = options.projectSuggestionsSubmission
+      && !options.projectSuggestionsSubmission.result
+      ? projectSuggestionsRecoveryActive
+        ? PROJECT_SUGGESTIONS_OUTCOME_RESERVE
+        : PROJECT_SUGGESTIONS_DELIVERY_RESERVE
+      : 0;
+    const structuredDeliveryReserve = Math.max(agentSourceReserve, projectSuggestionsReserve);
+    const remainingSteps = Math.max(1, options.maxSteps - stepCount - structuredDeliveryReserve);
     const streamConfig: any = {
       model,
       messages,
@@ -1000,13 +1065,15 @@ async function* executeAgentAttempt(
       // A missing-outcome recovery turn has exactly one job. Require a tool
       // call there; prose or ordinary tools can only duplicate work or mutate
       // state after the original turn already ended.
-      toolChoice: outcomeNudgeSpent ? 'required' as const : 'auto' as const,
+      toolChoice: (outcomeNudgeSpent || agentSourceSubmissionRecoveryActive || projectSuggestionsRecoveryActive)
+        ? 'required' as const
+        : 'auto' as const,
       // Provider-agnostic reasoning effort -> the SDK maps it to the provider's
       // native control (Anthropic thinking budget / OpenAI reasoningEffort).
       ...(reasoning && { reasoning }),
       stopWhen: contextManager
-        ? [isStepCount(remainingSteps), stopForCompaction, stopOnSuspend, stopOnDeliveredOutcome]
-        : [isStepCount(remainingSteps), stopOnSuspend, stopOnDeliveredOutcome],
+        ? [isStepCount(remainingSteps), stopForCompaction, stopOnSuspend, stopOnDeliveredOutcome, stopOnDeliveredAgentSource, stopOnDeliveredProjectSuggestions]
+        : [isStepCount(remainingSteps), stopOnSuspend, stopOnDeliveredOutcome, stopOnDeliveredAgentSource, stopOnDeliveredProjectSuggestions],
       abortSignal: effectiveAbortSignal,
       // Deterministic fix for the XML-drift failure mode (fields smuggled into
       // neighboring strings as <parameter> markup); anything else falls through
@@ -1049,7 +1116,19 @@ async function* executeAgentAttempt(
     //      same step is denied (gate-first order only).
     // A generic (all-tools) approval fn is safe: no tool defines its own
     // needsApproval, so nothing is being overridden by taking sole authority.
-    const toolsForStream: ToolSet = outcomeNudgeSpent
+    const toolsForStream: ToolSet = agentSourceSubmissionRecoveryActive
+      ? Object.fromEntries(
+          [SUBMIT_AGENT_SOURCE_TOOL]
+            .filter((name) => modelFacingTools[name] !== undefined)
+            .map((name) => [name, modelFacingTools[name]])
+        ) as ToolSet
+      : projectSuggestionsRecoveryActive
+      ? Object.fromEntries(
+          [SUBMIT_PROJECT_SUGGESTIONS_TOOL]
+            .filter((name) => modelFacingTools[name] !== undefined)
+            .map((name) => [name, modelFacingTools[name]])
+        ) as ToolSet
+      : outcomeNudgeSpent
       ? Object.fromEntries(
           [REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL]
             .filter((name) => modelFacingTools[name] !== undefined)
@@ -1329,6 +1408,12 @@ async function* executeAgentAttempt(
   let runAnotherSegment = true;
   // One outcome nudge per run (see the nudge block at the end of the loop).
   let outcomeNudgeSpent = false;
+  // One creator delivery recovery per run. The flag is active only for the
+  // constrained stream where submit_agent_source is the sole available tool.
+  let agentSourceSubmissionRecoverySpent = false;
+  let agentSourceSubmissionRecoveryActive = false;
+  let projectSuggestionsRecoverySpent = false;
+  let projectSuggestionsRecoveryActive = false;
   // Whether the run has produced any visible prose yet, and whether prose from
   // here on is redundant (set only when the nudge fires on top of an existing
   // report). See the text-delta case.
@@ -1916,6 +2001,83 @@ Current step: ${stepCount}/${options.maxSteps}`);
         }
       } catch (reconcileError) {
         logger.debug(`Segment compaction check failed: ${(reconcileError as Error).message}`);
+      }
+    }
+
+    // Creator delivery recovery. Some smaller models correctly inspect and
+    // author the project, then hallucinate that the schema-backed submission
+    // tool is absent and declare the run incomplete without trying it. The
+    // runtime knows the toolset authoritatively, so recover that narrow case in
+    // the same conversation with only submit_agent_source exposed. Unrelated
+    // report_incomplete reasons remain terminal and are never overwritten.
+    const justRanAgentSourceRecovery = agentSourceSubmissionRecoveryActive;
+    agentSourceSubmissionRecoveryActive = false;
+    const incompleteReason = options.runOutcome?.incomplete?.reason ?? '';
+    const falselyClaimedSubmissionUnavailable =
+      incompleteReason.includes(SUBMIT_AGENT_SOURCE_TOOL) &&
+      /(?:missing|unavailable|not (?:present|available|provided)|cannot (?:access|find|use)|can't (?:access|find|use)|environment)/i.test(incompleteReason);
+    const canRecoverMissingAgentSource =
+      !justRanAgentSourceRecovery &&
+      !runAnotherSegment &&
+      !suspendState &&
+      !agentSourceSubmissionRecoverySpent &&
+      !options.agentSourceSubmission?.source &&
+      modelFacingTools[SUBMIT_AGENT_SOURCE_TOOL] !== undefined &&
+      stepCount < options.maxSteps &&
+      !['length', 'content-filter', 'error'].includes(segmentFinishReason ?? '') &&
+      (!options.runOutcome?.incomplete || falselyClaimedSubmissionUnavailable);
+
+    if (canRecoverMissingAgentSource) {
+      try {
+        messages = [...segmentInput, ...await accumulatedResponseMessages(stream)];
+        messages.push({ role: 'user', content: SUBMIT_AGENT_SOURCE_NUDGE_PROMPT } as ModelMessage);
+        contextManager?.setMessages(messages);
+        if (falselyClaimedSubmissionUnavailable && options.runOutcome) {
+          delete options.runOutcome.incomplete;
+        }
+        agentSourceSubmissionRecoverySpent = true;
+        agentSourceSubmissionRecoveryActive = true;
+        runAnotherSegment = true;
+        logger.debug('Creator stopped without submitting source; forcing one schema-backed submission turn.');
+      } catch (recoveryError) {
+        logger.debug(`Agent source submission recovery skipped: ${(recoveryError as Error).message}`);
+      }
+    }
+
+    // Project discovery uses the same structured-delivery guarantee as agent
+    // creation. If the model stops after inspecting files without submitting,
+    // give the existing conversation one constrained turn where the validated
+    // suggestions tool is the only possible action.
+    const justRanProjectSuggestionsRecovery = projectSuggestionsRecoveryActive;
+    projectSuggestionsRecoveryActive = false;
+    const projectSuggestionsFalselyUnavailable =
+      incompleteReason.includes(SUBMIT_PROJECT_SUGGESTIONS_TOOL) &&
+      /(?:missing|unavailable|not (?:present|available|provided)|cannot (?:access|find|use)|can't (?:access|find|use)|environment)/i.test(incompleteReason);
+    const canRecoverMissingProjectSuggestions =
+      !justRanProjectSuggestionsRecovery &&
+      !runAnotherSegment &&
+      !suspendState &&
+      !projectSuggestionsRecoverySpent &&
+      !options.projectSuggestionsSubmission?.result &&
+      modelFacingTools[SUBMIT_PROJECT_SUGGESTIONS_TOOL] !== undefined &&
+      stepCount < options.maxSteps &&
+      !['length', 'content-filter', 'error'].includes(segmentFinishReason ?? '') &&
+      (!options.runOutcome?.incomplete || projectSuggestionsFalselyUnavailable);
+
+    if (canRecoverMissingProjectSuggestions) {
+      try {
+        messages = [...segmentInput, ...await accumulatedResponseMessages(stream)];
+        messages.push({ role: 'user', content: SUBMIT_PROJECT_SUGGESTIONS_NUDGE_PROMPT } as ModelMessage);
+        contextManager?.setMessages(messages);
+        if (projectSuggestionsFalselyUnavailable && options.runOutcome) {
+          delete options.runOutcome.incomplete;
+        }
+        projectSuggestionsRecoverySpent = true;
+        projectSuggestionsRecoveryActive = true;
+        runAnotherSegment = true;
+        logger.debug('Discovery stopped without submitting suggestions; forcing one schema-backed submission turn.');
+      } catch (recoveryError) {
+        logger.debug(`Project suggestions submission recovery skipped: ${(recoveryError as Error).message}`);
       }
     }
 
