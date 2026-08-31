@@ -68,7 +68,7 @@ export function OnboardingSessionLog(props: {
       if (element) element.scrollTop = element.scrollHeight;
     });
     return () => cancelAnimationFrame(frame);
-  }, [entries, expanded, streamError]);
+  }, [entries, expanded, streamError, status]);
 
   return (
     <section class="onboarding-session-log" aria-live="polite" aria-label={props.title}>
@@ -84,6 +84,12 @@ export function OnboardingSessionLog(props: {
                 <span>{line.label}</span><pre>{line.text}</pre>
               </div>
             ))}
+        {running && !streamError && visible.length > 0 && (
+          <div class="onboarding-session-line onboarding-session-working" aria-label="Agent is still working">
+            <span class="onboarding-session-working-indicator" aria-hidden="true"><i /></span>
+            <pre>Still working<span class="onboarding-session-working-dots" aria-hidden="true" /></pre>
+          </div>
+        )}
         {streamError && <div class="onboarding-session-error">{streamError}</div>}
       </div>
       {lines.length > 12 && (

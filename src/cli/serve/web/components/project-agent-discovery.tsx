@@ -24,7 +24,7 @@ import {
   projectDiscoveryReducer,
   resumableProjectDiscoveryState,
 } from './onboarding-machine';
-import { OnboardingShell } from './onboarding-shell';
+import { firstUsefulAgentSetupSteps, OnboardingShell } from './onboarding-shell';
 import { hasConfiguredProvider, ProviderSetupDialog } from './provider-setup';
 
 type OnboardingModal = 'provider' | 'direct-create' | null;
@@ -229,12 +229,13 @@ export function ProjectAgentDiscovery(props: {
         compact={props.compact}
         labelledBy="project-discovery-title"
         stepsLabel="First useful agent setup steps"
-        steps={[
-          { number: '01', title: 'Choose project', detail: projectLabel },
-          { number: '02', title: 'Connect provider', detail: hasConfiguredProvider(setup?.provider.status) ? 'Provider ready' : 'Required before project scan', current: currentStep === 2 },
-          { number: '03', title: 'Scan project', detail: 'Read-only, bounded project context', current: currentStep === 3 },
-          { number: '04', title: props.existingAgents ? 'Create another agent' : 'Create an agent', detail: 'Review Source, then run it', current: currentStep === 4 },
-        ]}
+        steps={firstUsefulAgentSetupSteps({
+          currentStep,
+          projectDetail: projectLabel,
+          providerReady: hasConfiguredProvider(setup?.provider.status),
+          scanDetail: 'Read-only, bounded project context',
+          createDetail: 'Review Source, then run it',
+        })}
       >
         <div class="eyebrow">{isCreationStage ? `Creating ${selectedSuggestion?.name ?? 'your agent'}` : props.existingAgents ? 'Add another useful agent' : 'Your first useful agent'}</div>
         <h2 id="project-discovery-title">
@@ -303,7 +304,7 @@ export function ProjectAgentDiscovery(props: {
             <button type="button" class="onboarding-primary" disabled={state.type === 'ready' && !model} onClick={continueFromSetup}>
               {state.type === 'provider-required' ? 'Connect provider' : !model ? 'Choose a model to continue' : retryingCreation ? 'Try creating again' : retryingScan ? 'Scan again' : 'Scan this project'}
             </button>
-            {state.type === 'ready' && !retryingCreation && <button type="button" class="onboarding-skip-link" disabled={!model} onClick={() => setModal('direct-create')}>Skip scan and create an agent directly</button>}
+            {state.type === 'ready' && !retryingCreation && <button type="button" class="onboarding-skip-link" onClick={() => setModal('direct-create')}>Skip scan and create an agent directly</button>}
             {retryingCreation && <a class="onboarding-skip-link" href="/agents" onClick={clearResume}>Skip for now — open the agent dashboard</a>}
             <span class="onboarding-assurance">{retryingCreation ? 'Project and selected idea preserved' : 'Read-only scan · You choose what gets created'}</span>
           </div>
@@ -321,7 +322,7 @@ export function ProjectAgentDiscovery(props: {
             <div class="onboarding-actions">
               <button type="button" class="onboarding-primary" onClick={() => void scan()}>Try again</button>
               <button type="button" class="onboarding-secondary" onClick={() => dispatch({ type: 'CHOOSE_MODEL_AFTER_SCAN' })}>Choose another model</button>
-              <button type="button" class="onboarding-skip-link" disabled={!model} onClick={() => setModal('direct-create')}>Skip scan</button>
+              <button type="button" class="onboarding-skip-link" onClick={() => setModal('direct-create')}>Skip scan</button>
             </div>
           </div>
         )}

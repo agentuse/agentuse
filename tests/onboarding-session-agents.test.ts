@@ -80,6 +80,7 @@ describe('onboarding session agents', () => {
       model: 'openai:gpt-5.6-terra', projectName: 'demo', inspectedFiles: 99, safeViewRoot: '/tmp/safe-view',
     }), '');
     expect(discovery.name).toBe('onboarding-project-discovery');
+    expect(discovery.config.reasoning).toBe('minimal');
     expect(discovery.config.tools?.filesystem?.[0]?.path).toBe('/tmp/safe-view');
     expect(discovery.config.tools?.bash).toBeUndefined();
     expect(discovery.config.maxSteps).toBe(20);
@@ -99,6 +100,7 @@ describe('onboarding session agents', () => {
       availableModels: ['openai:gpt-5.6-luna'],
     }), '');
     expect(creator.name).toBe('onboarding-agent-creator');
+    expect(creator.config.reasoning).toBe('minimal');
     expect(creator.instructions).toContain('<creator_skill>');
     expect(creator.instructions).toContain('openai:gpt-5.6-luna');
     expect(creator.instructions).toContain('Submit the complete raw .agentuse file through submit_agent_source');

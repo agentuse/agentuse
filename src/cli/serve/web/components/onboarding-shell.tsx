@@ -7,6 +7,21 @@ export interface OnboardingStepItem {
   current?: boolean;
 }
 
+export function firstUsefulAgentSetupSteps(options: {
+  currentStep: 1 | 2 | 3 | 4;
+  projectDetail?: string;
+  providerReady?: boolean;
+  scanDetail?: string;
+  createDetail?: string;
+}): OnboardingStepItem[] {
+  return [
+    { number: '01', title: 'Choose a project', detail: options.projectDetail ?? 'New or already in progress', current: options.currentStep === 1 },
+    { number: '02', title: 'Connect provider', detail: options.providerReady ? 'Provider ready' : 'Required before project scan', current: options.currentStep === 2 },
+    { number: '03', title: 'Scan project', detail: options.scanDetail ?? 'Get three grounded suggestions', current: options.currentStep === 3 },
+    { number: '04', title: 'Create and run', detail: options.createDetail ?? 'Review Source, then see the result', current: options.currentStep === 4 },
+  ];
+}
+
 export function OnboardingShell(props: {
   labelledBy: string;
   stepsLabel: string;

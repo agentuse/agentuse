@@ -7759,7 +7759,7 @@ export function createServeCommand(): Command {
               projectRoot: project.root,
               newSessionId: sessionId,
               trigger: 'onboarding',
-              timeout: 150,
+              timeout: 300,
               maxSteps: 12,
               debug: options.debug,
             }).then(async (execution) => {

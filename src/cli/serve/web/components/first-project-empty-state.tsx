@@ -3,7 +3,7 @@ import { FIRST_PROJECT_DEFAULT_NAME } from '../../../../onboarding';
 import { attachExistingProject, createManagedProject, pickProjectFolder, reportOnboardingTelemetry } from '../lib/api';
 import { ProjectAgentDiscovery } from './project-agent-discovery';
 import { projectDiscoveryHref } from '../lib/links';
-import { OnboardingShell } from './onboarding-shell';
+import { firstUsefulAgentSetupSteps, OnboardingShell } from './onboarding-shell';
 import { initialProjectSelectionState, projectSelectionReducer } from './onboarding-machine';
 
 export function FirstProjectEmptyState(props: { compact?: boolean; folderPickerAvailable?: boolean }) {
@@ -20,12 +20,8 @@ export function FirstProjectEmptyState(props: { compact?: boolean; folderPickerA
           className="existing-project-found"
           compact={props.compact}
           labelledBy="existing-project-title"
-          stepsLabel="Existing project next steps"
-          steps={[
-            { number: '01', title: 'Project selected', detail: project.about?.name ?? project.id },
-            { number: '02', title: 'Existing agents found', detail: `${agentLabel} ready to use` },
-            { number: '03', title: 'Choose what’s next', detail: 'Open the dashboard or discover another idea', current: true },
-          ]}
+          stepsLabel="First useful agent setup steps"
+          steps={firstUsefulAgentSetupSteps({ currentStep: 1, projectDetail: project.about?.name ?? project.id })}
         >
             <div class="eyebrow">Project ready</div>
             <h2 id="existing-project-title">This project already has {project.agentCount} {project.agentCount === 1 ? 'agent' : 'agents'}</h2>
@@ -98,12 +94,7 @@ export function FirstProjectEmptyState(props: { compact?: boolean; folderPickerA
       compact={props.compact}
       labelledBy="first-project-title"
       stepsLabel="First useful agent setup steps"
-      steps={[
-        { number: '01', title: 'Choose a project', detail: 'New or already in progress', current: true },
-        { number: '02', title: 'Connect provider', detail: 'Required before project scan' },
-        { number: '03', title: 'Scan project', detail: 'Get three grounded suggestions' },
-        { number: '04', title: 'Create and run', detail: 'Review Source, then see the result' },
-      ]}
+      steps={firstUsefulAgentSetupSteps({ currentStep: 1 })}
     >
         <div class="eyebrow">Get started</div>
         {props.compact ? <h2 id="first-project-title">Start with real work</h2> : <h1 id="first-project-title">Start with real work</h1>}

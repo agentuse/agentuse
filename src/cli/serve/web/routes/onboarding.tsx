@@ -6,6 +6,7 @@ import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { fetchInfo } from '../lib/api';
 import { pageTitle } from '../lib/brand';
+import { WORDMARK_SVG } from '../../brand';
 
 /** Dedicated first-use workflow. Dashboard routes stay operational surfaces. */
 export default function Onboarding() {
@@ -20,7 +21,7 @@ export default function Onboarding() {
   return (
     <div class="page-onboarding" data-ambient="idle">
       <header class="onboarding-route-header">
-        <a class="onboarding-route-brand" href="/" aria-label="AgentUse home">AGENTUSE</a>
+        <a class="onboarding-route-brand" href="/" aria-label="AgentUse home" dangerouslySetInnerHTML={{ __html: WORDMARK_SVG }} />
         <a class="onboarding-route-exit" href="/agents">Exit onboarding</a>
       </header>
       <main class="onboarding-route-main">

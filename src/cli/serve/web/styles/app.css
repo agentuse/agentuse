@@ -3989,17 +3989,20 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-home .home-onboarding { padding-top: 56px; }
 .page-onboarding { min-height: 100vh; background: var(--bg); }
 .onboarding-route-header {
-  position: fixed; z-index: 20; inset: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
-  height: 58px; padding: 0 clamp(20px, 3.5vw, 54px); pointer-events: none;
+  position: fixed; z-index: 100; inset: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
+  height: 68px; padding: 0 clamp(20px, 3.5vw, 54px); border-bottom: 1px solid var(--line); background: var(--bg);
 }
-.onboarding-route-brand,
-.onboarding-route-exit { pointer-events: auto; }
-.onboarding-route-brand { color: var(--fg); font: 800 var(--font-size-supporting)/1 var(--sans); letter-spacing: -0.05em; text-decoration: none; }
+.onboarding-route-brand { display: inline-flex; align-items: center; color: var(--fg); text-decoration: none; }
+.onboarding-route-brand .brand-mark { display: inline-flex; align-items: center; }
+.onboarding-route-brand .brand-mark svg { display: block; width: auto; height: 22px; }
+.onboarding-route-brand .brand-mark-dark { display: none; }
+:root[data-theme="dark"] .onboarding-route-brand .brand-mark-light { display: none; }
+:root[data-theme="dark"] .onboarding-route-brand .brand-mark-dark { display: inline-flex; }
 .onboarding-route-exit { color: var(--muted-2); font: 500 var(--font-size-caption)/1 var(--sans); text-decoration: none; }
 .onboarding-route-exit:hover { color: var(--cyan); }
-.onboarding-route-main { display: flex; min-height: 100vh; width: 100%; padding: 58px 0 0; }
+.onboarding-route-main { display: flex; min-height: 100vh; width: 100%; padding: 68px 0 0; }
 .page-onboarding .onboarding-empty {
-  width: 100%; min-height: calc(100vh - 58px); margin: 0; padding: clamp(42px, 6vw, 92px) clamp(28px, 8vw, 132px);
+  width: 100%; min-height: calc(100vh - 68px); margin: 0; padding: clamp(42px, 6vw, 92px) clamp(28px, 8vw, 132px);
   gap: clamp(44px, 7vw, 112px); border: 0; border-radius: 0; background: transparent; box-shadow: none;
 }
 .page-onboarding .onboarding-copy { align-self: center; }
@@ -4076,6 +4079,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   background: transparent;
   color: var(--cyan);
   font: 500 var(--font-size-caption)/1.4 var(--sans);
+  text-decoration: none;
   cursor: pointer;
 }
 .onboarding-skip-link:hover:not(:disabled) { border-bottom-color: currentColor; }
@@ -4187,6 +4191,17 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .onboarding-session-line { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 12px; padding: 7px 14px; border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); }
 .onboarding-session-line > span { padding-top: 2px; color: var(--cyan); font: var(--font-size-micro)/1.35 var(--mono); overflow-wrap: anywhere; }
 .onboarding-session-line pre { margin: 0; color: var(--muted-3); font: var(--font-size-micro)/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.onboarding-session-working-indicator { display: flex; align-items: center; min-height: 18px; padding-top: 0 !important; }
+.onboarding-session-working-indicator i { display: block; width: 9px; height: 9px; border: 1px solid var(--cyan); border-top-color: transparent; border-radius: 50%; animation: log-spin .75s linear infinite; }
+.onboarding-session-working pre { color: var(--cyan); animation: onboarding-session-working-pulse 1.7s ease-in-out infinite; }
+.onboarding-session-working-dots::after { content: ""; animation: log-working-dots 1.4s steps(1, end) infinite; }
+@keyframes onboarding-session-working-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-session-working pre,
+  .onboarding-session-working-dots::after,
+  .onboarding-session-working-indicator i { animation: none; }
+  .onboarding-session-working-dots::after { content: "…"; }
+}
 .onboarding-session-placeholder,
 .onboarding-session-error { padding: 18px 14px; color: var(--muted); font: var(--font-size-micro)/1.5 var(--mono); }
 .onboarding-session-error { color: var(--red); }
@@ -4217,8 +4232,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
     padding: 32px 24px;
   }
   .page-home .home-onboarding { padding-top: 32px; }
-  .onboarding-route-header { position: absolute; }
-  .page-onboarding .onboarding-empty { min-height: calc(100vh - 58px); padding: 34px 22px 48px; }
+  .page-onboarding .onboarding-empty { min-height: calc(100vh - 68px); padding: 34px 22px 48px; }
   .onboarding-empty h1,
   .onboarding-empty h2,
   .page-agents .onboarding-empty.is-compact h2 { font-size: var(--font-size-display); }
