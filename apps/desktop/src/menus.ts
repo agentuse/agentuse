@@ -1,6 +1,7 @@
 import type { MenuItemConstructorOptions } from "electron";
 
 export interface NavigationCommands {
+  open(path: string): void;
   canGoBack(): boolean;
   canGoForward(): boolean;
   goBack(): void;
@@ -68,6 +69,13 @@ export function createNavigationMenu(commands: NavigationCommands): MenuItemCons
   return {
     label: "Go",
     submenu: [
+      { label: "Home", accelerator: "Command+1", click: () => commands.open("/") },
+      { label: "Agents", accelerator: "Command+2", click: () => commands.open("/agents") },
+      { label: "Sessions", accelerator: "Command+3", click: () => commands.open("/sessions") },
+      { label: "Schedules", accelerator: "Command+4", click: () => commands.open("/schedules") },
+      { label: "Stores", accelerator: "Command+5", click: () => commands.open("/stores") },
+      { label: "Approvals", accelerator: "Command+6", click: () => commands.open("/approvals") },
+      { type: "separator" },
       {
         label: "Back",
         accelerator: "Command+[",

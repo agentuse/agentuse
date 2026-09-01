@@ -60,19 +60,38 @@ describe("desktop application menus", () => {
   });
 
   it("reflects navigation availability and delegates navigation", () => {
+    const open = mock(() => undefined);
     const goBack = mock(() => undefined);
     const goForward = mock(() => undefined);
     const menu = createNavigationMenu({
+      open,
       canGoBack: () => true,
       canGoForward: () => false,
       goBack,
       goForward,
     });
-    const [back, forward] = menu.submenu as Array<{
+    const items = menu.submenu as Array<{
+      label?: string;
       accelerator?: string;
       enabled?: boolean;
       click?: () => void;
     }>;
+
+    expect(items.slice(0, 6).map((item) => [item.label, item.accelerator])).toEqual([
+      ["Home", "Command+1"],
+      ["Agents", "Command+2"],
+      ["Sessions", "Command+3"],
+      ["Schedules", "Command+4"],
+      ["Stores", "Command+5"],
+      ["Approvals", "Command+6"],
+    ]);
+    items[0]?.click?.();
+    items[5]?.click?.();
+    expect(open).toHaveBeenNthCalledWith(1, "/");
+    expect(open).toHaveBeenNthCalledWith(2, "/approvals");
+
+    const back = items.find((item) => item.label === "Back")!;
+    const forward = items.find((item) => item.label === "Forward")!;
 
     expect(back.accelerator).toBe("Command+[");
     expect(back.enabled).toBe(true);

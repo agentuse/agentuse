@@ -107,6 +107,7 @@
     "fuzzysort": "^3.1.0",
     "glob": "^11.0.3",
     "gray-matter": "^4.0.3",
+    "lucide-preact": "^1.38.0",
     "minimatch": "^10.1.1",
     "ora": "^9.0.0",
     "posthog-node": "^5.18.0",

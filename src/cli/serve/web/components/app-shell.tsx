@@ -1,6 +1,20 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
+import {
+  ArrowLeft,
+  ArrowRight,
+  Bot,
+  CalendarDays,
+  CircleCheck,
+  Database,
+  House,
+  Menu,
+  MessageSquare,
+  PanelLeft,
+  Search,
+  Settings,
+} from 'lucide-preact';
 import { openAgentPalette } from './agent-palette';
 import { useGlobalApprovals } from '../hooks/use-global-approvals';
 import { useMediaQuery } from '../hooks/use-media-query';
@@ -66,42 +80,13 @@ function writeSidebarWidth(width: number): void {
   }
 }
 
-function SearchIcon() {
-  return (
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <circle cx="7" cy="7" r="4.5" /><path d="m11 11 3 3" />
-    </svg>
-  );
-}
-
-function MenuIcon() {
-  return <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3 5.5h14M3 10h14M3 14.5h14" /></svg>;
-}
-
-function SidebarIcon() {
-  return <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2.75" y="3" width="14.5" height="14" rx="2" /><path d="M7.25 3v14" /></svg>;
-}
-
-function BackIcon({ forward = false }: { forward?: boolean }) {
-  return <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={forward ? 'm8 5 5 5-5 5' : 'm12 5-5 5 5 5'} /></svg>;
-}
-
-function SettingsIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09A1.65 1.65 0 0 0 19.4 15z" />
-    </svg>
-  );
-}
-
 function NavIcon({ page }: { page: NavigationPage }) {
-  if (page === 'home') return <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="m3 9 7-6 7 6v8H6V9" /></svg>;
-  if (page === 'agents') return <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="14" height="11" rx="3" /><path d="M10 2v3M7 10h.01M13 10h.01M7 13h6" /></svg>;
-  if (page === 'sessions') return <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M3 4.5h14v10H8l-4 3v-3H3z" /></svg>;
-  if (page === 'schedules') return <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="14" height="13" rx="2" /><path d="M6 2.5V6M14 2.5V6M3 8h14M10 11v3l2 1" /></svg>;
-  if (page === 'stores') return <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><ellipse cx="10" cy="5" rx="6.5" ry="2.5" /><path d="M3.5 5v5c0 1.4 2.9 2.5 6.5 2.5s6.5-1.1 6.5-2.5V5M3.5 10v5c0 1.4 2.9 2.5 6.5 2.5s6.5-1.1 6.5-2.5v-5" /></svg>;
-  return <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="7" /><path d="m7 10 2 2 4-4" /></svg>;
+  if (page === 'home') return <House aria-hidden="true" strokeWidth={1.7} />;
+  if (page === 'agents') return <Bot aria-hidden="true" strokeWidth={1.7} />;
+  if (page === 'sessions') return <MessageSquare aria-hidden="true" strokeWidth={1.7} />;
+  if (page === 'schedules') return <CalendarDays aria-hidden="true" strokeWidth={1.7} />;
+  if (page === 'stores') return <Database aria-hidden="true" strokeWidth={1.7} />;
+  return <CircleCheck aria-hidden="true" strokeWidth={1.7} />;
 }
 
 function navHref(page: NavigationPage): string {
@@ -291,9 +276,9 @@ export function AppShell({ children }: { children: ComponentChildren }) {
       <header class="topbar app-toolbar">
         {isDesktop ? (
           <>
-            <button type="button" class="toolbar-button sidebar-toggle" aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'} aria-keyshortcuts="Meta+B Control+B" aria-expanded={!sidebarCollapsed} title="Toggle sidebar (⌘B)" onClick={toggleSidebar}><SidebarIcon /></button>
-            <button type="button" class="toolbar-button" aria-label="Back" disabled={!navigationState.canGoBack} onClick={() => window.agentuseDesktop?.goBack?.()}><BackIcon /></button>
-            <button type="button" class="toolbar-button" aria-label="Forward" disabled={!navigationState.canGoForward} onClick={() => window.agentuseDesktop?.goForward?.()}><BackIcon forward /></button>
+            <button type="button" class="toolbar-button sidebar-toggle" aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'} aria-keyshortcuts="Meta+B Control+B" aria-expanded={!sidebarCollapsed} title="Toggle sidebar (⌘B)" onClick={toggleSidebar}><PanelLeft aria-hidden="true" strokeWidth={1.7} /></button>
+            <button type="button" class="toolbar-button" aria-label="Back" disabled={!navigationState.canGoBack} onClick={() => window.agentuseDesktop?.goBack?.()}><ArrowLeft aria-hidden="true" strokeWidth={1.7} /></button>
+            <button type="button" class="toolbar-button" aria-label="Forward" disabled={!navigationState.canGoForward} onClick={() => window.agentuseDesktop?.goForward?.()}><ArrowRight aria-hidden="true" strokeWidth={1.7} /></button>
             <span class="toolbar-drag-region" aria-hidden="true" />
           </>
         ) : (
@@ -306,7 +291,7 @@ export function AppShell({ children }: { children: ComponentChildren }) {
               aria-expanded={drawerOpen}
               aria-controls="app-sidebar"
               onClick={() => setDrawerOpen((open) => !open)}
-            ><MenuIcon /></button>
+            ><Menu aria-hidden="true" strokeWidth={1.7} /></button>
             <a class="mobile-brand" href="/" aria-label="AgentUse home"><span class="brand-wordmark" dangerouslySetInnerHTML={{ __html: WORDMARK_SVG }} /></a>
           </>
         )}
@@ -338,10 +323,10 @@ export function AppShell({ children }: { children: ComponentChildren }) {
         </nav>
         <div class="sidebar-footer">
           <button type="button" class="palette-trigger sidebar-palette-trigger" aria-label="Go to agent" title={`Go to agent (${IS_APPLE ? '⌘' : 'Ctrl+'}K)`} onClick={() => openAgentPalette()}>
-            <SearchIcon /><span class="palette-trigger-label">Go to agent</span><kbd class="palette-trigger-kbd">{IS_APPLE ? '⌘' : 'Ctrl'}K</kbd>
+            <Search aria-hidden="true" strokeWidth={1.7} /><span class="palette-trigger-label">Go to agent</span><kbd class="palette-trigger-kbd">{IS_APPLE ? '⌘' : 'Ctrl'}K</kbd>
           </button>
           <a class={`sidebar-nav-item${pathname === '/settings' ? ' active' : ''}`} href="/settings" aria-current={pathname === '/settings' ? 'page' : undefined}>
-            <SettingsIcon /><span>settings</span>
+            <Settings aria-hidden="true" strokeWidth={1.7} /><span>settings</span>
           </a>
         </div>
         <button

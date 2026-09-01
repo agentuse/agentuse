@@ -1225,7 +1225,13 @@ function broadcastNavigationState(): void {
   window.webContents.send("agentuse:desktop:navigation-state", dashboardNavigationState());
 }
 
+async function showDashboardPath(path: string): Promise<void> {
+  if (!dashboardUrl) await ensureServer();
+  await showDashboard(new URL(path, dashboardUrl!).toString());
+}
+
 const navigationCommands: NavigationCommands = {
+  open: (path) => void showDashboardPath(path),
   canGoBack: () => activeNavigationHistory()?.canGoBack() ?? false,
   canGoForward: () => activeNavigationHistory()?.canGoForward() ?? false,
   goBack: () => {
