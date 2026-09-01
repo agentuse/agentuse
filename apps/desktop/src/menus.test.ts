@@ -48,14 +48,19 @@ describe("desktop application menus", () => {
     expect(open).toHaveBeenCalledTimes(1);
   });
 
-  it("provides the standard sidebar shortcut in the View menu", () => {
+  it("provides standard reload and sidebar shortcuts in the View menu", () => {
+    const reload = mock(() => undefined);
     const toggle = mock(() => undefined);
-    const menu = createViewMenu({ toggle });
-    const [item] = menu.submenu as MenuItemConstructorOptions[];
+    const menu = createViewMenu({ reload, toggle });
+    const items = menu.submenu as MenuItemConstructorOptions[];
+    const reloadItem = items.find((item) => item.label === "Reload");
+    const sidebarItem = items.find((item) => item.label === "Toggle Sidebar");
 
-    expect(item?.label).toBe("Toggle Sidebar");
-    expect(item?.accelerator).toBe("Command+B");
-    item?.click?.({} as never, undefined as never, {} as never);
+    expect(reloadItem?.accelerator).toBe("Command+R");
+    expect(sidebarItem?.accelerator).toBe("Command+B");
+    reloadItem?.click?.({} as never, undefined as never, {} as never);
+    sidebarItem?.click?.({} as never, undefined as never, {} as never);
+    expect(reload).toHaveBeenCalledTimes(1);
     expect(toggle).toHaveBeenCalledTimes(1);
   });
 

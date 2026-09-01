@@ -16,6 +16,10 @@ export interface SidebarCommands {
   toggle(): void;
 }
 
+export interface ViewCommands extends SidebarCommands {
+  reload(): void;
+}
+
 export interface TrayMenuCommands {
   showDashboard(): void;
   showSettings(): void;
@@ -56,11 +60,13 @@ export function createEditMenu(find: FindCommands): MenuItemConstructorOptions {
   };
 }
 
-export function createViewMenu(sidebar: SidebarCommands): MenuItemConstructorOptions {
+export function createViewMenu(commands: ViewCommands): MenuItemConstructorOptions {
   return {
     label: "View",
     submenu: [
-      { label: "Toggle Sidebar", accelerator: "Command+B", click: sidebar.toggle },
+      { label: "Reload", accelerator: "Command+R", click: commands.reload },
+      { type: "separator" },
+      { label: "Toggle Sidebar", accelerator: "Command+B", click: commands.toggle },
     ],
   };
 }

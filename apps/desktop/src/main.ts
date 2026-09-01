@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pendingApprovalCount, pendingApprovalTitle, pendingApprovalTooltip, type ApprovalBucketsPayload } from "./approval-status";
 import { bundledCliCommand } from "./bundled-cli";
-import { createEditMenu, createNavigationMenu, createTrayMenu, createViewMenu, type FindCommands, type NavigationCommands, type SidebarCommands } from "./menus";
+import { createEditMenu, createNavigationMenu, createTrayMenu, createViewMenu, type FindCommands, type NavigationCommands, type ViewCommands } from "./menus";
 import { parseNotificationFrames, type NativeNotificationEvent } from "./notification-stream";
 import { encodeNativeSettingsMessage, isNativeSettingsPipeClosure, parseNativeSettingsCommand, type NativeSettingsMessage } from "./native-settings";
 import {
@@ -704,6 +704,7 @@ async function showPrimaryWindow(): Promise<void> {
 async function prepareDesktopDocument(browser: BrowserWindow): Promise<void> {
   if (browser.isDestroyed() || browser.webContents.isDestroyed()) return;
   await browser.webContents.executeJavaScript(`(() => {
+    document.documentElement.toggleAttribute('data-agentuse-desktop-mac', ${process.platform === "darwin"});
     document.querySelector('.skip-link')?.remove();
     if (window.__agentuseDesktopFocusGuardInstalled) return;
     window.__agentuseDesktopFocusGuardInstalled = true;
@@ -1268,8 +1269,12 @@ function toggleDashboardSidebar(): void {
   ));
 }
 
-const sidebarCommands: SidebarCommands = {
+const viewCommands: ViewCommands = {
   toggle: toggleDashboardSidebar,
+  reload: () => {
+    if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
+    window.webContents.reload();
+  },
 };
 
 function refreshTrayMenu(): void {
@@ -1299,7 +1304,7 @@ function refreshApplicationMenu(): void {
       ],
     },
     createEditMenu(findCommands),
-    createViewMenu(sidebarCommands),
+    createViewMenu(viewCommands),
     createNavigationMenu(navigationCommands),
   ]));
 }
