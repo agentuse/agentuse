@@ -5,6 +5,7 @@ import path from 'path';
 import { AnthropicAuth } from '../src/auth/anthropic';
 import {
   clearProviderOAuthAttempts,
+  checkCustomProvider,
   completeProviderOAuth,
   providerSetupSnapshot,
   removeCustomProvider,
@@ -21,6 +22,7 @@ const ENV_KEYS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'OPENAI_API_KE
 describe('Dashboard provider setup service', () => {
   let tempDir = '';
   let originalAuthFile: string;
+  let fetchSpy: ReturnType<typeof spyOn> | undefined;
   const originalEnv = new Map<string, string | undefined>();
 
   beforeEach(async () => {
@@ -35,6 +37,8 @@ describe('Dashboard provider setup service', () => {
   });
 
   afterEach(async () => {
+    fetchSpy?.mockRestore();
+    fetchSpy = undefined;
     (AuthStorage as any).AUTH_FILE = originalAuthFile;
     for (const key of ENV_KEYS) {
       const value = originalEnv.get(key);
@@ -60,12 +64,60 @@ describe('Dashboard provider setup service', () => {
   });
 
   it('validates and manages custom OpenAI-compatible providers', async () => {
-    const payload = await saveCustomProvider({ name: 'Local_Models', baseURL: 'http://localhost:11434/v1/', key: 'local-secret' });
-    expect(payload.status.customProviders).toEqual([{ id: 'local_models', baseURL: 'http://localhost:11434/v1', hasApiKey: true }]);
+    fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input) => String(input).endsWith('/models')
+      ? new Response(JSON.stringify({ data: [] }), { status: 200 })
+      : new Response(JSON.stringify({ choices: [] }), { status: 200 }));
+    const payload = await saveCustomProvider({ name: 'Local_Models', baseURL: 'http://localhost:11434/v1/', key: 'local-secret', models: ['qwen3'] });
+    expect(payload.status.customProviders).toEqual([{ id: 'local_models', baseURL: 'http://localhost:11434/v1', hasApiKey: true, api: 'openai-completions', models: ['qwen3'] }]);
     expect(JSON.stringify(payload)).not.toContain('local-secret');
 
-    await expect(saveCustomProvider({ name: 'openai', baseURL: 'http://localhost:11434/v1' })).rejects.toThrow('reserved');
+    await expect(saveCustomProvider({ name: 'openai', baseURL: 'http://localhost:11434/v1', models: ['qwen3'] })).rejects.toThrow('reserved');
     expect((await removeCustomProvider('local_models')).status.customProviders).toEqual([]);
+  });
+
+  it('checks the runtime endpoint without saving provider configuration', async () => {
+    fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input) => String(input).endsWith('/models')
+      ? new Response(JSON.stringify({ data: [{ id: 'local-model' }] }), { status: 200 })
+      : new Response(JSON.stringify({ choices: [] }), { status: 200 }));
+
+    await expect(checkCustomProvider({
+      name: 'lmstudio',
+      baseURL: 'http://127.0.0.1:1234',
+    })).resolves.toEqual({
+      name: 'lmstudio',
+      baseURL: 'http://127.0.0.1:1234/v1',
+      api: 'openai-completions',
+      models: ['local-model'],
+    });
+    expect(await AuthStorage.getCustomProvider('lmstudio')).toBeUndefined();
+    expect(fetchSpy).toHaveBeenCalledWith('http://127.0.0.1:1234/v1/models', expect.anything());
+  });
+
+  it('uses a manual Anthropic model when the endpoint has no model discovery API', async () => {
+    fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input) => String(input).endsWith('/models')
+      ? new Response('missing', { status: 404 })
+      : new Response(JSON.stringify({ content: [] }), { status: 200 }));
+    await expect(checkCustomProvider({
+      name: 'claude-gateway',
+      baseURL: 'http://localhost:8080/v1',
+      api: 'anthropic-messages',
+      models: ['claude-compatible'],
+    })).resolves.toMatchObject({ api: 'anthropic-messages', models: ['claude-compatible'] });
+    expect(fetchSpy).toHaveBeenCalledWith('http://localhost:8080/v1/messages', expect.objectContaining({ method: 'POST' }));
+  });
+
+  it('automatically detects an OpenAI Responses endpoint', async () => {
+    fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/models')) return new Response(JSON.stringify({ data: [{ id: 'response-model' }] }), { status: 200 });
+      if (url.endsWith('/responses')) return new Response(JSON.stringify({ output: [] }), { status: 200 });
+      return new Response(JSON.stringify({ error: { message: 'not supported' } }), { status: 404 });
+    });
+    await expect(checkCustomProvider({
+      name: 'response-gateway',
+      baseURL: 'http://localhost:8080/v1',
+      api: 'auto',
+    })).resolves.toMatchObject({ api: 'openai-responses', models: ['response-model'] });
   });
 
   it('treats a saved keyless custom endpoint as ready for agent creation', () => {

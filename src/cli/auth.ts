@@ -9,6 +9,7 @@ import {
 } from "../providers/opencode-go";
 import { AUTH_PROVIDERS, BUILTIN_PROVIDERS } from "../providers/registry-sources";
 import { getProviderStatus } from "../auth/provider-status.js";
+import { checkCustomProviderCompletion, CUSTOM_PROVIDER_APIS, detectCustomProviderApi, discoverCustomProviderModelIds, normalizeCustomProviderBaseURL, normalizeCustomProviderModelIds, type CustomProviderApi } from "../auth/custom-provider-models.js";
 
 const GITHUB_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
@@ -126,9 +127,11 @@ export function createProviderCommand(): Command {
 
   const addProviderCommand = authCmd
     .command("add <name>")
-    .description("Add a custom provider endpoint (OpenAI-compatible)")
-    .requiredOption("--url <url>", "Base URL of the OpenAI-compatible endpoint")
+    .description("Add a custom provider endpoint")
+    .requiredOption("--url <url>", "Base URL of the provider endpoint")
+    .option("--api <format>", "API format override: openai-completions, openai-responses, or anthropic-messages", "auto")
     .option("--key <key>", "Optional API key for the endpoint")
+    .option("--model <id>", "Model ID to save when automatic discovery is unavailable (repeatable)", (id, models: string[]) => [...models, id], [])
     .addOption(new Option("--no-developer-role").hideHelp())
     .addOption(new Option("--no-reasoning-effort").hideHelp())
     .addOption(new Option("--no-stream-usage").hideHelp())
@@ -148,6 +151,8 @@ Use these only when an endpoint reports a protocol compatibility error.
   addProviderCommand.action(async (name: string, options: {
       url: string;
       key?: string;
+      api: string;
+      model: string[];
       developerRole: boolean;
       reasoningEffort: boolean;
       streamUsage: boolean;
@@ -178,6 +183,10 @@ Use these only when an endpoint reports a protocol compatibility error.
         logger.error("--max-tokens-field must be max_tokens or max_completion_tokens");
         process.exit(1);
       }
+      if (options.api !== 'auto' && !CUSTOM_PROVIDER_APIS.includes(options.api as CustomProviderApi)) {
+        logger.error(`--api must be auto or one of: ${CUSTOM_PROVIDER_APIS.join(', ')}`);
+        process.exit(1);
+      }
 
       const compatibility = {
         ...(options.developerRole === false && { supportsDeveloperRole: false }),
@@ -189,18 +198,46 @@ Use these only when an endpoint reports a protocol compatibility error.
         }),
       };
 
-      await AuthStorage.setCustomProvider(name, {
-        baseURL: options.url,
+      const providerName = name.toLowerCase();
+      const provider = {
+        baseURL: normalizeCustomProviderBaseURL(providerName, options.url),
+        api: (options.api === 'auto' ? 'openai-completions' : options.api) as CustomProviderApi,
         ...(options.key && { key: options.key }),
         ...(Object.keys(compatibility).length > 0 && { compatibility }),
-      });
+      };
+      let discoveredModels: string[];
+      try {
+        discoveredModels = await discoverCustomProviderModelIds(providerName, provider);
+      } catch (error) {
+        if (options.model.length === 0) {
+          logger.error(`Could not check provider endpoint: ${error instanceof Error ? error.message : String(error)}`);
+          process.exit(1);
+        }
+        discoveredModels = [];
+      }
+      const models = normalizeCustomProviderModelIds([...discoveredModels, ...options.model]);
+      if (models.length === 0) {
+        logger.error("Could not discover any models. Add at least one with --model <model-id>.");
+        process.exit(1);
+      }
+      try {
+        if (options.api === 'auto') provider.api = await detectCustomProviderApi(provider, models[0]!);
+        else await checkCustomProviderCompletion(provider, models[0]!);
+      } catch (error) {
+        logger.error(`Could not run a test completion: ${error instanceof Error ? error.message : String(error)}`);
+        process.exit(1);
+      }
 
-      process.stdout.write(`✅ Added custom provider '${name}'\n`);
+      await AuthStorage.setCustomProvider(providerName, { ...provider, models });
+
+      process.stdout.write(`✅ Added custom provider '${providerName}'\n`);
       process.stdout.write(`   URL: ${options.url}\n`);
+      process.stdout.write(`   API: ${provider.api}${options.api === 'auto' ? ' (detected)' : ''}\n`);
       if (options.key) {
         process.stdout.write(`   Key: ****${options.key.slice(-4)}\n`);
       }
-      process.stdout.write(`\nUsage: agentuse run agent.agentuse -m ${name}:<model-name>\n`);
+      process.stdout.write(`   Models: ${models.length} saved\n`);
+      process.stdout.write(`\nUsage: agentuse run agent.agentuse -m ${providerName}:${models[0]}\n`);
     });
 
   authCmd

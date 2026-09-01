@@ -6,6 +6,12 @@ import { AuthStorage } from "../src/auth/storage";
 import { CustomProviderAuth } from "../src/auth/types";
 
 describe("CustomProviderAuth schema", () => {
+  it("validates supported custom provider API formats", () => {
+    for (const api of ["openai-completions", "openai-responses", "anthropic-messages"]) {
+      expect(CustomProviderAuth.safeParse({ type: "custom", baseURL: "http://localhost/v1", api }).success).toBe(true);
+    }
+    expect(CustomProviderAuth.safeParse({ type: "custom", baseURL: "http://localhost/v1", api: "unknown" }).success).toBe(false);
+  });
   it("validates a custom provider with baseURL and key", () => {
     const result = CustomProviderAuth.safeParse({
       type: "custom",
@@ -32,6 +38,15 @@ describe("CustomProviderAuth schema", () => {
         supportsUsageInStreaming: false,
         maxTokensField: "max_completion_tokens",
       },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("validates a persisted custom model catalog", () => {
+    const result = CustomProviderAuth.safeParse({
+      type: "custom",
+      baseURL: "http://localhost:1234/v1",
+      models: ["qwen3.5-35b-a3b", "google/gemma-3"],
     });
     expect(result.success).toBe(true);
   });
@@ -92,6 +107,15 @@ describe("AuthStorage custom provider methods", () => {
       expect(provider).toBeDefined();
       expect(provider!.baseURL).toBe("http://localhost:8080/v1");
       expect(provider!.key).toBeUndefined();
+    });
+
+    it("stores custom provider model IDs", async () => {
+      await AuthStorage.setCustomProvider("lmstudio", {
+        baseURL: "http://localhost:1234/v1",
+        models: ["qwen3.5-35b-a3b"],
+      });
+
+      expect((await AuthStorage.getCustomProvider("lmstudio"))?.models).toEqual(["qwen3.5-35b-a3b"]);
     });
 
     it("stores request compatibility flags", async () => {

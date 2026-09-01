@@ -7,9 +7,7 @@ import { getModelFromRegistry, getSuggestedModelIds } from '../generated/models.
 import { parseAgentContent } from '../parser.js';
 import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go.js';
 import type { ProviderStatus } from '../auth/provider-status.js';
-import { AuthStorage } from '../auth/storage.js';
 import { parseScheduleExpression } from '../scheduler/parser.js';
-import { logger } from '../utils/logger.js';
 
 export interface AgentCreationProject {
   id: string;
@@ -40,60 +38,6 @@ export interface AgentCreationProvider {
   models: string[];
   defaultModel?: string;
   custom?: true;
-}
-
-export type CustomProviderModels = Record<string, string[]>;
-
-const CUSTOM_MODEL_DISCOVERY_TIMEOUT_MS = 3_000;
-const CUSTOM_MODEL_DISCOVERY_LIMIT = 200;
-
-/**
- * Ask custom OpenAI-compatible endpoints for their visible models. Discovery
- * is advisory: an offline or partially compatible endpoint stays configured
- * and the UI retains its manual model-ID escape hatch.
- */
-export async function discoverCustomProviderModels(
-  timeoutMs = CUSTOM_MODEL_DISCOVERY_TIMEOUT_MS,
-): Promise<CustomProviderModels> {
-  const providers = await AuthStorage.getCustomProviders();
-  const discovered = await Promise.all(Object.entries(providers).map(async ([id, provider]) => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const isLMStudio = id.toLowerCase().replace(/[-_]/g, '') === 'lmstudio';
-      const endpoint = isLMStudio
-        ? new URL('/api/v1/models', provider.baseURL).toString()
-        : `${provider.baseURL.replace(/\/+$/, '')}/models`;
-      const response = await fetch(endpoint, {
-        signal: controller.signal,
-        headers: {
-          accept: 'application/json',
-          ...(provider.key && { authorization: `Bearer ${provider.key}` }),
-        },
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const payload = await response.json() as {
-        data?: Array<{ id?: unknown; type?: unknown }>;
-        models?: Array<{ key?: unknown; type?: unknown }>;
-      };
-      const candidates = isLMStudio
-        ? (Array.isArray(payload.models) ? payload.models.map((model) => ({ id: model.key, type: model.type })) : [])
-        : (Array.isArray(payload.data) ? payload.data : []);
-      const models = [...new Set(candidates
-        .filter((model) => model?.type === undefined || model.type === 'llm')
-        .map((model) => typeof model?.id === 'string' ? model.id.trim() : '')
-        .filter(Boolean))]
-        .slice(0, CUSTOM_MODEL_DISCOVERY_LIMIT)
-        .map((model) => `${id}:${model}`);
-      return [id, models] as const;
-    } catch (error) {
-      logger.debug(`Could not discover models for custom provider '${id}': ${error instanceof Error ? error.message : String(error)}`);
-      return [id, []] as const;
-    } finally {
-      clearTimeout(timer);
-    }
-  }));
-  return Object.fromEntries(discovered);
 }
 
 export class AgentCreationError extends Error {
@@ -290,7 +234,6 @@ function orderModels(models: readonly string[], preferredModel: string | undefin
 export function agentCreationProviders(
   status: ProviderStatus,
   preferredModel?: string,
-  customModels: CustomProviderModels = {},
 ): AgentCreationProvider[] {
   const providers: AgentCreationProvider[] = [];
   for (const provider of status.providers) {
@@ -306,7 +249,7 @@ export function agentCreationProviders(
   }
   for (const provider of status.customProviders) {
     const defaultModel = preferredModel?.startsWith(`${provider.id}:`) ? preferredModel : undefined;
-    const models = orderModels(customModels[provider.id] ?? [], defaultModel, undefined);
+    const models = orderModels((provider.models ?? []).map((model) => `${provider.id}:${model}`), defaultModel, undefined);
     providers.push({
       id: provider.id,
       name: provider.id,

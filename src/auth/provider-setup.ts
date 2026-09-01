@@ -4,6 +4,7 @@ import { CodexAuth } from './codex.js';
 import { getProviderStatus, type ProviderStatus } from './provider-status.js';
 import { AuthStorage } from './storage.js';
 import { BUILTIN_PROVIDERS } from '../providers/registry-sources.js';
+import { checkCustomProviderCompletion, CUSTOM_PROVIDER_APIS, detectCustomProviderApi, discoverCustomProviderModelIds, normalizeCustomProviderBaseURL, normalizeCustomProviderModelIds, type CustomProviderApi } from './custom-provider-models.js';
 
 export type ProviderAuthMethod = 'oauth' | 'api_key';
 
@@ -125,11 +126,19 @@ export async function removeProviderCredential(provider: unknown, kind: unknown)
   return providerSetupSnapshot();
 }
 
-export async function saveCustomProvider(input: {
+interface CustomProviderInput {
   name: unknown;
   baseURL: unknown;
   key?: unknown;
-}): Promise<ProviderSetupSnapshot> {
+  api?: unknown;
+  models?: unknown;
+}
+
+async function prepareCustomProvider(input: CustomProviderInput): Promise<{
+  name: string;
+  provider: { baseURL: string; key?: string; api: CustomProviderApi };
+  models: string[];
+}> {
   if (typeof input.name !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(input.name)) {
     throw new Error('Provider name must start with a letter and contain only letters, numbers, hyphens, and underscores');
   }
@@ -140,10 +149,55 @@ export async function saveCustomProvider(input: {
   try { url = new URL(input.baseURL.trim()); } catch { throw new Error('Base URL must be a valid URL'); }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('Base URL must use HTTP or HTTPS');
   if (input.key !== undefined && typeof input.key !== 'string') throw new Error('API key must be text');
-  await AuthStorage.setCustomProvider(name, {
-    baseURL: url.toString().replace(/\/$/, ''),
+  const requestedApi = input.api === undefined ? 'auto' : input.api;
+  if (typeof requestedApi !== 'string' || (requestedApi !== 'auto' && !CUSTOM_PROVIDER_APIS.includes(requestedApi as CustomProviderApi))) throw new Error('Unsupported custom provider API format');
+  const provider = {
+    baseURL: normalizeCustomProviderBaseURL(name, url.toString()),
+    api: (requestedApi === 'auto' ? 'openai-completions' : requestedApi) as CustomProviderApi,
     ...(typeof input.key === 'string' && input.key.trim() ? { key: input.key.trim() } : {}),
+  };
+  const manualModels = normalizeCustomProviderModelIds(input.models);
+  let discoveredModels: string[] = [];
+  try {
+    discoveredModels = await discoverCustomProviderModelIds(name, provider);
+  } catch (error) {
+    if (manualModels.length === 0) throw error;
+  }
+  const models = normalizeCustomProviderModelIds([...discoveredModels, ...manualModels]);
+  if (models.length === 0) {
+    throw new Error('Could not find any models at this endpoint. Enter at least one model ID manually.');
+  }
+  if (requestedApi === 'auto') provider.api = await detectCustomProviderApi(provider, models[0]!);
+  else await checkCustomProviderCompletion(provider, models[0]!);
+  return { name, provider, models };
+}
+
+export async function checkCustomProvider(input: CustomProviderInput): Promise<{
+  name: string;
+  baseURL: string;
+  models: string[];
+  api: CustomProviderApi;
+}> {
+  const prepared = await prepareCustomProvider(input);
+  return { name: prepared.name, baseURL: prepared.provider.baseURL, api: prepared.provider.api, models: prepared.models };
+}
+
+export async function saveCustomProvider(input: CustomProviderInput): Promise<ProviderSetupSnapshot> {
+  const { name, provider, models } = await prepareCustomProvider(input);
+  await AuthStorage.setCustomProvider(name, {
+    ...provider,
+    models,
   });
+  return providerSetupSnapshot();
+}
+
+export async function refreshCustomProviderModels(name: unknown): Promise<ProviderSetupSnapshot> {
+  if (typeof name !== 'string' || !name) throw new Error('Custom provider name is required');
+  const provider = await AuthStorage.getCustomProvider(name);
+  if (!provider) throw new Error(`Custom provider was not found: ${name}`);
+  const discovered = await discoverCustomProviderModelIds(name, provider);
+  if (discovered.length === 0) throw new Error('The provider returned no usable models. The saved model list was not changed.');
+  await AuthStorage.setCustomProvider(name, { ...provider, models: discovered });
   return providerSetupSnapshot();
 }
 

@@ -6,6 +6,7 @@ import { wrapLanguageModel } from 'ai';
 import { AnthropicAuth } from './auth/anthropic';
 import { CodexAuth } from './auth/codex';
 import { AuthStorage } from './auth/storage';
+import { normalizeCustomProviderBaseURL } from './auth/custom-provider-models';
 import { logger } from './utils/logger';
 import { warnIfModelNotInRegistry, loadCustomProviderNames } from './utils/model-utils';
 import { resolveModelString } from './utils/model-alias';
@@ -658,10 +659,23 @@ export async function createModel(modelString: string) {
     if (customProvider) {
       // Allow env var overrides: <NAME>_BASE_URL and <NAME>_API_KEY
       const envPrefix = config.provider.toUpperCase().replace(/-/g, '_');
-      const baseURL = process.env[`${envPrefix}_BASE_URL`] || customProvider.baseURL;
+      const baseURL = normalizeCustomProviderBaseURL(
+        config.provider,
+        process.env[`${envPrefix}_BASE_URL`] || customProvider.baseURL,
+      );
       const apiKey = process.env[`${envPrefix}_API_KEY`] || customProvider.key || 'not-needed';
 
       logger.debug(`Using custom provider '${config.provider}' at ${baseURL}`);
+
+      const api = customProvider.api ?? 'openai-completions';
+      if (api === 'anthropic-messages') {
+        const provider = createAnthropic({ apiKey, baseURL });
+        return await maybeWrapWithDevTools(provider.chat(config.modelName));
+      }
+      if (api === 'openai-responses') {
+        const provider = createOpenAI({ apiKey, baseURL });
+        return await maybeWrapWithDevTools(provider.responses(config.modelName));
+      }
 
       // Use @ai-sdk/openai-compatible for local/custom endpoints
       // (handles protocol differences better than @ai-sdk/openai)

@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ProviderStatus } from '../../../../auth/provider-status';
 import {
+  checkCustomProvider,
   completeProviderOAuth,
   fetchProviderSetup,
   removeCustomProvider,
   removeProviderCredential,
+  refreshCustomProviderModels,
   saveCustomProvider,
   saveProviderApiKey,
   startProviderOAuth,
+  type CustomProviderApiSelection,
   type ProviderSetupPayload,
 } from '../lib/api';
 import { DashboardSelect } from './dashboard-select';
@@ -36,6 +39,9 @@ function ProviderSetupForm(props: {
   const [customName, setCustomName] = useState('');
   const [customURL, setCustomURL] = useState('');
   const [customKey, setCustomKey] = useState('');
+  const [customApi, setCustomApi] = useState<CustomProviderApiSelection>('auto');
+  const [customModels, setCustomModels] = useState('');
+  const [customCheck, setCustomCheck] = useState<{ baseURL: string; models: string[] } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,7 +60,22 @@ function ProviderSetupForm(props: {
     try {
       let next: ProviderSetupPayload;
       if (provider === 'custom') {
-        next = await saveCustomProvider(customName, customURL, customKey || undefined);
+        const manualModels = customModels.split(/[\n,]+/).map((model) => model.trim()).filter(Boolean);
+        if (!customCheck) {
+          const checked = await checkCustomProvider(customName, customURL, customApi, customKey || undefined, manualModels);
+          setCustomURL(checked.baseURL);
+          setCustomModels(checked.models.join('\n'));
+          setCustomApi(checked.api);
+          setCustomCheck({ baseURL: checked.baseURL, models: checked.models });
+          return;
+        }
+        next = await saveCustomProvider(
+          customName,
+          customCheck.baseURL,
+          customApi,
+          customKey || undefined,
+          customCheck.models,
+        );
       } else if (method === 'api_key') {
         next = await saveProviderApiKey(provider, key);
       } else if (!flow) {
@@ -97,9 +118,12 @@ function ProviderSetupForm(props: {
 
       {provider === 'custom' ? (
         <div class="provider-custom-fields">
-          <label class="provider-field"><span>Name</span><input value={customName} placeholder="my-provider" onInput={(event) => setCustomName((event.target as HTMLInputElement).value)} disabled={busy} /></label>
-          <label class="provider-field"><span>Base URL</span><input value={customURL} placeholder="https://api.example.com/v1" onInput={(event) => setCustomURL((event.target as HTMLInputElement).value)} disabled={busy} /></label>
-          <label class="provider-field"><span>API key <em>optional</em></span><input type="password" value={customKey} onInput={(event) => setCustomKey((event.target as HTMLInputElement).value)} disabled={busy} /></label>
+          <label class="provider-field"><span>Name</span><input value={customName} placeholder="my-provider" onInput={(event) => { setCustomName((event.target as HTMLInputElement).value); setCustomCheck(null); }} disabled={busy} /></label>
+          <label class="provider-field"><span>Base URL</span><input value={customURL} placeholder="https://api.example.com/v1" onInput={(event) => { setCustomURL((event.target as HTMLInputElement).value); setCustomCheck(null); }} disabled={busy} /></label>
+          <label class="provider-field"><span>API format</span><select value={customApi} onChange={(event) => { setCustomApi((event.target as HTMLSelectElement).value as CustomProviderApiSelection); setCustomCheck(null); }} disabled={busy}><option value="auto">Detect automatically</option><option value="openai-completions">OpenAI Chat Completions compatible</option><option value="openai-responses">OpenAI Responses compatible</option><option value="anthropic-messages">Anthropic Messages compatible</option></select><small>AgentUse detects the protocol during the endpoint check. Choose an override only when detection fails.</small></label>
+          <label class="provider-field"><span>API key <em>optional</em></span><input type="password" value={customKey} onInput={(event) => { setCustomKey((event.target as HTMLInputElement).value); setCustomCheck(null); }} disabled={busy} /></label>
+          <label class="provider-field"><span>Model IDs <em>optional when discovery is supported</em></span><textarea value={customModels} placeholder={'One model ID per line\nqwen3.5-35b-a3b'} onInput={(event) => { setCustomModels((event.target as HTMLTextAreaElement).value); setCustomCheck(null); }} disabled={busy} /><small>AgentUse checks the runtime endpoint and discovers models before anything is saved.</small></label>
+          {customCheck && <div class="provider-model-check" role="status"><strong>Endpoint ready</strong><span>{customCheck.models.length} {customCheck.models.length === 1 ? 'model' : 'models'} found at <code>{customCheck.baseURL}</code></span><ul>{customCheck.models.map((model) => <li key={model}><code>{model}</code></li>)}</ul></div>}
         </div>
       ) : (
         <>
@@ -125,7 +149,7 @@ function ProviderSetupForm(props: {
       <div class="provider-setup-actions">
         {flow && <button type="button" class="provider-setup-secondary" onClick={() => { setFlow(null); setCode(''); }} disabled={busy}>Back</button>}
         <button type="button" class="provider-setup-primary" onClick={() => void submit()} disabled={busy} aria-busy={busy}>
-          {busy ? 'Working…' : provider === 'custom' || method === 'api_key' ? 'Save provider' : flow ? 'Finish connecting' : `Continue to ${entry?.name ?? 'provider'}`}
+          {busy ? 'Working…' : provider === 'custom' ? customCheck ? 'Save provider' : 'Check endpoint' : method === 'api_key' ? 'Save provider' : flow ? 'Finish connecting' : `Continue to ${entry?.name ?? 'provider'}`}
         </button>
       </div>
     </div>
@@ -203,6 +227,14 @@ export function ProviderSettingsGroup() {
     finally { setBusyKey(null); }
   };
 
+  const refreshCustom = async (name: string) => {
+    setBusyKey(`refresh:${name}`);
+    setError(null);
+    try { setPayload(await refreshCustomProviderModels(name)); }
+    catch (caught) { setError((caught as Error).message || 'Could not refresh models.'); }
+    finally { setBusyKey(null); }
+  };
+
   return (
     <>
       <section class="settings-group provider-settings-group">
@@ -226,11 +258,11 @@ export function ProviderSettingsGroup() {
         })}
         {payload?.status.customProviders.map((provider) => (
           <div class="settings-row provider-settings-row" key={provider.id}>
-            <div class="settings-row-text"><div class="settings-row-label">{provider.id}</div><div class="settings-row-hint">{provider.baseURL}</div></div>
-            <div class="settings-row-control provider-settings-control"><span class="provider-status is-ready">{provider.hasApiKey ? 'Connected' : 'Connected · keyless'}</span><button type="button" class="settings-item" disabled={busyKey === `custom:${provider.id}`} onClick={() => void removeCustom(provider.id)}>Remove</button></div>
+            <div class="settings-row-text"><div class="settings-row-label">{provider.id}</div><div class="settings-row-hint">{provider.baseURL} · {provider.models?.length ?? 0} {provider.models?.length === 1 ? 'model' : 'models'}</div></div>
+            <div class="settings-row-control provider-settings-control"><span class="provider-status is-ready">{provider.hasApiKey ? 'Connected' : 'Connected · keyless'}</span><button type="button" class="settings-item" disabled={busyKey === `refresh:${provider.id}`} onClick={() => void refreshCustom(provider.id)}>{busyKey === `refresh:${provider.id}` ? 'Refreshing…' : 'Refresh models'}</button><button type="button" class="settings-item" disabled={busyKey === `custom:${provider.id}`} onClick={() => void removeCustom(provider.id)}>Remove</button></div>
           </div>
         ))}
-        {payload && <div class="settings-row"><div class="settings-row-text"><div class="settings-row-label">Custom provider</div><div class="settings-row-hint">Add an OpenAI-compatible endpoint.</div></div><div class="settings-row-control"><button type="button" class="settings-item" onClick={() => setDialogProvider('custom')}>Add provider</button></div></div>}
+        {payload && <div class="settings-row"><div class="settings-row-text"><div class="settings-row-label">Custom provider</div><div class="settings-row-hint">Add a compatible model endpoint.</div></div><div class="settings-row-control"><button type="button" class="settings-item" onClick={() => setDialogProvider('custom')}>Add provider</button></div></div>}
       </section>
       <ProviderSetupDialog open={dialogProvider !== null} {...(dialogProvider ? { initialProvider: dialogProvider } : {})} allowCustom title={dialogProvider === 'custom' ? 'add custom provider' : 'connect a provider'} onComplete={(next) => { setPayload(next); setDialogProvider(null); }} onClose={() => setDialogProvider(null)} />
     </>

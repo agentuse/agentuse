@@ -86,6 +86,8 @@ import {
   providerSetupSnapshot,
   removeCustomProvider,
   removeProviderCredential,
+  checkCustomProvider,
+  refreshCustomProviderModels,
   saveCustomProvider,
   saveProviderApiKey,
   startProviderOAuth,
@@ -93,7 +95,6 @@ import {
 import {
   AgentCreationError,
   agentCreationProviders,
-  discoverCustomProviderModels,
   createAgentFile,
   createGuidedProjectAgentFile,
   validateAgentCreationRequest,
@@ -7238,10 +7239,32 @@ export function createServeCommand(): Command {
         if (isApi && routePath === "/providers/custom" && req.method === "POST") {
           try {
             const body = await parseJSONBody(req);
-            sendJSON(res, 200, { success: true, ...await saveCustomProvider({ name: body.name, baseURL: body.baseURL, key: body.key }) });
+            sendJSON(res, 200, { success: true, ...await saveCustomProvider({ name: body.name, baseURL: body.baseURL, key: body.key, api: body.api, models: body.models }) });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "CUSTOM_PROVIDER_INVALID", (err as Error).message);
+          }
+          return;
+        }
+
+        if (isApi && routePath === "/providers/custom/check" && req.method === "POST") {
+          try {
+            const body = await parseJSONBody(req);
+            sendJSON(res, 200, { success: true, ...await checkCustomProvider({ name: body.name, baseURL: body.baseURL, key: body.key, api: body.api, models: body.models }) });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "CUSTOM_PROVIDER_CHECK_FAILED", (err as Error).message);
+          }
+          return;
+        }
+
+        if (isApi && routePath === "/providers/custom/refresh" && req.method === "POST") {
+          try {
+            const body = await parseJSONBody(req);
+            sendJSON(res, 200, { success: true, ...await refreshCustomProviderModels(body.name) });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "CUSTOM_PROVIDER_REFRESH_FAILED", (err as Error).message);
           }
           return;
         }
@@ -7265,7 +7288,6 @@ export function createServeCommand(): Command {
               providers: agentCreationProviders(
                 snapshot.status,
                 preferredAgentCreationModel,
-                await discoverCustomProviderModels(),
               ),
               projects: projects.map((project) => ({
                 id: project.id,

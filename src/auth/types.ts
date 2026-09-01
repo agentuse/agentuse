@@ -30,6 +30,8 @@ export const CustomProviderAuth = z.object({
   type: z.literal("custom"),
   baseURL: z.string(),
   key: z.string().optional(),
+  api: z.enum(["openai-completions", "openai-responses", "anthropic-messages"]).optional(),
+  models: z.array(z.string()).optional(),
   compatibility: z.object({
     supportsDeveloperRole: z.boolean().optional(),
     supportsReasoningEffort: z.boolean().optional(),

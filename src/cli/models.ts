@@ -118,7 +118,12 @@ export function createModelsCommand(): Command {
       if (displayCustom.length > 0 && (!provider || isCustomFilter)) {
         for (const [name, config] of displayCustom) {
           console.log(chalk.cyan.bold(`${name}`) + chalk.gray(` (${config.baseURL})`));
-          console.log(chalk.gray(`  Use: agentuse run agent.agentuse -m ${name}:<model-name>`));
+          for (const model of config.models ?? []) {
+            console.log(`  ${name}:${model}`);
+          }
+          if (!config.models?.length) {
+            console.log(chalk.gray('  No saved models. Re-add the provider with --model or refresh it in Settings.'));
+          }
           console.log();
         }
       }

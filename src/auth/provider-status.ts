@@ -26,6 +26,8 @@ export interface CustomProviderStatus {
   id: string;
   baseURL: string;
   hasApiKey: boolean;
+  models?: string[];
+  api?: 'openai-completions' | 'openai-responses' | 'anthropic-messages';
 }
 
 export interface ProviderStatus {
@@ -131,6 +133,8 @@ export async function getProviderStatus(): Promise<ProviderStatus> {
       id,
       baseURL: config.baseURL,
       hasApiKey: Boolean(config.key),
+      api: config.api ?? 'openai-completions',
+      models: config.models ?? [],
     }),
   );
 

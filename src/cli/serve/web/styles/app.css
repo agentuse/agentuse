@@ -5750,12 +5750,16 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .provider-field { display: flex; flex-direction: column; gap: 7px; color: var(--fg); font-size: var(--font-size-caption); }
 .provider-field em { color: var(--muted); font-style: normal; }
 .provider-field input,
+.provider-field textarea,
 .provider-field select {
   width: 100%; min-height: 40px; padding: 8px 11px;
   border: 1px solid var(--line-strong); border-radius: 8px;
   background: var(--panel); color: var(--fg); font-family: var(--sans); font-size: var(--field-font-size);
 }
+.provider-field textarea { min-height: 76px; resize: vertical; }
+.provider-field small { color: var(--muted-3); line-height: 1.45; }
 .provider-field input:focus,
+.provider-field textarea:focus,
 .provider-field select:focus { outline: 2px solid var(--cyan-border); outline-offset: 1px; border-color: transparent; }
 
 /* Shared dialog select. The host WebView paints native select popups outside
@@ -5818,6 +5822,9 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .provider-method-toggle button[aria-pressed="true"] { background: var(--bg); color: var(--fg); box-shadow: var(--surface-shadow); }
 .provider-custom-fields,
 .provider-oauth-complete { display: grid; gap: 11px; }
+.provider-model-check { display: grid; gap: 6px; padding: 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: var(--font-size-caption); }
+.provider-model-check > span { color: var(--muted-3); line-height: 1.45; }
+.provider-model-check ul { display: grid; gap: 3px; margin: 2px 0 0; padding-left: 18px; }
 .provider-oauth-complete p { margin: 0; color: var(--muted-3); font-size: var(--font-size-caption); line-height: 1.5; }
 .provider-oauth-complete > a { width: fit-content; color: var(--cyan); font-size: var(--font-size-caption); }
 .provider-setup-error { margin: 0; color: var(--red); font-size: var(--font-size-caption); line-height: 1.45; }

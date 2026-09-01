@@ -851,8 +851,25 @@ export function removeProviderCredential(provider: string, kind: 'oauth' | 'api_
   return postJson('/api/providers/remove', { provider, kind });
 }
 
-export function saveCustomProvider(name: string, baseURL: string, key?: string): Promise<ProviderSetupPayload> {
-  return postJson('/api/providers/custom', { name, baseURL, ...(key ? { key } : {}) });
+export type CustomProviderApi = 'openai-completions' | 'openai-responses' | 'anthropic-messages';
+export type CustomProviderApiSelection = CustomProviderApi | 'auto';
+
+export function saveCustomProvider(name: string, baseURL: string, api: CustomProviderApiSelection, key?: string, models: string[] = []): Promise<ProviderSetupPayload> {
+  return postJson('/api/providers/custom', { name, baseURL, api, ...(key ? { key } : {}), models });
+}
+
+export function checkCustomProvider(name: string, baseURL: string, api: CustomProviderApiSelection, key?: string, models: string[] = []): Promise<{
+  success: true;
+  name: string;
+  baseURL: string;
+  api: CustomProviderApi;
+  models: string[];
+}> {
+  return postJson('/api/providers/custom/check', { name, baseURL, api, ...(key ? { key } : {}), models });
+}
+
+export function refreshCustomProviderModels(name: string): Promise<ProviderSetupPayload> {
+  return postJson('/api/providers/custom/refresh', { name });
 }
 
 export function removeCustomProvider(name: string): Promise<ProviderSetupPayload> {

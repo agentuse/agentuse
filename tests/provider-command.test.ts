@@ -11,12 +11,14 @@ describe('createProviderCommand', () => {
   let exitSpy: ReturnType<typeof spyOn> | undefined;
   let warnSpy: ReturnType<typeof spyOn> | undefined;
   let stdoutSpy: ReturnType<typeof spyOn> | undefined;
+  let fetchSpy: ReturnType<typeof spyOn> | undefined;
 
   afterEach(() => {
     errorSpy?.mockRestore();
     exitSpy?.mockRestore();
     warnSpy?.mockRestore();
     stdoutSpy?.mockRestore();
+    fetchSpy?.mockRestore();
   });
 
   it('keeps custom compatibility flags in an advanced add-command help section', () => {
@@ -65,6 +67,31 @@ describe('createProviderCommand', () => {
     expect(errorSpy).toHaveBeenCalledWith(
       "Cannot use reserved provider name 'opencode-go'. Reserved: anthropic, openai, openrouter, opencode-go, bedrock, demo"
     );
+  });
+
+  it('saves repeatable manual model IDs when a reachable endpoint returns no models', async () => {
+    const command = createProviderCommand();
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-provider-command-test-'));
+    const originalAuthFile = (AuthStorage as any).AUTH_FILE;
+    (AuthStorage as any).AUTH_FILE = path.join(tempDir, 'auth.json');
+    fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input) => String(input).endsWith('/models')
+      ? new Response(JSON.stringify({ data: [] }), { status: 200 })
+      : new Response(JSON.stringify({ choices: [] }), { status: 200 }));
+    stdoutSpy = spyOn(process.stdout, 'write').mockImplementation((() => true) as any);
+
+    try {
+      await command.parseAsync([
+        'add', 'Local_Gateway', '--url', 'http://localhost:9999/v1',
+        '--model', 'qwen3', '--model', 'google/gemma-3',
+      ], { from: 'user' });
+      expect(await AuthStorage.getCustomProvider('local_gateway')).toMatchObject({
+        api: 'openai-completions',
+        models: ['qwen3', 'google/gemma-3'],
+      });
+    } finally {
+      (AuthStorage as any).AUTH_FILE = originalAuthFile;
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   it('lists OpenCode Go environment authentication', async () => {
@@ -200,6 +227,8 @@ describe('createProviderCommand', () => {
       id: 'local',
       baseURL: 'http://localhost:11434/v1',
       hasApiKey: true,
+      api: 'openai-completions',
+      models: [],
     }]);
     expect(text).not.toContain('stored-secret');
     expect(text).not.toContain('environment-oauth-secret');
