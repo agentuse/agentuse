@@ -43,6 +43,7 @@ interface DesktopUpdaterOptions {
   platform: NodeJS.Platform;
   currentVersion: string;
   beforeInstall?: () => void | Promise<void>;
+  onUpdateReady?: (version: string) => void | Promise<void>;
   onStateChange?: (state: DesktopUpdateState) => void;
 }
 
@@ -81,9 +82,9 @@ export class DesktopUpdater {
 
     if (!this.enabled) return;
 
-    // A check may discover an update, but download and installation always
-    // require separate user actions in Settings.
-    autoUpdater.autoDownload = false;
+    // Download quietly after discovery, but install only after the user accepts
+    // the native restart prompt or explicitly chooses it in Settings.
+    autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = false;
     autoUpdater.on("checking-for-update", () => this.setState({
       status: "checking",
@@ -92,11 +93,12 @@ export class DesktopUpdater {
       actionDisabled: true,
     }));
     autoUpdater.on("update-available", (info) => this.setState({
-      status: "available",
+      status: "downloading",
       availableVersion: info.version,
-      detail: `AgentUse ${info.version} is available. Download it when you are ready.`,
+      progress: 0,
+      detail: `Downloading AgentUse ${info.version}…`,
       actionLabel: "Download Update",
-      actionDisabled: false,
+      actionDisabled: true,
     }));
     autoUpdater.on("update-not-available", () => this.setState({
       status: "upToDate",
@@ -113,14 +115,19 @@ export class DesktopUpdater {
       actionLabel: "Download Update",
       actionDisabled: true,
     }));
-    autoUpdater.on("update-downloaded", (info) => this.setState({
-      status: "ready",
-      availableVersion: info.version,
-      progress: 100,
-      detail: `AgentUse ${info.version} is ready. Restart to install it.`,
-      actionLabel: "Restart and Install",
-      actionDisabled: false,
-    }));
+    autoUpdater.on("update-downloaded", (info) => {
+      this.setState({
+        status: "ready",
+        availableVersion: info.version,
+        progress: 100,
+        detail: `AgentUse ${info.version} is ready. Restart to install it.`,
+        actionLabel: "Restart and Install",
+        actionDisabled: false,
+      });
+      // The downloaded update remains available through Settings even if the
+      // optional native prompt cannot be shown.
+      void Promise.resolve(this.options.onUpdateReady?.(info.version)).catch(() => {});
+    });
     autoUpdater.on("error", (error) => this.setError(error));
   }
 

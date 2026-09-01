@@ -24,7 +24,12 @@ class FakeAutoUpdater extends EventEmitter {
   }
 }
 
-function createUpdater(fake = new FakeAutoUpdater(), packaged = true, beforeInstall?: () => void | Promise<void>) {
+function createUpdater(
+  fake = new FakeAutoUpdater(),
+  packaged = true,
+  beforeInstall?: () => void | Promise<void>,
+  onUpdateReady?: (version: string) => void | Promise<void>,
+) {
   return {
     fake,
     updater: new DesktopUpdater(fake as DesktopAutoUpdater, {
@@ -32,15 +37,16 @@ function createUpdater(fake = new FakeAutoUpdater(), packaged = true, beforeInst
       platform: "darwin",
       currentVersion: "0.19.1",
       beforeInstall,
+      onUpdateReady,
     }),
   };
 }
 
 describe("desktop updater", () => {
-  it("checks without downloading or enabling install-on-quit", async () => {
+  it("checks with background download but without install-on-quit", async () => {
     const { fake, updater } = createUpdater();
 
-    expect(fake.autoDownload).toBe(false);
+    expect(fake.autoDownload).toBe(true);
     expect(fake.autoInstallOnAppQuit).toBe(false);
     await updater.checkForUpdates();
 
@@ -50,37 +56,41 @@ describe("desktop updater", () => {
     expect(updater.state.status).toBe("checking");
   });
 
-  it("requires separate download and restart/install actions", async () => {
+  it("downloads automatically and requires an explicit restart/install action", async () => {
     const actions: string[] = [];
     const fake = new FakeAutoUpdater();
     fake.quitAndInstall = (isSilent?: boolean, isForceRunAfter?: boolean) => {
       actions.push("install");
       fake.installs.push([isSilent, isForceRunAfter]);
     };
-    const { updater } = createUpdater(fake, true, async () => {
-      actions.push("drain-server");
-      await Promise.resolve();
-      actions.push("authorize-native-quit");
-    });
+    const { updater } = createUpdater(
+      fake,
+      true,
+      async () => {
+        actions.push("drain-server");
+        await Promise.resolve();
+        actions.push("authorize-native-quit");
+      },
+      (version) => { actions.push(`prompt-${version}`); },
+    );
 
     fake.emit("update-available", { version: "0.19.2" });
     expect(updater.state).toMatchObject({
-      status: "available",
+      status: "downloading",
       availableVersion: "0.19.2",
       actionLabel: "Download Update",
+      actionDisabled: true,
     });
     expect(fake.downloads).toBe(0);
-
-    await updater.downloadUpdate();
-    expect(fake.downloads).toBe(1);
-    expect(updater.state.status).toBe("downloading");
     expect(fake.installs).toEqual([]);
 
     fake.emit("download-progress", { percent: 51.7 });
     expect(updater.state.progress).toBe(52);
     fake.emit("update-downloaded", { version: "0.19.2" });
+    await Promise.resolve();
     expect(updater.state.actionLabel).toBe("Restart and Install");
     expect(fake.installs).toEqual([]);
+    expect(actions).toEqual(["prompt-0.19.2"]);
 
     const install = updater.installUpdate();
     expect(updater.state).toMatchObject({
@@ -92,7 +102,7 @@ describe("desktop updater", () => {
 
     await install;
     expect(fake.installs).toEqual([[undefined, undefined]]);
-    expect(actions).toEqual(["drain-server", "authorize-native-quit", "install"]);
+    expect(actions).toEqual(["prompt-0.19.2", "drain-server", "authorize-native-quit", "install"]);
   });
 
   it("contains offline errors and allows a later retry", async () => {
@@ -110,6 +120,25 @@ describe("desktop updater", () => {
     await updater.checkForUpdates();
     expect(fake.checks).toBe(2);
     expect(updater.state.status).toBe("checking");
+  });
+
+  it("keeps a downloaded update ready when the native prompt fails", async () => {
+    const { fake, updater } = createUpdater(
+      new FakeAutoUpdater(),
+      true,
+      undefined,
+      async () => { throw new Error("dialog unavailable"); },
+    );
+
+    fake.emit("update-downloaded", { version: "0.19.2" });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(updater.state).toMatchObject({
+      status: "ready",
+      availableVersion: "0.19.2",
+      actionLabel: "Restart and Install",
+    });
   });
 
   it("does not contact the updater from an unpackaged app", async () => {

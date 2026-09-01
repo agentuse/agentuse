@@ -1151,11 +1151,24 @@ function initializeDesktopUpdater(): void {
       }
       stopNotificationStream();
     },
+    onUpdateReady: async (version) => {
+      const { response } = await dialog.showMessageBox({
+        type: "info",
+        title: "AgentUse update ready",
+        message: `AgentUse ${version} is ready to install.`,
+        detail: "Restart AgentUse now to apply the update, or continue working and restart later.",
+        buttons: ["Restart Now", "Later"],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true,
+      });
+      if (response === 0) await desktopUpdater?.installUpdate();
+    },
     onStateChange: () => void pushNativeSettingsState(),
   });
 
-  // Checking is best-effort and deliberately detached from launch. With
-  // autoDownload disabled, discovery cannot download or install anything.
+  // Checking and background download are best-effort and deliberately detached
+  // from launch. Installation still requires an explicit restart decision.
   const timer = setTimeout(() => void desktopUpdater?.checkForUpdates(), 5_000);
   timer.unref();
 }

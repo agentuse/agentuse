@@ -91,10 +91,11 @@ helper under `Contents/Frameworks`, where nested macOS code is expected.
 ### Updates and the first manual upload
 
 The packaged app checks the public `agentuse/agentuse` GitHub Releases feed in
-the background after startup. Discovery is non-blocking: the updater does not
-download automatically, does not install when the app later quits, and reports
-offline failures only in **Settings → About**. A user must separately choose
-**Download Update** and then **Restart and Install**.
+the background after startup and downloads available updates automatically.
+When a download finishes, a native prompt offers **Restart Now** or **Later**.
+Installation never happens on an ordinary quit; a user must accept the prompt
+or choose **Restart and Install** later in **Settings → About**. Offline failures
+remain non-blocking and are reported only in the About tab.
 
 `electron-builder` is configured with both `dmg` and `zip` targets. The DMG is
 the human-facing installer; the ZIP and `latest-mac.yml` are required by
@@ -114,8 +115,8 @@ For the first updater-enabled Mac release, keep build and upload manual:
 4. After the normal release workflow has created GitHub Release `v0.19.1`,
    manually upload the DMG, ZIP, blockmaps, and `latest-mac.yml` to that same
    public release. Do not create a second release or upload only the DMG.
-5. From an older signed build, use **Settings → About → Check for Updates** to
-   verify discovery, explicit download, and explicit restart/install. Also
+5. From an older signed build, verify background discovery and download, the
+   native **Restart Now** / **Later** prompt, and explicit restart/install. Also
    repeat once without network access to confirm the app continues normally.
 
 The updater bootstrap does not add an automated signing or artifact-upload job.
