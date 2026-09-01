@@ -45,8 +45,33 @@ import { AgentCreationProgressPanel } from '../src/cli/serve/web/components/agen
 import { firstUsefulAgentSetupSteps } from '../src/cli/serve/web/components/onboarding-shell';
 import { ProjectFolderField } from '../src/cli/serve/web/components/project-folder-field';
 import { ProjectsSettingsGroup, RestartOnboardingGroup } from '../src/cli/serve/web/components/project-settings';
+import { AgentRevisionLauncher } from '../src/cli/serve/web/components/agent-revision';
 
 const noop = () => {};
+
+describe('agent revision entry', () => {
+  it('uses one session action and keeps the coding-agent escape hatch inside the revision form', () => {
+    const html = renderToString(<AgentRevisionLauncher
+      ended
+      context={{
+        sessionId: 'session-1',
+        projectId: 'support',
+        projectPath: '/project',
+        agentName: 'Support triage',
+        agentFilePath: '/project/support-triage.agentuse',
+        model: 'openai:gpt-5.6-luna',
+        sessionStatus: 'error',
+        errorCode: 'INCOMPLETE',
+      }}
+    />);
+
+    expect(html.match(/Fix or improve agent…/g)?.length).toBe(1);
+    expect(html).toContain('Fix a problem');
+    expect(html).toContain('Improve behavior');
+    expect(html).toContain('Need project code or a custom integration?');
+    expect(html.indexOf('Send to Coding Agent…')).toBeGreaterThan(html.indexOf('Start revision session'));
+  });
+});
 
 describe('project settings', () => {
   it('positions guided project creation as restarting onboarding from General', () => {

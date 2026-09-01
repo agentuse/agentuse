@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Completed runs can now fix or improve their own AgentUse agent through a visible internal revision session.** The reviser diagnoses the originating transcript against the current agent and a sanitized project view, pauses in the same session when one material decision is missing, and either returns a validated source proposal or explains why the agent should not change. Proposals show their source and capability changes before an operator applies them; source-hash checks prevent stale overwrites, replacement is atomic, the previous version can be restored, and the originating run keeps a durable link back to the revision session. **Send to Coding Agent** remains available inside the revision form for work that requires project code or a custom integration.
+
 ## [0.19.3] - 2026-09-01
 
 ### Changed

@@ -29,7 +29,7 @@ const INTENT_DESCRIPTION =
 // Tools whose own schema already carries the human-facing story: await_human
 // has `prompt`/`summary` (and a second headline would compete with the approval
 // card), report_incomplete has `reason`. Subagent calls carry their task prompt.
-const SKIP_TOOL_NAMES = new Set(['await_human', 'report_incomplete', 'submit_agent_source']);
+const SKIP_TOOL_NAMES = new Set(['await_human', 'report_incomplete', 'submit_agent_source', 'submit_agent_revision']);
 
 function shouldSkip(name: string): boolean {
   return SKIP_TOOL_NAMES.has(name) || name.startsWith('subagent__');

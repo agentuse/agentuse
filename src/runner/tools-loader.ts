@@ -33,6 +33,11 @@ import {
   projectSuggestionsSubmissionContract,
   type ProjectSuggestionsSubmission,
 } from '../onboarding/submit-project-suggestions.js';
+import {
+  agentRevisionSubmissionContract,
+  createSubmitAgentRevisionTool,
+  type AgentRevisionSubmission,
+} from '../agents/revision.js';
 
 /**
  * Options for loading agent tools
@@ -81,6 +86,8 @@ export interface LoadedAgentTools {
   agentSourceSubmission?: AgentSourceSubmission | undefined;
   /** Validated suggestions submitted by the private onboarding discovery tool. */
   projectSuggestionsSubmission?: ProjectSuggestionsSubmission | undefined;
+  /** Structured result submitted by the private internal agent reviser. */
+  agentRevisionSubmission?: AgentRevisionSubmission | undefined;
   /** Store instance (if configured) - caller must call store.releaseLock() when done */
   store?: Store | undefined;
   /** Sandbox instance (if configured) - caller must call sandboxInstance.kill() when done */
@@ -306,8 +313,10 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
   const agentSourceSubmission: AgentSourceSubmission | undefined = agentSourceContract ? {} : undefined;
   const projectSuggestionsContract = projectSuggestionsSubmissionContract(agent.config.metadata);
   const projectSuggestionsSubmission: ProjectSuggestionsSubmission | undefined = projectSuggestionsContract ? {} : undefined;
+  const agentRevisionContract = agentRevisionSubmissionContract(agent.config.metadata);
+  const agentRevisionSubmission: AgentRevisionSubmission | undefined = agentRevisionContract ? {} : undefined;
   const baseReportComplete = createReportCompleteTool(runOutcome);
-  const guardedReportComplete: Tool = agentSourceSubmission || projectSuggestionsSubmission
+  const guardedReportComplete: Tool = agentSourceSubmission || projectSuggestionsSubmission || agentRevisionSubmission
     ? {
         ...baseReportComplete,
         execute: async (input: unknown, options: unknown) => {
@@ -316,6 +325,9 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
           }
           if (projectSuggestionsSubmission && !projectSuggestionsSubmission.result) {
             throw new Error('No valid project suggestions have been submitted. Call submit_project_suggestions first, correct any validation error, and only then call report_complete.');
+          }
+          if (agentRevisionSubmission && !agentRevisionSubmission.outcome) {
+            throw new Error('No validated revision outcome has been submitted. Call submit_agent_revision first, correct any validation error, and only then call report_complete.');
           }
           return (baseReportComplete.execute as (input: unknown, options: unknown) => unknown)(input, options);
         },
@@ -333,6 +345,13 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
       submit_project_suggestions: createSubmitProjectSuggestionsTool(
         projectSuggestionsSubmission,
         projectSuggestionsContract,
+      ),
+    }),
+    ...(agentRevisionContract && agentRevisionSubmission && {
+      submit_agent_revision: createSubmitAgentRevisionTool(
+        agentRevisionSubmission,
+        agentRevisionContract,
+        loadedSkillNames,
       ),
     }),
   };
@@ -389,6 +408,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     runOutcome,
     ...(agentSourceSubmission && { agentSourceSubmission }),
     ...(projectSuggestionsSubmission && { projectSuggestionsSubmission }),
+    ...(agentRevisionSubmission && { agentRevisionSubmission }),
     store,
     sandboxInstance,
     bindSessionId: (id: string) => {

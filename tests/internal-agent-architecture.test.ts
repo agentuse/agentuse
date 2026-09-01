@@ -46,6 +46,17 @@ describe('internal AgentUse architecture', () => {
     expect(serve.slice(projectIdeasStart, serve.indexOf('routePath === "/onboarding/run"', projectIdeasStart))).toContain('worker.execute({');
   });
 
+  it('runs agent revisions as persisted, resumable AgentUse sessions', async () => {
+    const serve = await source('cli/serve.ts');
+    const revisionStart = serve.indexOf("routePath.match(/^\\/sessions\\/([^/?#]+)\\/revisions$/)");
+    expect(revisionStart).toBeGreaterThan(-1);
+    const section = serve.slice(revisionStart, serve.indexOf('const revisionActionMatch', revisionStart));
+    expect(section).toContain('writeInternalAgentRevisionSource(');
+    expect(section).toContain('agentPath: internalAgentPath');
+    expect(section).toContain('newSessionId: revisionSessionId');
+    expect(section).not.toContain('completeText(');
+  });
+
   it('uses one creator endpoint, worker path, and SSE job controller', async () => {
     const [serve, webApi, createDialog, onboarding, controller] = await Promise.all([
       source('cli/serve.ts'),

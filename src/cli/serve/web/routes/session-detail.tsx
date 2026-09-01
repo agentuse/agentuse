@@ -7,6 +7,7 @@ import { DecisionDialog, type DecisionDialogMode } from '../components/comment-d
 import { ContinuePanel } from '../components/continue-panel';
 import { LearningsPanel } from '../components/learnings-panel';
 import { DebugPromptButton } from '../components/debug-prompt-button';
+import { AgentRevisionLauncher, AgentRevisionSessionPanel } from '../components/agent-revision';
 import { SessionMenu } from '../components/session-menu';
 import { Loading } from '../components/loading';
 import { postSessionDecision, postSessionContinue, postSessionStop, postSessionReopen, fetchSessionArtifacts, fetchApprovals, type SessionArtifact } from '../lib/api';
@@ -318,6 +319,7 @@ export default function SessionDetail() {
   // Terminal load failures (unauthorized, not found, corrupted session data):
   // the page can't recover, so we render this instead of the live view.
   const [fatalError, setFatalError] = useState<string | null>(null);
+  const [isRevisionSession, setIsRevisionSession] = useState(false);
   const [decisionDialog, setDecisionDialog] = useState<DecisionDialogMode | null>(null);
   const [nudge, setNudge] = useState(0);
   // Project artifacts this run produced, from the artifact manifest. Refetched as
@@ -463,6 +465,7 @@ export default function SessionDetail() {
     setExpandOverrides(new Map());
     setResult({ text: '', error: false });
     setFatalError(null);
+    setIsRevisionSession(false);
     setLogsVersion((v) => v + 1);
     setArtifacts([]);
     setLogsLimit(400);
@@ -787,17 +790,17 @@ export default function SessionDetail() {
   // is the opt-in), so the affordance shows whenever there's an agent file to
   // attach it to. Whether the rule is injected into future runs is a separate
   // question, governed by learning.apply — surfaced as a hint in the dialog.
-  const canRememberLearning = Boolean(approval?.agent.filePath);
+  const canRememberLearning = Boolean(approval?.agent.filePath) && !isRevisionSession;
   const rememberApplies = approval?.learning?.apply === true;
-  const continueActionable = ended && !live && Boolean(approval?.agent.filePath) && !fatalError;
+  const continueActionable = ended && !live && Boolean(approval?.agent.filePath) && !fatalError && !isRevisionSession;
   // Any session with an agent file to read/write learnings for, not only an
   // ended one. A run suspended at an approval is the moment a reviewer is most
   // likely to want to correct the agent, and it is also when a stranded-
   // learnings warning matters most — they are about to approve work produced
   // without any of it. The panel renders nothing at all when it has nothing to
   // report, so extending it to live and suspended runs adds no empty box.
-  const learningsVisible = Boolean(approval?.agent.filePath);
-  const stopActionable = approval !== null && !ended && !expired && !submittingStop && !fatalError;
+  const learningsVisible = Boolean(approval?.agent.filePath) && !isRevisionSession;
+  const stopActionable = approval !== null && !ended && !expired && !submittingStop && !fatalError && !isRevisionSession;
   // Same Discard button on an ended failed run: stamps the run as reviewed
   // (dismissedAt) so it clears from Home's "Needs your attention". Stopped-by-
   // user runs never re-enter that list, so they get no discard affordance.
@@ -1466,7 +1469,7 @@ export default function SessionDetail() {
           <div class="eyebrow">{eyebrow}</div>
           <div class="header-title-row">
             <h1>{agentLabel}</h1>
-            {!isSubagentView && approval.agent.filePath && (
+            {!isSubagentView && approval.agent.filePath && !isRevisionSession && (
               <SessionMenu
                 agentName={agentLabel}
                 agentFilePath={approval.agent.filePath}
@@ -1676,22 +1679,37 @@ export default function SessionDetail() {
               for a session that has one: its warnings were the whole reason it
               existed, and a warning behind a button nobody presses is not a
               warning. The rules themselves fold away inside the panel instead. */}
-          <DebugPromptButton
-            mode={!approval.agent.filePath && approval.agent.name === ONBOARDING_AGENT_NAME && approval.model === ONBOARDING_MODEL
-              ? 'onboarding'
-              : 'debug'}
-            context={{
-              sessionId: approval.sessionId,
-              projectId: projectId ?? approval.project,
-              projectPath: approval.projectPath,
-              agentName: agentLabel,
-              agentFilePath: approval.agent.filePath,
-              model: approval.model,
-              sessionStatus: approval.sessionStatus,
-              errorCode: approval.errorCode,
-              errorMessage: approval.errorMessage,
-            }}
-          />
+          {!approval.agent.filePath && approval.agent.name === ONBOARDING_AGENT_NAME && approval.model === ONBOARDING_MODEL ? (
+            <DebugPromptButton
+              mode="onboarding"
+              context={{
+                sessionId: approval.sessionId,
+                projectId: projectId ?? approval.project,
+                projectPath: approval.projectPath,
+                agentName: agentLabel,
+                model: approval.model,
+                sessionStatus: approval.sessionStatus,
+                errorCode: approval.errorCode,
+                errorMessage: approval.errorMessage,
+              }}
+            />
+          ) : approval.agent.filePath && !isRevisionSession ? (
+            <AgentRevisionLauncher
+              ended={ended}
+              token={token}
+              context={{
+                sessionId: approval.sessionId,
+                projectId: projectId ?? approval.project,
+                projectPath: approval.projectPath,
+                agentName: agentLabel,
+                agentFilePath: approval.agent.filePath,
+                model: approval.model,
+                sessionStatus: approval.sessionStatus,
+                errorCode: approval.errorCode,
+                errorMessage: approval.errorMessage,
+              }}
+            />
+          ) : null}
           {(stopActionable || dismissActionable) && (
             <button
               type="button"
@@ -1718,6 +1736,14 @@ export default function SessionDetail() {
             </button>
           )}
         </div>
+
+        <AgentRevisionSessionPanel
+          sessionId={sessionId}
+          token={token}
+          project={projectId ?? approval.project}
+          sessionStatus={displayStatus}
+          onDetected={() => setIsRevisionSession(true)}
+        />
 
         <ContinuePanel
           hidden={!continueActionable || !showResume}

@@ -6,6 +6,7 @@ import type { ProviderCatalogEntry } from "../../../../auth/provider-setup";
 import type { ProviderStatus } from "../../../../auth/provider-status";
 import type { AgentCreationProvider } from "../../../../agents/create";
 import type { ReasoningLevel } from "../../../../model-compatibility";
+import type { AgentRevisionMode, AgentRevisionRecord } from "../../../../agents/revision";
 
 export type { SerializedSchedule };
 
@@ -661,7 +662,7 @@ export interface OnboardingJobHandle {
   id: string;
   sessionId: string;
   projectId: string;
-  kind: 'project-discovery' | 'agent-creation';
+  kind: 'project-discovery' | 'agent-creation' | 'agent-revision';
   status: 'running' | 'completed' | 'error';
   /** Absent on jobs created by older daemons; treat those as already running. */
   phase?: 'preparing' | 'running';
@@ -692,6 +693,63 @@ export function startOnboardingAgentCreation(input: {
 
 export function fetchInternalAgentJob(id: string): Promise<{ success: true; job: OnboardingJob }> {
   return getJson(`/api/internal-agent-jobs/${encodeURIComponent(id)}`);
+}
+
+export interface AgentRevisionSummary extends Omit<AgentRevisionRecord, 'proposedSource' | 'previousSource'> {
+  href?: string;
+}
+
+export function fetchSessionRevisions(
+  sessionId: string,
+  token?: string,
+  project?: string,
+): Promise<{ success: true; revisions: AgentRevisionSummary[] }> {
+  return getJson(`/sessions/${encodeURIComponent(sessionId)}/revisions`, { token, project });
+}
+
+export function startAgentRevision(input: {
+  sessionId: string;
+  token?: string;
+  project?: string;
+  mode: AgentRevisionMode;
+  instruction: string;
+  model: string;
+  reasoning?: ReasoningLevel;
+}): Promise<{ success: true; job: OnboardingJobHandle }> {
+  const path = withToken(`/sessions/${encodeURIComponent(input.sessionId)}/revisions`, input.token);
+  return postJson(path, {
+    ...(input.project && { project: input.project }),
+    mode: input.mode,
+    instruction: input.instruction,
+    model: input.model,
+    ...(input.reasoning && { reasoning: input.reasoning }),
+  });
+}
+
+export function fetchAgentRevision(
+  revisionSessionId: string,
+  token?: string,
+  project?: string,
+): Promise<{ success: true; revision: Omit<AgentRevisionRecord, 'previousSource'> & { baseSource?: string; originHref?: string } }> {
+  return getJson(`/agent-revisions/${encodeURIComponent(revisionSessionId)}`, { token, project });
+}
+
+export function postAgentRevisionAction(
+  revisionSessionId: string,
+  action: 'apply' | 'discard' | 'restore',
+  project?: string,
+): Promise<{ success: true; revision: Omit<AgentRevisionRecord, 'previousSource'> }> {
+  const query = project ? `?project=${encodeURIComponent(project)}` : '';
+  return postJson(`/agent-revisions/${encodeURIComponent(revisionSessionId)}/${action}${query}`, {});
+}
+
+export function requestAgentRevisionChanges(
+  revisionSessionId: string,
+  prompt: string,
+  project?: string,
+): Promise<{ sessionId: string; status: string }> {
+  const query = project ? `?project=${encodeURIComponent(project)}` : '';
+  return postJson(`/agent-revisions/${encodeURIComponent(revisionSessionId)}/request-changes${query}`, { prompt });
 }
 
 export interface AgentDetailMeta {

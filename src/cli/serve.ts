@@ -4,7 +4,7 @@ import { timingSafeEqual } from "crypto";
 import { spawn, type ChildProcess } from "child_process";
 import { join, resolve, basename, relative, extname, dirname } from "path";
 import { createReadStream, existsSync, realpathSync } from "fs";
-import { readFile, stat } from "fs/promises";
+import { lstat, readFile, realpath, stat } from "fs/promises";
 import { glob } from "glob";
 import { createInterface, type Interface as ReadlineInterface } from "readline";
 import chalk from "chalk";
@@ -99,6 +99,20 @@ import {
   validateAgentCreationRequest,
 } from "../agents/create";
 import { validateAuthoredAgentSource } from "../agents/author";
+import {
+  applyAgentRevision,
+  buildAgentRevisionSessionAgent,
+  createAgentRevisionRecord,
+  discardAgentRevision,
+  failAgentRevision,
+  listAgentRevisionRecords,
+  readAgentRevisionRecord,
+  reopenAgentRevision,
+  restoreAgentRevision,
+  sourceHash,
+  writeInternalAgentRevisionSource,
+  type AgentRevisionMode,
+} from "../agents/revision";
 import {
   discoverProjectSkillCatalog,
   prepareProjectDiscoveryView,
@@ -455,7 +469,7 @@ interface OnboardingModelJob {
   id: string;
   sessionId: string;
   projectId: string;
-  kind: 'project-discovery' | 'agent-creation';
+  kind: 'project-discovery' | 'agent-creation' | 'agent-revision';
   status: 'running' | 'completed' | 'error';
   phase: 'preparing' | 'running';
   model: string;
@@ -2767,6 +2781,14 @@ function sessionLearningTidyAllowed(
   return validateApiKeyHeader(authorization, apiKey);
 }
 
+/** Starting or applying a revision can spend model tokens and rewrite source. */
+function sessionAgentRevisionAllowed(
+  authorization: string | undefined,
+  apiKey: string | undefined,
+): boolean {
+  return validateApiKeyHeader(authorization, apiKey);
+}
+
 function isSessionCapabilityAuthorized(options: {
   authorization?: string | undefined;
   sessionToken?: string | undefined;
@@ -3105,6 +3127,14 @@ export function createServeCommand(): Command {
       // isolated from the parent process and from sibling projects.
       const workers = new Map<string, AgentWorker>();
       const onboardingJobs = new Map<string, OnboardingModelJob>();
+      const revisionViewCleanups = new Map<string, () => Promise<void>>();
+      const revisionMutations = new Set<string>();
+      const cleanupRevisionView = async (revisionSessionId: string): Promise<void> => {
+        const cleanup = revisionViewCleanups.get(revisionSessionId);
+        if (!cleanup) return;
+        revisionViewCleanups.delete(revisionSessionId);
+        await cleanup().catch(() => undefined);
+      };
       const pruneOnboardingJobs = (): void => {
         const cutoff = Date.now() - 60 * 60 * 1000;
         for (const [id, job] of onboardingJobs) {
@@ -4012,6 +4042,42 @@ export function createServeCommand(): Command {
         return null;
       };
 
+      // Revision sessions persist their product state separately from the
+      // ordinary session transcript. Keep that state in sync for every way a
+      // suspended/completed session can resume, not only for its first run.
+      const settleAgentRevisionExecution = async (
+        project: Project,
+        sessionId: string,
+        result: WorkerExecuteResult | WorkerExecuteError,
+      ): Promise<void> => {
+        const record = await readAgentRevisionRecord(project.root, sessionId);
+        if (!record || record.status !== 'running') return;
+
+        const job = onboardingJobs.get(sessionId);
+        if (!result.success) {
+          await failAgentRevision(project.root, sessionId, result.error);
+          if (job?.kind === 'agent-revision') {
+            job.status = 'error';
+            job.error = result.error;
+          }
+          return;
+        }
+        if (result.result.finishReason === 'suspended' || result.result.approvalUrl) return;
+
+        // A successful revision must finish through submit_agent_revision.
+        // Reaching a terminal turn without it is an invalid internal outcome,
+        // otherwise the originating run would display "running" forever.
+        const error = {
+          code: 'REVISION_NOT_SUBMITTED',
+          message: 'The revision session ended without submitting a validated outcome',
+        };
+        await failAgentRevision(project.root, sessionId, error);
+        if (job?.kind === 'agent-revision') {
+          job.status = 'error';
+          job.error = error;
+        }
+      };
+
       // Shared resume kickoff for both /approvals/:id/decision and the unified
       // /sessions/:id/decision. The caller validates auth + state, then hands us
       // the resolved gate resumeToken; we run the worker resume, update any
@@ -4088,7 +4154,10 @@ export function createServeCommand(): Command {
           },
           resumeToken,
           debug: options.debug,
-        })).then(result => {
+        })).then(async result => {
+          await settleAgentRevisionExecution(project, targetSessionId, result).catch((err) => {
+            logger.warn(`Failed to settle revision session ${targetSessionId}: ${(err as Error).message}`);
+          });
           if (!result.success) {
             const alreadyCompleted = /SESSION_NOT_SUSPENDED:\s*completed/i.test(result.error.message);
             if (alreadyCompleted) {
@@ -4176,7 +4245,10 @@ export function createServeCommand(): Command {
             prompt,
             debug: options.debug,
           }))
-          .then(result => {
+          .then(async result => {
+            await settleAgentRevisionExecution(project, sessionId, result).catch((err) => {
+              logger.warn(`Failed to settle revision session ${sessionId}: ${(err as Error).message}`);
+            });
             if (!result.success) {
               approvalLog.continueFailed(sessionId, Date.now() - continueStart, result.error.message);
               logger.warn(`Session continue ${sessionId} failed: ${result.error.message}`);
@@ -7677,6 +7749,374 @@ export function createServeCommand(): Command {
           return;
         }
 
+        const originRevisionsMatch = !isApi && req.method === 'GET'
+          ? routePath.match(/^\/sessions\/([^/?#]+)\/revisions$/)
+          : null;
+        if (originRevisionsMatch) {
+          try {
+            const originSessionId = decodeURIComponent(originRevisionsMatch[1]!);
+            const token = requestUrl.searchParams.get('token') ?? undefined;
+            const projectId = requestUrl.searchParams.get('project') ?? undefined;
+            if (!sessionAuthorized(originSessionId, token)) {
+              sendError(res, 401, 'UNAUTHORIZED', 'Not authorized for this session');
+              return;
+            }
+            const found = await findSessionInfo(originSessionId, projectId);
+            if (!found.success) {
+              sendError(res, found.status, found.code, found.message);
+              return;
+            }
+            const revisions = await listAgentRevisionRecords(found.project.root, originSessionId);
+            sendJSON(res, 200, {
+              success: true,
+              revisions: revisions.map(({ proposedSource: _proposed, previousSource: _previous, ...record }) => {
+                const params = new URLSearchParams({ project: found.project.id });
+                const revisionToken = sessionViewToken(record.revisionSessionId, apiKey);
+                if (revisionToken) params.set('token', revisionToken);
+                return {
+                  ...record,
+                  href: `/sessions/${encodeURIComponent(record.revisionSessionId)}?${params.toString()}`,
+                };
+              }),
+            });
+          } catch (err) {
+            sendError(res, 400, 'REVISION_LIST_FAILED', (err as Error).message);
+          }
+          return;
+        }
+
+        const startRevisionMatch = !isApi && req.method === 'POST'
+          ? routePath.match(/^\/sessions\/([^/?#]+)\/revisions$/)
+          : null;
+        if (startRevisionMatch) {
+          let cleanupView: (() => Promise<void>) | undefined;
+          let mutationKey: string | undefined;
+          try {
+            if (!sessionAgentRevisionAllowed(req.headers.authorization, apiKey)) {
+              sendError(res, 403, 'OPERATOR_REQUIRED', 'Only an authenticated operator can start an agent revision');
+              return;
+            }
+            if (effectiveHideAgentSource) {
+              sendError(res, 403, 'AGENT_SOURCE_HIDDEN', 'Agent revision is unavailable while serve.hideAgentSource is enabled');
+              return;
+            }
+            const originSessionId = decodeURIComponent(startRevisionMatch[1]!);
+            const body = await parseJSONBody(req);
+            const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
+            const found = await findSessionInfo(originSessionId, projectId);
+            if (!found.success) {
+              sendError(res, found.status, found.code, found.message);
+              return;
+            }
+            mutationKey = `origin:${found.project.id}:${originSessionId}`;
+            if (revisionMutations.has(mutationKey)) {
+              sendError(res, 409, 'REVISION_STARTING', 'A revision is already being started for this session');
+              return;
+            }
+            revisionMutations.add(mutationKey);
+            const existingRevisions = await listAgentRevisionRecords(found.project.root, originSessionId);
+            const activeRevision = existingRevisions.find((revision) =>
+              revision.status === 'running' || revision.status === 'proposed' || revision.status === 'no-change');
+            if (activeRevision) {
+              const params = new URLSearchParams({ project: found.project.id });
+              const activeToken = sessionViewToken(activeRevision.revisionSessionId, apiKey);
+              if (activeToken) params.set('token', activeToken);
+              sendJSON(res, 409, {
+                success: false,
+                error: {
+                  code: 'REVISION_ALREADY_ACTIVE',
+                  message: 'This session already has a revision waiting for completion or review',
+                  revisionSessionId: activeRevision.revisionSessionId,
+                  href: `/sessions/${encodeURIComponent(activeRevision.revisionSessionId)}?${params.toString()}`,
+                },
+              });
+              return;
+            }
+            const mode: AgentRevisionMode | undefined = body.mode === 'fix' || body.mode === 'improve' ? body.mode : undefined;
+            if (!mode) {
+              sendError(res, 400, 'REVISION_MODE_REQUIRED', 'Choose whether to fix or improve the agent');
+              return;
+            }
+            const instruction = typeof body.instruction === 'string' ? body.instruction.trim() : '';
+            if (!instruction || instruction.length > 12_000) {
+              sendError(res, 400, 'REVISION_INSTRUCTION_REQUIRED', 'Describe what the revision should focus on');
+              return;
+            }
+            const targetAgent = found.info.approval.originAgent ?? found.info.approval.agent;
+            if (!targetAgent.filePath) {
+              sendError(res, 400, 'NO_AGENT_FILE', 'This session does not record an editable agent file');
+              return;
+            }
+            if (!isPathInside(found.project.scopeRoot, targetAgent.filePath) || !existsSync(targetAgent.filePath)) {
+              sendError(res, 400, 'INVALID_AGENT_PATH', 'The session agent is outside the served project scope');
+              return;
+            }
+            const [targetStat, realScope, realTarget] = await Promise.all([
+              lstat(targetAgent.filePath),
+              realpath(found.project.scopeRoot),
+              realpath(targetAgent.filePath),
+            ]);
+            if (!targetStat.isFile() || targetStat.isSymbolicLink() || !isPathInside(realScope, realTarget)) {
+              sendError(res, 400, 'INVALID_AGENT_PATH', 'The session agent must be a regular file inside the served project scope');
+              return;
+            }
+            const worker = workers.get(found.project.id);
+            if (!worker) {
+              sendError(res, 500, 'WORKER_UNAVAILABLE', `No worker for project ${found.project.id}`);
+              return;
+            }
+            const snapshot = await providerSetupSnapshot();
+            const providers = agentCreationProviders(snapshot.status, preferredAgentCreationModel);
+            const availableModels = [...new Set(providers.flatMap((provider) => provider.models))];
+            const model = typeof body.model === 'string' ? body.model.trim() : '';
+            if (!model || !availableModels.includes(model)) {
+              sendError(res, 400, 'REVISION_MODEL_INVALID', 'Choose a configured authoring model');
+              return;
+            }
+            let reasoning: ReasoningLevel | undefined;
+            if (body.reasoning !== undefined) {
+              if (typeof body.reasoning !== 'string' || !(REASONING_LEVELS as readonly string[]).includes(body.reasoning)) {
+                sendError(res, 400, 'REVISION_REASONING_INVALID', 'Choose a valid thinking effort');
+                return;
+              }
+              reasoning = body.reasoning as ReasoningLevel;
+            }
+            const revisionSessionId = ulid();
+            const [currentSource, creatorSkill, availableSkills, view] = await Promise.all([
+              readFile(targetAgent.filePath, 'utf8'),
+              loadBuiltinSkillSource('creator'),
+              discoverProjectSkillCatalog(found.project.root),
+              prepareProjectDiscoveryView(found.project.scopeRoot),
+            ]);
+            cleanupView = view.cleanup;
+            const expectedSourceHash = sourceHash(currentSource);
+            const targetAgentName = targetAgent.name || found.info.approval.agent.name;
+            const agentContent = buildAgentRevisionSessionAgent({
+              revisionSessionId,
+              originSessionId,
+              projectId: found.project.id,
+              projectRoot: found.project.root,
+              targetAgentPath: targetAgent.filePath,
+              targetAgentName,
+              mode,
+              instruction,
+              model,
+              ...(reasoning && { reasoning }),
+              expectedSourceHash,
+              currentSource,
+              originTranscript: buildRunTranscript(found.info.approval.logs, 80_000),
+              safeViewRoot: view.root,
+              creatorSkill,
+              availableModels,
+              availableSkills,
+            });
+            const internalAgentPath = await writeInternalAgentRevisionSource(
+              found.project.root,
+              revisionSessionId,
+              agentContent,
+            );
+            const record = await createAgentRevisionRecord({
+              revisionSessionId,
+              originSessionId,
+              projectId: found.project.id,
+              projectRoot: found.project.root,
+              targetAgentPath: targetAgent.filePath,
+              ...(found.info.approval.agent.runPath && targetAgent.filePath === found.info.approval.agent.filePath
+                ? { targetAgentRunPath: found.info.approval.agent.runPath }
+                : {}),
+              targetAgentName,
+              mode,
+              instruction,
+              authoringModel: model,
+              expectedSourceHash,
+              previousSource: currentSource,
+            });
+            const job: OnboardingModelJob = {
+              id: revisionSessionId,
+              sessionId: revisionSessionId,
+              projectId: found.project.id,
+              kind: 'agent-revision',
+              status: 'running',
+              phase: 'preparing',
+              model,
+              createdAt: record.createdAt,
+            };
+            pruneOnboardingJobs();
+            onboardingJobs.set(job.id, job);
+            const sessionToken = apiKey ? sessionViewToken(revisionSessionId, apiKey) : undefined;
+            sendJSON(res, 202, { success: true, job: { ...job, ...(sessionToken && { sessionToken }) } });
+            wakeListHubs();
+
+            const finishRevisionView = cleanupView;
+            cleanupView = undefined;
+            if (finishRevisionView) revisionViewCleanups.set(revisionSessionId, finishRevisionView);
+            void (async () => {
+              try {
+                job.phase = 'running';
+                wakeListHubs();
+                const execution = await worker.execute({
+                  agentPath: internalAgentPath,
+                  projectRoot: found.project.root,
+                  newSessionId: revisionSessionId,
+                  trigger: 'manual',
+                  timeout: 480,
+                  maxSteps: 20,
+                  debug: options.debug,
+                });
+                if (!execution.success) {
+                  job.status = 'error';
+                  job.error = execution.error;
+                  await failAgentRevision(found.project.root, revisionSessionId, execution.error);
+                  return;
+                }
+                const latest = await readAgentRevisionRecord(found.project.root, revisionSessionId);
+                if (latest?.status === 'proposed' || latest?.status === 'no-change') {
+                  job.status = 'completed';
+                  job.result = latest;
+                  return;
+                }
+                if (execution.result.finishReason === 'suspended' || execution.result.approvalUrl) {
+                  return;
+                }
+                const error = { code: 'REVISION_NOT_SUBMITTED', message: 'The revision session ended without submitting a validated outcome' };
+                job.status = 'error';
+                job.error = error;
+                await failAgentRevision(found.project.root, revisionSessionId, error);
+              } catch (error) {
+                const failure = { code: 'REVISION_FAILED', message: (error as Error).message };
+                job.status = 'error';
+                job.error = failure;
+                await failAgentRevision(found.project.root, revisionSessionId, failure).catch(() => undefined);
+              } finally {
+                const latest = await readAgentRevisionRecord(found.project.root, revisionSessionId).catch(() => undefined);
+                if (latest && (latest.status === 'applied' || latest.status === 'discarded' || latest.status === 'restored' || latest.status === 'error')) {
+                  await cleanupRevisionView(revisionSessionId);
+                }
+                wakeListHubs();
+              }
+            })();
+          } catch (err) {
+            await cleanupView?.().catch(() => undefined);
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, 'REVISION_START_FAILED', (err as Error).message);
+          } finally {
+            if (mutationKey) revisionMutations.delete(mutationKey);
+          }
+          return;
+        }
+
+        const revisionActionMatch = !isApi
+          ? routePath.match(/^\/agent-revisions\/([^/?#]+)(?:\/(apply|discard|restore|request-changes))?$/)
+          : null;
+        if (revisionActionMatch) {
+          let mutationKey: string | undefined;
+          try {
+            const revisionSessionId = decodeURIComponent(revisionActionMatch[1]!);
+            const action = revisionActionMatch[2];
+            const projectId = requestUrl.searchParams.get('project') ?? undefined;
+            const project = projectId ? projectsById.get(projectId) : projects.length === 1 ? projects[0] : undefined;
+            if (!project) {
+              sendError(res, 400, 'PROJECT_REQUIRED', 'Choose the project that owns this revision');
+              return;
+            }
+            if (req.method === 'GET' && !action) {
+              const token = requestUrl.searchParams.get('token') ?? undefined;
+              if (!sessionAuthorized(revisionSessionId, token)) {
+                sendError(res, 401, 'UNAUTHORIZED', 'Not authorized for this revision session');
+                return;
+              }
+              if (effectiveHideAgentSource) {
+                sendError(res, 403, 'AGENT_SOURCE_HIDDEN', 'Agent revision review is unavailable while serve.hideAgentSource is enabled');
+                return;
+              }
+              const record = await readAgentRevisionRecord(project.root, revisionSessionId);
+              if (!record) {
+                sendError(res, 404, 'REVISION_NOT_FOUND', 'Revision not found');
+                return;
+              }
+              const { previousSource: _previous, ...visibleRecord } = record;
+              const baseSource = record.previousSource
+                ?? (record.status === 'proposed' || record.status === 'no-change' || record.status === 'running'
+                  ? await readFile(record.targetAgentPath, 'utf8').catch(() => undefined)
+                  : undefined);
+              const originParams = new URLSearchParams({ project: project.id });
+              const originToken = sessionViewToken(record.originSessionId, apiKey);
+              if (originToken) originParams.set('token', originToken);
+              if (record.status === 'applied' || record.status === 'discarded' || record.status === 'restored' || record.status === 'error') {
+                await cleanupRevisionView(revisionSessionId);
+              }
+              sendJSON(res, 200, {
+                success: true,
+                revision: {
+                  ...visibleRecord,
+                  ...(baseSource && { baseSource }),
+                  originHref: `/sessions/${encodeURIComponent(record.originSessionId)}?${originParams.toString()}`,
+                },
+              });
+              return;
+            }
+            if (req.method !== 'POST' || !action) {
+              sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Unsupported revision action');
+              return;
+            }
+            if (!sessionAgentRevisionAllowed(req.headers.authorization, apiKey)) {
+              sendError(res, 403, 'OPERATOR_REQUIRED', 'Only an authenticated operator can change agent source');
+              return;
+            }
+            mutationKey = `revision:${project.id}:${revisionSessionId}`;
+            if (revisionMutations.has(mutationKey)) {
+              sendError(res, 409, 'REVISION_ACTION_IN_PROGRESS', 'Another action is already changing this revision');
+              return;
+            }
+            revisionMutations.add(mutationKey);
+            if (action === 'request-changes') {
+              const body = await parseJSONBody(req);
+              const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+              if (!prompt || prompt.length > 12_000) {
+                sendError(res, 400, 'REVISION_FEEDBACK_REQUIRED', 'Describe the changes you want to the proposal');
+                return;
+              }
+              const activeKey = `${project.id}:${revisionSessionId}`;
+              if (activeApprovalResumes.has(activeKey) || activeSessionContinuations.has(activeKey)) {
+                sendError(res, 409, 'SESSION_ACTIVE', 'This revision session is already continuing');
+                return;
+              }
+              await reopenAgentRevision(project.root, revisionSessionId);
+              startSessionContinue(res, { project, sessionId: revisionSessionId, prompt });
+              return;
+            }
+            let record;
+            if (action === 'apply') {
+              const snapshot = await providerSetupSnapshot();
+              const availableModels = [...new Set(agentCreationProviders(snapshot.status, preferredAgentCreationModel).flatMap((provider) => provider.models))];
+              const availableSkills = (await discoverProjectSkillCatalog(project.root)).filter((skill) => !skill.ambiguous).map((skill) => skill.name);
+              record = await applyAgentRevision({
+                projectRoot: project.root,
+                scopeRoot: project.scopeRoot,
+                revisionSessionId,
+                availableModels,
+                availableSkills,
+              });
+              agentSummaryCache.delete(record.targetAgentPath);
+              if (record.targetAgentRunPath) agentSummaryCache.delete(resolveScopedAgentPath(project, record.targetAgentRunPath));
+            } else if (action === 'restore') {
+              record = await restoreAgentRevision({ projectRoot: project.root, scopeRoot: project.scopeRoot, revisionSessionId });
+              agentSummaryCache.delete(record.targetAgentPath);
+            } else {
+              record = await discardAgentRevision(project.root, revisionSessionId);
+            }
+            wakeListHubs();
+            const { previousSource: _previous, ...visibleRecord } = record;
+            sendJSON(res, 200, { success: true, revision: visibleRecord });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, 'REVISION_ACTION_FAILED', (err as Error).message);
+          } finally {
+            if (mutationKey) revisionMutations.delete(mutationKey);
+          }
+          return;
+        }
+
         const onboardingJobMatch = isApi && req.method === 'GET'
           ? routePath.match(/^\/internal-agent-jobs\/([^/?#]+)$/)
           : null;
@@ -7686,6 +8126,21 @@ export function createServeCommand(): Command {
           if (!job) {
             sendError(res, 404, 'ONBOARDING_JOB_NOT_FOUND', 'This onboarding job is no longer available');
             return;
+          }
+          if (job.kind === 'agent-revision') {
+            const project = projectsById.get(job.projectId);
+            const record = project ? await readAgentRevisionRecord(project.root, job.sessionId) : undefined;
+            if (record?.status === 'proposed' || record?.status === 'no-change' || record?.status === 'applied' || record?.status === 'restored' || record?.status === 'discarded') {
+              job.status = 'completed';
+              job.result = record;
+              if (record.status === 'applied' || record.status === 'restored' || record.status === 'discarded') {
+                await cleanupRevisionView(job.sessionId);
+              }
+            } else if (record?.status === 'error') {
+              job.status = 'error';
+              if (record.error) job.error = record.error;
+              await cleanupRevisionView(job.sessionId);
+            }
           }
           sendJSON(res, 200, { success: true, job });
           return;

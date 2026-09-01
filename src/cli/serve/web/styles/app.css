@@ -6927,6 +6927,165 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 }
 
 /* --- session detail extras --- */
+
+.agent-revision-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.agent-revision-link-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agent-revision-link-copy strong { font-size: 13px; }
+.agent-revision-link-copy span { color: var(--muted); font-size: 12px; }
+.agent-revision-open { flex: 0 0 auto; font-size: 12px; font-weight: 650; }
+
+.agent-revision-dialog {
+  width: min(680px, calc(100vw - 28px));
+  max-height: min(780px, calc(100vh - 28px));
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--fg);
+  background: var(--panel);
+  box-shadow: var(--shadow-lg);
+}
+
+.agent-revision-dialog::backdrop { background: rgb(0 0 0 / 48%); }
+.agent-revision-dialog-body { display: grid; gap: 17px; padding: 20px; overflow: auto; }
+.agent-revision-intro { display: grid; gap: 4px; }
+.agent-revision-intro strong { font-size: 16px; }
+.agent-revision-intro span { color: var(--muted); font-size: 13px; line-height: 1.45; }
+.agent-revision-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.agent-revision-modes button {
+  display: grid;
+  gap: 3px;
+  padding: 12px;
+  text-align: left;
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.agent-revision-modes button.is-selected { border-color: var(--fg); box-shadow: inset 0 0 0 1px var(--fg); }
+.agent-revision-modes strong { font-size: 13px; }
+.agent-revision-modes span { color: var(--muted); font-size: 12px; }
+.agent-revision-field { display: grid; gap: 6px; min-width: 0; color: var(--muted); font-size: 12px; font-weight: 650; }
+.agent-revision-field textarea,
+.agent-revision-field select {
+  width: 100%;
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+}
+.agent-revision-field textarea { min-height: 100px; padding: 10px; resize: vertical; }
+.agent-revision-field select { min-height: 38px; padding: 0 9px; }
+.agent-revision-models { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 12px; }
+.agent-revision-actions { display: flex; justify-content: flex-end; }
+.agent-revision-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 13px;
+  color: var(--bg);
+  border: 1px solid var(--fg);
+  border-radius: 7px;
+  background: var(--fg);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+.agent-revision-primary:disabled { opacity: .55; }
+.agent-revision-handoff {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.agent-revision-handoff span { display: grid; gap: 2px; }
+.agent-revision-handoff strong { font-size: 12px; }
+.agent-revision-handoff small { color: var(--muted); font-size: 11px; }
+.agent-revision-handoff button,
+.agent-revision-review-actions button {
+  min-height: 34px;
+  padding: 0 10px;
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-hover);
+  font-size: 12px;
+}
+.agent-revision-error { margin: 0; color: var(--red); font-size: 12px; }
+
+.agent-revision-session-panel {
+  display: grid;
+  gap: 14px;
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.agent-revision-session-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.agent-revision-session-head > span:first-child { display: grid; gap: 3px; }
+.agent-revision-session-head strong { font-size: 15px; }
+.agent-revision-session-head small,
+.agent-revision-session-panel > p,
+.agent-revision-proposal-title span { color: var(--muted); font-size: 12px; }
+.agent-revision-state { padding: 3px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 11px; }
+.agent-revision-diagnosis { display: grid; gap: 5px; padding: 12px; border-left: 3px solid var(--muted); background: var(--bg); }
+.agent-revision-diagnosis strong { font-size: 12px; }
+.agent-revision-diagnosis p { margin: 0; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+.agent-revision-proposal-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.agent-revision-capabilities { display: grid; gap: 5px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); }
+.agent-revision-capabilities strong { font-size: 12px; }
+.agent-revision-capabilities span,
+.agent-revision-capabilities li { color: var(--muted); font-size: 12px; }
+.agent-revision-capabilities ul { display: grid; gap: 3px; margin: 0; padding-left: 18px; }
+.agent-revision-diff {
+  max-height: 420px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 12px/1.55 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.agent-revision-diff span { display: block; min-height: 1.55em; }
+.agent-revision-diff .is-add { background: color-mix(in srgb, var(--green) 13%, transparent); }
+.agent-revision-diff .is-remove { background: color-mix(in srgb, var(--red) 12%, transparent); }
+.agent-revision-review-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.agent-revision-review-actions .is-quiet { margin-left: auto; border-color: transparent; background: transparent; color: var(--muted); }
+.agent-revision-change-request { display: grid; gap: 8px; padding-top: 4px; }
+.agent-revision-change-request textarea { min-height: 82px; padding: 9px; resize: vertical; color: var(--fg); border: 1px solid var(--line); border-radius: 7px; background: var(--bg); }
+.agent-revision-change-request .agent-revision-primary { justify-self: start; }
+
+@media (max-width: 620px) {
+  .agent-revision-modes,
+  .agent-revision-models { grid-template-columns: 1fr; }
+  .agent-revision-handoff,
+  .agent-revision-link,
+  .agent-revision-session-head { align-items: stretch; flex-direction: column; }
+  .agent-revision-open { align-self: flex-start; }
+}
 /* token-usage meta cells share the .meta .cell styling; just give them an
    identifiable hook and keep the hidden attribute working. */
 .page-approval-detail .meta .token-cell[hidden] { display: none; }

@@ -10,6 +10,7 @@ import type { RunOutcome } from '../tools/report-outcome.js';
 import type { AgentSourceSubmission } from '../onboarding/submit-agent-source.js';
 import type { ProjectSuggestionsSubmission } from '../onboarding/submit-project-suggestions.js';
 import type { ProjectDiscoveryResult } from '../agents/discover.js';
+import type { AgentRevisionSubmission } from '../agents/revision.js';
 import type { EffectWAL } from './effect-wal';
 import type { LiveToolOutputRelay } from './live-tool-output';
 import type { RunModelOverride } from '../utils/model-alias';
@@ -79,6 +80,8 @@ export interface PreparedAgentExecution {
   agentSourceSubmission?: AgentSourceSubmission | undefined;
   /** Mutable structured handoff used only by in-memory onboarding discovery. */
   projectSuggestionsSubmission?: ProjectSuggestionsSubmission | undefined;
+  /** Mutable structured handoff used only by the in-memory agent reviser. */
+  agentRevisionSubmission?: AgentRevisionSubmission | undefined;
   doomLoopDetector: DoomLoopDetector;
   /**
    * Per-session effect WAL (tool executes + bash spawn/exit records), already
