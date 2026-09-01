@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { lstat, mkdir, mkdtemp, open, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative } from 'node:path';
 import { glob } from 'glob';
@@ -211,34 +211,35 @@ export function parseProjectDiscoveryResponse(response: string, projectName: str
 }
 
 export async function collectProjectDiscoveryContext(projectRoot: string): Promise<{ projectName: string; inspectedFiles: number; context: string }> {
+  const resolvedProjectRoot = await realpath(projectRoot);
   const files = (await glob('**/*', {
-    cwd: projectRoot,
+    cwd: resolvedProjectRoot,
     nodir: true,
     dot: true,
     maxDepth: 4,
     ignore: IGNORED,
-  })).sort().slice(0, MAX_FILES);
+  }))
+    .filter(isProjectDiscoveryPathAllowed)
+    .sort()
+    .slice(0, MAX_FILES);
   const manifestPaths = [...new Set([
     ...CONTEXT_FILES.filter((file) => files.includes(file)),
     ...files.filter((file) => /(^|\/)(README|ABOUT)\.(md|mdx)$/i.test(file)).slice(0, 4),
     ...files.filter((file) => /(^|\/)(package\.json|pyproject\.toml|Cargo\.toml|go\.mod)$/i.test(file)).slice(0, 6),
   ])];
-  const sections = [`Project: ${basename(projectRoot)}`, `File map (limited to ${MAX_FILES} files, secrets and generated directories excluded):\n${files.join('\n')}`];
+  const sections = [`Project: ${basename(resolvedProjectRoot)}`, `File map (limited to ${MAX_FILES} files, secrets and generated directories excluded):\n${files.join('\n')}`];
   let used = sections.join('\n\n').length;
   for (const path of manifestPaths) {
     if (used >= MAX_CONTEXT_CHARS) break;
-    try {
-      const body = (await readFile(join(projectRoot, path), 'utf8')).slice(0, MAX_FILE_CHARS);
-      const remaining = MAX_CONTEXT_CHARS - used;
-      const section = `\n\n--- ${path} ---\n${body}`.slice(0, remaining);
-      sections.push(section);
-      used += section.length;
-    } catch {
-      // A file can change between the bounded glob and read. The file map is
-      // still useful, so skip that one instead of failing the whole scan.
-    }
+    const buffer = await readBoundedDiscoveryFile(resolvedProjectRoot, path, MAX_FILE_CHARS);
+    if (!buffer || buffer.includes(0)) continue;
+    const body = redactProjectDiscoveryText(buffer.toString('utf8'));
+    const remaining = MAX_CONTEXT_CHARS - used;
+    const section = `\n\n--- ${path} ---\n${body}`.slice(0, remaining);
+    sections.push(section);
+    used += section.length;
   }
-  return { projectName: basename(projectRoot), inspectedFiles: files.length, context: sections.join('\n\n') };
+  return { projectName: basename(resolvedProjectRoot), inspectedFiles: files.length, context: sections.join('\n\n') };
 }
 
 export async function discoverProjectAgents(

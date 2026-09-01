@@ -6,18 +6,29 @@ import { parseAgent } from '../parser.js';
 import { formatScheduleHuman } from '../scheduler/parser.js';
 import { loadPausedSchedules, normalizeScheduleAgentPath, setSchedulePaused } from '../scheduler/state.js';
 import { resolveLocalAgentPath, resolveProjectContext } from '../utils/project.js';
-import { findServerForProject, type ServerEntry } from '../utils/server-registry.js';
+import { findServerForProject, type ServerEntry, type ServerProjectEntry } from '../utils/server-registry.js';
+
+export function serverScheduleAgentPath(
+  projectRoot: string,
+  agentPath: string,
+  project: Pick<ServerProjectEntry, 'root' | 'scopeRoot'>,
+): string {
+  const absoluteAgentPath = resolve(projectRoot, agentPath);
+  const scopeRoot = resolve(project.scopeRoot ?? project.root);
+  return normalizeScheduleAgentPath(relative(scopeRoot, absoluteAgentPath));
+}
 
 async function notifyRunningServer(server: ServerEntry, projectRoot: string, agentPath: string, paused: boolean): Promise<void> {
   const project = server.projects?.find((entry) => resolve(entry.root) === resolve(projectRoot));
   if (!project) return;
+  const runPath = serverScheduleAgentPath(projectRoot, agentPath, project);
   const host = server.host === '0.0.0.0' || server.host === '::' ? '127.0.0.1' : server.host;
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
   if (process.env.AGENTUSE_API_KEY) headers.Authorization = `Bearer ${process.env.AGENTUSE_API_KEY}`;
   const response = await fetch(`http://${host}:${server.port}/api/schedules/state`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ project: project.id, path: agentPath, paused }),
+    body: JSON.stringify({ project: project.id, path: runPath, paused }),
   });
   if (!response.ok) throw new Error(`running daemon returned ${response.status}`);
 }

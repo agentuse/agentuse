@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -37,6 +37,20 @@ describe('project-aware agent discovery', () => {
     expect(snapshot.context).toContain('package.json');
     expect(snapshot.context).not.toContain('SECRET=never-include');
     expect(snapshot.context).not.toContain('node_modules/noise.js');
+  });
+
+  it('does not follow project manifest symlinks or include inline credentials', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'agent-discovery-'));
+    const outside = join(await mkdtemp(join(tmpdir(), 'agent-discovery-secret-')), 'outside.md');
+    await writeFile(outside, 'OUTSIDE_SECRET=should-not-leave-machine');
+    await symlink(outside, join(root, 'README.md'));
+    await writeFile(join(root, 'ABOUT.md'), 'OPENAI_API_KEY=sk-example-credential-value');
+
+    const snapshot = await collectProjectDiscoveryContext(root);
+
+    expect(snapshot.context).not.toContain('should-not-leave-machine');
+    expect(snapshot.context).not.toContain('sk-example-credential-value');
+    expect(snapshot.context).toContain('OPENAI_API_KEY=[REDACTED]');
   });
 
   it('uses the selected configured model for the scan', async () => {

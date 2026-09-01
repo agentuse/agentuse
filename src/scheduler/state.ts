@@ -2,10 +2,26 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, posix } from 'node:path';
 import { getProjectDirSync } from '../storage/paths.js';
 import { atomicWriteFile } from '../utils/atomic-write.js';
+import { withOwnershipLock } from '../utils/ownership-lock.js';
 
 interface ScheduleStateFile {
   version: 1;
   pausedSchedules: string[];
+}
+
+const stateWriteChains = new Map<string, Promise<unknown>>();
+
+function withScheduleStateLock<T>(file: string, operation: () => Promise<T>): Promise<T> {
+  const previous = stateWriteChains.get(file) ?? Promise.resolve();
+  const locked = () => withOwnershipLock(`${file}.lock`, operation, {
+    staleMs: 30_000,
+    retryMs: 20,
+    maxWaitMs: 5_000,
+    label: 'schedule-state',
+  });
+  const result = previous.then(locked, locked);
+  stateWriteChains.set(file, result.then(() => {}, () => {}));
+  return result;
 }
 
 export function scheduleStatePath(projectRoot: string): string {
@@ -42,14 +58,16 @@ export async function loadPausedSchedules(projectRoot: string): Promise<Set<stri
 
 export async function setSchedulePaused(projectRoot: string, agentPath: string, paused: boolean): Promise<Set<string>> {
   const normalized = normalizeScheduleAgentPath(agentPath);
-  const current = await loadPausedSchedules(projectRoot);
-  if (paused) current.add(normalized);
-  else current.delete(normalized);
   const file = scheduleStatePath(projectRoot);
-  await mkdir(dirname(file), { recursive: true });
-  const state: ScheduleStateFile = { version: 1, pausedSchedules: [...current].sort() };
-  await atomicWriteFile(file, `${JSON.stringify(state, null, 2)}\n`);
-  return current;
+  return withScheduleStateLock(file, async () => {
+    const current = await loadPausedSchedules(projectRoot);
+    if (paused) current.add(normalized);
+    else current.delete(normalized);
+    await mkdir(dirname(file), { recursive: true });
+    const state: ScheduleStateFile = { version: 1, pausedSchedules: [...current].sort() };
+    await atomicWriteFile(file, `${JSON.stringify(state, null, 2)}\n`);
+    return current;
+  });
 }
 
 export async function isSchedulePaused(projectRoot: string, agentPath: string): Promise<boolean> {

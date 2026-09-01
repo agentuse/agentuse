@@ -39,4 +39,16 @@ describe('deployment-local schedule state', () => {
   it('rejects paths that can escape the project identity', () => {
     expect(() => normalizeScheduleAgentPath('../outside.agentuse')).toThrow('Invalid project-relative agent path');
   });
+
+  it('serializes concurrent state changes without losing either update', async () => {
+    await Promise.all([
+      setSchedulePaused(root, 'agents/daily.agentuse', true),
+      setSchedulePaused(root, 'agents/weekly.agentuse', true),
+    ]);
+
+    expect(await loadPausedSchedules(root)).toEqual(new Set([
+      'agents/daily.agentuse',
+      'agents/weekly.agentuse',
+    ]));
+  });
 });
