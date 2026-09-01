@@ -159,21 +159,15 @@ describe('project discovery onboarding machine', () => {
     }
   });
 
-  it('retains the suggestion, discovery, and streamed log after creation fails', () => {
+  it('retains the suggestion and discovery after the shared creator session fails', () => {
     let state = projectDiscoveryReducer(suggestionsState(), { type: 'CREATION_STARTED', suggestion });
-    state = projectDiscoveryReducer(state, { type: 'CREATION_STATUS', message: 'Preparing model' });
-    state = projectDiscoveryReducer(state, { type: 'CREATION_DRAFT', text: '## Goal\nReview docs.' });
     state = projectDiscoveryReducer(state, { type: 'CREATION_FAILED', error: 'Invalid source' });
 
     expect(state.type).toBe('creation-failed');
     expect(onboardingCurrentStep(state)).toBe(4);
     expect(onboardingDiscovery(state)).toEqual(discovery);
     expect(onboardingSuggestion(state)).toEqual(suggestion);
-    if (state.type === 'creation-failed') {
-      expect(state.log).toContain('[agentuse] Preparing model');
-      expect(state.log).toContain('[model draft]');
-      expect(state.log).toContain('[error] Invalid source');
-    }
+    if (state.type === 'creation-failed') expect(state.error).toBe('Invalid source');
   });
 
   it('returns creation recovery to model selection without losing the chosen idea', () => {
@@ -194,13 +188,12 @@ describe('project discovery onboarding machine', () => {
   it('ignores transitions that are invalid for the current state', () => {
     const ready = readyState();
     expect(projectDiscoveryReducer(ready, { type: 'SCAN_SUCCEEDED', discovery })).toBe(ready);
-    expect(projectDiscoveryReducer(ready, { type: 'CREATION_DRAFT', text: 'unexpected' })).toBe(ready);
+    expect(projectDiscoveryReducer(ready, { type: 'CREATION_FAILED', error: 'unexpected' })).toBe(ready);
   });
 
-  it('restores a failed creation after reload with its suggestion and log intact', () => {
+  it('restores an interrupted creation after reload with its suggestion intact', () => {
     const creating = projectDiscoveryReducer(suggestionsState(), { type: 'CREATION_STARTED', suggestion });
-    const drafted = projectDiscoveryReducer(creating, { type: 'CREATION_DRAFT', text: '## Goal\nReview docs.' });
-    const resume = resumableProjectDiscoveryState(drafted);
+    const resume = resumableProjectDiscoveryState(creating);
     const parsed = parseProjectDiscoveryResume(JSON.stringify(resume));
     const restored = parsed
       ? projectDiscoveryReducer(readyState(), { type: 'RESTORE', resume: parsed })
@@ -209,10 +202,7 @@ describe('project discovery onboarding machine', () => {
     expect(parsed?.type).toBe('creation-failed');
     expect(restored.type).toBe('creation-failed');
     expect(onboardingSuggestion(restored)).toEqual(suggestion);
-    if (restored.type === 'creation-failed') {
-      expect(restored.log).toContain('[model draft]');
-      expect(restored.log).toContain('creation was interrupted');
-    }
+    if (restored.type === 'creation-failed') expect(restored.error).toContain('creation was interrupted');
   });
 
   it('ignores malformed resume data', () => {

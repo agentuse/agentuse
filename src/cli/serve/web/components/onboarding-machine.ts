@@ -110,19 +110,13 @@ export type ProjectDiscoveryState =
       type: 'creating';
       discovery: ProjectDiscoveryPayload;
       suggestion: ProjectAgentSuggestion;
-      log: string;
-      draftStarted: boolean;
-      errorReported: boolean;
       job: OnboardingJobHandle | null;
     } & WithSetup)
   | ({
       type: 'creation-failed';
       discovery: ProjectDiscoveryPayload;
       suggestion: ProjectAgentSuggestion;
-      log: string;
       error: string;
-      draftStarted: boolean;
-      errorReported: boolean;
       job?: OnboardingJobHandle;
     } & WithSetup);
 
@@ -143,7 +137,6 @@ export type ProjectDiscoveryResume =
       model: string | null;
       discovery: ProjectDiscoveryPayload;
       suggestion: ProjectAgentSuggestion;
-      log: string;
       error: string;
       job?: OnboardingJobHandle;
     };
@@ -161,9 +154,6 @@ export type ProjectDiscoveryEvent =
   | { type: 'CHOOSE_MODEL_AFTER_SCAN' }
   | { type: 'CREATION_STARTED'; suggestion: ProjectAgentSuggestion }
   | { type: 'CREATION_SESSION_STARTED'; job: OnboardingJobHandle }
-  | { type: 'CREATION_STATUS'; message: string }
-  | { type: 'CREATION_DRAFT'; text: string }
-  | { type: 'CREATION_SAVED'; agentName: string }
   | { type: 'CREATION_FAILED'; error: string }
   | { type: 'CHOOSE_MODEL_AFTER_CREATION' };
 
@@ -187,13 +177,6 @@ function hasSetup(state: ProjectDiscoveryState): state is Exclude<ProjectDiscove
 function withModel(state: ProjectDiscoveryState, model: string): ProjectDiscoveryState {
   if (!hasSetup(state)) return state;
   return { ...state, setup: { ...state.setup, model } };
-}
-
-function appendCreationLog(
-  state: Extract<ProjectDiscoveryState, { type: 'creating' | 'creation-failed' }>,
-  text: string,
-): ProjectDiscoveryState {
-  return { ...state, log: `${state.log}${text}` };
 }
 
 export function projectDiscoveryReducer(
@@ -226,9 +209,6 @@ export function projectDiscoveryReducer(
           discovery: event.resume.discovery,
           suggestion: event.resume.suggestion,
           job: event.resume.job,
-          log: '',
-          draftStarted: false,
-          errorReported: false,
         };
       }
       return {
@@ -236,10 +216,7 @@ export function projectDiscoveryReducer(
         setup,
         discovery: event.resume.discovery,
         suggestion: event.resume.suggestion,
-        log: event.resume.log,
         error: event.resume.error,
-        draftStarted: event.resume.log.includes('[model draft]'),
-        errorReported: event.resume.log.includes('[error]'),
         ...(event.resume.job && { job: event.resume.job }),
       };
     }
@@ -289,30 +266,11 @@ export function projectDiscoveryReducer(
         setup: source.setup,
         discovery: source.discovery,
         suggestion: event.suggestion,
-        log: '[agentuse] Starting agent creation\n',
-        draftStarted: false,
-        errorReported: false,
         job: null,
       };
     }
     case 'CREATION_SESSION_STARTED':
       return state.type === 'creating' ? { ...state, job: event.job } : state;
-    case 'CREATION_STATUS':
-      return state.type === 'creating'
-        ? appendCreationLog(state, `\n[agentuse] ${event.message}\n`)
-        : state;
-    case 'CREATION_DRAFT':
-      return state.type === 'creating'
-        ? {
-            ...state,
-            log: `${state.log}${state.draftStarted ? '' : '\n[model draft]\n'}${event.text}`,
-            draftStarted: true,
-          }
-        : state;
-    case 'CREATION_SAVED':
-      return state.type === 'creating'
-        ? appendCreationLog(state, `\n[agentuse] Saved ${event.agentName}\n`)
-        : state;
     case 'CREATION_FAILED':
       if (state.type !== 'creating') return state;
       return {
@@ -321,9 +279,6 @@ export function projectDiscoveryReducer(
         discovery: state.discovery,
         suggestion: state.suggestion,
         error: event.error,
-        log: state.errorReported ? state.log : `${state.log}\n[error] ${event.error}\n`,
-        draftStarted: state.draftStarted,
-        errorReported: state.errorReported,
         ...(state.job && { job: state.job }),
       };
     case 'CHOOSE_MODEL_AFTER_CREATION':
@@ -380,7 +335,6 @@ export function resumableProjectDiscoveryState(state: ProjectDiscoveryState): Pr
       model: state.setup.model,
       discovery: state.discovery,
       suggestion: state.suggestion,
-      log: state.errorReported ? state.log : `${state.log}\n[error] ${error}\n`,
       error,
     };
   }
@@ -390,7 +344,6 @@ export function resumableProjectDiscoveryState(state: ProjectDiscoveryState): Pr
       model: state.setup.model,
       discovery: state.discovery,
       suggestion: state.suggestion,
-      log: state.log,
       error: state.error,
       ...(state.job && { job: state.job }),
     };
@@ -421,7 +374,6 @@ export function parseProjectDiscoveryResume(value: string | null): ProjectDiscov
     if (parsed.type === 'creation-failed'
       && 'discovery' in parsed && parsed.discovery
       && 'suggestion' in parsed && parsed.suggestion
-      && typeof parsed.log === 'string'
       && typeof parsed.error === 'string') return parsed as ProjectDiscoveryResume;
   } catch {
     // Ignore stale or malformed tab state and start from provider/model setup.

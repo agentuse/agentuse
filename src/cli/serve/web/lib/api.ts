@@ -5,6 +5,7 @@ import type { SerializedSchedule } from "../../../../scheduler";
 import type { ProviderCatalogEntry } from "../../../../auth/provider-setup";
 import type { ProviderStatus } from "../../../../auth/provider-status";
 import type { AgentCreationProvider } from "../../../../agents/create";
+import type { ReasoningLevel } from "../../../../model-compatibility";
 
 export type { SerializedSchedule };
 
@@ -624,13 +625,16 @@ export function fetchAgentCreationOptions(): Promise<AgentCreationOptionsPayload
   return getJson('/api/agents/create');
 }
 
-export function createAgent(input: {
+export function startAgentCreationSession(input: {
   project: string;
   name?: string;
+  description?: string;
   objective: string;
   model: string;
+  reasoning?: ReasoningLevel;
   schedule?: string;
-}): Promise<{ success: true; agent: AgentRow }> {
+  guided?: boolean;
+}): Promise<{ success: true; job: OnboardingJobHandle }> {
   return postJson('/api/agents', input);
 }
 
@@ -653,16 +657,14 @@ export interface ProjectDiscoveryPayload {
   suggestions: ProjectAgentSuggestion[];
 }
 
-export function discoverProjectAgents(project: string, model?: string): Promise<ProjectDiscoveryPayload> {
-  return postJson('/api/agents/discover', { project, ...(model ? { model } : {}) });
-}
-
 export interface OnboardingJobHandle {
   id: string;
   sessionId: string;
   projectId: string;
   kind: 'project-discovery' | 'agent-creation';
   status: 'running' | 'completed' | 'error';
+  /** Absent on jobs created by older daemons; treat those as already running. */
+  phase?: 'preparing' | 'running';
   model: string;
   createdAt: number;
   sessionToken?: string;
@@ -685,63 +687,11 @@ export function startOnboardingAgentCreation(input: {
   model: string;
   schedule: string;
 }): Promise<{ success: true; job: OnboardingJobHandle }> {
-  return postJson('/api/onboarding/creation', input);
+  return postJson('/api/agents', { ...input, guided: true });
 }
 
-export function fetchOnboardingJob(id: string): Promise<{ success: true; job: OnboardingJob }> {
-  return getJson(`/api/onboarding/jobs/${encodeURIComponent(id)}`);
-}
-
-export type AgentCreationProgressEvent =
-  | { type: 'status'; message: string }
-  | { type: 'draft'; text: string }
-  | { type: 'complete'; agent: AgentRow }
-  | { type: 'error'; error: { code: string; message: string } };
-
-/** Streams the model-authored draft and persistence milestones from serve. */
-export async function createAgentWithProgress(
-  input: { project: string; name?: string; description?: string; objective: string; model: string; schedule?: string; guided?: boolean },
-  onProgress: (event: AgentCreationProgressEvent) => void,
-  signal?: AbortSignal,
-): Promise<AgentRow> {
-  const response = await fetch('/api/agents', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' },
-    body: JSON.stringify(input),
-    ...(signal && { signal }),
-  });
-  if (!response.ok || !response.body) {
-    const payload = await response.json().catch(() => null);
-    throw new ApiRequestError(
-      response.status,
-      payload?.error?.code ?? 'REQUEST_FAILED',
-      payload?.error?.message ?? `Request failed with status ${response.status}`,
-    );
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let created: AgentRow | null = null;
-  const acceptLine = (line: string) => {
-    if (!line.trim()) return;
-    const event = JSON.parse(line) as AgentCreationProgressEvent;
-    onProgress(event);
-    if (event.type === 'complete') created = event.agent;
-    if (event.type === 'error') throw new ApiRequestError(400, event.error.code, event.error.message);
-  };
-
-  while (true) {
-    const { value, done } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-    for (const line of lines) acceptLine(line);
-    if (done) break;
-  }
-  acceptLine(buffer);
-  if (!created) throw new ApiRequestError(500, 'INCOMPLETE_RESPONSE', 'Agent creation ended before the agent was saved');
-  return created;
+export function fetchInternalAgentJob(id: string): Promise<{ success: true; job: OnboardingJob }> {
+  return getJson(`/api/internal-agent-jobs/${encodeURIComponent(id)}`);
 }
 
 export interface AgentDetailMeta {

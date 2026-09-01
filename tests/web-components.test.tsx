@@ -37,17 +37,77 @@ import { sessionContextFetchKey } from '../src/cli/serve/web/routes/session-cont
 import { learningsTidyHref } from '../src/cli/serve/web/lib/links';
 import type { LearningSummary, SessionLearning, TidyResult } from '../src/cli/serve/web/lib/api';
 import { RecentJobRow, recentJobSummary } from '../src/cli/serve/web/routes/agent-detail';
-import { isTerminalOnboardingSessionStatus } from '../src/cli/serve/web/components/project-agent-discovery';
+import {
+  isTerminalInternalAgentSessionStatus,
+  mergeInternalAgentJob,
+} from '../src/cli/serve/web/hooks/use-internal-agent-job';
+import { AgentCreationProgressPanel } from '../src/cli/serve/web/components/agent-create-dialog';
 
 const noop = () => {};
 
 describe('onboarding session completion', () => {
   it('uses terminal session events to trigger final-result retrieval', () => {
-    expect(isTerminalOnboardingSessionStatus('running')).toBe(false);
-    expect(isTerminalOnboardingSessionStatus('suspended')).toBe(false);
-    expect(isTerminalOnboardingSessionStatus('completed')).toBe(true);
-    expect(isTerminalOnboardingSessionStatus('error')).toBe(true);
-    expect(isTerminalOnboardingSessionStatus('timeout')).toBe(true);
+    expect(isTerminalInternalAgentSessionStatus('running')).toBe(false);
+    expect(isTerminalInternalAgentSessionStatus('suspended')).toBe(false);
+    expect(isTerminalInternalAgentSessionStatus('completed')).toBe(true);
+    expect(isTerminalInternalAgentSessionStatus('error')).toBe(true);
+    expect(isTerminalInternalAgentSessionStatus('timeout')).toBe(true);
+  });
+
+  it('preserves the session capability token across persisted job refreshes', () => {
+    const current = {
+      id: 'creator-session', sessionId: 'creator-session', projectId: 'demo',
+      kind: 'agent-creation' as const, status: 'running' as const, phase: 'preparing' as const,
+      model: 'openai:gpt-5.6-sol', createdAt: 1, sessionToken: 'view-token',
+    };
+    const refreshed = { ...current, phase: 'running' as const, sessionToken: undefined };
+    expect(mergeInternalAgentJob(current, refreshed).sessionToken).toBe('view-token');
+  });
+});
+
+describe('New Agent creation progress', () => {
+  it('renders the real internal session log and a full-session link', () => {
+    const html = renderToString(<AgentCreationProgressPanel
+      phase="creating"
+      modelLabel="gpt-5.6-sol"
+      job={{
+        id: 'creator-session',
+        sessionId: 'creator-session',
+        projectId: 'demo',
+        kind: 'agent-creation',
+        status: 'running',
+        phase: 'running',
+        model: 'openai:gpt-5.6-sol',
+        createdAt: 1,
+        sessionToken: 'view-token',
+      }}
+    />);
+
+    expect(html).toContain('Live AgentUse session');
+    expect(html).toContain('Open full session log');
+    expect(html).toContain('/sessions/creator-session?project=demo&amp;token=view-token');
+    expect(html).not.toContain('Creation log');
+  });
+
+  it('shows preparation progress before connecting to the creator session', () => {
+    const html = renderToString(<AgentCreationProgressPanel
+      phase="creating"
+      modelLabel="gpt-5.6-terra"
+      job={{
+        id: 'preparing-creator',
+        sessionId: 'preparing-creator',
+        projectId: 'demo',
+        kind: 'agent-creation',
+        status: 'running',
+        phase: 'preparing',
+        model: 'openai:gpt-5.6-terra',
+        createdAt: 1,
+      }}
+    />);
+
+    expect(html).toContain('Preparing project context');
+    expect(html).toContain('Scanning project files and discovering available skills');
+    expect(html).not.toContain('Open full session log');
   });
 });
 

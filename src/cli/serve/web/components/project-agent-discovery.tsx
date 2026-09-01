@@ -1,17 +1,16 @@
 import { useEffect, useReducer, useState } from 'preact/hooks';
 import { agentDetailHref, projectDiscoveryHref } from '../lib/links';
 import {
-  fetchOnboardingJob,
   fetchAgentCreationOptions,
   fetchProviderSetup,
   startOnboardingAgentCreation,
   startProjectDiscoverySession,
   type AgentRow,
-  type OnboardingJobHandle,
   type ProjectAgentSuggestion,
   type ProjectDiscoveryPayload,
   type ProviderSetupPayload,
 } from '../lib/api';
+import { useInternalAgentJob } from '../hooks/use-internal-agent-job';
 import { AgentCreateDialog, creationModelLabel } from './agent-create-dialog';
 import { DashboardSelect } from './dashboard-select';
 import { OnboardingSessionLog } from './onboarding-session-log';
@@ -30,16 +29,6 @@ import { firstUsefulAgentSetupSteps, OnboardingShell } from './onboarding-shell'
 import { hasConfiguredProvider, ProviderSetupDialog } from './provider-setup';
 
 type OnboardingModal = 'provider' | 'direct-create' | null;
-type TerminalSessionSignal = { jobId: string; status: string };
-
-const TERMINAL_SESSION_STATUSES = new Set(['completed', 'error', 'expired', 'failed', 'stopped', 'timeout', 'incomplete']);
-const FINAL_RESULT_RETRY_MS = 500;
-const FINAL_RESULT_MAX_ATTEMPTS = 60;
-
-export function isTerminalOnboardingSessionStatus(status: string): boolean {
-  return TERMINAL_SESSION_STATUSES.has(status);
-}
-
 function setProviderRouteState(projectId: string, open: boolean): void {
   history.replaceState(null, '', projectDiscoveryHref(projectId, { ...(open && { connectProvider: true }) }));
 }
@@ -60,7 +49,6 @@ export function ProjectAgentDiscovery(props: {
     && new URLSearchParams(window.location.search).get('provider') === 'connect'
     ? 'provider'
     : null);
-  const [terminalSession, setTerminalSession] = useState<TerminalSessionSignal | null>(null);
   const resumeKey = `agentuse:onboarding:${props.projectId}`;
 
   const clearResume = () => {
@@ -85,70 +73,42 @@ export function ProjectAgentDiscovery(props: {
     if (resume && typeof sessionStorage !== 'undefined') sessionStorage.setItem(resumeKey, JSON.stringify(resume));
   }, [resumeKey, state]);
 
-  const activeJob = state.type === 'scanning' || state.type === 'creating' ? state.job : null;
+  const activeJob = state.type === 'scanning' || state.type === 'creating'
+    || state.type === 'scan-failed' || state.type === 'creation-failed'
+    ? state.job ?? null
+    : null;
+  const internalSession = useInternalAgentJob(activeJob);
+
   useEffect(() => {
-    if (!activeJob || terminalSession?.jobId !== activeJob.id) return;
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let attempts = 0;
-    const fetchFinalResult = async () => {
-      try {
-        const { job } = await fetchOnboardingJob(activeJob.id);
-        if (disposed) return;
-        if (job.status === 'running') {
-          attempts += 1;
-          if (attempts >= FINAL_RESULT_MAX_ATTEMPTS) {
-            const message = 'The session ended, but AgentUse could not finish preparing its result.';
-            if (activeJob.kind === 'project-discovery') dispatch({ type: 'SCAN_FAILED', error: message });
-            else dispatch({ type: 'CREATION_FAILED', error: message });
-            return;
-          }
-          timer = setTimeout(() => void fetchFinalResult(), FINAL_RESULT_RETRY_MS);
-          return;
-        }
-        if (job.status === 'error') {
-          const message = job.error?.message || 'The onboarding agent did not finish successfully.';
-          if (job.kind === 'project-discovery') dispatch({ type: 'SCAN_FAILED', error: message });
-          else dispatch({ type: 'CREATION_FAILED', error: message });
-          return;
-        }
-        if (job.kind === 'project-discovery') {
-          dispatch({ type: 'SCAN_SUCCEEDED', discovery: job.result as ProjectDiscoveryPayload });
-          return;
-        }
-        const agent = (job.result as { success: true; agent: AgentRow }).agent;
-        clearResume();
-        window.location.href = agentDetailHref(agent.projectId, agent.runPath, {
-          tab: 'source',
-          spotlightRun: !props.existingAgents,
-        });
-      } catch (caught) {
-        if (disposed) return;
-        attempts += 1;
-        if (attempts < FINAL_RESULT_MAX_ATTEMPTS) {
-          timer = setTimeout(() => void fetchFinalResult(), FINAL_RESULT_RETRY_MS);
-          return;
-        }
-        const message = (caught as Error).message || 'Could not reconnect to the onboarding session.';
-        if (state.type === 'scanning') dispatch({ type: 'SCAN_FAILED', error: message });
-        else if (state.type === 'creating') dispatch({ type: 'CREATION_FAILED', error: message });
-      }
-    };
-    void fetchFinalResult();
-    return () => {
-      disposed = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [activeJob?.id, terminalSession?.jobId]);
-
-  const observeSessionStatus = (job: OnboardingJobHandle, status: string) => {
-    if (!isTerminalOnboardingSessionStatus(status)) return;
-    setTerminalSession((current) => current?.jobId === job.id ? current : { jobId: job.id, status });
-  };
-
-  const observeFatalSessionError = (job: OnboardingJobHandle) => {
-    setTerminalSession((current) => current?.jobId === job.id ? current : { jobId: job.id, status: 'stream-error' });
-  };
+    if (!activeJob) return;
+    if (internalSession.controllerError) {
+      if (state.type === 'scanning') dispatch({ type: 'SCAN_FAILED', error: internalSession.controllerError });
+      else if (state.type === 'creating') dispatch({ type: 'CREATION_FAILED', error: internalSession.controllerError });
+      return;
+    }
+    const job = internalSession.finalJob;
+    if (!job || (state.type !== 'scanning' && state.type !== 'creating')) return;
+    if (job.status === 'error') {
+      const message = job.error?.message || 'The internal AgentUse session did not finish successfully.';
+      if (job.kind === 'project-discovery') dispatch({ type: 'SCAN_FAILED', error: message });
+      else dispatch({ type: 'CREATION_FAILED', error: message });
+      return;
+    }
+    if (job.kind === 'project-discovery') {
+      dispatch({ type: 'SCAN_SUCCEEDED', discovery: job.result as ProjectDiscoveryPayload });
+      return;
+    }
+    const agent = (job.result as { success: true; agent: AgentRow } | undefined)?.agent;
+    if (!agent) {
+      dispatch({ type: 'CREATION_FAILED', error: 'The creator session ended before the agent was saved.' });
+      return;
+    }
+    clearResume();
+    window.location.href = agentDetailHref(agent.projectId, agent.runPath, {
+      tab: 'source',
+      spotlightRun: !props.existingAgents,
+    });
+  }, [activeJob?.id, internalSession.finalJob, internalSession.controllerError, state.type]);
 
   const setup = 'setup' in state ? state.setup : null;
   const model = setup?.model ?? null;
@@ -258,11 +218,11 @@ export function ProjectAgentDiscovery(props: {
                     ? 'Choose a more capable model, then try creating the same agent again. The project and selected idea are preserved.'
                     : retryingScan
                       ? 'Choose a more capable model, then scan the same project again.'
-                      : 'AgentUse reads a safe project view and suggests three recurring tasks.'
+                      : 'AgentUse reads a safe project view and considers relevant project and global skills before suggesting three recurring tasks.'
                   : state.type === 'scanning' || state.type === 'scan-failed'
-                    ? 'AgentUse is reading the project and preparing three ideas.'
+                    ? 'AgentUse is reading the project, considering installed skills, and preparing three ideas.'
                     : isCreationStage
-                      ? 'AgentUse is writing and validating the agent Source.'
+                      ? 'AgentUse is loading relevant skill instructions, then writing and validating the agent source.'
                       : discovery?.summary ?? 'Choose one idea to continue.'}
         </p>
 
@@ -318,11 +278,23 @@ export function ProjectAgentDiscovery(props: {
         {state.type === 'booting' && <div class="discovery-progress" role="status"><span class="btn-spinner" aria-hidden="true" /><span>Loading providers and models</span></div>}
         {state.type === 'boot-error' && <div class="onboarding-error" role="alert">{state.error}</div>}
         {state.type === 'scanning' && !state.job && <div class="discovery-progress" role="status"><span class="btn-spinner" aria-hidden="true" /><span>Starting project discovery session</span></div>}
-        {state.type === 'scanning' && state.job && <OnboardingSessionLog job={state.job} title={`Scanning with ${selectedModelLabel}`} onStatus={(status) => observeSessionStatus(state.job!, status)} onFatalError={() => observeFatalSessionError(state.job!)} />}
+        {state.type === 'scanning' && state.job && <OnboardingSessionLog
+          job={internalSession.job ?? state.job}
+          title={`Scanning with ${selectedModelLabel}`}
+          status={internalSession.sessionStatus}
+          entries={internalSession.entries}
+          streamError={internalSession.streamError}
+        />}
 
         {state.type === 'scan-failed' && (
           <div class="discovery-recovery" aria-live="polite">
-            {state.job && <OnboardingSessionLog job={state.job} title="Project scan session" />}
+            {state.job && <OnboardingSessionLog
+              job={internalSession.job ?? state.job}
+              title="Project scan session"
+              status={internalSession.sessionStatus}
+              entries={internalSession.entries}
+              streamError={internalSession.streamError}
+            />}
             <div class="discovery-failure" role="alert"><strong>Couldn’t scan this project</strong><span>The selected model didn’t return usable, evidence-backed suggestions. It may not be capable enough for this task.</span></div>
             <div class="onboarding-actions">
               <button type="button" class="onboarding-primary" onClick={() => void scan()}>Try again</button>
@@ -355,7 +327,13 @@ export function ProjectAgentDiscovery(props: {
         {isCreationStage && (
           <div class="discovery-creation" aria-live="polite">
             {state.job
-              ? <OnboardingSessionLog job={state.job} title={`Creating with ${selectedModelLabel}`} onStatus={(status) => observeSessionStatus(state.job!, status)} onFatalError={() => observeFatalSessionError(state.job!)} />
+              ? <OnboardingSessionLog
+                  job={internalSession.job ?? state.job}
+                  title={`Creating with ${selectedModelLabel}`}
+                  status={internalSession.sessionStatus}
+                  entries={internalSession.entries}
+                  streamError={internalSession.streamError}
+                />
               : state.type === 'creating'
                 ? <div class="discovery-progress" role="status"><span class="btn-spinner" aria-hidden="true" /><span>Starting AgentUse Creator session</span></div>
                 : null}

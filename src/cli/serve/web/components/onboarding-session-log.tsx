@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ApprovalLogEntry } from '../../types';
-import { useApprovalStream } from '../hooks/use-approval-stream';
 import type { OnboardingJobHandle } from '../lib/api';
 
 function entryLine(entry: ApprovalLogEntry): { label: string; text: string } | null {
@@ -22,45 +21,16 @@ function entryLine(entry: ApprovalLogEntry): { label: string; text: string } | n
 export function OnboardingSessionLog(props: {
   job: OnboardingJobHandle;
   title: string;
-  onStatus?: (status: string) => void;
-  onFatalError?: (message: string) => void;
+  status: string;
+  entries: ApprovalLogEntry[];
+  streamError?: string | null | undefined;
 }) {
-  const [status, setStatus] = useState<string>(props.job.status);
-  const [entries, setEntries] = useState<ApprovalLogEntry[]>([]);
-  const [streamError, setStreamError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const linesRef = useRef<HTMLDivElement>(null);
-
-  useApprovalStream({
-    sessionId: props.job.sessionId,
-    token: props.job.sessionToken,
-    project: props.job.projectId,
-    pending: true,
-    logsLimit: 160,
-    nudge: 0,
-    handlers: {
-      onStatus: (next) => {
-        setStatus(next);
-        props.onStatus?.(next);
-      },
-      onLogs: (next) => setEntries(next),
-      onLog: (entry) => setEntries((current) => {
-        const index = current.findIndex((candidate) => candidate.id === entry.id);
-        if (index < 0) return [...current, entry];
-        const copy = [...current];
-        copy[index] = entry;
-        return copy;
-      }),
-      onFatalError: (_code, message) => {
-        setStreamError(message);
-        props.onFatalError?.(message);
-      },
-    },
-  });
-
-  const lines = useMemo(() => entries.map(entryLine).filter((entry): entry is { label: string; text: string } => Boolean(entry)), [entries]);
+  const lines = useMemo(() => props.entries.map(entryLine).filter((entry): entry is { label: string; text: string } => Boolean(entry)), [props.entries]);
   const visible = expanded ? lines : lines.slice(-12);
-  const running = status === 'running' || status === 'waiting' || status === 'suspended';
+  const running = props.status === 'running' || props.status === 'waiting' || props.status === 'suspended';
+  const preparing = props.job.phase === 'preparing';
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -68,29 +38,29 @@ export function OnboardingSessionLog(props: {
       if (element) element.scrollTop = element.scrollHeight;
     });
     return () => cancelAnimationFrame(frame);
-  }, [entries, expanded, streamError, status]);
+  }, [props.entries, expanded, props.streamError, props.status]);
 
   return (
     <section class="onboarding-session-log" aria-live="polite" aria-label={props.title}>
       <header>
         <span class={`onboarding-session-state${running ? ' is-running' : ''}`} aria-hidden="true" />
-        <div><strong>{props.title}</strong><small>{running ? 'Live AgentUse session' : `Session ${status}`}</small></div>
+        <div><strong>{props.title}</strong><small>{preparing ? 'Preparing project context' : running ? 'Live AgentUse session' : `Session ${props.status}`}</small></div>
       </header>
       <div class="onboarding-session-lines" ref={linesRef}>
-        {visible.length === 0 && !streamError
-          ? <div class="onboarding-session-placeholder">Starting the agent and preparing its tools…</div>
+        {visible.length === 0 && !props.streamError
+          ? <div class="onboarding-session-placeholder">{preparing ? 'Scanning project files and discovering available skills…' : 'Starting the agent and preparing its tools…'}</div>
           : visible.map((line, index) => (
               <div class="onboarding-session-line" key={`${line.label}-${index}`}>
                 <span>{line.label}</span><pre>{line.text}</pre>
               </div>
             ))}
-        {running && !streamError && visible.length > 0 && (
+        {running && !props.streamError && visible.length > 0 && (
           <div class="onboarding-session-line onboarding-session-working" aria-label="Agent is still working">
             <span class="onboarding-session-working-indicator" aria-hidden="true"><i /></span>
             <pre>Still working<span class="onboarding-session-working-dots" aria-hidden="true" /></pre>
           </div>
         )}
-        {streamError && <div class="onboarding-session-error">{streamError}</div>}
+        {props.streamError && <div class="onboarding-session-error">{props.streamError}</div>}
       </div>
       {lines.length > 12 && (
         <button type="button" class="onboarding-session-expand" onClick={() => setExpanded((value) => !value)}>

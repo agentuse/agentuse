@@ -48,15 +48,18 @@ export function useApprovalStream(options: {
    * not be treated as a fatal "not found".
    */
   pending?: boolean;
+  /** Do not connect until the server has finished preparing the session. */
+  enabled?: boolean;
   logsLimit?: number;
 }): void {
   const handlersRef = useRef(options.handlers);
   handlersRef.current = options.handlers;
   const nudgeRef = useRef<() => void>(() => {});
 
-  const { sessionId, token, project, pending, logsLimit } = options;
+  const { sessionId, token, project, pending, enabled = true, logsLimit } = options;
 
   useEffect(() => {
+    if (!enabled) return;
     // Grace window for a just-started session that 404s in the polling fallback.
     const mountedAt = Date.now();
     let seenOk = false;
@@ -229,7 +232,7 @@ export function useApprovalStream(options: {
       if (pollTimer) clearTimeout(pollTimer);
       if (sseRetryTimer) clearTimeout(sseRetryTimer);
     };
-  }, [sessionId, token, project, logsLimit]);
+  }, [sessionId, token, project, enabled, logsLimit]);
 
   useEffect(() => {
     if (options.nudge > 0) nudgeRef.current();

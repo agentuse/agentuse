@@ -367,16 +367,16 @@ async function main(): Promise<void> {
     'provider-ready onboarding opens native persistent agent creation',
   );
   expectBrowser(
-    `document.querySelector('.agent-create-dialog input[placeholder="Support digest"]') === null && document.querySelector('.agent-create-handoff')?.innerText.includes('more hands-on') === true`,
-    'agent creation asks only for the job and separates the hands-on coding-agent path',
+    `document.querySelector('.agent-create-dialog input[placeholder="Support Ticket Triage"]') === null && document.querySelector('.agent-create-dialog [aria-label="Creator provider model"]') !== null && document.querySelector('.agent-create-dialog [aria-label="Thinking effort"]')?.innerText.includes('Medium') === true && document.querySelector('.agent-create-dialog [aria-label="Creator provider"]') === null && document.querySelector('.agent-create-handoff')?.innerText.includes('scripts, dependencies, or project-specific code') === true`,
+    'agent creation derives the name and exposes combined model and thinking controls',
   );
-  browser(['click', '.agent-create-dialog .dashboard-select-trigger[aria-label="Creator model"]']);
+  browser(['click', '.agent-create-dialog .dashboard-select-trigger[aria-label="Creator provider model"]']);
   expectBrowser(
-    `(() => { const menu = document.querySelector('.agent-create-dialog .dashboard-select-menu'); const options = menu?.querySelectorAll('[role="option"]') ?? []; return Boolean(menu) && options.length > 1 && getComputedStyle(menu).backgroundColor !== 'rgb(255, 255, 255)'; })()`,
-    'agent creation uses a bounded dark model listbox instead of a native select popup',
+    `(() => { const menu = document.querySelector('.agent-create-dialog .dashboard-select-menu'); const options = menu?.querySelectorAll('[role="option"]') ?? []; return Boolean(menu) && options.length > 1 && getComputedStyle(menu).backgroundColor !== 'rgb(255, 255, 255)' && getComputedStyle(menu).overscrollBehaviorY === 'contain' && getComputedStyle(document.documentElement).overflow === 'hidden'; })()`,
+    'agent creation contains listbox scrolling and locks the background page',
   );
   browser(['screenshot', join(evidenceDir, 'onboarding-create-agent-model-picker.png')]);
-  browser(['click', '.agent-create-dialog .dashboard-select-trigger[aria-label="Creator model"]']);
+  browser(['click', '.agent-create-dialog .dashboard-select-trigger[aria-label="Creator provider model"]']);
   browser(['eval', `(() => {
     const set = (selector, value) => { const element = document.querySelector(selector); if (!element) return false; element.value = value; element.dispatchEvent(new Event('input', { bubbles: true })); return true; };
     return set('.agent-create-field textarea', 'Summarize new support tickets every morning and highlight urgent replies.');

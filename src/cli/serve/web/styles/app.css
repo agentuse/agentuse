@@ -117,6 +117,10 @@ body {
    code, the copyable session-id field) stays selectable and zoomable. */
 html { -webkit-tap-highlight-color: transparent; }
 html, body { overscroll-behavior: none; }
+/* Native dialogs live in the top layer but do not lock the document scroller.
+   Keep wheel/touch input on the modal instead of moving the obscured page. */
+html:has(dialog[open]),
+body:has(dialog[open]) { overflow: hidden; }
 a, button, select, summary, label, input, textarea,
 [role="button"], .nav-item, .palette-trigger {
   touch-action: manipulation;
@@ -3992,6 +3996,14 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   position: fixed; z-index: 100; inset: 0 0 auto; display: flex; align-items: center; justify-content: space-between;
   height: 68px; padding: 0 clamp(20px, 3.5vw, 54px); border-bottom: 1px solid var(--line); background: var(--bg);
 }
+html[data-agentuse-desktop-mac] .onboarding-route-header {
+  padding-left: max(92px, clamp(20px, 3.5vw, 54px));
+  -webkit-app-region: drag;
+}
+html[data-agentuse-desktop-mac] .onboarding-route-brand,
+html[data-agentuse-desktop-mac] .onboarding-route-exit {
+  -webkit-app-region: no-drag;
+}
 .onboarding-route-brand { display: inline-flex; align-items: center; color: var(--fg); text-decoration: none; }
 .onboarding-route-brand .brand-mark { display: inline-flex; align-items: center; }
 .onboarding-route-brand .brand-mark svg { display: block; width: auto; height: 22px; }
@@ -4182,7 +4194,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .discovery-recovery .onboarding-actions,
 .discovery-creation .onboarding-actions { margin-top: 14px; }
 .project-discovery .agent-create-progress { padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
-.project-discovery .agent-create-log { min-height: 270px; max-height: min(46vh, 420px); }
 .onboarding-session-log { margin-top: 24px; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 11px; background: var(--panel); }
 .onboarding-session-log > header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 11px; align-items: center; padding: 13px 14px; border-bottom: 1px solid var(--line); }
 .onboarding-session-log > header strong,
@@ -5792,11 +5803,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .dashboard-select.is-open .dashboard-select-chevron { margin-top: 3px; transform: rotate(225deg); }
 .dashboard-select-menu {
   position: absolute; z-index: 100; top: calc(100% + 5px); left: 0; right: 0;
-  max-height: 240px; padding: 4px; overflow-y: auto;
+  max-height: 240px; padding: 4px; overflow-y: auto; overscroll-behavior: contain;
   border: 1px solid var(--line-strong); border-radius: 8px;
   background: var(--bg); box-shadow: 0 16px 40px rgba(0,0,0,0.52);
 }
-.agent-create-model-row .dashboard-select-menu { top: auto; bottom: calc(100% + 5px); }
+.agent-create-creator-row .dashboard-select-menu { top: auto; bottom: calc(100% + 5px); }
 .dashboard-select-option {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   width: 100%; min-height: 34px; padding: 7px 9px;
@@ -5865,7 +5876,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   padding: 0; border: 1px solid var(--line-strong); border-radius: 12px;
   background: var(--bg); color: var(--fg); box-shadow: 0 20px 60px rgba(0,0,0,0.5); overflow: hidden;
 }
-.agent-create-body { display: flex; flex-direction: column; gap: 16px; max-height: calc(100vh - 98px); padding: 18px; overflow: auto; }
+.agent-create-body { display: flex; flex-direction: column; gap: 16px; max-height: calc(100vh - 98px); padding: 18px; overflow: auto; overscroll-behavior: contain; }
 .agent-create-intro { display: grid; gap: 4px; }
 .agent-create-intro strong { font-size: var(--font-size-body); font-weight: 560; }
 .agent-create-intro span,
@@ -5885,7 +5896,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .agent-create-field input:focus,
 .agent-create-field select:focus,
 .agent-create-field textarea:focus { outline: 2px solid var(--cyan-border); outline-offset: 1px; border-color: transparent; }
-.agent-create-model-row { display: grid; grid-template-columns: minmax(150px, 0.7fr) minmax(0, 1.3fr); gap: 11px; }
+.agent-create-creator-row { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(150px, 0.8fr); gap: 11px; }
 .agent-create-model-hint { margin-top: -5px; color: var(--muted); font-size: var(--font-size-micro); line-height: 1.45; }
 .agent-create-project {
   display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: baseline; gap: 4px 10px;
@@ -5925,14 +5936,9 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   font-family: var(--mono); font-size: var(--font-size-micro); font-weight: 700;
 }
 .agent-create-progress.is-error .agent-create-progress-mark { border-color: var(--red); background: transparent; color: var(--red); }
-.agent-create-log-label { color: var(--muted); font-size: var(--font-size-micro); text-transform: uppercase; letter-spacing: 0.06em; }
-.agent-create-log {
-  width: 100%; min-height: 250px; max-height: min(42vh, 380px); box-sizing: border-box; resize: vertical;
-  padding: 12px; border: 1px solid var(--line-strong); border-radius: 8px;
-  background: #090b0c; color: #b8c0c4; caret-color: transparent;
-  font-family: var(--mono); font-size: var(--font-size-micro); line-height: 1.55; white-space: pre; overflow: auto;
-}
-.agent-create-log:focus { outline: 1px solid var(--cyan-border); outline-offset: 1px; }
+.agent-create-progress .onboarding-session-log { margin-top: 0; }
+.agent-create-session-link { align-self: flex-end; color: var(--cyan); font-size: var(--font-size-micro); text-decoration: none; }
+.agent-create-session-link:hover { text-decoration: underline; }
 .agent-create-progress-hint { color: var(--muted); font-size: var(--font-size-micro); line-height: 1.45; }
 .agent-create-progress-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
 .page-agents .agents-title-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
@@ -5946,7 +5952,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-agents .new-agent-button:disabled { opacity: 0.65; cursor: default; }
 .new-agent-error { display: block; margin-top: 7px; color: var(--red); font-size: var(--font-size-micro); }
 @media (max-width: 560px) {
-  .agent-create-model-row { grid-template-columns: 1fr; }
+  .agent-create-creator-row { grid-template-columns: 1fr; }
   .agent-create-actions { align-items: stretch; }
   .agent-create-handoff { grid-template-columns: 1fr; gap: 10px; }
   .agent-create-primary, .agent-create-escape { width: 100%; }
