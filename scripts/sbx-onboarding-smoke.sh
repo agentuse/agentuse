@@ -40,8 +40,9 @@ trap cleanup EXIT INT TERM
 
 mkdir -p "$SMOKE_HOME/config" "$SMOKE_HOME/data"
 export HOME="$SMOKE_HOME/home"
-export AGENTUSE_CONFIG="$SMOKE_HOME/config/config.json"
-export XDG_DATA_HOME="$SMOKE_HOME/data"
+export AGENTUSE_CONFIG_DIR="$SMOKE_HOME/config"
+export AGENTUSE_DATA_DIR="$SMOKE_HOME/data"
+unset XDG_DATA_HOME
 mkdir -p "$HOME"
 
 # The smoke contract is provider-free. Codex sandbox authentication belongs to
@@ -56,8 +57,8 @@ SERVER_PID=$!
 for _ in $(seq 1 60); do
   if curl -fsS "http://127.0.0.1:$PORT/api/about" >"$SMOKE_HOME/about.json"; then
     kill -0 "$SERVER_PID" 2>/dev/null || die "server exited after responding; see $SMOKE_HOME/server.log"
-    [[ ! -e "$AGENTUSE_CONFIG" ]] \
-      || grep -Eq '"projects"[[:space:]]*:[[:space:]]*\[[[:space:]]*\]' "$AGENTUSE_CONFIG" \
+    [[ ! -e "$AGENTUSE_CONFIG_DIR/config.json" ]] \
+      || grep -Eq '"projects"[[:space:]]*:[[:space:]]*\[[[:space:]]*\]' "$AGENTUSE_CONFIG_DIR/config.json" \
       || die "fresh onboarding unexpectedly created a project"
     echo "sbx smoke: PASS — fresh provider-free onboarding is reachable at http://127.0.0.1:$PORT"
     exit 0

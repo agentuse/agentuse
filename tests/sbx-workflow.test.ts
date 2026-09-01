@@ -39,9 +39,19 @@ describe('Docker Sandbox development workflow', () => {
   it('isolates AgentUse state and does not import coding-agent credentials', () => {
     const script = read('scripts/sbx-onboarding-smoke.sh');
     expect(script).toContain('export HOME="$SMOKE_HOME/home"');
-    expect(script).toContain('export AGENTUSE_CONFIG="$SMOKE_HOME/config/config.json"');
-    expect(script).toContain('export XDG_DATA_HOME="$SMOKE_HOME/data"');
+    expect(script).toContain('export AGENTUSE_CONFIG_DIR="$SMOKE_HOME/config"');
+    expect(script).toContain('export AGENTUSE_DATA_DIR="$SMOKE_HOME/data"');
     expect(script).not.toContain('.codex/auth');
     expect(script).not.toContain('.agentuse/config');
+  });
+
+  it('isolates mutable serve config from the production profile', () => {
+    const script = read('scripts/serve-sandbox.sh');
+    expect(script).toContain('export AGENTUSE_DATA_DIR="$STATE_DIR/data"');
+    expect(script).toContain('ln -s "$SOURCE_AUTH_FILE" "$AGENTUSE_DATA_DIR/auth.json"');
+    expect(script).toContain('export AGENTUSE_CONFIG_DIR="$STATE_DIR/config"');
+    expect(script).toContain('unset AGENTUSE_CONFIG AGENTUSE_ENV');
+    expect(script).not.toContain('export AGENTUSE_CONFIG=');
+    expect(script).not.toContain('export AGENTUSE_ENV=');
   });
 });

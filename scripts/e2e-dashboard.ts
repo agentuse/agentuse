@@ -240,9 +240,11 @@ async function main(): Promise<void> {
   const projectRoot = join(workspace, 'project');
   const onboardingProjectRoot = join(workspace, 'onboarding');
   const stateRoot = join(workspace, 'state');
-  const configPath = join(workspace, 'config.json');
+  const configDir = join(workspace, 'config');
+  const configPath = join(configDir, 'config.json');
   await mkdir(projectRoot, { recursive: true });
   await mkdir(stateRoot, { recursive: true });
+  await mkdir(configDir, { recursive: true });
   await writeFile(configPath, JSON.stringify({
     serve: {
       brand: { name: 'AgentUse Control Room' },
@@ -250,7 +252,7 @@ async function main(): Promise<void> {
     },
   }));
 
-  process.env.XDG_DATA_HOME = stateRoot;
+  process.env.AGENTUSE_DATA_DIR = stateRoot;
   const approvalSessionId = await seedProject(projectRoot);
   const onboardingSessionId = await seedOnboardingProject(onboardingProjectRoot);
   const port = await freePort();
@@ -278,8 +280,8 @@ async function main(): Promise<void> {
     env: {
       ...process.env,
       HOME: workspace,
-      XDG_DATA_HOME: stateRoot,
-      AGENTUSE_CONFIG: configPath,
+      AGENTUSE_DATA_DIR: stateRoot,
+      AGENTUSE_CONFIG_DIR: configDir,
       OPENAI_BASE_URL: `${authorBaseUrl}/v1`,
       SLACK_APP_TOKEN: '',
       SLACK_BOT_TOKEN: '',
