@@ -56,10 +56,16 @@ function agentGroupAnchor(agentId: string): string {
 function groupRowsByAgent(rows: SessionRow[]): AgentGroup[] {
   const groups = new Map<string, AgentGroup>();
   for (const row of rows) {
-    let group = groups.get(row.agent.id);
+    const revision = row.purpose?.kind === 'agent-revision' ? row.purpose : undefined;
+    const agentId = revision ? 'internal:agent-revision' : row.agent.id;
+    let group = groups.get(agentId);
     if (!group) {
-      group = { agentId: row.agent.id, agentName: row.agent.name || row.agent.id, rows: [] };
-      groups.set(row.agent.id, group);
+      group = {
+        agentId,
+        agentName: revision ? 'Internal revisions' : row.agent.name || row.agent.id,
+        rows: [],
+      };
+      groups.set(agentId, group);
     }
     group.rows.push(row);
   }
@@ -118,6 +124,13 @@ export function SessionRowView(props: {
   const statusActive = statusFilter === statusFilterValue;
   const triggerActive = triggerFilter === row.trigger;
   const agentActive = agentFilter === row.agent.id;
+  const revision = row.purpose?.kind === 'agent-revision' ? row.purpose : undefined;
+  const displayName = revision
+    ? `${revision.mode === 'fix' ? 'Fixing' : 'Improving'} ${revision.targetAgentName}`
+    : row.agent.name || row.agent.id;
+  const originHref = revision
+    ? `/sessions/${encodeURIComponent(revision.originSessionId)}?project=${encodeURIComponent(row.project)}`
+    : undefined;
   const avatar = (row.agent.name || row.agent.id)
     .split(/[\s/_-]+/)
     .filter(Boolean)
@@ -129,7 +142,7 @@ export function SessionRowView(props: {
     <div
       class={`row${view === 'feed' ? ' session-feed-card' : ''}${dismissed ? ' is-dismissed' : ''}`}
       role={view === 'feed' ? 'article' : undefined}
-      aria-label={view === 'feed' ? `${row.agent.name || row.agent.id} session` : undefined}
+      aria-label={view === 'feed' ? `${displayName} session` : undefined}
       // Programmatically focusable (never in the Tab order): j/k move focus card
       // to card, and the focused card is what Space expands.
       tabIndex={view === 'feed' ? -1 : undefined}
@@ -144,23 +157,26 @@ export function SessionRowView(props: {
                 title={statusActive ? `Stop filtering by status: ${statusFilterValue}` : `Filter sessions by status: ${statusFilterValue}`}
               >{statusText}</a>
               {multiProject && <span class="chip project">{row.project}</span>}
-              <a
-                class="chip trigger"
-                href={filterHref('trigger', triggerActive ? '' : row.trigger)}
-                title={triggerActive ? `Stop filtering by trigger: ${row.trigger}` : `Filter sessions by trigger: ${row.trigger}`}
-              >{row.trigger}</a>
-              <a
-                class="chip agent"
-                href={filterHref('agent', agentActive ? '' : row.agent.id)}
-                title={agentActive ? `Stop filtering by agent: ${row.agent.id}` : `Filter sessions by agent: ${row.agent.id}`}
-              >{row.agent.id}</a>
+              {revision
+                ? <span class="chip internal">internal revision</span>
+                : <><a
+                  class="chip trigger"
+                  href={filterHref('trigger', triggerActive ? '' : row.trigger)}
+                  title={triggerActive ? `Stop filtering by trigger: ${row.trigger}` : `Filter sessions by trigger: ${row.trigger}`}
+                >{row.trigger}</a><a
+                  class="chip agent"
+                  href={filterHref('agent', agentActive ? '' : row.agent.id)}
+                  title={agentActive ? `Stop filtering by agent: ${row.agent.id}` : `Filter sessions by agent: ${row.agent.id}`}
+                >{row.agent.id}</a></>}
               {row.mock && <span class="chip mock">mock</span>}
               {dismissedChip}
               <span class="row-time" title={formatApprovalTime(row.createdAt)}>{formatRelativeTime(row.createdAt)}</span>
               {discardButton}
             </div>
-            <a class="row-title row-link" href={href}>{row.agent.name || row.agent.id}</a>
-            {row.agent.description && <div class="row-sub">{row.agent.description}</div>}
+            <a class="row-title row-link" href={href}>{displayName}</a>
+            {revision
+              ? <div class="row-sub">AgentUse internal session · From session {revision.originSessionId.slice(0, 8)}…</div>
+              : row.agent.description && <div class="row-sub">{row.agent.description}</div>}
             {row.errorMessage && <div class="row-decision">{errorText(row.errorMessage)}</div>}
           </>
         )
@@ -169,20 +185,24 @@ export function SessionRowView(props: {
             {/* The initials tile carries the agent filter: the card title is the
                 agent's name, so repeating its id in the byline (as the row view
                 does) would only duplicate what is already on screen. */}
-            <a
-              class="session-feed-avatar"
-              href={filterHref('agent', agentActive ? '' : row.agent.id)}
-              title={agentActive ? `Stop filtering by agent: ${row.agent.id}` : `Filter sessions by agent: ${row.agent.id}`}
-              aria-label={agentActive ? `Stop filtering by agent: ${row.agent.id}` : `Filter sessions by agent: ${row.agent.id}`}
-            >{avatar}</a>
+            {revision
+              ? <span class="session-feed-avatar is-internal" aria-hidden="true">↻</span>
+              : <a
+                class="session-feed-avatar"
+                href={filterHref('agent', agentActive ? '' : row.agent.id)}
+                title={agentActive ? `Stop filtering by agent: ${row.agent.id}` : `Filter sessions by agent: ${row.agent.id}`}
+                aria-label={agentActive ? `Stop filtering by agent: ${row.agent.id}` : `Filter sessions by agent: ${row.agent.id}`}
+              >{avatar}</a>}
             <div class="session-feed-identity">
-              <a class="row-title" href={href}>{row.agent.name || row.agent.id}</a>
-              {row.agent.description && <div class="row-sub">{row.agent.description}</div>}
+              <a class="row-title" href={href}>{displayName}</a>
+              {!revision && row.agent.description && <div class="row-sub">{row.agent.description}</div>}
               <div class="session-feed-byline">
-                <a
-                  href={filterHref('trigger', triggerActive ? '' : row.trigger)}
-                  title={triggerActive ? `Stop filtering by trigger: ${row.trigger}` : `Filter sessions by trigger: ${row.trigger}`}
-                >{row.trigger}</a>
+                {revision
+                  ? <><span class="chip internal">internal revision</span><span aria-hidden="true">·</span><a href={originHref}>from session {revision.originSessionId.slice(0, 8)}…</a></>
+                  : <a
+                    href={filterHref('trigger', triggerActive ? '' : row.trigger)}
+                    title={triggerActive ? `Stop filtering by trigger: ${row.trigger}` : `Filter sessions by trigger: ${row.trigger}`}
+                  >{row.trigger}</a>}
                 {multiProject && <><span aria-hidden="true">·</span><span>{row.project}</span></>}
                 {row.mock && <><span aria-hidden="true">·</span><span>mock</span></>}
                 <span aria-hidden="true">·</span>

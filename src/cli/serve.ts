@@ -78,7 +78,7 @@ import {
 // Type-only, so this stays erased at compile and adds nothing to the bundle.
 // The context payload is elaborate enough that a hand-kept local copy (as the
 // older session types above are) would drift from the page that consumes it.
-import type { SessionContextPayload } from "./serve/types";
+import type { SessionContextPayload, SessionPurpose } from "./serve/types";
 import { startOrphanReconcileLoop } from "./serve/orphan-reconcile";
 import { ONBOARDING_AGENT_ID, ONBOARDING_AGENT_SOURCE } from "../onboarding";
 import {
@@ -112,6 +112,7 @@ import {
   sourceHash,
   writeInternalAgentRevisionSource,
   type AgentRevisionMode,
+  type AgentRevisionRecord,
 } from "../agents/revision";
 import {
   discoverProjectSkillCatalog,
@@ -626,6 +627,7 @@ interface SessionSummary {
   /** Suspended parent parked on a running delegated child (see serve/types). */
   subagentActive?: boolean;
   finalResponse?: string;
+  purpose?: SessionPurpose;
 }
 
 type SessionRow = SessionSummary & { project: string };
@@ -1863,6 +1865,17 @@ function sessionMatchesAgentFilter(session: SessionSummary, filter: string): boo
   if (!normalized) return true;
   return session.agent.id.toLowerCase().includes(normalized) ||
     session.agent.name.toLowerCase().includes(normalized);
+}
+
+function agentRevisionSessionPurpose(
+  record: Pick<AgentRevisionRecord, 'mode' | 'originSessionId' | 'targetAgentName'>
+): SessionPurpose {
+  return {
+    kind: 'agent-revision',
+    mode: record.mode,
+    originSessionId: record.originSessionId,
+    targetAgentName: record.targetAgentName,
+  };
 }
 
 const ARTIFACT_RAW_MIME: Record<string, string> = {
@@ -4726,6 +4739,10 @@ export function createServeCommand(): Command {
         updatedAt: number;
         finalResponse: string | undefined;
       }>();
+      // A revision session's purpose is immutable. Cache both hits and misses so
+      // the live Sessions SSE cadence does not repeatedly probe the filesystem
+      // for ordinary sessions.
+      const sessionPurposeCache = new Map<string, SessionPurpose | null>();
       // The list hubs poll on a slow steady cadence; nudge them the moment the
       // daemon knows the lists are about to change (run triggered, decision
       // made, runner announced a state change) so dashboards update in ~1s.
@@ -4917,6 +4934,35 @@ export function createServeCommand(): Command {
               ? row
               : { ...row, session: { ...row.session, finalResponse } };
           });
+        }
+
+        pageItems = await Promise.all(pageItems.map(async (row) => {
+          const cacheKey = `${row.projectId}\0${row.session.sessionId}`;
+          let purpose = sessionPurposeCache.get(cacheKey);
+          if (!sessionPurposeCache.has(cacheKey)) {
+            const project = projects.find((candidate) => candidate.id === row.projectId);
+            if (project) {
+              try {
+                const revision = await readAgentRevisionRecord(project.root, row.session.sessionId);
+                purpose = revision ? agentRevisionSessionPurpose(revision) : null;
+              } catch (error) {
+                logger.warn(`Could not classify session ${row.session.sessionId}: ${(error as Error).message}`);
+                purpose = null;
+              }
+            } else {
+              purpose = null;
+            }
+            sessionPurposeCache.set(cacheKey, purpose);
+          }
+          return purpose
+            ? { ...row, session: { ...row.session, purpose } }
+            : row;
+        }));
+
+        while (sessionPurposeCache.size > 2_000) {
+          const oldest = sessionPurposeCache.keys().next().value;
+          if (oldest === undefined) break;
+          sessionPurposeCache.delete(oldest);
         }
 
         return {
@@ -9253,6 +9299,7 @@ export const __testing = {
   sessionListUpdatedAfter,
   SESSION_LIST_SSE_INTERVAL_MS,
   sessionMatchesAgentFilter,
+  agentRevisionSessionPurpose,
   sessionMatchesStatusFilter,
   parseSessionMockFilter,
   sessionMatchesMockFilter,

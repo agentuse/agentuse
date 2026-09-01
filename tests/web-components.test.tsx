@@ -488,6 +488,47 @@ describe('Application sidebar sizing', () => {
 });
 
 describe('Session feed response', () => {
+  it('distinguishes internal revisions from user-authored agent runs in both layouts', () => {
+    const row: SessionRow = {
+      sessionId: '01REVISIONSESSION0000000000',
+      project: 'demo',
+      agent: { id: '.agentuse/internal/reviser', name: 'Fix Support triage' },
+      status: 'running',
+      trigger: 'manual',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      purpose: {
+        kind: 'agent-revision',
+        mode: 'fix',
+        originSessionId: '01ORIGINSESSION000000000000',
+        targetAgentName: 'Support triage',
+      },
+    };
+    const render = (view: 'summary' | 'feed') => renderToString(<SessionRowView
+      view={view}
+      multiProject={false}
+      statusFilter=""
+      triggerFilter=""
+      agentFilter=""
+      dismissed={false}
+      onDiscard={noop}
+      filterHref={(key, value) => `/sessions?${key}=${value}`}
+      row={row}
+    />);
+
+    const summary = render('summary');
+    expect(summary).toContain('internal revision');
+    expect(summary).toContain('Fixing Support triage');
+    expect(summary).toContain('From session 01ORIGI');
+    expect(summary).not.toContain('.agentuse/internal/reviser');
+
+    const feed = render('feed');
+    expect(feed).toContain('session-feed-avatar is-internal');
+    expect(feed).toContain('Fixing Support triage');
+    expect(feed).toContain('/sessions/01ORIGINSESSION000000000000?project=demo');
+    expect(feed).toContain('internal revision');
+  });
+
   it('separates agent identity, run metadata, response, and action into feed regions', () => {
     const html = renderToString(
       <SessionRowView

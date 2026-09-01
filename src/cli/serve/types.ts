@@ -93,7 +93,16 @@ export interface SessionSummary {
   subagentActive?: boolean;
   /** Present on session-list rows only when the caller requests feed detail. */
   finalResponse?: string;
+  /** Why this session exists when it is an AgentUse-owned internal workflow. */
+  purpose?: SessionPurpose;
 }
+
+export type SessionPurpose = {
+  kind: 'agent-revision';
+  mode: 'fix' | 'improve';
+  originSessionId: string;
+  targetAgentName: string;
+};
 
 export interface SessionStatusInfo {
   sessionId: string;

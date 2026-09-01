@@ -7,7 +7,7 @@ import { DecisionDialog, type DecisionDialogMode } from '../components/comment-d
 import { ContinuePanel } from '../components/continue-panel';
 import { LearningsPanel } from '../components/learnings-panel';
 import { DebugPromptButton } from '../components/debug-prompt-button';
-import { AgentRevisionLauncher, AgentRevisionSessionPanel } from '../components/agent-revision';
+import { AgentRevisionLauncher, AgentRevisionSessionPanel, type AgentRevisionSessionIdentity } from '../components/agent-revision';
 import { SessionMenu } from '../components/session-menu';
 import { Loading } from '../components/loading';
 import { postSessionDecision, postSessionContinue, postSessionStop, postSessionReopen, fetchSessionArtifacts, fetchApprovals, type SessionArtifact } from '../lib/api';
@@ -320,6 +320,7 @@ export default function SessionDetail() {
   // the page can't recover, so we render this instead of the live view.
   const [fatalError, setFatalError] = useState<string | null>(null);
   const [isRevisionSession, setIsRevisionSession] = useState(false);
+  const [revisionIdentity, setRevisionIdentity] = useState<AgentRevisionSessionIdentity | null>(null);
   const [decisionDialog, setDecisionDialog] = useState<DecisionDialogMode | null>(null);
   const [nudge, setNudge] = useState(0);
   // Project artifacts this run produced, from the artifact manifest. Refetched as
@@ -466,6 +467,7 @@ export default function SessionDetail() {
     setResult({ text: '', error: false });
     setFatalError(null);
     setIsRevisionSession(false);
+    setRevisionIdentity(null);
     setLogsVersion((v) => v + 1);
     setArtifacts([]);
     setLogsLimit(400);
@@ -1186,7 +1188,12 @@ export default function SessionDetail() {
   const agentLabel = approval.agent.name || approval.agent.id;
   // The name is the headline; the description (often a full sentence with
   // implementation notes) reads as a subhead rather than a giant multi-line H1.
-  const agentDescription = approval.agent.description && approval.agent.description !== agentLabel
+  const revisionTitle = revisionIdentity
+    ? `${revisionIdentity.mode === 'fix' ? 'Fixing' : 'Improving'} ${revisionIdentity.targetAgentName}`
+    : undefined;
+  const pageAgentLabel = revisionTitle ?? agentLabel;
+  const agentIdentityLabel = isRevisionSession ? 'AgentUse Reviser' : agentLabel;
+  const agentDescription = !isRevisionSession && approval.agent.description && approval.agent.description !== agentLabel
     ? approval.agent.description
     : undefined;
   const busy = status === 'resuming' || status === 'continuing';
@@ -1212,14 +1219,18 @@ export default function SessionDetail() {
   // parent run. Surface a prominent jump-to-parent CTA so the reviewer isn't left
   // hunting for the (intentionally hidden) approve buttons.
   const showParentApproveCta = isSubagentView && approval.sessionStatus === 'suspended' && Boolean(parentLink);
-  const eyebrow = isSubagentView
+  const eyebrow = isRevisionSession
+    ? 'internal revision'
+    : isSubagentView
     ? 'sub-agent run'
     : actionable
       ? 'human approval requested'
       : continueActionable
         ? approval.sessionStatus === 'error' ? 'session needs attention' : 'session completed'
         : 'session log';
-  const promptText = isSubagentView
+  const promptText = isRevisionSession
+    ? 'This AgentUse-owned session diagnoses the originating run and prepares a source proposal for your review.'
+    : isSubagentView
     ? approval.sessionStatus === 'suspended'
       ? 'This sub-agent is paused for approval. The decision is made on its parent run — open it from the pending request at the end of the log.'
       : 'A delegated sub-agent run. Approvals and follow-ups for it are handled on the parent run.'
@@ -1374,7 +1385,7 @@ export default function SessionDetail() {
   );
 
   return (
-    <div class="page-approval-detail">
+    <div class={`page-approval-detail${isRevisionSession ? ' is-internal-revision' : ''}`}>
       <main>
         <div class={`session-bar${scrolled ? ' is-scrolled' : ''}`}>
           <div class="session-bar-lead">
@@ -1394,7 +1405,8 @@ export default function SessionDetail() {
             ) : null}
             <span class={`status ${displayStatus}`}>{displayStatus}</span>
             {approval?.mock && <span class="mock-badge" title="Tool outputs were LLM-generated; no real tools ran">mock</span>}
-            <span class="session-bar-name">{agentLabel}</span>
+            {isRevisionSession && <span class="internal-session-badge">internal revision</span>}
+            <span class="session-bar-name">{pageAgentLabel}</span>
           </div>
           {actionable && queueNext && (
             <div class="session-bar-queue">
@@ -1468,7 +1480,8 @@ export default function SessionDetail() {
         <header>
           <div class="eyebrow">{eyebrow}</div>
           <div class="header-title-row">
-            <h1>{agentLabel}</h1>
+            <h1>{pageAgentLabel}</h1>
+            {isRevisionSession && <span class="internal-session-badge">AgentUse Reviser</span>}
             {!isSubagentView && approval.agent.filePath && !isRevisionSession && (
               <SessionMenu
                 agentName={agentLabel}
@@ -1486,7 +1499,7 @@ export default function SessionDetail() {
           <div class="meta">
             <div class="cell"><span class="label">session</span><code>{approval.sessionId}</code></div>
             <div class="cell"><span class="label">{term('project')}</span><code>{projectId ?? approval.project ?? 'default'}</code></div>
-            <div class="cell"><span class="label">agent</span><span class="value">{agentLabel}</span></div>
+            <div class="cell"><span class="label">agent</span><span class="value">{agentIdentityLabel}</span></div>
             {approval.createdAt !== undefined && (
               <div class="cell"><span class="label">started</span><span class="value">{formatApprovalTime(approval.createdAt)}</span></div>
             )}
@@ -1742,7 +1755,10 @@ export default function SessionDetail() {
           token={token}
           project={projectId ?? approval.project}
           sessionStatus={displayStatus}
-          onDetected={() => setIsRevisionSession(true)}
+          onDetected={(identity) => {
+            setIsRevisionSession(true);
+            if (identity) setRevisionIdentity(identity);
+          }}
         />
 
         <ContinuePanel

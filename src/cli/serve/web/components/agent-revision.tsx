@@ -237,7 +237,7 @@ export function AgentRevisionSessionPanel(props: {
   project?: string | undefined;
   currentSource?: string | undefined;
   sessionStatus: string;
-  onDetected?: (() => void) | undefined;
+  onDetected?: ((revision?: AgentRevisionSessionIdentity) => void) | undefined;
 }) {
   const [revision, setRevision] = useState<(Omit<AgentRevisionRecord, 'previousSource'> & { baseSource?: string; originHref?: string }) | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -250,7 +250,7 @@ export function AgentRevisionSessionPanel(props: {
     try {
       const payload = await fetchAgentRevision(props.sessionId, props.token, props.project);
       setRevision(payload.revision);
-      props.onDetected?.();
+      props.onDetected?.(payload.revision);
       setError(null);
     } catch (caught) {
       if ((caught as { status?: number }).status !== 404) {
@@ -347,6 +347,11 @@ export function AgentRevisionSessionPanel(props: {
     </section>
   );
 }
+
+export type AgentRevisionSessionIdentity = Pick<
+  AgentRevisionRecord,
+  'mode' | 'originSessionId' | 'targetAgentName'
+>;
 
 function revisionFallbackOriginHref(originSessionId: string, project?: string): string {
   const params = new URLSearchParams();

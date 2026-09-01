@@ -3846,6 +3846,24 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-schedules .eyebrow,
 .page-stores .eyebrow,
 .page-approval-detail .eyebrow { font-size: var(--font-size-micro); color: var(--cyan); letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px; }
+.page-approval-detail .internal-session-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 8px;
+  border: 1px solid var(--cyan-border);
+  border-radius: 999px;
+  background: var(--cyan-soft);
+  color: var(--cyan);
+  font-size: var(--font-size-micro);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+.page-approval-detail.is-internal-revision header {
+  border-left: 2px solid var(--cyan-border);
+  padding-left: 18px;
+}
 .page-home h1,
 .page-agents h1,
 .page-schedules h1,
@@ -6563,6 +6581,12 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   transition: color 120ms ease, border-color 120ms ease;
 }
 .page-sessions .session-feed-avatar:hover { color: var(--cyan); border-color: var(--cyan-border); }
+.page-sessions .session-feed-avatar.is-internal {
+  color: var(--cyan);
+  border-color: var(--cyan-border);
+  background: var(--cyan-soft);
+  font-size: var(--font-size-body);
+}
 .page-sessions .session-feed-identity { min-width: 0; }
 .page-sessions .session-feed-card .row-title {
   display: inline-block;
@@ -6796,6 +6820,14 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   color: var(--muted-3);
 }
 .page-sessions .chip.status.pending { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
+.page-sessions .chip.internal {
+  color: var(--cyan);
+  border-color: var(--cyan-border);
+  background: var(--cyan-soft);
+  font-family: var(--sans);
+  font-weight: 600;
+  letter-spacing: 0;
+}
 /* A finished run is the expected outcome, so it stays neutral: colour is spent
    on the states that want a second look (running, suspended, failed). */
 .page-sessions .chip.status.completed { color: var(--muted-3); border-color: var(--line-strong); background: none; }
