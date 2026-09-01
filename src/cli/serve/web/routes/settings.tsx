@@ -136,7 +136,7 @@ function ProjectsSettingsGroup() {
         </div>
       </Group>
       <Group title="Projects">
-        <p class="settings-group-hint">Projects available to this AgentUse server. Removing one disconnects it without deleting its folder or files.</p>
+        <p class="settings-group-hint">Projects connected to this server. Removing one leaves its files untouched.</p>
         <div class="project-settings-list" aria-live="polite">
           {loading && <div class="project-settings-empty">Loading projects…</div>}
           {!loading && info?.projects.length === 0 && <div class="project-settings-empty">No projects are connected yet.</div>}

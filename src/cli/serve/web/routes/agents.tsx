@@ -825,6 +825,8 @@ export default function Agents({ project }: { project?: string } = {}) {
         ? `${allAgents.length} of ${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} match ${filterLabel}.`
         : noProjects
           ? 'Create a project to keep your first agents and runs together.'
+        : loadedAgents.length === 0
+          ? '0 agents'
         : scoped
           ? `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} in this ${term('project')}.`
           : `${loadedAgents.length} agent${loadedAgents.length === 1 ? '' : 's'} across ${byProject.size} ${term('project', byProject.size)}.`;
@@ -924,7 +926,7 @@ export default function Agents({ project }: { project?: string } = {}) {
               </span>
               {!loadedAgents.some((a) => (a.subagents?.length ?? 0) > 0 || (a.dependsOn?.length ?? 0) > 0) && (
                 <span class="agent-graph-legend-hint">
-                  No relationships declared yet: add <code>dependsOn:</code> or <code>subagents:</code> to agent frontmatter.
+                  Add <code>dependsOn:</code> or <code>subagents:</code> to show relationships.
                 </span>
               )}
             </div>
@@ -996,6 +998,9 @@ export default function Agents({ project }: { project?: string } = {}) {
               {emptyMsg}
               {filterActive && !projectMissing && (
                 <button type="button" class="empty-action" onClick={() => updateFilter('')}>Clear filter</button>
+              )}
+              {!filterActive && !projectMissing && (
+                <a class="empty-action" href={scoped ? projectDiscoveryHref(project) : '/onboarding'}>Find agent ideas</a>
               )}
             </div>}</div>
           : [...byProject.entries()].map(([projectId, agents]) => (

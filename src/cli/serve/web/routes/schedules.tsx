@@ -84,7 +84,7 @@ export default function Schedules() {
         <header>
           <div class="eyebrow">scheduled agents</div>
           <h1>Schedules</h1>
-          <p class="lede">{data ? `${schedules.length} scheduled agent${schedules.length === 1 ? '' : 's'}, upcoming runs first. Times in ${zone}` : loading ? 'Loading…' : ''}</p>
+          <p class="lede">{data ? `${schedules.length} schedule${schedules.length === 1 ? '' : 's'} · ${zone}` : loading ? 'Loading…' : ''}</p>
           {error && <div class="errors" role="alert">Failed to load schedules: {error.message}</div>}
         </header>
         {hasContent
@@ -94,7 +94,7 @@ export default function Schedules() {
           </>
           : <div class="panel">{loading && !data
             ? <Loading label="Loading schedules…" />
-            : <div class="empty">No scheduled agents. Add a schedule: field to an agent file.</div>}</div>}
+            : <div class="empty">No schedules yet. <a class="empty-action" href="/agents">Open an agent to add one</a></div>}</div>}
       </main>
     </div>
   );

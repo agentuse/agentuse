@@ -239,7 +239,7 @@ export function ProviderSettingsGroup() {
     <>
       <section class="settings-group provider-settings-group">
         <h2 class="settings-group-title">Providers</h2>
-        <p class="settings-group-hint">Stored on this AgentUse server host and shared by projects that use its credential store.</p>
+      <p class="settings-group-hint">Connections are available to every project on this server.</p>
         {!payload && !error && <p class="settings-group-hint">Loading providers…</p>}
         {error && <p class="settings-check-error" role="alert">{error}</p>}
         {providers.map(({ entry, status }) => {
