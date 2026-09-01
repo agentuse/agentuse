@@ -61,23 +61,33 @@ export function AgentRevisionLauncher(props: {
   const [reasoning, setReasoning] = useState<ReasoningLevel>('medium');
   const [models, setModels] = useState<Array<{ value: string; label: string }>>([]);
   const [revisions, setRevisions] = useState<Array<AgentRevisionSummary & { href?: string }>>([]);
+  const [historySessionId, setHistorySessionId] = useState<string | null>(null);
   const [loadingOptions, setLoadingOptions] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const activeRevision = revisions.find((revision) => ACTIVE_REVISION_STATUSES.has(revision.status));
-  const latest = activeRevision ?? revisions[0];
+  const currentSessionId = useRef(props.context.sessionId);
+  currentSessionId.current = props.context.sessionId;
+  const historyLoaded = historySessionId === props.context.sessionId;
+  const currentRevisions = historyLoaded ? revisions : [];
+  const activeRevision = currentRevisions.find((revision) => ACTIVE_REVISION_STATUSES.has(revision.status));
+  const latest = activeRevision ?? currentRevisions[0];
 
   const refresh = async () => {
+    const requestedSessionId = props.context.sessionId;
     try {
       const payload = await fetchSessionRevisions(
-        props.context.sessionId,
+        requestedSessionId,
         props.token,
         props.context.projectId,
       );
+      if (currentSessionId.current !== requestedSessionId) return;
       setRevisions(payload.revisions as Array<AgentRevisionSummary & { href?: string }>);
     } catch {
       // Revision history is additive; the ordinary session remains usable.
+      if (currentSessionId.current !== requestedSessionId) return;
+      setRevisions([]);
+    } finally {
+      if (currentSessionId.current === requestedSessionId) setHistorySessionId(requestedSessionId);
     }
   };
 
@@ -98,13 +108,6 @@ export function AgentRevisionLauncher(props: {
     const timer = setInterval(() => void refresh(), 1500);
     return () => clearInterval(timer);
   }, [latest?.revisionSessionId, latest?.status]);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
-    else if (!open && dialog.open) dialog.close();
-  }, [open]);
 
   const begin = async () => {
     setOpen(true);
@@ -157,18 +160,21 @@ export function AgentRevisionLauncher(props: {
 
   return (
     <>
-      {latest && (
+      {latest && !open && (
         <div class={`agent-revision-link is-${latest.status}`}>
           <span class="agent-revision-link-copy">
             <strong>{revisionLabel(latest)}</strong>
             <span>{revisionOriginDescription(latest)}</span>
           </span>
-          <a class="agent-revision-open" href={revisionHref(latest, undefined, props.context.projectId)}>
-            {revisionOriginAction(latest, active)}
-          </a>
+          <span class="agent-revision-link-actions">
+            <a class="agent-revision-open" href={revisionHref(latest, undefined, props.context.projectId)}>
+              {revisionOriginAction(latest, active)}
+            </a>
+            {!active && <button type="button" onClick={() => void begin()}>Start another revision</button>}
+          </span>
         </div>
       )}
-      {!active && (
+      {historyLoaded && !latest && !open && (
         <button type="button" class="debug-prompt-button" onClick={() => void begin()}>
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
@@ -176,15 +182,15 @@ export function AgentRevisionLauncher(props: {
           <span>Fix or improve agent…</span>
         </button>
       )}
-      <dialog ref={dialogRef} class="agent-revision-dialog" aria-labelledby="agent-revision-title" onClose={() => setOpen(false)}>
-        <div class="dialog-head"><span id="agent-revision-title" class="title">revise agent</span><button type="button" class="dialog-close" aria-label="Close" disabled={busy} onClick={() => setOpen(false)}>×</button></div>
-        <div class="agent-revision-dialog-body">
-          <div class="agent-revision-intro"><strong>Fix or improve {props.context.agentName ?? 'this agent'}</strong><span>AgentUse will run a visible internal agent, diagnose this session, and propose a revision before changing source.</span></div>
+      {open && <section class="agent-revision-form" aria-labelledby="agent-revision-title">
+        <div class="agent-revision-form-head"><span id="agent-revision-title">Fix or improve agent</span><button type="button" aria-label="Close revision form" disabled={busy} onClick={() => setOpen(false)}>×</button></div>
+        <div class="agent-revision-form-body">
+          <div class="agent-revision-intro"><strong>Revise {props.context.agentName ?? 'this agent'}</strong><span>Start one internal session to diagnose this run and propose a safe source change. Nothing changes until you review and apply it.</span></div>
           <div class="agent-revision-modes">
             <button type="button" class={mode === 'fix' ? 'is-selected' : ''} aria-pressed={mode === 'fix'} onClick={() => setMode('fix')}><strong>Fix a problem</strong><span>Make the smallest durable correction.</span></button>
             <button type="button" class={mode === 'improve' ? 'is-selected' : ''} aria-pressed={mode === 'improve'} onClick={() => setMode('improve')}><strong>Improve behavior</strong><span>Refine quality, cost, or reliability.</span></button>
           </div>
-          <label class="agent-revision-field"><span>What should the revision focus on?</span><textarea value={instruction} disabled={busy} placeholder={mode === 'fix' ? 'e.g. refunded orders should be excluded, not treated as unknown' : 'e.g. make the result shorter without missing urgent tickets'} onInput={(event) => setInstruction((event.target as HTMLTextAreaElement).value)} /></label>
+          <label class="agent-revision-field"><span>What should change?</span><textarea value={instruction} disabled={busy} placeholder={mode === 'fix' ? 'e.g. exclude refunded orders instead of treating them as unknown' : 'e.g. make future results shorter without missing urgent tickets'} onInput={(event) => setInstruction((event.target as HTMLTextAreaElement).value)} /></label>
           <div class="agent-revision-models">
             <label class="agent-revision-field"><span>Authoring model</span><select value={model} disabled={busy || loadingOptions} onChange={(event) => setModel((event.target as HTMLSelectElement).value)}>{models.map((option) => <option value={option.value}>{option.label}</option>)}</select></label>
             <label class="agent-revision-field"><span>Thinking effort</span><select value={reasoning} disabled={busy} onChange={(event) => setReasoning((event.target as HTMLSelectElement).value as ReasoningLevel)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
@@ -196,7 +202,7 @@ export function AgentRevisionLauncher(props: {
             <button type="button" disabled={busy} onClick={() => { setOpen(false); setCodingOpen(true); }}>Send to Coding Agent…</button>
           </div>
         </div>
-      </dialog>
+      </section>}
       <SendToCodingAgentDialog
         open={codingOpen}
         title="send revision to coding agent"

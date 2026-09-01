@@ -61,7 +61,7 @@ describe('agent revision entry', () => {
     expect(revisionOriginAction(accepted, false)).toBe('View revision');
   });
 
-  it('uses one session action and keeps the coding-agent escape hatch inside the revision form', () => {
+  it('does not expose a revision action until existing revision history is known', () => {
     const html = renderToString(<AgentRevisionLauncher
       ended
       context={{
@@ -76,17 +76,15 @@ describe('agent revision entry', () => {
       }}
     />);
 
-    expect(html.match(/Fix or improve agent…/g)?.length).toBe(1);
-    expect(html).toContain('Fix a problem');
-    expect(html).toContain('Improve behavior');
-    expect(html).toContain('Need project code or a custom integration?');
-    expect(html.indexOf('Send to Coding Agent…')).toBeGreaterThan(html.indexOf('Start revision session'));
+    expect(html).not.toContain('Fix or improve agent…');
+    expect(html).not.toContain('Fix a problem');
+    expect(html).not.toContain('Agent revision');
   });
 
-  it('renders the revision form on an opaque, scroll-safe modal surface', async () => {
+  it('renders the revision form as an opaque inline surface', async () => {
     const css = await Bun.file(new URL('../src/cli/serve/web/styles/app.css', import.meta.url)).text();
-    const dialogRules = css.slice(
-      css.indexOf('.agent-revision-dialog {'),
+    const formRules = css.slice(
+      css.indexOf('.agent-revision-form {'),
       css.indexOf('.agent-revision-intro {'),
     );
     const fieldRules = css.slice(
@@ -94,14 +92,11 @@ describe('agent revision entry', () => {
       css.indexOf('.agent-revision-models {'),
     );
 
-    expect(dialogRules).toContain('background: var(--surface);');
-    expect(dialogRules).toContain('overflow: hidden;');
-    expect(dialogRules).toContain('overscroll-behavior: contain;');
+    expect(formRules).toContain('width: 100%;');
+    expect(formRules).toContain('background: var(--panel);');
+    expect(formRules).toContain('overflow: hidden;');
     expect(fieldRules).toContain('font-weight: 400;');
-    expect(css.slice(css.indexOf('dialog#decision-dialog::backdrop'), css.indexOf('.palette-backdrop {')))
-      .toContain('.agent-revision-dialog::backdrop');
-    expect(css.slice(css.indexOf(':root[data-theme="light"] dialog#decision-dialog::backdrop'), css.indexOf(':root[data-theme="light"] .palette-backdrop {')))
-      .toContain(':root[data-theme="light"] .agent-revision-dialog::backdrop');
+    expect(css).not.toContain('.agent-revision-dialog');
   });
 });
 

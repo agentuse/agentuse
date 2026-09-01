@@ -3004,7 +3004,6 @@ dialog#decision-dialog::backdrop,
 .cca-dialog::backdrop,
 .provider-setup-dialog::backdrop,
 .agent-create-dialog::backdrop,
-.agent-revision-dialog::backdrop,
 .palette-backdrop {
   background: rgba(0,0,0,0.55);
   backdrop-filter: blur(4px);
@@ -3016,7 +3015,6 @@ dialog#decision-dialog::backdrop,
 :root[data-theme="light"] .cca-dialog::backdrop,
 :root[data-theme="light"] .provider-setup-dialog::backdrop,
 :root[data-theme="light"] .agent-create-dialog::backdrop,
-:root[data-theme="light"] .agent-revision-dialog::backdrop,
 :root[data-theme="light"] .palette-backdrop {
   background: rgba(0,0,0,0.30);
 }
@@ -6951,26 +6949,51 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 .agent-revision-link-copy strong { font-size: 13px; }
 .agent-revision-link-copy span { color: var(--muted); font-size: 12px; }
 .agent-revision-open { flex: 0 0 auto; font-size: 12px; font-weight: 650; }
-
-.agent-revision-dialog {
-  width: min(680px, calc(100vw - 28px));
-  max-height: min(780px, calc(100vh - 28px));
-  padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 12px;
+.agent-revision-link-actions { display: flex; align-items: center; flex: 0 0 auto; gap: 10px; }
+.agent-revision-link-actions button {
+  min-height: 32px;
+  padding: 0 10px;
   color: var(--fg);
-  background: var(--surface);
-  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-hover);
+  font-size: 12px;
+}
+
+.agent-revision-form {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--fg);
+  background: var(--panel);
   overflow: hidden;
 }
 
-.agent-revision-dialog-body {
+.agent-revision-form-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 42px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+.agent-revision-form-head span { font-size: 13px; font-weight: 700; }
+.agent-revision-form-head button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--muted);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 20px;
+}
+.agent-revision-form-head button:hover { color: var(--fg); background: var(--panel-hover); }
+
+.agent-revision-form-body {
   display: grid;
   gap: 17px;
-  max-height: calc(100vh - 76px);
-  padding: 20px;
-  overflow: auto;
-  overscroll-behavior: contain;
+  padding: 16px;
 }
 .agent-revision-intro { display: grid; gap: 4px; }
 .agent-revision-intro strong { font-size: 16px; }
@@ -7097,6 +7120,7 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   .agent-revision-handoff,
   .agent-revision-link,
   .agent-revision-session-head { align-items: stretch; flex-direction: column; }
+  .agent-revision-link-actions { align-items: flex-start; flex-direction: column; }
   .agent-revision-open { align-self: flex-start; }
 }
 /* token-usage meta cells share the .meta .cell styling; just give them an
