@@ -375,6 +375,7 @@ export function ProjectAgentDiscovery(props: {
       <ProviderSetupDialog
         open={modal === 'provider'}
         title="connect before scanning"
+        allowCustom
         onComplete={(provider) => { void providerConnected(provider); }}
         onClose={() => { setModal(null); setProviderRouteState(props.projectId, false); }}
       />
