@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.19.2] - 2026-09-01
+
 ### Added
 
 - **`AGENTUSE_CONFIG_DIR` and `AGENTUSE_DATA_DIR` now provide explicit profile boundaries.** The configuration root contains `config.json`, `.env`, managed projects, user-global plugins, and user-global skills. The data root contains credentials, sessions, learnings, schedules, server state, push state, telemetry, and update state. `XDG_DATA_HOME/agentuse` remains the standards-compatible data fallback. The file-level `AGENTUSE_CONFIG` and `AGENTUSE_ENV` overrides remain compatible but are deprecated for removal no earlier than December 1, 2026.
