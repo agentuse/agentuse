@@ -81,21 +81,18 @@ function suggestionsState(): ProjectDiscoveryState {
 }
 
 describe('project discovery onboarding machine', () => {
-  it('shows custom providers as model-ID entries and requires a complete ID', () => {
+  it('does not expose an onboarding-only model-ID escape hatch', () => {
     const providers = [
       ...options.providers,
       { id: 'local', name: 'local', models: [], custom: true as const },
     ];
-    expect(projectDiscoveryModelOptions(providers)).toContainEqual({
-      value: 'local:',
-      label: 'local · Enter model ID…',
-    });
+    expect(projectDiscoveryModelOptions(providers)).not.toContainEqual(expect.objectContaining({ value: 'local:' }));
     expect(projectDiscoveryModelReady('local:', providers)).toBe(false);
-    expect(projectDiscoveryModelReady('local:qwen3', providers)).toBe(true);
+    expect(projectDiscoveryModelReady('local:qwen3', providers)).toBe(false);
     expect(projectDiscoveryModelReady('unknown:qwen3', providers)).toBe(false);
   });
 
-  it('shows discovered custom models before the manual model-ID fallback', () => {
+  it('shows the custom models saved with the provider', () => {
     const providers = [{
       id: 'lmstudio',
       name: 'lmstudio',
@@ -105,7 +102,6 @@ describe('project discovery onboarding machine', () => {
     }];
     expect(projectDiscoveryModelOptions(providers)).toEqual([
       { value: 'lmstudio:qwen/qwen3-8b', label: 'lmstudio · qwen/qwen3-8b' },
-      { value: 'lmstudio:', label: 'lmstudio · Enter model ID…' },
     ]);
     expect(projectDiscoveryModelReady('lmstudio:qwen/qwen3-8b', providers)).toBe(true);
   });

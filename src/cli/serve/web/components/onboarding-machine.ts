@@ -10,13 +10,10 @@ import type { AgentCreationProvider } from '../../../../agents/create';
 
 export function projectDiscoveryModelOptions(providers: AgentCreationProvider[]): Array<{ value: string; label: string }> {
   return providers.flatMap((provider) => provider.custom
-    ? [
-        ...provider.models.map((model) => ({
+    ? provider.models.map((model) => ({
           value: model,
           label: `${provider.name} · ${model.slice(provider.id.length + 1)}`,
-        })),
-        { value: `${provider.id}:`, label: `${provider.name} · Enter model ID…` },
-      ]
+        }))
     : provider.models.map((model) => ({ value: model, label: model })));
 }
 
@@ -25,10 +22,9 @@ export function projectDiscoveryModelReady(
   providers: AgentCreationProvider[],
 ): boolean {
   if (!model) return false;
-  const provider = providers.find((candidate) => candidate.models.includes(model)
-    || (candidate.custom && model.startsWith(`${candidate.id}:`)));
+  const provider = providers.find((candidate) => candidate.models.includes(model));
   if (!provider) return false;
-  return provider.custom ? Boolean(model.slice(provider.id.length + 1).trim()) : true;
+  return true;
 }
 
 export type ProjectSelectionState =
