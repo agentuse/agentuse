@@ -3004,6 +3004,7 @@ dialog#decision-dialog::backdrop,
 .cca-dialog::backdrop,
 .provider-setup-dialog::backdrop,
 .agent-create-dialog::backdrop,
+.agent-revision-dialog::backdrop,
 .palette-backdrop {
   background: rgba(0,0,0,0.55);
   backdrop-filter: blur(4px);
@@ -3015,6 +3016,7 @@ dialog#decision-dialog::backdrop,
 :root[data-theme="light"] .cca-dialog::backdrop,
 :root[data-theme="light"] .provider-setup-dialog::backdrop,
 :root[data-theme="light"] .agent-create-dialog::backdrop,
+:root[data-theme="light"] .agent-revision-dialog::backdrop,
 :root[data-theme="light"] .palette-backdrop {
   background: rgba(0,0,0,0.30);
 }
@@ -6957,12 +6959,19 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   border: 1px solid var(--line);
   border-radius: 12px;
   color: var(--fg);
-  background: var(--panel);
+  background: var(--surface);
   box-shadow: var(--shadow-lg);
+  overflow: hidden;
 }
 
-.agent-revision-dialog::backdrop { background: rgb(0 0 0 / 48%); }
-.agent-revision-dialog-body { display: grid; gap: 17px; padding: 20px; overflow: auto; }
+.agent-revision-dialog-body {
+  display: grid;
+  gap: 17px;
+  max-height: calc(100vh - 76px);
+  padding: 20px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
 .agent-revision-intro { display: grid; gap: 4px; }
 .agent-revision-intro strong { font-size: 16px; }
 .agent-revision-intro span { color: var(--muted); font-size: 13px; line-height: 1.45; }
@@ -6988,6 +6997,9 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   border: 1px solid var(--line);
   border-radius: 7px;
   background: var(--bg);
+  font-family: var(--sans);
+  font-size: var(--field-font-size);
+  font-weight: 400;
 }
 .agent-revision-field textarea { min-height: 100px; padding: 10px; resize: vertical; }
 .agent-revision-field select { min-height: 38px; padding: 0 9px; }

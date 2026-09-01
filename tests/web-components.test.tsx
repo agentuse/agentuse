@@ -71,6 +71,27 @@ describe('agent revision entry', () => {
     expect(html).toContain('Need project code or a custom integration?');
     expect(html.indexOf('Send to Coding Agent…')).toBeGreaterThan(html.indexOf('Start revision session'));
   });
+
+  it('renders the revision form on an opaque, scroll-safe modal surface', async () => {
+    const css = await Bun.file(new URL('../src/cli/serve/web/styles/app.css', import.meta.url)).text();
+    const dialogRules = css.slice(
+      css.indexOf('.agent-revision-dialog {'),
+      css.indexOf('.agent-revision-intro {'),
+    );
+    const fieldRules = css.slice(
+      css.indexOf('.agent-revision-field textarea,'),
+      css.indexOf('.agent-revision-models {'),
+    );
+
+    expect(dialogRules).toContain('background: var(--surface);');
+    expect(dialogRules).toContain('overflow: hidden;');
+    expect(dialogRules).toContain('overscroll-behavior: contain;');
+    expect(fieldRules).toContain('font-weight: 400;');
+    expect(css.slice(css.indexOf('dialog#decision-dialog::backdrop'), css.indexOf('.palette-backdrop {')))
+      .toContain('.agent-revision-dialog::backdrop');
+    expect(css.slice(css.indexOf(':root[data-theme="light"] dialog#decision-dialog::backdrop'), css.indexOf(':root[data-theme="light"] .palette-backdrop {')))
+      .toContain(':root[data-theme="light"] .agent-revision-dialog::backdrop');
+  });
 });
 
 describe('project settings', () => {
