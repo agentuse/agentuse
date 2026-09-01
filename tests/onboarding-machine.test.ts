@@ -95,6 +95,21 @@ describe('project discovery onboarding machine', () => {
     expect(projectDiscoveryModelReady('unknown:qwen3', providers)).toBe(false);
   });
 
+  it('shows discovered custom models before the manual model-ID fallback', () => {
+    const providers = [{
+      id: 'lmstudio',
+      name: 'lmstudio',
+      models: ['lmstudio:qwen/qwen3-8b'],
+      defaultModel: 'lmstudio:qwen/qwen3-8b',
+      custom: true as const,
+    }];
+    expect(projectDiscoveryModelOptions(providers)).toEqual([
+      { value: 'lmstudio:qwen/qwen3-8b', label: 'lmstudio · qwen/qwen3-8b' },
+      { value: 'lmstudio:', label: 'lmstudio · Enter model ID…' },
+    ]);
+    expect(projectDiscoveryModelReady('lmstudio:qwen/qwen3-8b', providers)).toBe(true);
+  });
+
   it('boots into the provider gate or explicit model-selection state from provider status', () => {
     const gated = projectDiscoveryReducer(initialProjectDiscoveryState, {
       type: 'BOOT_SUCCEEDED',

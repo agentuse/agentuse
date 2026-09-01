@@ -10,7 +10,13 @@ import type { AgentCreationProvider } from '../../../../agents/create';
 
 export function projectDiscoveryModelOptions(providers: AgentCreationProvider[]): Array<{ value: string; label: string }> {
   return providers.flatMap((provider) => provider.custom
-    ? [{ value: `${provider.id}:`, label: `${provider.name} · Enter model ID…` }]
+    ? [
+        ...provider.models.map((model) => ({
+          value: model,
+          label: `${provider.name} · ${model.slice(provider.id.length + 1)}`,
+        })),
+        { value: `${provider.id}:`, label: `${provider.name} · Enter model ID…` },
+      ]
     : provider.models.map((model) => ({ value: model, label: model })));
 }
 

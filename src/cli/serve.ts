@@ -93,6 +93,7 @@ import {
 import {
   AgentCreationError,
   agentCreationProviders,
+  discoverCustomProviderModels,
   createAgentFile,
   createGuidedProjectAgentFile,
   validateAgentCreationRequest,
@@ -7261,7 +7262,11 @@ export function createServeCommand(): Command {
             const snapshot = await providerSetupSnapshot();
             sendJSON(res, 200, {
               success: true,
-              providers: agentCreationProviders(snapshot.status, preferredAgentCreationModel),
+              providers: agentCreationProviders(
+                snapshot.status,
+                preferredAgentCreationModel,
+                await discoverCustomProviderModels(),
+              ),
               projects: projects.map((project) => ({
                 id: project.id,
                 path: project.root,
