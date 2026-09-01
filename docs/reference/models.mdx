@@ -181,9 +181,13 @@ See the [Amazon Bedrock model catalog](https://docs.aws.amazon.com/bedrock/lates
 
 Authentication uses standard AWS environment variables (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION`, optional `AWS_SESSION_TOKEN`) or `AWS_BEARER_TOKEN_BEDROCK`. See the [Model Configuration guide](/guides/model-configuration#amazon-bedrock) for details.
 
-## Custom Providers (Local LLMs)
+## Custom Providers
 
-In addition to the built-in providers above, you can connect any OpenAI-compatible endpoint as a custom provider:
+In addition to the built-in providers above, Dashboard Settings can connect
+custom OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages
+endpoints. It discovers and saves available models and verifies the selected
+protocol with a minimal completion. For OpenAI-compatible local endpoints, you
+can also use the CLI:
 
 ```bash
 # Add Ollama
@@ -201,7 +205,7 @@ agentuse run agent.agentuse -m ollama:qwen3.5:0.8b
 agentuse run agent.agentuse -m lmstudio:qwen/qwen3.5-9b
 ```
 
-See [Model Configuration](/guides/model-configuration#custom-providers-local-llms) for full setup details.
+See [Model Configuration](/guides/model-configuration#custom-providers) for full setup details.
 
 ## Usage
 

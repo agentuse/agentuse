@@ -43,6 +43,19 @@ addressable routes. A session page is the durable record for one run: its
 activity, approval gate, tool output, result, metrics, verification verdict,
 and follow-up controls stay together.
 
+Settings can add an existing project or create a managed one, and can disconnect
+a project without deleting its files. For an existing project, guided discovery
+scans a sanitized, read-only view, accounts for agents already present, and
+proposes evidence-backed recurring work. Agent creation runs as a visible
+session, and any proposed schedule starts paused until you test and enable it.
+
+The agent and Schedules pages show declared cron expressions and deployment-local
+paused state. Pause or resume a schedule there, or with `agentuse schedules
+pause` and `agentuse schedules resume`, without editing agent frontmatter.
+Provider setup in Settings supports Anthropic and OpenAI login or API keys,
+OpenRouter and OpenCode Go keys, plus custom OpenAI Chat Completions, OpenAI
+Responses, and Anthropic Messages endpoints.
+
 ## Viewer preferences
 
 Dashboard preferences are local to the current Dashboard. In a browser they are

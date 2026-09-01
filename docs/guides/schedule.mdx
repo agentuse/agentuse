@@ -32,6 +32,22 @@ Scheduled (1)
   monitor.agentuse       0 * * * *   Jan 01, 12:00
 ```
 
+## Pause or resume a schedule
+
+Pause a declared schedule without editing the agent file:
+
+```bash
+agentuse schedules
+agentuse schedules pause agents/daily.agentuse
+agentuse schedules resume agents/daily.agentuse
+```
+
+The agent's `schedule` frontmatter remains unchanged and visible. Pause state is
+stored for the current deployment, so another deployment of the same project can
+run the schedule independently. You can use the same controls from the agent
+page or the Schedules page in the dashboard. Newly suggested schedules created
+through guided project discovery start paused until you test and enable them.
+
 ## Schedule Formats
 
 The `schedule` field accepts a single string value. The format is auto-detected:

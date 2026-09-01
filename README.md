@@ -51,7 +51,9 @@ npx -y agentuse@latest setup
 ```
 
 Choose Browser for guided visual setup or Terminal for a headless Linux/SSH
-flow. Both create the same managed project under `~/.agentuse/projects`.
+flow. Browser and Desktop can create a managed project under
+`~/.agentuse/projects` or attach an existing project; Terminal creates and
+registers the managed project.
 
 Install the CLI globally if you want a persistent `agentuse` command in every
 terminal, then connect a model provider before the first real run:

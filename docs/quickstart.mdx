@@ -38,10 +38,12 @@ server running in your terminal. Both routes now follow the same onboarding
 flow.
 
 <Steps>
-  <Step title="Create a project">
-    Keep the suggested name, `my-agents`, or change it. AgentUse creates a
-    dedicated project under `~/.agentuse/projects/` and shows its full path
-    before anything writes an agent file.
+  <Step title="Create or attach a project">
+    Keep the suggested name, `my-agents`, to create a dedicated project under
+    `~/.agentuse/projects/`, or attach an existing project. AgentUse shows the
+    full path before anything writes an agent file. For an existing project,
+    the guided flow can scan a sanitized, read-only view and suggest recurring
+    work grounded in the repository while accounting for agents already there.
   </Step>
 
   <Step title="Run the sample agent">
@@ -63,7 +65,8 @@ flow.
     chooses a suitable runtime model from the connected providers. AgentUse
     validates the generated source, runtime-model choice, and static safety
     guardrails before persisting it in the project and showing it immediately.
-    The saved agent still needs your review before its first run. If
+    The saved agent still needs your review before its first run. A schedule
+    proposed by project discovery starts paused until you test and enable it. If
     you prefer to work hands-on, use **Copy prompt to coding agent** instead;
     the prepared handoff carries your task and keeps the existing validation
     workflow as an escape hatch.

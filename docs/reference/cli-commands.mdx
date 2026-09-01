@@ -890,6 +890,24 @@ Jun 03, 09:00  daily.agentuse  Daily 9am  never
 
 ---
 
+## agentuse schedules
+
+Inspect and control deployment-local schedule state without changing agent
+frontmatter.
+
+```bash
+agentuse schedules
+agentuse schedules pause <agent>
+agentuse schedules resume <agent>
+```
+
+`agentuse schedules` lists declared schedules and whether each one is active or
+paused. `pause` and `resume` persist the override for the current deployment and
+notify a running daemon, when present. The declared cron expression or interval
+stays in the agent file and remains visible in the dashboard.
+
+---
+
 ## agentuse models
 
 List the recommended models, the aliases they can be reached by, and your configured default.
@@ -950,7 +968,9 @@ agentuse provider login opencode-go
 
 ### provider add
 
-Add a custom OpenAI-compatible endpoint (Ollama, LM Studio, vLLM, etc.).
+Add a custom OpenAI-compatible endpoint from the CLI (Ollama, LM Studio, vLLM,
+etc.). The dashboard can additionally configure OpenAI Responses and Anthropic
+Messages endpoints; see [Model Configuration](/guides/model-configuration#custom-providers).
 
 ```bash
 agentuse provider add ollama --url http://localhost:11434/v1

@@ -8,11 +8,13 @@
 - **The Web dashboard and Mac app can now take a new user from an existing project to a useful persistent agent.** The guided flow attaches or creates a project, connects a built-in or custom model provider, scans a sanitized read-only project view for evidence-backed recurring work, creates the reviewed agent through a visible AgentUse session, and leaves its proposed schedule paused until the operator tests and enables it. Direct agent creation remains available when a scan is unnecessary.
 - **Model providers can now be configured from the dashboard.** Provider setup supports Anthropic and OpenAI OAuth or API keys, OpenRouter and OpenCode Go keys, and custom OpenAI Completions, OpenAI Responses, or Anthropic Messages endpoints. Custom endpoints discover and save their available models, verify the selected protocol with a real minimal completion, and remain editable from Settings.
 - **Schedules can be paused per deployment without editing agent source.** The agent page, schedules dashboard, and new `agentuse schedules`, `agentuse schedules pause`, and `agentuse schedules resume` commands share durable deployment-local state while keeping the declared cron expression visible.
+- **The dashboard now has responsive, persistent navigation.** On smaller screens it becomes an accessible drawer; on desktop the sidebar can be collapsed with `⌘/Ctrl+B` and resized. The Mac app also adds back/forward navigation, section shortcuts, and `⌘R` reload.
 
 ### Changed
 
 - **The model catalog and compatibility routing now cover the current GPT-5.6, Claude, OpenRouter, OpenCode Go, and custom-endpoint surfaces.** Reasoning effort is normalized per model and transport, OpenCode Go Responses routes replay complete stateless tool history, and compatible gateways receive only the request fields they support.
 - **Dashboard typography, empty states, session filters, and onboarding guidance are more compact and explicit.** Paused schedules are named as paused, advanced session filters are disclosed on demand, and project/provider setup no longer competes with the operational dashboard.
+- **Project discovery now accounts for existing agents, so recommended work does not duplicate responsibilities.** Connected projects can also be added or removed in Settings without changing their files on disk.
 
 ### Fixed
 

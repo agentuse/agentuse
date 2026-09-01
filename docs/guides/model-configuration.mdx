@@ -244,9 +244,16 @@ agentuse run agent.agentuse -m bedrock:arn:aws:bedrock:eu-west-1:123456789012:ap
   Your IAM user/role needs `AmazonBedrockFullAccess` (or an equivalent custom policy) and you must have requested access to the foundation model in the AWS console. The `bedrock:` prefix bypasses the static model registry, so any Bedrock model ID or inference-profile ARN is accepted.
 </Note>
 
-## Custom Providers (Local LLMs)
+## Custom Providers
 
-Connect to any OpenAI-compatible endpoint, Ollama, LM Studio, vLLM, llama.cpp, and more.
+Connect hosted or local endpoints from **Dashboard Settings → Providers**. A
+custom provider can use OpenAI Chat Completions, OpenAI Responses, or Anthropic
+Messages. Dashboard setup discovers available models, lets you choose which to
+save, and verifies the selected protocol with a minimal completion before the
+provider is ready. Saved custom providers remain editable in Settings.
+
+The CLI supports adding OpenAI-compatible endpoints such as Ollama, LM Studio,
+vLLM, and llama.cpp.
 
 ### Adding a Custom Provider
 
