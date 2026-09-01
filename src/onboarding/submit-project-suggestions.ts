@@ -2,6 +2,7 @@ import type { Tool } from 'ai';
 import { z } from 'zod';
 import {
   parseProjectDiscoveryResponse,
+  type ExistingProjectAgentSummary,
   type ProjectDiscoveryResult,
 } from '../agents/discover.js';
 
@@ -19,6 +20,7 @@ export interface ProjectSuggestionsSubmission {
 export interface ProjectSuggestionsSubmissionContract {
   projectName: string;
   inspectedFiles: number;
+  existingAgents: ExistingProjectAgentSummary[];
 }
 
 export function projectSuggestionsSubmissionContract(
@@ -27,9 +29,43 @@ export function projectSuggestionsSubmissionContract(
   if (metadata?.internal !== true || metadata.onboarding !== 'project-discovery') return undefined;
   const projectName = metadata.projectName;
   const inspectedFiles = metadata.inspectedFiles;
+  const existingAgents = metadata.existingAgents;
   if (typeof projectName !== 'string' || !projectName.trim()) return undefined;
   if (typeof inspectedFiles !== 'number' || !Number.isSafeInteger(inspectedFiles) || inspectedFiles < 0) return undefined;
-  return { projectName, inspectedFiles };
+  if (!Array.isArray(existingAgents)) return undefined;
+  const parsedExistingAgents: ExistingProjectAgentSummary[] = [];
+  for (const entry of existingAgents) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return undefined;
+    const value = entry as Record<string, unknown>;
+    if (typeof value.path !== 'string' || typeof value.name !== 'string' || typeof value.description !== 'string') return undefined;
+    parsedExistingAgents.push({ path: value.path, name: value.name, description: value.description });
+  }
+  return { projectName, inspectedFiles, existingAgents: parsedExistingAgents };
+}
+
+const DUPLICATE_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'agent', 'daily', 'for', 'in', 'of', 'on', 'project', 'the', 'to', 'weekly', 'with',
+]);
+
+function responsibilityTokens(value: string): Set<string> {
+  return new Set(value.toLowerCase().match(/[a-z0-9]+/gu)?.filter((token) =>
+    token.length > 2 && !DUPLICATE_STOP_WORDS.has(token)
+  ) ?? []);
+}
+
+function substantiallyDuplicatesExistingAgent(
+  suggestion: { name: string; description: string },
+  existing: ExistingProjectAgentSummary,
+): boolean {
+  const suggestedName = suggestion.name.toLowerCase().replace(/[^a-z0-9]+/gu, ' ').trim();
+  const existingName = existing.name.toLowerCase().replace(/[^a-z0-9]+/gu, ' ').trim();
+  if (suggestedName === existingName) return true;
+  const proposed = responsibilityTokens(`${suggestion.name} ${suggestion.description}`);
+  const covered = responsibilityTokens(`${existing.name} ${existing.description}`);
+  if (proposed.size === 0 || covered.size === 0) return false;
+  let overlap = 0;
+  for (const token of proposed) if (covered.has(token)) overlap += 1;
+  return overlap >= 2 && overlap / Math.min(proposed.size, covered.size) >= 0.6;
 }
 
 const suggestionSchema = z.object({
@@ -62,6 +98,17 @@ export function createSubmitProjectSuggestionsTool(
     }).strict(),
     execute: async (input: { summary: string; suggestions: Array<z.infer<typeof suggestionSchema>> }) => {
       try {
+        for (const suggestion of input.suggestions) {
+          const duplicate = contract.existingAgents.find((existing) =>
+            substantiallyDuplicatesExistingAgent(suggestion, existing)
+          );
+          if (duplicate) {
+            throw new Error(
+              `Suggestion ${suggestion.name} duplicates the existing agent ${duplicate.name}. ` +
+              'Replace it with a materially distinct responsibility.'
+            );
+          }
+        }
         submission.result = parseProjectDiscoveryResponse(
           JSON.stringify(input),
           contract.projectName,

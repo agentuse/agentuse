@@ -196,6 +196,41 @@ final result: passed
 
 ---
 
+# Design QA — Settings project management split
+
+- Source visual truth: `/Users/llch/Library/Application Support/CleanShot/media/media_QQjjDXDJHv/CleanShot 2026-09-01 at 11.44.36.png`
+- Folder-field reference: `/Users/llch/Library/Application Support/CleanShot/media/media_gYB7Tax6f5/CleanShot 2026-09-01 at 11.45.48.png`
+- Implementation: `http://127.0.0.1:12233/settings?tab=projects`
+- State: light theme, local web, existing connected projects
+
+## Comparison evidence
+
+The source and live implementation were inspected together at the same desktop
+state. The Projects tab retains the established settings width, tabs, panel
+treatment, typography, and project inventory while replacing the onboarding
+card with a focused Add project form. Its path field and Choose folder action
+match the supplied folder-field reference and reuse the onboarding picker.
+
+## Interaction checks
+
+- General contains “Create or connect a project” under Onboarding with a
+  “Start onboarding again” link to `/onboarding`.
+- Projects contains no onboarding restart action.
+- Entering a directory enables Add project; the button is disabled when empty.
+- Choose folder is shown for Desktop and local-web picker-capable environments.
+- Project removal remains unchanged.
+- Browser console errors checked: none.
+
+## Findings
+
+No actionable P0, P1, or P2 visual or interaction differences remain. The new
+form follows existing responsive rules and stacks the picker control at narrow
+widths.
+
+final result: passed
+
+---
+
 # Design QA — Guided creation Settings card
 
 - Source visual truth: `/Users/llch/Library/Application Support/CleanShot/media/media_UJl0INmRXT/CleanShot 2026-08-31 at 14.02.42.png`

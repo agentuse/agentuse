@@ -36,14 +36,79 @@ import { TidyProgressView } from '../src/cli/serve/web/routes/learnings-tidy';
 import { sessionContextFetchKey } from '../src/cli/serve/web/routes/session-context';
 import { learningsTidyHref } from '../src/cli/serve/web/lib/links';
 import type { LearningSummary, SessionLearning, TidyResult } from '../src/cli/serve/web/lib/api';
-import { RecentJobRow, recentJobSummary } from '../src/cli/serve/web/routes/agent-detail';
+import { firstAgentRunTutorialCopy, RecentJobRow, recentJobSummary } from '../src/cli/serve/web/routes/agent-detail';
 import {
   isTerminalInternalAgentSessionStatus,
   mergeInternalAgentJob,
 } from '../src/cli/serve/web/hooks/use-internal-agent-job';
 import { AgentCreationProgressPanel } from '../src/cli/serve/web/components/agent-create-dialog';
+import { firstUsefulAgentSetupSteps } from '../src/cli/serve/web/components/onboarding-shell';
+import { ProjectFolderField } from '../src/cli/serve/web/components/project-folder-field';
+import { ProjectsSettingsGroup, RestartOnboardingGroup } from '../src/cli/serve/web/components/project-settings';
 
 const noop = () => {};
+
+describe('project settings', () => {
+  it('positions guided project creation as restarting onboarding from General', () => {
+    const html = renderToString(<RestartOnboardingGroup />);
+
+    expect(html).toContain('Create or connect a project');
+    expect(html).toContain('Start onboarding again');
+    expect(html).toContain('/onboarding');
+  });
+
+  it('keeps the Projects tab focused on attaching a directory', () => {
+    const html = renderToString(<ProjectsSettingsGroup />);
+
+    expect(html).toContain('Add project');
+    expect(html).toContain('Choose a folder or enter its path');
+    expect(html).not.toContain('Start onboarding again');
+  });
+
+  it('shows the shared native folder action only when available', () => {
+    const withPicker = renderToString(<ProjectFolderField
+      id="project-path"
+      value=""
+      pickerAvailable
+      onChange={noop}
+    />);
+    const withoutPicker = renderToString(<ProjectFolderField
+      id="project-path"
+      value=""
+      pickerAvailable={false}
+      onChange={noop}
+    />);
+
+    expect(withPicker).toContain('Choose folder…');
+    expect(withoutPicker).not.toContain('Choose folder…');
+  });
+});
+
+describe('first-agent onboarding steps', () => {
+  it('uses a create-first journey for a new empty project', () => {
+    const steps = firstUsefulAgentSetupSteps({ currentStep: 3, flow: 'new', providerReady: true });
+
+    expect(steps.map((step) => step.title)).toEqual(['Create project', 'Connect model', 'Create agent', 'Run agent']);
+    expect(steps.find((step) => step.current)?.title).toBe('Create agent');
+  });
+
+  it('keeps discovery in the journey for an existing project', () => {
+    const steps = firstUsefulAgentSetupSteps({ currentStep: 3, flow: 'existing', providerReady: true });
+
+    expect(steps.map((step) => step.title)).toEqual(['Add existing project', 'Connect model', 'Find work', 'Create and run']);
+    expect(steps.find((step) => step.current)?.title).toBe('Find work');
+  });
+});
+
+describe('first-agent run spotlight', () => {
+  it('finishes immediately when the agent has no schedule', () => {
+    expect(firstAgentRunTutorialCopy(false)).toEqual({ progress: null, action: 'Done' });
+  });
+
+  it('continues to schedule guidance when the agent has a schedule', () => {
+    expect(firstAgentRunTutorialCopy(true)).toEqual({ progress: '1 of 2', action: 'Next' });
+  });
+});
 
 describe('onboarding session completion', () => {
   it('uses terminal session events to trigger final-result retrieval', () => {

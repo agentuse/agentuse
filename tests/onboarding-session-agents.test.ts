@@ -45,9 +45,20 @@ describe('onboarding session agents', () => {
       () => rm(outsideRoot, { recursive: true, force: true }),
     );
     await mkdir(join(project, 'src'), { recursive: true });
+    await mkdir(join(project, '.agentuse'), { recursive: true });
     await mkdir(join(project, 'node_modules', 'pkg'), { recursive: true });
     await writeFile(join(project, 'README.md'), '# Product');
     await writeFile(join(project, 'src', 'config.ts'), 'const API_KEY="super-secret-value";\nexport const mode="test";');
+    await writeFile(join(project, '.agentuse', 'scheduler.lock'), 'runtime state');
+    await writeFile(join(project, 'existing.agentuse'), [
+      '---',
+      'name: Release readiness',
+      'model: openai:gpt-5.6-luna',
+      'description: Decide whether the project is safe to release.',
+      '---',
+      '',
+      'Inspect the release and return a verdict.',
+    ].join('\n'));
     await writeFile(join(project, '.env'), 'TOKEN=never-copy');
     await writeFile(join(project, 'node_modules', 'pkg', 'index.js'), 'generated noise');
     const outsideFile = join(outsideRoot, 'outside.txt');
@@ -58,6 +69,13 @@ describe('onboarding session agents', () => {
     cleanups.push(view.cleanup);
     expect(view.availableFiles).toContain('README.md');
     expect(view.availableFiles).toContain('src/config.ts');
+    expect(view.availableFiles).not.toContain('existing.agentuse');
+    expect(view.availableFiles).not.toContain('.agentuse/scheduler.lock');
+    expect(view.existingAgents).toEqual([{
+      path: 'existing.agentuse',
+      name: 'Release readiness',
+      description: 'Decide whether the project is safe to release.',
+    }]);
     expect(view.availableFiles).not.toContain('.env');
     expect(view.availableFiles.some((path) => path.includes('node_modules'))).toBe(false);
     expect(view.availableFiles).not.toContain('linked-outside.txt');
@@ -65,6 +83,7 @@ describe('onboarding session agents', () => {
     expect(await readFile(join(view.root, 'src', 'config.ts'), 'utf8')).toContain('API_KEY=[REDACTED]');
     expect(await readFile(join(view.root, 'src', 'config.ts'), 'utf8')).not.toContain('super-secret-value');
     await expect(readFile(join(view.root, 'linked-outside.txt'), 'utf8')).rejects.toThrow();
+    await expect(readFile(join(view.root, 'existing.agentuse'), 'utf8')).rejects.toThrow();
   });
 
   it('redacts common secret assignments, provider tokens, and private keys', () => {
@@ -86,6 +105,11 @@ describe('onboarding session agents', () => {
     const discovery = parseAgentContent(buildProjectDiscoverySessionAgent({
       model: 'openai:gpt-5.6-terra', projectName: 'demo', inspectedFiles: 99, safeViewRoot: '/tmp/safe-view',
       availableSkills,
+      existingAgents: [{
+        path: 'agents/release-readiness.agentuse',
+        name: 'Release readiness',
+        description: 'Decide whether the project is safe to release.',
+      }],
     }), '');
     expect(discovery.name).toBe('onboarding-project-discovery');
     expect(discovery.config.reasoning).toBe('minimal');
@@ -94,15 +118,28 @@ describe('onboarding session agents', () => {
     expect(discovery.config.maxSteps).toBe(20);
     expect(discovery.instructions).toContain('Submit the one-sentence project summary');
     expect(discovery.instructions).toContain('submit_project_suggestions');
+    expect(discovery.instructions).toContain('Act as a capable teammate joining this project');
+    expect(discovery.instructions).toContain('jobs and responsibilities worth owning');
+    expect(discovery.instructions).toContain('Reporting is appropriate only when someone needs that information');
+    expect(discovery.instructions).toContain('Do not force an action');
     expect(discovery.instructions).toContain('modify project files, or take external actions');
     expect(discovery.instructions).toContain('human approval before execution');
+    expect(discovery.instructions).not.toContain('health checks, drift detection, reporting, release readiness');
     expect(discovery.instructions).toContain('<name>release-helper</name>');
     expect(discovery.instructions).toContain('<source>project</source>');
     expect(discovery.instructions).toContain('name that skill explicitly in the objective');
+    expect(discovery.instructions).toContain('<already_covered_agents>');
+    expect(discovery.instructions).toContain('<name>Release readiness</name>');
+    expect(discovery.instructions).toContain('Do not propose the same responsibility under the same or a different name');
     expect(discovery.config.skills?.auto).toBe(false);
     expect(discovery.instructions).not.toContain('Every first run must be read-only');
     expect(discovery.config.metadata?.projectName).toBe('demo');
     expect(discovery.config.metadata?.inspectedFiles).toBe(99);
+    expect(discovery.config.metadata?.existingAgents).toEqual([{
+      path: 'agents/release-readiness.agentuse',
+      name: 'Release readiness',
+      description: 'Decide whether the project is safe to release.',
+    }]);
 
     const creator = parseAgentContent(buildAgentCreatorSessionAgent({
       model: 'openai:gpt-5.6-terra',
@@ -334,8 +371,9 @@ Create the agent.
       onboarding: 'project-discovery',
       projectName: 'demo',
       inspectedFiles: 99,
+      existingAgents: [],
     });
-    expect(contract).toEqual({ projectName: 'demo', inspectedFiles: 99 });
+    expect(contract).toEqual({ projectName: 'demo', inspectedFiles: 99, existingAgents: [] });
     const submission: { result?: unknown } = {};
     const tool = createSubmitProjectSuggestionsTool(submission as any, contract!);
     await expect((tool.execute as any)({ summary: 'Demo project', suggestions: [] }))
@@ -344,6 +382,32 @@ Create the agent.
     await expect((tool.execute as any)(JSON.parse(suggestions))).resolves.toContain('Accepted');
     expect((submission.result as any)?.suggestions).toHaveLength(3);
     expect((submission.result as any)?.inspectedFiles).toBe(99);
+  });
+
+  it('rejects suggestions that repeat an existing agent responsibility', async () => {
+    const contract = projectSuggestionsSubmissionContract({
+      internal: true,
+      onboarding: 'project-discovery',
+      projectName: 'demo',
+      inspectedFiles: 3,
+      existingAgents: [{
+        path: 'agents/release-readiness.agentuse',
+        name: 'Release readiness',
+        description: 'Weekly deploy safety verdict before release.',
+      }],
+    });
+    const submission: { result?: unknown } = {};
+    const tool = createSubmitProjectSuggestionsTool(submission as any, contract!);
+    const repeated = JSON.parse(suggestions);
+    repeated.suggestions[0] = {
+      ...repeated.suggestions[0],
+      name: 'Release readiness',
+      description: 'Review deployment safety before release.',
+    };
+
+    await expect((tool.execute as any)(repeated))
+      .rejects.toThrow('duplicates the existing agent Release readiness');
+    expect(submission.result).toBeUndefined();
   });
 
   it('injects the discovery submission tool and guards completion', async () => {
@@ -355,6 +419,7 @@ metadata:
   onboarding: project-discovery
   projectName: demo
   inspectedFiles: 99
+  existingAgents: []
 ---
 
 Discover useful work.

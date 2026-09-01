@@ -401,13 +401,17 @@ a, button, select, summary, label, input, textarea,
   background: var(--bg);
   color: var(--fg);
   font-size: var(--font-size-supporting);
+  text-decoration: none;
   cursor: pointer;
 }
+.settings-row-control > a.settings-item { display: inline-flex; align-items: center; justify-content: center; }
 .settings-item:hover { border-color: var(--line-strong); background: var(--panel-hover); }
 .settings-item:disabled { opacity: 0.6; cursor: default; }
-.guided-creation-settings { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
-.guided-creation-settings .settings-group-hint { max-width: 62ch; margin-bottom: 0; }
-.guided-creation-settings .settings-item { flex: none; }
+.project-settings-add { display: grid; gap: 10px; }
+.project-settings-add .project-folder-field-label { color: var(--muted-2); font: 600 var(--font-size-micro)/1 var(--sans); letter-spacing: 0.03em; }
+.project-settings-add-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.project-settings-add-footer small { color: var(--muted); font-size: var(--font-size-micro); line-height: 1.45; }
+.project-settings-add-footer .settings-item { flex: none; }
 .project-settings-list { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .project-settings-row { display: flex; align-items: center; gap: 16px; padding: 12px 0; }
 .project-settings-row + .project-settings-row { border-top: 1px solid var(--line); }
@@ -422,7 +426,8 @@ a, button, select, summary, label, input, textarea,
 .project-settings-remove:disabled { cursor: default; opacity: 0.6; }
 .project-settings-error { margin-top: 10px; color: var(--red); font-size: var(--font-size-caption); line-height: 1.45; }
 @media (max-width: 560px) {
-  .guided-creation-settings { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .project-settings-add-footer { align-items: stretch; flex-direction: column; }
+  .project-settings-add-footer .settings-item { align-self: flex-start; }
 }
 /* Home-section visibility checkboxes (per-viewer, persisted in localStorage). */
 .settings-checks { display: flex; flex-direction: column; gap: 2px; }
@@ -4133,11 +4138,23 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   display: block; margin-bottom: 8px; color: var(--muted-2); font: 600 var(--font-size-micro)/1 var(--sans); letter-spacing: 0.03em;
 }
 .first-project-field-row { display: flex; align-items: stretch; gap: 10px; }
-.first-project-field-row input {
+.first-project-field-row input,
+.project-folder-field input {
   min-width: 0; flex: 1 1 auto; width: 100%; height: 42px; min-height: 42px; padding: 0 13px; border: 1px solid var(--line-strong);
   border-radius: 9px; background: var(--panel); color: var(--fg); font: var(--font-size-supporting)/1 var(--sans);
 }
-.first-project-field-row input:focus { outline: 2px solid var(--cyan); outline-offset: 1px; border-color: transparent; }
+.first-project-field-row input:focus,
+.project-folder-field input:focus { outline: 2px solid var(--cyan); outline-offset: 1px; border-color: transparent; }
+.project-folder-field-label { display: block; margin-bottom: 8px; }
+.project-folder-field { display: flex; align-items: stretch; gap: 10px; }
+.project-folder-choose {
+  appearance: none; display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 0 14px;
+  border: 1px solid var(--line-strong); border-radius: 9px; background: var(--panel); color: var(--fg); white-space: nowrap;
+  font: 560 var(--font-size-caption)/1 var(--sans); cursor: pointer;
+}
+.project-folder-choose:hover:not(:disabled) { border-color: var(--cyan); color: var(--cyan); }
+.project-folder-choose:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+.project-folder-choose:disabled { cursor: default; opacity: 0.62; }
 .first-project-footer { display: grid; gap: 13px; margin-top: 12px; }
 .first-project-footer > small { display: block; max-width: 56ch; color: var(--muted); font-size: var(--font-size-micro); line-height: 1.45; }
 .first-project-footer > small code { color: var(--muted-2); font-family: var(--mono); font-size: var(--font-size-micro); }
@@ -4253,6 +4270,8 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   .page-agents .onboarding-empty.is-compact h2 { font-size: var(--font-size-display); }
   .first-project-field-row { align-items: stretch; flex-direction: column; }
   .first-project-field-row input { flex: none; }
+  .project-folder-field { align-items: stretch; flex-direction: column; }
+  .project-folder-field input { flex: none; }
   .first-project-footer > small { max-width: none; }
   .first-project-actions { justify-content: stretch; }
   .first-project-actions > button { flex: 1 1 0; }

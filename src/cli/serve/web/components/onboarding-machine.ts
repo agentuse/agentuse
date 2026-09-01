@@ -31,7 +31,7 @@ export type ProjectSelectionState =
   | { type: 'choose'; name: string; path: string }
   | { type: 'new'; name: string; path: string; submitting: boolean; error: string | null }
   | { type: 'existing'; name: string; path: string; activity: 'idle' | 'choosing-folder' | 'submitting'; error: string | null }
-  | { type: 'attached'; project: ProjectInfo };
+  | { type: 'attached'; project: ProjectInfo; origin: 'new' | 'existing' };
 
 export type ProjectSelectionEvent =
   | { type: 'CHOOSE_NEW' }
@@ -43,7 +43,7 @@ export type ProjectSelectionEvent =
   | { type: 'FOLDER_PICK_STARTED' }
   | { type: 'FOLDER_PICKED'; path: string | null }
   | { type: 'FAILED'; error: string }
-  | { type: 'PROJECT_ATTACHED'; project: ProjectInfo };
+  | { type: 'PROJECT_ATTACHED'; project: ProjectInfo; origin: 'new' | 'existing' };
 
 export function initialProjectSelectionState(name: string): ProjectSelectionState {
   return { type: 'choose', name, path: '' };
@@ -53,7 +53,7 @@ export function projectSelectionReducer(
   state: ProjectSelectionState,
   event: ProjectSelectionEvent,
 ): ProjectSelectionState {
-  if (event.type === 'PROJECT_ATTACHED') return { type: 'attached', project: event.project };
+  if (event.type === 'PROJECT_ATTACHED') return { type: 'attached', project: event.project, origin: event.origin };
   if (state.type === 'attached') return state;
   switch (event.type) {
     case 'CHOOSE_NEW':
@@ -140,6 +140,11 @@ export type ProjectDiscoveryResume =
       error: string;
       job?: OnboardingJobHandle;
     };
+
+// Browser recovery is intentionally tab-scoped, but completed suggestions must
+// not outlive changes to the discovery contract. Bump this whenever the hidden
+// discovery agent's prompt or structured result semantics materially change.
+export const PROJECT_DISCOVERY_RESUME_VERSION = 2;
 
 export type ProjectDiscoveryEvent =
   | { type: 'BOOT_SUCCEEDED'; provider: ProviderSetupPayload; options: AgentCreationOptionsPayload }
@@ -235,7 +240,7 @@ export function projectDiscoveryReducer(
     case 'MODEL_SELECTED':
       return withModel(state, event.model);
     case 'SCAN_STARTED':
-      return state.type === 'ready' || state.type === 'scan-failed'
+      return state.type === 'ready' || state.type === 'scan-failed' || state.type === 'suggestions'
         ? { type: 'scanning', setup: state.setup, job: null }
         : state;
     case 'SCAN_SESSION_STARTED':
@@ -354,7 +359,10 @@ export function resumableProjectDiscoveryState(state: ProjectDiscoveryState): Pr
 export function parseProjectDiscoveryResume(value: string | null): ProjectDiscoveryResume | null {
   if (!value) return null;
   try {
-    const parsed = JSON.parse(value) as Partial<ProjectDiscoveryResume>;
+    const stored = JSON.parse(value) as { version?: unknown; resume?: unknown };
+    if (stored.version !== PROJECT_DISCOVERY_RESUME_VERSION || !stored.resume
+      || typeof stored.resume !== 'object' || Array.isArray(stored.resume)) return null;
+    const parsed = stored.resume as Partial<ProjectDiscoveryResume>;
     const modelValid = parsed.model === null || typeof parsed.model === 'string';
     if (!modelValid) return null;
     if (parsed.type === 'ready' && 'intent' in parsed && parsed.intent
@@ -379,4 +387,8 @@ export function parseProjectDiscoveryResume(value: string | null): ProjectDiscov
     // Ignore stale or malformed tab state and start from provider/model setup.
   }
   return null;
+}
+
+export function serializeProjectDiscoveryResume(resume: ProjectDiscoveryResume): string {
+  return JSON.stringify({ version: PROJECT_DISCOVERY_RESUME_VERSION, resume });
 }

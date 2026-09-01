@@ -3,6 +3,7 @@ import { lstat, mkdir, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/pr
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { glob } from 'glob';
+import matter from 'gray-matter';
 import { formatScheduleHuman, parseScheduleExpression } from '../scheduler/parser.js';
 import { discoverSkills } from '../skill/discovery.js';
 import { validateAgentName } from './create.js';
@@ -10,6 +11,7 @@ import { validateAgentName } from './create.js';
 const ADAPTIVE_MAX_FILES = 400;
 const ADAPTIVE_MAX_FILE_BYTES = 64_000;
 const ADAPTIVE_MAX_TOTAL_BYTES = 2_000_000;
+const ADAPTIVE_MAX_EXISTING_AGENTS = 100;
 const IGNORED = [
   '.git/**', 'node_modules/**', 'vendor/**', 'dist/**', 'build/**', 'coverage/**',
   '.next/**', '.turbo/**', 'tmp/**', '.cache/**', '.venv/**', 'venv/**',
@@ -46,7 +48,14 @@ export interface ProjectDiscoveryView {
   projectName: string;
   inspectedFiles: number;
   availableFiles: string[];
+  existingAgents: ExistingProjectAgentSummary[];
   cleanup(): Promise<void>;
+}
+
+export interface ExistingProjectAgentSummary {
+  path: string;
+  name: string;
+  description: string;
 }
 
 export interface ProjectSkillSummary {
@@ -113,6 +122,35 @@ async function readBoundedDiscoveryFile(projectRoot: string, relativePath: strin
   }
 }
 
+async function readExistingProjectAgentSummary(
+  projectRoot: string,
+  relativePath: string,
+): Promise<ExistingProjectAgentSummary | undefined> {
+  const buffer = await readBoundedDiscoveryFile(projectRoot, relativePath, 16_000);
+  if (!buffer || buffer.includes(0)) return undefined;
+  const text = redactProjectDiscoveryText(buffer.toString('utf8'));
+  try {
+    const parsed = matter(text, {});
+    const data = parsed.data && typeof parsed.data === 'object'
+      ? parsed.data as Record<string, unknown>
+      : {};
+    const fallbackName = basename(relativePath, '.agentuse');
+    const name = typeof data.name === 'string' && data.name.trim()
+      ? data.name.trim().slice(0, 120)
+      : fallbackName;
+    const description = typeof data.description === 'string'
+      ? data.description.trim().slice(0, 240)
+      : '';
+    return { path: relativePath, name, description };
+  } catch {
+    return {
+      path: relativePath,
+      name: basename(relativePath, '.agentuse').slice(0, 120),
+      description: '',
+    };
+  }
+}
+
 /** Build a capability-safe temporary view for an adaptive onboarding agent.
  * The model can list, search, and read this view, never the real project. The
  * view excludes sensitive/generated paths and redacts common credential forms
@@ -128,9 +166,28 @@ export async function prepareProjectDiscoveryView(projectRoot: string): Promise<
     ignore: IGNORED,
   })).sort();
   const availableFiles: string[] = [];
+  const existingAgents: ExistingProjectAgentSummary[] = [];
   let usedBytes = 0;
   try {
+    // Collect covered responsibilities independently of the source-file cap so
+    // large repositories cannot hide agents that sort after the first 400 files.
+    const agentPaths = candidates
+      .filter((relativePath) => relativePath.toLowerCase().endsWith('.agentuse'))
+      .slice(0, ADAPTIVE_MAX_EXISTING_AGENTS);
+    for (const relativePath of agentPaths) {
+      const summary = await readExistingProjectAgentSummary(resolvedProjectRoot, relativePath);
+      if (summary) existingAgents.push(summary);
+    }
+
     for (const relativePath of candidates) {
+      // Existing agent source is useful for avoiding duplicate responsibilities,
+      // but it must not become ordinary project evidence: doing so anchors the
+      // discovery model on agents it previously created. Keep only bounded
+      // identity metadata in a separate, explicitly "already covered" catalog.
+      if (relativePath.toLowerCase().endsWith('.agentuse')) continue;
+      // Runtime state and installed-skill bodies under .agentuse are not
+      // product source. Skills are represented by the separate bounded catalog.
+      if (relativePath.replace(/\\/gu, '/').startsWith('.agentuse/')) continue;
       if (availableFiles.length >= ADAPTIVE_MAX_FILES || usedBytes >= ADAPTIVE_MAX_TOTAL_BYTES) break;
       if (!isProjectDiscoveryPathAllowed(relativePath)) continue;
       const remaining = ADAPTIVE_MAX_TOTAL_BYTES - usedBytes;
@@ -156,6 +213,7 @@ export async function prepareProjectDiscoveryView(projectRoot: string): Promise<
       projectName: basename(resolvedProjectRoot),
       inspectedFiles: availableFiles.length,
       availableFiles,
+      existingAgents,
       cleanup: () => rm(root, { recursive: true, force: true }),
     };
   } catch (error) {

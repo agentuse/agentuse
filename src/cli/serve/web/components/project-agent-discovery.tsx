@@ -24,6 +24,7 @@ import {
   projectDiscoveryModelReady,
   projectDiscoveryReducer,
   resumableProjectDiscoveryState,
+  serializeProjectDiscoveryResume,
 } from './onboarding-machine';
 import { firstUsefulAgentSetupSteps, OnboardingShell } from './onboarding-shell';
 import { hasConfiguredProvider, ProviderSetupDialog } from './provider-setup';
@@ -43,12 +44,14 @@ export function ProjectAgentDiscovery(props: {
   projectPath: string;
   compact?: boolean;
   existingAgents?: boolean;
+  startDirectCreate?: boolean;
 }) {
   const [state, dispatch] = useReducer(projectDiscoveryReducer, initialProjectDiscoveryState);
   const [modal, setModal] = useState<OnboardingModal>(() => typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('provider') === 'connect'
     ? 'provider'
     : null);
+  const [autoStartDirectCreate, setAutoStartDirectCreate] = useState(props.startDirectCreate === true);
   const resumeKey = `agentuse:onboarding:${props.projectId}`;
 
   const clearResume = () => {
@@ -58,10 +61,10 @@ export function ProjectAgentDiscovery(props: {
   useEffect(() => {
     void Promise.all([fetchProviderSetup(), fetchAgentCreationOptions()]).then(([provider, options]) => {
       dispatch({ type: 'BOOT_SUCCEEDED', provider, options });
-      const resume = typeof sessionStorage === 'undefined'
-        ? null
-        : parseProjectDiscoveryResume(sessionStorage.getItem(resumeKey));
+      const storedResume = typeof sessionStorage === 'undefined' ? null : sessionStorage.getItem(resumeKey);
+      const resume = parseProjectDiscoveryResume(storedResume);
       if (resume) dispatch({ type: 'RESTORE', resume });
+      else if (storedResume && typeof sessionStorage !== 'undefined') sessionStorage.removeItem(resumeKey);
     }).catch((caught) => dispatch({
       type: 'BOOT_FAILED',
       error: (caught as Error).message || 'Could not check provider setup.',
@@ -70,8 +73,22 @@ export function ProjectAgentDiscovery(props: {
 
   useEffect(() => {
     const resume = resumableProjectDiscoveryState(state);
-    if (resume && typeof sessionStorage !== 'undefined') sessionStorage.setItem(resumeKey, JSON.stringify(resume));
+    if (resume && typeof sessionStorage !== 'undefined') sessionStorage.setItem(resumeKey, serializeProjectDiscoveryResume(resume));
   }, [resumeKey, state]);
+
+  useEffect(() => {
+    if (!autoStartDirectCreate || modal !== null) return;
+    if (state.type === 'provider-required') {
+      setAutoStartDirectCreate(false);
+      setModal('provider');
+      setProviderRouteState(props.projectId, true);
+    } else if (state.type === 'ready') {
+      setAutoStartDirectCreate(false);
+      setModal('direct-create');
+    } else if (state.type === 'boot-error') {
+      setAutoStartDirectCreate(false);
+    }
+  }, [autoStartDirectCreate, modal, props.projectId, state.type]);
 
   const activeJob = state.type === 'scanning' || state.type === 'creating'
     || state.type === 'scan-failed' || state.type === 'creation-failed'
@@ -126,13 +143,14 @@ export function ProjectAgentDiscovery(props: {
     try {
       const options = await fetchAgentCreationOptions();
       dispatch({ type: 'PROVIDER_CONNECTED', provider, options });
+      if (props.startDirectCreate) setModal('direct-create');
     } catch (caught) {
       dispatch({ type: 'BOOT_FAILED', error: (caught as Error).message || 'Could not refresh available models.' });
     }
   };
 
   const scan = async () => {
-    if (!model || !modelReady || (state.type !== 'ready' && state.type !== 'scan-failed')) return;
+    if (!model || !modelReady || (state.type !== 'ready' && state.type !== 'scan-failed' && state.type !== 'suggestions')) return;
     dispatch({ type: 'SCAN_STARTED' });
     try {
       const { job } = await startProjectDiscoverySession(props.projectId, model);
@@ -170,7 +188,9 @@ export function ProjectAgentDiscovery(props: {
     else void scan();
   };
 
-  const currentStep = onboardingCurrentStep(state);
+  const providerReady = hasConfiguredProvider(setup?.provider.status);
+  const directCreateStage = props.startDirectCreate === true;
+  const currentStep = directCreateStage ? (providerReady ? 3 : 2) : onboardingCurrentStep(state);
   const modelOptions = projectDiscoveryModelOptions(setup?.options.providers ?? []).map((option) => {
     const provider = setup?.options.providers.find((candidate) => option.value.startsWith(`${candidate.id}:`));
     return provider?.custom
@@ -196,18 +216,30 @@ export function ProjectAgentDiscovery(props: {
         stepsLabel="First useful agent setup steps"
         steps={firstUsefulAgentSetupSteps({
           currentStep,
+          flow: directCreateStage ? 'new' : 'existing',
           projectDetail: projectLabel,
-          providerReady: hasConfiguredProvider(setup?.provider.status),
+          providerReady,
           scanDetail: 'Read-only',
-          createDetail: 'Review before scheduling',
+          createDetail: directCreateStage ? (providerReady ? 'Describe the job' : 'Next') : 'Review before scheduling',
+          ...(directCreateStage ? { runDetail: 'Test before scheduling' } : {}),
         })}
       >
-        <div class="eyebrow">{isCreationStage ? `Creating ${selectedSuggestion?.name ?? 'your agent'}` : props.existingAgents ? 'Add another useful agent' : 'Your first useful agent'}</div>
+        <div class="eyebrow">{directCreateStage ? 'Your first useful agent' : isCreationStage ? `Creating ${selectedSuggestion?.name ?? 'your agent'}` : props.existingAgents ? 'Add another useful agent' : 'Your first useful agent'}</div>
         <h2 id="project-discovery-title">
-          {isCreationStage ? 'Building your agent' : state.type === 'suggestions' ? 'Choose recurring work' : 'Find work worth automating'}
+          {directCreateStage
+            ? state.type === 'provider-required' ? 'Connect a model' : 'Create your first agent'
+            : isCreationStage ? 'Building your agent' : state.type === 'suggestions' ? 'Choose recurring work' : 'Find work worth automating'}
         </h2>
         <p class="onboarding-lede">
-          {state.type === 'booting'
+          {directCreateStage
+            ? state.type === 'booting'
+              ? 'Checking your providers and available models…'
+              : state.type === 'boot-error'
+                ? 'AgentUse could not prepare the agent creator.'
+                : state.type === 'provider-required'
+                  ? 'Connect a model, then describe the useful job you want this agent to handle.'
+                  : 'This project is empty, so there is nothing useful to scan yet. Describe the workflow you want to automate.'
+            : state.type === 'booting'
             ? 'Checking your providers and available models…'
             : state.type === 'boot-error'
               ? 'AgentUse could not prepare this onboarding flow.'
@@ -236,7 +268,7 @@ export function ProjectAgentDiscovery(props: {
             : `Read-only view · ${discovery.inspectedFiles} files available to the model`}</small>}
         </div>
 
-        {state.type === 'ready' && (
+        {!directCreateStage && state.type === 'ready' && (
           <div class="discovery-model-field">
             <span>{retryingCreation ? 'Creator model' : 'Analysis model'}</span>
             <div class="discovery-model-control">
@@ -264,7 +296,16 @@ export function ProjectAgentDiscovery(props: {
           </div>
         )}
 
-        {(state.type === 'provider-required' || state.type === 'ready') && (
+        {directCreateStage && (state.type === 'provider-required' || state.type === 'ready') && (
+          <div class="onboarding-actions">
+            <button type="button" class="onboarding-primary" onClick={state.type === 'provider-required' ? openProvider : () => setModal('direct-create')}>
+              {state.type === 'provider-required' ? 'Connect model' : 'Create your first agent'}
+            </button>
+            <span class="onboarding-assurance">Empty project · Start from the workflow you need</span>
+          </div>
+        )}
+
+        {!directCreateStage && (state.type === 'provider-required' || state.type === 'ready') && (
           <div class="onboarding-actions">
             <button type="button" class="onboarding-primary" disabled={state.type === 'ready' && !modelReady} onClick={continueFromSetup}>
               {state.type === 'provider-required' ? 'Connect provider' : !modelReady ? 'Choose a model to continue' : retryingCreation ? 'Try creating again' : retryingScan ? 'Scan again' : 'Scan this project'}
@@ -319,6 +360,7 @@ export function ProjectAgentDiscovery(props: {
             ))}
             <div class="agent-suggestion-footer">
               <p class="agent-suggestion-note">Schedules start paused. Test the agent, then turn it on when ready.</p>
+              <button type="button" class="onboarding-skip-link" onClick={() => void scan()}>Scan again</button>
               <a class="onboarding-skip-link" href="/agents" onClick={clearResume}>Open agent dashboard</a>
             </div>
           </div>
@@ -364,7 +406,7 @@ export function ProjectAgentDiscovery(props: {
       />
       <AgentCreateDialog
         open={modal === 'direct-create'}
-        title="create an agent directly"
+        title={props.startDirectCreate ? 'create your first agent' : 'create an agent directly'}
         initialProjectId={props.projectId}
         {...(model ? { initialModel: model } : {})}
         lockProject

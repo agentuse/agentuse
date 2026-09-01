@@ -7758,6 +7758,7 @@ export function createServeCommand(): Command {
                   inspectedFiles: view.inspectedFiles,
                   safeViewRoot: view.root,
                   availableSkills,
+                  existingAgents: view.existingAgents,
                 });
                 job.phase = 'running';
                 wakeListHubs();

@@ -6,11 +6,13 @@ import {
   onboardingDiscovery,
   onboardingSuggestion,
   parseProjectDiscoveryResume,
+  PROJECT_DISCOVERY_RESUME_VERSION,
   projectDiscoveryModelOptions,
   projectDiscoveryModelReady,
   projectDiscoveryReducer,
   projectSelectionReducer,
   resumableProjectDiscoveryState,
+  serializeProjectDiscoveryResume,
   type ProjectDiscoveryState,
 } from '../src/cli/serve/web/components/onboarding-machine';
 import type {
@@ -194,7 +196,7 @@ describe('project discovery onboarding machine', () => {
   it('restores an interrupted creation after reload with its suggestion intact', () => {
     const creating = projectDiscoveryReducer(suggestionsState(), { type: 'CREATION_STARTED', suggestion });
     const resume = resumableProjectDiscoveryState(creating);
-    const parsed = parseProjectDiscoveryResume(JSON.stringify(resume));
+    const parsed = resume ? parseProjectDiscoveryResume(serializeProjectDiscoveryResume(resume)) : null;
     const restored = parsed
       ? projectDiscoveryReducer(readyState(), { type: 'RESTORE', resume: parsed })
       : readyState();
@@ -211,11 +213,30 @@ describe('project discovery onboarding machine', () => {
     expect(parseProjectDiscoveryResume(JSON.stringify({ type: 'suggestions', model: null }))).toBeNull();
   });
 
+  it('invalidates browser recovery data from another discovery contract version', () => {
+    const resume = resumableProjectDiscoveryState(suggestionsState());
+    expect(resume).not.toBeNull();
+    const current = resume ? serializeProjectDiscoveryResume(resume) : '';
+    expect(parseProjectDiscoveryResume(current)?.type).toBe('suggestions');
+    const stale = JSON.stringify({
+      version: PROJECT_DISCOVERY_RESUME_VERSION - 1,
+      resume,
+    });
+    expect(parseProjectDiscoveryResume(stale)).toBeNull();
+  });
+
+  it('starts a fresh scan from completed suggestions', () => {
+    const rescanning = projectDiscoveryReducer(suggestionsState(), { type: 'SCAN_STARTED' });
+    expect(rescanning.type).toBe('scanning');
+    expect(onboardingDiscovery(rescanning)).toBeNull();
+    if (rescanning.type === 'scanning') expect(rescanning.job).toBeNull();
+  });
+
   it('restores a live scan session instead of restarting model work', () => {
     let state = projectDiscoveryReducer(readyState(), { type: 'SCAN_STARTED' });
     state = projectDiscoveryReducer(state, { type: 'SCAN_SESSION_STARTED', job });
     const resume = resumableProjectDiscoveryState(state);
-    const parsed = parseProjectDiscoveryResume(JSON.stringify(resume));
+    const parsed = resume ? parseProjectDiscoveryResume(serializeProjectDiscoveryResume(resume)) : null;
     const restored = parsed ? projectDiscoveryReducer(readyState(), { type: 'RESTORE', resume: parsed }) : readyState();
 
     expect(parsed?.type).toBe('scanning');
@@ -227,7 +248,7 @@ describe('project discovery onboarding machine', () => {
     let state = projectDiscoveryReducer(suggestionsState(), { type: 'CREATION_STARTED', suggestion });
     state = projectDiscoveryReducer(state, { type: 'CREATION_SESSION_STARTED', job: { ...job, kind: 'agent-creation' } });
     const resume = resumableProjectDiscoveryState(state);
-    const parsed = parseProjectDiscoveryResume(JSON.stringify(resume));
+    const parsed = resume ? parseProjectDiscoveryResume(serializeProjectDiscoveryResume(resume)) : null;
     const restored = parsed ? projectDiscoveryReducer(readyState(), { type: 'RESTORE', resume: parsed }) : readyState();
 
     expect(parsed?.type).toBe('creating');
@@ -266,9 +287,17 @@ describe('project selection onboarding machine', () => {
 
   it('moves directly into the attached project state without a page reload', () => {
     const project = { id: 'demo', path: '/tmp/demo', agentCount: 0, scheduleCount: 0 };
-    const state = projectSelectionReducer(initialProjectSelectionState('My agents'), { type: 'PROJECT_ATTACHED', project });
+    const state = projectSelectionReducer(initialProjectSelectionState('My agents'), { type: 'PROJECT_ATTACHED', project, origin: 'new' });
 
-    expect(state).toEqual({ type: 'attached', project });
+    expect(state).toEqual({ type: 'attached', project, origin: 'new' });
     expect(projectSelectionReducer(state, { type: 'BACK' })).toBe(state);
+  });
+
+  it('preserves whether an empty project was newly created or attached', () => {
+    const project = { id: 'demo', path: '/tmp/demo', agentCount: 0, scheduleCount: 0 };
+    const initial = initialProjectSelectionState('My agents');
+
+    expect(projectSelectionReducer(initial, { type: 'PROJECT_ATTACHED', project, origin: 'new' })).toMatchObject({ origin: 'new' });
+    expect(projectSelectionReducer(initial, { type: 'PROJECT_ATTACHED', project, origin: 'existing' })).toMatchObject({ origin: 'existing' });
   });
 });

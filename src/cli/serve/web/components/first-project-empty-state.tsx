@@ -1,7 +1,8 @@
 import { useEffect, useReducer } from 'preact/hooks';
 import { FIRST_PROJECT_DEFAULT_NAME } from '../../../../onboarding';
-import { attachExistingProject, createManagedProject, pickProjectFolder, reportOnboardingTelemetry } from '../lib/api';
+import { attachExistingProject, createManagedProject, reportOnboardingTelemetry } from '../lib/api';
 import { ProjectAgentDiscovery } from './project-agent-discovery';
+import { ProjectFolderField } from './project-folder-field';
 import { projectDiscoveryHref } from '../lib/links';
 import { firstUsefulAgentSetupSteps, OnboardingShell } from './onboarding-shell';
 import { initialProjectSelectionState, projectSelectionReducer } from './onboarding-machine';
@@ -21,7 +22,7 @@ export function FirstProjectEmptyState(props: { compact?: boolean; folderPickerA
           compact={props.compact}
           labelledBy="existing-project-title"
           stepsLabel="First useful agent setup steps"
-          steps={firstUsefulAgentSetupSteps({ currentStep: 1, projectDetail: project.about?.name ?? project.id })}
+          steps={firstUsefulAgentSetupSteps({ currentStep: 1, flow: 'existing', projectDetail: project.about?.name ?? project.id })}
         >
             <div class="eyebrow">Project ready</div>
             <h2 id="existing-project-title">This project already has {project.agentCount} {project.agentCount === 1 ? 'agent' : 'agents'}</h2>
@@ -41,7 +42,13 @@ export function FirstProjectEmptyState(props: { compact?: boolean; folderPickerA
         </OnboardingShell>
       );
     }
-    return <ProjectAgentDiscovery projectId={project.id} {...(project.about?.name ? { projectName: project.about.name } : {})} projectPath={project.path} {...(props.compact ? { compact: true } : {})} />;
+    return <ProjectAgentDiscovery
+      projectId={project.id}
+      {...(project.about?.name ? { projectName: project.about.name } : {})}
+      projectPath={project.path}
+      {...(state.origin === 'new' ? { startDirectCreate: true } : {})}
+      {...(props.compact ? { compact: true } : {})}
+    />;
   }
 
   const busy = (state.type === 'new' && state.submitting)
@@ -56,7 +63,7 @@ export function FirstProjectEmptyState(props: { compact?: boolean; folderPickerA
     try {
       const result = await createManagedProject(state.name.trim());
       reportOnboardingTelemetry({ event: 'onboarding_step_completed', step: 'project_created' });
-      dispatch({ type: 'PROJECT_ATTACHED', project: result.project });
+      dispatch({ type: 'PROJECT_ATTACHED', project: result.project, origin: 'new' });
     } catch (err) {
       reportOnboardingTelemetry({ event: 'onboarding_step_failed', step: 'project_created', error_code: 'project_create_failed' });
       dispatch({ type: 'FAILED', error: (err as Error).message });
@@ -70,21 +77,10 @@ export function FirstProjectEmptyState(props: { compact?: boolean; folderPickerA
     try {
       const result = await attachExistingProject(state.path.trim());
       reportOnboardingTelemetry({ event: 'onboarding_step_completed', step: 'project_created' });
-      dispatch({ type: 'PROJECT_ATTACHED', project: result.project });
+      dispatch({ type: 'PROJECT_ATTACHED', project: result.project, origin: 'existing' });
     } catch (err) {
       reportOnboardingTelemetry({ event: 'onboarding_step_failed', step: 'project_created', error_code: 'project_create_failed' });
       dispatch({ type: 'FAILED', error: (err as Error).message });
-    }
-  };
-
-  const chooseFolder = async () => {
-    if (state.type !== 'existing' || state.activity !== 'idle') return;
-    dispatch({ type: 'FOLDER_PICK_STARTED' });
-    try {
-      const selected = await pickProjectFolder();
-      dispatch({ type: 'FOLDER_PICKED', path: selected });
-    } catch (err) {
-      dispatch({ type: 'FAILED', error: (err as Error).message || 'Could not open the folder chooser.' });
     }
   };
 
@@ -94,7 +90,10 @@ export function FirstProjectEmptyState(props: { compact?: boolean; folderPickerA
       compact={props.compact}
       labelledBy="first-project-title"
       stepsLabel="First useful agent setup steps"
-      steps={firstUsefulAgentSetupSteps({ currentStep: 1 })}
+      steps={firstUsefulAgentSetupSteps({
+        currentStep: 1,
+        flow: state.type === 'new' ? 'new' : state.type === 'existing' ? 'existing' : 'choose',
+      })}
     >
         <div class="eyebrow">Get started</div>
         {props.compact ? <h2 id="first-project-title">Build your first agent</h2> : <h1 id="first-project-title">Build your first agent</h1>}
@@ -133,11 +132,18 @@ export function FirstProjectEmptyState(props: { compact?: boolean; folderPickerA
 
         {state.type === 'existing' && (
           <form class="first-project-form" onSubmit={attachExisting}>
-            <label for="existing-project-path">Project folder path</label>
-            <div class="first-project-field-row">
-              <input id="existing-project-path" value={state.path} placeholder="Choose a folder or enter its path" autofocus disabled={busy || choosing} onInput={(event) => dispatch({ type: 'PATH_CHANGED', path: event.currentTarget.value })} />
-              {props.folderPickerAvailable && <button type="button" class="onboarding-secondary" disabled={busy || choosing} aria-busy={choosing} onClick={() => void chooseFolder()}>{choosing ? 'Choosing…' : 'Choose folder…'}</button>}
-            </div>
+            <ProjectFolderField
+              id="existing-project-path"
+              value={state.path}
+              pickerAvailable={props.folderPickerAvailable === true}
+              autofocus
+              disabled={busy || choosing}
+              onChange={(path) => dispatch({ type: 'PATH_CHANGED', path })}
+              onPickingChange={(picking) => dispatch(picking
+                ? { type: 'FOLDER_PICK_STARTED' }
+                : { type: 'FOLDER_PICKED', path: null })}
+              onError={(message) => dispatch({ type: 'FAILED', error: message })}
+            />
             <div class="first-project-footer">
               <small>The folder stays in place. The next step is read-only.</small>
               <div class="first-project-actions">

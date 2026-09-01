@@ -75,6 +75,12 @@ function agentIdFromPath(path: string): string {
   return path.replace(/\.agentuse$/, '');
 }
 
+export function firstAgentRunTutorialCopy(hasSchedule: boolean): { progress: string | null; action: 'Next' | 'Done' } {
+  return hasSchedule
+    ? { progress: '1 of 2', action: 'Next' }
+    : { progress: null, action: 'Done' };
+}
+
 function Chip(props: { children: ComponentChildren; tone?: 'cyan' | 'amber' | 'muted'; title?: string }) {
   return <span class={`cap-chip${props.tone ? ` ${props.tone}` : ''}`} {...(props.title ? { title: props.title } : {})}>{props.children}</span>;
 }
@@ -461,6 +467,8 @@ export default function AgentDetail() {
     if (data && tutorialStep === 'schedule' && !data.schedule) finishTutorial();
   }, [data, tutorialStep]);
 
+  const runTutorialCopy = firstAgentRunTutorialCopy(Boolean(data?.schedule));
+
   return (
     <div class="page-agent-detail">
       <main>
@@ -498,10 +506,10 @@ export default function AgentDetail() {
                     </button>
                     {tutorialStep === 'run' && (
                       <div class="first-agent-spotlight-card" role="dialog" aria-modal="true" aria-label="Run your first agent">
-                        <small>1 of 2</small>
+                        {runTutorialCopy.progress && <small>{runTutorialCopy.progress}</small>}
                         <strong>Test it manually</strong>
                         <span id="first-agent-run-tutorial-copy">Run once and review the result.</span>
-                        <button ref={tutorialActionRef} type="button" onClick={advanceTutorial}>Next</button>
+                        <button ref={tutorialActionRef} type="button" onClick={data.schedule ? advanceTutorial : finishTutorial}>{runTutorialCopy.action}</button>
                       </div>
                     )}
                   </div>

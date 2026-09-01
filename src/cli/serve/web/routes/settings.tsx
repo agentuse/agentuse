@@ -1,4 +1,3 @@
-import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { ThemeToggle } from '../components/theme-toggle';
 import { useTitle } from '../hooks/use-title';
@@ -8,28 +7,8 @@ import { HOME_SECTIONS, useHomeSections } from '../hooks/use-home-sections';
 import { usePushBell } from '../hooks/use-push';
 import { debugSettingsEnabled, requestUpdatePreview } from '../lib/update-preview';
 import { ProviderSettingsGroup } from '../components/provider-setup';
-import { fetchInfo, removeProject, type InfoPayload } from '../lib/api';
-
-function Group(props: { title: string; children: ComponentChildren }) {
-  return (
-    <section class="settings-group">
-      <h2 class="settings-group-title">{props.title}</h2>
-      {props.children}
-    </section>
-  );
-}
-
-function Row(props: { label: string; hint?: string; children?: ComponentChildren }) {
-  return (
-    <div class="settings-row">
-      <div class="settings-row-text">
-        <div class="settings-row-label">{props.label}</div>
-        {props.hint && <div class="settings-row-hint">{props.hint}</div>}
-      </div>
-      {props.children && <div class="settings-row-control">{props.children}</div>}
-    </div>
-  );
-}
+import { ProjectsSettingsGroup, RestartOnboardingGroup } from '../components/project-settings';
+import { SettingsGroup as Group, SettingsRow as Row } from '../components/settings-layout';
 
 /** Two per-category checkboxes when push can work here; otherwise a single
  *  explanation of what stands in the way (mirrors the push-bell dialogs). */
@@ -93,76 +72,6 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
 function settingsTabFromSearch(search: string): SettingsTab {
   const candidate = new URLSearchParams(search).get('tab');
   return candidate === 'projects' || candidate === 'providers' ? candidate : 'general';
-}
-
-function ProjectsSettingsGroup() {
-  const [info, setInfo] = useState<InfoPayload | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [removing, setRemoving] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = async () => {
-    const next = await fetchInfo();
-    setInfo(next);
-  };
-
-  useEffect(() => {
-    refresh().catch((err) => setError((err as Error).message)).finally(() => setLoading(false));
-  }, []);
-
-  const remove = async (projectId: string, label: string) => {
-    if (removing || !confirm(`Remove “${label}” from AgentUse?\n\nThe project folder and its files will stay on disk.`)) return;
-    setRemoving(projectId);
-    setError(null);
-    try {
-      await removeProject(projectId);
-      await refresh();
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setRemoving(null);
-    }
-  };
-
-  return (
-    <>
-      <Group title="Create or connect a project">
-        <div class="guided-creation-settings">
-          <p class="settings-group-hint">Start fresh or connect an existing folder, then build an agent step by step.</p>
-          <button type="button" class="settings-item" onClick={() => location.assign('/onboarding')}>
-            Add project
-          </button>
-        </div>
-      </Group>
-      <Group title="Projects">
-        <p class="settings-group-hint">Projects connected to this server. Removing one leaves its files untouched.</p>
-        <div class="project-settings-list" aria-live="polite">
-          {loading && <div class="project-settings-empty">Loading projects…</div>}
-          {!loading && info?.projects.length === 0 && <div class="project-settings-empty">No projects are connected yet.</div>}
-          {info?.projects.map((project) => {
-            const label = project.about?.name ?? project.id;
-            return (
-              <div class="project-settings-row" key={project.id}>
-                <div class="project-settings-copy">
-                  <a href={`/agents/${encodeURIComponent(project.id)}`}>{label}</a>
-                  <code title={project.scope ?? project.path}>{project.scope ?? project.path}</code>
-                  <small>{project.agentCount} {project.agentCount === 1 ? 'agent' : 'agents'} · {project.scheduleCount} {project.scheduleCount === 1 ? 'schedule' : 'schedules'}{info.default === project.id ? ' · Default' : ''}</small>
-                </div>
-                <button
-                  type="button"
-                  class="project-settings-remove"
-                  disabled={removing !== null}
-                  aria-busy={removing === project.id}
-                  onClick={() => void remove(project.id, label)}
-                >{removing === project.id ? 'Removing…' : 'Remove'}</button>
-              </div>
-            );
-          })}
-        </div>
-        {error && <div class="project-settings-error" role="alert">{error}</div>}
-      </Group>
-    </>
-  );
 }
 
 export default function Settings() {
@@ -264,6 +173,8 @@ export default function Settings() {
                   </Row>
                 </Group>
               )}
+
+              <RestartOnboardingGroup />
 
               <Group title="Appearance">
                 <Row label="Theme" hint="Light, dark, or follow the system.">
