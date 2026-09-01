@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pendingApprovalCount, pendingApprovalTitle, pendingApprovalTooltip, type ApprovalBucketsPayload } from "./approval-status";
 import { bundledCliCommand } from "./bundled-cli";
-import { createEditMenu, createNavigationMenu, createTrayMenu, type FindCommands, type NavigationCommands } from "./menus";
+import { createEditMenu, createNavigationMenu, createTrayMenu, createViewMenu, type FindCommands, type NavigationCommands, type SidebarCommands } from "./menus";
 import { parseNotificationFrames, type NativeNotificationEvent } from "./notification-stream";
 import { encodeNativeSettingsMessage, isNativeSettingsPipeClosure, parseNativeSettingsCommand, type NativeSettingsMessage } from "./native-settings";
 import {
@@ -1252,6 +1252,20 @@ const findCommands: FindCommands = {
   open: focusSessionLogSearch,
 };
 
+function toggleDashboardSidebar(): void {
+  if (window && !window.isDestroyed() && window.isVisible()) {
+    void window.webContents.executeJavaScript("window.dispatchEvent(new Event('agentuse:toggle-sidebar'))");
+    return;
+  }
+  void showDashboard().then(() => window?.webContents.executeJavaScript(
+    "window.dispatchEvent(new Event('agentuse:toggle-sidebar'))"
+  ));
+}
+
+const sidebarCommands: SidebarCommands = {
+  toggle: toggleDashboardSidebar,
+};
+
 function refreshTrayMenu(): void {
   trayMenu = Menu.buildFromTemplate(createTrayMenu({
     showDashboard: () => void showPrimaryWindow(),
@@ -1279,6 +1293,7 @@ function refreshApplicationMenu(): void {
       ],
     },
     createEditMenu(findCommands),
+    createViewMenu(sidebarCommands),
     createNavigationMenu(navigationCommands),
   ]));
 }

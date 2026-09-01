@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'bun:test';
 import { renderToString } from 'preact-render-to-string';
 import { LogEntry } from '../src/cli/serve/web/components/log-entry';
-import { navigationPageForPath } from '../src/cli/serve/web/components/app-shell';
+import {
+  DEFAULT_SIDEBAR_WIDTH,
+  MAX_SIDEBAR_WIDTH,
+  MIN_SIDEBAR_WIDTH,
+  clampSidebarWidth,
+  isSidebarToggleShortcut,
+  navigationPageForPath,
+} from '../src/cli/serve/web/components/app-shell';
 import { pendingNewestFirst, PendingApprovalGroups, PendingApprovalRow } from '../src/cli/serve/web/components/pending-approval-card';
 import { StoreTable, type StoreTableColumn } from '../src/cli/serve/web/components/store-table';
 import { ContinuePanel } from '../src/cli/serve/web/components/continue-panel';
@@ -280,6 +287,26 @@ describe('Application sidebar navigation', () => {
     expect(navigationPageForPath('/stores/shared/item-1')).toBe('stores');
     expect(navigationPageForPath('/approvals')).toBe('approvals');
     expect(navigationPageForPath('/settings')).toBeUndefined();
+  });
+});
+
+describe('Application sidebar sizing', () => {
+  it('keeps the default width within the supported range', () => {
+    expect(DEFAULT_SIDEBAR_WIDTH).toBeGreaterThan(MIN_SIDEBAR_WIDTH);
+    expect(DEFAULT_SIDEBAR_WIDTH).toBeLessThan(MAX_SIDEBAR_WIDTH);
+  });
+
+  it('rounds widths and clamps drag values to the supported range', () => {
+    expect(clampSidebarWidth(253.6)).toBe(254);
+    expect(clampSidebarWidth(20)).toBe(MIN_SIDEBAR_WIDTH);
+    expect(clampSidebarWidth(900)).toBe(MAX_SIDEBAR_WIDTH);
+  });
+
+  it('recognizes the platform sidebar shortcut without matching plain typing', () => {
+    expect(isSidebarToggleShortcut({ key: 'b', metaKey: true, ctrlKey: false, altKey: false })).toBe(true);
+    expect(isSidebarToggleShortcut({ key: 'B', metaKey: false, ctrlKey: true, altKey: false })).toBe(true);
+    expect(isSidebarToggleShortcut({ key: 'b', metaKey: false, ctrlKey: false, altKey: false })).toBe(false);
+    expect(isSidebarToggleShortcut({ key: 'b', metaKey: true, ctrlKey: false, altKey: true })).toBe(false);
   });
 });
 

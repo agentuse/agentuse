@@ -7966,6 +7966,34 @@ button.ctx-result[aria-expanded="true"] .ctx-chevron { transform: rotate(180deg)
   color: var(--fg);
   transition: width 180ms ease, padding 180ms ease, border-color 180ms ease, opacity 120ms ease, transform 180ms ease;
 }
+.sidebar-resize-handle {
+  position: absolute;
+  inset: 0 -4px 0 auto;
+  z-index: 3;
+  width: 8px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+.sidebar-resize-handle::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 3px;
+  width: 2px;
+  background: var(--cyan);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.sidebar-resize-handle:hover::after,
+.sidebar-resize-handle:focus-visible::after,
+.is-resizing-sidebar .sidebar-resize-handle::after { opacity: 0.72; }
+.sidebar-resize-handle:focus-visible { outline: none; }
+.is-resizing-sidebar,
+.is-resizing-sidebar * { cursor: col-resize !important; user-select: none !important; }
 .sidebar-brand-row {
   display: flex;
   align-items: center;
@@ -8121,6 +8149,7 @@ button.ctx-result[aria-expanded="true"] .ctx-chevron { transform: rotate(180deg)
   opacity: 0;
   pointer-events: none;
 }
+.app-shell[data-sidebar-collapsed="true"] .sidebar-resize-handle { display: none; }
 
 .app-sidebar a:focus-visible,
 .app-sidebar button:focus-visible,
@@ -8206,6 +8235,7 @@ button.ctx-result[aria-expanded="true"] .ctx-chevron { transform: rotate(180deg)
     transform: translateX(-18%);
     box-shadow: none;
   }
+  .sidebar-resize-handle { display: none; }
   .app-sidebar.is-open { opacity: 1; transform: translateX(0); }
   .sidebar-scrim {
     position: fixed;

@@ -8,6 +8,10 @@ import { WORDMARK_SVG } from '../../brand';
 
 const IS_APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 const SIDEBAR_PREF_KEY = 'agentuse-sidebar-collapsed';
+const SIDEBAR_WIDTH_PREF_KEY = 'agentuse-sidebar-width';
+export const DEFAULT_SIDEBAR_WIDTH = 224;
+export const MIN_SIDEBAR_WIDTH = 180;
+export const MAX_SIDEBAR_WIDTH = 360;
 
 export type NavigationPage = 'home' | 'agents' | 'sessions' | 'schedules' | 'stores' | 'approvals';
 
@@ -21,6 +25,14 @@ export function navigationPageForPath(pathname: string): NavigationPage | undefi
   return undefined;
 }
 
+export function clampSidebarWidth(width: number): number {
+  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, Math.round(width)));
+}
+
+export function isSidebarToggleShortcut(event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey'>): boolean {
+  return !event.altKey && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'b';
+}
+
 function readSidebarPreference(): boolean {
   try {
     return localStorage.getItem(SIDEBAR_PREF_KEY) === 'true';
@@ -32,6 +44,23 @@ function readSidebarPreference(): boolean {
 function writeSidebarPreference(collapsed: boolean): void {
   try {
     localStorage.setItem(SIDEBAR_PREF_KEY, String(collapsed));
+  } catch {
+    // Restricted browser contexts may deny storage. The current window still works.
+  }
+}
+
+function readSidebarWidth(): number {
+  try {
+    const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_PREF_KEY));
+    return Number.isFinite(stored) && stored > 0 ? clampSidebarWidth(stored) : DEFAULT_SIDEBAR_WIDTH;
+  } catch {
+    return DEFAULT_SIDEBAR_WIDTH;
+  }
+}
+
+function writeSidebarWidth(width: number): void {
+  try {
+    localStorage.setItem(SIDEBAR_WIDTH_PREF_KEY, String(clampSidebarWidth(width)));
   } catch {
     // Restricted browser contexts may deny storage. The current window still works.
   }
@@ -88,10 +117,38 @@ export function AppShell({ children }: { children: ComponentChildren }) {
   const approvals = useGlobalApprovals();
   const pending = approvals.data?.buckets.pending.length ?? 0;
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => isDesktop && readSidebarPreference());
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarPreference);
+  const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
   const [navigationState, setNavigationState] = useState({ canGoBack: false, canGoForward: false });
   const drawerRef = useRef<HTMLElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+
+  const toggleSidebar = () => {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      writeSidebarPreference(next);
+      return next;
+    });
+  };
+
+  useEffect(() => () => resizeCleanupRef.current?.(), []);
+
+  useEffect(() => {
+    if (isMobile) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isSidebarToggleShortcut(event)) return;
+      event.preventDefault();
+      toggleSidebar();
+    };
+    const onNativeToggle = () => toggleSidebar();
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('agentuse:toggle-sidebar', onNativeToggle);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('agentuse:toggle-sidebar', onNativeToggle);
+    };
+  }, [isMobile]);
 
   useEffect(() => {
     if (drawerOpen) {
@@ -152,15 +209,54 @@ export function AppShell({ children }: { children: ComponentChildren }) {
     };
   }, [isDesktop]);
 
-  const toggleSidebar = () => {
-    const next = !sidebarCollapsed;
-    setSidebarCollapsed(next);
-    writeSidebarPreference(next);
-  };
-
   const closeDrawer = (restoreMenuFocus = false) => {
     setDrawerOpen(false);
     if (restoreMenuFocus) requestAnimationFrame(() => menuButtonRef.current?.focus());
+  };
+
+  const startSidebarResize = (event: PointerEvent) => {
+    if (isMobile || sidebarCollapsed) return;
+    event.preventDefault();
+    resizeCleanupRef.current?.();
+    let nextWidth = sidebarWidth;
+    const onMove = (moveEvent: PointerEvent) => {
+      nextWidth = clampSidebarWidth(moveEvent.clientX);
+      setSidebarWidth(nextWidth);
+    };
+    const cleanup = () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', finish);
+      document.removeEventListener('pointercancel', finish);
+      document.documentElement.classList.remove('is-resizing-sidebar');
+      resizeCleanupRef.current = null;
+    };
+    const finish = () => {
+      writeSidebarWidth(nextWidth);
+      cleanup();
+    };
+    resizeCleanupRef.current = cleanup;
+    document.documentElement.classList.add('is-resizing-sidebar');
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', finish);
+    document.addEventListener('pointercancel', finish);
+  };
+
+  const resizeSidebarWithKeyboard = (event: KeyboardEvent) => {
+    let nextWidth: number | undefined;
+    if (event.key === 'ArrowLeft') nextWidth = sidebarWidth - 12;
+    if (event.key === 'ArrowRight') nextWidth = sidebarWidth + 12;
+    if (event.key === 'Home') nextWidth = MIN_SIDEBAR_WIDTH;
+    if (event.key === 'End') nextWidth = MAX_SIDEBAR_WIDTH;
+    if (nextWidth === undefined) return;
+    event.preventDefault();
+    const clamped = clampSidebarWidth(nextWidth);
+    setSidebarWidth(clamped);
+    writeSidebarWidth(clamped);
+  };
+
+  const resetSidebarWidth = () => {
+    setSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
+    writeSidebarWidth(DEFAULT_SIDEBAR_WIDTH);
   };
 
   const skipToContent = (event: Event) => {
@@ -189,12 +285,13 @@ export function AppShell({ children }: { children: ComponentChildren }) {
       data-desktop={isDesktop ? 'true' : 'false'}
       data-sidebar-collapsed={sidebarCollapsed ? 'true' : 'false'}
       data-drawer-open={drawerOpen ? 'true' : 'false'}
+      style={{ '--app-sidebar-width': `${sidebarWidth}px` }}
     >
       <a class="skip-link" href="#" onClick={skipToContent}>Skip to content</a>
       <header class="topbar app-toolbar">
         {isDesktop ? (
           <>
-            <button type="button" class="toolbar-button sidebar-toggle" aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'} aria-expanded={!sidebarCollapsed} onClick={toggleSidebar}><SidebarIcon /></button>
+            <button type="button" class="toolbar-button sidebar-toggle" aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'} aria-keyshortcuts="Meta+B Control+B" aria-expanded={!sidebarCollapsed} title="Toggle sidebar (⌘B)" onClick={toggleSidebar}><SidebarIcon /></button>
             <button type="button" class="toolbar-button" aria-label="Back" disabled={!navigationState.canGoBack} onClick={() => window.agentuseDesktop?.goBack?.()}><BackIcon /></button>
             <button type="button" class="toolbar-button" aria-label="Forward" disabled={!navigationState.canGoForward} onClick={() => window.agentuseDesktop?.goForward?.()}><BackIcon forward /></button>
             <span class="toolbar-drag-region" aria-hidden="true" />
@@ -247,6 +344,21 @@ export function AppShell({ children }: { children: ComponentChildren }) {
             <SettingsIcon /><span>settings</span>
           </a>
         </div>
+        <button
+          type="button"
+          class="sidebar-resize-handle"
+          role="separator"
+          aria-label="Resize sidebar"
+          aria-controls="app-sidebar"
+          aria-orientation="vertical"
+          aria-valuemin={MIN_SIDEBAR_WIDTH}
+          aria-valuemax={MAX_SIDEBAR_WIDTH}
+          aria-valuenow={sidebarWidth}
+          title="Drag to resize · double-click to reset"
+          onPointerDown={startSidebarResize}
+          onKeyDown={resizeSidebarWithKeyboard}
+          onDblClick={resetSidebarWidth}
+        />
       </aside>
 
       <div class="app-route">{children}</div>

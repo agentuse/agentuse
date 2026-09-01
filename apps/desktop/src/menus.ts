@@ -11,6 +11,10 @@ export interface FindCommands {
   open(): void;
 }
 
+export interface SidebarCommands {
+  toggle(): void;
+}
+
 export interface TrayMenuCommands {
   showDashboard(): void;
   showSettings(): void;
@@ -47,6 +51,15 @@ export function createEditMenu(find: FindCommands): MenuItemConstructorOptions {
           { label: "Find…", accelerator: "Command+F", click: find.open },
         ],
       },
+    ],
+  };
+}
+
+export function createViewMenu(sidebar: SidebarCommands): MenuItemConstructorOptions {
+  return {
+    label: "View",
+    submenu: [
+      { label: "Toggle Sidebar", accelerator: "Command+B", click: sidebar.toggle },
     ],
   };
 }

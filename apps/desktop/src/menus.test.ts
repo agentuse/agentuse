@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { MenuItemConstructorOptions } from "electron";
-import { createEditMenu, createNavigationMenu, createTrayMenu } from "./menus";
+import { createEditMenu, createNavigationMenu, createTrayMenu, createViewMenu } from "./menus";
 
 describe("desktop application menus", () => {
   it("keeps the menu-bar menu focused on dashboard, settings, and quit", () => {
@@ -46,6 +46,17 @@ describe("desktop application menus", () => {
     expect(items.map((item) => item.accelerator)).toEqual(["Command+F"]);
     items[0]?.click?.({} as never, undefined as never, {} as never);
     expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("provides the standard sidebar shortcut in the View menu", () => {
+    const toggle = mock(() => undefined);
+    const menu = createViewMenu({ toggle });
+    const [item] = menu.submenu as MenuItemConstructorOptions[];
+
+    expect(item?.label).toBe("Toggle Sidebar");
+    expect(item?.accelerator).toBe("Command+B");
+    item?.click?.({} as never, undefined as never, {} as never);
+    expect(toggle).toHaveBeenCalledTimes(1);
   });
 
   it("reflects navigation availability and delegates navigation", () => {
