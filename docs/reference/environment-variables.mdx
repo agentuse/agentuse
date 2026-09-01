@@ -3,6 +3,25 @@ title: Environment Variables
 description: Environment variables used by AgentUse
 ---
 
+## Configuration Profile
+
+<ParamField path="AGENTUSE_CONFIG_DIR" type="string" default="~/.agentuse">
+  Directory containing AgentUse's user-controlled `config.json`, `.env`,
+  managed `projects/`, user-global `plugins/`, and user-global `skills/`. Set
+  this together with `AGENTUSE_DATA_DIR` when isolating a test or development
+  server.
+
+  ```bash
+  export AGENTUSE_CONFIG_DIR="/tmp/agentuse-test/config"
+  export AGENTUSE_DATA_DIR="/tmp/agentuse-test/data"
+  ```
+
+  The older `AGENTUSE_CONFIG` and `AGENTUSE_ENV` file-level overrides are
+  deprecated compatibility controls. When present they take precedence for
+  their respective file and are scheduled for removal no earlier than
+  December 1, 2026.
+</ParamField>
+
 ## API Configuration
 
 These environment variables are required for authenticating with AI providers.
@@ -452,24 +471,40 @@ Large tool results are re-sent to the model on every subsequent step, so a singl
 
 ## Storage
 
+<ParamField path="AGENTUSE_DATA_DIR" type="string" default="~/.local/share/agentuse">
+  Exact directory containing AgentUse-owned durable data: provider credentials,
+  sessions, learnings, schedules, server registry and logs, push state,
+  telemetry identity, and update state.
+
+  ```bash
+  export AGENTUSE_DATA_DIR="/custom/agentuse-data"
+  ```
+
+  AgentUse does not append another `agentuse/` component to this path. This
+  variable takes precedence over `XDG_DATA_HOME`.
+</ParamField>
+
 <ParamField path="XDG_DATA_HOME" type="string">
-  Override the default data directory for session logs and project data.
-  Default: `~/.local/share`
+  Standards-compatible fallback base directory. AgentUse uses
+  `$XDG_DATA_HOME/agentuse` only when `AGENTUSE_DATA_DIR` is unset. Default XDG
+  base: `~/.local/share`.
 
   ```bash
   export XDG_DATA_HOME="/custom/data/path"
   ```
 
-  Everything a run generates is stored per project, under a directory keyed by a digest of the git root:
+  Everything a run generates is stored per project, under the resolved
+  AgentUse data directory:
 
   ```
-  $XDG_DATA_HOME/agentuse/project/{git-hash}/
+  $AGENTUSE_DATA_DIR/project/{git-hash}/
   ├── session/          # execution logs
   ├── learnings/        # agent learnings
   └── consolidations/   # undo snapshots for `agentuse learnings tidy`
   ```
 
-  Pointing this at a scratch directory therefore isolates a development daemon's sessions and learnings from your own.
+  For a fully isolated development daemon, set `AGENTUSE_DATA_DIR` and
+  `AGENTUSE_CONFIG_DIR`. Existing XDG-based integrations remain compatible.
 
   See [Session Logs](/guides/session-logs) and [Learning](/guides/learning) for more details.
 </ParamField>

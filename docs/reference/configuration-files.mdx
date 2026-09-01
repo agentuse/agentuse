@@ -14,12 +14,14 @@ AgentUse reads configuration from agent files, environment files, global default
 | `.env` | Project | Environment variables for API keys, model providers, MCP servers, and runtime behavior |
 | `--env-file <path>` | Run command | Load a specific environment file for `agentuse run` |
 | `~/.agentuse/config.json` | User | Global `agentuse serve` defaults and an `env` block of variable defaults |
-| `AGENTUSE_CONFIG=/path/to/config.json` | Process | Override the global config file path |
+| `AGENTUSE_CONFIG_DIR=/path/to/profile` | Process | Override the directory containing user-global config, env, managed projects, plugins, and skills |
+| `AGENTUSE_CONFIG=/path/to/config.json` | Process | Deprecated file-level config override; compatibility only |
+| `AGENTUSE_ENV=/path/to/.env` | Process | Deprecated file-level env override; compatibility only |
 | `ABOUT.md` | Directory | Optional dashboard identity and description for the project or folder containing it |
 | `.agentuse/plugins/*.{ts,js}` | Project | Project-local plugins |
-| `~/.agentuse/plugins/*.{ts,js}` | User | User-global plugins |
+| `$AGENTUSE_CONFIG_DIR/plugins/*.{ts,js}` | User | User-global plugins; defaults to `~/.agentuse/plugins/*.{ts,js}` |
 | `.agentuse/skills/` | Project | Project-local skills |
-| `~/.agentuse/skills/` | User | User-global skills |
+| `$AGENTUSE_CONFIG_DIR/skills/` | User | User-global skills; defaults to `~/.agentuse/skills/` |
 | `.claude/skills/` | Project | Claude ecosystem skill compatibility |
 | `~/.claude/skills/` | User | Claude ecosystem skill compatibility |
 | `~/.agents/skills/` | User | Shared agent skills compatibility |
@@ -105,7 +107,9 @@ Put long-lived `agentuse serve` defaults in `~/.agentuse/config.json`:
 }
 ```
 
-Use `AGENTUSE_CONFIG=/path/to/config.json` to load a different file. Project paths may start with `~` or `~/`.
+Use `AGENTUSE_CONFIG_DIR=/path/to/profile` to isolate the complete configuration profile. AgentUse reads `config.json` and `.env` from that directory and uses its `projects/`, `plugins/`, and `skills/` subdirectories for user-global resources. Project paths inside `config.json` may start with `~` or `~/`.
+
+`AGENTUSE_CONFIG` and `AGENTUSE_ENV` remain as deprecated file-level overrides for compatibility and take precedence over `AGENTUSE_CONFIG_DIR` when set. They are scheduled for removal no earlier than December 1, 2026; new integrations should use only `AGENTUSE_CONFIG_DIR`.
 
 AgentUse runs one serve daemon at a time. Put every project that should accept `/run`, approval, and notification traffic into `serve.projects`, or pass repeated `-C` flags when starting the daemon.
 
@@ -229,7 +233,7 @@ model: "@fast"
 
 Aliases are resolved when the agent file is parsed. A fallback alias keeps its ordered concrete candidates until execution. Session logs, cost accounting, and context limits record the concrete model that actually ran. A suspended run first resumes on its last selected model, even if the alias has since changed, and can advance through the remaining persisted candidates if that resumed segment fails before producing new output or invoking a tool.
 
-To point a repo at its own aliases rather than your user-global ones, set `AGENTUSE_CONFIG` to a config file inside the repo.
+To point a repo at its own aliases rather than your user-global ones, put `config.json` in a dedicated directory and set `AGENTUSE_CONFIG_DIR` to that directory.
 
 Run `agentuse models` to see every alias and what it currently resolves to.
 
@@ -238,7 +242,7 @@ Run `agentuse models` to see every alias and what it currently resolves to.
 Plugins are TypeScript or JavaScript modules loaded from these directories:
 
 1. `.agentuse/plugins/*.{ts,js}`
-2. `~/.agentuse/plugins/*.{ts,js}`
+2. `$AGENTUSE_CONFIG_DIR/plugins/*.{ts,js}` (defaults to `~/.agentuse/plugins/*.{ts,js}`)
 
 Project plugins load before user-global plugins.
 
@@ -249,12 +253,12 @@ See [Plugins](/guides/plugins) for the plugin API.
 Skills are reusable instruction packs stored as `SKILL.md` files. AgentUse discovers skills in this order:
 
 1. `.agentuse/skills/`
-2. `~/.agentuse/skills/`
+2. `$AGENTUSE_CONFIG_DIR/skills/` (defaults to `~/.agentuse/skills/`)
 3. `.claude/skills/`
 4. `~/.claude/skills/`
 5. `~/.agents/skills/`
 
-Use `.agentuse/skills/` for project-specific skills and `~/.agentuse/skills/` for personal skills shared across projects. The `.claude/skills/` locations provide compatibility with existing Claude skills, while `~/.agents/skills/` supports the shared agent-skills convention. Symlinked skill directories and `SKILL.md` files are supported; dangling links are skipped and circular directory links are ignored safely.
+Use `.agentuse/skills/` for project-specific skills and `$AGENTUSE_CONFIG_DIR/skills/` for personal skills shared across projects. The latter defaults to `~/.agentuse/skills/`. The `.claude/skills/` locations provide compatibility with existing Claude skills, while `~/.agents/skills/` supports the shared agent-skills convention. Symlinked skill directories and `SKILL.md` files are supported; dangling links are skipped and circular directory links are ignored safely.
 
 See [Skills](/guides/skills) for authoring and discovery details.
 
@@ -267,12 +271,14 @@ These files are generated by features rather than hand-written as primary config
 | `{agent-name}.store.json` | Store | Stores persistent key-value data for the agent |
 | `.agentuse/sandbox/` | Sandbox | Stores sandbox-related working data |
 | `.agentuse/benchmark/` | Benchmark | Stores local benchmark suites and results |
-| `$XDG_DATA_HOME/agentuse/` | Session logging, Learning | Per-project state, defaulting to `~/.local/share/agentuse/` |
+| `$AGENTUSE_DATA_DIR/` | AgentUse runtime | Credentials, sessions, learnings, schedules, registry, logs, push, telemetry, and update state; defaults to `~/.local/share/agentuse/` |
+
+Configuration and durable application data have separate roots. `AGENTUSE_CONFIG_DIR` moves user-controlled configuration; `AGENTUSE_DATA_DIR` moves AgentUse-owned data. `XDG_DATA_HOME` remains a compatible base-directory fallback. Isolated test or development servers should set the two AgentUse-specific variables.
 
 State that a run generates rather than a person writes lives outside the project, under a per-project directory keyed by a digest of the git root:
 
 ```
-$XDG_DATA_HOME/agentuse/project/{project-hash}/
+$AGENTUSE_DATA_DIR/project/{project-hash}/
 ├── session/          # execution logs
 ├── learnings/        # agent learnings, one file per agent
 └── consolidations/   # undo snapshots for `agentuse learnings tidy`

@@ -312,14 +312,14 @@ rules go **stale**:
 Learnings are stored in the AgentUse state directory, alongside session logs, not in your repository:
 
 ```
-$XDG_DATA_HOME/agentuse/project/{project-hash}/
+$AGENTUSE_DATA_DIR/project/{project-hash}/
 ├── session/                                # execution logs
 ├── consolidations/                         # tidy-up undo snapshots
 └── learnings/
     └── agents/blog/write.learnings.md      # one agent's learnings
 ```
 
-`$XDG_DATA_HOME` defaults to `~/.local/share`. `{project-hash}` is a digest of your git root, so two repositories that both contain `agents/blog/write.agentuse` keep separate learnings, and one agent resolves to one file whichever directory you run it from. The file itself is named after the agent's path relative to the project root, so subdirectories are preserved.
+`$AGENTUSE_DATA_DIR` defaults to `~/.local/share/agentuse`; when it is unset, `$XDG_DATA_HOME/agentuse` remains the standards-compatible fallback. `{project-hash}` is a digest of your git root, so two repositories that both contain `agents/blog/write.agentuse` keep separate learnings, and one agent resolves to one file whichever directory you run it from. The file itself is named after the agent's path relative to the project root, so subdirectories are preserved.
 
 That path is not one you can type from memory, so nothing asks you to:
 

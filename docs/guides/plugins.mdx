@@ -35,7 +35,7 @@ export default {
 
 Plugins are automatically loaded from:
 - `./.agentuse/plugins/*.{ts,js}` - Project-specific plugins (loaded first)
-- `~/.agentuse/plugins/*.{ts,js}` - User-global plugins (loaded second)
+- `$AGENTUSE_CONFIG_DIR/plugins/*.{ts,js}` - User-global plugins (loaded second; defaults to `~/.agentuse/plugins/*.{ts,js}`)
 
 **Note:** Project-specific plugins take precedence and are loaded before global plugins. All plugins with the same event handler will execute in the order they are loaded.
 
@@ -260,4 +260,3 @@ export default plugin;
 - Multiple plugins can handle the same event
 - Console output is captured during agent execution and made available to plugins
 - Plugin require cache is cleared for hot-reloading during development
-

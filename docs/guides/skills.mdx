@@ -41,7 +41,7 @@ Skills are discovered from these directories (in priority order):
 | Location | Scope | Purpose |
 |----------|-------|---------|
 | `.agentuse/skills/` | Project | Project-specific skills |
-| `~/.agentuse/skills/` | User | Personal skills across projects |
+| `$AGENTUSE_CONFIG_DIR/skills/` | User | Personal skills across projects; defaults to `~/.agentuse/skills/` |
 | `.claude/skills/` | Project | Claude ecosystem compatibility |
 | `~/.claude/skills/` | User | Claude ecosystem compatibility |
 | `~/.agents/skills/` | User | Shared agent skills compatibility |
