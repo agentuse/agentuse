@@ -21,6 +21,8 @@ import {
   onboardingDiscovery,
   onboardingSuggestion,
   parseProjectDiscoveryResume,
+  projectDiscoveryModelOptions,
+  projectDiscoveryModelReady,
   projectDiscoveryReducer,
   resumableProjectDiscoveryState,
 } from './onboarding-machine';
@@ -170,7 +172,7 @@ export function ProjectAgentDiscovery(props: {
   };
 
   const scan = async () => {
-    if (!model || (state.type !== 'ready' && state.type !== 'scan-failed')) return;
+    if (!model || !modelReady || (state.type !== 'ready' && state.type !== 'scan-failed')) return;
     dispatch({ type: 'SCAN_STARTED' });
     try {
       const { job } = await startProjectDiscoverySession(props.projectId, model);
@@ -181,7 +183,7 @@ export function ProjectAgentDiscovery(props: {
   };
 
   const create = async (suggestion: ProjectAgentSuggestion) => {
-    if (!model || state.type === 'creating' || !onboardingDiscovery(state)) return;
+    if (!model || !modelReady || state.type === 'creating' || !onboardingDiscovery(state)) return;
     dispatch({ type: 'CREATION_STARTED', suggestion });
     try {
       const { job } = await startOnboardingAgentCreation({
@@ -209,13 +211,17 @@ export function ProjectAgentDiscovery(props: {
   };
 
   const currentStep = onboardingCurrentStep(state);
-  const modelOptions = setup?.options.providers.flatMap((provider) => provider.models.map((candidate) => ({
-    value: candidate,
-    label: `${provider.name} · ${creationModelLabel(candidate, provider.id)}`,
-  }))) ?? [];
+  const modelOptions = projectDiscoveryModelOptions(setup?.options.providers ?? []).map((option) => {
+    const provider = setup?.options.providers.find((candidate) => option.value.startsWith(`${candidate.id}:`));
+    return provider?.custom
+      ? option
+      : { ...option, label: `${provider?.name ?? ''} · ${creationModelLabel(option.value, provider?.id ?? '')}` };
+  });
   const selectedProvider = setup?.options.providers.find((provider) => model
     ? provider.models.includes(model) || (provider.custom && model.startsWith(`${provider.id}:`))
     : false);
+  const customProvider = selectedProvider?.custom === true;
+  const modelReady = projectDiscoveryModelReady(model, setup?.options.providers ?? []);
   const selectedModelLabel = model ? creationModelLabel(model, selectedProvider?.id ?? '') : 'the selected model';
   const isCreationStage = state.type === 'creating' || state.type === 'creation-failed';
   const retryingCreation = state.type === 'ready' && state.intent.type === 'retry-create';
@@ -284,6 +290,19 @@ export function ProjectAgentDiscovery(props: {
                 placeholder="Choose a model…"
               />
               <button type="button" class="onboarding-secondary" onClick={openProvider}>Add provider</button>
+              {customProvider && (
+                <label class="discovery-custom-model">
+                  <span>Model ID</span>
+                  <input
+                    value={model?.slice(selectedProvider.id.length + 1) ?? ''}
+                    placeholder="model-name"
+                    onInput={(event) => dispatch({
+                      type: 'MODEL_SELECTED',
+                      model: `${selectedProvider.id}:${(event.target as HTMLInputElement).value}`,
+                    })}
+                  />
+                </label>
+              )}
             </div>
             <small>{retryingCreation ? 'Used to create the selected agent. Its runtime model is chosen separately.' : 'Generates project suggestions only. The agent’s runtime model is chosen separately when the agent is created.'}</small>
             <details class="discovery-sharing-details">
@@ -301,8 +320,8 @@ export function ProjectAgentDiscovery(props: {
 
         {(state.type === 'provider-required' || state.type === 'ready') && (
           <div class="onboarding-actions">
-            <button type="button" class="onboarding-primary" disabled={state.type === 'ready' && !model} onClick={continueFromSetup}>
-              {state.type === 'provider-required' ? 'Connect provider' : !model ? 'Choose a model to continue' : retryingCreation ? 'Try creating again' : retryingScan ? 'Scan again' : 'Scan this project'}
+            <button type="button" class="onboarding-primary" disabled={state.type === 'ready' && !modelReady} onClick={continueFromSetup}>
+              {state.type === 'provider-required' ? 'Connect provider' : !modelReady ? customProvider ? 'Enter a model ID to continue' : 'Choose a model to continue' : retryingCreation ? 'Try creating again' : retryingScan ? 'Scan again' : 'Scan this project'}
             </button>
             {state.type === 'ready' && !retryingCreation && <button type="button" class="onboarding-skip-link" onClick={() => setModal('direct-create')}>Skip scan and create an agent directly</button>}
             {retryingCreation && <a class="onboarding-skip-link" href="/agents" onClick={clearResume}>Skip for now — open the agent dashboard</a>}

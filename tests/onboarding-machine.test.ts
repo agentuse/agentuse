@@ -6,6 +6,8 @@ import {
   onboardingDiscovery,
   onboardingSuggestion,
   parseProjectDiscoveryResume,
+  projectDiscoveryModelOptions,
+  projectDiscoveryModelReady,
   projectDiscoveryReducer,
   projectSelectionReducer,
   resumableProjectDiscoveryState,
@@ -79,6 +81,20 @@ function suggestionsState(): ProjectDiscoveryState {
 }
 
 describe('project discovery onboarding machine', () => {
+  it('shows custom providers as model-ID entries and requires a complete ID', () => {
+    const providers = [
+      ...options.providers,
+      { id: 'local', name: 'local', models: [], custom: true as const },
+    ];
+    expect(projectDiscoveryModelOptions(providers)).toContainEqual({
+      value: 'local:',
+      label: 'local · Enter model ID…',
+    });
+    expect(projectDiscoveryModelReady('local:', providers)).toBe(false);
+    expect(projectDiscoveryModelReady('local:qwen3', providers)).toBe(true);
+    expect(projectDiscoveryModelReady('unknown:qwen3', providers)).toBe(false);
+  });
+
   it('boots into the provider gate or explicit model-selection state from provider status', () => {
     const gated = projectDiscoveryReducer(initialProjectDiscoveryState, {
       type: 'BOOT_SUCCEEDED',

@@ -6,6 +6,24 @@ import type {
   ProviderSetupPayload,
   OnboardingJobHandle,
 } from '../lib/api';
+import type { AgentCreationProvider } from '../../../../agents/create';
+
+export function projectDiscoveryModelOptions(providers: AgentCreationProvider[]): Array<{ value: string; label: string }> {
+  return providers.flatMap((provider) => provider.custom
+    ? [{ value: `${provider.id}:`, label: `${provider.name} · Enter model ID…` }]
+    : provider.models.map((model) => ({ value: model, label: model })));
+}
+
+export function projectDiscoveryModelReady(
+  model: string | null,
+  providers: AgentCreationProvider[],
+): boolean {
+  if (!model) return false;
+  const provider = providers.find((candidate) => candidate.models.includes(model)
+    || (candidate.custom && model.startsWith(`${candidate.id}:`)));
+  if (!provider) return false;
+  return provider.custom ? Boolean(model.slice(provider.id.length + 1).trim()) : true;
+}
 
 export type ProjectSelectionState =
   | { type: 'choose'; name: string; path: string }

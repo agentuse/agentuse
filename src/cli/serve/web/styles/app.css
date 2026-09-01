@@ -4159,6 +4159,10 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .discovery-model-field > small { color: var(--muted); font: var(--font-size-micro)/1.45 var(--sans); }
 .discovery-model-control { display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: stretch; gap: 9px; }
 .discovery-model-control .onboarding-secondary { min-height: 40px; }
+.discovery-custom-model { grid-column: 1 / -1; display: grid; gap: 7px; }
+.discovery-custom-model > span { color: var(--muted-2); font: 600 var(--font-size-micro)/1 var(--sans); letter-spacing: 0.03em; }
+.discovery-custom-model > input { min-height: 40px; width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); padding: 0 12px; font: var(--font-size-small)/1.2 var(--mono); }
+.discovery-custom-model > input:focus { border-color: var(--accent); outline: 2px solid color-mix(in srgb, var(--accent) 18%, transparent); outline-offset: 1px; }
 .discovery-sharing-details { color: var(--muted-2); font: var(--font-size-micro)/1.5 var(--sans); }
 .discovery-sharing-details summary { width: fit-content; color: var(--cyan); cursor: pointer; user-select: none; }
 .discovery-sharing-details summary:hover { color: var(--fg); }
