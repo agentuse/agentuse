@@ -501,8 +501,8 @@ export default function AgentDetail() {
                     {tutorialStep === 'run' && (
                       <div class="first-agent-spotlight-card" role="dialog" aria-modal="true" aria-label="Run your first agent">
                         <small>1 of 2</small>
-                        <strong>Your agent is ready</strong>
-                        <span id="first-agent-run-tutorial-copy">Run it once to make sure it works.</span>
+                        <strong>Test it manually</strong>
+                        <span id="first-agent-run-tutorial-copy">Run once and review the result.</span>
                         <button ref={tutorialActionRef} type="button" onClick={advanceTutorial}>Next</button>
                       </div>
                     )}
@@ -539,8 +539,8 @@ export default function AgentDetail() {
                     {tutorialStep === 'schedule' && (
                       <div class="first-agent-spotlight-card schedule-spotlight-card" role="dialog" aria-modal="true" aria-label="Enable your agent schedule when ready">
                         <small>2 of 2</small>
-                        <strong>Make it autonomous when you’re ready</strong>
-                        <span id="first-agent-schedule-tutorial-copy">After a few good manual runs, turn on the schedule. Until then, it stays paused.</span>
+                        <strong>Turn on autopilot</strong>
+                        <span id="first-agent-schedule-tutorial-copy">When the results look right, enable the schedule. It stays paused until then.</span>
                         <button ref={tutorialActionRef} type="button" onClick={finishTutorial}>Finish</button>
                       </div>
                     )}

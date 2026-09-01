@@ -25,7 +25,7 @@ export function FirstProjectEmptyState(props: { compact?: boolean; folderPickerA
         >
             <div class="eyebrow">Project ready</div>
             <h2 id="existing-project-title">This project already has {project.agentCount} {project.agentCount === 1 ? 'agent' : 'agents'}</h2>
-            <p class="onboarding-lede">Open the dashboard to work with what’s already here, or scan the project for another useful agent grounded in its code and documentation.</p>
+            <p class="onboarding-lede">Open its agents, or find another useful workflow in this project.</p>
             <div class="onboarding-project">
               <span>Existing project</span>
               <strong>{project.about?.name ?? project.id}</strong>
@@ -97,20 +97,20 @@ export function FirstProjectEmptyState(props: { compact?: boolean; folderPickerA
       steps={firstUsefulAgentSetupSteps({ currentStep: 1 })}
     >
         <div class="eyebrow">Get started</div>
-        {props.compact ? <h2 id="first-project-title">Start with real work</h2> : <h1 id="first-project-title">Start with real work</h1>}
-        <p class="onboarding-lede">Choose where your first useful agent should live. AgentUse can start clean or learn from a project you already work on.</p>
+        {props.compact ? <h2 id="first-project-title">Build your first agent</h2> : <h1 id="first-project-title">Build your first agent</h1>}
+        <p class="onboarding-lede">Start fresh or find recurring work in an existing project.</p>
 
         {state.type === 'choose' && (
           <div class="project-choice-grid">
             <button type="button" class="project-choice-card" onClick={() => dispatch({ type: 'CHOOSE_NEW' })}>
-              <strong>Create a new project</strong>
-              <span>Start with an empty AgentUse workspace and shape the first agent yourself.</span>
-              <small>Best for a new workflow</small>
+              <strong>Start a new project</strong>
+              <span>Build an agent in an empty workspace.</span>
+              <small>New workflow</small>
             </button>
             <button type="button" class="project-choice-card is-recommended" onClick={() => dispatch({ type: 'CHOOSE_EXISTING' })}>
-              <strong>Choose a project you already work on</strong>
-              <span>Connect a provider, scan project context, and get three grounded agent ideas.</span>
-              <small>Recommended for your first useful agent</small>
+              <strong>Use an existing project</strong>
+              <span>Find recurring work in its files.</span>
+              <small>Recommended</small>
             </button>
           </div>
         )}
@@ -139,7 +139,7 @@ export function FirstProjectEmptyState(props: { compact?: boolean; folderPickerA
               {props.folderPickerAvailable && <button type="button" class="onboarding-secondary" disabled={busy || choosing} aria-busy={choosing} onClick={() => void chooseFolder()}>{choosing ? 'Choosing…' : 'Choose folder…'}</button>}
             </div>
             <div class="first-project-footer">
-              <small>The project stays in place. AgentUse only saves the folder reference; the next step is a bounded, read-only scan.</small>
+              <small>The folder stays in place. The next step is read-only.</small>
               <div class="first-project-actions">
                 <button type="button" class="onboarding-secondary" onClick={() => dispatch({ type: 'BACK' })} disabled={busy || choosing}>Back to project choices</button>
                 <button type="submit" class="onboarding-primary" disabled={busy || !state.path.trim()} aria-busy={busy}>{busy && <span class="btn-spinner" aria-hidden="true" />}{busy ? 'Opening…' : 'Use this project'}</button>

@@ -238,13 +238,13 @@ export function ProjectAgentDiscovery(props: {
           currentStep,
           projectDetail: projectLabel,
           providerReady: hasConfiguredProvider(setup?.provider.status),
-          scanDetail: 'Read-only, bounded project context',
-          createDetail: 'Review Source, then run it',
+          scanDetail: 'Read-only',
+          createDetail: 'Review before scheduling',
         })}
       >
         <div class="eyebrow">{isCreationStage ? `Creating ${selectedSuggestion?.name ?? 'your agent'}` : props.existingAgents ? 'Add another useful agent' : 'Your first useful agent'}</div>
         <h2 id="project-discovery-title">
-          {isCreationStage ? 'The model is writing your agent' : state.type === 'suggestions' ? 'Pick the work worth repeating' : 'Find useful work in this project'}
+          {isCreationStage ? 'Building your agent' : state.type === 'suggestions' ? 'Choose recurring work' : 'Find work worth automating'}
         </h2>
         <p class="onboarding-lede">
           {state.type === 'booting'
@@ -252,18 +252,18 @@ export function ProjectAgentDiscovery(props: {
             : state.type === 'boot-error'
               ? 'AgentUse could not prepare this onboarding flow.'
               : state.type === 'provider-required'
-                ? 'Connect a model provider so AgentUse can inspect this project and propose agents grounded in the work already here.'
+                ? 'Connect a model so AgentUse can find recurring work in this project.'
                 : state.type === 'ready'
                   ? retryingCreation
                     ? 'Choose a more capable model, then try creating the same agent again. The project and selected idea are preserved.'
                     : retryingScan
                       ? 'Choose a more capable model, then scan the same project again.'
-                      : 'A read-only AgentUse session will intelligently explore a sanitized project view and propose three safe, recurring agents.'
+                      : 'AgentUse reads a safe project view and suggests three recurring tasks.'
                   : state.type === 'scanning' || state.type === 'scan-failed'
-                    ? 'Watch the AgentUse session inspect relevant files. If it fails, change the model without restarting onboarding.'
+                    ? 'AgentUse is reading the project and preparing three ideas.'
                     : isCreationStage
-                      ? 'The live AgentUse session stays visible while the Creator skill designs and validates the complete agent.'
-                      : discovery?.summary ?? 'Choose one suggestion to create it.'}
+                      ? 'AgentUse is writing and validating the agent Source.'
+                      : discovery?.summary ?? 'Choose one idea to continue.'}
         </p>
 
         <div class="onboarding-project">
@@ -290,7 +290,7 @@ export function ProjectAgentDiscovery(props: {
               />
               <button type="button" class="onboarding-secondary" onClick={openProvider}>Add provider</button>
             </div>
-            <small>{retryingCreation ? 'Used to create the selected agent. Its runtime model is chosen separately.' : 'Generates project suggestions only. The agent’s runtime model is chosen separately when the agent is created.'}</small>
+            <small>{retryingCreation ? 'Creates this agent; choose its runtime model later.' : 'Finds ideas only; choose the runtime model later.'}</small>
             <details class="discovery-sharing-details">
               <summary>What exactly gets sent to the model?</summary>
               <ul>
@@ -346,8 +346,8 @@ export function ProjectAgentDiscovery(props: {
               </article>
             ))}
             <div class="agent-suggestion-footer">
-              <p class="agent-suggestion-note">The selected schedule is added to the agent Source. Run it once now to review the result; you can change or remove the schedule anytime.</p>
-              <a class="onboarding-skip-link" href="/agents" onClick={clearResume}>Skip for now — open the agent dashboard</a>
+              <p class="agent-suggestion-note">Schedules start paused. Test the agent, then turn it on when ready.</p>
+              <a class="onboarding-skip-link" href="/agents" onClick={clearResume}>Open agent dashboard</a>
             </div>
           </div>
         )}
