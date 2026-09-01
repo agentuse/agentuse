@@ -187,6 +187,10 @@ export interface RunAgentResult {
   complete?: { headline: string; details?: string; artifacts?: string[] };
   /** Validated source delivered through the creator-only submit tool. */
   agentSource?: string;
+  /** Human-facing name delivered with creator-only source. */
+  authoredAgentName?: string;
+  /** Project-local filename delivered with creator-only source. */
+  authoredAgentFileName?: string;
   /** Validated suggestions delivered through the discovery-only submit tool. */
   projectDiscovery?: ProjectDiscoveryResult;
 }

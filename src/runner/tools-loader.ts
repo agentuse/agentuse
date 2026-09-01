@@ -217,20 +217,27 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
 
   // Load skill tools if project context is available
   let skillTools: Record<string, Tool> = {};
+  let loadedSkillNames: (() => string[]) | undefined;
   if (projectContext) {
     try {
-      const { skillTool, skillReadTool, skills } = await createSkillTools(
+      const loaded = await createSkillTools(
         projectContext.projectRoot,
         effectiveToolsConfig,
         {
           auto: agent.config.skills!.auto,
           explicitSkillNames,
+          ...(agent.config.metadata?.internal === true
+            && (agent.config.metadata.creator === 'agent' || agent.config.metadata.onboarding === 'agent-creator')
+            ? { purpose: 'authoring' as const }
+            : {}),
         }
       );
+      const { skillTool, skillReadTool, skills } = loaded;
       if (skills.length > 0) {
         skillTools['tools__skill_load'] = skillTool;
         skillTools['tools__skill_read'] = skillReadTool;
         logger.debug(`${logPrefix}Loaded ${skills.length} skill(s): ${skills.map(s => s.name).join(', ')}`);
+        loadedSkillNames = loaded.loadedSkillNames;
       }
     } catch (error) {
       logger.warn(`${logPrefix}Failed to load skills: ${(error as Error).message}`);
@@ -305,7 +312,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
         ...baseReportComplete,
         execute: async (input: unknown, options: unknown) => {
           if (agentSourceSubmission && !agentSourceSubmission.source) {
-            throw new Error('No valid agent source has been submitted. Call submit_agent_source first, correct any validation error, and only then call report_complete.');
+            throw new Error('No valid agent name, filename, and source have been submitted. Call submit_agent_source first, correct any validation error, and only then call report_complete.');
           }
           if (projectSuggestionsSubmission && !projectSuggestionsSubmission.result) {
             throw new Error('No valid project suggestions have been submitted. Call submit_project_suggestions first, correct any validation error, and only then call report_complete.');
@@ -318,9 +325,9 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     report_incomplete: createReportIncompleteTool(runOutcome),
     report_complete: guardedReportComplete,
   };
-  const onboardingTools: Record<string, Tool> = {
+  const internalSubmissionTools: Record<string, Tool> = {
     ...(agentSourceContract && agentSourceSubmission && {
-      submit_agent_source: createSubmitAgentSourceTool(agentSourceSubmission, agentSourceContract),
+      submit_agent_source: createSubmitAgentSourceTool(agentSourceSubmission, agentSourceContract, loadedSkillNames),
     }),
     ...(projectSuggestionsContract && projectSuggestionsSubmission && {
       submit_project_suggestions: createSubmitProjectSuggestionsTool(
@@ -340,7 +347,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     skillTools,
     storeTools,
     sandboxTools,
-    onboardingTools,
+    internalSubmissionTools,
     outcomeTools,
   ];
 

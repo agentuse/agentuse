@@ -129,12 +129,16 @@ describe('outcome precedence: one slot, two writers', () => {
       status: 'completed',
       complete: { headline: 'Created Docs drift' },
       agentSource: source,
+      authoredAgentName: 'Docs Drift Monitor',
+      authoredAgentFileName: 'docs-drift.agentuse',
       text: '✅ Complete: Created Docs drift',
       toolCallCount: 2,
       hasTextOutput: true,
     }, 10);
 
     expect(json.result.agentSource).toBe(source);
+    expect(json.result.authoredAgentName).toBe('Docs Drift Monitor');
+    expect(json.result.authoredAgentFileName).toBe('docs-drift.agentuse');
   });
 
   it('carries validated project suggestions across the worker boundary', () => {

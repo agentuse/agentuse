@@ -7,7 +7,6 @@ import { getModelFromRegistry, getSuggestedModelIds } from '../generated/models.
 import { parseAgentContent } from '../parser.js';
 import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go.js';
 import type { ProviderStatus } from '../auth/provider-status.js';
-import { parseScheduleExpression } from '../scheduler/parser.js';
 
 export interface AgentCreationProject {
   id: string;
@@ -17,6 +16,7 @@ export interface AgentCreationProject {
 
 export interface AgentCreationInput {
   name?: unknown;
+  fileName?: unknown;
   objective: unknown;
   model: unknown;
   source?: unknown;
@@ -64,6 +64,20 @@ export function validateAgentName(value: unknown): string {
     throw new AgentCreationError('INVALID_AGENT', 'Agent name must use letters, numbers, spaces, hyphens, or underscores');
   }
   return name;
+}
+
+export function validateAgentFileName(value: unknown): string {
+  if (typeof value !== 'string') throw new AgentCreationError('INVALID_AGENT', 'Agent filename is required');
+  const fileName = value.trim();
+  if (!fileName) throw new AgentCreationError('INVALID_AGENT', 'Agent filename is required');
+  if (fileName.length > 160) throw new AgentCreationError('INVALID_AGENT', 'Agent filename must be 160 characters or fewer');
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*\.agentuse$/u.test(fileName)) {
+    throw new AgentCreationError(
+      'INVALID_AGENT',
+      'Agent filename must use lowercase kebab-case and end with .agentuse',
+    );
+  }
+  return fileName;
 }
 
 function cleanObjective(value: unknown): string {
@@ -157,43 +171,6 @@ function isPathInside(parent: string, child: string): boolean {
 function renderAgent(name: string, model: string, objective: string, description: string): string {
   const frontmatter = YAML.stringify({ name, model, description }, { lineWidth: 0 }).trimEnd();
   return `---\n${frontmatter}\n---\n\n${objective}\n`;
-}
-
-/** Build the reviewed project-discovery suggestion without another model call.
- * AgentUse owns the schema and safety boundary; the scan already authored the
- * useful instructions. */
-export async function createGuidedProjectAgentFile(
-  project: AgentCreationProject,
-  input: Pick<AgentCreationInput, 'name' | 'objective' | 'model'> & { schedule: unknown; description: unknown; instructions: unknown },
-  configuredProviders: readonly string[],
-): Promise<CreatedAgentFile> {
-  const request = validateAgentCreationRequest(input, configuredProviders);
-  if (typeof input.schedule !== 'string' || !input.schedule.trim()) {
-    throw new AgentCreationError('INVALID_AGENT', 'Choose a valid schedule for this agent');
-  }
-  const schedule = input.schedule.trim();
-  parseScheduleExpression(schedule);
-  if (typeof input.description !== 'string' || !input.description.trim()) {
-    throw new AgentCreationError('INVALID_AGENT', 'The reviewed suggestion must include a description');
-  }
-  const description = input.description.trim();
-  if (description.length > 240) throw new AgentCreationError('INVALID_AGENT', 'The reviewed suggestion description is too long');
-  if (typeof input.instructions !== 'string' || !input.instructions.trim()) {
-    throw new AgentCreationError('INVALID_AGENT', 'The selected model returned empty agent instructions');
-  }
-  const instructions = input.instructions.trim();
-  const name = request.name ?? deriveAgentName(request.objective);
-  const frontmatter = YAML.stringify({
-    name,
-    model: request.model,
-    description,
-    schedule,
-    tools: {
-      filesystem: [{ path: '${root}', permissions: ['read'] }],
-    },
-  }, { lineWidth: 0 }).trimEnd();
-  const source = `---\n${frontmatter}\n---\n\n${instructions}\n`;
-  return createAgentFile(project, { ...request, source }, configuredProviders);
 }
 
 const BALANCED_CREATOR_DEFAULTS: Readonly<Record<string, string>> = {
@@ -325,7 +302,9 @@ export async function createAgentFile(
     throw new AgentCreationError('CREATE_FAILED', 'The agent directory is not a writable directory inside this project');
   }
 
-  const fileName = `${slug}.agentuse`;
+  const fileName = input.fileName === undefined
+    ? `${slug}.agentuse`
+    : validateAgentFileName(input.fileName);
   const absolutePath = join(realDirectory, fileName);
   const temporary = join(realDirectory, `.${fileName}.${process.pid}.${randomUUID()}.tmp`);
   let handle;
@@ -339,7 +318,10 @@ export async function createAgentFile(
   } catch (error) {
     await handle?.close().catch(() => undefined);
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
-      throw new AgentCreationError('AGENT_EXISTS', `An agent named “${persistedName}” already exists at ${relative(realRoot, absolutePath)}. Choose a different agent name and try again.`);
+      throw new AgentCreationError(
+        'AGENT_EXISTS',
+        `An agent file already exists at ${relative(realRoot, absolutePath)}. Choose a different filename for “${persistedName}” and try again.`,
+      );
     }
     if (error instanceof AgentCreationError) throw error;
     throw new AgentCreationError('CREATE_FAILED', `Could not create agent: ${(error as Error).message}`);

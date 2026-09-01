@@ -173,7 +173,8 @@ function formatSkillOutput(
 async function buildSkillOutput(
   skillContent: SkillContent,
   agentToolsConfig: ToolsConfig | undefined,
-  projectRoot: string
+  projectRoot: string,
+  purpose: 'runtime' | 'authoring' = 'runtime',
 ): Promise<string> {
   const pathWarning = await checkSkillPathAccess(
     skillContent.directory,
@@ -181,7 +182,9 @@ async function buildSkillOutput(
     projectRoot
   );
 
-  const unsatisfied = validateAllowedTools(skillContent.allowedTools, agentToolsConfig);
+  const unsatisfied = purpose === 'runtime'
+    ? validateAllowedTools(skillContent.allowedTools, agentToolsConfig)
+    : [];
   const warnings: string[] = [];
 
   if (pathWarning) {
@@ -190,6 +193,13 @@ async function buildSkillOutput(
 
   if (unsatisfied.length > 0) {
     warnings.push(`> ⚠️ WARNING: This skill requires tools not available: ${unsatisfied.map(r => r.pattern).join(', ')}. Do not attempt to use these tools.`);
+  }
+
+  if (purpose === 'authoring' && skillContent.allowedTools?.length) {
+    warnings.push(
+      `> AUTHORING NOTE: The skill declares these tool requirements for the finished agent: ${skillContent.allowedTools.join(', ')}. ` +
+      'Reading this skill grants nothing. Declare only the narrow capabilities the workflow needs, and put consequential actions behind tools.bash.gated.',
+    );
   }
 
   return formatSkillOutput(
@@ -210,6 +220,8 @@ export interface SkillToolsResult {
   skillReadTool: Tool;
   /** List of discovered skills */
   skills: SkillInfo[];
+  /** Names whose complete SKILL.md has been loaded in this tool instance. */
+  loadedSkillNames(): string[];
 }
 
 export interface SkillToolsOptions {
@@ -217,6 +229,9 @@ export interface SkillToolsOptions {
   auto?: boolean | undefined;
   /** Explicit skill names that should be visible and marked loaded for skill_read */
   explicitSkillNames?: string[] | undefined;
+  /** Runtime validates the current agent's tools; authoring presents declared
+   * tools as requirements for the agent being designed without granting them. */
+  purpose?: 'runtime' | 'authoring' | undefined;
 }
 
 export interface SkillPromptOutput {
@@ -280,7 +295,7 @@ export async function createSkillTools(
       // Track loaded skill directory for skill_read tool
       loadedSkills.set(name, skillContent.directory);
 
-      return buildSkillOutput(skillContent, agentToolsConfig, projectRoot);
+      return buildSkillOutput(skillContent, agentToolsConfig, projectRoot, options.purpose);
     },
   };
 
@@ -347,7 +362,12 @@ export async function createSkillTools(
     },
   };
 
-  return { skillTool, skillReadTool, skills };
+  return {
+    skillTool,
+    skillReadTool,
+    skills,
+    loadedSkillNames: () => [...loadedSkills.keys()],
+  };
 }
 
 export async function loadSkillPromptOutputs(

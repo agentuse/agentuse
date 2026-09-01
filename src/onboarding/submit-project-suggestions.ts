@@ -36,7 +36,7 @@ const suggestionSchema = z.object({
   name: z.string().min(1).max(120).describe('Concise ASCII agent name.'),
   description: z.string().min(1).max(240).describe('One concrete recurring outcome.'),
   objective: z.string().min(1).max(8_000).describe(
-    'Complete production prompt stating what to inspect, what judgment to make, and what concise result to return.'
+    'Complete production prompt stating what to inspect, what judgment to make, any action to take, the approval boundary for consequential actions, and what concise result to return.'
   ),
   schedule: z.string().min(1).max(100).describe('Valid five-field cron expression.'),
   evidence: z.array(z.string().min(1).max(180)).min(1).max(3).describe(

@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import {
   agentCreationProviders,
   createAgentFile,
-  createGuidedProjectAgentFile,
   deriveAgentName,
   validateAgentCreationRequest,
 } from '../src/agents/create';
@@ -46,28 +45,6 @@ describe('persistent dashboard agent creation', () => {
     expect(parsed.config.model).toBe('openai:gpt-5.6-terra');
   });
 
-  it('creates a reviewed project suggestion deterministically with read-only project access', async () => {
-    const target = await project();
-    const created = await createGuidedProjectAgentFile(target, {
-      name: 'Docs Drift Detector',
-      objective: 'Inspect project documentation and report concrete drift. Do not modify files.',
-      description: 'Find documentation that has drifted from the project.',
-      instructions: '## Goal\nFind documentation drift.\n\n## Output\nReturn a concise Markdown report.',
-      model: 'opencode-go:minimax-m3',
-      schedule: '0 8 * * 3',
-    }, ['opencode-go']);
-
-    const source = await readFile(created.absolutePath, 'utf8');
-    expect(source).toContain('name: Docs Drift Detector');
-    expect(source).toContain('model: opencode-go:minimax-m3');
-    expect(source).toContain("schedule: 0 8 * * 3");
-    const parsed = await parseAgent(created.absolutePath);
-    expect(parsed.config.schedule).toBe('0 8 * * 3');
-    expect(parsed.config.tools?.filesystem).toEqual([{ path: '${root}', permissions: ['read'] }]);
-    expect(parsed.config.description).toBe('Find documentation that has drifted from the project.');
-    expect(parsed.instructions).toContain('## Goal');
-  });
-
   it('derives concise stable names from the first useful task clause', () => {
     expect(deriveAgentName('Review yesterday’s work and identify the most important follow-up.'))
       .toBe('Review Yesterday Work');
@@ -96,6 +73,29 @@ Review the tickets supplied in the run prompt and prioritize urgent replies.
     expect(created.name).toBe('Ticket Triage');
     expect(created.path).toBe('agents/ticket-triage.agentuse');
     expect(await readFile(created.absolutePath, 'utf8')).toBe(`${authored.trim()}\n`);
+  });
+
+  it('persists a model-authored friendly name under its separately submitted filename', async () => {
+    const target = await project();
+    const authored = `---
+name: Weekly Support Triage
+model: openai:gpt-5.6-terra
+description: Triage incoming support tickets every week
+---
+
+Review new support tickets and prioritize urgent replies.
+`;
+    const created = await createAgentFile(target, {
+      name: 'Weekly Support Triage',
+      fileName: 'support-inbox-review.agentuse',
+      objective: 'Triage support tickets.',
+      model: 'openai:gpt-5.6-terra',
+      source: authored,
+    }, ['openai']);
+
+    expect(created.name).toBe('Weekly Support Triage');
+    expect(created.path).toBe('agents/support-inbox-review.agentuse');
+    expect((await parseAgent(created.absolutePath)).name).toBe('Weekly Support Triage');
   });
 
   it('enforces an explicit name on model-authored source', async () => {
@@ -149,6 +149,9 @@ Triage support tickets.
     await expect(createAgentFile(target, {
       name: 'Missing Model', objective: 'Do something.', model: 'local:',
     }, ['local'])).rejects.toMatchObject({ code: 'INVALID_AGENT' });
+    await expect(createAgentFile(target, {
+      name: 'Unsafe Filename', fileName: '../escape.agentuse', objective: 'Do something.', model: 'openai:gpt-5.6',
+    }, ['openai'])).rejects.toThrow('lowercase kebab-case');
   });
 
   it('refuses a symlinked agents directory', async () => {

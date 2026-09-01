@@ -535,6 +535,8 @@ export async function runAgent(
       ...(incomplete && { incomplete }),
       ...(complete && { complete }),
       ...(preparation.agentSourceSubmission?.source && { agentSource: preparation.agentSourceSubmission.source }),
+      ...(preparation.agentSourceSubmission?.name && { authoredAgentName: preparation.agentSourceSubmission.name }),
+      ...(preparation.agentSourceSubmission?.fileName && { authoredAgentFileName: preparation.agentSourceSubmission.fileName }),
       ...(preparation.projectSuggestionsSubmission?.result && {
         projectDiscovery: preparation.projectSuggestionsSubmission.result,
       }),

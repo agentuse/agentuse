@@ -109,6 +109,8 @@ export function runResultJson(result: RunAgentResult, duration: number) {
         ...(result.complete.artifacts?.length && { artifacts: result.complete.artifacts }),
       }),
       ...(result.agentSource && { agentSource: result.agentSource }),
+      ...(result.authoredAgentName && { authoredAgentName: result.authoredAgentName }),
+      ...(result.authoredAgentFileName && { authoredAgentFileName: result.authoredAgentFileName }),
       ...(result.projectDiscovery && { projectDiscovery: result.projectDiscovery }),
       ...(result.finishReason && { finishReason: result.finishReason }),
       duration,

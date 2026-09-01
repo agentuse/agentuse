@@ -1,23 +1,15 @@
 import { constants } from 'node:fs';
 import { lstat, mkdir, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, isAbsolute, join, relative } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { glob } from 'glob';
-import { completeText, type CompleteTextOptions } from '../complete-text.js';
 import { formatScheduleHuman, parseScheduleExpression } from '../scheduler/parser.js';
-import { helperSystemPrompt } from '../utils/anthropic.js';
+import { discoverSkills } from '../skill/discovery.js';
 import { validateAgentName } from './create.js';
 
-const MAX_CONTEXT_CHARS = 48_000;
-const MAX_FILE_CHARS = 12_000;
-const MAX_FILES = 160;
 const ADAPTIVE_MAX_FILES = 400;
 const ADAPTIVE_MAX_FILE_BYTES = 64_000;
 const ADAPTIVE_MAX_TOTAL_BYTES = 2_000_000;
-const CONTEXT_FILES = [
-  'README.md', 'README.mdx', 'package.json', 'pyproject.toml', 'Cargo.toml',
-  'go.mod', 'Gemfile', 'Makefile', 'AGENTS.md', 'CLAUDE.md',
-] as const;
 const IGNORED = [
   '.git/**', 'node_modules/**', 'vendor/**', 'dist/**', 'build/**', 'coverage/**',
   '.next/**', '.turbo/**', 'tmp/**', '.cache/**', '.venv/**', 'venv/**',
@@ -55,6 +47,42 @@ export interface ProjectDiscoveryView {
   inspectedFiles: number;
   availableFiles: string[];
   cleanup(): Promise<void>;
+}
+
+export interface ProjectSkillSummary {
+  name: string;
+  description: string;
+  source: 'project' | 'global';
+  allowedTools: string[];
+  ambiguous: boolean;
+}
+
+/** Return the effective runtime skill catalog without copying skill bodies into
+ * the sanitized project view. Discovery only needs selection metadata; the
+ * creator later loads the real winning SKILL.md and its referenced files. */
+export async function discoverProjectSkillCatalog(projectRoot: string): Promise<ProjectSkillSummary[]> {
+  const resolvedProjectRoot = await realpath(projectRoot).catch(() => resolve(projectRoot));
+  const projectSkillRoots = [
+    join(resolvedProjectRoot, '.agentuse', 'skills'),
+    join(resolvedProjectRoot, '.claude', 'skills'),
+  ];
+  const isInside = (parent: string, child: string): boolean => {
+    const rel = relative(parent, child);
+    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+  };
+  const skills = await discoverSkills(resolvedProjectRoot);
+  return [...skills.values()]
+    .map((skill): ProjectSkillSummary => ({
+      name: skill.name,
+      description: skill.description,
+      source: projectSkillRoots.some((root) => isInside(root, skill.location)) ? 'project' : 'global',
+      allowedTools: [...(skill.allowedTools ?? [])],
+      ambiguous: Boolean(skill.shadowedLocations?.length),
+    }))
+    .sort((left, right) => {
+      if (left.source !== right.source) return left.source === 'project' ? -1 : 1;
+      return left.name.localeCompare(right.name);
+    });
 }
 
 async function readBoundedDiscoveryFile(projectRoot: string, relativePath: string, maxBytes: number): Promise<Buffer | undefined> {
@@ -153,8 +181,6 @@ export interface ProjectDiscoveryResult {
   suggestions: ProjectAgentSuggestion[];
 }
 
-type CompleteDiscoveryText = (model: string, options: CompleteTextOptions) => Promise<string>;
-
 function stripFence(value: string): string {
   const trimmed = value.trim();
   const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n```$/i.exec(trimmed);
@@ -208,104 +234,4 @@ export function parseProjectDiscoveryResponse(response: string, projectName: str
     inspectedFiles,
     suggestions,
   };
-}
-
-export async function collectProjectDiscoveryContext(projectRoot: string): Promise<{ projectName: string; inspectedFiles: number; context: string }> {
-  const resolvedProjectRoot = await realpath(projectRoot);
-  const files = (await glob('**/*', {
-    cwd: resolvedProjectRoot,
-    nodir: true,
-    dot: true,
-    maxDepth: 4,
-    ignore: IGNORED,
-  }))
-    .filter(isProjectDiscoveryPathAllowed)
-    .sort()
-    .slice(0, MAX_FILES);
-  const manifestPaths = [...new Set([
-    ...CONTEXT_FILES.filter((file) => files.includes(file)),
-    ...files.filter((file) => /(^|\/)(README|ABOUT)\.(md|mdx)$/i.test(file)).slice(0, 4),
-    ...files.filter((file) => /(^|\/)(package\.json|pyproject\.toml|Cargo\.toml|go\.mod)$/i.test(file)).slice(0, 6),
-  ])];
-  const sections = [`Project: ${basename(resolvedProjectRoot)}`, `File map (limited to ${MAX_FILES} files, secrets and generated directories excluded):\n${files.join('\n')}`];
-  let used = sections.join('\n\n').length;
-  for (const path of manifestPaths) {
-    if (used >= MAX_CONTEXT_CHARS) break;
-    const buffer = await readBoundedDiscoveryFile(resolvedProjectRoot, path, MAX_FILE_CHARS);
-    if (!buffer || buffer.includes(0)) continue;
-    const body = redactProjectDiscoveryText(buffer.toString('utf8'));
-    const remaining = MAX_CONTEXT_CHARS - used;
-    const section = `\n\n--- ${path} ---\n${body}`.slice(0, remaining);
-    sections.push(section);
-    used += section.length;
-  }
-  return { projectName: basename(resolvedProjectRoot), inspectedFiles: files.length, context: sections.join('\n\n') };
-}
-
-export async function discoverProjectAgents(
-  projectRoot: string,
-  model: string,
-  complete: CompleteDiscoveryText = completeText,
-): Promise<ProjectDiscoveryResult> {
-  const snapshot = await collectProjectDiscoveryContext(projectRoot);
-  const system = helperSystemPrompt(model, `You are a product-minded automation designer. Analyze a bounded, read-only project snapshot and propose three concrete AgentUse agents that would create recurring value for the people working on this project. Return strict JSON only.`);
-  const requirements = `Requirements:
-- Exactly three distinct suggestions, ordered by likely usefulness.
-- Every suggestion MUST include an "evidence" array containing one to three non-empty strings. This field is mandatory.
-- Every evidence string must cite a specific path or visible signal from the supplied snapshot.
-- Never invent tools, providers, credentials, issue trackers, or external destinations.
-- Agents must be safe on their first run: inspect and report, never modify files, commit, push, deploy, publish, or message people.
-- Prefer durable workflows such as change summaries, dependency or test-health checks, documentation drift, release readiness, and project-specific reviews.
-- Schedules should be daily or weekly, not more frequent, and should make sense for the work.
-- The objective must name the inputs to inspect, the decision or analysis to perform, and a concise dashboard-visible deliverable.`;
-  const prompt = `Analyze this project snapshot and return exactly this JSON shape:
-{
-  "summary": "one sentence describing the project and its current work",
-  "suggestions": [
-    {
-      "name": "concise ASCII agent name",
-      "description": "one concrete outcome",
-      "objective": "complete production prompt for a read-only agent, grounded in this project",
-      "schedule": "valid five-field cron expression",
-      "evidence": ["specific path or signal from the snapshot"]
-    }
-  ]
-}
-
-${requirements}
-
-<project_snapshot>
-${snapshot.context}
-</project_snapshot>`;
-  const completionOptions = (nextPrompt: string): CompleteTextOptions => ({
-    ...system,
-    prompt: nextPrompt,
-    maxOutputTokens: 3_500,
-    maxRetries: 2,
-    abortSignal: AbortSignal.timeout(90_000),
-  });
-  const response = await complete(model, completionOptions(prompt));
-  try {
-    return parseProjectDiscoveryResponse(response, snapshot.projectName, snapshot.inspectedFiles);
-  } catch (firstError) {
-    const repairPrompt = `Your previous response failed validation: ${(firstError as Error).message}.
-
-Return a corrected replacement as strict JSON only. Do not explain the correction or wrap it in Markdown.
-
-${requirements}
-
-<previous_response>
-${response.slice(0, 16_000)}
-</previous_response>
-
-<project_snapshot>
-${snapshot.context}
-</project_snapshot>`;
-    const repaired = await complete(model, completionOptions(repairPrompt));
-    try {
-      return parseProjectDiscoveryResponse(repaired, snapshot.projectName, snapshot.inspectedFiles);
-    } catch {
-      throw new Error('The selected model could not produce three valid, evidence-backed suggestions. Try scanning again or choose another analysis model.');
-    }
-  }
 }
