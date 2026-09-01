@@ -45,11 +45,22 @@ import { AgentCreationProgressPanel } from '../src/cli/serve/web/components/agen
 import { firstUsefulAgentSetupSteps } from '../src/cli/serve/web/components/onboarding-shell';
 import { ProjectFolderField } from '../src/cli/serve/web/components/project-folder-field';
 import { ProjectsSettingsGroup, RestartOnboardingGroup } from '../src/cli/serve/web/components/project-settings';
-import { AgentRevisionLauncher } from '../src/cli/serve/web/components/agent-revision';
+import { AgentRevisionLauncher, revisionLabel, revisionOriginAction, revisionOriginDescription } from '../src/cli/serve/web/components/agent-revision';
 
 const noop = () => {};
 
 describe('agent revision entry', () => {
+  it('explains that a no-change diagnosis must be reviewed before another revision', () => {
+    const revision = { status: 'no-change' as const, mode: 'fix' as const, targetAgentName: 'Support triage' };
+    expect(revisionLabel(revision)).toBe('Revision needs review');
+    expect(revisionOriginDescription(revision)).toBe('Review this diagnosis before starting another revision.');
+    expect(revisionOriginAction(revision, true)).toBe('Review diagnosis');
+    const accepted = { ...revision, status: 'accepted' as const };
+    expect(revisionLabel(accepted)).toBe('Diagnosis accepted');
+    expect(revisionOriginDescription(accepted)).toBe('No agent source change was made. You can start another revision.');
+    expect(revisionOriginAction(accepted, false)).toBe('View revision');
+  });
+
   it('uses one session action and keeps the coding-agent escape hatch inside the revision form', () => {
     const html = renderToString(<AgentRevisionLauncher
       ended

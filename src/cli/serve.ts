@@ -7989,7 +7989,7 @@ export function createServeCommand(): Command {
                 await failAgentRevision(found.project.root, revisionSessionId, failure).catch(() => undefined);
               } finally {
                 const latest = await readAgentRevisionRecord(found.project.root, revisionSessionId).catch(() => undefined);
-                if (latest && (latest.status === 'applied' || latest.status === 'discarded' || latest.status === 'restored' || latest.status === 'error')) {
+                if (latest && (latest.status === 'accepted' || latest.status === 'applied' || latest.status === 'discarded' || latest.status === 'restored' || latest.status === 'error')) {
                   await cleanupRevisionView(revisionSessionId);
                 }
                 wakeListHubs();
@@ -8042,7 +8042,7 @@ export function createServeCommand(): Command {
               const originParams = new URLSearchParams({ project: project.id });
               const originToken = sessionViewToken(record.originSessionId, apiKey);
               if (originToken) originParams.set('token', originToken);
-              if (record.status === 'applied' || record.status === 'discarded' || record.status === 'restored' || record.status === 'error') {
+              if (record.status === 'accepted' || record.status === 'applied' || record.status === 'discarded' || record.status === 'restored' || record.status === 'error') {
                 await cleanupRevisionView(revisionSessionId);
               }
               sendJSON(res, 200, {
@@ -8130,10 +8130,10 @@ export function createServeCommand(): Command {
           if (job.kind === 'agent-revision') {
             const project = projectsById.get(job.projectId);
             const record = project ? await readAgentRevisionRecord(project.root, job.sessionId) : undefined;
-            if (record?.status === 'proposed' || record?.status === 'no-change' || record?.status === 'applied' || record?.status === 'restored' || record?.status === 'discarded') {
+            if (record?.status === 'proposed' || record?.status === 'no-change' || record?.status === 'accepted' || record?.status === 'applied' || record?.status === 'restored' || record?.status === 'discarded') {
               job.status = 'completed';
               job.result = record;
-              if (record.status === 'applied' || record.status === 'restored' || record.status === 'discarded') {
+              if (record.status === 'accepted' || record.status === 'applied' || record.status === 'restored' || record.status === 'discarded') {
                 await cleanupRevisionView(job.sessionId);
               }
             } else if (record?.status === 'error') {

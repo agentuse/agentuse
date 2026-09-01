@@ -13,7 +13,7 @@ import type { ReasoningLevel } from '../model-compatibility.js';
 import type { ProjectSkillSummary } from './discover.js';
 
 export type AgentRevisionMode = 'fix' | 'improve';
-export type AgentRevisionStatus = 'running' | 'proposed' | 'no-change' | 'applied' | 'discarded' | 'restored' | 'error';
+export type AgentRevisionStatus = 'running' | 'proposed' | 'no-change' | 'accepted' | 'applied' | 'discarded' | 'restored' | 'error';
 
 export interface AgentRevisionRecord {
   version: 1;
@@ -463,9 +463,13 @@ export async function restoreAgentRevision(input: {
 export async function discardAgentRevision(projectRoot: string, revisionSessionId: string): Promise<AgentRevisionRecord> {
   const record = await readAgentRevisionRecord(projectRoot, revisionSessionId);
   if (!record || (record.status !== 'proposed' && record.status !== 'no-change')) throw new Error('This revision cannot be discarded');
-  const discarded: AgentRevisionRecord = { ...record, status: 'discarded', updatedAt: Date.now() };
-  await writeRecord(discarded);
-  return discarded;
+  const resolved: AgentRevisionRecord = {
+    ...record,
+    status: record.status === 'no-change' ? 'accepted' : 'discarded',
+    updatedAt: Date.now(),
+  };
+  await writeRecord(resolved);
+  return resolved;
 }
 
 export async function reopenAgentRevision(

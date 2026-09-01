@@ -7062,6 +7062,7 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 .agent-revision-diagnosis { display: grid; gap: 5px; padding: 12px; border-left: 3px solid var(--muted); background: var(--bg); }
 .agent-revision-diagnosis strong { font-size: 12px; }
 .agent-revision-diagnosis p { margin: 0; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+.agent-revision-resolution-hint { margin: -2px 0 0; color: var(--muted-3); font-size: 12px; line-height: 1.45; }
 .agent-revision-proposal-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .agent-revision-capabilities { display: grid; gap: 5px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); }
 .agent-revision-capabilities strong { font-size: 12px; }

@@ -15,14 +15,26 @@ import { SendToCodingAgentDialog } from './send-to-coding-agent-dialog';
 
 const ACTIVE_REVISION_STATUSES = new Set(['running', 'proposed', 'no-change']);
 
-function revisionLabel(revision: Pick<AgentRevisionSummary, 'status' | 'mode'>): string {
+export function revisionLabel(revision: Pick<AgentRevisionSummary, 'status' | 'mode'>): string {
   if (revision.status === 'running') return `${revision.mode === 'fix' ? 'Fix' : 'Improvement'} session is running`;
   if (revision.status === 'proposed') return 'Revision ready to review';
-  if (revision.status === 'no-change') return 'Diagnosis ready';
+  if (revision.status === 'no-change') return 'Revision needs review';
+  if (revision.status === 'accepted') return 'Diagnosis accepted';
   if (revision.status === 'applied') return 'Revision applied';
   if (revision.status === 'restored') return 'Previous source restored';
   if (revision.status === 'discarded') return 'Revision discarded';
   return 'Revision stopped';
+}
+
+export function revisionOriginDescription(revision: Pick<AgentRevisionSummary, 'status' | 'mode' | 'targetAgentName'>): string {
+  if (revision.status === 'no-change') return 'Review this diagnosis before starting another revision.';
+  if (revision.status === 'accepted') return 'No agent source change was made. You can start another revision.';
+  return `${revision.mode === 'fix' ? 'Fixing' : 'Improving'} ${revision.targetAgentName} from this run.`;
+}
+
+export function revisionOriginAction(revision: Pick<AgentRevisionSummary, 'status'>, active: boolean): string {
+  if (revision.status === 'no-change') return 'Review diagnosis';
+  return active ? 'Open revision session' : 'View revision';
 }
 
 function revisionHref(revision: AgentRevisionSummary & { href?: string }, token?: string, project?: string): string {
@@ -149,10 +161,10 @@ export function AgentRevisionLauncher(props: {
         <div class={`agent-revision-link is-${latest.status}`}>
           <span class="agent-revision-link-copy">
             <strong>{revisionLabel(latest)}</strong>
-            <span>{latest.mode === 'fix' ? 'Fixing' : 'Improving'} {latest.targetAgentName} from this run.</span>
+            <span>{revisionOriginDescription(latest)}</span>
           </span>
           <a class="agent-revision-open" href={revisionHref(latest, undefined, props.context.projectId)}>
-            {active ? 'Open revision session' : 'View revision'}
+            {revisionOriginAction(latest, active)}
           </a>
         </div>
       )}
@@ -259,8 +271,12 @@ export function AgentRevisionSessionPanel(props: {
     setBusy(action);
     setError(null);
     try {
+      const acceptedDiagnosis = action === 'discard' && revision?.status === 'no-change';
       const payload = await postAgentRevisionAction(props.sessionId, action, props.project);
       setRevision(payload.revision);
+      if (acceptedDiagnosis && revision) {
+        window.location.assign(revision.originHref ?? revisionFallbackOriginHref(revision.originSessionId, props.project));
+      }
     } catch (caught) {
       setError((caught as Error).message || `Could not ${action} this revision.`);
     } finally {
@@ -286,10 +302,8 @@ export function AgentRevisionSessionPanel(props: {
     : [], [revision?.proposedSource, revision?.baseSource, props.currentSource]);
 
   if (!isRevision) return null;
-  const originParams = new URLSearchParams();
-  if (props.project) originParams.set('project', props.project);
   const originHref = revision.originHref
-    ?? `/sessions/${encodeURIComponent(revision.originSessionId)}${originParams.size ? `?${originParams.toString()}` : ''}`;
+    ?? revisionFallbackOriginHref(revision.originSessionId, props.project);
 
   return (
     <section class={`agent-revision-session-panel is-${revision.status}`}>
@@ -303,7 +317,8 @@ export function AgentRevisionSessionPanel(props: {
       {revision.status === 'no-change' && revision.recommendedAction && <div class="agent-revision-diagnosis"><strong>Recommended next action</strong><p>{revision.recommendedAction}</p></div>}
       {revision.status === 'no-change' && (
         <>
-          <div class="agent-revision-review-actions"><button type="button" class="agent-revision-primary" disabled={busy !== null} onClick={() => setRequestingChanges((value) => !value)}>Request an agent change</button><button type="button" class="is-quiet" disabled={busy !== null} onClick={() => void act('discard')}>{busy === 'discard' ? 'Closing…' : 'Close diagnosis'}</button></div>
+          <p class="agent-revision-resolution-hint">Accepting finishes this revision. You can start another from the original session afterward.</p>
+          <div class="agent-revision-review-actions"><button type="button" class="agent-revision-primary" disabled={busy !== null} onClick={() => void act('discard')}>{busy === 'discard' ? 'Accepting…' : 'Accept diagnosis'}</button><button type="button" disabled={busy !== null} onClick={() => setRequestingChanges((value) => !value)}>Ask reviser to reconsider</button></div>
           {requestingChanges && <div class="agent-revision-change-request"><textarea value={changePrompt} placeholder="Explain why the agent itself should change…" onInput={(event) => setChangePrompt((event.target as HTMLTextAreaElement).value)} /><button type="button" class="agent-revision-primary" disabled={!changePrompt.trim()} onClick={() => void requestChanges()}>Continue revision session</button></div>}
         </>
       )}
@@ -325,4 +340,10 @@ export function AgentRevisionSessionPanel(props: {
       {error && <p class="agent-revision-error" role="alert">{error}</p>}
     </section>
   );
+}
+
+function revisionFallbackOriginHref(originSessionId: string, project?: string): string {
+  const params = new URLSearchParams();
+  if (project) params.set('project', project);
+  return `/sessions/${encodeURIComponent(originSessionId)}${params.size ? `?${params.toString()}` : ''}`;
 }

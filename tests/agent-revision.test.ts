@@ -158,7 +158,7 @@ describe('internal agent revision', () => {
     expect(record?.status).toBe('no-change');
     expect(record?.recommendedAction).toContain('Reconnect');
     expect(await readFile(f.targetAgentPath, 'utf8')).toBe(f.currentSource);
-    await expect(discardAgentRevision(f.projectRoot, f.revisionSessionId)).resolves.toMatchObject({ status: 'discarded' });
+    await expect(discardAgentRevision(f.projectRoot, f.revisionSessionId)).resolves.toMatchObject({ status: 'accepted' });
   });
 
   it('surfaces capability changes and can apply a newly loaded available skill', async () => {
