@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **The Mac app now downloads available updates quietly and prompts when they are ready.** Choose **Restart Now** to install through the existing clean backend shutdown path or **Later** to keep working; deferred updates remain available in **Settings → About**, and ordinary app quits never install them automatically.
+
 ## [0.19.2] - 2026-09-01
 
 ### Added

@@ -103,22 +103,20 @@ the human-facing installer; the ZIP and `latest-mac.yml` are required by
 package command includes `--publish never`, so building locally cannot upload
 artifacts.
 
-For the first updater-enabled Mac release, keep build and upload manual:
+For each Mac release, keep build and upload manual:
 
-1. Later, use `bun scripts/release.ts prepare 0.19.1` to bump both the npm and
+1. Use `bun scripts/release.ts prepare X.Y.Z` to bump both the npm and
    Desktop manifests together. Do not hand-edit one version independently.
 2. On a release Mac with the signing identity and notarization profile, run
    `APPLE_KEYCHAIN_PROFILE=agentuse-notary pnpm desktop:package:mac`.
 3. Before uploading, confirm `apps/desktop/dist` contains the signed/notarized
    DMG, Mac ZIP, their blockmaps, and `latest-mac.yml`. Inspect the YAML and
    verify its version and ZIP filename match the release.
-4. After the normal release workflow has created GitHub Release `v0.19.1`,
-   manually upload the DMG, ZIP, blockmaps, and `latest-mac.yml` to that same
-   public release. Do not create a second release or upload only the DMG.
+4. After the normal release workflow has created the matching GitHub Release,
+   manually upload the DMG, ZIP, blockmaps, and `latest-mac.yml` to it. Do not
+   create a second release or upload only the DMG.
 5. From an older signed build, verify background discovery and download, the
    native **Restart Now** / **Later** prompt, and explicit restart/install. Also
    repeat once without network access to confirm the app continues normally.
 
-The updater bootstrap does not add an automated signing or artifact-upload job.
-That can be introduced after the first release validates certificates,
-notarization, GitHub asset names, and the full upgrade path.
+The updater does not add an automated signing or artifact-upload job.

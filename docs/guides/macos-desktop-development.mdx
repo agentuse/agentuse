@@ -107,7 +107,7 @@ release script to prepare that version; do not edit the Desktop version
 separately:
 
 ```bash
-bun scripts/release.ts prepare 0.19.1
+bun scripts/release.ts prepare X.Y.Z
 ```
 
 Build the Mac release with the signing and notarization credentials above. The
@@ -122,6 +122,7 @@ public `agentuse/agentuse` GitHub Releases repository.
 
 After the normal GitHub release exists, manually upload all of those Mac assets
 to that same public release. Test the completed feed from an older signed build:
-check for the update, download it, choose **Restart and Install**, and confirm
-the new version launches. Also repeat a check while offline and confirm the app
-continues working while the About tab reports the failure.
+confirm that the update downloads in the background, choose **Later** in the
+native prompt, install it from **Settings → About**, and confirm the new version
+launches. Repeat with **Restart Now**, then repeat a check while offline and
+confirm the app continues working while the About tab reports the failure.
