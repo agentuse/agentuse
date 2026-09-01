@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { renderToString } from 'preact-render-to-string';
 import { LogEntry } from '../src/cli/serve/web/components/log-entry';
-import { Topbar } from '../src/cli/serve/web/components/topbar';
+import { navigationPageForPath } from '../src/cli/serve/web/components/app-shell';
 import { pendingNewestFirst, PendingApprovalGroups, PendingApprovalRow } from '../src/cli/serve/web/components/pending-approval-card';
 import { StoreTable, type StoreTableColumn } from '../src/cli/serve/web/components/store-table';
 import { ContinuePanel } from '../src/cli/serve/web/components/continue-panel';
@@ -267,27 +267,19 @@ describe('serve.terms display nouns', () => {
   });
 });
 
-describe('Topbar navigation', () => {
-  it('exposes Home as the active primary destination on the home screen', () => {
-    const html = renderToString(<Topbar currentPage="home" />);
-
-    expect(html).toContain('<a href="/" aria-current="page" class="nav-item active">home</a>');
-    expect(html.indexOf('>home</a>')).toBeLessThan(html.indexOf('>agents</a>'));
+describe('Application sidebar navigation', () => {
+  it('maps the home and primary route families to stable destinations', () => {
+    expect(navigationPageForPath('/')).toBe('home');
+    expect(navigationPageForPath('/agents/demo/reviewer')).toBe('agents');
+    expect(navigationPageForPath('/learnings/tidy')).toBe('agents');
+    expect(navigationPageForPath('/sessions/session-1/context')).toBe('sessions');
   });
 
-  it('keeps Home explicit while another primary destination is active', () => {
-    const html = renderToString(<Topbar currentPage="sessions" />);
-
-    expect(html).toContain('<a href="/" class="nav-item">home</a>');
-    expect(html).toContain('<a href="/sessions" aria-current="page" class="nav-item active">sessions</a>');
-  });
-
-  it('keeps reload in Dashboard preferences instead of duplicating it in the header', () => {
-    const html = renderToString(<Topbar />);
-
-    expect(html).toContain('aria-label="Dashboard preferences"');
-    expect(html).not.toContain('aria-label="Reload"');
-    expect(html).not.toContain('header-refresh');
+  it('maps secondary route families and leaves preferences unselected', () => {
+    expect(navigationPageForPath('/schedules')).toBe('schedules');
+    expect(navigationPageForPath('/stores/shared/item-1')).toBe('stores');
+    expect(navigationPageForPath('/approvals')).toBe('approvals');
+    expect(navigationPageForPath('/settings')).toBeUndefined();
   });
 });
 

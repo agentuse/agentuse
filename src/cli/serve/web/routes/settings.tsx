@@ -1,6 +1,5 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import { Topbar } from '../components/topbar';
 import { ThemeToggle } from '../components/theme-toggle';
 import { useTitle } from '../hooks/use-title';
 import { pageTitle, brandName } from '../lib/brand';
@@ -226,7 +225,6 @@ export default function Settings() {
 
   return (
     <div class="page-settings">
-      <Topbar />
       <main>
         <header>
           <div class="eyebrow">dashboard</div>

@@ -4,7 +4,6 @@ import { fetchSessionContext } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { useSmartBack } from '../hooks/use-smart-back';
-import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { LogContent } from '../components/content';
 import { toolChipLabel } from '../components/log-entry';
@@ -516,7 +515,6 @@ export default function SessionContext() {
     // Reuses the session page's shell class so the header, meta grid and
     // section titles match the page this one is reached from.
     <div class="page-approval-detail page-session-context">
-      <Topbar currentPage="sessions" right={<span class="session-pill">diagnostic</span>} />
       <main>
         <a class="back-link" href={backHref} onClick={goBack}>Back to session</a>
         {error && <div class="errors" role="alert">Failed to load diagnostics: {error.message}</div>}

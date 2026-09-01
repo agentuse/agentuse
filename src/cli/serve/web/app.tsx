@@ -1,6 +1,6 @@
-import { ErrorBoundary, LocationProvider, Router, Route, lazy } from 'preact-iso';
+import { ErrorBoundary, LocationProvider, Router, Route, lazy, useLocation } from 'preact-iso';
 import { useEffect } from 'preact/hooks';
-import { Topbar } from './components/topbar';
+import { AppShell } from './components/app-shell';
 import { AgentPalette } from './components/agent-palette';
 import { ApprovalToast } from './components/approval-toast';
 import { NavTracker } from './hooks/use-smart-back';
@@ -47,13 +47,55 @@ function NotFound() {
   }, []);
   return (
     <div class="page-home">
-      <Topbar />
       <main>
         <h1>Not found</h1>
         <p class="empty">This page does not exist. Try <a href="/sessions">sessions</a> or <a href="/stores">stores</a>.</p>
       </main>
     </div>
   );
+}
+
+function AppRoutes() {
+  return (
+    <Router
+      onLoadStart={() => setRouteLoading(true)}
+      onLoadEnd={() => {
+        setRouteLoading(false);
+        dismissBootLoader();
+      }}
+      onRouteChange={() => {
+        setRouteLoading(false);
+        dismissBootLoader();
+      }}
+    >
+      <Route path="/" component={Home} />
+      <Route path="/onboarding" component={Onboarding} />
+      <Route path="/agents" component={Agents} />
+      <Route path="/agents/:project" component={Agents} />
+      <Route path="/agents/:project/:agent*" component={AgentDetail} />
+      <Route path="/schedules" component={Schedules} />
+      <Route path="/sessions" component={SessionsList} />
+      <Route path="/sessions/:sessionId" component={SessionDetail} />
+      {/* Diagnostic subpage: what was actually loaded into this run's context window. */}
+      <Route path="/sessions/:sessionId/context" component={SessionContext} />
+      <Route path="/approvals" component={ApprovalsList} />
+      <Route path="/stores" component={StoresIndex} />
+      <Route path="/stores/:store" component={StoreItems} />
+      <Route path="/stores/:store/:item" component={StoreItemDetail} />
+      <Route path="/settings" component={Settings} />
+      {/* Query-addressed (?project=&path=&job=): an agent path has slashes
+          of its own, which would be ambiguous under /agents/:project/:agent*. */}
+      <Route path="/learnings/tidy" component={LearningsTidy} />
+      <Route default component={NotFound} />
+    </Router>
+  );
+}
+
+function RoutedApp() {
+  const location = useLocation();
+  const pathname = new URL(location.url, 'https://agentuse.local').pathname;
+  if (pathname === '/onboarding') return <AppRoutes />;
+  return <AppShell><AppRoutes /></AppShell>;
 }
 
 export function App() {
@@ -64,37 +106,7 @@ export function App() {
         <GlobalApprovalsProvider>
           <AgentPalette />
           <ApprovalToast />
-          <Router
-          onLoadStart={() => setRouteLoading(true)}
-          onLoadEnd={() => {
-            setRouteLoading(false);
-            dismissBootLoader();
-          }}
-          onRouteChange={() => {
-            setRouteLoading(false);
-            dismissBootLoader();
-          }}
-          >
-          <Route path="/" component={Home} />
-          <Route path="/onboarding" component={Onboarding} />
-          <Route path="/agents" component={Agents} />
-          <Route path="/agents/:project" component={Agents} />
-          <Route path="/agents/:project/:agent*" component={AgentDetail} />
-          <Route path="/schedules" component={Schedules} />
-          <Route path="/sessions" component={SessionsList} />
-          <Route path="/sessions/:sessionId" component={SessionDetail} />
-          {/* Diagnostic subpage: what was actually loaded into this run's context window. */}
-          <Route path="/sessions/:sessionId/context" component={SessionContext} />
-          <Route path="/approvals" component={ApprovalsList} />
-          <Route path="/stores" component={StoresIndex} />
-          <Route path="/stores/:store" component={StoreItems} />
-          <Route path="/stores/:store/:item" component={StoreItemDetail} />
-          <Route path="/settings" component={Settings} />
-          {/* Query-addressed (?project=&path=&job=): an agent path has slashes
-              of its own, which would be ambiguous under /agents/:project/:agent*. */}
-          <Route path="/learnings/tidy" component={LearningsTidy} />
-          <Route default component={NotFound} />
-          </Router>
+          <RoutedApp />
         </GlobalApprovalsProvider>
       </ErrorBoundary>
     </LocationProvider>

@@ -8,7 +8,6 @@ import {
 } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
-import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { TidyResultView } from '../components/learnings-panel';
 import { agentDetailHref, learningsTidyHref } from '../lib/links';
@@ -176,7 +175,6 @@ export default function LearningsTidy() {
 
   return (
     <div class="page-agents">
-      <Topbar currentPage="agents" right={<span class="session-pill">tidy up <code>{agentName(runPath)}</code></span>} />
       <main>
         <a class="back-link" href={backHref}>Back to agent</a>
         <header>

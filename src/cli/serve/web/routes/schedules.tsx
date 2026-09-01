@@ -2,7 +2,6 @@ import type { SerializedSchedule } from '../../../../scheduler';
 import { fetchSchedules } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
-import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { formatApprovalTime } from '../lib/format';
 import { pageTitle } from '../lib/brand';
@@ -79,7 +78,6 @@ export default function Schedules() {
 
   return (
     <div class="page-schedules">
-      <Topbar currentPage="schedules" />
       <main>
         <header>
           <div class="eyebrow">scheduled agents</div>

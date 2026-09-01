@@ -3,7 +3,6 @@ import { useLocation, useRoute } from 'preact-iso';
 import { fetchStoreRows } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
-import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { ErrorBanner } from '../components/error-banner';
 import { StoreTable, type StoreTableColumn } from '../components/store-table';
@@ -101,7 +100,6 @@ export default function StoreItems() {
 
   return (
     <div class="page-stores">
-      <Topbar currentPage="stores" right={<span class="session-pill">store <code>{storeName}</code></span>} />
       <main>
         <header>
           <div class="eyebrow">store table</div>

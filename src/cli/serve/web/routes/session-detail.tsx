@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation, useRoute } from 'preact-iso';
 import type { ApprovalLogEntry, ApprovalPageInfo } from '../../types';
-import { Topbar } from '../components/topbar';
 import { LogEntry, toolChipLabel } from '../components/log-entry';
 import { InlineMarkdown, LogContent } from '../components/content';
 import { DecisionDialog, type DecisionDialogMode } from '../components/comment-dialog';
@@ -1169,7 +1168,6 @@ export default function SessionDetail() {
   if (fatalError) {
     return (
       <div class="page-approval-detail">
-        <Topbar currentPage="sessions" />
         <main><p class="notice error">{fatalError}</p></main>
       </div>
     );
@@ -1177,7 +1175,6 @@ export default function SessionDetail() {
   if (!approval) {
     return (
       <div class="page-approval-detail">
-        <Topbar currentPage="sessions" />
         <main><Loading wrapClass="notice" label="Loading session…" /></main>
       </div>
     );
@@ -1375,7 +1372,6 @@ export default function SessionDetail() {
 
   return (
     <div class="page-approval-detail">
-      <Topbar currentPage="sessions" />
       <main>
         <div class={`session-bar${scrolled ? ' is-scrolled' : ''}`}>
           <div class="session-bar-lead">

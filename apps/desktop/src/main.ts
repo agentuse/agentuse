@@ -221,6 +221,18 @@ function registerDesktopIpc(): void {
     });
     return result.canceled ? null : result.filePaths[0] ?? null;
   });
+  ipcMain.handle("agentuse:desktop:get-navigation-state", (event) => {
+    assertDashboardSender(event);
+    return dashboardNavigationState();
+  });
+  ipcMain.handle("agentuse:desktop:go-back", (event) => {
+    assertDashboardSender(event);
+    navigationCommands.goBack();
+  });
+  ipcMain.handle("agentuse:desktop:go-forward", (event) => {
+    assertDashboardSender(event);
+    navigationCommands.goForward();
+  });
   ipcMain.handle("agentuse:setup:get-state", async (event) => {
     assertSetupSender(event);
     return desktopSetupState();
@@ -563,6 +575,10 @@ function createWindow(): BrowserWindow {
     minHeight: 600,
     title: APP_NAME,
     show: false,
+    ...(process.platform === "darwin" ? {
+      titleBarStyle: "hiddenInset" as const,
+      trafficLightPosition: { x: 14, y: 16 },
+    } : {}),
     webPreferences: {
       preload: join(__dirname, "preload.cjs"),
       nodeIntegration: false,
@@ -597,8 +613,14 @@ function createWindow(): BrowserWindow {
   browser.webContents.on("dom-ready", () => void prepareDesktopDocument(browser));
   // Electron emits the in-page event for History API changes made by the SPA.
   // Rebuild only the application menu so the tray menu and lifecycle stay put.
-  browser.webContents.on("did-navigate", refreshApplicationMenu);
-  browser.webContents.on("did-navigate-in-page", refreshApplicationMenu);
+  browser.webContents.on("did-navigate", () => {
+    refreshApplicationMenu();
+    broadcastNavigationState();
+  });
+  browser.webContents.on("did-navigate-in-page", () => {
+    refreshApplicationMenu();
+    broadcastNavigationState();
+  });
   browser.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(permission === "notifications" || permission === "clipboard-sanitized-write");
   });
@@ -687,7 +709,7 @@ async function prepareDesktopDocument(browser: BrowserWindow): Promise<void> {
     window.__agentuseDesktopFocusGuardInstalled = true;
 
     let brandWasFocusedBeforeBlur = false;
-    const brandIsFocused = () => document.activeElement?.matches?.('.topbar .brand') === true;
+    const brandIsFocused = () => document.activeElement?.matches?.('.sidebar-brand') === true;
     const desktopFocusSink = () => {
       let sink = document.querySelector('[data-agentuse-desktop-focus-sink]');
       if (sink instanceof HTMLElement) return sink;
@@ -1188,6 +1210,19 @@ async function requestFullQuitFromMenuBar(): Promise<void> {
 function activeNavigationHistory() {
   if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return undefined;
   return window.webContents.navigationHistory;
+}
+
+function dashboardNavigationState(): { canGoBack: boolean; canGoForward: boolean } {
+  const history = activeNavigationHistory();
+  return {
+    canGoBack: history?.canGoBack() ?? false,
+    canGoForward: history?.canGoForward() ?? false,
+  };
+}
+
+function broadcastNavigationState(): void {
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
+  window.webContents.send("agentuse:desktop:navigation-state", dashboardNavigationState());
 }
 
 const navigationCommands: NavigationCommands = {

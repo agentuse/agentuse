@@ -6,7 +6,6 @@ import { fetchApprovals } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useApprovalsStream } from '../hooks/use-approvals-stream';
 import { useTitle } from '../hooks/use-title';
-import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { PushBell } from '../components/push-bell';
 import { PendingApprovalGroups } from '../components/pending-approval-card';
@@ -143,7 +142,6 @@ export default function ApprovalsList() {
 
   return (
     <div class="page-approvals">
-      <Topbar currentPage="approvals" />
       <main>
         <h1>Approvals <PushBell category="approvals" /></h1>
         {error && (

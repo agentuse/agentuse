@@ -2,7 +2,6 @@ import { useLocation } from 'preact-iso';
 import { fetchStores } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
-import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { ErrorBanner } from '../components/error-banner';
 import { StoreTable, type StoreTableColumn } from '../components/store-table';
@@ -87,7 +86,6 @@ export default function StoresIndex() {
 
   return (
     <div class="page-stores">
-      <Topbar currentPage="stores" />
       <main>
         <header>
           <div class="eyebrow">shared state</div>

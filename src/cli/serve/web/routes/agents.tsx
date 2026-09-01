@@ -17,7 +17,6 @@ import { useAgentColumns } from '../hooks/use-agent-columns';
 import { useMediaQuery } from '../hooks/use-media-query';
 import { useRunAgent } from '../hooks/use-run-agent';
 import { useSmartBack } from '../hooks/use-smart-back';
-import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { RunInstructionDialog } from '../components/run-instruction-dialog';
 import { AgentGraphView } from '../components/agent-graph-view';
@@ -850,7 +849,6 @@ export default function Agents({ project }: { project?: string } = {}) {
 
   return (
     <div class="page-agents">
-      <Topbar currentPage="agents" />
       <GroupRail items={railItems} />
       <main>
         <header>

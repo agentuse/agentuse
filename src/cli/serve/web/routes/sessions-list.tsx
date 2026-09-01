@@ -7,7 +7,6 @@ import { useFetch } from '../hooks/use-fetch';
 import { useMediaQuery } from '../hooks/use-media-query';
 import { useSessionsStream } from '../hooks/use-sessions-stream';
 import { useTitle } from '../hooks/use-title';
-import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { PushBell } from '../components/push-bell';
 import { AgentFilterSelect } from '../components/agent-filter-select';
@@ -547,7 +546,6 @@ export default function SessionsList() {
 
   return (
     <div class="page-sessions">
-      <Topbar currentPage="sessions" />
       <GroupRail items={railItems} />
       <main>
         <div class="sessions-head">

@@ -4,7 +4,6 @@ import { fetchStoreItem } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { useSmartBack } from '../hooks/use-smart-back';
-import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { formatApprovalTime, storeItemPreview, storeItemTitle, valueAsRecord } from '../lib/format';
 import { pageTitle } from '../lib/brand';
@@ -44,7 +43,6 @@ export default function StoreItemDetail() {
 
   return (
     <div class="page-stores">
-      <Topbar currentPage="stores" right={<span class="session-pill">store <code>{storeName}</code></span>} />
       <main>
         <a class="back-link" href={backHref} onClick={goBack}>Back to store table</a>
         {error && <div class="errors">Failed to load item: {error.message}</div>}

@@ -7,7 +7,6 @@ import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { useRunAgent } from '../hooks/use-run-agent';
 import { useSmartBack } from '../hooks/use-smart-back';
-import { Topbar } from '../components/topbar';
 import { Loading } from '../components/loading';
 import { SchedulePill } from '../components/schedule-pill';
 import { AgentLearningsPanel, StrandedLearningsBanner } from '../components/learnings-panel';
@@ -464,7 +463,6 @@ export default function AgentDetail() {
 
   return (
     <div class="page-agent-detail">
-      <Topbar currentPage="agents" />
       <main>
         <a class="back" href="/agents" onClick={goBack}>← Back</a>
 

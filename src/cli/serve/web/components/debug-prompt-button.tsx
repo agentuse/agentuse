@@ -34,6 +34,10 @@ declare global {
       getProviderStatus: () => Promise<ProviderStatus>;
       openSettings: () => Promise<void>;
       chooseProjectFolder: () => Promise<string | null>;
+      getNavigationState: () => Promise<{ canGoBack: boolean; canGoForward: boolean }>;
+      goBack: () => Promise<void>;
+      goForward: () => Promise<void>;
+      onNavigationStateChange: (listener: (state: { canGoBack: boolean; canGoForward: boolean }) => void) => () => void;
     };
   }
 }

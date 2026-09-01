@@ -9,7 +9,6 @@ import { useLiveHome, sessionRowKey, ORPHANED_LABEL, type ActivityEvent } from '
 import { isAttentionSessionDismissed, useGlobalApprovals } from '../hooks/use-global-approvals';
 import { useSessionTail } from '../hooks/use-session-tail';
 import { useTitle } from '../hooks/use-title';
-import { Topbar } from '../components/topbar';
 import { UpdateBanner } from '../components/update-banner';
 import { Loading } from '../components/loading';
 import { pendingNewestFirst, PendingApprovalRow } from '../components/pending-approval-card';
@@ -807,7 +806,6 @@ export default function Home() {
   return (
     <div class="page-home" data-ambient={ambient}>
       <div class="home-ambient" aria-hidden="true"></div>
-      <Topbar currentPage="home" />
       <main class="home-boot">
         {(previewRequested && data)
           ? <UpdateBanner update={previewUpdate(data.version)} persistDismissal={false} />

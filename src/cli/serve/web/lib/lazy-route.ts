@@ -7,8 +7,8 @@
  * new route). preact-iso's `lazy` throws the import promise to suspend, and the
  * Router only ever `.then()`s it — there is no reject path. A failed chunk
  * import therefore suspends the route *forever*: blank, non-interactive, and
- * (because <Topbar/>, which owns the theme effect, renders inside each route)
- * unthemed — falling back to the browser-default light look. The user's only
+ * (because the first route has not committed) unthemed — falling back to the
+ * browser-default light look. The user's only
  * escape is a manual reload.
  *
  * Recover automatically: when a chunk import rejects, do a single full reload,
