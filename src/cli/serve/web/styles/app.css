@@ -5121,6 +5121,15 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agents .chip.status { color: var(--cyan); border-color: var(--cyan-border); }
 .schedule-pill { font-family: var(--mono); cursor: help; }
+.page-agents .schedule-pill.is-paused,
+.page-agent-detail .schedule-pill.is-paused { color: var(--muted-2); border-color: var(--line-strong); }
+.schedule-pill-state {
+  margin-right: 6px;
+  padding-right: 6px;
+  border-right: 1px solid currentColor;
+  font-family: var(--sans);
+  font-weight: 600;
+}
 .schedule-pill:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 2px; }
 .schedule-tooltip {
   position: fixed;

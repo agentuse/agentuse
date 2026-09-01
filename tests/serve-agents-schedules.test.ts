@@ -108,6 +108,16 @@ describe('collectAgents', () => {
     const { agents } = await __testing.collectAgents([makeProject()]);
     expect(agents.map((a) => a.path)).toEqual(['daily.agentuse', 'helper.agentuse']);
   });
+
+  it('adds current pause state after reading cached agent summaries', async () => {
+    const project = makeProject();
+    const { agents } = await __testing.collectAgents([project]);
+
+    __testing.annotateAgentScheduleStates(agents, [project], (_project, agentPath) => agentPath !== 'daily.agentuse');
+
+    expect(agents.find((agent) => agent.path === 'daily.agentuse')?.scheduleEnabled).toBe(false);
+    expect(agents.find((agent) => agent.path === 'helper.agentuse')?.scheduleEnabled).toBeUndefined();
+  });
 });
 
 describe('bare serve migration warning', () => {

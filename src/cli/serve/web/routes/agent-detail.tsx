@@ -144,7 +144,7 @@ function Capabilities(props: { meta: AgentDetailMeta; model: string; schedule: s
 
   const runtimeChips: VNode[] = [<Chip key="model" tone="cyan">{props.model}</Chip>];
   if (props.schedule) runtimeChips.push(
-    <SchedulePill key="sched" class="cap-chip" schedule={props.schedule} human={props.scheduleHuman} />
+    <SchedulePill key="sched" class="cap-chip" schedule={props.schedule} human={props.scheduleHuman} enabled={props.scheduleEnabled} />
   );
   if (typeof meta.timeout === 'number') runtimeChips.push(<Chip key="to">timeout {meta.timeout}s</Chip>);
   if (typeof meta.maxSteps === 'number') runtimeChips.push(<Chip key="ms">{meta.maxSteps} steps</Chip>);

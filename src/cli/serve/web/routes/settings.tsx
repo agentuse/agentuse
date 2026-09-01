@@ -129,9 +129,9 @@ function ProjectsSettingsGroup() {
     <>
       <Group title="Create or connect a project">
         <div class="guided-creation-settings">
-          <p class="settings-group-hint">Start a new project or connect a folder you already work in, then discover useful recurring work and build an agent step by step.</p>
+          <p class="settings-group-hint">Start fresh or connect an existing folder, then build an agent step by step.</p>
           <button type="button" class="settings-item" onClick={() => location.assign('/onboarding')}>
-            Add a Project
+            Add project
           </button>
         </div>
       </Group>
@@ -232,8 +232,8 @@ export default function Settings() {
           <div class="eyebrow">dashboard</div>
           <h1>Settings</h1>
           <p class="lede">{isDesktop
-            ? 'Manage the Dashboard, projects, and provider connections on this Mac.'
-            : 'Manage this Dashboard, its projects, and provider connections.'}</p>
+            ? 'Manage appearance, projects, and models on this Mac.'
+            : 'Manage appearance, projects, and models.'}</p>
         </header>
 
         <div class="settings-tabs" role="tablist" aria-label="Settings sections">

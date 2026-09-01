@@ -143,7 +143,7 @@ function AgentMenu(props: { agent: AgentRow; pinned: boolean; onTogglePin: () =>
           {agent.schedule && (
             <div class="menu-meta">
               <span class="menu-meta-label">Schedule</span>
-              <SchedulePill class="chip status" schedule={agent.schedule} human={agent.scheduleHuman} />
+              <SchedulePill class="chip status" schedule={agent.schedule} human={agent.scheduleHuman} enabled={agent.scheduleEnabled} />
             </div>
           )}
           {agent.metadata && Object.keys(agent.metadata).length > 0 && (
@@ -169,7 +169,7 @@ function AgentMenu(props: { agent: AgentRow; pinned: boolean; onTogglePin: () =>
             <svg class="menu-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
               <path d="M5 3.5v9a.75.75 0 0 0 1.14.64l7.25-4.5a.75.75 0 0 0 0-1.28l-7.25-4.5A.75.75 0 0 0 5 3.5Z" />
             </svg>
-            <span>Run with Custom Instruction</span>
+            <span>Run with instruction…</span>
           </button>
           <a
             class="menu-item"
@@ -457,7 +457,7 @@ function AgentCard(props: { agent: AgentRow; ctx: RowCtx; showProject?: boolean 
         <LastRunCell session={last} />
       </div>
       <div class="agent-card-foot">
-        {a.schedule && <SchedulePill class="chip status" schedule={a.schedule} human={a.scheduleHuman} />}
+        {a.schedule && <SchedulePill class="chip status" schedule={a.schedule} human={a.scheduleHuman} enabled={a.scheduleEnabled} />}
         <span class="chip" title={a.model}>{a.model}</span>
         <span class="agent-card-runbtn"><RunButton agentPath={a.runPath} projectId={a.projectId} /></span>
       </div>
@@ -684,7 +684,7 @@ function ColumnCell({ id, agent, ctx }: { id: string; agent: AgentRow; ctx: RowC
   if (id === 'lastRun') return <LastRunCell session={ctx.lastRunFor(agent)} />;
   if (id === 'schedule') {
     return agent.schedule
-      ? <SchedulePill class="chip status" schedule={agent.schedule} human={agent.scheduleHuman} />
+      ? <SchedulePill class="chip status" schedule={agent.schedule} human={agent.scheduleHuman} enabled={agent.scheduleEnabled} />
       : <span class="muted">—</span>;
   }
   if (id === 'run') return <RunButton agentPath={agent.runPath} projectId={agent.projectId} />;

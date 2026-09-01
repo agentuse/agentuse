@@ -214,6 +214,17 @@ describe('SchedulePill', () => {
     expect(html).toContain('aria-label="*/15 * * * *"');
     expect(html).toContain('tabindex="0"');
   });
+
+  it('makes a paused schedule explicit without hiding its cadence', () => {
+    const html = renderToString(
+      <SchedulePill schedule="0 9 * * 1" human="At 09:00 AM, only on Monday" enabled={false} />
+    );
+
+    expect(html).toContain('schedule-pill is-paused');
+    expect(html).toContain('aria-label="Paused schedule — 0 9 * * 1 — At 09:00 AM, only on Monday"');
+    expect(html).toContain('schedule-pill-state">Paused</span>');
+    expect(html).toContain('>0 9 * * 1</span>');
+  });
 });
 
 describe('serve.terms display nouns', () => {

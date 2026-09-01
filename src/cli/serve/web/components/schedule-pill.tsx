@@ -17,15 +17,18 @@ interface TooltipPosition {
 export function SchedulePill(props: {
   schedule: string;
   human?: string | undefined;
+  enabled?: boolean | undefined;
   class?: string | undefined;
 }) {
   const explanation = props.human ?? props.schedule;
+  const paused = props.enabled === false;
   const pillRef = useRef<HTMLSpanElement>(null);
   const tooltipId = useId();
   const [position, setPosition] = useState<TooltipPosition | null>(null);
-  const accessibleLabel = explanation === props.schedule
+  const scheduleLabel = explanation === props.schedule
     ? props.schedule
     : `${props.schedule} — ${explanation}`;
+  const accessibleLabel = paused ? `Paused schedule — ${scheduleLabel}` : scheduleLabel;
 
   const showTooltip = () => {
     const rect = pillRef.current?.getBoundingClientRect();
@@ -57,7 +60,7 @@ export function SchedulePill(props: {
     <>
       <span
         ref={pillRef}
-        class={`schedule-pill${props.class ? ` ${props.class}` : ''}`}
+        class={`schedule-pill${paused ? ' is-paused' : ''}${props.class ? ` ${props.class}` : ''}`}
         tabIndex={0}
         aria-label={accessibleLabel}
         aria-describedby={position ? tooltipId : undefined}
@@ -69,7 +72,8 @@ export function SchedulePill(props: {
           if (event.key === 'Escape') setPosition(null);
         }}
       >
-        {props.schedule}
+        {paused && <span class="schedule-pill-state">Paused</span>}
+        <span>{props.schedule}</span>
       </span>
       {position && createPortal(
         <span
@@ -78,7 +82,7 @@ export function SchedulePill(props: {
           role="tooltip"
           style={{ left: `${position.left}px`, top: `${position.top}px` }}
         >
-          {explanation}
+          {paused ? `Paused · ${explanation}` : explanation}
         </span>,
         document.body
       )}

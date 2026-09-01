@@ -2176,6 +2176,8 @@ interface AgentSummary {
   schedule?: string;
   /** Human-readable form of `schedule` (e.g. "At 09:00 AM, only on Monday"). */
   scheduleHuman?: string;
+  /** Runtime state of the declared schedule; false when locally paused. */
+  scheduleEnabled?: boolean;
   /** Free-form frontmatter `metadata:`, passed through untouched for the UI. */
   metadata?: Record<string, unknown>;
   /** Declared subagent targets, normalized project-relative (see serve/types). */
@@ -2252,6 +2254,21 @@ async function collectAgents(projects: Project[]): Promise<CollectAgentsResult> 
   agents.sort((a, b) => a.projectId.localeCompare(b.projectId) || a.path.localeCompare(b.path));
   annotateRelationshipWarnings(agents);
   return { agents, errors };
+}
+
+/** Add local scheduler state at response time so cached file summaries never
+ * freeze a pause/resume choice made after the agent was parsed. */
+function annotateAgentScheduleStates(
+  agents: AgentSummary[],
+  projects: Project[],
+  scheduleIsEnabled: (project: Project, agentPath: string) => boolean,
+): void {
+  const projectsById = new Map(projects.map((project) => [project.id, project]));
+  for (const agent of agents) {
+    if (!agent.schedule) continue;
+    const project = projectsById.get(agent.projectId);
+    if (project) agent.scheduleEnabled = scheduleIsEnabled(project, agent.runPath);
+  }
 }
 
 /**
@@ -5243,6 +5260,7 @@ export function createServeCommand(): Command {
         if (req.method === "GET" && routePath === '/agents') {
           const { agents, errors } = await collectAgents(projects);
           if (isApi) {
+            annotateAgentScheduleStates(agents, projects, scheduleIsEnabled);
             const dirs = await collectDirAbouts(projects, agents);
             sendJSON(res, 200, { success: true, agents, errors, ...(dirs.length > 0 && { dirs }) });
             return;
@@ -8875,6 +8893,7 @@ export const __testing = {
   workerExecutionErrorResponse,
   isSpaPageRoute,
   collectAgents,
+  annotateAgentScheduleStates,
   formatPsTable,
   formatAgentsTable,
   formatSchedulesTable,

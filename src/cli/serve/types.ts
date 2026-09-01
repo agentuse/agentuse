@@ -616,6 +616,8 @@ export interface AgentSummary {
   schedule?: string;
   /** Human-readable form of `schedule` (e.g. "Every 5 minutes"). */
   scheduleHuman?: string;
+  /** Runtime state of the declared schedule; false when locally paused. */
+  scheduleEnabled?: boolean;
   /**
    * Free-form frontmatter `metadata:`. Opaque to the daemon, passed through so
    * the UI can surface it (selectable column, detail list). Omitted when the
