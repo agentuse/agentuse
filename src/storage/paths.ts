@@ -2,6 +2,9 @@ import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
 import { execSync } from 'child_process';
+import { getAgentuseDataDir } from '../utils/data-dir';
+
+export { getAgentuseDataDir } from '../utils/data-dir';
 
 /**
  * Get XDG data directory (using Linux XDG conventions on all platforms)
@@ -62,13 +65,13 @@ export async function getGitRoot(cwd: string): Promise<string | null> {
 
 /**
  * Get project directory based on git root or project-root hash.
- * Returns: {xdgData}/agentuse/project/{hash}
+ * Returns: {agentuseData}/project/{hash}
  * Hash source: git root when available, otherwise the absolute project root.
  * The non-git branch previously returned `project/global`, which collided across
  * multiple non-git projects served by the same process.
  */
 export function getProjectDirSync(projectRoot: string): string {
-  const baseDir = path.join(getXdgDataDir(), 'agentuse', 'project');
+  const baseDir = path.join(getAgentuseDataDir(), 'project');
 
   const gitRoot = getGitRootSync(projectRoot);
   const source = gitRoot ?? path.resolve(projectRoot);

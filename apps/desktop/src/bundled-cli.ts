@@ -2,7 +2,15 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-const RUNTIME_PATH_ENV = ["HOME", "XDG_DATA_HOME", "AGENTUSE_CONFIG"] as const;
+const RUNTIME_PATH_ENV = [
+  "HOME",
+  "AGENTUSE_DATA_DIR",
+  "XDG_DATA_HOME",
+  "AGENTUSE_CONFIG_DIR",
+  // Deprecated compatibility overrides; remove no earlier than 2026-12-01.
+  "AGENTUSE_CONFIG",
+  "AGENTUSE_ENV",
+] as const;
 
 /**
  * A shell-ready command that runs the CLI packaged inside AgentUse.app.

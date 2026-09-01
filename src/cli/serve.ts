@@ -17,7 +17,7 @@ import { logger, LogLevel, executionLog, approvalLog } from "../utils/logger";
 import { printLogo } from "../utils/branding";
 import { getSessionStorageDir, initStorage } from "../storage/index.js";
 import { findGateSnapshotFile } from "../session/gate-artifacts.js";
-import { getXdgDataDir } from "../storage/paths.js";
+import { getAgentuseDataDir } from "../storage/paths.js";
 import { Scheduler, type Schedule, type SerializedSchedule } from "../scheduler";
 import { loadPausedSchedules, normalizeScheduleAgentPath, setSchedulePaused } from '../scheduler/state.js';
 import { FileWatcher } from "../watcher";
@@ -4604,7 +4604,7 @@ export function createServeCommand(): Command {
       // Web Push to home-screen-installed clients: VAPID keys + device
       // subscriptions persist in the data dir; notifications fire on pending
       // approvals and session completions (see pushService.notify call sites).
-      const pushService = new PushService(getXdgDataDir(), (msg) => console.log(msg));
+      const pushService = new PushService(getAgentuseDataDir(), (msg) => console.log(msg));
       type NativeNotificationEvent = {
         category: PushCategory;
         payload: Pick<PushPayload, 'title' | 'body' | 'url' | 'tag' | 'appBadge'>;

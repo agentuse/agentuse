@@ -1,5 +1,5 @@
 import { glob } from 'glob';
-import { homedir, tmpdir } from 'os';
+import { tmpdir } from 'os';
 import { join, dirname, extname } from 'path';
 import { pathToFileURL } from 'url';
 import { mkdtemp, stat, writeFile, rm } from 'fs/promises';
@@ -7,6 +7,7 @@ import * as esbuild from 'esbuild';
 import { createHash, randomBytes } from 'crypto';
 import type { AgentCompleteEvent, PluginHandlers } from './types';
 import { logger } from '../utils/logger';
+import { getGlobalConfigDir } from '../utils/global-config';
 
 export class PluginManager {
   private plugins: Array<{ path: string; handlers: PluginHandlers }> = [];
@@ -17,7 +18,7 @@ export class PluginManager {
       ? customDirs.map(dir => join(dir, '*.{ts,js}'))
       : [
           './.agentuse/plugins/*.{ts,js}',
-          join(homedir(), '.agentuse/plugins/*.{ts,js}')
+          join(getGlobalConfigDir(), 'plugins/*.{ts,js}')
         ];
 
     for (const pattern of pluginPaths) {

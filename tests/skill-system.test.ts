@@ -24,6 +24,7 @@ import { logger } from '../src/utils/logger';
 describe('Skill System', () => {
   let testDir: string;
   let originalHome: string | undefined;
+  let originalConfigDir: string | undefined;
 
   beforeEach(async () => {
     // Create a temporary directory for test skills
@@ -31,7 +32,9 @@ describe('Skill System', () => {
 
     // Mock HOME environment variable to isolate tests from user's global skills
     originalHome = process.env.HOME;
+    originalConfigDir = process.env.AGENTUSE_CONFIG_DIR;
     process.env.HOME = testDir;
+    delete process.env.AGENTUSE_CONFIG_DIR;
   });
 
   afterEach(async () => {
@@ -43,6 +46,11 @@ describe('Skill System', () => {
       process.env.HOME = originalHome;
     } else {
       delete process.env.HOME;
+    }
+    if (originalConfigDir !== undefined) {
+      process.env.AGENTUSE_CONFIG_DIR = originalConfigDir;
+    } else {
+      delete process.env.AGENTUSE_CONFIG_DIR;
     }
 
     // Clean up temporary directory
@@ -579,6 +587,16 @@ Content`);
       const directories = getDiscoveryDirectories(testDir);
 
       expect(directories.at(-1)).toBe(join(homedir(), '.agents', 'skills'));
+    });
+
+    it('uses AGENTUSE_CONFIG_DIR for user-global skills', () => {
+      const configDir = join(testDir, 'isolated-config');
+      process.env.AGENTUSE_CONFIG_DIR = configDir;
+
+      const directories = getDiscoveryDirectories(testDir);
+
+      expect(directories[1]).toBe(join(configDir, 'skills'));
+      expect(directories).not.toContain(join(homedir(), '.agentuse', 'skills'));
     });
 
     it('follows symlinked skill directories and keeps the visible location', async () => {

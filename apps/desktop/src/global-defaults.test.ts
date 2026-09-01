@@ -6,11 +6,14 @@ import { initializeDesktopGlobalDefaults } from "./global-defaults";
 
 describe("Desktop global defaults", () => {
   const roots: string[] = [];
+  const originalConfigDir = process.env.AGENTUSE_CONFIG_DIR;
   const originalConfig = process.env.AGENTUSE_CONFIG;
   const originalEnv = process.env.AGENTUSE_ENV;
 
   afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+    if (originalConfigDir === undefined) delete process.env.AGENTUSE_CONFIG_DIR;
+    else process.env.AGENTUSE_CONFIG_DIR = originalConfigDir;
     if (originalConfig === undefined) delete process.env.AGENTUSE_CONFIG;
     else process.env.AGENTUSE_CONFIG = originalConfig;
     if (originalEnv === undefined) delete process.env.AGENTUSE_ENV;
@@ -19,15 +22,16 @@ describe("Desktop global defaults", () => {
     delete process.env.DESKTOP_CONFIG_ENV_KEY;
   });
 
-  it("loads AGENTUSE_ENV and config.json env before Desktop runtime checks", () => {
+  it("loads AGENTUSE_CONFIG_DIR defaults before Desktop runtime checks", () => {
     const root = mkdtempSync(join(tmpdir(), "agentuse-desktop-defaults-"));
     roots.push(root);
     const envPath = join(root, ".env");
     const configPath = join(root, "config.json");
     writeFileSync(envPath, "DESKTOP_ENV_FILE_KEY=from-env-file\n");
     writeFileSync(configPath, JSON.stringify({ env: { DESKTOP_CONFIG_ENV_KEY: "from-config" } }));
-    process.env.AGENTUSE_ENV = envPath;
-    process.env.AGENTUSE_CONFIG = configPath;
+    process.env.AGENTUSE_CONFIG_DIR = root;
+    delete process.env.AGENTUSE_ENV;
+    delete process.env.AGENTUSE_CONFIG;
 
     const loaded = initializeDesktopGlobalDefaults();
 

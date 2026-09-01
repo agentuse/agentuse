@@ -2,7 +2,7 @@ import { Command } from "commander";
 import fs from "fs/promises";
 import path from "path";
 import * as dotenv from "dotenv";
-import { getSessionStorageDir, getProjectDir, getXdgDataDir } from "../storage/paths";
+import { getSessionStorageDir, getProjectDir, getAgentuseDataDir } from "../storage/paths";
 import type { SessionInfo, Message, Part, SessionStatus } from "../session/types";
 import { initStorage } from "../storage";
 import { SessionManager } from "../session";
@@ -214,7 +214,7 @@ async function listSessions(projectRoot: string): Promise<SessionSummary[]> {
 }
 
 async function listAllProjectSessions(): Promise<SessionSummary[]> {
-  const projectsDir = path.join(getXdgDataDir(), "agentuse", "project");
+  const projectsDir = path.join(getAgentuseDataDir(), "project");
   const sessions: SessionSummary[] = [];
 
   const projectEntries = await fs.readdir(projectsDir, { withFileTypes: true }).catch(() => []);

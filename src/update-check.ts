@@ -11,7 +11,7 @@ import { get as httpsGet } from 'https';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
-import { getXdgDataDir } from './storage/paths';
+import { getAgentuseDataDir } from './utils/data-dir';
 
 export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export const UPDATE_REMINDER_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -39,7 +39,7 @@ export interface AvailableUpdate {
 }
 
 function stateDir(): string {
-  return join(getXdgDataDir(), 'agentuse');
+  return getAgentuseDataDir();
 }
 
 function updateCachePath(): string {

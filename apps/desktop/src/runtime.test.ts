@@ -1,7 +1,17 @@
 import { describe, expect, it } from "bun:test";
-import { isAbandonedDesktopServer, isDashboardNavigation, isLocalServer, isSafeExternalUrl, selectServer, serverUrl } from "./runtime";
+import { isAbandonedDesktopServer, isDashboardNavigation, isLocalServer, isSafeExternalUrl, selectServer, serverRegistryDirectory, serverUrl } from "./runtime";
 
 describe("desktop runtime helpers", () => {
+  it("uses AGENTUSE_DATA_DIR as the exact registry profile", () => {
+    expect(serverRegistryDirectory({
+      AGENTUSE_DATA_DIR: "/tmp/agentuse-data",
+      XDG_DATA_HOME: "/tmp/xdg-data",
+    })).toBe("/tmp/agentuse-data/servers");
+    expect(serverRegistryDirectory({
+      XDG_DATA_HOME: "/tmp/xdg-data",
+    })).toBe("/tmp/xdg-data/agentuse/servers");
+  });
+
   it("only attaches to local registered servers", () => {
     expect(isLocalServer({ host: "127.0.0.1", port: 12233 })).toBe(true);
     expect(isLocalServer({ host: "0.0.0.0", port: 12233 })).toBe(true);

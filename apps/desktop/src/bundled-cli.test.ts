@@ -19,11 +19,12 @@ describe("Desktop bundled CLI command", () => {
   it("carries only the non-secret paths that select the Desktop runtime profile", () => {
     expect(bundledCliCommand("/Applications/AgentUse.app/AgentUse", "/tmp/cli.js", {
       HOME: "/tmp/Fresh User/home",
+      AGENTUSE_DATA_DIR: "/tmp/Fresh User/data",
       XDG_DATA_HOME: "/tmp/Fresh User/data",
-      AGENTUSE_CONFIG: "/tmp/Fresh User/config.json",
+      AGENTUSE_CONFIG_DIR: "/tmp/Fresh User/config",
       OPENAI_API_KEY: "must-not-appear",
     })).toBe(
-      "env HOME='/tmp/Fresh User/home' XDG_DATA_HOME='/tmp/Fresh User/data' AGENTUSE_CONFIG='/tmp/Fresh User/config.json' ELECTRON_RUN_AS_NODE=1 '/Applications/AgentUse.app/AgentUse' '/tmp/cli.js'",
+      "env HOME='/tmp/Fresh User/home' AGENTUSE_DATA_DIR='/tmp/Fresh User/data' XDG_DATA_HOME='/tmp/Fresh User/data' AGENTUSE_CONFIG_DIR='/tmp/Fresh User/config' ELECTRON_RUN_AS_NODE=1 '/Applications/AgentUse.app/AgentUse' '/tmp/cli.js'",
     );
   });
 });

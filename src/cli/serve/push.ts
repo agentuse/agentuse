@@ -151,7 +151,7 @@ interface StoreShape {
 
 /**
  * Push state for one daemon: VAPID keypair (generated on first use) and the
- * device subscriptions, persisted as one JSON file under the XDG data dir.
+ * device subscriptions, persisted as one JSON file under the AgentUse data dir.
  * The daemon is a singleton (server registry enforces this) so plain
  * read-modify-write with an atomic rename is sufficient.
  */
@@ -165,7 +165,7 @@ export class PushService {
   private readonly log: (message: string) => void;
 
   constructor(dataDir: string, log: (message: string) => void = () => {}) {
-    this.file = join(dataDir, "agentuse", "push", "push-state.json");
+    this.file = join(dataDir, "push", "push-state.json");
     this.log = log;
     const state = this.load();
     this.subscriptions = state.subscriptions;

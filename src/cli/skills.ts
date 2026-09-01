@@ -13,6 +13,7 @@ import {
 } from '../skill/discovery.js';
 import { parseSkillContent } from '../skill/parser.js';
 import { resolveProjectContext } from '../utils/project.js';
+import { getGlobalConfigDir } from '../utils/global-config.js';
 import type { SkillContent, SkillInfo } from '../skill/types.js';
 
 type SkillSource = 'builtin' | 'installed';
@@ -66,9 +67,12 @@ function getBuiltinDirectoryInfo(): DirectoryInfo[] {
 
 function getInstalledDirectoryInfo(projectRoot: string): DirectoryInfo[] {
   const home = homedir();
+  const globalConfigDir = getGlobalConfigDir();
   const labels = new Map([
     [join(projectRoot, '.agentuse', 'skills'), '.agentuse/skills'],
-    [join(home, '.agentuse', 'skills'), '~/.agentuse/skills'],
+    [join(globalConfigDir, 'skills'), globalConfigDir === join(home, '.agentuse')
+      ? '~/.agentuse/skills'
+      : `${globalConfigDir}/skills`],
     [join(projectRoot, '.claude', 'skills'), '.claude/skills'],
     [join(home, '.claude', 'skills'), '~/.claude/skills'],
     [join(home, '.agents', 'skills'), '~/.agents/skills'],

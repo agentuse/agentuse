@@ -1,8 +1,8 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { isProcessRefAlive, processRefState, type ProcessRefState } from "../../../src/utils/process-info";
 import type { DesktopServerSupervisor } from "../../../src/utils/desktop-supervisor";
+import { getAgentuseDataDir } from "../../../src/utils/data-dir";
 
 /** Public shape written by `agentuse serve` to its process registry. */
 export interface RegisteredServer {
@@ -19,7 +19,7 @@ export interface RegisteredServer {
 }
 
 export function serverRegistryDirectory(env: NodeJS.ProcessEnv = process.env): string {
-  return join(env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "agentuse", "servers");
+  return join(getAgentuseDataDir(env), "servers");
 }
 
 export function isLocalServer(server: Pick<RegisteredServer, "host" | "port">): boolean {

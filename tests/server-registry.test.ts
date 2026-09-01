@@ -12,12 +12,14 @@ import {
   getDefaultLogFilePath,
   type ServerEntry,
 } from "../src/utils/server-registry";
-import { getXdgDataDir } from "../src/storage/paths";
+import { getAgentuseDataDir } from "../src/storage/paths";
 
+const originalAgentuseDataDir = process.env.AGENTUSE_DATA_DIR;
 const originalXdgDataHome = process.env.XDG_DATA_HOME;
 const testDataHome = fs.mkdtempSync(path.join(tmpdir(), "agentuse-server-registry-"));
+delete process.env.AGENTUSE_DATA_DIR;
 process.env.XDG_DATA_HOME = testDataHome;
-const REGISTRY_DIR = path.join(getXdgDataDir(), "agentuse", "servers");
+const REGISTRY_DIR = path.join(getAgentuseDataDir(), "servers");
 
 describe("Server Registry", () => {
   // Clean up test entries before and after each test
@@ -31,6 +33,8 @@ describe("Server Registry", () => {
   beforeEach(cleanupTestEntries);
   afterEach(cleanupTestEntries);
   afterAll(() => {
+    if (originalAgentuseDataDir === undefined) delete process.env.AGENTUSE_DATA_DIR;
+    else process.env.AGENTUSE_DATA_DIR = originalAgentuseDataDir;
     if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
     else process.env.XDG_DATA_HOME = originalXdgDataHome;
     fs.rmSync(testDataHome, { recursive: true, force: true });

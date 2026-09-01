@@ -12,10 +12,12 @@ describe('PluginManager', () => {
   let loggerWarnSpy: any;
   let loggerInfoSpy: any;
   let loggerDebugSpy: any;
+  const originalConfigDir = process.env.AGENTUSE_CONFIG_DIR;
 
   beforeEach(() => {
     // Clear all mocks before each test
     mock.restore();
+    delete process.env.AGENTUSE_CONFIG_DIR;
     pluginManager = new PluginManager();
     
     loggerWarnSpy = spyOn(logger, 'warn').mockImplementation(() => {});
@@ -27,6 +29,8 @@ describe('PluginManager', () => {
     loggerWarnSpy.mockRestore();
     loggerInfoSpy.mockRestore();
     loggerDebugSpy.mockRestore();
+    if (originalConfigDir === undefined) delete process.env.AGENTUSE_CONFIG_DIR;
+    else process.env.AGENTUSE_CONFIG_DIR = originalConfigDir;
     mock.restore();
   });
 
@@ -166,6 +170,20 @@ describe('PluginManager', () => {
       );
       expect(mockGlob).toHaveBeenCalledWith(
         expect.stringContaining(join(homedir(), '.agentuse/plugins/*.{ts,js}')),
+        expect.any(Object)
+      );
+    });
+
+    test('should search AGENTUSE_CONFIG_DIR for user-global plugins', async () => {
+      const configDir = '/tmp/agentuse-plugin-profile';
+      process.env.AGENTUSE_CONFIG_DIR = configDir;
+      const mockGlob = mock(() => Promise.resolve([]));
+      mock.module('glob', () => ({ glob: mockGlob }));
+
+      await pluginManager.loadPlugins();
+
+      expect(mockGlob).toHaveBeenCalledWith(
+        join(configDir, 'plugins/*.{ts,js}'),
         expect.any(Object)
       );
     });

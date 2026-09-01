@@ -122,7 +122,7 @@ export function FirstProjectEmptyState(props: { compact?: boolean; folderPickerA
               <input id="first-project-name" value={state.name} maxLength={80} autofocus disabled={busy} onInput={(event) => dispatch({ type: 'NAME_CHANGED', name: event.currentTarget.value })} />
             </div>
             <div class="first-project-footer">
-              <small>Stored under <code>~/.agentuse/projects</code>. Nothing is added to the folder where you started AgentUse.</small>
+              <small>Stored in the AgentUse configuration profile's <code>projects/</code> folder. Nothing is added to the folder where you started AgentUse.</small>
               <div class="first-project-actions">
                 <button type="button" class="onboarding-secondary" onClick={() => dispatch({ type: 'BACK' })} disabled={busy}>Back to project choices</button>
                 <button type="submit" class="onboarding-primary" disabled={busy || !state.name.trim()} aria-busy={busy}>{busy && <span class="btn-spinner" aria-hidden="true" />}{busy ? 'Creating…' : 'Create project'}</button>

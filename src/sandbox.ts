@@ -12,6 +12,7 @@ import { homedir } from 'os';
 import type { ResolvedMount } from './tools/path-validator.js';
 import { logger } from './utils/logger';
 import { durationSecondsSchema } from './utils/duration';
+import { getGlobalConfigDir } from './utils/global-config';
 
 // ── Schema ──────────────────────────────────────────────────────────
 
@@ -251,7 +252,7 @@ export async function createSandbox(options: CreateSandboxOptions): Promise<Sand
   // Mount global skill directories if they exist
   const home = homedir();
   const globalSkillDirs = [
-    join(home, '.agentuse', 'skills'),
+    join(getGlobalConfigDir(), 'skills'),
     join(home, '.claude', 'skills'),
   ];
   for (const dir of globalSkillDirs) {

@@ -115,7 +115,7 @@ describe('PushService', () => {
   });
 
   it('survives a corrupt state file by starting fresh', () => {
-    const file = join(dataDir, 'agentuse', 'push', 'push-state.json');
+    const file = join(dataDir, 'push', 'push-state.json');
     service.upsert(sub('https://push.example/a'), {});
     writeFileSync(file, '{nope');
     const fresh = new PushService(dataDir);

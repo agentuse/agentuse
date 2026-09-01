@@ -2,14 +2,14 @@
  * Server Registry
  *
  * Tracks running `agentuse serve` instances using PID files.
- * Each server writes a JSON file to {XDG_DATA_HOME}/agentuse/servers/<pid>.json on startup,
+ * Each server writes a JSON file to {AGENTUSE_DATA_DIR}/servers/<pid>.json on startup,
  * which is removed on graceful shutdown. Stale entries (where PID no longer exists)
  * are cleaned up automatically.
  */
 
 import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync, readFileSync } from "fs";
 import { join, relative, resolve } from "path";
-import { getXdgDataDir } from "../storage/paths";
+import { getAgentuseDataDir } from "./data-dir";
 import { getProcessStartTime, getCurrentProcessStartTime } from "./process-info";
 import type { DesktopServerSupervisor } from "./desktop-supervisor";
 
@@ -49,7 +49,7 @@ export interface ServerEntry {
 }
 
 function getRegistryDir(): string {
-  return join(getXdgDataDir(), "agentuse", "servers");
+  return join(getAgentuseDataDir(), "servers");
 }
 
 /**

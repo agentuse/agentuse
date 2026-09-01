@@ -2,6 +2,7 @@ import { existsSync, statSync } from 'fs';
 import { dirname, resolve, sep } from 'path';
 import { homedir } from 'os';
 import { logger } from './logger';
+import { getGlobalConfigDir } from './global-config';
 
 /**
  * Find project root by searching upward from a starting directory.
@@ -159,7 +160,7 @@ export function resolveProjectContext(
   // Resolve plugin directories
   const pluginDirs = [
     resolve(projectRoot, '.agentuse', 'plugins'),
-    resolve(process.env.HOME || '~', '.agentuse', 'plugins'),
+    resolve(getGlobalConfigDir(), 'plugins'),
   ].filter(dir => existsSync(dir));
 
   return {

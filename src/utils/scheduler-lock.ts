@@ -2,7 +2,7 @@
  * Per-project scheduler lock.
  *
  * The serve registry (server-registry.ts) already refuses to start a second
- * daemon, but its PID files live under $XDG_DATA_HOME: a daemon launched with
+ * daemon, but its PID files live under AGENTUSE_DATA_DIR: a daemon launched with
  * a different data dir (the standard recipe for isolated test daemons) is
  * invisible to it while still able to load the real project config and fire
  * its schedules, double-running every scheduled agent with real side effects.

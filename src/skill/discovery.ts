@@ -4,11 +4,12 @@ import { readdir, realpath, stat } from 'fs/promises';
 import { parseSkillFrontmatter } from './parser.js';
 import type { SkillInfo } from './types.js';
 import { logger } from '../utils/logger.js';
+import { getGlobalConfigDir } from '../utils/global-config.js';
 
 /**
  * Skill discovery directories in priority order:
  * 1. .agentuse/skills/ - Project-local
- * 2. ~/.agentuse/skills/ - User-global
+ * 2. $AGENTUSE_CONFIG_DIR/skills/ - User-global (defaults to ~/.agentuse/skills/)
  * 3. .claude/skills/ - Claude ecosystem compatibility
  * 4. ~/.claude/skills/ - Claude ecosystem compatibility
  * 5. ~/.agents/skills/ - Shared agent skills compatibility
@@ -17,7 +18,7 @@ export function getDiscoveryDirectories(projectRoot: string): string[] {
   const home = homedir();
   return [
     join(projectRoot, '.agentuse', 'skills'),
-    join(home, '.agentuse', 'skills'),
+    join(getGlobalConfigDir(), 'skills'),
     join(projectRoot, '.claude', 'skills'),
     join(home, '.claude', 'skills'),
     join(home, '.agents', 'skills'),

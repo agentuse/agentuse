@@ -9,7 +9,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
-import { getXdgDataDir } from '../storage/paths';
+import { getAgentuseDataDir } from '../utils/data-dir';
 
 const TELEMETRY_FILE = 'telemetry.json';
 const LOCK_STALE_MS = 10_000;
@@ -47,7 +47,7 @@ export interface FirstExecutionClaim {
 }
 
 function getTelemetryDir(): string {
-  return path.join(getXdgDataDir(), 'agentuse');
+  return getAgentuseDataDir();
 }
 
 function getConfigPath(): string {

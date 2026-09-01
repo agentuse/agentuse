@@ -177,14 +177,29 @@ function validateModels(input: unknown, configPath: string): GlobalModelsConfig 
   return out;
 }
 
-export function getGlobalConfigPath(): string {
-  const override = process.env.AGENTUSE_CONFIG;
+/**
+ * Directory containing AgentUse's user-controlled configuration files.
+ *
+ * `AGENTUSE_CONFIG_DIR` is the profile-level isolation boundary: config.json,
+ * .env, managed projects, user-global plugins, and user-global skills all
+ * derive from it. The file-level overrides below remain temporarily for
+ * compatibility with existing installations.
+ */
+export function getGlobalConfigDir(): string {
+  const override = process.env.AGENTUSE_CONFIG_DIR;
   if (override && override.length > 0) return path.resolve(override);
-  return path.join(homedir(), '.agentuse', 'config.json');
+  return path.join(homedir(), '.agentuse');
 }
 
-/** Managed projects live beside config.json, so AGENTUSE_CONFIG also provides
- * a complete isolation seam for tests and portable installations. */
+export function getGlobalConfigPath(): string {
+  // Deprecated 2026-09-01; remove no earlier than 2026-12-01.
+  const legacyOverride = process.env.AGENTUSE_CONFIG;
+  if (legacyOverride && legacyOverride.length > 0) return path.resolve(legacyOverride);
+  return path.join(getGlobalConfigDir(), 'config.json');
+}
+
+/** Managed projects normally live in the configuration directory. The legacy
+ * AGENTUSE_CONFIG file override continues to place them beside that file. */
 export function getManagedProjectsRoot(configPath = getGlobalConfigPath()): string {
   return path.join(path.dirname(configPath), 'projects');
 }
@@ -263,9 +278,10 @@ export function removeServeProject(
 }
 
 export function getGlobalEnvPath(): string {
-  const override = process.env.AGENTUSE_ENV;
-  if (override && override.length > 0) return path.resolve(override);
-  return path.join(homedir(), '.agentuse', '.env');
+  // Deprecated 2026-09-01; remove no earlier than 2026-12-01.
+  const legacyOverride = process.env.AGENTUSE_ENV;
+  if (legacyOverride && legacyOverride.length > 0) return path.resolve(legacyOverride);
+  return path.join(getGlobalConfigDir(), '.env');
 }
 
 export function loadGlobalEnv(options: { override?: boolean } = {}): string | undefined {

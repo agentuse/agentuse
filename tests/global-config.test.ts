@@ -4,8 +4,10 @@ import * as path from 'path';
 import * as os from 'os';
 import {
   loadGlobalConfig,
+  getGlobalConfigDir,
   getGlobalConfigPath,
   getGlobalEnvPath,
+  getManagedProjectsRoot,
   loadGlobalEnv,
   applyGlobalConfigEnv,
   expandHome,
@@ -22,9 +24,17 @@ function makeTmpConfig(content: string | object): string {
 }
 
 describe('getGlobalConfigPath', () => {
+  const originalConfigDir = process.env.AGENTUSE_CONFIG_DIR;
   const originalConfig = process.env.AGENTUSE_CONFIG;
   const originalEnv = process.env.AGENTUSE_ENV;
+  beforeEach(() => {
+    delete process.env.AGENTUSE_CONFIG_DIR;
+    delete process.env.AGENTUSE_CONFIG;
+    delete process.env.AGENTUSE_ENV;
+  });
   afterEach(() => {
+    if (originalConfigDir === undefined) delete process.env.AGENTUSE_CONFIG_DIR;
+    else process.env.AGENTUSE_CONFIG_DIR = originalConfigDir;
     if (originalConfig === undefined) delete process.env.AGENTUSE_CONFIG;
     else process.env.AGENTUSE_CONFIG = originalConfig;
     if (originalEnv === undefined) delete process.env.AGENTUSE_ENV;
@@ -32,11 +42,25 @@ describe('getGlobalConfigPath', () => {
   });
 
   it('returns ~/.agentuse/config.json by default', () => {
-    delete process.env.AGENTUSE_CONFIG;
     expect(getGlobalConfigPath()).toBe(path.join(os.homedir(), '.agentuse', 'config.json'));
   });
 
-  it('honors AGENTUSE_CONFIG override', () => {
+  it('derives config, env, and managed projects from AGENTUSE_CONFIG_DIR', () => {
+    process.env.AGENTUSE_CONFIG_DIR = '/tmp/agentuse-profile';
+    expect(getGlobalConfigDir()).toBe('/tmp/agentuse-profile');
+    expect(getGlobalConfigPath()).toBe('/tmp/agentuse-profile/config.json');
+    expect(getGlobalEnvPath()).toBe('/tmp/agentuse-profile/.env');
+    expect(getManagedProjectsRoot()).toBe('/tmp/agentuse-profile/projects');
+  });
+
+  it('resolves relative AGENTUSE_CONFIG_DIR to absolute', () => {
+    process.env.AGENTUSE_CONFIG_DIR = './relative-profile';
+    expect(path.isAbsolute(getGlobalConfigDir())).toBe(true);
+    expect(getGlobalConfigPath()).toBe(path.join(getGlobalConfigDir(), 'config.json'));
+  });
+
+  it('temporarily honors deprecated AGENTUSE_CONFIG before AGENTUSE_CONFIG_DIR', () => {
+    process.env.AGENTUSE_CONFIG_DIR = '/tmp/agentuse-profile';
     process.env.AGENTUSE_CONFIG = '/tmp/custom-config.json';
     expect(getGlobalConfigPath()).toBe('/tmp/custom-config.json');
   });
@@ -47,21 +71,29 @@ describe('getGlobalConfigPath', () => {
   });
 
   it('returns ~/.agentuse/.env by default for server env', () => {
-    delete process.env.AGENTUSE_ENV;
     expect(getGlobalEnvPath()).toBe(path.join(os.homedir(), '.agentuse', '.env'));
   });
 
-  it('honors AGENTUSE_ENV override', () => {
+  it('temporarily honors deprecated AGENTUSE_ENV before AGENTUSE_CONFIG_DIR', () => {
+    process.env.AGENTUSE_CONFIG_DIR = '/tmp/agentuse-profile';
     process.env.AGENTUSE_ENV = '/tmp/custom-agentuse.env';
     expect(getGlobalEnvPath()).toBe('/tmp/custom-agentuse.env');
   });
 });
 
 describe('loadGlobalEnv', () => {
+  const originalConfigDir = process.env.AGENTUSE_CONFIG_DIR;
   const originalAgentuseEnv = process.env.AGENTUSE_ENV;
   const originalValue = process.env.AGENTUSE_TEST_GLOBAL_ENV;
 
+  beforeEach(() => {
+    delete process.env.AGENTUSE_CONFIG_DIR;
+    delete process.env.AGENTUSE_ENV;
+  });
+
   afterEach(() => {
+    if (originalConfigDir === undefined) delete process.env.AGENTUSE_CONFIG_DIR;
+    else process.env.AGENTUSE_CONFIG_DIR = originalConfigDir;
     if (originalAgentuseEnv === undefined) delete process.env.AGENTUSE_ENV;
     else process.env.AGENTUSE_ENV = originalAgentuseEnv;
     if (originalValue === undefined) delete process.env.AGENTUSE_TEST_GLOBAL_ENV;
@@ -77,6 +109,17 @@ describe('loadGlobalEnv', () => {
 
     expect(loadGlobalEnv()).toBe(file);
     expect(process.env.AGENTUSE_TEST_GLOBAL_ENV).toBe('already-set');
+  });
+
+  it('loads .env from AGENTUSE_CONFIG_DIR', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentuse-env-dir-'));
+    const file = path.join(dir, '.env');
+    fs.writeFileSync(file, 'AGENTUSE_TEST_GLOBAL_ENV=from-config-dir\n');
+    process.env.AGENTUSE_CONFIG_DIR = dir;
+    delete process.env.AGENTUSE_TEST_GLOBAL_ENV;
+
+    expect(loadGlobalEnv()).toBe(file);
+    expect(process.env.AGENTUSE_TEST_GLOBAL_ENV).toBe('from-config-dir');
   });
 
   it('returns undefined when the global env file does not exist', () => {
@@ -327,6 +370,30 @@ describe('loadGlobalConfig honors AGENTUSE_CONFIG when no path arg', () => {
 
   it('reads from AGENTUSE_CONFIG when no explicit path passed', () => {
     expect(loadGlobalConfig()?.serve?.port).toBe(9999);
+  });
+});
+
+describe('loadGlobalConfig honors AGENTUSE_CONFIG_DIR when no path arg', () => {
+  const originalConfigDir = process.env.AGENTUSE_CONFIG_DIR;
+  const originalConfig = process.env.AGENTUSE_CONFIG;
+  let dir: string;
+
+  beforeEach(() => {
+    const file = makeTmpConfig({ serve: { port: 9998 } });
+    dir = path.dirname(file);
+    process.env.AGENTUSE_CONFIG_DIR = dir;
+    delete process.env.AGENTUSE_CONFIG;
+  });
+
+  afterEach(() => {
+    if (originalConfigDir === undefined) delete process.env.AGENTUSE_CONFIG_DIR;
+    else process.env.AGENTUSE_CONFIG_DIR = originalConfigDir;
+    if (originalConfig === undefined) delete process.env.AGENTUSE_CONFIG;
+    else process.env.AGENTUSE_CONFIG = originalConfig;
+  });
+
+  it('reads config.json from the configured directory', () => {
+    expect(loadGlobalConfig()?.serve?.port).toBe(9998);
   });
 });
 

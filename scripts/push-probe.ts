@@ -3,7 +3,8 @@
  *
  *   bun scripts/push-probe.ts state
  *     Show the daemon's persisted VAPID key + device subscriptions
- *     (~/.local/share/agentuse/push/push-state.json, XDG_DATA_HOME aware).
+ *     (~/.local/share/agentuse/push/push-state.json by default;
+ *      AGENTUSE_DATA_DIR and XDG_DATA_HOME aware).
  *
  *   bun scripts/push-probe.ts capture [--daemon http://127.0.0.1:12233] [--port 39299]
  *     Subscribe a decryptable mock device to a LIVE daemon, then print every
@@ -35,9 +36,9 @@
 import { createServer } from 'http';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
 import { createDecipheriv, createECDH, createHmac, createPrivateKey } from 'crypto';
 import { encryptPayload, vapidAuthHeader } from '../src/cli/serve/push';
+import { getAgentuseDataDir } from '../src/utils/data-dir';
 
 // RFC 8291 Appendix A keys — public test vector material, safe to commit.
 const RFC_P256DH = 'BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4';
@@ -53,8 +54,7 @@ function flag(name: string, fallback?: string): string | undefined {
 }
 
 function statePath(): string {
-  const xdg = process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share');
-  return join(xdg, 'agentuse', 'push', 'push-state.json');
+  return join(getAgentuseDataDir(), 'push', 'push-state.json');
 }
 
 function loadState(): { vapid: { privateJwk: JsonWebKey; publicKey: string }; subscriptions: Array<{ endpoint: string; keys: { p256dh: string; auth: string }; prefs: Record<string, boolean>; userAgent?: string }> } {
