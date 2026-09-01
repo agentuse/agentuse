@@ -6242,8 +6242,30 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 .page-sessions .filters-description { color: var(--muted); font-size: var(--font-size-caption); }
 .page-sessions .filter-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
+}
+.page-sessions .filter-grid-primary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.page-sessions .filter-grid-advanced { grid-template-columns: repeat(3, minmax(0, 1fr)); padding-top: 10px; }
+.page-sessions .filters-advanced { border-top: 1px solid var(--line); }
+.page-sessions .filters-advanced > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding-top: 10px;
+  color: var(--muted-2);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+.page-sessions .filters-advanced > summary span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--cyan-soft);
+  color: var(--cyan);
+  font: var(--font-size-micro)/1 var(--mono);
 }
 .page-sessions .filters label {
   display: grid;

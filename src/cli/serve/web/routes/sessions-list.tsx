@@ -315,8 +315,13 @@ export default function SessionsList() {
     ...(agentFilter ? [{ key: 'agent', label: 'Agent', value: agentFilter }] : []),
     ...(approvalFilter ? [{ key: 'approval', label: 'Approval', value: approvalFilter }] : []),
   ];
+  const advancedFilterCount = [triageFilter !== '', triggerFilter !== '', mockFilter !== ''].filter(Boolean).length;
   const [filtersOpen, setFiltersOpen] = useState(activeCount > 0);
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(advancedFilterCount > 0);
   const [groupByAgent, setGroupByAgent] = useState(false);
+  useEffect(() => {
+    if (advancedFilterCount > 0) setAdvancedFiltersOpen(true);
+  }, [advancedFilterCount]);
   // App-root optimistic discard state lets Sessions and Home reconcile the
   // same action immediately, even while their independent SSE snapshots lag.
   const attentionState = useGlobalApprovals();
@@ -584,7 +589,6 @@ export default function SessionsList() {
         <div id="session-filters" class={`filters${narrow && !filtersOpen ? ' collapsed' : ''}`}>
           <div class="filters-heading">
             <span class="filters-title">Filter sessions</span>
-            <span class="filters-description">Narrow the live feed by time, state, source, or agent.</span>
             <div class="filters-heading-actions">
               <button
                 type="button"
@@ -596,7 +600,7 @@ export default function SessionsList() {
               {activeCount > 0 && <a class="filters-reset" href="/sessions">Clear all</a>}
             </div>
           </div>
-          <div class="filter-grid">
+          <div class="filter-grid filter-grid-primary">
             <label class="filter-field filter-field-window">window
               <select value={win} onChange={onSelect('window')}>
                 {WINDOWS.map((w) => <option value={w} key={w}>{w}</option>)}
@@ -607,25 +611,34 @@ export default function SessionsList() {
                 {STATUSES.map((s) => <option value={s} key={s || 'any'}>{s || 'any'}</option>)}
               </select>
             </label>
-            <label class="filter-field filter-field-triage">triage
-              <select value={triageFilter} onChange={onSelect('triage')}>
-                {TRIAGE_OPTIONS.map((t) => <option value={t.value} key={t.value || 'any'}>{t.label}</option>)}
-              </select>
-            </label>
-            <label class="filter-field filter-field-trigger">trigger
-              <select value={triggerFilter} onChange={onSelect('trigger')}>
-                {TRIGGERS.map((t) => <option value={t} key={t || 'any'}>{t || 'any'}</option>)}
-              </select>
-            </label>
-            <label class="filter-field filter-field-mock">mock runs
-              <select value={mockFilter} onChange={onSelect('mock')}>
-                {MOCK_OPTIONS.map((m) => <option value={m.value} key={m.value || 'hidden'}>{m.label}</option>)}
-              </select>
-            </label>
             <label class="filter-field filter-field-agent">agent
               <AgentFilterSelect options={agentOptions} value={agentFilter ?? ''} onChange={commitAgent} />
             </label>
           </div>
+          <details
+            class="filters-advanced"
+            open={advancedFiltersOpen}
+            onToggle={(event) => setAdvancedFiltersOpen(event.currentTarget.open)}
+          >
+            <summary>More filters{advancedFilterCount > 0 && <span>{advancedFilterCount}</span>}</summary>
+            <div class="filter-grid filter-grid-advanced">
+              <label class="filter-field filter-field-triage">triage
+                <select value={triageFilter} onChange={onSelect('triage')}>
+                  {TRIAGE_OPTIONS.map((t) => <option value={t.value} key={t.value || 'any'}>{t.label}</option>)}
+                </select>
+              </label>
+              <label class="filter-field filter-field-trigger">trigger
+                <select value={triggerFilter} onChange={onSelect('trigger')}>
+                  {TRIGGERS.map((t) => <option value={t} key={t || 'any'}>{t || 'any'}</option>)}
+                </select>
+              </label>
+              <label class="filter-field filter-field-mock">mock runs
+                <select value={mockFilter} onChange={onSelect('mock')}>
+                  {MOCK_OPTIONS.map((m) => <option value={m.value} key={m.value || 'hidden'}>{m.label}</option>)}
+                </select>
+              </label>
+            </div>
+          </details>
         </div>
 
         {resolvedError && <div class="errors" role="alert">Failed to load sessions: {resolvedError.message}</div>}
