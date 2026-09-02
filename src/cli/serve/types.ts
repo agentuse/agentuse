@@ -1,5 +1,5 @@
 import type { ActiveContextUsage, SessionTrigger } from "../../session/types";
-import type { DescendantBreadcrumb, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary } from "../../session/important-descendants";
+import type { DescendantActivity, DescendantBreadcrumb, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary } from "../../session/important-descendants";
 
 export type { SessionTrigger };
 
@@ -326,6 +326,8 @@ export interface ChildSessionSummary {
   updatedAt: number;
   errorCode?: string;
   errorMessage?: string;
+  /** Newest tool step, present only while the child is still executing. */
+  activity?: DescendantActivity;
 }
 
 export interface SessionTokenUsage {

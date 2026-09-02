@@ -12,7 +12,7 @@ import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionP
 import { currentProcessRef } from './utils/process-info';
 import { withOwnershipLock } from './utils/ownership-lock';
 import { contextUsageFromSnapshot } from './session/usage';
-import { buildImportantDescendantEvents, buildImportantDescendants } from './session/important-descendants';
+import { buildDescendantActivity, buildImportantDescendantEvents, buildImportantDescendants } from './session/important-descendants';
 import { summarizeSessionTiming } from './session/timing';
 import { repairEscapedText } from './utils/display-text';
 import { Command } from 'commander';
@@ -2078,7 +2078,7 @@ async function runInternalWorker() {
     sessionPath?: string
   ) {
     const descendants = await sessionManager.listDescendantSessions(sessionId, sessionPath);
-    const summarize = ({ session }: { session: SessionInfo }) => ({
+    const summarize = ({ session, parts }: { session: SessionInfo; parts?: Part[] }) => ({
       sessionId: session.id,
       agent: {
         id: session.agent.id,
@@ -2091,10 +2091,11 @@ async function runInternalWorker() {
       createdAt: session.time.created,
       updatedAt: session.time.updated,
       ...sessionErrorFields(session),
+      ...(() => {
+        const activity = buildDescendantActivity(session, parts ?? []);
+        return activity ? { activity } : {};
+      })(),
     });
-    const childSessions = descendants
-      .filter(({ session }) => session.parentSessionID === sessionId)
-      .map(summarize);
     const evidence = await Promise.all(descendants.map(async ({ session, agentId }) => {
       try {
         const messages = await sessionManager.getSessionMessages(session.id, agentId);
@@ -2109,6 +2110,9 @@ async function runInternalWorker() {
         return { session, parts: [] as Part[] };
       }
     }));
+    const childSessions = evidence
+      .filter(({ session }) => session.parentSessionID === sessionId)
+      .map(summarize);
     return {
       childSessions,
       importantDescendants: buildImportantDescendants(rootSession, evidence),

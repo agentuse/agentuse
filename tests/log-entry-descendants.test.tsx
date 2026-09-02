@@ -215,3 +215,33 @@ describe('nested descendant session rows', () => {
     expect(html).toContain('href="/sessions/pipeline#log-gate-2"');
   });
 });
+
+describe('running subagent activity line', () => {
+  it('shows the newest tool step and its step count on a running card', () => {
+    const child = row({
+      id: 'growth',
+      name: 'X Growth Manager',
+      href: '/sessions/growth',
+      createdAt: Date.UTC(2026, 8, 2, 15, 44),
+      parentSessionId: 'manager',
+      breadcrumb: [{ sessionId: 'manager', agentName: 'Demo Manager' }],
+    });
+    child.status = 'running';
+    child.displayStatus = 'running';
+    delete child.durationMs;
+    child.activity = {
+      tool: 'bash',
+      detail: 'birdc search "small live tests"',
+      steps: 7,
+      startedAt: Date.now() - 14_000,
+      running: true,
+    };
+
+    const html = renderEntry(child);
+    expect(html).toContain('subagent-activity is-running');
+    expect(html).toContain('>now</span>');
+    expect(html).toContain('>bash</code>');
+    expect(html).toContain('birdc search &quot;small live tests&quot;');
+    expect(html).toContain('step 7 · 14s');
+  });
+});

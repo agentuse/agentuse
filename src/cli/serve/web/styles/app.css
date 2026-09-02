@@ -7552,6 +7552,48 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 .page-approval-detail .subagent-context > * + *::before { content: "·"; margin-right: 8px; color: var(--muted-3); }
 .page-approval-detail .subagent-context time,
 .page-approval-detail .subagent-context span { font-family: var(--mono); }
+/* The child's newest tool step. Sits directly under the identity row because it
+   is the line a reader scans a running card for. */
+.page-approval-detail .subagent-activity {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  min-width: 0;
+  color: var(--muted-2);
+  font-size: var(--font-size-micro);
+}
+.page-approval-detail .subagent-activity-label {
+  flex: none;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: var(--font-size-micro);
+  font-weight: var(--weight-medium);
+  color: var(--muted-3);
+}
+.page-approval-detail .subagent-activity.is-running .subagent-activity-label { color: var(--green); }
+.page-approval-detail .subagent-activity-tool {
+  flex: none;
+  font-family: var(--mono);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.page-approval-detail .subagent-activity-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--mono);
+  color: var(--muted-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.page-approval-detail .subagent-activity-meta {
+  flex: none;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-3);
+}
 .page-approval-detail .subagent-error {
   grid-column: 1 / -1;
   color: var(--red);

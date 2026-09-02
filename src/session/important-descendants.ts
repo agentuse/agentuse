@@ -36,6 +36,23 @@ export interface ImportantDescendantSummary {
   label?: string;
   gateLabel?: string;
   attemptLabel?: string;
+  activity?: DescendantActivity;
+}
+
+/** What a still-running descendant is doing right now. A RUNNING card otherwise
+ * shows only the task it was handed, which answers "what was it told to do",
+ * never "what is it doing"; the newest tool step answers the second. */
+export interface DescendantActivity {
+  /** Tool name of the newest step. */
+  tool: string;
+  /** Compact argument of that step, when its input carries an obvious one. */
+  detail?: string;
+  /** Tool steps taken so far, so the reader can tell progress from a stall. */
+  steps: number;
+  /** Start of the newest step, for a live elapsed timer. */
+  startedAt: number;
+  /** The newest step is still executing, rather than the last one that finished. */
+  running: boolean;
 }
 
 export interface DescendantEvidence {
@@ -181,6 +198,48 @@ function errorFields(session: SessionInfo): Pick<ImportantDescendantSummary, 'er
   };
 }
 
+/** Input keys that carry the human-meaningful argument of a tool call, in the
+ * order a reader would want them. */
+const ACTIVITY_DETAIL_KEYS = ['command', 'query', 'url', 'path', 'file_path', 'pattern', 'task', 'prompt', 'name'];
+
+function activityDetail(input: unknown): string | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+  const record = input as Record<string, unknown>;
+  for (const key of ACTIVITY_DETAIL_KEYS) {
+    const value = record[key];
+    if (typeof value !== 'string' || !value.trim()) continue;
+    const compact = value.trim().replace(/\s+/g, ' ');
+    return compact.length > 88 ? `${compact.slice(0, 85)}…` : compact;
+  }
+  return undefined;
+}
+
+type StartedToolPart = Extract<Part, { type: 'tool' }> & {
+  state: Extract<Part, { type: 'tool' }>['state'] & { time: { start: number } };
+};
+
+/** The newest started tool step of a session that is still executing. Terminal
+ * sessions report a duration instead, so they get no activity line. */
+export function buildDescendantActivity(session: SessionInfo, parts: Part[]): DescendantActivity | undefined {
+  if (!isExecutingSessionStatus(session.status)) return undefined;
+  const steps = parts.filter((part): part is StartedToolPart =>
+    part.type === 'tool' && part.state.status !== 'pending'
+  );
+  const latest = steps.reduce<StartedToolPart | undefined>(
+    (newest, part) => !newest || part.state.time.start >= newest.state.time.start ? part : newest,
+    undefined
+  );
+  if (!latest) return undefined;
+  const detail = activityDetail(latest.state.input);
+  return {
+    tool: latest.tool,
+    ...(detail && { detail }),
+    steps: steps.length,
+    startedAt: latest.state.time.start,
+    running: latest.state.status === 'running',
+  };
+}
+
 /** Classify important descendants and retain the minimum ancestor chain needed
  * to show them beneath their real parents. Historical judges without explicit
  * attempt metadata are numbered chronologically among Judge siblings. */
@@ -305,6 +364,7 @@ export function buildImportantDescendants(
             ? 'Revising after reviewer feedback'
             : fallbackLabel;
     const terminal = isTerminalSessionStatus(session.status);
+    const activity = buildDescendantActivity(session, item.parts ?? []);
     result.push({
       sessionId: session.id,
       parentSessionId: session.parentSessionID,
@@ -327,6 +387,7 @@ export function buildImportantDescendants(
       ...(label && { label }),
       ...(classified.gateLabel && { gateLabel: classified.gateLabel }),
       ...(attemptLabel && { attemptLabel }),
+      ...(activity && { activity }),
     });
   }
   return result;

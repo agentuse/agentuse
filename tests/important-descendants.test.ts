@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { __testing } from '../src/cli/serve';
-import { buildImportantDescendantEvents, buildImportantDescendants, type ImportantDescendantSummary } from '../src/session/important-descendants';
+import { buildDescendantActivity, buildImportantDescendantEvents, buildImportantDescendants, type ImportantDescendantSummary } from '../src/session/important-descendants';
 import type { SessionInfo, VerifyPart } from '../src/session/types';
 
 function session(options: {
@@ -370,5 +370,36 @@ describe('important descendant log tree', () => {
     expect(tree?.events).toMatchObject([{
       ownerSessionId: 'pipeline', displayStatus: 'failed', href: '/sessions/pipeline#log-verify-inline',
     }]);
+  });
+});
+
+function toolPart(tool: string, input: Record<string, unknown>, status: 'running' | 'completed', time: number) {
+  const base = { id: `${tool}-${time}`, messageID: 'message', sessionID: 'child', type: 'tool', tool, callID: `call-${time}` };
+  return status === 'running'
+    ? { ...base, state: { status, input, time: { start: time } } } as any
+    : { ...base, state: { status, input, output: 'ok', time: { start: time, end: time + 10 } } } as any;
+}
+
+describe('running descendant activity', () => {
+  const running = session({ id: 'child', parent: 'root', name: 'Growth', status: 'running', createdAt: 500 });
+
+  it('reports the newest tool step of an executing session and hides it once terminal', () => {
+    const parts = [
+      toolPart('exa_search', { query: 'AI workflow measurement' }, 'completed', 1_000),
+      toolPart('bash', { command: 'birdc   search  "small live tests"' }, 'running', 2_000),
+    ];
+    expect(buildDescendantActivity(running, parts)).toEqual({
+      tool: 'bash',
+      detail: 'birdc search "small live tests"',
+      steps: 2,
+      startedAt: 2_000,
+      running: true,
+    });
+    const done = session({ id: 'child', parent: 'root', name: 'Growth', createdAt: 500 });
+    expect(buildDescendantActivity(done, parts)).toBeUndefined();
+  });
+
+  it('has no activity before the first tool step', () => {
+    expect(buildDescendantActivity(running, [])).toBeUndefined();
   });
 });

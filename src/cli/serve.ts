@@ -49,7 +49,7 @@ import { saveManualLearning, LearningStore, effectiveCap, partitionLearnings, co
 import { homedir } from "os";
 import type { StoreItem } from "../store/types";
 import type { ActiveContextUsage, SessionTrigger } from "../session/types";
-import type { DescendantBreadcrumb, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary } from "../session/important-descendants";
+import type { DescendantActivity, DescendantBreadcrumb, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary } from "../session/important-descendants";
 import { ulid } from "ulid";
 import { sessionViewToken, validateSessionToken } from "../utils/session-token";
 import { readArtifactManifest, getManifestPath } from "../tools/artifact-manifest";
@@ -713,7 +713,8 @@ interface ChildSessionSummary {
   createdAt: number;
   updatedAt: number;
   errorCode?: string;
-  errorMessage?: string;
+  errorMessage?: string;  /** Newest tool step, present only while the child is still executing. */
+  activity?: DescendantActivity;
 }
 
 interface WorkerListSessionsResult {
@@ -2722,6 +2723,7 @@ function importantDescendantTree(
       ...(descendant.label && { label: descendant.label }),
       ...(descendant.gateLabel && { gateLabel: descendant.gateLabel }),
       ...(descendant.attemptLabel && { attemptLabel: descendant.attemptLabel }),
+      ...(descendant.activity && { activity: descendant.activity }),
     }));
   }
 

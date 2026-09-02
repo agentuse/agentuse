@@ -1,6 +1,6 @@
 import type { ComponentChildren } from 'preact';
 import { memo } from 'preact/compat';
-import { useLayoutEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useSmoothText } from '../hooks/use-smooth-text';
 import type { ApprovalChange, ApprovalLogDetails, ApprovalLogEntry, ApprovalOption, ApprovalReference, LogSubagentEvent, LogSubagentSession } from '../../types';
 import { formatLogTime, isJsonLikeContent, logEntrySignature, storeItemPreview, storeItemTitle, valueAsRecord } from '../lib/format';
@@ -690,6 +690,29 @@ function formatSessionDuration(durationMs: number | undefined): string | undefin
   return minuteRemainder ? `${hours}h ${minuteRemainder}m` : `${hours}h`;
 }
 
+/** The child's newest tool step, with a live timer. A running card otherwise
+ * shows only the task the child was handed, which never answers what it is
+ * doing now — the reader had to open the child session to find out. */
+function SubagentActivityLine(props: { activity: NonNullable<LogSubagentSession['activity']> }) {
+  const activity = props.activity;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!activity.running) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [activity.running, activity.startedAt]);
+  const elapsed = activity.running ? formatSessionDuration(Math.max(0, now - activity.startedAt)) : undefined;
+  return (
+    <span class={`subagent-activity${activity.running ? ' is-running' : ''}`}>
+      <span class="subagent-activity-label">{activity.running ? 'now' : 'last'}</span>
+      <code class="subagent-activity-tool">{activity.tool}</code>
+      {activity.detail && <span class="subagent-activity-detail">{activity.detail}</span>}
+      <span class="subagent-activity-meta">{`step ${activity.steps}${elapsed ? ` · ${elapsed}` : ''}`}</span>
+    </span>
+  );
+}
+
 function VerifyEventCard(props: { event: Extract<LogSubagentEvent, { type: 'verify' }> }) {
   const event = props.event;
   const name = event.mode === 'inline' ? 'Inline criteria' : 'Judge setup';
@@ -771,6 +794,7 @@ function SubagentCard(props: { session: LogSubagentSession }) {
           {duration && <span>{duration}</span>}
         </span>
       )}
+      {s.activity && <SubagentActivityLine activity={s.activity} />}
       {s.errorMessage && <span class="subagent-error">{s.errorMessage}</span>}
       {s.command && <span class="subagent-command">{s.command}</span>}
     </>
