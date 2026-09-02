@@ -201,9 +201,22 @@ export function recentJobSummary(value: string, max = 280): string {
     .replace(/\[([^\]]+)]\([^)]+\)/g, '$1')
     .replace(/[*_~`>|]/g, '')
     .replace(/\s+/g, ' ')
+    // The status already states the outcome; a leading "✅ Complete:" only pushes
+    // the part worth reading off the first line.
+    // Agents often stack the prefix ("✅ Complete: ✅ Complete: …"), so strip it
+    // until nothing is left to strip.
+    .replace(/^(?:[✅❌⚠️❗🚧🔴\s]*(?:complete|completed|done|success|succeeded|failed|failure|error)\s*[:—-])+\s*/iu, '')
+    .replace(/^[✅❌⚠️❗🚧🔴\s]+/u, '')
     .trim();
   if (compact.length <= max) return compact;
   return `${compact.slice(0, max).trimEnd()}…`;
+}
+
+/** Split a job summary into its one-line outcome and the supporting detail. */
+export function splitJobSummary(value: string): { headline: string; detail: string } {
+  const match = /^(.{20,140}?[.!?;])\s+(?=[A-Z(“"])/.exec(value);
+  if (!match) return { headline: value, detail: '' };
+  return { headline: match[1], detail: value.slice(match[0].length).trim() };
 }
 
 function recentJobFallback(row: SessionRow): string {
@@ -222,26 +235,33 @@ export function RecentJobRow(props: { row: SessionRow }) {
   const href = `/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`;
   const status = displayStatusLabel(row.status, row.errorCode);
   const summary = row.finalResponse?.trim() ? recentJobSummary(row.finalResponse) : recentJobFallback(row);
+  const { headline, detail } = splitJobSummary(summary);
   const live = row.status === 'preparing' || row.status === 'running' || row.status === 'resuming' || row.status === 'continuing' || row.subagentActive === true;
   const statusClass = row.status === 'preparing' ? 'preparing' : live ? 'running' : status;
+  const when = row.updatedAt || row.createdAt;
   return (
-    <article class={`job-row${live ? ' live' : ''}`}>
-      <div class="job-row-head">
-        <span class={`chip status ${statusClass}`}>{row.subagentActive ? 'running · subagent' : status}</span>
-        <span class="chip trigger">{row.trigger}</span>
-        <span class="job-row-time" title={formatApprovalTime(row.updatedAt || row.createdAt)}>{formatRelativeTime(row.updatedAt || row.createdAt)}</span>
+    <article class={`job-row${live ? ' live' : ''}`} title={row.sessionId}>
+      {/* The outcome leads, and its link stretches over the whole row so the
+          text you read is the thing you click. */}
+      <a class="job-row-link" href={href}>
+        <span class={`job-dot ${statusClass}`} aria-hidden="true" />
+        <span class="job-row-headline">{headline}</span>
+      </a>
+      {detail && <p class="job-row-detail">{detail}</p>}
+      <div class="job-row-meta">
+        <span class="job-row-status">{row.subagentActive ? 'running · subagent' : status}</span>
+        <span class="job-row-sep" aria-hidden="true">·</span>
+        <span>{row.trigger}</span>
+        <span class="job-row-sep" aria-hidden="true">·</span>
+        <span title={formatApprovalTime(when)}>{formatRelativeTime(when)}</span>
+        <span class="job-row-open">Open job <span aria-hidden="true">→</span></span>
       </div>
-      <p class="job-row-summary">{summary}</p>
       {row.finalResponse?.trim() && (
         <details class="job-response">
           <summary>Full response</summary>
           <div class="job-response-content"><LogContent value={row.finalResponse} forceMarkdown /></div>
         </details>
       )}
-      <footer class="job-row-foot">
-        <code>{row.sessionId.slice(0, 12)}</code>
-        <a href={href}>Open job <span aria-hidden="true">→</span></a>
-      </footer>
     </article>
   );
 }
