@@ -69,6 +69,18 @@ export function headerTokenUsage(
   return approval?.tokenUsage;
 }
 
+/** The ended-session Result card already owns the durable terminal error. Keep
+ * the bottom notice for transient action feedback, but never repeat that same
+ * error after the actions. */
+export function shouldShowResultNotice(
+  result: { text: string; error: boolean },
+  summaryFirst: boolean,
+  resultErrorText: string
+): boolean {
+  return Boolean(result.text)
+    && !(summaryFirst && result.error && result.text === resultErrorText);
+}
+
 export interface TokenMetaItem {
   label: string;
   value: string;
@@ -134,6 +146,66 @@ export function tokenUsageMetaItems(tokenUsage: ApprovalPageInfo['tokenUsage'] |
 function CountUpValue(props: { num: number; format: (n: number) => string }) {
   const display = useCountUp(props.num, { duration: 600, startAtTarget: true, round: false });
   return <>{props.format(display)}</>;
+}
+
+async function writeClipboardText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall through to the selection-based path used by older webviews.
+  }
+
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.readOnly = true;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand('copy');
+    textarea.remove();
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
+/** The identifier itself is the copy target, with inline confirmation so the
+ * interaction stays discoverable without adding another metadata control. */
+export function SessionIdCopy(props: { sessionId: string }) {
+  const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setCopied(false);
+    return () => {
+      if (resetTimer.current !== null) clearTimeout(resetTimer.current);
+    };
+  }, [props.sessionId]);
+
+  const copy = async () => {
+    if (!await writeClipboardText(props.sessionId)) return;
+    setCopied(true);
+    if (resetTimer.current !== null) clearTimeout(resetTimer.current);
+    resetTimer.current = setTimeout(() => setCopied(false), 1_600);
+  };
+
+  return (
+    <button
+      type="button"
+      class={`session-id-copy${copied ? ' is-copied' : ''}`}
+      aria-label={`Copy session ID ${props.sessionId}`}
+      title={copied ? 'Session ID copied' : 'Copy session ID'}
+      onClick={() => void copy()}
+    >
+      <code>{props.sessionId}</code>
+      <span class="session-id-copy-status" aria-live="polite">{copied ? 'copied' : ''}</span>
+    </button>
+  );
 }
 
 /** Headroom tone for the context gauge: calm green until half, then amber, then red. */
@@ -1248,8 +1320,10 @@ export default function SessionDetail() {
               ? (approval.errorMessage ?? 'This run is waiting on a delegated sub-agent that has already ended, so it can no longer be resumed.')
               : 'Live view of this run. The session log updates as new work arrives.';
 
-  // Verdict line for the summary-first result card: wall-clock duration
-  // (createdAt → last log entry, so approval wait time counts) + tool calls.
+  // Verdict line for the summary-first result card. Prefer the runtime's
+  // root+descendant timing split so a reviewer taking 30 minutes does not make
+  // the agent look 30 minutes slower. Historical sessions fall back to wall
+  // time derived from their log.
   const lastLogTime = orderedLogs.length > 0 ? orderedLogs[orderedLogs.length - 1].time : undefined;
   // The corrections row lives in the session log, which is collapsed by default.
   // A run that silently applied 10 of its 26 corrections would stay silent until
@@ -1266,7 +1340,15 @@ export default function SessionDetail() {
     [orderedLogs]
   );
   const resultMeta = [
-    approval.createdAt !== undefined && lastLogTime !== undefined && lastLogTime > approval.createdAt
+    approval.timing
+      ? `active ${formatDuration(approval.timing.activeMs)}`
+      : undefined,
+    approval.timing
+      ? `approval wait ${formatDuration(approval.timing.approvalMs)}`
+      : undefined,
+    approval.timing
+      ? `wall ${formatDuration(approval.timing.wallMs)}`
+      : approval.createdAt !== undefined && lastLogTime !== undefined && lastLogTime > approval.createdAt
       ? `finished in ${formatDuration(lastLogTime - approval.createdAt)}`
       : undefined,
     toolCallCount > 0 ? `${toolCallCount} tool call${toolCallCount === 1 ? '' : 's'}` : undefined,
@@ -1497,7 +1579,7 @@ export default function SessionDetail() {
           {agentDescription && <p class="agent-tagline">{agentDescription}</p>}
           <p class="prompt">{promptText}</p>
           <div class="meta">
-            <div class="cell"><span class="label">session</span><code>{approval.sessionId}</code></div>
+            <div class="cell"><span class="label">session</span><SessionIdCopy sessionId={approval.sessionId} /></div>
             <div class="cell"><span class="label">{term('project')}</span><code>{projectId ?? approval.project ?? 'default'}</code></div>
             <div class="cell"><span class="label">agent</span><span class="value">{agentIdentityLabel}</span></div>
             {approval.createdAt !== undefined && (
@@ -1772,7 +1854,9 @@ export default function SessionDetail() {
           This session is not accepting actions right now.
         </div>
 
-        <p ref={noticeRef} class={`notice${result.error ? ' error' : ''}`} role={result.error ? 'alert' : 'status'}>{result.text}</p>
+        {shouldShowResultNotice(result, summaryFirst, resultErrorText) && (
+          <p ref={noticeRef} class={`notice${result.error ? ' error' : ''}`} role={result.error ? 'alert' : 'status'}>{result.text}</p>
+        )}
       </main>
 
       <DecisionDialog

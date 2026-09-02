@@ -275,6 +275,46 @@ describe('important descendant log tree', () => {
   const judge1 = session({ id: 'judge-1', parent: pipeline.id, name: 'Pipeline Gate', createdAt: 3_000 });
   const judge2 = session({ id: 'judge-2', parent: pipeline.id, name: 'Pipeline Gate', createdAt: 4_000 });
 
+  it('renders one fallback widget for every childless subagent call', () => {
+    const logs = __testing.logsWithChildSessions([
+      {
+        id: 'old-pr-1', type: 'tool', tool: 'subagent__pr', title: 'PR', status: 'completed', time: 2_000,
+        details: { output: 'Sub-agent LifeHack Blog PR failed: All MCP servers failed to connect' },
+      },
+      { id: 'old-pr-2', type: 'tool', tool: 'subagent__pr', title: 'PR', status: 'running', time: 3_000 },
+    ]);
+
+    expect(logs).toHaveLength(2);
+    expect(logs.map((entry: any) => entry.subagentSession?.sessionId)).toEqual(['old-pr-1', 'old-pr-2']);
+    expect(logs.map((entry: any) => entry.subagentSession?.synthetic)).toEqual([true, true]);
+    expect(logs[0]?.subagentSession).toMatchObject({ displayStatus: 'error', agent: { name: 'PR' } });
+    expect(logs[1]?.subagentSession).toMatchObject({ displayStatus: 'running', agent: { name: 'PR' } });
+  });
+
+  it('attaches a repeated agent child to its nearest call and leaves a widget on every older call', () => {
+    const currentPr = session({
+      id: 'pr-current', parent: manager.id, name: 'LifeHack Blog PR', agentId: 'agents/blog/blog-pr', createdAt: 5_010,
+      status: 'running',
+    });
+    const logs = __testing.logsWithChildSessions(
+      [
+        { id: 'old-pr-1', type: 'tool', tool: 'subagent__pr', title: 'PR', status: 'completed', time: 2_000 },
+        { id: 'old-pr-2', type: 'tool', tool: 'subagent__pr', title: 'PR', status: 'completed', time: 3_000 },
+        { id: 'current-pr', type: 'tool', tool: 'subagent__pr', title: 'PR', status: 'running', time: 5_000 },
+      ],
+      [childSummary(currentPr)],
+      (id: string) => `/sessions/${id}`,
+      [],
+      { sessionId: manager.id, agentName: manager.agent.name },
+    );
+
+    expect(logs.map((entry: any) => entry.subagentSession?.sessionId)).toEqual([
+      'old-pr-1', 'old-pr-2', 'pr-current',
+    ]);
+    expect(logs.map((entry: any) => entry.subagentSession?.synthetic ?? false)).toEqual([true, true, false]);
+    expect(logs[2]?.subagentSession?.href).toBe('/sessions/pr-current');
+  });
+
   it('nests multiple Judge rows once each beneath the existing direct-child row', () => {
     const important = buildImportantDescendants(manager, [
       { session: pipeline }, { session: judge1 }, { session: judge2 },

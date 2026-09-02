@@ -592,7 +592,8 @@ function VerifyEventCard(props: { event: Extract<LogSubagentEvent, { type: 'veri
   const event = props.event;
   const name = event.mode === 'inline' ? 'Inline criteria' : 'Judge setup';
   const breadcrumb = event.breadcrumb.map((entry) => entry.agentName).join(' › ');
-  const statusClass = event.verdict === 'pass' ? 'completed' : 'error';
+  const failed = event.verdict !== 'pass';
+  const statusClass = failed ? 'error' : 'completed';
   const ownerName = event.breadcrumb.at(-1)?.agentName ?? 'owning session';
   const inner = (
     <>
@@ -607,12 +608,12 @@ function VerifyEventCard(props: { event: Extract<LogSubagentEvent, { type: 'veri
         {breadcrumb && <span>{breadcrumb}</span>}
         <time dateTime={new Date(event.time).toISOString()}>{formatLogTime(event.time)}</time>
       </span>
-      {event.critique && <span class={`verify-event-critique${event.verdict === 'pass' ? '' : ' is-failure'}`}>{event.critique}</span>}
+      {event.critique && <span class="verify-event-critique">{event.critique}</span>}
     </>
   );
   const row = event.href
-    ? <a class="subagent-event verify-event" href={event.href} aria-label={`Open inline Judge event in ${ownerName}`}>{inner}<span class="subagent-open-cue" aria-hidden="true">open ›</span></a>
-    : <div class="subagent-event verify-event">{inner}</div>;
+    ? <a class={`subagent-event verify-event${failed ? ' is-failure' : ''}`} href={event.href} aria-label={`Open inline Judge event in ${ownerName}`}>{inner}<span class="subagent-open-cue" aria-hidden="true">open ›</span></a>
+    : <div class={`subagent-event verify-event${failed ? ' is-failure' : ''}`}>{inner}</div>;
   return <div class="subagent-tree-node is-important" data-event-id={event.id}>{row}</div>;
 }
 
@@ -659,7 +660,7 @@ function SubagentCard(props: { session: LogSubagentSession }) {
         <span class="subagent-name">{name}</span>
         {judge && <span class="subagent-role judge">Judge</span>}
       </span>
-      <code class="subagent-id">{s.sessionId}</code>
+      <code class="subagent-id">{s.synthetic ? `call ${s.sessionId}` : s.sessionId}</code>
       {(s.label || breadcrumb || s.createdAt) && (
         <span class="subagent-context">
           {s.label && <strong>{s.label}</strong>}

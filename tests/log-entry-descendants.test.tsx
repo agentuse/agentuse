@@ -57,6 +57,26 @@ function renderEntry(session: LogSubagentSession): string {
 }
 
 describe('nested descendant session rows', () => {
+  it('labels a childless subagent widget as a call instead of a real session', () => {
+    const html = renderEntry({
+      sessionId: 'call-pr-1',
+      agent: { id: 'pr', name: 'PR' },
+      status: 'error',
+      displayStatus: 'error',
+      trigger: 'manual',
+      createdAt: Date.UTC(2026, 8, 1, 17, 10),
+      updatedAt: Date.UTC(2026, 8, 1, 17, 10),
+      command: '',
+      synthetic: true,
+      errorMessage: 'All MCP servers failed to connect',
+    });
+
+    expect(html).toContain('class="subagent-event"');
+    expect(html).toContain('call call-pr-1');
+    expect(html).toContain('All MCP servers failed to connect');
+    expect(html).not.toContain('Open subagent session');
+  });
+
   it('renders Judge attempts as indented links with status, breadcrumb, timestamp, and duration', () => {
     const judge = row({
       id: 'judge-1',

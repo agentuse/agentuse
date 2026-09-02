@@ -47,6 +47,73 @@ describe('session view token', () => {
   });
 });
 
+describe('agent revision transcript evidence', () => {
+  it('keeps the latest continuation and terminal error when a resumed run exceeds the evidence cap', () => {
+    const logs = [
+      {
+        id: '1',
+        type: 'tool',
+        tool: 'subagent__pr',
+        status: 'error',
+        title: 'subagent__pr error',
+        details: { input: 'x'.repeat(300), errorMessage: 'The first MCP startup failed.' },
+      },
+      {
+        id: '2',
+        type: 'text',
+        title: 'User response',
+        message: 'Try again for the second time',
+      },
+      {
+        id: '3',
+        type: 'tool',
+        tool: 'subagent__pr',
+        status: 'error',
+        title: 'subagent__pr error',
+        details: { input: 'x'.repeat(300), errorMessage: 'The second MCP startup failed.' },
+      },
+      {
+        id: '4',
+        type: 'text',
+        title: 'User response',
+        message: 'Try again for the third time',
+      },
+      {
+        id: '5',
+        type: 'tool',
+        tool: 'subagent__release',
+        status: 'error',
+        title: 'subagent__release error',
+        details: { input: 'Release PR 104', errorMessage: 'The release worker stopped.' },
+      },
+    ];
+
+    const transcript = __testing.buildRunTranscript(logs as any, 360, {
+      focus: 'latest-attempt',
+      terminal: {
+        status: 'error',
+        errorCode: 'CASCADE_ORPHANED',
+        errorMessage: 'Our servers are currently overloaded. Please try again later.',
+      },
+    });
+
+    expect(transcript).toContain('User continuation:\nTry again for the third time');
+    expect(transcript).toContain('subagent__release');
+    expect(transcript).toContain('Current terminal error (CASCADE_ORPHANED)');
+    expect(transcript).toContain('Our servers are currently overloaded');
+    expect(transcript).not.toContain('The first MCP startup failed');
+    expect(transcript).not.toContain('The second MCP startup failed');
+    expect(transcript).not.toContain('Try again for the second time');
+  });
+
+  it('includes a terminal failure even when the session has no transcript logs', () => {
+    expect(__testing.buildRunTranscript(undefined, 6000, {
+      focus: 'latest-attempt',
+      terminal: { status: 'error', errorCode: 'TIMEOUT', errorMessage: 'The latest attempt timed out.' },
+    })).toBe('Transcript scope: latest execution attempt.\n\nCurrent terminal error (TIMEOUT):\nThe latest attempt timed out.');
+  });
+});
+
 describe('header-gate exemption (capability routes)', () => {
   const capabilityRoutes = [
     '/sessions/abc',

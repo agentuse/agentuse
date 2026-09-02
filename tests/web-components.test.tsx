@@ -17,7 +17,7 @@ import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/c
 import { parseChartSpec } from '../src/cli/serve/web/lib/chart-svg';
 import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { displayAgentName, isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
-import { aggregateToolStats, hasActionableApproval, headerTokenUsage, sessionLogMatches, sessionLogSearchTerms, tokenUsageMetaItems, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
+import { aggregateToolStats, hasActionableApproval, headerTokenUsage, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, shouldShowResultNotice, tokenUsageMetaItems, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
 import { FeedResponse, NewSinceLastVisit, SessionRowView } from '../src/cli/serve/web/routes/sessions-list';
 import { labelFor, suspendedGateKinds } from '../src/cli/serve/web/hooks/use-live-home';
 import {
@@ -1147,6 +1147,24 @@ describe('DecisionDialog component', () => {
 });
 
 describe('SessionDetail header', () => {
+  it('does not repeat the Result card error in the bottom action notice', () => {
+    const terminalError = 'Session finished with an error: delegated sub-agent ended.';
+
+    expect(shouldShowResultNotice({ text: terminalError, error: true }, true, terminalError)).toBe(false);
+    expect(shouldShowResultNotice({ text: 'Resume request failed.', error: true }, true, terminalError)).toBe(true);
+    expect(shouldShowResultNotice({ text: terminalError, error: true }, false, terminalError)).toBe(true);
+    expect(shouldShowResultNotice({ text: '', error: false }, true, terminalError)).toBe(false);
+  });
+
+  it('renders the session id itself as a clipboard action', () => {
+    const html = renderToString(<SessionIdCopy sessionId="01COPYSESSION00000000000000" />);
+
+    expect(html).toContain('class="session-id-copy"');
+    expect(html).toContain('aria-label="Copy session ID 01COPYSESSION00000000000000"');
+    expect(html).toContain('<code>01COPYSESSION00000000000000</code>');
+    expect(html).toContain('aria-live="polite"');
+  });
+
   it('does not keep approval controls actionable once a decision is resuming', () => {
     const header = {
       sessionId: 'session-1',

@@ -336,6 +336,14 @@ export interface SessionTokenUsage {
   context?: ActiveContextUsage;
 }
 
+export interface SessionTimingSummary {
+  calculatedAt: number;
+  wallMs: number;
+  activeMs: number;
+  approvalMs: number;
+  approvalCount: number;
+}
+
 export interface ApprovalPageInfo {
   sessionId: string;
   sessionStatus: string;
@@ -423,6 +431,8 @@ export interface ApprovalPageInfo {
   parentAgentName?: string;
   parentHref?: string;
   tokenUsage?: SessionTokenUsage;
+  /** Wall time split so human review latency is not reported as execution. */
+  timing?: SessionTimingSummary;
   logs?: ApprovalLogEntry[];
   /** True when the run was started with --mock (tool outputs are LLM-generated). */
   mock?: boolean;
@@ -459,6 +469,9 @@ export interface ApprovalLogEntry {
 }
 
 export interface LogSubagentSession extends ChildSessionSummary {
+  /** Fallback card for a subagent tool call whose durable child record is not
+   * available yet (or was never created by an older runtime). */
+  synthetic?: boolean;
   href?: string;
   command: string;
   displayStatus: string;

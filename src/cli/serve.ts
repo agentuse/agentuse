@@ -783,6 +783,13 @@ interface ApprovalPageInfo {
   parentAgentName?: string;
   parentHref?: string;
   tokenUsage?: SessionTokenUsage;
+  timing?: {
+    calculatedAt: number;
+    wallMs: number;
+    activeMs: number;
+    approvalMs: number;
+    approvalCount: number;
+  };
   logs?: ApprovalLogEntry[];
   mock?: boolean;
 }
@@ -798,6 +805,7 @@ interface ApprovalLogEntry {
   id: string;
   type: string;
   tool?: string;
+  callId?: string;
   status?: string;
   /** Severity for `type: 'log'` entries; carried through the worker IPC. */
   level?: 'debug' | 'info' | 'warn' | 'error' | 'system';
@@ -809,6 +817,9 @@ interface ApprovalLogEntry {
 }
 
 interface LogSubagentSession extends ChildSessionSummary {
+  /** Fallback card for a subagent tool call whose durable child record is not
+   * available yet (or was never created by an older runtime). */
+  synthetic?: boolean;
   href?: string;
   command: string;
   displayStatus: string;
@@ -1598,29 +1609,80 @@ function parseJSONBody(req: IncomingMessage): Promise<Record<string, unknown>> {
 // calls (name + truncated input/output), and any reviewed draft — pulled from
 // the session log the daemon already holds in-process. Used to ground a manual
 // instruction in the run the reviewer was looking at.
-function buildRunTranscript(logs: ApprovalLogEntry[] | undefined, maxChars = 6000): string {
-  if (!logs || logs.length === 0) return '';
+function buildRunTranscript(
+  logs: ApprovalLogEntry[] | undefined,
+  maxChars = 6000,
+  options: {
+    focus?: 'earliest' | 'latest' | 'latest-attempt';
+    terminal?: { status?: string; errorCode?: string; errorMessage?: string };
+  } = {},
+): string {
   const clip = (s: string | undefined, n: number): string => {
     if (!s) return '';
     const t = s.trim();
     return t.length > n ? t.slice(0, n) + '…' : t;
   };
-  const lines: string[] = [];
-  for (const e of logs) {
+  const blocks: string[] = [];
+  const allLogs = logs ?? [];
+  let latestContinuationIndex = -1;
+  if (options.focus === 'latest-attempt') {
+    for (let index = allLogs.length - 1; index >= 0; index -= 1) {
+      const entry = allLogs[index]!;
+      if (entry.type === 'text' && entry.title === 'User response') {
+        latestContinuationIndex = index;
+        break;
+      }
+    }
+  }
+  const scopedLogs = latestContinuationIndex >= 0 ? allLogs.slice(latestContinuationIndex) : allLogs;
+  if (options.focus === 'latest-attempt') {
+    blocks.push(latestContinuationIndex >= 0
+      ? 'Transcript scope: latest execution attempt after the most recent user continuation.'
+      : 'Transcript scope: latest execution attempt.');
+  }
+  for (const e of scopedLogs) {
     if (e.type === 'text' && e.message?.trim()) {
-      lines.push(`Agent output:\n${e.message.trim()}`);
+      const label = e.title === 'User response' ? 'User continuation' : 'Agent output';
+      blocks.push(`${label}:\n${clip(e.message, 4000)}`);
     } else if (e.type === 'tool') {
       const io = [
         e.details?.input ? `input ${clip(e.details.input, 300)}` : '',
         e.details?.output ? `output ${clip(e.details.output, 500)}` : '',
+        e.details?.errorMessage ? `error ${clip(e.details.errorMessage, 500)}` : '',
+        !e.details && e.status === 'error' && e.message ? `error ${clip(e.message, 500)}` : '',
       ].filter(Boolean).join(' → ');
-      lines.push(`Tool ${e.tool ?? e.title}${io ? `: ${io}` : ''}`);
+      blocks.push(`Tool ${e.tool ?? e.title}${io ? `: ${io}` : ''}`);
+    } else if (e.type === 'error' || (e.type === 'log' && e.level === 'error')) {
+      blocks.push(`Error ${e.title}${e.message?.trim() ? `:\n${clip(e.message, 1000)}` : ''}`);
     } else if (e.details?.draft?.trim()) {
-      lines.push(`Reviewed work:\n${clip(e.details.draft, 1500)}`);
+      blocks.push(`Reviewed work:\n${clip(e.details.draft, 1500)}`);
     }
   }
-  const out = lines.join('\n\n');
-  return out.length > maxChars ? out.slice(0, maxChars) + '\n…(truncated)' : out;
+
+  const terminal = options.terminal;
+  if (terminal?.status === 'error' && terminal.errorMessage) {
+    const code = terminal.errorCode ? ` (${terminal.errorCode})` : '';
+    blocks.push(`Current terminal error${code}:\n${clip(terminal.errorMessage, 4000)}`);
+  }
+
+  const out = blocks.join('\n\n');
+  if (out.length <= maxChars) return out;
+  if (options.focus !== 'latest' && options.focus !== 'latest-attempt') {
+    return out.slice(0, maxChars) + '\n…(truncated)';
+  }
+
+  const marker = '…(earlier activity omitted; showing the latest session activity)';
+  const budget = Math.max(0, maxChars - marker.length - 2);
+  const selected: string[] = [];
+  let selectedLength = 0;
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index]!;
+    const separatorLength = selected.length > 0 ? 2 : 0;
+    if (selectedLength + separatorLength + block.length > budget) continue;
+    selected.unshift(block);
+    selectedLength += separatorLength + block.length;
+  }
+  return `${marker}\n\n${selected.join('\n\n')}`;
 }
 
 function sendJSON(res: ServerResponse, status: number, data: unknown) {
@@ -2627,6 +2689,35 @@ function childSessionLogEntry(
   };
 }
 
+function fallbackSubagentSession(entry: ApprovalLogEntry): LogSubagentSession | undefined {
+  if (!entry.tool?.startsWith('subagent__')) return undefined;
+  const rawName = entry.tool.slice('subagent__'.length) || 'subagent';
+  const name = rawName
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => part.toLowerCase() === 'pr' ? 'PR' : `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(' ');
+  const explicitError = entry.details?.errorMessage;
+  const failureText = explicitError ?? [entry.details?.output, entry.message]
+    .find((value) => typeof value === 'string' && /sub-agent\b.*\bfailed:|all mcp servers failed/i.test(value));
+  const status = failureText || entry.status === 'error'
+    ? 'error'
+    : entry.status === 'pending' ? 'running' : entry.status ?? 'running';
+  const createdAt = entry.time ?? 0;
+  return {
+    sessionId: entry.callId ?? entry.id,
+    agent: { id: rawName, name: name || rawName },
+    status,
+    trigger: 'manual',
+    createdAt,
+    updatedAt: createdAt,
+    ...(failureText && { errorMessage: failureText }),
+    synthetic: true,
+    command: '',
+    displayStatus: status,
+  };
+}
+
 function logsWithChildSessions(
   logs: ApprovalLogEntry[] = [],
   childSessions: ChildSessionSummary[] = [],
@@ -2635,8 +2726,6 @@ function logsWithChildSessions(
   root?: { sessionId: string; agentName: string },
   importantDescendantEvents: ImportantDescendantEvent[] = []
 ): ApprovalLogEntry[] {
-  if (childSessions.length === 0) return logs;
-
   const childTree = importantDescendantTree(
     childSessions,
     importantDescendants,
@@ -2646,29 +2735,49 @@ function logsWithChildSessions(
   );
 
   const matchedChildIds = new Set<string>();
-  const enrichedLogs = logs.map((entry) => {
+  const assignedChildren = new Map<string, LogSubagentSession>();
+  for (const entry of logs) {
     if (entry.subagentSession) {
       matchedChildIds.add(entry.subagentSession.sessionId);
       const current = childTree.find((candidate) => candidate.sessionId === entry.subagentSession?.sessionId);
-      return current ? { ...entry, subagentSession: current } : entry;
+      assignedChildren.set(entry.id, current ?? entry.subagentSession);
     }
-    const child = childTree
-      .filter((candidate) => !matchedChildIds.has(candidate.sessionId))
-      .map((candidate) => ({
-        child: candidate,
-        score: childSessionLogMatchScore(candidate, entry),
+  }
+
+  // Match globally instead of walking logs chronologically. With repeated calls
+  // to the same agent, a greedy oldest-first pass attached the newest child to
+  // the first historical call solely because their names matched. Ranking every
+  // available pair lets time proximity break that tie before either side is used.
+  const candidates = logs
+    .filter((entry) => !entry.subagentSession && entry.tool?.startsWith('subagent__'))
+    .flatMap((entry) => childTree
+      .filter((child) => !matchedChildIds.has(child.sessionId))
+      .map((child) => ({
+        entry,
+        child,
+        score: childSessionLogMatchScore(child, entry),
         timeDelta: typeof entry.time === 'number'
-          ? Math.abs(candidate.createdAt - entry.time)
+          ? Math.abs(child.createdAt - entry.time)
           : Number.POSITIVE_INFINITY,
-      }))
-      .filter((candidate) => candidate.score > 0)
-      .sort((a, b) => b.score - a.score || a.timeDelta - b.timeDelta || a.child.sessionId.localeCompare(b.child.sessionId))[0]?.child;
-    if (!child) return entry;
-    matchedChildIds.add(child.sessionId);
-    return {
-      ...entry,
-      subagentSession: child,
-    };
+      })))
+    .filter((candidate) => candidate.score > 0)
+    .sort((a, b) =>
+      b.score - a.score ||
+      a.timeDelta - b.timeDelta ||
+      (a.entry.time ?? 0) - (b.entry.time ?? 0) ||
+      a.child.sessionId.localeCompare(b.child.sessionId)
+    );
+  for (const candidate of candidates) {
+    if (assignedChildren.has(candidate.entry.id) || matchedChildIds.has(candidate.child.sessionId)) continue;
+    assignedChildren.set(candidate.entry.id, candidate.child);
+    matchedChildIds.add(candidate.child.sessionId);
+  }
+
+  const enrichedLogs = logs.map((entry) => {
+    const child = assignedChildren.get(entry.id);
+    if (child) return { ...entry, subagentSession: child };
+    const fallback = fallbackSubagentSession(entry);
+    return fallback ? { ...entry, subagentSession: fallback } : entry;
   });
 
   for (const child of childTree) {
@@ -7950,7 +8059,14 @@ export function createServeCommand(): Command {
               ...(reasoning && { reasoning }),
               expectedSourceHash,
               currentSource,
-              originTranscript: buildRunTranscript(found.info.approval.logs, 80_000),
+              originTranscript: buildRunTranscript(found.info.approval.logs, 80_000, {
+                focus: 'latest-attempt',
+                terminal: {
+                  status: found.info.approval.sessionStatus,
+                  ...(found.info.approval.errorCode && { errorCode: found.info.approval.errorCode }),
+                  ...(found.info.approval.errorMessage && { errorMessage: found.info.approval.errorMessage }),
+                },
+              }),
               safeViewRoot: view.root,
               creatorSkill,
               availableModels,
@@ -9305,6 +9421,7 @@ export const __testing = {
   sessionMatchesMockFilter,
   sessionListStreamKey,
   sessionLearningTidyAllowed,
+  buildRunTranscript,
   importantDescendantTree,
   logsWithChildSessions,
   reportedSurfaceForRun,
