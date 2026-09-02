@@ -7225,6 +7225,19 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   text-decoration: none;
 }
 .agent-revision-primary:disabled { opacity: .55; }
+/* The page-scoped `.page-approval-detail button:where(...)` reset outranks the
+   single-class rule above and flattened this to a transparent outline, leaving
+   the form's real action with no more weight than the Cancel next to it. */
+.page-approval-detail .agent-revision-primary {
+  border-color: transparent;
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+}
+.page-approval-detail .agent-revision-primary:hover:not(:disabled) { background: var(--primary-bg-hover); }
+/* Keep the resume button up in the actions row instead of stranding it below
+   the open revision form. */
+.page-approval-detail .session-actions .agent-revision-form { order: 2; }
+.page-approval-detail .session-actions > button { order: 1; }
 .agent-revision-handoff {
   display: flex;
   align-items: center;
