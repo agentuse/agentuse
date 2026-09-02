@@ -2,6 +2,11 @@ import { access, chmod, open, rename, stat, unlink } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
+export interface AtomicWriteOptions {
+  /** Mode used for a newly-created destination. Existing modes are preserved. */
+  mode?: number;
+}
+
 /**
  * Replace a file without ever exposing a partially-written destination.
  *
@@ -13,11 +18,12 @@ import { randomUUID } from 'node:crypto';
 export async function atomicWriteFile(
   target: string,
   content: string | Uint8Array,
+  options: AtomicWriteOptions = {},
 ): Promise<void> {
   const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
-  const priorMode = await stat(target).then((info) => info.mode).catch(() => undefined);
+  const priorMode = await stat(target).then((info) => info.mode & 0o777).catch(() => undefined);
   if (priorMode !== undefined) await access(target, constants.W_OK);
-  const handle = await open(temporary, 'wx');
+  const handle = await open(temporary, 'wx', options.mode);
   try {
     await handle.writeFile(content);
     await handle.sync();

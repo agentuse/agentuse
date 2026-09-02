@@ -9,6 +9,7 @@ import { withOwnershipLock } from '../utils/ownership-lock';
 import { mapLimit, Semaphore } from '../utils/concurrency';
 import { dehydrateSnapshotMedia, rehydrateSnapshotMedia } from './media-cache';
 import { computeSubagentActiveIds } from './subagent-active';
+import { isExecutingSessionStatus, isLiveSessionStatus } from './status';
 import type {
   SessionInfo,
   SessionTrigger,
@@ -1412,7 +1413,7 @@ export class SessionManager {
       .filter((session) => options.createdAfter === undefined || session.createdAt >= options.createdAfter)
       .filter((session) => options.updatedAfter === undefined
         || session.updatedAt >= options.updatedAfter
-        || (options.includeLiveBeforeUpdatedAfter && (session.status === 'preparing' || session.status === 'running' || activeIds.has(session.sessionId))))
+        || (options.includeLiveBeforeUpdatedAfter && (isExecutingSessionStatus(session.status) || activeIds.has(session.sessionId))))
       .sort((a, b) => b.createdAt - a.createdAt || b.sessionId.localeCompare(a.sessionId))
       .map((session) => activeIds.has(session.sessionId) ? { ...session, subagentActive: true } : session);
   }
@@ -1439,7 +1440,7 @@ export class SessionManager {
   async listReconcileCandidatesCreatedAfter(createdAfter: number): Promise<SessionEntry[]> {
     const summaries = await this.listSessionSummaries({ createdAfter, includeSubagents: true });
     const candidates = summaries.filter((session) =>
-      session.status === 'preparing' || session.status === 'running' || session.status === 'suspended'
+      isLiveSessionStatus(session.status)
     );
     const entries = await Promise.all(candidates.map((session) =>
       this.readSessionEntryAtPath(session.path, session.sessionId)

@@ -1,9 +1,10 @@
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getProjectDir, getSessionStorageDir } from '../storage/index.js';
 import { EFFECT_WAL_FILENAME, STRUCTURED_DELIVERY_CHECKPOINT } from '../runner/effect-wal.js';
 import { parseAgentContent } from '../parser.js';
-import type { ProjectDiscoveryResult } from '../agents/discover.js';
+import { parseProjectDiscoveryResponse, type ProjectDiscoveryResult } from '../agents/discover.js';
+import { atomicWriteFile } from '../utils/atomic-write.js';
 
 const JOB_DIRECTORY = 'internal-agent-jobs';
 
@@ -19,15 +20,8 @@ export async function writeInternalAgentJobRecord(projectRoot: string, id: strin
   const projectDir = await getProjectDir(projectRoot);
   const directory = join(projectDir, JOB_DIRECTORY);
   const target = jobFile(projectDir, id);
-  const temporary = `${target}.${process.pid}.tmp`;
   await mkdir(directory, { recursive: true });
-  try {
-    await writeFile(temporary, JSON.stringify(record), 'utf8');
-    await rename(temporary, target);
-  } catch (error) {
-    await unlink(temporary).catch(() => undefined);
-    throw error;
-  }
+  await atomicWriteFile(target, JSON.stringify(record), { mode: 0o600 });
 }
 
 export async function readInternalAgentJobRecord<T>(projectRoot: string, id: string): Promise<T | null> {
@@ -171,23 +165,18 @@ function parseDiscoveryResult(value: unknown): ProjectDiscoveryResult | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (typeof record.projectName !== 'string'
-    || typeof record.summary !== 'string'
     || typeof record.inspectedFiles !== 'number'
-    || !Array.isArray(record.suggestions)
-    || record.suggestions.length !== 3) return null;
-  const valid = record.suggestions.every((suggestion) => {
-    if (!suggestion || typeof suggestion !== 'object' || Array.isArray(suggestion)) return false;
-    const item = suggestion as Record<string, unknown>;
-    return typeof item.id === 'string'
-      && typeof item.name === 'string'
-      && typeof item.description === 'string'
-      && typeof item.objective === 'string'
-      && typeof item.schedule === 'string'
-      && typeof item.scheduleHuman === 'string'
-      && Array.isArray(item.evidence)
-      && item.evidence.every((entry) => typeof entry === 'string');
-  });
-  return valid ? record as unknown as ProjectDiscoveryResult : null;
+    || !Number.isSafeInteger(record.inspectedFiles)
+    || record.inspectedFiles < 0) return null;
+  try {
+    return parseProjectDiscoveryResponse(
+      JSON.stringify({ summary: record.summary, suggestions: record.suggestions }),
+      record.projectName,
+      record.inspectedFiles,
+    );
+  } catch {
+    return null;
+  }
 }
 
 /** Recover a validated project-discovery handoff after its owning daemon exits. */

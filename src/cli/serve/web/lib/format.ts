@@ -1,5 +1,11 @@
 import type { ApprovalLogEntry, ApprovalLogDetails, ApprovalPageInfo } from "../../types";
 import type { StoreItem } from "../../../../store/types";
+import {
+  isExecutingSessionStatus,
+  isLiveSessionStatus,
+  isProjectedTerminalSessionStatus,
+  sessionOutcome,
+} from "../../../../session/status";
 
 export function formatApprovalTime(value?: number): string {
   return value ? new Date(value).toLocaleString() : 'Unknown';
@@ -205,10 +211,9 @@ export function latestReviewerComment(logs: ApprovalLogEntry[]): { comment: stri
  * surface as their own label, matching the server's child-session rendering.
  */
 export function displayStatusLabel(status: string, errorCode?: string | undefined): string {
-  if (status === 'error') {
-    if (errorCode === 'USER_STOPPED') return 'stopped';
-    if (errorCode === 'TIMEOUT') return 'timeout';
-    if (errorCode === 'INCOMPLETE') return 'incomplete';
+  const outcome = sessionOutcome(status, errorCode);
+  if (outcome && outcome !== 'completed' && outcome !== 'error') return outcome;
+  if (outcome === 'error') {
     // Ended by the reconcile sweep, not by anything the run itself did: it was
     // parked on a delegated sub-agent that had already ended. Naming that beats
     // a bare "error" — the failure is one level down, not here.
@@ -222,9 +227,9 @@ export function displayStatusLabel(status: string, errorCode?: string | undefine
  *  Unknown statuses read as failures rather than silently passing as ok. */
 export type RunTone = 'running' | 'waiting' | 'ok' | 'failed';
 export function runTone(status: string): RunTone {
-  if (status === 'preparing' || status === 'running' || status === 'resuming' || status === 'continuing') return 'running';
+  if (isExecutingSessionStatus(status)) return 'running';
   if (status === 'completed') return 'ok';
-  if (status === 'suspended') return 'waiting';
+  if (status === 'suspended' || status === 'waiting') return 'waiting';
   return 'failed';
 }
 
@@ -236,12 +241,12 @@ export function isRunningStatus(status: string | undefined): boolean {
 }
 
 export function isEndedStatus(status: string | undefined): boolean {
-  return status === 'completed' || status === 'error' || status === 'stopped' || status === 'timeout' || status === 'incomplete';
+  return isProjectedTerminalSessionStatus(status);
 }
 
 export function isLiveStatus(status: string, logs: ApprovalLogEntry[]): boolean {
-  if (status === 'completed' || status === 'error' || status === 'expired' || status === 'failed' || status === 'stopped' || status === 'timeout' || status === 'incomplete') return false;
-  if (status === 'preparing' || status === 'run' || status === 'running' || status === 'resuming' || status === 'continuing') return true;
+  if (isProjectedTerminalSessionStatus(status)) return false;
+  if (isLiveSessionStatus(status)) return true;
   return logs.some((entry) => entry.status === 'streaming' || entry.status === 'running');
 }
 

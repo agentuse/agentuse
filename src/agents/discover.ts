@@ -1,11 +1,12 @@
 import { constants } from 'node:fs';
 import { lstat, mkdir, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, isAbsolute, join, resolve } from 'node:path';
 import { glob } from 'glob';
 import matter from 'gray-matter';
 import { formatScheduleHuman, parseScheduleExpression } from '../scheduler/parser.js';
 import { discoverSkills } from '../skill/discovery.js';
+import { isPathInside } from '../utils/path-policy.js';
 import { validateAgentName } from './create.js';
 
 const ADAPTIVE_MAX_FILES = 400;
@@ -75,16 +76,12 @@ export async function discoverProjectSkillCatalog(projectRoot: string): Promise<
     join(resolvedProjectRoot, '.agentuse', 'skills'),
     join(resolvedProjectRoot, '.claude', 'skills'),
   ];
-  const isInside = (parent: string, child: string): boolean => {
-    const rel = relative(parent, child);
-    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
-  };
   const skills = await discoverSkills(resolvedProjectRoot);
   return [...skills.values()]
     .map((skill): ProjectSkillSummary => ({
       name: skill.name,
       description: skill.description,
-      source: projectSkillRoots.some((root) => isInside(root, skill.location)) ? 'project' : 'global',
+      source: projectSkillRoots.some((root) => isPathInside(root, skill.location)) ? 'project' : 'global',
       allowedTools: [...(skill.allowedTools ?? [])],
       ambiguous: Boolean(skill.shadowedLocations?.length),
     }))
@@ -101,8 +98,7 @@ async function readBoundedDiscoveryFile(projectRoot: string, relativePath: strin
     const sourceStats = await lstat(sourcePath);
     if (!sourceStats.isFile() || sourceStats.isSymbolicLink()) return undefined;
     const resolvedSource = await realpath(sourcePath);
-    const fromRoot = relative(projectRoot, resolvedSource);
-    if (fromRoot === '..' || fromRoot.startsWith('../') || fromRoot.startsWith('..\\') || isAbsolute(fromRoot)) return undefined;
+    if (!isPathInside(projectRoot, resolvedSource, { allowEqual: false })) return undefined;
   } catch {
     return undefined;
   }

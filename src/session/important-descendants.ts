@@ -1,4 +1,5 @@
 import type { Part, SessionInfo, SessionTrigger } from './types';
+import { isExecutingSessionStatus, isTerminalSessionStatus } from './status';
 
 export type ImportantDescendantKind = 'judge' | 'verification' | 'approval' | 'failure' | 'mutation' | 'context';
 
@@ -284,7 +285,7 @@ export function buildImportantDescendants(
       && !hasJudgeEvidence(session.id);
     const reviewerComments = humanReviewerComments(item.parts ?? []);
     const pendingGate = classified.gateLabel;
-    const active = session.status === 'preparing' || session.status === 'running';
+    const active = isExecutingSessionStatus(session.status);
     const phase = pendingGate
       ? 'awaiting-approval' as const
       : reviewerComments.length > 0 && active
@@ -303,7 +304,7 @@ export function buildImportantDescendants(
           : phase === 'revising'
             ? 'Revising after reviewer feedback'
             : fallbackLabel;
-    const terminal = session.status === 'completed' || session.status === 'error';
+    const terminal = isTerminalSessionStatus(session.status);
     result.push({
       sessionId: session.id,
       parentSessionId: session.parentSessionID,

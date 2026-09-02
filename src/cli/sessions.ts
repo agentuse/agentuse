@@ -19,6 +19,7 @@ import { describeLearningOutcome, effectiveCap, saveManualLearning, type Learnin
 import { findServerForProject } from "../utils/server-registry";
 import { Semaphore } from "../utils/concurrency";
 import { formatCompactDuration } from "../utils/duration";
+import { isExecutingSessionStatus, sessionOutcome } from "../session/status";
 
 interface SessionSummary {
   id: string;
@@ -403,14 +404,13 @@ function resolveSessionScope(options?: { all?: boolean; project?: string | boole
 }
 
 function statusLabel(status?: SessionStatus, errorCode?: string): string {
-  if (status === 'error' && errorCode === 'USER_STOPPED') return 'stopped';
-  if (status === 'error' && errorCode === 'TIMEOUT') return 'timeout';
-  if (status === 'error' && errorCode === 'INCOMPLETE') return 'incomplete';
-  return status === 'completed'
+  const outcome = sessionOutcome(status, errorCode);
+  if (outcome === 'stopped' || outcome === 'timeout' || outcome === 'incomplete') return outcome;
+  return outcome === 'completed'
     ? 'done'
     : status === 'preparing'
       ? 'preparing'
-    : status === 'error'
+    : outcome === 'error'
       ? 'fail'
       : status === 'suspended'
         ? 'suspended'
@@ -429,7 +429,7 @@ function sessionStatusText(session: Pick<SessionSummary, 'status' | 'errorCode' 
  *  sort ahead of everything else so in-flight work is never buried below runs
  *  that merely finished more recently. Requires subagentActive to be marked. */
 function sessionLiveRank(s: SessionSummary): number {
-  return (s.status === 'preparing' || s.status === 'running' || s.subagentActive) ? 0 : 1;
+  return (isExecutingSessionStatus(s.status) || s.subagentActive) ? 0 : 1;
 }
 
 /** Display order for the session list: live first, then most-recently-active
@@ -1639,7 +1639,7 @@ async function resumeSession(
     }
   }
 
-  if (found.session.status === "preparing" || found.session.status === "running") {
+  if (isExecutingSessionStatus(found.session.status)) {
     throw new Error(`Session ${summary.id} is already ${found.session.status}`);
   }
 

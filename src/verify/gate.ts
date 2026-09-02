@@ -19,7 +19,8 @@ import {
   type HumanApprovalDecision,
 } from '../runner/session-helper.js';
 import { open, realpath, stat } from 'fs/promises';
-import { isAbsolute, relative, resolve } from 'path';
+import { resolve } from 'path';
+import { isBlockedReviewPath, isPathInside } from '../utils/path-policy.js';
 
 /** Resolve which placements are active. Default: gate when the agent carries
  * an approval gate, output otherwise. */
@@ -63,20 +64,6 @@ export function shouldDeferGateReviewToHuman(
   return latest?.status === 'commented' && Boolean(latest.comment?.trim());
 }
 
-function isInside(parent: string, child: string): boolean {
-  const rel = relative(parent, child);
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
-}
-
-function isBlockedArtifactPath(projectRoot: string, artifactPath: string): boolean {
-  const segments = relative(projectRoot, artifactPath).split(/[\\/]+/);
-  return segments.some((segment) => segment.startsWith('.env'))
-    || segments[0] === '.git'
-    || segments[0] === 'node_modules'
-    || (segments[0] === '.agentuse'
-      && (segments[1] === 'store' || segments[1] === 'sessions' || segments[1] === 'env'));
-}
-
 async function renderLocalArtifacts(
   paths: string[],
   projectRoot: string | undefined
@@ -98,7 +85,7 @@ async function renderLocalArtifacts(
     try {
       const resolved = resolve(projectRoot, artifactPath);
       const real = await realpath(resolved);
-      if (!isInside(realRoot, real) || isBlockedArtifactPath(realRoot, real)) {
+      if (!isPathInside(realRoot, real) || isBlockedReviewPath(realRoot, real)) {
         throw new Error('path is outside the reviewable project surface');
       }
       const fileStat = await stat(real);

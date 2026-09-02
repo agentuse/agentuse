@@ -10,15 +10,9 @@
 import { CHART_FENCE_LANGUAGE, renderChartBlock } from "./chart-svg";
 import { looksLikeMarkdown } from "./format";
 import { highlightJson, highlightJsonSource } from "./json-highlight";
+import { escapeHtml } from "./html";
 
-export function escapeHtml(value: unknown): string {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+export { escapeHtml } from "./html";
 
 export function renderInlineMarkdown(value: string): string {
   const codeSpans: string[] = [];

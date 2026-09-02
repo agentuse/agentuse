@@ -10,7 +10,7 @@
  * dangerouslySetInnerHTML choke point: every dynamic value below flows
  * through escapeHtml() before markup is added.
  */
-import { escapeHtml } from './content-html';
+import { escapeHtml } from './html';
 
 export interface ChartSeries {
   name: string;

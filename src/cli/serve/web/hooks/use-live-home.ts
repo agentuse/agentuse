@@ -5,6 +5,7 @@ import { useFetch } from './use-fetch';
 import { useSessionsStream } from './use-sessions-stream';
 import { useGlobalApprovals } from './use-global-approvals';
 import { displayAgentName, displayStatusLabel } from '../lib/format';
+import { isExecutingSessionStatus } from '../../../../session/status';
 
 /** One row of the home-page activity feed, derived from session transitions. */
 export interface ActivityEvent {
@@ -79,7 +80,7 @@ export function labelFor(row: SessionRow, isNew: boolean, gates: SuspendedGateKi
     if (gates.expired.has(sessionRowKey(row))) return 'approval expired';
     return 'resuming';
   }
-  if (isNew && (status === 'preparing' || status === 'running' || status === 'resuming' || status === 'continuing')) return 'started';
+  if (isNew && isExecutingSessionStatus(status)) return 'started';
   return status;
 }
 

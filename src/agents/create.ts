@@ -1,12 +1,13 @@
 import { constants } from 'node:fs';
 import { link, lstat, mkdir, open, realpath, unlink } from 'node:fs/promises';
-import { isAbsolute, join, relative } from 'node:path';
+import { join, relative } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import * as YAML from 'yaml';
 import { getModelFromRegistry, getSuggestedModelIds } from '../generated/models.js';
 import { parseAgentContent } from '../parser.js';
 import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go.js';
 import type { ProviderStatus } from '../auth/provider-status.js';
+import { isPathInside } from '../utils/path-policy.js';
 
 export interface AgentCreationProject {
   id: string;
@@ -161,11 +162,6 @@ function agentSlug(name: string): string {
 function oneLineDescription(objective: string): string {
   const line = objective.replace(/\s+/g, ' ').trim();
   return line.length <= 240 ? line : `${line.slice(0, 239).trimEnd()}…`;
-}
-
-function isPathInside(parent: string, child: string): boolean {
-  const rel = relative(parent, child);
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
 function renderAgent(name: string, model: string, objective: string, description: string): string {

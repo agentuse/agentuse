@@ -18,6 +18,7 @@ import { createHash } from 'crypto';
 import { getSessionStorageDir, getStorageState } from '../storage/index.js';
 import { SessionManager } from './manager.js';
 import { logger } from '../utils/logger.js';
+import { isBlockedReviewPath, isPathInside } from '../utils/path-policy.js';
 
 export interface GateArtifactSnapshot {
   /** Project-root-relative path the gate referenced. */
@@ -41,20 +42,6 @@ const AV_EXT_RE = /\.(mp4|webm|mov|m4v|mp3|m4a|wav|ogg)$/i;
  *  gets a larger allowance. */
 const MAX_STATIC_BYTES = 10 * 1024 * 1024;
 const MAX_AV_BYTES = 128 * 1024 * 1024;
-
-function isPathInside(parent: string, child: string): boolean {
-  const rel = path.relative(parent, child);
-  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
-}
-
-/** Mirror of the serve-side denylist: never snapshot secrets or internal state. */
-function isBlockedProjectPath(projectRoot: string, resolved: string): boolean {
-  const segments = path.relative(projectRoot, resolved).split(/[\\/]+/);
-  const blockedRoots = new Set(['.git', 'node_modules']);
-  return segments.some((seg) => seg.startsWith('.env'))
-    || blockedRoots.has(segments[0])
-    || (segments[0] === '.agentuse' && (segments[1] === 'store' || segments[1] === 'sessions' || segments[1] === 'env'));
-}
 
 interface GateArtifactCandidate {
   path: string;
@@ -185,15 +172,15 @@ export async function snapshotGateArtifacts(
   for (const { path: rel, required } of candidates) {
     try {
       const resolved = path.resolve(projectRoot, rel);
-      if (!isPathInside(projectRoot, resolved)) {
+      if (!isPathInside(projectRoot, resolved, { allowEqual: false })) {
         throw new Error('path is outside the project');
       }
       const real = await fs.realpath(resolved).catch(() => null);
       if (!real) throw new Error('file does not exist');
-      if (!isPathInside(realProjectRoot, real)) {
+      if (!isPathInside(realProjectRoot, real, { allowEqual: false })) {
         throw new Error('resolved path is outside the project');
       }
-      if (isBlockedProjectPath(realProjectRoot, real)) {
+      if (isBlockedReviewPath(realProjectRoot, real)) {
         throw new Error('path is blocked from approval disclosure');
       }
       const fileStat = await fs.stat(real);

@@ -1,7 +1,6 @@
-import { constants } from 'node:fs';
-import { chmod, lstat, mkdir, open, readFile, realpath, readdir, rename, unlink } from 'node:fs/promises';
-import { createHash, randomUUID } from 'node:crypto';
-import { dirname, isAbsolute, join, relative } from 'node:path';
+import { lstat, mkdir, readFile, realpath, readdir } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { dirname, join } from 'node:path';
 import type { Tool } from 'ai';
 import { z } from 'zod';
 import * as YAML from 'yaml';
@@ -12,6 +11,8 @@ import { escapeSafeVariables } from '../tools/path-validator.js';
 import { match as wildcardMatch } from '../tools/wildcard.js';
 import type { ReasoningLevel } from '../model-compatibility.js';
 import type { ProjectSkillSummary } from './discover.js';
+import { isPathInside } from '../utils/path-policy.js';
+import { atomicWriteFile } from '../utils/atomic-write.js';
 
 export type AgentRevisionStatus =
   | 'running'
@@ -96,39 +97,15 @@ export async function writeInternalAgentRevisionSource(
   const directory = revisionDir(projectRoot);
   await mkdir(directory, { recursive: true });
   const target = internalAgentRevisionPath(projectRoot, revisionSessionId);
-  const temporary = join(directory, `.${revisionSessionId}.${process.pid}.${randomUUID()}.agentuse.tmp`);
-  let handle;
-  try {
-    handle = await open(temporary, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
-    await handle.writeFile(source, 'utf8');
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
-    await rename(temporary, target);
-    return target;
-  } finally {
-    await handle?.close().catch(() => undefined);
-    await unlink(temporary).catch(() => undefined);
-  }
+  await atomicWriteFile(target, source, { mode: 0o600 });
+  return target;
 }
 
 async function writeRecord(record: AgentRevisionRecord): Promise<void> {
   const directory = revisionDir(record.projectRoot);
   await mkdir(directory, { recursive: true });
   const target = revisionPath(record.projectRoot, record.revisionSessionId);
-  const temporary = join(directory, `.${record.revisionSessionId}.${process.pid}.${randomUUID()}.tmp`);
-  let handle;
-  try {
-    handle = await open(temporary, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
-    await handle.writeFile(`${JSON.stringify(record, null, 2)}\n`, 'utf8');
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
-    await rename(temporary, target);
-  } finally {
-    await handle?.close().catch(() => undefined);
-    await unlink(temporary).catch(() => undefined);
-  }
+  await atomicWriteFile(target, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
 }
 
 export async function createAgentRevisionRecord(record: Omit<AgentRevisionRecord, 'version' | 'status' | 'createdAt' | 'updatedAt'>): Promise<AgentRevisionRecord> {
@@ -235,11 +212,6 @@ export async function listAgentRevisionRecords(projectRoot: string, originSessio
 
 export function sourceHash(source: string): string {
   return createHash('sha256').update(source).digest('hex');
-}
-
-function isPathInside(parent: string, child: string): boolean {
-  const rel = relative(parent, child);
-  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
 function explicitSkillNames(config: ReturnType<typeof parseAgentContent>['config']): string[] {
@@ -510,21 +482,7 @@ export function buildAgentRevisionSessionAgent(input: {
 async function replaceAgentSource(targetPath: string, source: string): Promise<void> {
   const targetStat = await lstat(targetPath);
   if (!targetStat.isFile() || targetStat.isSymbolicLink()) throw new Error('The target agent must be a regular file, not a symlink');
-  const directory = dirname(targetPath);
-  const temporary = join(directory, `.${relative(directory, targetPath)}.${process.pid}.${randomUUID()}.tmp`);
-  let handle;
-  try {
-    handle = await open(temporary, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, targetStat.mode & 0o777);
-    await handle.writeFile(source, 'utf8');
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
-    await chmod(temporary, targetStat.mode & 0o777);
-    await rename(temporary, targetPath);
-  } finally {
-    await handle?.close().catch(() => undefined);
-    await unlink(temporary).catch(() => undefined);
-  }
+  await atomicWriteFile(targetPath, source, { mode: targetStat.mode & 0o777 });
 }
 
 async function validateRevisionTarget(scopeRoot: string, targetPath: string): Promise<void> {

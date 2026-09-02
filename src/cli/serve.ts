@@ -14,6 +14,9 @@ import { formatScheduleHuman, parseScheduleExpression } from "../scheduler/parse
 import { type AgentChunk } from "../runner";
 import { findProjectRoot, resolveProjectContext } from "../utils/project";
 import { logger, LogLevel, executionLog, approvalLog } from "../utils/logger";
+import { isPathInside } from "../utils/path-policy";
+import { isExecutingSessionStatus, isTerminalSessionStatus } from "../session/status";
+import { runInternalJobLifecycle } from "../onboarding/internal-job-runner";
 import { printLogo } from "../utils/branding";
 import { getSessionStorageDir, initStorage } from "../storage/index.js";
 import { findGateSnapshotFile } from "../session/gate-artifacts.js";
@@ -2695,7 +2698,7 @@ function importantDescendantTree(
   const directIds = new Set(childSessions.map((child) => child.sessionId));
 
   for (const child of childSessions) {
-    const terminal = child.status === 'completed' || child.status === 'error';
+    const terminal = isTerminalSessionStatus(child.status);
     nodes.set(child.sessionId, enrichChildSessionForLog(child, childSessionHref, {
       ...(terminal && child.updatedAt >= child.createdAt && { durationMs: child.updatedAt - child.createdAt }),
       ...(root && {
@@ -2865,7 +2868,7 @@ function logsWithChildSessions(
 }
 
 function isEndedSessionStatus(status: string | undefined): boolean {
-  return status === 'completed' || status === 'error';
+  return isTerminalSessionStatus(status);
 }
 
 /**
@@ -3090,11 +3093,6 @@ function toAgentRunPath(project: Project, filePath: string | undefined): string 
   if (!filePath) return undefined;
   const runPath = relative(project.scopeRoot, filePath);
   return project.agentFiles.includes(runPath) ? runPath : undefined;
-}
-
-function isPathInside(parent: string, child: string): boolean {
-  const rel = relative(parent, child);
-  return rel === '' || (!rel.startsWith('..') && !rel.startsWith('/'));
 }
 
 function collectDir(value: string, previous: string[]): string[] {
@@ -5132,7 +5130,7 @@ export function createServeCommand(): Command {
         intervalMs: SESSION_LIST_SSE_INTERVAL_MS,
         liveIntervalMs: SESSION_LIST_SSE_LIVE_INTERVAL_MS,
         isLive: (payload) => payload.sessions.some(
-          (s) => s.status === 'preparing' || s.status === 'running' || s.status === 'resuming' || s.status === 'continuing' || s.subagentActive === true
+          (s) => isExecutingSessionStatus(s.status) || s.subagentActive === true
         ),
       });
       // Feed mode reads final assistant text from the durable transcript. Cache
@@ -5258,7 +5256,7 @@ export function createServeCommand(): Command {
         // buried below runs that merely finished more recently; within each tier,
         // most-recently-active first. The cursor relocates rows by their stable
         // key (createdAt+id), so this ordering does not affect pagination.
-        const isLive = (s: SessionSummary) => s.status === 'preparing' || s.status === 'running' || s.subagentActive === true;
+        const isLive = (s: SessionSummary) => isExecutingSessionStatus(s.status) || s.subagentActive === true;
         rows.sort((a, b) =>
           (isLive(a.session) ? 0 : 1) - (isLive(b.session) ? 0 : 1) ||
           b.session.updatedAt - a.session.updatedAt ||
@@ -7980,9 +7978,10 @@ export function createServeCommand(): Command {
               job: { ...job, ...(sessionToken && { sessionToken }) },
             });
 
-            void (async () => {
-              let cleanupView: (() => Promise<void>) | undefined;
-              try {
+            let cleanupView: (() => Promise<void>) | undefined;
+            void runInternalJobLifecycle({
+              job,
+              prepare: async () => {
                 const viewPromise = prepareProjectDiscoveryView(project.scopeRoot).then((view) => {
                   cleanupView = view.cleanup;
                   return view;
@@ -7992,7 +7991,7 @@ export function createServeCommand(): Command {
                   loadBuiltinSkillSource('creator'),
                   discoverProjectSkillCatalog(project.root),
                 ]);
-                const agentContent = buildAgentCreatorSessionAgent({
+                return buildAgentCreatorSessionAgent({
                   model: request.model,
                   ...(reasoning && { reasoning }),
                   safeViewRoot: view.root,
@@ -8004,10 +8003,8 @@ export function createServeCommand(): Command {
                   availableModels,
                   availableSkills,
                 });
-                job.phase = 'running';
-                await persistOnboardingJob(job);
-                wakeListHubs();
-                const execution = await worker.execute({
+              },
+              execute: (agentContent) => worker.execute({
                   agentContent,
                   agentName: 'internal-agent-creator',
                   projectRoot: project.root,
@@ -8017,7 +8014,8 @@ export function createServeCommand(): Command {
                   timeout: 300,
                   maxSteps: 12,
                   debug: options.debug,
-                });
+                }),
+              consume: async (execution) => {
                 if (!execution.success) {
                   job.status = 'error';
                   job.error = execution.error;
@@ -8039,28 +8037,22 @@ export function createServeCommand(): Command {
                   fileName: execution.result.authoredAgentFileName,
                 });
                 job.status = 'completed';
-              } catch (error) {
-                job.status = 'error';
-                job.error = {
+              },
+              mapError: (error) => ({
                   code: error instanceof AgentCreationError ? error.code : 'AGENT_CREATE_FAILED',
                   message: (error as Error).message,
-                };
-                if (job.phase === 'preparing') {
-                  await worker.failPreparingSession({
-                    projectRoot: project.root,
-                    sessionId,
-                    code: job.error.code,
-                    message: job.error.message,
-                  }).catch(() => undefined);
-                }
-              } finally {
-                await persistOnboardingJob(job).catch((error) => {
-                  logger.warn(`Failed to persist internal agent job ${job.id}: ${(error as Error).message}`);
-                });
-                await cleanupView?.().catch(() => {});
-                wakeListHubs();
-              }
-            })();
+                }),
+              persist: () => persistOnboardingJob(job),
+              wake: wakeListHubs,
+              failPreparing: (error) => worker.failPreparingSession({
+                projectRoot: project.root,
+                sessionId,
+                code: error.code,
+                message: error.message,
+              }).then(() => undefined),
+              cleanup: async () => { await cleanupView?.(); },
+              onPersistenceError: (error) => logger.warn(`Failed to persist internal agent job ${job.id}: ${(error as Error).message}`),
+            });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             if (err instanceof AgentCreationError) {
@@ -8422,9 +8414,10 @@ export function createServeCommand(): Command {
             sendJSON(res, 202, { success: true, job: { ...job, ...(sessionToken && { sessionToken }) } });
             wakeListHubs();
 
-            void (async () => {
-              let cleanupView: (() => Promise<void>) | undefined;
-              try {
+            let cleanupView: (() => Promise<void>) | undefined;
+            void runInternalJobLifecycle({
+              job,
+              prepare: async () => {
                 const viewPromise = prepareProjectDiscoveryView(found.project.scopeRoot).then((view) => {
                   cleanupView = view.cleanup;
                   return view;
@@ -8469,10 +8462,9 @@ export function createServeCommand(): Command {
                   revisionViewCleanups.set(revisionSessionId, finishRevisionView);
                   cleanupView = undefined;
                 }
-                job.phase = 'running';
-                await persistOnboardingJob(job);
-                wakeListHubs();
-                const execution = await worker.execute({
+                return internalAgentPath;
+              },
+              execute: (internalAgentPath) => worker.execute({
                   agentPath: internalAgentPath,
                   projectRoot: found.project.root,
                   newSessionId: revisionSessionId,
@@ -8481,7 +8473,8 @@ export function createServeCommand(): Command {
                   timeout: 480,
                   maxSteps: 20,
                   debug: options.debug,
-                });
+                }),
+              consume: async (execution) => {
                 if (!execution.success) {
                   job.status = 'error';
                   job.error = execution.error;
@@ -8501,29 +8494,26 @@ export function createServeCommand(): Command {
                 job.status = 'error';
                 job.error = error;
                 await failAgentRevision(found.project.root, revisionSessionId, error);
-              } catch (error) {
-                const failure = { code: 'REVISION_FAILED', message: (error as Error).message };
-                job.status = 'error';
-                job.error = failure;
-                await worker.failPreparingSession({
-                  projectRoot: found.project.root,
-                  sessionId: revisionSessionId,
-                  code: failure.code,
-                  message: failure.message,
-                }).catch(() => undefined);
-                await failAgentRevision(found.project.root, revisionSessionId, failure).catch(() => undefined);
-              } finally {
-                await persistOnboardingJob(job).catch((error) => {
-                  logger.warn(`Failed to persist internal agent job ${job.id}: ${(error as Error).message}`);
-                });
+              },
+              mapError: (error) => ({ code: 'REVISION_FAILED', message: (error as Error).message }),
+              persist: () => persistOnboardingJob(job),
+              wake: wakeListHubs,
+              failPreparing: (failure) => worker.failPreparingSession({
+                projectRoot: found.project.root,
+                sessionId: revisionSessionId,
+                code: failure.code,
+                message: failure.message,
+              }).then(() => undefined),
+              onError: (failure) => failAgentRevision(found.project.root, revisionSessionId, failure).then(() => undefined),
+              cleanup: async () => {
                 await cleanupView?.().catch(() => undefined);
                 const latest = await readAgentRevisionRecord(found.project.root, revisionSessionId).catch(() => undefined);
                 if (latest && (latest.status === 'accepted' || latest.status === 'applied' || latest.status === 'discarded' || latest.status === 'restored' || latest.status === 'error')) {
                   await cleanupRevisionView(revisionSessionId);
                 }
-                wakeListHubs();
-              }
-            })();
+              },
+              onPersistenceError: (error) => logger.warn(`Failed to persist internal agent job ${job.id}: ${(error as Error).message}`),
+            });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, 'REVISION_START_FAILED', (err as Error).message);
@@ -8861,9 +8851,10 @@ export function createServeCommand(): Command {
               job: { ...job, ...(sessionToken && { sessionToken }) },
             });
 
-            void (async () => {
-              let cleanupView: (() => Promise<void>) | undefined;
-              try {
+            let cleanupView: (() => Promise<void>) | undefined;
+            void runInternalJobLifecycle({
+              job,
+              prepare: async () => {
                 const viewPromise = prepareProjectDiscoveryView(project.scopeRoot).then((view) => {
                   cleanupView = view.cleanup;
                   return view;
@@ -8872,7 +8863,7 @@ export function createServeCommand(): Command {
                   viewPromise,
                   discoverProjectSkillCatalog(project.root),
                 ]);
-                const agentContent = buildProjectDiscoverySessionAgent({
+                return buildProjectDiscoverySessionAgent({
                   model: discoveryModel,
                   projectName: view.projectName,
                   inspectedFiles: view.inspectedFiles,
@@ -8880,10 +8871,8 @@ export function createServeCommand(): Command {
                   availableSkills,
                   existingAgents: view.existingAgents,
                 });
-                job.phase = 'running';
-                await persistOnboardingJob(job);
-                wakeListHubs();
-                const execution = await worker.execute({
+              },
+              execute: (agentContent) => worker.execute({
                   agentContent,
                   agentName: 'onboarding-project-discovery',
                   projectRoot: project.root,
@@ -8893,13 +8882,14 @@ export function createServeCommand(): Command {
                   timeout: 300,
                   maxSteps: 20,
                   debug: options.debug,
-                });
+                }),
+              consume: async (execution) => {
                 if (!execution.success) {
                   job.status = 'error';
                   job.error = execution.error?.code === 'TIMEOUT'
                     ? {
                         ...execution.error,
-                        message: 'The creator ran out of time before it could validate the agent. Try again or choose another model.',
+                        message: 'Project discovery ran out of time before it could submit suggestions. Try again or choose another model.',
                       }
                     : execution.error;
                   return;
@@ -8915,28 +8905,22 @@ export function createServeCommand(): Command {
                 }
                 job.status = 'completed';
                 job.result = { success: true, model: discoveryModel, ...discovery };
-              } catch (error) {
-                job.status = 'error';
-                job.error = {
-                  code: job.phase === 'preparing' ? 'PROJECT_DISCOVERY_START_FAILED' : 'PROJECT_DISCOVERY_FAILED',
+              },
+              mapError: (error, phase) => ({
+                  code: phase === 'preparing' ? 'PROJECT_DISCOVERY_START_FAILED' : 'PROJECT_DISCOVERY_FAILED',
                   message: (error as Error).message,
-                };
-                if (job.phase === 'preparing') {
-                  await worker.failPreparingSession({
-                    projectRoot: project.root,
-                    sessionId,
-                    code: job.error.code,
-                    message: job.error.message,
-                  }).catch(() => undefined);
-                }
-              } finally {
-                await persistOnboardingJob(job).catch((error) => {
-                  logger.warn(`Failed to persist internal agent job ${job.id}: ${(error as Error).message}`);
-                });
-                await cleanupView?.().catch(() => {});
-                wakeListHubs();
-              }
-            })();
+                }),
+              persist: () => persistOnboardingJob(job),
+              wake: wakeListHubs,
+              failPreparing: (error) => worker.failPreparingSession({
+                projectRoot: project.root,
+                sessionId,
+                code: error.code,
+                message: error.message,
+              }).then(() => undefined),
+              cleanup: async () => { await cleanupView?.(); },
+              onPersistenceError: (error) => logger.warn(`Failed to persist internal agent job ${job.id}: ${(error as Error).message}`),
+            });
           } catch (error) {
             if (sendRequestParseError(res, error)) return;
             sendError(res, 500, 'PROJECT_DISCOVERY_START_FAILED', (error as Error).message);

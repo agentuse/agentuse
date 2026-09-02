@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ApprovalLogEntry } from '../../types';
 import type { OnboardingJobHandle } from '../lib/api';
+import { isLiveSessionStatus } from '../../../../session/status';
 
 function entryLine(entry: ApprovalLogEntry): { label: string; text: string } | null {
   if (entry.type === 'log' && entry.level === 'debug') return null;
@@ -29,7 +30,7 @@ export function OnboardingSessionLog(props: {
   const linesRef = useRef<HTMLDivElement>(null);
   const lines = useMemo(() => props.entries.map(entryLine).filter((entry): entry is { label: string; text: string } => Boolean(entry)), [props.entries]);
   const visible = expanded ? lines : lines.slice(-12);
-  const running = props.status === 'preparing' || props.status === 'running' || props.status === 'waiting' || props.status === 'suspended';
+  const running = isLiveSessionStatus(props.status);
   const preparing = props.status === 'preparing' || props.job.phase === 'preparing';
 
   useEffect(() => {

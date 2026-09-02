@@ -7,6 +7,7 @@ import {
   clearProviderOAuthAttempts,
   checkCustomProvider,
   completeProviderOAuth,
+  configureCustomProvider,
   providerSetupSnapshot,
   removeCustomProvider,
   removeProviderCredential,
@@ -73,6 +74,23 @@ describe('Dashboard provider setup service', () => {
 
     await expect(saveCustomProvider({ name: 'openai', baseURL: 'http://localhost:11434/v1', models: ['qwen3'] })).rejects.toThrow('reserved');
     expect((await removeCustomProvider('local_models')).status.customProviders).toEqual([]);
+  });
+
+  it('preserves CLI compatibility overrides through the shared custom-provider service', async () => {
+    fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input) => String(input).endsWith('/models')
+      ? new Response(JSON.stringify({ data: [] }), { status: 200 })
+      : new Response(JSON.stringify({ choices: [] }), { status: 200 }));
+    const configured = await configureCustomProvider({
+      name: 'compat_proxy',
+      baseURL: 'http://localhost:8080/v1',
+      api: 'openai-completions',
+      models: ['local-model'],
+      compatibility: { supportsDeveloperRole: false, maxTokensField: 'max_tokens' },
+    });
+
+    expect(configured.provider.compatibility).toEqual({ supportsDeveloperRole: false, maxTokensField: 'max_tokens' });
+    expect((await AuthStorage.getCustomProvider('compat_proxy'))?.compatibility)
+      .toEqual({ supportsDeveloperRole: false, maxTokensField: 'max_tokens' });
   });
 
   it('checks the runtime endpoint without saving provider configuration', async () => {

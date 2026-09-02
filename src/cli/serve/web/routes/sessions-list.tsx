@@ -18,7 +18,7 @@ import { term } from '../lib/terms';
 import { useSessionListView, type SessionListView } from '../hooks/use-session-list-view';
 import { useLastVisit } from '../hooks/use-last-visit';
 import { isAttentionSessionDismissed, useGlobalApprovals } from '../hooks/use-global-approvals';
-import { isExecutingSessionStatus, SESSION_STATUS_FILTERS } from '../../../../session/status';
+import { isExecutingSessionStatus, isLiveSessionStatus, SESSION_STATUS_FILTERS } from '../../../../session/status';
 
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d', '90d', 'all'];
 const STATUSES = SESSION_STATUS_FILTERS;
@@ -254,14 +254,14 @@ export function FeedResponse(props: { value: string | undefined; status: string;
   const long = Boolean(props.value && (props.value.length > 1_800 || props.value.split(/\r?\n/).length > 18));
   // subagentActive reads as live (like running): the response lands when the
   // delegated sub-agent returns.
-  const live = props.status === 'preparing' || props.status === 'running' || props.status === 'suspended' || props.subagentActive === true;
+  const live = isLiveSessionStatus(props.status) || props.subagentActive === true;
   const emptyMessage = props.subagentActive
     ? 'Working in a delegated sub-agent. Its response will appear here when the sub-agent returns.'
     : props.status === 'preparing'
       ? 'Preparing project context. The agent will start when its safe workspace is ready.'
-      : props.status === 'running'
+      : isExecutingSessionStatus(props.status)
       ? 'Agent is working. Its response will appear here as it becomes available.'
-      : props.status === 'suspended'
+      : props.status === 'suspended' || props.status === 'waiting'
         ? 'Waiting on an approval or a delegated sub-agent. No final response yet.'
         : 'This session ended without a final response.';
 

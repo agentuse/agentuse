@@ -5,6 +5,7 @@ import { getProviderStatus, type ProviderStatus } from './provider-status.js';
 import { AuthStorage } from './storage.js';
 import { BUILTIN_PROVIDERS } from '../providers/registry-sources.js';
 import { checkCustomProviderCompletion, CUSTOM_PROVIDER_APIS, detectCustomProviderApi, discoverCustomProviderModelIds, normalizeCustomProviderBaseURL, normalizeCustomProviderModelIds, type CustomProviderApi } from './custom-provider-models.js';
+import type { CustomProviderAuth } from './types.js';
 
 export type ProviderAuthMethod = 'oauth' | 'api_key';
 
@@ -126,17 +127,18 @@ export async function removeProviderCredential(provider: unknown, kind: unknown)
   return providerSetupSnapshot();
 }
 
-interface CustomProviderInput {
+export interface CustomProviderInput {
   name: unknown;
   baseURL: unknown;
   key?: unknown;
   api?: unknown;
   models?: unknown;
+  compatibility?: CustomProviderAuth['compatibility'];
 }
 
-async function prepareCustomProvider(input: CustomProviderInput): Promise<{
+export async function prepareCustomProvider(input: CustomProviderInput): Promise<{
   name: string;
-  provider: { baseURL: string; key?: string; api: CustomProviderApi };
+  provider: { baseURL: string; key?: string; api: CustomProviderApi; compatibility?: CustomProviderAuth['compatibility'] };
   models: string[];
 }> {
   if (typeof input.name !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(input.name)) {
@@ -155,6 +157,9 @@ async function prepareCustomProvider(input: CustomProviderInput): Promise<{
     baseURL: normalizeCustomProviderBaseURL(name, url.toString()),
     api: (requestedApi === 'auto' ? 'openai-completions' : requestedApi) as CustomProviderApi,
     ...(typeof input.key === 'string' && input.key.trim() ? { key: input.key.trim() } : {}),
+    ...(input.compatibility && Object.keys(input.compatibility).length > 0
+      ? { compatibility: input.compatibility }
+      : {}),
   };
   const manualModels = normalizeCustomProviderModelIds(input.models);
   let discoveredModels: string[] = [];
@@ -182,13 +187,22 @@ export async function checkCustomProvider(input: CustomProviderInput): Promise<{
   return { name: prepared.name, baseURL: prepared.provider.baseURL, api: prepared.provider.api, models: prepared.models };
 }
 
-export async function saveCustomProvider(input: CustomProviderInput): Promise<ProviderSetupSnapshot> {
+export async function configureCustomProvider(input: CustomProviderInput): Promise<{
+  name: string;
+  provider: Awaited<ReturnType<typeof prepareCustomProvider>>['provider'];
+  models: string[];
+  snapshot: ProviderSetupSnapshot;
+}> {
   const { name, provider, models } = await prepareCustomProvider(input);
   await AuthStorage.setCustomProvider(name, {
     ...provider,
     models,
   });
-  return providerSetupSnapshot();
+  return { name, provider, models, snapshot: await providerSetupSnapshot() };
+}
+
+export async function saveCustomProvider(input: CustomProviderInput): Promise<ProviderSetupSnapshot> {
+  return (await configureCustomProvider(input)).snapshot;
 }
 
 export async function refreshCustomProviderModels(name: unknown): Promise<ProviderSetupSnapshot> {

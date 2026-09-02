@@ -9,6 +9,7 @@ import {
   recoverInternalDiscoverySession,
   writeInternalAgentJobRecord,
 } from '../src/onboarding/internal-job-store';
+import { formatScheduleHuman } from '../src/scheduler/parser';
 
 describe('internal agent job recovery', () => {
   let root: string;
@@ -86,7 +87,7 @@ describe('internal agent job recovery', () => {
       description: `Own recurring work ${index}`,
       objective: `Inspect evidence and complete work ${index}.`,
       schedule: '0 9 * * 1',
-      scheduleHuman: 'At 9:00 AM, only on Monday',
+      scheduleHuman: formatScheduleHuman('0 9 * * 1'),
       evidence: [`src/work-${index}.ts`],
     }));
     fs.writeFileSync(path.join(sessionDir, 'structured-delivery.json'), JSON.stringify({
@@ -106,6 +107,38 @@ describe('internal agent job recovery', () => {
         summary: 'A project with recurring work.',
         inspectedFiles: 12,
         suggestions,
+      },
+    });
+  });
+
+  test('rejects a checkpoint that bypasses the canonical discovery contract', async () => {
+    const storage = await getSessionStorageDir(root);
+    const sessionDir = path.join(storage, '01INVALID-onboarding-project-discovery');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, 'session.json'), JSON.stringify({ status: 'completed' }));
+    fs.writeFileSync(path.join(sessionDir, 'structured-delivery.json'), JSON.stringify({
+      kind: 'project-suggestions',
+      result: {
+        projectName: 'Recovery project',
+        summary: 'A project with recurring work.',
+        inspectedFiles: 12,
+        suggestions: [1, 2, 3].map((index) => ({
+          id: `suggestion-${index}`,
+          name: `Agent ${index}`,
+          description: 'Recurring work',
+          objective: 'Do the work.',
+          schedule: 'not-a-schedule',
+          scheduleHuman: 'Whenever',
+          evidence: ['README.md'],
+        })),
+      },
+    }));
+
+    expect(await recoverInternalDiscoverySession(root, '01INVALID')).toEqual({
+      status: 'error',
+      error: {
+        code: 'PROJECT_DISCOVERY_RESULT_MISSING',
+        message: 'The completed discovery session has no recoverable suggestions',
       },
     });
   });

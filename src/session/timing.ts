@@ -1,4 +1,5 @@
 import type { Part, SessionInfo } from './types';
+import { isTerminalSessionStatus } from './status';
 
 export interface SessionTimingSummary {
   calculatedAt: number;
@@ -62,7 +63,7 @@ export function summarizeSessionTiming(
   now = Date.now()
 ): SessionTimingSummary {
   const start = root.time.created;
-  const terminal = root.status === 'completed' || root.status === 'error';
+  const terminal = isTerminalSessionStatus(root.status);
   const end = Math.max(start, terminal ? root.time.updated : now);
   const intervals: Interval[] = [];
   let approvalCount = 0;

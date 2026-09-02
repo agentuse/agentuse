@@ -3,6 +3,7 @@ import { join, resolve, extname, dirname } from "path";
 import { fileURLToPath } from "url";
 import type { IncomingMessage, ServerResponse } from "http";
 import { approvalThemeBootScript, escapeHtml } from "./ui";
+import { isPathInside } from "../../utils/path-policy";
 
 export interface WebManifest {
   entry: string;
@@ -26,11 +27,6 @@ const CONTENT_TYPES: Record<string, string> = {
 };
 
 const MANIFEST_RECHECK_MS = 1000;
-
-function isPathInside(parent: string, child: string): boolean {
-  const rel = child.startsWith(parent) ? child.slice(parent.length) : null;
-  return rel !== null && (rel === "" || rel.startsWith("/") || rel.startsWith("\\"));
-}
 
 /**
  * Locates and serves the built Web UI (dist/web). Resolution is relative to

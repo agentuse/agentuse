@@ -1,6 +1,6 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { randomBytes } from 'crypto';
+import { atomicWriteFile } from '../utils/atomic-write.js';
 
 /**
  * Project artifact manifest.
@@ -88,9 +88,7 @@ function withWriteChain<T>(key: string, op: () => Promise<T>): Promise<T> {
 
 async function writeManifestAtomic(manifestPath: string, manifest: ArtifactManifest): Promise<void> {
   await fs.mkdir(path.dirname(manifestPath), { recursive: true });
-  const tmp = `${manifestPath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
-  await fs.rename(tmp, manifestPath);
+  await atomicWriteFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
 }
 
 /**

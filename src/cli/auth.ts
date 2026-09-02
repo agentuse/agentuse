@@ -1,5 +1,5 @@
 import { Command, Option } from "commander";
-import { AnthropicAuth, AuthStorage, CodexAuth } from "../auth/index.js";
+import { AuthStorage } from "../auth/index.js";
 import readline from "readline";
 import { logger } from "../utils/logger";
 import {
@@ -9,7 +9,15 @@ import {
 } from "../providers/opencode-go";
 import { AUTH_PROVIDERS, BUILTIN_PROVIDERS } from "../providers/registry-sources";
 import { getProviderStatus } from "../auth/provider-status.js";
-import { checkCustomProviderCompletion, CUSTOM_PROVIDER_APIS, detectCustomProviderApi, discoverCustomProviderModelIds, normalizeCustomProviderBaseURL, normalizeCustomProviderModelIds, type CustomProviderApi } from "../auth/custom-provider-models.js";
+import { CUSTOM_PROVIDER_APIS, type CustomProviderApi } from "../auth/custom-provider-models.js";
+import {
+  completeProviderOAuth,
+  configureCustomProvider,
+  removeCustomProvider,
+  removeProviderCredential,
+  saveProviderApiKey,
+  startProviderOAuth,
+} from "../auth/provider-setup.js";
 
 const GITHUB_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
@@ -198,46 +206,27 @@ Use these only when an endpoint reports a protocol compatibility error.
         }),
       };
 
-      const providerName = name.toLowerCase();
-      const provider = {
-        baseURL: normalizeCustomProviderBaseURL(providerName, options.url),
-        api: (options.api === 'auto' ? 'openai-completions' : options.api) as CustomProviderApi,
-        ...(options.key && { key: options.key }),
-        ...(Object.keys(compatibility).length > 0 && { compatibility }),
-      };
-      let discoveredModels: string[];
       try {
-        discoveredModels = await discoverCustomProviderModelIds(providerName, provider);
+        const configured = await configureCustomProvider({
+          name,
+          baseURL: options.url,
+          key: options.key,
+          api: options.api,
+          models: options.model,
+          compatibility,
+        });
+        const { name: providerName, provider, models } = configured;
+
+        process.stdout.write(`✅ Added custom provider '${providerName}'\n`);
+        process.stdout.write(`   URL: ${provider.baseURL}\n`);
+        process.stdout.write(`   API: ${provider.api}${options.api === 'auto' ? ' (detected)' : ''}\n`);
+        if (options.key) process.stdout.write(`   Key: ****${options.key.slice(-4)}\n`);
+        process.stdout.write(`   Models: ${models.length} saved\n`);
+        process.stdout.write(`\nUsage: agentuse run agent.agentuse -m ${providerName}:${models[0]}\n`);
       } catch (error) {
-        if (options.model.length === 0) {
-          logger.error(`Could not check provider endpoint: ${error instanceof Error ? error.message : String(error)}`);
-          process.exit(1);
-        }
-        discoveredModels = [];
-      }
-      const models = normalizeCustomProviderModelIds([...discoveredModels, ...options.model]);
-      if (models.length === 0) {
-        logger.error("Could not discover any models. Add at least one with --model <model-id>.");
+        logger.error(`Could not configure provider: ${error instanceof Error ? error.message : String(error)}`);
         process.exit(1);
       }
-      try {
-        if (options.api === 'auto') provider.api = await detectCustomProviderApi(provider, models[0]!);
-        else await checkCustomProviderCompletion(provider, models[0]!);
-      } catch (error) {
-        logger.error(`Could not run a test completion: ${error instanceof Error ? error.message : String(error)}`);
-        process.exit(1);
-      }
-
-      await AuthStorage.setCustomProvider(providerName, { ...provider, models });
-
-      process.stdout.write(`✅ Added custom provider '${providerName}'\n`);
-      process.stdout.write(`   URL: ${options.url}\n`);
-      process.stdout.write(`   API: ${provider.api}${options.api === 'auto' ? ' (detected)' : ''}\n`);
-      if (options.key) {
-        process.stdout.write(`   Key: ****${options.key.slice(-4)}\n`);
-      }
-      process.stdout.write(`   Models: ${models.length} saved\n`);
-      process.stdout.write(`\nUsage: agentuse run agent.agentuse -m ${providerName}:${models[0]}\n`);
     });
 
   authCmd
@@ -359,11 +348,11 @@ Use these only when an endpoint reports a protocol compatibility error.
         if (index >= 0 && index < storedList.length) {
           const item = storedList[index];
           if (item.isCustom) {
-            await AuthStorage.removeCustomProvider(item.provider);
+            await removeCustomProvider(item.provider);
           } else if (item.key.endsWith(":oauth")) {
-            await AuthStorage.removeOAuth(item.provider);
+            await removeProviderCredential(item.provider, 'oauth');
           } else {
-            await AuthStorage.removeApiKey(item.provider);
+            await removeProviderCredential(item.provider, 'api_key');
           }
           process.stdout.write(`✅ Removed ${item.type} from ${item.provider}\n`);
           return;
@@ -375,7 +364,7 @@ Use these only when an endpoint reports a protocol compatibility error.
       // Check if it's a custom provider first
       const customProvider = await AuthStorage.getCustomProvider(provider);
       if (customProvider) {
-        await AuthStorage.removeCustomProvider(provider);
+        await removeCustomProvider(provider);
         process.stdout.write(`✅ Removed custom provider '${provider}'\n`);
         return;
       }
@@ -393,7 +382,7 @@ Use these only when an endpoint reports a protocol compatibility error.
       // If specific flag is set, remove only that type
       if (options?.oauth) {
         if (hasOAuth) {
-          await AuthStorage.removeOAuth(provider);
+          await removeProviderCredential(provider, 'oauth');
           process.stdout.write(`✅ Removed OAuth from ${provider}\n`);
         } else {
           logger.warn(`No OAuth credentials found for ${provider}`);
@@ -403,7 +392,7 @@ Use these only when an endpoint reports a protocol compatibility error.
 
       if (options?.api) {
         if (hasApiKey) {
-          await AuthStorage.removeApiKey(provider);
+          await removeProviderCredential(provider, 'api_key');
           process.stdout.write(`✅ Removed API key from ${provider}\n`);
         } else {
           logger.warn(`No API key found for ${provider}`);
@@ -422,16 +411,16 @@ Use these only when an endpoint reports a protocol compatibility error.
 
         switch (selection) {
           case "1":
-            await AuthStorage.removeOAuth(provider);
+            await removeProviderCredential(provider, 'oauth');
             process.stdout.write(`✅ Removed OAuth from ${provider}\n`);
             break;
           case "2":
-            await AuthStorage.removeApiKey(provider);
+            await removeProviderCredential(provider, 'api_key');
             process.stdout.write(`✅ Removed API key from ${provider}\n`);
             break;
           case "3":
-            await AuthStorage.removeOAuth(provider);
-            await AuthStorage.removeApiKey(provider);
+            await removeProviderCredential(provider, 'oauth');
+            await removeProviderCredential(provider, 'api_key');
             process.stdout.write(`✅ Removed all credentials from ${provider}\n`);
             break;
           default:
@@ -440,10 +429,10 @@ Use these only when an endpoint reports a protocol compatibility error.
       } else {
         // Only one type exists, remove it
         if (hasOAuth) {
-          await AuthStorage.removeOAuth(provider);
+          await removeProviderCredential(provider, 'oauth');
           process.stdout.write(`✅ Removed OAuth from ${provider}\n`);
         } else {
-          await AuthStorage.removeApiKey(provider);
+          await removeProviderCredential(provider, 'api_key');
           process.stdout.write(`✅ Removed API key from ${provider}\n`);
         }
       }
@@ -671,11 +660,11 @@ async function handleCodexOAuth() {
   process.stdout.write("\n🔄 Starting ChatGPT OAuth flow...\n\n");
 
   try {
-    const { url, pkce } = await CodexAuth.authorize();
+    const flow = await startProviderOAuth('openai');
 
     process.stdout.write(`${"=".repeat(80)}\n`);
     process.stdout.write(`📋 AUTHORIZATION URL:\n`);
-    process.stdout.write(`${url}\n`);
+    process.stdout.write(`${flow.authorizationUrl}\n`);
     process.stdout.write(`${"=".repeat(80)}\n\n`);
 
     process.stdout.write("📝 Steps:\n");
@@ -692,37 +681,11 @@ async function handleCodexOAuth() {
       return;
     }
 
-    // Extract code from callback URL
-    let code: string | null = null;
-    try {
-      const parsed = new URL(callbackUrl);
-      code = parsed.searchParams.get("code");
-    } catch {
-      // Maybe they just pasted the code directly
-      code = callbackUrl.trim();
-    }
-
-    if (!code) {
-      logger.warn("Could not extract authorization code from URL");
-      return;
-    }
-
     process.stdout.write("🔄 Exchanging code for tokens...\n");
 
     try {
-      const credentials = await CodexAuth.exchange(code, pkce);
-      await AuthStorage.setOAuth("openai", {
-        type: "codex-oauth",
-        refresh: credentials.refresh,
-        access: credentials.access,
-        expires: credentials.expires,
-        accountId: credentials.accountId,
-      });
-
+      await completeProviderOAuth(flow.flowId, callbackUrl);
       process.stdout.write("✅ Successfully authenticated with ChatGPT!\n");
-      if (credentials.accountId) {
-        process.stdout.write(`📋 Account ID: ${credentials.accountId}\n`);
-      }
     } catch {
       logger.warn("Invalid code or authorization failed");
     }
@@ -738,12 +701,12 @@ async function handleAnthropicOAuth(mode: "max" | "console") {
   process.stdout.write(`\n🔄 Starting ${mode === "max" ? "Claude Pro/Max" : "Console"} OAuth flow...\n\n`);
 
   try {
-    const { url, verifier } = await AnthropicAuth.authorize(mode);
+    const flow = await startProviderOAuth('anthropic', mode);
     
     // Always show the URL prominently  
     process.stdout.write(`\n${"=".repeat(80)}\n`);
     process.stdout.write(`📋 AUTHORIZATION URL:\n`);
-    process.stdout.write(`${url}\n`);
+    process.stdout.write(`${flow.authorizationUrl}\n`);
     process.stdout.write(`${"=".repeat(80)}\n\n`);
 
     process.stdout.write("📝 Steps:\n");
@@ -762,13 +725,7 @@ async function handleAnthropicOAuth(mode: "max" | "console") {
     process.stdout.write("🔄 Exchanging code for tokens...\n");
 
     try {
-      const credentials = await AnthropicAuth.exchange(code, verifier);
-      await AuthStorage.setOAuth("anthropic", {
-        type: "oauth",
-        refresh: credentials.refresh,
-        access: credentials.access,
-        expires: credentials.expires,
-      });
+      await completeProviderOAuth(flow.flowId, code);
       process.stdout.write("✅ Login successful\n");
 
       if (mode === "max") {
@@ -803,10 +760,7 @@ async function handleGenericLogin(provider: string, keyName: string) {
   }
 
   try {
-    await AuthStorage.setApiKey(provider, {
-      type: "api",
-      key,
-    });
+    await saveProviderApiKey(provider, key);
 
     process.stdout.write(`✅ Successfully stored ${keyName}!\n`);
   } catch (error) {

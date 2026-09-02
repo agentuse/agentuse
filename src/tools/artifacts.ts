@@ -3,7 +3,6 @@ import { z } from 'zod';
 import matter from 'gray-matter';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { randomBytes } from 'crypto';
 import type { ToolOutput, ToolErrorOutput } from './types.js';
 import { getArtifactUrl } from './await-human.js';
 import {
@@ -12,6 +11,8 @@ import {
   readArtifactManifest,
   upsertArtifactEntry,
 } from './artifact-manifest.js';
+import { isPathInside } from '../utils/path-policy.js';
+import { atomicWriteFile } from '../utils/atomic-write.js';
 
 export interface ArtifactToolContext {
   projectRoot: string;
@@ -49,12 +50,6 @@ function safeFileName(name: string): string {
   return safeStem + safeExt;
 }
 
-/** True only when `child` resolves strictly inside `parent`. */
-function isInside(parent: string, child: string): boolean {
-  const rel = path.relative(parent, child);
-  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
-}
-
 /** Merge title/tags into a markdown file's YAML frontmatter (explicit args win). */
 function applyFrontmatter(content: string, title?: string, tags?: string[]): string {
   if (title === undefined && (!tags || tags.length === 0)) return content;
@@ -63,13 +58,6 @@ function applyFrontmatter(content: string, title?: string, tags?: string[]): str
   if (title !== undefined) data.title = title;
   if (tags && tags.length > 0) data.tags = tags;
   return matter.stringify(parsed.content, data);
-}
-
-async function writeFileAtomic(filePath: string, content: string): Promise<void> {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  const tmp = `${filePath}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
-  await fs.writeFile(tmp, content, 'utf8');
-  await fs.rename(tmp, filePath);
 }
 
 /**
@@ -101,7 +89,7 @@ export function createArtifactTool(context: ArtifactToolContext): Tool {
         const groupSlug = slug(group ?? title ?? path.basename(name, path.extname(name))) || 'artifact';
         const fileName = safeFileName(name);
         const targetAbs = path.resolve(artifactsRoot, groupSlug, fileName);
-        if (!isInside(artifactsRoot, targetAbs)) {
+        if (!isPathInside(artifactsRoot, targetAbs, { allowEqual: false })) {
           return errOut(`Refusing to write artifact outside ${dir}/`);
         }
 
@@ -110,7 +98,8 @@ export function createArtifactTool(context: ArtifactToolContext): Tool {
           ? applyFrontmatter(content, title, tags)
           : content;
 
-        await writeFileAtomic(targetAbs, finalContent);
+        await fs.mkdir(path.dirname(targetAbs), { recursive: true });
+        await atomicWriteFile(targetAbs, finalContent);
 
         const relName = path.relative(context.projectRoot, targetAbs).split(path.sep).join('/');
         const now = new Date().toISOString();

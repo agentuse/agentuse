@@ -17,6 +17,7 @@ import { LogContent } from '../components/content';
 import { formatApprovalTime, formatRelativeTime, displayStatusLabel, errorText, isEndedStatus } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 import { agentDetailViewState, type AgentDetailTab } from '../lib/links';
+import { isExecutingSessionStatus } from '../../../../session/status';
 
 /**
  * Split an `.agentuse` file into its YAML frontmatter and Markdown body.
@@ -223,7 +224,7 @@ function recentJobFallback(row: SessionRow): string {
   if (row.errorMessage) return errorText(row.errorMessage);
   if (row.subagentActive) return 'Working in a delegated agent. Its response will appear here when it returns.';
   if (row.status === 'preparing') return 'Preparing project context. The agent will start when its safe workspace is ready.';
-  if (row.status === 'running' || row.status === 'resuming' || row.status === 'continuing') {
+  if (isExecutingSessionStatus(row.status)) {
     return 'This job is running. Its response will appear here when available.';
   }
   if (row.status === 'suspended') return 'Waiting for approval or input before this job can continue.';
@@ -236,7 +237,7 @@ export function RecentJobRow(props: { row: SessionRow }) {
   const status = displayStatusLabel(row.status, row.errorCode);
   const summary = row.finalResponse?.trim() ? recentJobSummary(row.finalResponse) : recentJobFallback(row);
   const { headline, detail } = splitJobSummary(summary);
-  const live = row.status === 'preparing' || row.status === 'running' || row.status === 'resuming' || row.status === 'continuing' || row.subagentActive === true;
+  const live = isExecutingSessionStatus(row.status) || row.subagentActive === true;
   const statusClass = row.status === 'preparing' ? 'preparing' : live ? 'running' : status;
   const when = row.updatedAt || row.createdAt;
   return (
