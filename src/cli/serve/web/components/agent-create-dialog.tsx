@@ -359,7 +359,7 @@ export function AgentCreateDialog(props: {
 }
 
 /** Normal Agents-view entry point. Onboarding uses the same dialog from its session CTA. */
-export function NewAgentButton(props: { initialProjectId?: string }) {
+export function NewAgentButton(props: { initialProjectId?: string; autoOpen?: boolean }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [providerOpen, setProviderOpen] = useState(false);
   const [codingOpen, setCodingOpen] = useState(false);
@@ -382,6 +382,15 @@ export function NewAgentButton(props: { initialProjectId?: string }) {
       setBusy(false);
     }
   };
+
+  // The command palette links here with ?new=1 rather than reaching into this
+  // button's state, so the provider check still runs before the dialog opens.
+  const started = useRef(false);
+  useEffect(() => {
+    if (!props.autoOpen || started.current) return;
+    started.current = true;
+    void begin();
+  }, [props.autoOpen]);
 
   return (
     <>

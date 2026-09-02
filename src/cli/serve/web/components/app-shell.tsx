@@ -402,8 +402,8 @@ export function AppShell({ children }: { children: ComponentChildren }) {
           </nav>
         )}
         <div class="sidebar-footer">
-          <button type="button" class="palette-trigger sidebar-palette-trigger" aria-label="Go to agent" title={`Go to agent (${IS_APPLE ? '⌘' : 'Ctrl+'}K)`} onClick={() => openAgentPalette()}>
-            <Search aria-hidden="true" strokeWidth={1.7} /><span class="palette-trigger-label">Go to agent</span><kbd class="palette-trigger-kbd">{IS_APPLE ? '⌘' : 'Ctrl'}K</kbd>
+          <button type="button" class="palette-trigger sidebar-palette-trigger" aria-label="Search" title={`Search (${IS_APPLE ? '⌘' : 'Ctrl+'}K)`} onClick={() => openAgentPalette()}>
+            <Search aria-hidden="true" strokeWidth={1.7} /><span class="palette-trigger-label">Search</span><kbd class="palette-trigger-kbd">{IS_APPLE ? '⌘' : 'Ctrl'}K</kbd>
           </button>
           <span class="sidebar-divider" aria-hidden="true" />
           <a class={`sidebar-nav-item${pathname === '/settings' ? ' active' : ''}`} href="/settings" aria-current={pathname === '/settings' ? 'page' : undefined}>

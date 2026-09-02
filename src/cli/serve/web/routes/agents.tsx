@@ -857,7 +857,8 @@ export default function Agents({ project }: { project?: string } = {}) {
             : <div class="eyebrow">loaded agents</div>}
           <div class="agents-title-row">
             <h1 {...(scoped && aboutOf(project, '.')?.name ? { title: project } : {})}>{scoped ? projectLabel(project) : 'Agents'}</h1>
-            {!noProjects && !projectMissing && <NewAgentButton {...(scoped ? { initialProjectId: project } : {})} />}
+            {/* ?new=1 is the command palette's "New agent" action landing here. */}
+            {!noProjects && !projectMissing && <NewAgentButton {...(scoped ? { initialProjectId: project } : {})} {...(location.query.new === '1' ? { autoOpen: true } : {})} />}
           </div>
           <p class="lede">{lede}</p>
           {scoped && (() => {

@@ -7727,6 +7727,29 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   cursor: pointer;
 }
 .palette-row.active { background: var(--panel-hover); }
+/* Section label above the first row of each group ("Needs you", "Recent", …).
+   Its wrapper is presentational so the rows stay direct options of the listbox. */
+.palette-group {
+  margin: 0;
+  padding: 10px 10px 4px;
+  color: var(--muted-2);
+  font-size: var(--font-size-micro);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.palette-section:first-child .palette-group { padding-top: 4px; }
+.palette-row-head {
+  display: flex; align-items: baseline; gap: 10px;
+  min-width: 0;
+}
+.palette-row-head > .palette-name { flex: 1; min-width: 0; }
+.palette-meta {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--muted-2); font-size: var(--font-size-micro);
+  white-space: nowrap;
+}
 .palette-name {
   font-weight: var(--weight-medium);
   max-width: 100%;
