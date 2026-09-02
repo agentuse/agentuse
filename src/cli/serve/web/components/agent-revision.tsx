@@ -175,11 +175,11 @@ export function AgentRevisionLauncher(props: {
         </div>
       )}
       {historyLoaded && !latest && !open && (
-        <button type="button" class="debug-prompt-button" onClick={() => void begin()}>
+        <button type="button" class="debug-prompt-button is-primary" title="Fix or improve this agent's source from what this run did" onClick={() => void begin()}>
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
           </svg>
-          <span>Fix or improve agent…</span>
+          <span>Improve agent</span>
         </button>
       )}
       {open && <section class="agent-revision-form" aria-labelledby="agent-revision-title">

@@ -1366,6 +1366,14 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 .debug-prompt-button svg, .session-action-button svg { color: var(--cyan); flex: none; }
 .debug-prompt-button:hover, .session-action-button:hover { border-color: var(--cyan-border); color: var(--fg); background: var(--cyan-soft); }
 .debug-prompt-button:focus-visible, .session-action-button:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 1px; }
+.page-approval-detail .debug-prompt-button.is-primary {
+  border-color: transparent;
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+  font-weight: var(--weight-bold);
+}
+.page-approval-detail .debug-prompt-button.is-primary svg { color: currentColor; }
+.page-approval-detail .debug-prompt-button.is-primary:hover { border-color: transparent; background: var(--primary-bg-hover); color: var(--primary-fg); }
 .page-approval-detail .debug-prompt-button.onboarding-handoff {
   border-color: transparent;
   background: var(--primary-bg);

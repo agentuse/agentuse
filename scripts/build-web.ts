@@ -5,14 +5,97 @@
  * Usage: bun scripts/build-web.ts [--watch]
  */
 import { basename, extname, relative, resolve } from "path";
-import { mkdir, readdir, readFile, rm, writeFile } from "fs/promises";
-import { createHash } from "crypto";
+import { mkdir, open, readdir, readFile, rm, stat, writeFile } from "fs/promises";
+import { createHash, randomUUID } from "crypto";
+import { tmpdir } from "os";
 import { brotliCompressSync, gzipSync, constants as zlibConstants } from "zlib";
 
 const ROOT = resolve(import.meta.dir, "..");
 const ENTRY = resolve(ROOT, "src/cli/serve/web/main.tsx");
 const OUTDIR = resolve(ROOT, "dist/web");
 const WATCH = process.argv.includes("--watch");
+const LOCK_PATH = resolve(
+  tmpdir(),
+  `agentuse-build-web-${createHash("sha256").update(ROOT).digest("hex").slice(0, 16)}.lock`,
+);
+const LOCK_STALE_GRACE_MS = 5_000;
+const LOCK_TIMEOUT_MS = 120_000;
+
+type BuildLock = {
+  pid: number;
+  root: string;
+  token: string;
+};
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+async function lockIsStale(): Promise<boolean> {
+  try {
+    const raw = await readFile(LOCK_PATH, "utf-8");
+    const lock = JSON.parse(raw) as Partial<BuildLock>;
+    if (lock.root === ROOT && typeof lock.pid === "number") {
+      return !processIsAlive(lock.pid);
+    }
+  } catch {
+    // A process can be between creating and populating the lock file. Only
+    // reclaim an unreadable lock after that short startup window has passed.
+  }
+
+  try {
+    return Date.now() - (await stat(LOCK_PATH)).mtimeMs > LOCK_STALE_GRACE_MS;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "ENOENT";
+  }
+}
+
+async function acquireBuildLock(): Promise<() => Promise<void>> {
+  const lock: BuildLock = { pid: process.pid, root: ROOT, token: randomUUID() };
+  const startedAt = Date.now();
+  let announcedWait = false;
+
+  while (true) {
+    try {
+      const handle = await open(LOCK_PATH, "wx");
+      try {
+        await handle.writeFile(JSON.stringify(lock));
+      } finally {
+        await handle.close();
+      }
+
+      return async () => {
+        try {
+          const current = JSON.parse(await readFile(LOCK_PATH, "utf-8")) as Partial<BuildLock>;
+          if (current.token === lock.token) await rm(LOCK_PATH, { force: true });
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+        }
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    }
+
+    if (await lockIsStale()) {
+      await rm(LOCK_PATH, { force: true });
+      continue;
+    }
+
+    if (!announcedWait) {
+      console.log("web ui: waiting for another build to finish...");
+      announcedWait = true;
+    }
+    if (Date.now() - startedAt >= LOCK_TIMEOUT_MS) {
+      throw new Error(`Timed out waiting for the web build lock at ${LOCK_PATH}`);
+    }
+    await Bun.sleep(50);
+  }
+}
 
 async function buildWeb(): Promise<void> {
   await rm(OUTDIR, { recursive: true, force: true });
@@ -112,7 +195,16 @@ async function buildWeb(): Promise<void> {
   );
 }
 
-await buildWeb();
+const runBuildWeb = async (): Promise<void> => {
+  const releaseBuildLock = await acquireBuildLock();
+  try {
+    await buildWeb();
+  } finally {
+    await releaseBuildLock();
+  }
+};
+
+await runBuildWeb();
 
 if (WATCH) {
   const { watch } = await import("chokidar");
@@ -129,7 +221,7 @@ if (WATCH) {
       }
       building = true;
       try {
-        await buildWeb();
+        await runBuildWeb();
       } catch (err) {
         console.error((err as Error).message);
       } finally {

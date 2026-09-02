@@ -1910,25 +1910,6 @@ export default function SessionDetail() {
               <span>{submittingReopen ? 'Reopening…' : 'Retry'}</span>
             </button>
           )}
-          {continueActionable && (
-            <button
-              type="button"
-              class={`session-action-button${showResume ? ' active' : ''}`}
-              aria-expanded={showResume}
-              aria-controls="continue-prompt"
-              onClick={() => setShowResume((v) => !v)}
-            >
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M21 12a9 9 0 1 1-3-6.7" />
-                <path d="M21 4v5h-5" />
-              </svg>
-              <span>Resume session</span>
-            </button>
-          )}
-          {/* No "Learnings" toggle here any more. The panel below is always on
-              for a session that has one: its warnings were the whole reason it
-              existed, and a warning behind a button nobody presses is not a
-              warning. The rules themselves fold away inside the panel instead. */}
           {!approval.agent.filePath && approval.agent.name === ONBOARDING_AGENT_NAME && approval.model === ONBOARDING_MODEL ? (
             <DebugPromptButton
               mode="onboarding"
@@ -1960,6 +1941,25 @@ export default function SessionDetail() {
               }}
             />
           ) : null}
+          {continueActionable && (
+            <button
+              type="button"
+              class={`session-action-button${showResume ? ' active' : ''}`}
+              aria-expanded={showResume}
+              aria-controls="continue-prompt"
+              onClick={() => setShowResume((v) => !v)}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-3-6.7" />
+                <path d="M21 4v5h-5" />
+              </svg>
+              <span>Resume session</span>
+            </button>
+          )}
+          {/* No "Learnings" toggle here any more. The panel below is always on
+              for a session that has one: its warnings were the whole reason it
+              existed, and a warning behind a button nobody presses is not a
+              warning. The rules themselves fold away inside the panel instead. */}
           {(stopActionable || dismissActionable) && (
             <button
               type="button"
