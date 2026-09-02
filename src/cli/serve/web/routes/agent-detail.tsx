@@ -357,9 +357,8 @@ export function buildCodingAgentPrompt(opts: { project: string; path: string; so
   ].join('\n');
 }
 
-function SourcePanel(props: { source: string; runPath: string; project: string; path: string }) {
+function SourcePanel(props: { source: string; runPath: string }) {
   const [copied, setCopied] = useState(false);
-  const [sendOpen, setSendOpen] = useState(false);
   const [rendered, setRendered] = useState(true);
   const copy = () => {
     void navigator.clipboard?.writeText(props.source).then(() => {
@@ -374,7 +373,6 @@ function SourcePanel(props: { source: string; runPath: string; project: string; 
         <span class="count">{props.runPath}</span>
         <span class="rule" />
         <button type="button" class="source-view-btn" onClick={() => setRendered((v) => !v)}>{rendered ? 'raw' : 'rendered'}</button>
-        <button type="button" class="send-agent-btn" onClick={() => setSendOpen(true)}>Send to Coding Agent…</button>
         <button type="button" class="copy-btn" onClick={copy}>{copied ? 'copied' : 'copy'}</button>
       </div>
       <div class="panel source-panel">
@@ -387,13 +385,6 @@ function SourcePanel(props: { source: string; runPath: string; project: string; 
           <pre class="source-pre"><code>{props.source}</code></pre>
         )}
       </div>
-      <SendToCodingAgentDialog
-        open={sendOpen}
-        buildPrompt={(detail) => buildCodingAgentPrompt({ project: props.project, path: props.path, source: props.source, detail })}
-        detailLabel="Give the agent more detail on what to implement"
-        placeholder={props.path}
-        onClose={() => setSendOpen(false)}
-      />
     </section>
   );
 }
@@ -663,7 +654,7 @@ export default function AgentDetail() {
             </div>
             {data.source !== undefined && (
               <div id="panel-source" class="tab-panel" role="tabpanel" aria-labelledby="tab-source" hidden={tab !== 'source'}>
-                <SourcePanel source={data.source} runPath={data.runPath} project={data.projectId} path={data.path} />
+                <SourcePanel source={data.source} runPath={data.runPath} />
               </div>
             )}
 

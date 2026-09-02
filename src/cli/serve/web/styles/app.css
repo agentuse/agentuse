@@ -5898,14 +5898,6 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 .page-agent-detail .group-title .copy-btn:hover { color: var(--cyan); background: var(--panel-hover); }
 
 /* source */
-.page-agent-detail .group-title .send-agent-btn {
-  font-family: var(--sans); font-size: var(--font-size-micro); color: var(--cyan);
-  background: var(--cyan-soft); border: 1px solid var(--cyan-border); cursor: pointer;
-  padding: 3px 10px; border-radius: 6px;
-  white-space: nowrap;
-  transition: background 120ms ease;
-}
-.page-agent-detail .group-title .send-agent-btn:hover { background: color-mix(in srgb, var(--cyan) 16%, transparent); }
 .page-agent-detail .group-title .source-view-btn {
   font-family: var(--sans); font-size: var(--font-size-micro); color: var(--muted);
   background: transparent; border: 1px solid var(--line-strong); cursor: pointer;
@@ -5931,8 +5923,7 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   .page-agent-detail .group-title .rule { display: none; }
   .page-agent-detail .group-title .see-all,
   .page-agent-detail .group-title .copy-btn,
-  .page-agent-detail .group-title .source-view-btn,
-  .page-agent-detail .group-title .send-agent-btn { order: 2; }
+  .page-agent-detail .group-title .source-view-btn { order: 2; }
 }
 .page-agent-detail .source-panel { border-left: 2px solid var(--cyan-border); }
 .page-agent-detail .source-pre {
