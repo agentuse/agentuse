@@ -172,6 +172,10 @@ export const LIVE_OUTPUT_MIN_RUNTIME_MS = 2_000;
  */
 export interface EffectAuditSink {
   append(record: Record<string, unknown>): void;
+  /** Persist one small, session-local recovery checkpoint atomically. Internal
+   * structured-delivery tools use this so a serve restart cannot discard an
+   * accepted handoff before the parent process finalizes it. */
+  checkpoint?(name: string, payload: unknown): void;
 }
 
 // Error output format

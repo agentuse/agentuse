@@ -2,6 +2,8 @@ import type { Tool } from 'ai';
 import { z } from 'zod';
 import { validateAuthoredAgentSource } from '../agents/author.js';
 import { AgentCreationError, validateAgentFileName, validateAgentName } from '../agents/create.js';
+import { STRUCTURED_DELIVERY_CHECKPOINT } from '../runner/effect-wal.js';
+import type { EffectAuditSink } from '../tools/types.js';
 
 export const SUBMIT_AGENT_SOURCE_TOOL = 'submit_agent_source';
 
@@ -58,6 +60,7 @@ export function createSubmitAgentSourceTool(
   submission: AgentSourceSubmission,
   contract: AgentSourceSubmissionContract,
   loadedSkillNames?: () => readonly string[],
+  recoverySink?: EffectAuditSink,
 ): Tool {
   return {
     description:
@@ -97,6 +100,13 @@ export function createSubmitAgentSourceTool(
         submission.name = authored.name;
         submission.fileName = fileName;
         submission.model = authored.model;
+        recoverySink?.checkpoint?.(STRUCTURED_DELIVERY_CHECKPOINT, {
+          kind: 'agent-source',
+          source: authored.source,
+          name: authored.name,
+          fileName,
+          model: authored.model,
+        });
         return `Accepted: ${authored.name} is valid and will be saved as ${fileName}. Call report_complete now with a short confirmation headline and omit details.`;
       } catch (error) {
         if (error instanceof AgentCreationError) {

@@ -124,6 +124,12 @@ import {
   buildAgentCreatorSessionAgent,
   buildProjectDiscoverySessionAgent,
 } from "../onboarding/session-agents";
+import {
+  readInternalAgentJobRecord,
+  recoverInternalCreatorSession,
+  writeInternalAgentJobRecord,
+  type RecoveredAgentSourceSubmission,
+} from "../onboarding/internal-job-store.js";
 import { openBrowser } from "../utils/open-browser";
 import { pickLocalProjectFolder } from "../utils/folder-picker";
 import { canUseHostFolderPicker } from "../utils/local-request";
@@ -477,6 +483,20 @@ interface OnboardingModelJob {
   createdAt: number;
   result?: unknown;
   error?: { code: string; message: string };
+}
+
+interface AgentCreationRecoveryInput {
+  request: { name?: string; objective: string; model: string };
+  schedule?: string;
+  guided: boolean;
+  configuredProviders: string[];
+  availableModels: string[];
+}
+
+interface PersistedOnboardingModelJob {
+  job: OnboardingModelJob;
+  ownerPid: number;
+  agentCreation?: AgentCreationRecoveryInput;
 }
 
 function workerExecutionErrorResponse(error: WorkerExecuteError): {
@@ -3249,6 +3269,8 @@ export function createServeCommand(): Command {
       // isolated from the parent process and from sibling projects.
       const workers = new Map<string, AgentWorker>();
       const onboardingJobs = new Map<string, OnboardingModelJob>();
+      const agentCreationRecoveryInputs = new Map<string, AgentCreationRecoveryInput>();
+      const activeAgentCreationRecoveries = new Map<string, Promise<void>>();
       const revisionViewCleanups = new Map<string, () => Promise<void>>();
       const revisionMutations = new Set<string>();
       const cleanupRevisionView = async (revisionSessionId: string): Promise<void> => {
@@ -3621,6 +3643,94 @@ export function createServeCommand(): Command {
           scheduleCount: entries.reduce((a, b) => a + b.scheduleCount, 0),
           projects: entries,
         });
+      };
+
+      const persistOnboardingJob = async (job: OnboardingModelJob): Promise<void> => {
+        const project = projectsById.get(job.projectId);
+        if (!project) return;
+        const agentCreation = agentCreationRecoveryInputs.get(job.id);
+        await writeInternalAgentJobRecord(project.root, job.id, {
+          job,
+          ownerPid: process.pid,
+          ...(agentCreation && { agentCreation }),
+        } satisfies PersistedOnboardingModelJob);
+      };
+
+      const loadPersistedOnboardingJob = async (id: string): Promise<PersistedOnboardingModelJob | null> => {
+        for (const project of projects) {
+          const record = await readInternalAgentJobRecord<PersistedOnboardingModelJob>(project.root, id).catch(() => null);
+          if (record?.job?.id === id && record.job.projectId === project.id) return record;
+        }
+        return null;
+      };
+
+      const finishAgentCreation = async (
+        project: Project,
+        recovery: AgentCreationRecoveryInput,
+        submission: Pick<RecoveredAgentSourceSubmission, 'source' | 'name' | 'fileName'>,
+      ) => {
+        const authored = validateAuthoredAgentSource(
+          submission.source,
+          recovery.availableModels,
+          recovery.request.name,
+          recovery.schedule,
+        );
+        const created = await createAgentFile(project, {
+          name: submission.name,
+          fileName: submission.fileName,
+          objective: recovery.request.objective,
+          model: authored.model,
+          source: authored.source,
+        }, recovery.configuredProviders);
+        if (recovery.guided) {
+          const statePath = toProjectRelativeAgentPath(project, created.runPath);
+          const paused = await setSchedulePaused(project.root, statePath, true);
+          pausedSchedulesByProject.set(project.id, paused);
+          scheduler.setEnabled(project.id, created.runPath, false);
+        }
+        if (!project.agentFiles.includes(created.runPath)) {
+          project.agentFiles.push(created.runPath);
+          project.agentFiles.sort();
+          agentCounts.set(project.id, project.agentFiles.length);
+          updateRegistryCounts();
+        }
+        agentSummaryCache.delete(created.absolutePath);
+        agentSummaryCache.delete(resolveScopedAgentPath(project, created.runPath));
+        const collected = await collectAgents([project]);
+        const agent = collected.agents.find((candidate) => candidate.runPath === created.runPath);
+        if (!agent) throw new Error('The new agent could not be loaded after it was written');
+        return { success: true as const, agent };
+      };
+
+      const recoverAgentCreationJob = (job: OnboardingModelJob): Promise<void> => {
+        const existing = activeAgentCreationRecoveries.get(job.id);
+        if (existing) return existing;
+        const operation = (async () => {
+          const project = projectsById.get(job.projectId);
+          const recovery = agentCreationRecoveryInputs.get(job.id);
+          if (!project || !recovery || job.status !== 'running') return;
+          const session = await recoverInternalCreatorSession(project.root, job.sessionId);
+          if (!session || session.status === 'running') return;
+          if (session.status === 'error') {
+            job.status = 'error';
+            job.error = session.error;
+          } else {
+            try {
+              job.result = await finishAgentCreation(project, recovery, session.submission);
+              job.status = 'completed';
+            } catch (error) {
+              job.status = 'error';
+              job.error = {
+                code: error instanceof AgentCreationError ? error.code : 'AGENT_CREATE_FAILED',
+                message: (error as Error).message,
+              };
+            }
+          }
+          await persistOnboardingJob(job);
+          wakeListHubs();
+        })().finally(() => activeAgentCreationRecoveries.delete(job.id));
+        activeAgentCreationRecoveries.set(job.id, operation);
+        return operation;
       };
 
       // Helper to print hot reload messages
@@ -7618,8 +7728,17 @@ export function createServeCommand(): Command {
               model: request.model,
               createdAt: Date.now(),
             };
+            const recoveryInput: AgentCreationRecoveryInput = {
+              request,
+              ...(schedule && { schedule }),
+              guided,
+              configuredProviders,
+              availableModels,
+            };
             pruneOnboardingJobs();
             onboardingJobs.set(job.id, job);
+            agentCreationRecoveryInputs.set(job.id, recoveryInput);
+            await persistOnboardingJob(job);
             wakeListHubs();
             const sessionToken = apiKey ? sessionViewToken(sessionId, apiKey) : undefined;
             sendJSON(res, 202, {
@@ -7652,6 +7771,7 @@ export function createServeCommand(): Command {
                   availableSkills,
                 });
                 job.phase = 'running';
+                await persistOnboardingJob(job);
                 wakeListHubs();
                 const execution = await worker.execute({
                   agentContent,
@@ -7678,41 +7798,12 @@ export function createServeCommand(): Command {
                     'The creator finished without submitting an agent name, filename, and source through submit_agent_source',
                   );
                 }
-                const authored = validateAuthoredAgentSource(
-                  execution.result.agentSource,
-                  availableModels,
-                  request.name,
-                  schedule,
-                );
-                const created = await createAgentFile(project, {
+                job.result = await finishAgentCreation(project, recoveryInput, {
+                  source: execution.result.agentSource,
                   name: execution.result.authoredAgentName,
                   fileName: execution.result.authoredAgentFileName,
-                  objective: request.objective,
-                  model: authored.model,
-                  source: authored.source,
-                }, configuredProviders);
-                if (guided) {
-                  // Reviewed onboarding suggestions keep their authored cadence,
-                  // but wait for the first successful manual run before AgentUse
-                  // enables autonomous execution.
-                  const statePath = toProjectRelativeAgentPath(project, created.runPath);
-                  const paused = await setSchedulePaused(project.root, statePath, true);
-                  pausedSchedulesByProject.set(project.id, paused);
-                  scheduler.setEnabled(project.id, created.runPath, false);
-                }
-                if (!project.agentFiles.includes(created.runPath)) {
-                  project.agentFiles.push(created.runPath);
-                  project.agentFiles.sort();
-                  agentCounts.set(project.id, project.agentFiles.length);
-                  updateRegistryCounts();
-                }
-                agentSummaryCache.delete(created.absolutePath);
-                agentSummaryCache.delete(resolveScopedAgentPath(project, created.runPath));
-                const collected = await collectAgents([project]);
-                const agent = collected.agents.find((candidate) => candidate.runPath === created.runPath);
-                if (!agent) throw new Error('The new agent could not be loaded after it was written');
+                });
                 job.status = 'completed';
-                job.result = { success: true, agent };
               } catch (error) {
                 job.status = 'error';
                 job.error = {
@@ -7720,6 +7811,9 @@ export function createServeCommand(): Command {
                   message: (error as Error).message,
                 };
               } finally {
+                await persistOnboardingJob(job).catch((error) => {
+                  logger.warn(`Failed to persist internal agent job ${job.id}: ${(error as Error).message}`);
+                });
                 await cleanupView?.().catch(() => {});
                 wakeListHubs();
               }
@@ -8284,7 +8378,60 @@ export function createServeCommand(): Command {
           : null;
         if (onboardingJobMatch) {
           pruneOnboardingJobs();
-          const job = onboardingJobs.get(decodeURIComponent(onboardingJobMatch[1]!));
+          const jobId = decodeURIComponent(onboardingJobMatch[1]!);
+          let job = onboardingJobs.get(jobId);
+          if (!job) {
+            const persisted = await loadPersistedOnboardingJob(jobId);
+            if (persisted) {
+              job = persisted.job;
+              onboardingJobs.set(job.id, job);
+              if (persisted.agentCreation) {
+                agentCreationRecoveryInputs.set(job.id, persisted.agentCreation);
+                await recoverAgentCreationJob(job);
+              } else if (job.status === 'running' && persisted.ownerPid !== process.pid) {
+                job.status = 'error';
+                job.error = {
+                  code: 'INTERNAL_JOB_INTERRUPTED',
+                  message: 'The serve daemon restarted before this internal job finished',
+                };
+                await persistOnboardingJob(job);
+              }
+            }
+          }
+          // Backward compatibility for creator sessions completed before job
+          // envelopes and structured-delivery checkpoints became durable.
+          if (!job) {
+            for (const project of projects) {
+              const session = await recoverInternalCreatorSession(project.root, jobId);
+              if (!session || session.status !== 'completed') continue;
+              const snapshot = await providerSetupSnapshot();
+              const providers = agentCreationProviders(snapshot.status, preferredAgentCreationModel);
+              const recovery: AgentCreationRecoveryInput = {
+                request: {
+                  objective: session.submission.source,
+                  model: session.submission.model,
+                },
+                guided: false,
+                configuredProviders: providers.map((provider) => provider.id),
+                availableModels: [...new Set(providers.flatMap((provider) => provider.models))],
+              };
+              job = {
+                id: jobId,
+                sessionId: jobId,
+                projectId: project.id,
+                kind: 'agent-creation',
+                status: 'running',
+                phase: 'running',
+                model: session.submission.model,
+                createdAt: Date.now(),
+              };
+              onboardingJobs.set(job.id, job);
+              agentCreationRecoveryInputs.set(job.id, recovery);
+              await persistOnboardingJob(job);
+              await recoverAgentCreationJob(job);
+              break;
+            }
+          }
           if (!job) {
             sendError(res, 404, 'ONBOARDING_JOB_NOT_FOUND', 'This onboarding job is no longer available');
             return;

@@ -256,7 +256,11 @@ Read references/checklist.md before authoring a release workflow.`);
     });
     expect(contract).toBeDefined();
     const submission: { source?: string; name?: string; fileName?: string; model?: string } = {};
-    const tool = createSubmitAgentSourceTool(submission, contract!);
+    const checkpoints: Array<{ name: string; payload: unknown }> = [];
+    const tool = createSubmitAgentSourceTool(submission, contract!, undefined, {
+      append: () => undefined,
+      checkpoint: (name, payload) => checkpoints.push({ name, payload }),
+    });
     await expect((tool.execute as any)({
       name: 'Docs drift', filename: 'docs-drift.agentuse', source: 'not an agent',
     })).rejects.toThrow('Source rejected');
@@ -269,6 +273,16 @@ Read references/checklist.md before authoring a release workflow.`);
     expect(submission.name).toBe('Docs drift');
     expect(submission.fileName).toBe('docs-drift-monitor.agentuse');
     expect(submission.model).toBe('openai:gpt-5.6-luna');
+    expect(checkpoints).toEqual([{
+      name: 'structured-delivery',
+      payload: {
+        kind: 'agent-source',
+        source,
+        name: 'Docs drift',
+        fileName: 'docs-drift-monitor.agentuse',
+        model: 'openai:gpt-5.6-luna',
+      },
+    }]);
 
     await expect((tool.execute as any)({
       name: 'Filename-shaped-name', filename: 'docs-drift.agentuse', source,

@@ -339,7 +339,12 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
   };
   const internalSubmissionTools: Record<string, Tool> = {
     ...(agentSourceContract && agentSourceSubmission && {
-      submit_agent_source: createSubmitAgentSourceTool(agentSourceSubmission, agentSourceContract, loadedSkillNames),
+      submit_agent_source: createSubmitAgentSourceTool(
+        agentSourceSubmission,
+        agentSourceContract,
+        loadedSkillNames,
+        effectAudit,
+      ),
     }),
     ...(projectSuggestionsContract && projectSuggestionsSubmission && {
       submit_project_suggestions: createSubmitProjectSuggestionsTool(

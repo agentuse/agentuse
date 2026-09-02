@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { EffectWAL, EFFECT_WAL_FILENAME, wrapToolsWithWAL, sanitizeWALInput } from '../src/runner/effect-wal';
+import { EffectWAL, EFFECT_WAL_FILENAME, STRUCTURED_DELIVERY_CHECKPOINT, wrapToolsWithWAL, sanitizeWALInput } from '../src/runner/effect-wal';
 import { SuspendSignal } from '../src/runner/suspend';
 
 function readRecords(dir: string): Array<Record<string, unknown>> {
@@ -61,6 +61,13 @@ describe('EffectWAL', () => {
   test('never throws even when the path is unwritable', () => {
     const wal = new EffectWAL('/dev/null/definitely-not-a-dir');
     expect(() => wal.append({ event: 'tool-start' })).not.toThrow();
+  });
+
+  test('atomically checkpoints an untruncated structured delivery', () => {
+    const wal = new EffectWAL(dir);
+    const payload = { kind: 'agent-source', source: 'x'.repeat(20_000) };
+    wal.checkpoint(STRUCTURED_DELIVERY_CHECKPOINT, payload);
+    expect(JSON.parse(fs.readFileSync(path.join(dir, `${STRUCTURED_DELIVERY_CHECKPOINT}.json`), 'utf8'))).toEqual(payload);
   });
 });
 

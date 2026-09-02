@@ -6,6 +6,7 @@ import type { EffectAuditSink } from '../tools/types.js';
 import { logger } from '../utils/logger';
 
 export const EFFECT_WAL_FILENAME = 'effect-wal.jsonl';
+export const STRUCTURED_DELIVERY_CHECKPOINT = 'structured-delivery';
 
 // Cap serialized inputs so one giant tool argument can't bloat the journal;
 // forensics needs the command/first content, not megabytes of payload.
@@ -57,6 +58,22 @@ export class EffectWAL implements EffectAuditSink {
       } catch (error) {
         logger.debug(`[EffectWAL] append failed: ${(error as Error).message}`);
       }
+    }
+  }
+
+  /** Atomically retain a validated structured handoff beside the effect WAL.
+   * Unlike audit inputs this is intentionally not truncated: it is the durable
+   * source of truth used to finish an internal job after a daemon restart. */
+  checkpoint(name: string, payload: unknown): void {
+    if (!this.dir || !/^[a-z0-9-]+$/u.test(name)) return;
+    const target = path.join(this.dir, `${name}.json`);
+    const temporary = `${target}.${process.pid}.tmp`;
+    try {
+      fs.writeFileSync(temporary, JSON.stringify(payload));
+      fs.renameSync(temporary, target);
+    } catch (error) {
+      try { fs.unlinkSync(temporary); } catch { /* best-effort cleanup */ }
+      logger.debug(`[EffectWAL] checkpoint failed: ${(error as Error).message}`);
     }
   }
 }
