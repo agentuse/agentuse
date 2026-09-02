@@ -101,6 +101,7 @@
     "commander": "^12.0.0",
     "croner": "^9.1.0",
     "cronstrue": "^3.9.0",
+    "diff": "^9.0.0",
     "dockerode": "^4.0.0",
     "dotenv": "^17.2.1",
     "esbuild": "0.23.1",
