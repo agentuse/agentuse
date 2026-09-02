@@ -4812,10 +4812,11 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 .page-home .now-meta { font-size: var(--font-size-caption); color: var(--muted); white-space: nowrap; }
 .page-home .now-grid {
   display: grid;
-  /* auto-fit so a lone running session gets the full row instead of being
-     squeezed into a third of it; min() keeps the track from overflowing
-     narrow phones. */
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  /* auto-fill, not auto-fit: empty tracks stay, so a card is the same size
+     whether one agent is running or six. Sessions start and finish live;
+     cards that resize under the cursor read as the page glitching.
+     min() keeps the track from overflowing narrow phones. */
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
   gap: 10px;
 }
 .page-home .now-grid a.now-row {
