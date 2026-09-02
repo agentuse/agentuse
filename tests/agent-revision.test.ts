@@ -107,6 +107,7 @@ describe('internal agent revision', () => {
     expect(parsed.config.metadata?.reviser).toBe('agent');
     expect(source).toContain('submit_agent_revision');
     expect(source).toContain('The agent stopped when it encountered refunded orders.');
+    expect(source).toContain('treat that as the primary incident unless the operator explicitly asks about an earlier failure');
   });
 
   it('validates a proposal, applies it atomically, and restores the prior source', async () => {

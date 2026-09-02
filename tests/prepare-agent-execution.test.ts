@@ -299,6 +299,8 @@ describe('prepareAgentExecution', () => {
       expect(result.userMessage).toContain('reply "very nice!"');
       expect(result.userMessage).toContain('a missing `choice` is NOT ambiguous');
       expect(result.userMessage).toContain('call `await_human` again');
+      expect(result.userMessage).toContain('why the previous approval no longer covers the action');
+      expect(result.userMessage).toContain('If it still covers the action, do not ask again');
     });
 
     it('routes Slack approval channels through channels config', () => {
