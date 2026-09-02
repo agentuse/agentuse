@@ -83,7 +83,7 @@ describe('internal worker session state ordering', () => {
     expect(continueBranch).toBeGreaterThanOrEqual(0);
 
     const continuationAssigned = source.indexOf('continuationSession = { sessionId: req.sessionId, agentId: found.agentId };', continueBranch);
-    const mcpConnected = source.indexOf('mcp = await connectMCP(agent.config.mcpServers, req.debug ?? false, mcpBasePath);', continueBranch);
+    const mcpConnected = source.indexOf('mcp = await connectMCP(agent.config.mcpServers, req.debug ?? false, mcpBasePath, runCwd);', continueBranch);
     const markedRunning = source.indexOf('await sessionManager.setSessionRunning(continuationSession.sessionId, continuationSession.agentId);', continueBranch);
 
     expect(continuationAssigned).toBeGreaterThan(continueBranch);

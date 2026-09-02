@@ -7,6 +7,7 @@ import type { SessionInfo, Message, Part, SessionStatus } from "../session/types
 import { initStorage } from "../storage";
 import { SessionManager } from "../session";
 import { computeSubagentActiveIds } from "../session/subagent-active";
+import { summarizeSessionTiming } from "../session/timing";
 import { resolveProjectContext } from "../utils/project";
 import { loadGlobalDefaults } from "../utils/global-config";
 import { logger, LogLevel } from "../utils/logger";
@@ -370,6 +371,17 @@ function formatDate(date: Date): string {
       day: "numeric",
     });
   }
+}
+
+function formatDurationMs(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  if (minutes < 60) return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const minuteRemainder = minutes % 60;
+  return minuteRemainder ? `${hours}h ${minuteRemainder}m` : `${hours}h`;
 }
 
 /**
@@ -975,8 +987,36 @@ async function showSession(
     .filter((child) => child.parentSessionID === s.id)
     .sort((a, b) => a.created.getTime() - b.created.getTime() || a.id.localeCompare(b.id));
 
+  // Include every descendant gate, not only direct children: while a leaf is
+  // awaiting review, all managers above it are parked on the same human wait.
+  const descendantIds = new Set<string>();
+  let frontier = new Set([s.id]);
+  while (frontier.size > 0) {
+    const next = new Set<string>();
+    for (const candidate of allProjectSessions) {
+      if (!candidate.parentSessionID || !frontier.has(candidate.parentSessionID) || descendantIds.has(candidate.id)) continue;
+      descendantIds.add(candidate.id);
+      next.add(candidate.id);
+    }
+    frontier = next;
+  }
+  const descendantEvidence = await Promise.all(
+    allProjectSessions
+      .filter((candidate) => descendantIds.has(candidate.id))
+      .map(async (candidate) => {
+        const childDetails = await getSessionDetails(candidate.dirPath);
+        return childDetails.session
+          ? { session: childDetails.session, parts: childDetails.messages.flatMap((entry) => entry.parts) }
+          : undefined;
+      })
+  );
+  const timing = summarizeSessionTiming(s, [
+    { session: s, parts: details.messages.flatMap((entry) => entry.parts) },
+    ...descendantEvidence.filter((entry): entry is NonNullable<typeof entry> => entry !== undefined),
+  ]);
+
   if (options?.json) {
-    process.stdout.write(JSON.stringify({ ...details, projectRoot: session.projectRoot, childSessions }, null, 2) + "\n");
+    process.stdout.write(JSON.stringify({ ...details, projectRoot: session.projectRoot, childSessions, timing }, null, 2) + "\n");
     return;
   }
 
@@ -1013,6 +1053,7 @@ async function showSession(
     : '⋯';
   const statusText = isIncomplete ? 'incomplete' : subagentActive ? 'running · subagent' : (s.status || 'unknown');
   process.stdout.write(`Status:      ${statusIcon} ${statusText}\n`);
+  process.stdout.write(`Timing:      active ${formatDurationMs(timing.activeMs)} · approval wait ${formatDurationMs(timing.approvalMs)} · wall ${formatDurationMs(timing.wallMs)}\n`);
   if (s.mock) {
     process.stdout.write(`Mock:        ⚠ mock run: some or all tool results were fabricated, not executed\n`);
   }
@@ -1080,7 +1121,7 @@ async function showSession(
       if (message.time.completed) {
         const durationMs = message.time.completed - message.time.created;
         const durationSec = (durationMs / 1000).toFixed(1);
-        statsLine += `  Duration: ${durationSec}s`;
+        statsLine += `  Wall duration: ${durationSec}s`;
       }
       process.stdout.write(statsLine + "\n");
       if (message.assistant.context) {
@@ -1691,7 +1732,12 @@ async function resumeSession(
       const agent = (rememberAgent && agentPath === found.session.agent.filePath)
         ? rememberAgent
         : await parseAgent(agentPath);
-      const mcp = await connectMCP(agent.config.mcpServers, options.debug ?? false, path.dirname(agentPath));
+      const mcp = await connectMCP(
+        agent.config.mcpServers,
+        options.debug ?? false,
+        path.dirname(agentPath),
+        cwd
+      );
 
       // From this boundary onward the reviewer decision is durable. A later
       // error may follow successful external effects, so reopening the gate
@@ -1764,7 +1810,12 @@ async function resumeSession(
   }
 
   const agent = await parseAgent(found.session.agent.filePath);
-  const mcp = await connectMCP(agent.config.mcpServers, options.debug ?? false, path.dirname(found.session.agent.filePath));
+  const mcp = await connectMCP(
+    agent.config.mcpServers,
+    options.debug ?? false,
+    path.dirname(found.session.agent.filePath),
+    cwd
+  );
   const continuationPrompt = buildContinuationPrompt(found.session, details, options.prompt);
   const result = await runAgent(
     agent,

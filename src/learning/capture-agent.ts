@@ -78,7 +78,12 @@ export async function captureViaAgent(params: {
 
   try {
     mcpConnections = captureAgent.config.mcpServers
-      ? await connectMCP(captureAgent.config.mcpServers as MCPServersConfig, false, captureDir)
+      ? await connectMCP(
+          captureAgent.config.mcpServers as MCPServersConfig,
+          false,
+          captureDir,
+          projectContext?.cwd
+        )
       : [];
     loadedTools = await loadAgentTools({
       agent: captureAgent,

@@ -147,7 +147,13 @@ function resolveEnvVariables(value: string): string {
 /**
  * Create transport based on configuration (stdio or HTTP)
  */
-function createTransport(name: string, config: MCPServerConfig, debug: boolean = false, basePath?: string): any {
+function createTransport(
+  name: string,
+  config: MCPServerConfig,
+  debug: boolean = false,
+  basePath?: string,
+  cwd?: string
+): any {
   // HTTP transport with SSE streaming
   if ('url' in config) {
     const options: any = {};
@@ -259,7 +265,12 @@ function createTransport(name: string, config: MCPServerConfig, debug: boolean =
       command: commandPath,
       args: config.args || [],
       env: env,
-      stderr: debug ? 'inherit' : 'ignore'
+      stderr: debug ? 'inherit' : 'ignore',
+      // Long-running serve processes host many projects without changing the
+      // daemon's process.cwd(). Bind each stdio server to the run's logical cwd
+      // so relative args, env files, and project-local executables resolve in
+      // the same place as filesystem and bash tools.
+      ...(cwd && { cwd })
     });
   }
   
@@ -333,9 +344,16 @@ export async function connectWithTimeout(
  * Connect to MCP servers using AI SDK createMCPClient
  * @param servers Optional server configurations
  * @param debug Enable debug logging
+ * @param basePath Agent-file directory used to resolve executable paths
+ * @param cwd Logical run working directory inherited by stdio MCP subprocesses
  * @returns Array of MCP client connections
  */
-export async function connectMCP(servers?: MCPServersConfig, debug: boolean = false, basePath?: string): Promise<MCPConnection[]> {
+export async function connectMCP(
+  servers?: MCPServersConfig,
+  debug: boolean = false,
+  basePath?: string,
+  cwd?: string
+): Promise<MCPConnection[]> {
   if (!servers) {
     logger.debug('[MCP] No MCP servers configured');
     return [];
@@ -355,7 +373,7 @@ export async function connectMCP(servers?: MCPServersConfig, debug: boolean = fa
       logger.debug(`[MCP] Configuring server: ${name} - ${JSON.stringify(config)}`);
 
       // Create transport based on config type
-      const transport = createTransport(name, config, debug, basePath);
+      const transport = createTransport(name, config, debug, basePath, cwd);
 
       // Create MCP client using AI SDK's built-in method
       const connected = await connectWithTimeout(

@@ -1151,17 +1151,23 @@ export class SessionManager {
    */
   async setSessionSuspended(sessionID: string, agentId: string): Promise<void> {
     await this.updateSession(sessionID, agentId, {
-      status: 'suspended'
-    });
+      status: 'suspended',
+      error: undefined
+    } as any);
   }
 
   /**
    * Mark a suspended session as running while a resume worker continues it.
    */
   async setSessionRunning(sessionID: string, agentId: string): Promise<void> {
+    // A retry/resume starts a new live attempt. Carrying a prior terminal error
+    // (especially INCOMPLETE) forward produces the impossible state observed in
+    // session lists: `running` plus an old failure verdict. Clear it atomically
+    // with the status flip so direct retries and cascade parents agree.
     await this.updateSession(sessionID, agentId, {
-      status: 'running'
-    });
+      status: 'running',
+      error: undefined
+    } as any);
   }
 
   private async scanSessions(
@@ -1667,8 +1673,9 @@ export class SessionManager {
    */
   async setSessionCompleted(sessionID: string, agentId: string): Promise<void> {
     await this.updateSession(sessionID, agentId, {
-      status: 'completed'
-    });
+      status: 'completed',
+      error: undefined
+    } as any);
   }
 
   /**

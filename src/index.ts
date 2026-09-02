@@ -13,6 +13,7 @@ import { currentProcessRef } from './utils/process-info';
 import { withOwnershipLock } from './utils/ownership-lock';
 import { contextUsageFromSnapshot } from './session/usage';
 import { buildImportantDescendantEvents, buildImportantDescendants } from './session/important-descendants';
+import { summarizeSessionTiming } from './session/timing';
 import { repairEscapedText } from './utils/display-text';
 import { Command } from 'commander';
 import { createProviderCommand, createAuthCommand } from './cli/auth';
@@ -707,7 +708,7 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
       const mcpBasePath = agentFilePath ? dirname(agentFilePath) : undefined;
       let mcp;
       try {
-        mcp = await connectMCP(agent.config.mcpServers, options.debug, mcpBasePath);
+        mcp = await connectMCP(agent.config.mcpServers, options.debug, mcpBasePath, process.cwd());
       } catch (mcpError: any) {
         // Exit immediately on MCP connection errors (especially missing required env vars)
         if (mcpError.fatal || mcpError.message?.includes('Missing required environment variables')) {
@@ -1318,8 +1319,8 @@ async function runInternalWorker() {
     version: 2;
     approvalGeneration: number;
     approvals: ApprovalSummary[];
-    /** Session-index timestamps used to refresh only approval-bearing runs
-     * whose durable state changed since this projection was written. */
+    /** Newest approval-relevant session-index timestamp in each root cascade.
+     * Used to refresh only approval-bearing runs whose durable gate state changed. */
     sourceUpdatedAt: Record<string, number>;
   }
 
@@ -2103,6 +2104,7 @@ async function runInternalWorker() {
       childSessions,
       importantDescendants: buildImportantDescendants(rootSession, evidence),
       importantDescendantEvents: buildImportantDescendantEvents(rootSession, evidence),
+      evidence,
     };
   }
 
@@ -2143,7 +2145,7 @@ async function runInternalWorker() {
       const agentPath = found.session.agent.filePath;
       const runCwd = found.session.project.cwd || projectRoot;
       const agent = await parseAgent(agentPath);
-      mcp = await connectMCP(agent.config.mcpServers, debug ?? false, dirname(agentPath));
+      mcp = await connectMCP(agent.config.mcpServers, debug ?? false, dirname(agentPath), runCwd);
       const projectContext = { projectRoot, stateRoot: projectRoot, cwd: runCwd };
       let pluginManager: PluginManager | null = null;
       try {
@@ -2639,12 +2641,16 @@ async function runInternalWorker() {
         messages.map((message) => sessionManager.getMessageParts(req.sessionId!, found.agentId, message.id))
       )).flat();
       let logs = logsWithSessionError(buildApprovalLogs(parts), found.session);
-      const { childSessions, importantDescendants, importantDescendantEvents } = await sessionHierarchySummaries(
+      const { childSessions, importantDescendants, importantDescendantEvents, evidence: descendantEvidence } = await sessionHierarchySummaries(
         sessionManager,
         found.session,
         req.sessionId,
         found.path
       );
+      const timing = summarizeSessionTiming(found.session, [
+        { session: found.session, parts: parts as Part[] },
+        ...descendantEvidence,
+      ]);
       const approvalParts = parts.filter((part: any) =>
         part?.type === 'tool' &&
         part?.tool === 'await_human' &&
@@ -2758,6 +2764,7 @@ async function runInternalWorker() {
             ...(importantDescendants.length > 0 && { importantDescendants }),
             ...(importantDescendantEvents.length > 0 && { importantDescendantEvents }),
             ...(tokenUsage && { tokenUsage }),
+            timing,
             logs
           },
         };
@@ -2832,6 +2839,7 @@ async function runInternalWorker() {
             ...(importantDescendants.length > 0 && { importantDescendants }),
             ...(importantDescendantEvents.length > 0 && { importantDescendantEvents }),
             ...(tokenUsage && { tokenUsage }),
+            timing,
             logs
           },
         };
@@ -2925,6 +2933,7 @@ async function runInternalWorker() {
           ...(importantDescendants.length > 0 && { importantDescendants }),
           ...(importantDescendantEvents.length > 0 && { importantDescendantEvents }),
           ...(tokenUsage && { tokenUsage }),
+          timing,
           logs
         },
       };
@@ -3476,6 +3485,32 @@ async function runInternalWorker() {
         !session.parentSessionId && sessionBelongsToProject(session, req.projectRoot)
       );
       const currentSessionIds = new Set(indexedTopLevel.map((session) => session.sessionId));
+      const indexedById = new Map(indexedSessions.map((session) => [session.sessionId, session]));
+      // Approval rows are owned by the root manager, but the durable gate lives
+      // on the delegated leaf. A reviewer comment can resume and re-gate that
+      // leaf without changing the root's timestamp, so root.updatedAt alone is
+      // not a sufficient incremental-projection revision. Fold every
+      // approval-relevant descendant's timestamp into its root instead. The
+      // compact index makes this O(session count * cascade depth) without
+      // reading any message or part trees.
+      const approvalSourceUpdatedAt = new Map<string, number>();
+      for (const session of indexedSessions) {
+        if (session.approvalRelevant !== true) continue;
+        let root = session;
+        const seen = new Set<string>([session.sessionId]);
+        while (root.parentSessionId) {
+          if (seen.has(root.parentSessionId)) break;
+          seen.add(root.parentSessionId);
+          const parent = indexedById.get(root.parentSessionId);
+          if (!parent) break;
+          root = parent;
+        }
+        if (!currentSessionIds.has(root.sessionId)) continue;
+        approvalSourceUpdatedAt.set(
+          root.sessionId,
+          Math.max(approvalSourceUpdatedAt.get(root.sessionId) ?? 0, session.updatedAt)
+        );
+      }
       const priorApprovals = projection && Array.isArray(projection.approvals)
         ? projection.approvals.filter((approval) => currentSessionIds.has(approval.sessionId))
         : [];
@@ -3485,7 +3520,8 @@ async function runInternalWorker() {
       const incremental = projection !== null && Array.isArray(projection.approvals);
       const summariesToRefresh = incremental
         ? indexedTopLevel.filter((session) =>
-            session.approvalRelevant === true && priorSourceUpdatedAt[session.sessionId] !== session.updatedAt
+            approvalSourceUpdatedAt.has(session.sessionId) &&
+            priorSourceUpdatedAt[session.sessionId] !== approvalSourceUpdatedAt.get(session.sessionId)
           )
         : indexedTopLevel;
       const refreshIds = new Set(summariesToRefresh.map((session) => session.sessionId));
@@ -3667,7 +3703,7 @@ async function runInternalWorker() {
         const summaries = await Promise.all(batch.map(summarizeApproval));
         approvals.push(...summaries.filter((approval): approval is ApprovalSummary => approval !== null));
         for (const summary of summaryBatch) {
-          sourceUpdatedAt[summary.sessionId] = summary.updatedAt;
+          sourceUpdatedAt[summary.sessionId] = approvalSourceUpdatedAt.get(summary.sessionId) ?? summary.updatedAt;
         }
       }
 
@@ -4000,7 +4036,7 @@ async function runInternalWorker() {
       }
 
       const mcpBasePath = inMemoryAgent ? undefined : dirname(agentPath);
-      mcp = await connectMCP(agent.config.mcpServers, req.debug ?? false, mcpBasePath);
+      mcp = await connectMCP(agent.config.mcpServers, req.debug ?? false, mcpBasePath, runCwd);
 
       const timeoutSeconds = req.timeout ?? agent.config.timeout ?? 300;
       const timeoutId = setTimeout(() => abortController.abort(), timeoutSeconds * 1000);

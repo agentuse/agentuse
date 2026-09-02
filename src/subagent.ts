@@ -206,29 +206,15 @@ export async function createSubAgentTool(
       try {
         logger.info(`[SubAgent:depth=${depth}] Starting ${agent.name}${task ? ` with task: ${task.slice(0, 100)}...` : ''}`);
 
-        // Connect to any MCP servers the sub-agent needs
-        // Use the sub-agent's directory as base path for resolving relative paths
+        // Create the durable child before MCP/tool runtime preparation
+        // (handshakes, skill loading, store locks). The parent log can then attach
+        // its subagent widget promptly, and startup failures still have a real
+        // child session to carry their error instead of becoming an untraceable
+        // completed tool call.
         const subAgentBasePath = dirname(resolvedPath);
-        const mcpConnections = agent.config.mcpServers
-          ? await connectMCP(agent.config.mcpServers as MCPServersConfig, false, subAgentBasePath)
-          : [];
-
-        // Effect WAL for this child: bound lazily once the child session exists
-        // (tools load first, but nothing executes before the model runs).
         const effectWal = new EffectWAL();
-
-        // Load all agent tools (MCP, configured, skill, store) using shared logic
-        const loadedTools = await loadAgentTools({
-          agent,
-          projectContext,
-          agentDir: subAgentBasePath,
-          agentFilePath: resolvedPath,
-          mcpConnections,
-          logPrefix: '[SubAgent] ',
-          toolOutputArtifacts,
-          effectAudit: effectWal,
-          liveToolOutput,
-        });
+        let mcpConnections: Awaited<ReturnType<typeof connectMCP>> = [];
+        let loadedTools: Awaited<ReturnType<typeof loadAgentTools>> | undefined;
 
         // Load nested sub-agents if within depth limit (will be populated after session creation)
         const maxDepth = getMaxSubAgentDepth();
@@ -239,9 +225,6 @@ export async function createSubAgentTool(
           // At depth limit, warn that nested sub-agents are being skipped
           logger.warn(`[SubAgent:depth=${depth}] Max depth ${maxDepth} reached, skipping ${agent.config.subagents.length} nested sub-agent(s) for ${agent.name}`);
         }
-
-        // Initially all loaded tools (nested subagents will be added after session creation)
-        let tools = { ...loadedTools.all };
 
         try {
           // Build system messages using shared logic
@@ -353,6 +336,33 @@ export async function createSubAgentTool(
             }
           }
 
+          // Connect and load tools only after the session is addressable. Apart
+          // from making startup visible in the UI, this lets the outer catch
+          // persist an MCP/tool initialization failure on the child itself.
+          mcpConnections = agent.config.mcpServers
+            ? await connectMCP(
+                agent.config.mcpServers as MCPServersConfig,
+                false,
+                subAgentBasePath,
+                projectContext?.cwd
+              )
+            : [];
+          const preparedTools = await loadAgentTools({
+            agent,
+            projectContext,
+            agentDir: subAgentBasePath,
+            agentFilePath: resolvedPath,
+            mcpConnections,
+            logPrefix: '[SubAgent] ',
+            toolOutputArtifacts,
+            effectAudit: effectWal,
+            liveToolOutput,
+          });
+          loadedTools = preparedTools;
+
+          // Nested subagents are added below once this session exists.
+          let tools = { ...preparedTools.all };
+
           // Now create nested sub-agent tools after this subagent's session exists.
           // Cascade only the original explicit run override. Passing this
           // child's resolved model pinned grandchildren to one candidate,
@@ -372,7 +382,7 @@ export async function createSubAgentTool(
             );
 
             // Merge nested subagent tools into tools
-            tools = { ...loadedTools.all, ...nestedSubAgentTools };
+            tools = { ...preparedTools.all, ...nestedSubAgentTools };
           }
 
           // Attach the child session to the session-aware tools built before it
@@ -382,7 +392,7 @@ export async function createSubAgentTool(
           // Without it, a delegated leaf's artifacts are written but orphaned:
           // no manifest sessionId, so they never surface in the session viewer.
           if (subagentSessionID) {
-            loadedTools.bindSessionId(subagentSessionID);
+            preparedTools.bindSessionId(subagentSessionID);
           }
 
           // Bind the leaf's approval gate to the child session. loadAgentTools built
@@ -459,7 +469,7 @@ export async function createSubAgentTool(
                 effectWal,
                 // A leaf's headline is what the parent reads instead of the
                 // whole report, so nudge for it here too.
-                runOutcome: loadedTools.runOutcome
+                runOutcome: preparedTools.runOutcome
               }),
               subagentSessionID && subagentMsgID && subagentSessionManager ? {
                 sessionManager: subagentSessionManager,  // Use NEW instance
@@ -524,7 +534,7 @@ export async function createSubAgentTool(
           // A sub-agent that declared itself incomplete (report_incomplete) is
           // persisted as error/INCOMPLETE instead, so its child-session pill reads
           // as a failure in the parent's log.
-          const subagentIncomplete = loadedTools.runOutcome.incomplete;
+          const subagentIncomplete = preparedTools.runOutcome.incomplete;
           if (subagentSessionManager && subagentSessionID && subagentMsgID && result.usage) {
             try {
               await subagentSessionManager.updateMessage(subagentSessionID, agentId, subagentMsgID, {
@@ -554,7 +564,7 @@ export async function createSubAgentTool(
           // (completeSubagentBookmark) so both hand the parent one shape.
           const composed = composeSubagentResult({
             agent: agent.name,
-            outcome: loadedTools.runOutcome,
+            outcome: preparedTools.runOutcome,
             text: result.text
           });
 
@@ -572,7 +582,7 @@ export async function createSubAgentTool(
           if (subagentLogSink) await subagentLogSink.flush();
 
           // Clean up store lock
-          if (loadedTools.store) {
+          if (loadedTools?.store) {
             await loadedTools.store.releaseLock();
           }
 

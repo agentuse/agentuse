@@ -209,7 +209,12 @@ async function judgeViaAgent(
 
   const judgeDir = dirname(resolvedPath);
   const mcpConnections = judgeAgent.config.mcpServers
-    ? await connectMCP(judgeAgent.config.mcpServers as MCPServersConfig, false, judgeDir)
+    ? await connectMCP(
+        judgeAgent.config.mcpServers as MCPServersConfig,
+        false,
+        judgeDir,
+        projectContext?.cwd
+      )
     : [];
 
   const loadedTools = await loadAgentTools({

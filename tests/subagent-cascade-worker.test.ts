@@ -88,7 +88,7 @@ describe('subagent approval cascade (worker integration)', () => {
         user: { prompt: { task: 'reply' } }, assistant: ASSISTANT(projectRoot),
       });
       // Leaf holds the real human gate.
-      await leafSm.addPart(leafId, leafAgentId, leafMsg, {
+      const firstGatePartId = await leafSm.addPart(leafId, leafAgentId, leafMsg, {
         type: 'tool', callID: 'leaf-call', tool: 'await_human',
         state: {
           status: 'pending', input: { prompt: 'Approve this reply?' }, suspendedAt: Date.now(),
@@ -141,6 +141,43 @@ describe('subagent approval cascade (worker integration)', () => {
         sessionId: rootId,
         agentName: 'reply-to-post',
         resumeToken: 'leaf-token',
+        status: 'pending',
+      });
+
+      // 4. A reviewer comment resumes only the leaf. It can revise and re-gate
+      // while the manager remains suspended on the same subagent_wait bookmark,
+      // so the root session timestamp does not change. The warm incremental
+      // projection must still refresh from the leaf's newer approval revision.
+      const firstGateEnd = Date.now();
+      await leafSm.updatePart(leafId, leafAgentId, leafMsg, firstGatePartId, {
+        state: {
+          status: 'completed',
+          input: { prompt: 'Approve this reply?' },
+          output: { status: 'comment', comment: 'Make it shorter' },
+          metadata: { resumePayload: { kind: 'await_human', resumeToken: 'leaf-token' } },
+          time: { start: firstGateEnd - 1, end: firstGateEnd },
+        },
+      } as any);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      await leafSm.addPart(leafId, leafAgentId, leafMsg, {
+        type: 'tool', callID: 'leaf-call-revised', tool: 'await_human',
+        state: {
+          status: 'pending', input: { prompt: 'Approve the shorter reply?' }, suspendedAt: Date.now(),
+          resumePayload: { kind: 'await_human', resumeToken: 'leaf-token-revised', approvalUrl: 'http://leaf/revised' },
+        },
+      } as any);
+
+      child.stdin.write(`${JSON.stringify({ id: 'invalidate-after-regate', type: 'invalidate-lists', projectRoot })}\n`);
+      expect((await readResponseFor(rl, 'invalidate-after-regate')).success).toBe(true);
+      child.stdin.write(`${JSON.stringify({ id: 'list-after-regate', type: 'list-approvals', projectRoot })}\n`);
+      const revisedList = await readResponseFor(rl, 'list-after-regate');
+      expect(revisedList.success).toBe(true);
+      expect(revisedList.approvals).toHaveLength(1);
+      expect(revisedList.approvals[0]).toMatchObject({
+        sessionId: rootId,
+        agentName: 'reply-to-post',
+        prompt: 'Approve the shorter reply?',
+        resumeToken: 'leaf-token-revised',
         status: 'pending',
       });
     } finally {

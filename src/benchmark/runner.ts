@@ -54,18 +54,19 @@ async function runTrial(
   const abortController = new AbortController();
   const timeout = config.timeout ?? 300;
   const timeoutId = setTimeout(() => abortController.abort(), timeout * 1000);
+  const projectRoot = dirname(agentFilePath);
 
   try {
     // Connect MCP servers from agent config
     const mcpClients = await connectMCP(
       agent.config.mcpServers,
       false,
-      dirname(config.suitePath)
+      dirname(config.suitePath),
+      projectRoot
     );
 
     try {
       // Use agent directory as projectRoot for skill discovery and cwd for bash commands
-      const projectRoot = dirname(agentFilePath);
       const projectContext = { projectRoot, stateRoot: projectRoot, cwd: projectRoot };
 
       // Create goal tracker for this trial
