@@ -28,14 +28,15 @@ describe("desktop runtime helpers", () => {
     expect(serverUrl({ host: "0.0.0.0", port: 12233 })).toBe("http://127.0.0.1:12233");
   });
 
-  it("prefers a replacement on the disconnected external server's port", () => {
+  it("reconnects only to the disconnected external server's endpoint and project", () => {
     const candidates = reconnectCandidates([
       { pid: 3, host: "127.0.0.1", port: 12234, projectRoot: "/c", startTime: 1, version: "1" },
       { pid: 2, host: "127.0.0.1", port: 12233, projectRoot: "/b", startTime: 3, version: "1" },
       { pid: 1, host: "127.0.0.1", port: 12233, projectRoot: "/a", startTime: 2, version: "1" },
-    ], { port: 12233 });
+      { pid: 4, host: "127.0.0.1", port: 12233, projectRoot: "/a", startTime: 4, version: "1" },
+    ], { port: 12233, projectRoot: "/a" });
 
-    expect(candidates.map((candidate) => candidate.pid)).toEqual([1, 2, 3]);
+    expect(candidates.map((candidate) => candidate.pid)).toEqual([1, 4]);
   });
 
   it("does not replace a disconnected external server without an explicit request", () => {

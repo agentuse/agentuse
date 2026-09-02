@@ -266,12 +266,10 @@ describe('header-gate exemption (capability routes)', () => {
 describe('session list helpers', () => {
   it('derives a stable public purpose from a durable revision record', () => {
     expect(__testing.agentRevisionSessionPurpose({
-      mode: 'fix',
       originSessionId: '01ORIGINSESSION000000000000',
       targetAgentName: 'Support triage',
     })).toEqual({
       kind: 'agent-revision',
-      mode: 'fix',
       originSessionId: '01ORIGINSESSION000000000000',
       targetAgentName: 'Support triage',
     });

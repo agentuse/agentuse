@@ -99,6 +99,11 @@ export interface SessionInfo {
     detail?: string;                 // Provider response body (truncated)
   };
 
+  /** Terminal errors from earlier attempts of this same resumable session.
+   * They remain timeline evidence after a retry clears the current `error`,
+   * but never affect the session's present status or needs-attention state. */
+  errorHistory?: Array<NonNullable<SessionInfo['error']>>;
+
   // Reviewer acknowledgment of an ended failed run: set when the reviewer
   // discards it (web Discard button / `sessions stop` on an ended session).
   // Clears the run from needs-attention surfaces without rewriting the true

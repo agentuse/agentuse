@@ -1,5 +1,6 @@
 import type { ParsedAgent } from '../parser';
 import type { RunAgentResult } from '../runner/types';
+import { formatShortDuration } from '../utils/duration';
 import { logger } from '../utils/logger';
 import { getSessionUrl } from '../tools/await-human';
 import {
@@ -53,11 +54,6 @@ interface RunChannelDisplayOptions extends Omit<RunChannelOptions, 'event'> {
 function truncate(value: string, maxLength: number): string {
   if (value.length <= maxLength) return value;
   return `${value.slice(0, Math.max(0, maxLength - 12))}\n...(truncated)`;
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  return `${Math.round(ms / 1000)}s`;
 }
 
 function errorMessage(error: unknown): string {
@@ -148,7 +144,7 @@ function buildRunRootBlocks(options: RunChannelDisplayOptions): any[] {
   const fields = [
     ...(durationMs !== undefined ? [{
       type: 'mrkdwn',
-      text: `*Duration*\n${formatDuration(durationMs)}`
+      text: `*Duration*\n${formatShortDuration(durationMs)}`
     }] : []),
     ...(options.sessionId ? [{
       type: 'mrkdwn',
@@ -187,7 +183,7 @@ function buildRunThreadMessages(options: RunChannelOptions): SlackThreadMessage[
     `Agent: ${options.agent.name}`,
     ...(options.sessionId ? [`Session: ${options.sessionId}`] : []),
     `Status: ${runStatus(options)}`,
-    ...(durationMs !== undefined ? [`Duration: ${formatDuration(durationMs)}`] : []),
+    ...(durationMs !== undefined ? [`Duration: ${formatShortDuration(durationMs)}`] : []),
     ...(options.result ? [`Tool calls: ${options.result.toolCallCount}`] : []),
     ...(options.result?.usage?.totalTokens !== undefined ? [`Tokens: ${options.result.usage.totalTokens}`] : []),
     ...(options.agent.config.model ? [`Model: ${options.agent.config.model}`] : []),

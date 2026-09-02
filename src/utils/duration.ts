@@ -97,3 +97,31 @@ export function parseDurationSeconds(
 ): number {
   return Math.ceil(parseDurationMs(value, options) / 1000);
 }
+
+/** Format short operational durations such as request and approval latency. */
+export function formatShortDuration(ms: number): string {
+  const safeMs = Math.max(0, Math.round(ms));
+  if (safeMs < 1000) return `${safeMs}ms`;
+  return `${Math.round(safeMs / 1000)}s`;
+}
+
+/** Format elapsed time for CLI summaries without noisy zero units. */
+export function formatCompactDuration(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  if (minutes < 60) return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const minuteRemainder = minutes % 60;
+  return minuteRemainder ? `${hours}h ${minuteRemainder}m` : `${hours}h`;
+}
+
+/** Format approximate duration for compact visual labels. */
+export function formatApproximateDuration(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 90) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${minutes}m`;
+  return `${Math.round(minutes / 60)}h`;
+}

@@ -862,6 +862,16 @@ export class SessionManager {
     await this.serializedWrite(key, () => this.withSessionIndexMutation(async () => {
       const session = await readJSON<SessionInfo>(key);
       if (session) {
+        // Clearing an error for a retry or later successful transition must
+        // not erase where an earlier attempt failed. Preserve it separately
+        // from the current-state field before applying the transition.
+        if (session.error && Object.hasOwn(updates, 'error') && updates.error === undefined) {
+          const history = session.errorHistory ?? [];
+          const last = history.at(-1);
+          if (!last || last.time !== session.error.time || last.code !== session.error.code) {
+            session.errorHistory = [...history, session.error].slice(-20);
+          }
+        }
         Object.assign(session, updates);
         // Whichever process flips a session (back) to 'running' owns its
         // execution now; re-stamp so the orphan sweep probes the right process.

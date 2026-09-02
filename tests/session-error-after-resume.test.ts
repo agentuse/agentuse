@@ -118,6 +118,40 @@ describe('a failed session that was resumed', () => {
     expect(info.approval.errorMessage).toBeUndefined();
   }, 30_000);
 
+  it('keeps separate historical markers across multiple failed attempts', async () => {
+    originalXdg = process.env.XDG_DATA_HOME;
+    dataHome = await mkdtemp(join(tmpdir(), 'agentuse-resume-error-'));
+    const projectRoot = join(dataHome, 'project');
+    process.env.XDG_DATA_HOME = dataHome;
+
+    await initStorage(projectRoot);
+    const sm = new SessionManager();
+    const agentId = 'agents/writer';
+    const sessionId = await sm.createSession({
+      agent: { id: agentId, name: 'Writer', isSubAgent: false },
+      model: 'demo:test', version: 'test', config: {},
+      project: { root: projectRoot, cwd: projectRoot },
+    });
+    await sm.createMessage(sessionId, agentId, {
+      user: { prompt: { task: 'draft' } }, assistant: ASSISTANT(projectRoot),
+    });
+    await sm.setSessionError(sessionId, agentId, { code: 'FIRST', message: 'first attempt failed' });
+    await sm.setSessionRunning(sessionId, agentId);
+    await sm.setSessionError(sessionId, agentId, { code: 'SECOND', message: 'second attempt failed' });
+    await sm.setSessionRunning(sessionId, agentId);
+
+    const child = spawn(process.execPath, ['src/index.ts', '--internal-worker'], { cwd: process.cwd(), env: { ...process.env } });
+    const rl = createInterface({ input: child.stdout });
+    worker = { child, rl };
+    await readReady(rl);
+    child.stdin.write(`${JSON.stringify({ id: 'info', type: 'approval-info', projectRoot, sessionId, skipTokenCheck: true })}\n`);
+    const info = await readResponseFor(rl, 'info');
+
+    expect(info.approval.logs.filter((entry: { id: string }) => entry.id.startsWith(`session-error:${sessionId}`))).toHaveLength(2);
+    expect(info.approval.sessionStatus).toBe('running');
+    expect(info.approval.errorCode).toBeUndefined();
+  }, 30_000);
+
   it('still reports the error while the failure is the current state', async () => {
     originalXdg = process.env.XDG_DATA_HOME;
     dataHome = await mkdtemp(join(tmpdir(), 'agentuse-resume-error-'));

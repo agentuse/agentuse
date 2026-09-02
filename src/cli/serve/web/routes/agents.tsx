@@ -24,6 +24,7 @@ import { GroupRail } from '../components/group-rail';
 import { SchedulePill } from '../components/schedule-pill';
 import { agentDetailHref, projectDiscoveryHref } from '../lib/links';
 import { NewAgentButton } from '../components/agent-create-dialog';
+import { formatApproximateDuration } from '../../../../utils/duration';
 
 /** Shared empty fallback, so a miss never hands a memoizing child a fresh array. */
 const NO_AGENTS: AgentRow[] = [];
@@ -281,14 +282,6 @@ function LastRunCell({ session }: { session: SessionRow | undefined }) {
   );
 }
 
-function formatDuration(ms: number): string {
-  const sec = Math.round(ms / 1000);
-  if (sec < 90) return `${sec}s`;
-  const min = Math.round(sec / 60);
-  if (min < 90) return `${min}m`;
-  return `${Math.round(min / 60)}h`;
-}
-
 const RUNSPARK_LIMIT = 12;
 const RUNSPARK_MAX_PX = 16;
 
@@ -314,7 +307,7 @@ function RunHistorySpark({ runs }: { runs: SessionRow[] }) {
           key={s.sessionId}
           class={`runspark-bar ${runTone(s.status)}`}
           style={{ height: `${Math.max(3, Math.round((durations[i]! / max) * RUNSPARK_MAX_PX))}px` }}
-          title={`${displayStatusLabel(s.status, s.errorCode)} · ${formatRelativeTime(s.createdAt)} · ${formatDuration(durations[i]!)}`}
+          title={`${displayStatusLabel(s.status, s.errorCode)} · ${formatRelativeTime(s.createdAt)} · ${formatApproximateDuration(durations[i]!)}`}
         ></span>
       ))}
     </span>

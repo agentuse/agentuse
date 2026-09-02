@@ -272,6 +272,7 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
   const [providerSetupOpen, setProviderSetupOpen] = useState(false);
   const [agentCreateOpen, setAgentCreateOpen] = useState(false);
   const [codingAgentDetail, setCodingAgentDetail] = useState('');
+  const [nativeCreationDraft, setNativeCreationDraft] = useState<AgentCreationDraft | null>(null);
   const manualCheckRef = useRef(false);
 
   useEffect(() => {
@@ -534,6 +535,7 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
         <AgentCreateDialog
           open={agentCreateOpen}
           title="create your first agent"
+          initialDraft={nativeCreationDraft}
           {...(props.context.projectId ? { initialProjectId: props.context.projectId } : {})}
           lockProject
           onCreated={(agent) => {
@@ -552,6 +554,7 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
             window.location.href = agentDetailHref(agent.projectId, agent.runPath, { tab: 'source', spotlightRun: true });
           }}
           onCodingAgent={(draft: AgentCreationDraft) => {
+            setNativeCreationDraft(draft);
             setCodingAgentDetail([
               draft.name ? `Agent name: ${draft.name}` : '',
               draft.objective,

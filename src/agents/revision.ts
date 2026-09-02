@@ -13,7 +13,17 @@ import { match as wildcardMatch } from '../tools/wildcard.js';
 import type { ReasoningLevel } from '../model-compatibility.js';
 import type { ProjectSkillSummary } from './discover.js';
 
-export type AgentRevisionStatus = 'running' | 'proposed' | 'no-change' | 'accepted' | 'applied' | 'discarded' | 'restored' | 'error';
+export type AgentRevisionStatus =
+  | 'running'
+  | 'proposed'
+  | 'no-change'
+  | 'accepted'
+  | 'applying'
+  | 'applied'
+  | 'discarded'
+  | 'restoring'
+  | 'restored'
+  | 'error';
 
 export interface AgentRevisionRecord {
   version: 1;
@@ -134,11 +144,73 @@ export async function createAgentRevisionRecord(record: Omit<AgentRevisionRecord
   return created;
 }
 
+async function reconcileRevisionMutation(record: AgentRevisionRecord): Promise<AgentRevisionRecord> {
+  if (record.status !== 'applying' && record.status !== 'restoring') return record;
+
+  let currentSource: string;
+  try {
+    currentSource = await readFile(record.targetAgentPath, 'utf8');
+  } catch (error) {
+    const failed: AgentRevisionRecord = {
+      ...record,
+      status: 'error',
+      error: {
+        code: record.status === 'applying' ? 'REVISION_APPLY_STATE_DIVERGED' : 'REVISION_RESTORE_STATE_DIVERGED',
+        message: `Could not reconcile the interrupted revision: ${error instanceof Error ? error.message : String(error)}`,
+      },
+      updatedAt: Date.now(),
+    };
+    await writeRecord(failed);
+    return failed;
+  }
+
+  const currentHash = sourceHash(currentSource);
+  if (record.status === 'applying') {
+    if (record.proposedSourceHash && currentHash === record.proposedSourceHash) {
+      const applied: AgentRevisionRecord = { ...record, status: 'applied', updatedAt: Date.now() };
+      await writeRecord(applied);
+      return applied;
+    }
+    if (currentHash === record.expectedSourceHash) {
+      const {
+        previousSource: _previousSource,
+        appliedAt: _appliedAt,
+        error: _error,
+        ...retained
+      } = record;
+      const proposed: AgentRevisionRecord = { ...retained, status: 'proposed', updatedAt: Date.now() };
+      await writeRecord(proposed);
+      return proposed;
+    }
+  } else if (record.previousSource && currentHash === sourceHash(record.previousSource)) {
+    const restored: AgentRevisionRecord = { ...record, status: 'restored', updatedAt: Date.now() };
+    await writeRecord(restored);
+    return restored;
+  } else if (record.proposedSourceHash && currentHash === record.proposedSourceHash) {
+    const { restoredAt: _restoredAt, error: _error, ...retained } = record;
+    const applied: AgentRevisionRecord = { ...retained, status: 'applied', updatedAt: Date.now() };
+    await writeRecord(applied);
+    return applied;
+  }
+
+  const failed: AgentRevisionRecord = {
+    ...record,
+    status: 'error',
+    error: {
+      code: record.status === 'applying' ? 'REVISION_APPLY_STATE_DIVERGED' : 'REVISION_RESTORE_STATE_DIVERGED',
+      message: 'The agent source changed while an interrupted revision operation was being reconciled. Review the current source before making another revision.',
+    },
+    updatedAt: Date.now(),
+  };
+  await writeRecord(failed);
+  return failed;
+}
+
 export async function readAgentRevisionRecord(projectRoot: string, revisionSessionId: string): Promise<AgentRevisionRecord | undefined> {
   try {
     const parsed = JSON.parse(await readFile(revisionPath(projectRoot, revisionSessionId), 'utf8')) as AgentRevisionRecord;
     if (parsed.version !== 1 || parsed.revisionSessionId !== revisionSessionId || parsed.projectRoot !== projectRoot) return undefined;
-    return parsed;
+    return reconcileRevisionMutation(parsed);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw error;
@@ -478,12 +550,19 @@ export async function applyAgentRevision(input: {
     availableModels: input.availableModels,
     availableSkills: input.availableSkills,
   });
+  const mutationStartedAt = Date.now();
+  const applying: AgentRevisionRecord = {
+    ...record,
+    status: 'applying',
+    previousSource: currentSource,
+    appliedAt: mutationStartedAt,
+    updatedAt: mutationStartedAt,
+  };
+  await writeRecord(applying);
   await replaceAgentSource(record.targetAgentPath, proposed.source);
   const applied: AgentRevisionRecord = {
-    ...record,
+    ...applying,
     status: 'applied',
-    previousSource: currentSource,
-    appliedAt: Date.now(),
     updatedAt: Date.now(),
   };
   await writeRecord(applied);
@@ -500,8 +579,16 @@ export async function restoreAgentRevision(input: {
   await validateRevisionTarget(input.scopeRoot, record.targetAgentPath);
   const currentSource = await readFile(record.targetAgentPath, 'utf8');
   if (sourceHash(currentSource) !== record.proposedSourceHash) throw new Error('The agent changed after this revision was applied. Restore it manually after reviewing the newer changes.');
+  const mutationStartedAt = Date.now();
+  const restoring: AgentRevisionRecord = {
+    ...record,
+    status: 'restoring',
+    restoredAt: mutationStartedAt,
+    updatedAt: mutationStartedAt,
+  };
+  await writeRecord(restoring);
   await replaceAgentSource(record.targetAgentPath, record.previousSource);
-  const restored: AgentRevisionRecord = { ...record, status: 'restored', restoredAt: Date.now(), updatedAt: Date.now() };
+  const restored: AgentRevisionRecord = { ...restoring, status: 'restored', updatedAt: Date.now() };
   await writeRecord(restored);
   return restored;
 }

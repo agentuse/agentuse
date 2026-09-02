@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { getProjectDir, getSessionStorageDir } from '../storage/index.js';
 import { EFFECT_WAL_FILENAME, STRUCTURED_DELIVERY_CHECKPOINT } from '../runner/effect-wal.js';
 import { parseAgentContent } from '../parser.js';
+import type { ProjectDiscoveryResult } from '../agents/discover.js';
 
 const JOB_DIRECTORY = 'internal-agent-jobs';
 
@@ -51,6 +52,11 @@ export type InternalCreatorRecovery =
   | { status: 'error'; error: { code: string; message: string } }
   | { status: 'completed'; submission: RecoveredAgentSourceSubmission };
 
+export type InternalDiscoveryRecovery =
+  | { status: 'running' }
+  | { status: 'error'; error: { code: string; message: string } }
+  | { status: 'completed'; result: ProjectDiscoveryResult };
+
 function parseSubmission(value: unknown): RecoveredAgentSourceSubmission | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -74,6 +80,34 @@ async function findTopLevelSessionDirectory(projectRoot: string, sessionId: stri
   return entry ? join(storageRoot, entry.name) : null;
 }
 
+async function readSessionState(directory: string): Promise<{
+  status?: string;
+  error?: { code?: string; message?: string };
+}> {
+  return JSON.parse(await readFile(join(directory, 'session.json'), 'utf8')) as {
+    status?: string;
+    error?: { code?: string; message?: string };
+  };
+}
+
+function sessionRecoveryState(
+  session: Awaited<ReturnType<typeof readSessionState>>,
+  fallbackCode: string,
+  fallbackMessage: string,
+): { status: 'running' } | { status: 'error'; error: { code: string; message: string } } | null {
+  if (session.status === 'completed') return null;
+  if (session.status === 'error' || session.status === 'stopped') {
+    return {
+      status: 'error',
+      error: {
+        code: session.error?.code ?? fallbackCode,
+        message: session.error?.message ?? fallbackMessage,
+      },
+    };
+  }
+  return { status: 'running' };
+}
+
 /** Read the durable result of a creator session whose owning serve process may
  * no longer exist. New sessions use the untruncated checkpoint. The WAL fallback
  * recovers sessions created before that checkpoint existed when their accepted
@@ -84,22 +118,13 @@ export async function recoverInternalCreatorSession(
 ): Promise<InternalCreatorRecovery | null> {
   const directory = await findTopLevelSessionDirectory(projectRoot, sessionId);
   if (!directory) return null;
-  const session = JSON.parse(await readFile(join(directory, 'session.json'), 'utf8')) as {
-    status?: string;
-    error?: { code?: string; message?: string };
-  };
-  if (session.status !== 'completed') {
-    if (session.status === 'error' || session.status === 'stopped') {
-      return {
-        status: 'error',
-        error: {
-          code: session.error?.code ?? 'CREATOR_SESSION_FAILED',
-          message: session.error?.message ?? 'The creator session did not finish successfully',
-        },
-      };
-    }
-    return { status: 'running' };
-  }
+  const session = await readSessionState(directory);
+  const unsettled = sessionRecoveryState(
+    session,
+    'CREATOR_SESSION_FAILED',
+    'The creator session did not finish successfully',
+  );
+  if (unsettled) return unsettled;
 
   const checkpoint = await readFile(join(directory, `${STRUCTURED_DELIVERY_CHECKPOINT}.json`), 'utf8')
     .then((contents) => parseSubmission(JSON.parse(contents)))
@@ -140,4 +165,59 @@ export async function recoverInternalCreatorSession(
   return recovered
     ? { status: 'completed', submission: recovered }
     : { status: 'error', error: { code: 'CREATOR_RESULT_MISSING', message: 'The completed creator session has no recoverable agent source' } };
+}
+
+function parseDiscoveryResult(value: unknown): ProjectDiscoveryResult | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.projectName !== 'string'
+    || typeof record.summary !== 'string'
+    || typeof record.inspectedFiles !== 'number'
+    || !Array.isArray(record.suggestions)
+    || record.suggestions.length !== 3) return null;
+  const valid = record.suggestions.every((suggestion) => {
+    if (!suggestion || typeof suggestion !== 'object' || Array.isArray(suggestion)) return false;
+    const item = suggestion as Record<string, unknown>;
+    return typeof item.id === 'string'
+      && typeof item.name === 'string'
+      && typeof item.description === 'string'
+      && typeof item.objective === 'string'
+      && typeof item.schedule === 'string'
+      && typeof item.scheduleHuman === 'string'
+      && Array.isArray(item.evidence)
+      && item.evidence.every((entry) => typeof entry === 'string');
+  });
+  return valid ? record as unknown as ProjectDiscoveryResult : null;
+}
+
+/** Recover a validated project-discovery handoff after its owning daemon exits. */
+export async function recoverInternalDiscoverySession(
+  projectRoot: string,
+  sessionId: string,
+): Promise<InternalDiscoveryRecovery | null> {
+  const directory = await findTopLevelSessionDirectory(projectRoot, sessionId);
+  if (!directory) return null;
+  const session = await readSessionState(directory);
+  const unsettled = sessionRecoveryState(
+    session,
+    'PROJECT_DISCOVERY_FAILED',
+    'Project discovery did not finish successfully',
+  );
+  if (unsettled) return unsettled;
+
+  const checkpoint = await readFile(join(directory, `${STRUCTURED_DELIVERY_CHECKPOINT}.json`), 'utf8')
+    .then((contents) => JSON.parse(contents) as { kind?: unknown; result?: unknown })
+    .catch(() => null);
+  const result = checkpoint?.kind === 'project-suggestions'
+    ? parseDiscoveryResult(checkpoint.result)
+    : null;
+  return result
+    ? { status: 'completed', result }
+    : {
+        status: 'error',
+        error: {
+          code: 'PROJECT_DISCOVERY_RESULT_MISSING',
+          message: 'The completed discovery session has no recoverable suggestions',
+        },
+      };
 }

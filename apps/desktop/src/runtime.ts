@@ -68,15 +68,13 @@ export function selectServer(servers: readonly RegisteredServer[]): RegisteredSe
  */
 export function reconnectCandidates(
   servers: readonly RegisteredServer[],
-  previous: Pick<RegisteredServer, "port">,
+  previous: Pick<RegisteredServer, "port" | "projectRoot">,
 ): RegisteredServer[] {
   return servers
-    .filter(isLocalServer)
-    .sort((left, right) => {
-      const leftPortRank = left.port === previous.port ? 0 : 1;
-      const rightPortRank = right.port === previous.port ? 0 : 1;
-      return leftPortRank - rightPortRank || left.startTime - right.startTime;
-    });
+    .filter((candidate) => isLocalServer(candidate)
+      && candidate.port === previous.port
+      && candidate.projectRoot === previous.projectRoot)
+    .sort((left, right) => left.startTime - right.startTime);
 }
 
 export function serverAcquisitionMode(

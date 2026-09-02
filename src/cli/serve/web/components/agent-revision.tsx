@@ -301,7 +301,7 @@ export function AgentRevisionSessionPanel(props: {
 }) {
   const [revision, setRevision] = useState<(Omit<AgentRevisionRecord, 'previousSource'> & { baseSource?: string; originHref?: string }) | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<'apply' | 'discard' | 'restore' | null>(null);
+  const [busy, setBusy] = useState<'apply' | 'discard' | 'restore' | 'cancel' | null>(null);
   const [requestingChanges, setRequestingChanges] = useState(false);
   const [changePrompt, setChangePrompt] = useState('');
   const isRevision = revision !== null;
@@ -333,7 +333,7 @@ export function AgentRevisionSessionPanel(props: {
     return () => clearInterval(timer);
   }, [revision?.revisionSessionId, revision?.status]);
 
-  const act = async (action: 'apply' | 'discard' | 'restore') => {
+  const act = async (action: 'apply' | 'discard' | 'restore' | 'cancel') => {
     setBusy(action);
     setError(null);
     try {
@@ -380,6 +380,7 @@ export function AgentRevisionSessionPanel(props: {
       {revision.status === 'running' && props.sessionStatus === 'preparing' && <p>AgentUse is preparing a safe project view. The reviser will start automatically when its context is ready.</p>}
       {revision.status === 'running' && props.sessionStatus !== 'preparing' && props.sessionStatus !== 'waiting' && <p>AgentUse is diagnosing the originating run. You can leave; this revision remains available from that run and Sessions.</p>}
       {revision.status === 'running' && props.sessionStatus === 'waiting' && <p>The reviser needs your decision below. Answering resumes this same internal session.</p>}
+      {revision.status === 'running' && <div class="agent-revision-review-actions"><button type="button" class="is-quiet" disabled={busy !== null} onClick={() => void act('cancel')}>{busy === 'cancel' ? 'Cancelling…' : 'Cancel revision'}</button></div>}
       {revision.diagnosis && <div class="agent-revision-diagnosis"><strong>Diagnosis</strong><p>{revision.diagnosis}</p></div>}
       {revision.status === 'no-change' && revision.recommendedAction && <div class="agent-revision-diagnosis"><strong>Recommended next action</strong><p>{revision.recommendedAction}</p></div>}
       {revision.status === 'no-change' && (

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'bun:test';
-import { parseDurationMs, parseDurationSeconds } from '../src/utils/duration';
+import {
+  formatApproximateDuration,
+  formatCompactDuration,
+  formatShortDuration,
+  parseDurationMs,
+  parseDurationSeconds,
+} from '../src/utils/duration';
 
 const secondsField = { bareUnit: 'seconds' as const, field: 'timeout' };
 const msField = { bareUnit: 'milliseconds' as const, field: 'tools.bash.timeout' };
@@ -56,5 +62,26 @@ describe('parseDurationSeconds', () => {
     expect(parseDurationSeconds('2m', secondsField)).toBe(120);
     expect(parseDurationSeconds('500ms', secondsField)).toBe(1);
     expect(parseDurationSeconds(300, secondsField)).toBe(300);
+  });
+});
+
+describe('duration formatting', () => {
+  it('formats short operational durations', () => {
+    expect(formatShortDuration(-1)).toBe('0ms');
+    expect(formatShortDuration(999)).toBe('999ms');
+    expect(formatShortDuration(1_499)).toBe('1s');
+  });
+
+  it('formats compact CLI durations', () => {
+    expect(formatCompactDuration(0)).toBe('0s');
+    expect(formatCompactDuration(61_000)).toBe('1m 1s');
+    expect(formatCompactDuration(3_600_000)).toBe('1h');
+    expect(formatCompactDuration(3_660_000)).toBe('1h 1m');
+  });
+
+  it('formats approximate visual durations', () => {
+    expect(formatApproximateDuration(89_000)).toBe('89s');
+    expect(formatApproximateDuration(90_000)).toBe('2m');
+    expect(formatApproximateDuration(5_400_000)).toBe('2h');
   });
 });

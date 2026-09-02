@@ -6,6 +6,7 @@ import { getSessionStorageDir } from '../src/storage';
 import {
   readInternalAgentJobRecord,
   recoverInternalCreatorSession,
+  recoverInternalDiscoverySession,
   writeInternalAgentJobRecord,
 } from '../src/onboarding/internal-job-store';
 
@@ -70,6 +71,41 @@ describe('internal agent job recovery', () => {
         fileName: 'legacy-agent.agentuse',
         model: 'openai:gpt-5.6-luna',
         source,
+      },
+    });
+  });
+
+  test('recovers validated project suggestions from their structured checkpoint', async () => {
+    const storage = await getSessionStorageDir(root);
+    const sessionDir = path.join(storage, '01DISCOVERY-onboarding-project-discovery');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, 'session.json'), JSON.stringify({ status: 'completed' }));
+    const suggestions = [1, 2, 3].map((index) => ({
+      id: `suggestion-${index}`,
+      name: `Agent ${index}`,
+      description: `Own recurring work ${index}`,
+      objective: `Inspect evidence and complete work ${index}.`,
+      schedule: '0 9 * * 1',
+      scheduleHuman: 'At 9:00 AM, only on Monday',
+      evidence: [`src/work-${index}.ts`],
+    }));
+    fs.writeFileSync(path.join(sessionDir, 'structured-delivery.json'), JSON.stringify({
+      kind: 'project-suggestions',
+      result: {
+        projectName: 'Recovery project',
+        summary: 'A project with recurring work.',
+        inspectedFiles: 12,
+        suggestions,
+      },
+    }));
+
+    expect(await recoverInternalDiscoverySession(root, '01DISCOVERY')).toEqual({
+      status: 'completed',
+      result: {
+        projectName: 'Recovery project',
+        summary: 'A project with recurring work.',
+        inspectedFiles: 12,
+        suggestions,
       },
     });
   });

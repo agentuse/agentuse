@@ -71,7 +71,7 @@ describe('internal worker session state ordering', () => {
     expect(recoverySource).not.toContain('errorMessage');
 
     const sessionErrorSource = source.slice(sessionErrorStart, hierarchySummariesStart);
-    expect(sessionErrorSource).toContain("id = `session-error:${session.id}`");
+    expect(sessionErrorSource).toContain("id = `session-error:${session.id}");
     expect(sessionErrorSource).toContain("status: 'error'");
     expect(sessionErrorSource).toContain("title: 'Session failed'");
     expect(sessionErrorSource).toContain('errorMessage: message');

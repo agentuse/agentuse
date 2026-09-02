@@ -18,9 +18,10 @@ import { term } from '../lib/terms';
 import { useSessionListView, type SessionListView } from '../hooks/use-session-list-view';
 import { useLastVisit } from '../hooks/use-last-visit';
 import { isAttentionSessionDismissed, useGlobalApprovals } from '../hooks/use-global-approvals';
+import { isExecutingSessionStatus, SESSION_STATUS_FILTERS } from '../../../../session/status';
 
 const WINDOWS = ['1h', '6h', '24h', '7d', '30d', '90d', 'all'];
-const STATUSES = ['', 'running', 'suspended', 'completed', 'error', 'incomplete'];
+const STATUSES = SESSION_STATUS_FILTERS;
 // Triage is orthogonal to status: has an ended run been reviewed-and-discarded?
 // 'undismissed' composes with status=error to reproduce the home "attention"
 // set (open failures), without conflating triage into the status axis.
@@ -37,7 +38,6 @@ const MOCK_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'include', label: 'shown' },
   { value: 'only', label: 'only mock' },
 ];
-const LIVE_SESSION_STATUSES = new Set(['running', 'resuming', 'continuing']);
 
 /** An ended failed run the reviewer can wave off: same rule the server's
  *  needs-attention filter and the home panel use. USER_STOPPED runs were the
@@ -680,7 +680,7 @@ export default function SessionsList() {
           )
           : groupByAgent
             ? <div class="agent-groups">{agentGroups.map((group) => {
-                const liveCount = group.rows.filter((r) => LIVE_SESSION_STATUSES.has(r.status) || r.subagentActive).length;
+                const liveCount = group.rows.filter((r) => isExecutingSessionStatus(r.status) || r.subagentActive).length;
                 return (
                   <details class="agent-group" open id={agentGroupAnchor(group.agentId)} key={group.agentId}>
                     <summary>

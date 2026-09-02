@@ -5,6 +5,8 @@ import {
   type ExistingProjectAgentSummary,
   type ProjectDiscoveryResult,
 } from '../agents/discover.js';
+import { STRUCTURED_DELIVERY_CHECKPOINT } from '../runner/effect-wal.js';
+import type { EffectAuditSink } from '../tools/types.js';
 
 export const SUBMIT_PROJECT_SUGGESTIONS_TOOL = 'submit_project_suggestions';
 
@@ -84,6 +86,7 @@ const suggestionSchema = z.object({
 export function createSubmitProjectSuggestionsTool(
   submission: ProjectSuggestionsSubmission,
   contract: ProjectSuggestionsSubmissionContract,
+  recoverySink?: EffectAuditSink,
 ): Tool {
   return {
     description:
@@ -114,6 +117,10 @@ export function createSubmitProjectSuggestionsTool(
           contract.projectName,
           contract.inspectedFiles,
         );
+        recoverySink?.checkpoint?.(STRUCTURED_DELIVERY_CHECKPOINT, {
+          kind: 'project-suggestions',
+          result: submission.result,
+        });
         return 'Accepted: three valid project suggestions were submitted. Call report_complete now with a short confirmation headline and omit details.';
       } catch (error) {
         throw new Error(`Suggestions rejected: ${(error as Error).message}. Correct the submission and call submit_project_suggestions again.`);

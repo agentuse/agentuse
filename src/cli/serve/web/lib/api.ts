@@ -750,7 +750,7 @@ export function fetchAgentRevision(
 
 export function postAgentRevisionAction(
   revisionSessionId: string,
-  action: 'apply' | 'discard' | 'restore',
+  action: 'apply' | 'discard' | 'restore' | 'cancel',
   project?: string,
 ): Promise<{ success: true; revision: Omit<AgentRevisionRecord, 'previousSource'> }> {
   const query = project ? `?project=${encodeURIComponent(project)}` : '';

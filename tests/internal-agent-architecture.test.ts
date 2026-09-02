@@ -67,7 +67,7 @@ describe('internal AgentUse architecture', () => {
     ]);
 
     expect(serve).not.toContain("routePath === '/onboarding/creation'");
-    expect(serve.match(/agentName: 'internal-agent-creator'/gu)).toHaveLength(1);
+    expect(serve.match(/agentName: 'internal-agent-creator'/gu)).toHaveLength(2);
     expect(webApi).toContain("postJson('/api/agents', { ...input, guided: true })");
     expect(webApi).not.toContain('fetchAgentCreationJob');
     expect(webApi).not.toContain('fetchOnboardingJob');
@@ -76,7 +76,7 @@ describe('internal AgentUse architecture', () => {
     expect(controller).toContain('useApprovalStream({');
   });
 
-  it('returns persisted jobs before preparing project context', async () => {
+  it('creates durable preparing jobs before preparing project context', async () => {
     const serve = await source('cli/serve.ts');
     const routeSections = [
       serve.slice(
@@ -90,7 +90,7 @@ describe('internal AgentUse architecture', () => {
     ];
 
     for (const section of routeSections) {
-      const persisted = section.indexOf('onboardingJobs.set(job.id, job)');
+      const persisted = section.indexOf('beginInternalAgentJob({');
       const responded = section.indexOf('sendJSON(res, 202');
       const prepared = section.indexOf('prepareProjectDiscoveryView');
       const executed = section.indexOf('worker.execute({');
@@ -106,7 +106,7 @@ describe('internal AgentUse architecture', () => {
     const revisionStart = serve.indexOf("routePath.match(/^\\/sessions\\/([^/?#]+)\\/revisions$/)");
     const section = serve.slice(revisionStart, serve.indexOf('const revisionActionMatch', revisionStart));
     const recorded = section.indexOf('createAgentRevisionRecord({');
-    const sessionCreated = section.indexOf('worker.createPreparingSession({');
+    const sessionCreated = section.indexOf('beginInternalAgentJob({');
     const responded = section.indexOf('sendJSON(res, 202');
     const prepared = section.indexOf('prepareProjectDiscoveryView');
     const executed = section.indexOf('worker.execute({');

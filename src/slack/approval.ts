@@ -1,5 +1,6 @@
 import type { SocketModeClient, LogLevel as SlackSocketLogLevel, Logger as SlackSocketLogger } from '@slack/socket-mode';
 import type { WebClient } from '@slack/web-api';
+import { formatShortDuration } from '../utils/duration';
 import { logger } from '../utils/logger';
 import {
   bestEffortClearSlackThreadStatus,
@@ -185,11 +186,6 @@ function truncate(value: string, maxLength: number): string {
   return `${value.slice(0, Math.max(0, maxLength - 12))}\n...(truncated)`;
 }
 
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  return `${Math.round(ms / 1000)}s`;
-}
-
 function actionIdFor(action: { id: string }, index: number): string {
   const safeId = action.id.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 80) || 'action';
   return `${ACTION_ID_PREFIX}_${index}_${safeId}`;
@@ -310,7 +306,7 @@ function buildStatusBlocks(options: {
     }] : []),
     ...(options.durationMs !== undefined ? [{
       type: 'mrkdwn',
-      text: `*Duration*\n${formatDuration(options.durationMs)}`
+      text: `*Duration*\n${formatShortDuration(options.durationMs)}`
     }] : []),
     {
       type: 'mrkdwn',

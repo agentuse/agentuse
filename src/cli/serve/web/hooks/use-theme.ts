@@ -2,17 +2,21 @@ import { useState } from 'preact/hooks';
 
 export type ThemePref = 'light' | 'dark' | 'system';
 
-const lightMql = window.matchMedia('(prefers-color-scheme: light)');
+const lightMql = typeof window === 'undefined'
+  ? undefined
+  : window.matchMedia('(prefers-color-scheme: light)');
 
 function readPref(): ThemePref {
+  if (typeof localStorage === 'undefined') return 'system';
   const stored = localStorage.getItem('agentuse-theme');
   return stored === 'light' || stored === 'dark' ? stored : 'system';
 }
 
 function applyTheme(pref: ThemePref): void {
+  if (typeof document === 'undefined') return;
   const resolved = pref === 'light' || pref === 'dark'
     ? pref
-    : (lightMql.matches ? 'light' : 'dark');
+    : (lightMql?.matches ? 'light' : 'dark');
   document.documentElement.setAttribute('data-theme', resolved);
   document.documentElement.setAttribute('data-theme-pref', pref);
 }
@@ -20,7 +24,7 @@ function applyTheme(pref: ThemePref): void {
 // Installed once from main.tsx so system light/dark flips reach every route,
 // not just the Settings page where the toggle (and useTheme) is mounted.
 export function initSystemThemeSync(): void {
-  lightMql.addEventListener('change', () => {
+  lightMql?.addEventListener('change', () => {
     if (readPref() === 'system') applyTheme('system');
   });
 }

@@ -18,6 +18,7 @@ import { reconcileOrphanedSessions } from "../runner/resume";
 import { describeLearningOutcome, effectiveCap, saveManualLearning, type LearningSource } from "../learning";
 import { findServerForProject } from "../utils/server-registry";
 import { Semaphore } from "../utils/concurrency";
+import { formatCompactDuration } from "../utils/duration";
 
 interface SessionSummary {
   id: string;
@@ -371,17 +372,6 @@ function formatDate(date: Date): string {
       day: "numeric",
     });
   }
-}
-
-function formatDurationMs(ms: number): string {
-  const seconds = Math.max(0, Math.round(ms / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  if (minutes < 60) return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const minuteRemainder = minutes % 60;
-  return minuteRemainder ? `${hours}h ${minuteRemainder}m` : `${hours}h`;
 }
 
 /**
@@ -1055,7 +1045,7 @@ async function showSession(
     : '⋯';
   const statusText = isIncomplete ? 'incomplete' : subagentActive ? 'running · subagent' : (s.status || 'unknown');
   process.stdout.write(`Status:      ${statusIcon} ${statusText}\n`);
-  process.stdout.write(`Timing:      active ${formatDurationMs(timing.activeMs)} · approval wait ${formatDurationMs(timing.approvalMs)} · wall ${formatDurationMs(timing.wallMs)}\n`);
+  process.stdout.write(`Timing:      active ${formatCompactDuration(timing.activeMs)} · approval wait ${formatCompactDuration(timing.approvalMs)} · wall ${formatCompactDuration(timing.wallMs)}\n`);
   if (s.mock) {
     process.stdout.write(`Mock:        ⚠ mock run: some or all tool results were fabricated, not executed\n`);
   }

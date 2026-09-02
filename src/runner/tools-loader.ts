@@ -350,6 +350,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
       submit_project_suggestions: createSubmitProjectSuggestionsTool(
         projectSuggestionsSubmission,
         projectSuggestionsContract,
+        effectAudit,
       ),
     }),
     ...(agentRevisionContract && agentRevisionSubmission && {

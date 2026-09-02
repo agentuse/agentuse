@@ -395,38 +395,15 @@ async function main(): Promise<void> {
   browser(['click', '.agent-create-primary']);
   browser(['wait', '--text', 'Creating your agent']);
   expectBrowser(
-    `(async () => {
-      const deadline = Date.now() + 2_000;
-      while (Date.now() < deadline) {
-        if (document.querySelector('.agent-create-progress.is-creating') !== null && document.querySelector('.agent-create-log')?.value.includes('[model draft]') === true) return true;
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      }
-      return false;
+    `(() => {
+      const dialog = document.querySelector('.agent-create-dialog[open]');
+      return dialog?.textContent?.includes('Creating your agent') === true
+        && dialog.querySelector('.agent-create-form') === null;
     })()`,
-    'agent creation replaces the form with a live model-authored creation log',
+    'agent creation replaces the editable form with progress',
   );
   browser(['screenshot', join(evidenceDir, 'onboarding-create-agent-progress.png')]);
-  browser(['wait', '--text', 'Creation complete']);
-  const creationError = JSON.parse(browser(['eval', `document.querySelector('.agent-create-error')?.textContent ?? ''`])) as string;
-  if (creationError) fail(`Model-backed onboarding creation failed: ${creationError}\nAuthor requests: ${await authorRequestCount()}\nDaemon output:\n${daemonOutput}`);
-  expectBrowser(
-    `document.querySelector('.agent-create-log')?.value.includes('[agentuse] Created Summarize New Support Tickets Every Morning') === true`,
-    'creation log carries the model draft through validation and persistence',
-  );
-  browser(['click', '.agent-create-progress-actions .agent-create-primary']);
-  const creationOutcome = JSON.parse(browser(['eval', '--stdin'], `(async () => {
-    const deadline = Date.now() + 20_000;
-    while (Date.now() < deadline) {
-      if (document.body.innerText.includes('Your agent is ready')) return 'ready';
-      const error = document.querySelector('.agent-create-error')?.textContent;
-      if (error) return 'error:' + error;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    return 'timeout';
-  })()`)) as string;
-  if (creationOutcome !== 'ready') {
-    fail(`Model-backed onboarding creation ${creationOutcome}\nAuthor requests: ${await authorRequestCount()}\nDaemon output:\n${daemonOutput}`);
-  }
+  browser(['wait', '--text', 'Summarize New Support Tickets Every Morning']);
   expectBrowser(
     `document.body.innerText.includes('Summarize New Support Tickets Every Morning') && document.querySelector('.agent-create-dialog[open]') === null`,
     'onboarding persists the first agent and renders its ready state',
@@ -446,8 +423,6 @@ async function main(): Promise<void> {
     return set('.agent-create-field textarea', 'Review yesterday’s work and identify the most important follow-up.');
   })()`]);
   browser(['click', '.agent-create-primary']);
-  browser(['wait', '--text', 'Creation complete']);
-  browser(['click', '.agent-create-progress-actions .agent-create-primary']);
   browser(['wait', '--text', 'Review Yesterday Work']);
   expectBrowser(
     `location.pathname.includes('/agents/onboarding/') && document.body.innerText.includes('Review Yesterday Work')`,
@@ -465,6 +440,7 @@ async function main(): Promise<void> {
     `document.body.innerText.toLowerCase().includes('pending approvals') && document.body.innerText.toLowerCase().includes('session completions')`,
     'PWA notification preferences are visible',
   );
+  browser(['click', '#settings-tab-providers']);
   expectBrowser(
     `document.body.innerText.toLowerCase().includes('providers') && document.body.innerText.includes('Anthropic') && document.body.innerText.includes('OpenRouter')`,
     'provider status is integrated into Preferences',

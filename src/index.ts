@@ -2043,32 +2043,32 @@ async function runInternalWorker() {
     logs: ReturnType<typeof buildApprovalLogs>,
     session: SessionInfo
   ): ReturnType<typeof buildApprovalLogs> {
-    if (!session.error) return logs;
-    const id = `session-error:${session.id}`;
-    if (logs.some((entry) => entry.id === id)) return logs;
-    const message = session.error.message || session.error.code || 'Session failed';
-    const lastLogTime = logs.reduce((max, entry) => Math.max(max, entry.time ?? 0), 0);
-    const errorTime = typeof (session.error as any).time === 'number' ? (session.error as any).time : undefined;
+    const errors = [...(session.errorHistory ?? []), ...(session.error ? [session.error] : [])];
+    if (errors.length === 0) return logs;
     const sessionTime = typeof session.time?.updated === 'number' ? session.time.updated : undefined;
-    // Anchor the marker at the moment the failure was recorded. Pinning it past
-    // the newest entry instead would drag it to the bottom of the feed of a run
-    // that has since been resumed, so the failure would keep re-appearing below
-    // work that happened after it. Older sessions stored no error time; those
-    // still fall back to "after everything else".
-    const time = errorTime ?? Math.max(lastLogTime, sessionTime ?? 0) + 1;
-    return [
-      ...logs,
-      {
-        id,
-        type: 'session',
-        status: 'error',
-        title: 'Session failed',
-        time,
-        details: {
-          errorMessage: message
+    return errors.reduce((entries, error, index) => {
+      // Keep the original stable id for the first failure. Later attempts get
+      // deterministic suffixes so every failure remains independently visible.
+      const id = `session-error:${session.id}${index === 0 ? '' : `:${index + 1}`}`;
+      if (entries.some((entry) => entry.id === id)) return entries;
+      const message = error.message || error.code || 'Session failed';
+      const lastLogTime = entries.reduce((max, entry) => Math.max(max, entry.time ?? 0), 0);
+      const errorTime = typeof error.time === 'number' ? error.time : undefined;
+      // Anchor the marker at the moment the failure was recorded. Older
+      // sessions stored no error time and fall back to after existing logs.
+      const time = errorTime ?? Math.max(lastLogTime, sessionTime ?? 0) + 1;
+      return [
+        ...entries,
+        {
+          id,
+          type: 'session',
+          status: 'error',
+          title: 'Session failed',
+          time,
+          details: { errorMessage: message }
         }
-      }
-    ];
+      ];
+    }, logs);
   }
 
   async function sessionHierarchySummaries(

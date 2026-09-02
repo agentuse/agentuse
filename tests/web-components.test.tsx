@@ -120,7 +120,7 @@ describe('agent revision entry', () => {
     expect(formRules).toContain('width: 100%;');
     expect(formRules).toContain('background: var(--panel);');
     expect(formRules).toContain('overflow: hidden;');
-    expect(fieldRules).toContain('font-weight: 400;');
+    expect(fieldRules).toContain('font-weight: var(--weight-normal);');
     expect(css).not.toContain('.agent-revision-dialog');
   });
 });
@@ -591,13 +591,13 @@ describe('Session feed response', () => {
 
     const summary = render('summary');
     expect(summary).toContain('internal revision');
-    expect(summary).toContain('Fixing Support triage');
+    expect(summary).toContain('Revising Support triage');
     expect(summary).toContain('From session 01ORIGI');
     expect(summary).not.toContain('.agentuse/internal/reviser');
 
     const feed = render('feed');
     expect(feed).toContain('session-feed-avatar is-internal');
-    expect(feed).toContain('Fixing Support triage');
+    expect(feed).toContain('Revising Support triage');
     expect(feed).toContain('/sessions/01ORIGINSESSION000000000000?project=demo');
     expect(feed).toContain('internal revision');
   });

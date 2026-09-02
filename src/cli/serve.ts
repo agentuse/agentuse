@@ -127,6 +127,7 @@ import {
 import {
   readInternalAgentJobRecord,
   recoverInternalCreatorSession,
+  recoverInternalDiscoverySession,
   writeInternalAgentJobRecord,
   type RecoveredAgentSourceSubmission,
 } from "../onboarding/internal-job-store.js";
@@ -134,7 +135,7 @@ import { openBrowser } from "../utils/open-browser";
 import { pickLocalProjectFolder } from "../utils/folder-picker";
 import { canUseHostFolderPicker } from "../utils/local-request";
 import { resolveAgentModel } from "../utils/model-alias";
-import { currentProcessRef, type ProcessRef } from "../utils/process-info";
+import { currentProcessRef, isProcessRefAliveAsync, type ProcessRef } from "../utils/process-info";
 import { REASONING_LEVELS, type ReasoningLevel } from "../model-compatibility";
 import {
   createIdempotentShutdown,
@@ -498,6 +499,10 @@ interface AgentCreationRecoveryInput {
 
 interface PersistedOnboardingModelJob {
   job: OnboardingModelJob;
+  /** Stable process identity for deciding whether a missing preparing shell is
+   * still being created or was lost with a prior daemon. */
+  owner?: ProcessRef;
+  /** Backward-compatible owner field written by pre-0.20 development builds. */
   ownerPid: number;
   agentCreation?: AgentCreationRecoveryInput;
 }
@@ -3320,7 +3325,7 @@ export function createServeCommand(): Command {
       const workers = new Map<string, AgentWorker>();
       const onboardingJobs = new Map<string, OnboardingModelJob>();
       const agentCreationRecoveryInputs = new Map<string, AgentCreationRecoveryInput>();
-      const activeAgentCreationRecoveries = new Map<string, Promise<void>>();
+      const activeInternalJobRecoveries = new Map<string, Promise<void>>();
       const revisionViewCleanups = new Map<string, () => Promise<void>>();
       const revisionMutations = new Set<string>();
       const cleanupRevisionView = async (revisionSessionId: string): Promise<void> => {
@@ -3702,8 +3707,49 @@ export function createServeCommand(): Command {
         await writeInternalAgentJobRecord(project.root, job.id, {
           job,
           ownerPid: process.pid,
+          owner: currentProcessRef(),
           ...(agentCreation && { agentCreation }),
         } satisfies PersistedOnboardingModelJob);
+      };
+
+      /** Start every model-backed internal feature through the same durable
+       * preparing shell. The job envelope describes the product operation;
+       * the session is the execution authority and is promoted atomically by
+       * worker.execute once preparation has finished. */
+      const beginInternalAgentJob = async (options: {
+        job: OnboardingModelJob;
+        worker: AgentWorker;
+        project: Project;
+        agentId: string;
+        agentName: string;
+        agentDescription: string;
+        timeout: number;
+        maxSteps: number;
+        trigger: SessionTrigger;
+      }): Promise<WorkerPreparingSessionResult | WorkerExecuteError> => {
+        const { job, worker, project } = options;
+        pruneOnboardingJobs();
+        onboardingJobs.set(job.id, job);
+        await persistOnboardingJob(job);
+        const prepared = await worker.createPreparingSession({
+          projectRoot: project.root,
+          sessionId: job.sessionId,
+          agentId: options.agentId,
+          agentName: options.agentName,
+          agentDescription: options.agentDescription,
+          model: job.model,
+          trigger: options.trigger,
+          timeout: options.timeout,
+          maxSteps: options.maxSteps,
+          owner: currentProcessRef(),
+        });
+        if (!prepared.success) {
+          job.status = 'error';
+          job.error = prepared.error;
+          await persistOnboardingJob(job);
+        }
+        wakeListHubs();
+        return prepared;
       };
 
       const loadPersistedOnboardingJob = async (id: string): Promise<PersistedOnboardingModelJob | null> => {
@@ -3752,16 +3798,24 @@ export function createServeCommand(): Command {
         return { success: true as const, agent };
       };
 
-      const recoverAgentCreationJob = (job: OnboardingModelJob): Promise<void> => {
-        const existing = activeAgentCreationRecoveries.get(job.id);
+      const recoverAgentCreationJob = (job: OnboardingModelJob, missingIsInterrupted = false): Promise<void> => {
+        const existing = activeInternalJobRecoveries.get(job.id);
         if (existing) return existing;
         const operation = (async () => {
           const project = projectsById.get(job.projectId);
           const recovery = agentCreationRecoveryInputs.get(job.id);
           if (!project || !recovery || job.status !== 'running') return;
           const session = await recoverInternalCreatorSession(project.root, job.sessionId);
-          if (!session || session.status === 'running') return;
-          if (session.status === 'error') {
+          if (!session) {
+            if (!missingIsInterrupted) return;
+            job.status = 'error';
+            job.error = {
+              code: 'PREPARATION_INTERRUPTED',
+              message: 'Agent preparation was interrupted before its durable session was created',
+            };
+          } else if (session.status === 'running') {
+            return;
+          } else if (session.status === 'error') {
             job.status = 'error';
             job.error = session.error;
           } else {
@@ -3778,9 +3832,76 @@ export function createServeCommand(): Command {
           }
           await persistOnboardingJob(job);
           wakeListHubs();
-        })().finally(() => activeAgentCreationRecoveries.delete(job.id));
-        activeAgentCreationRecoveries.set(job.id, operation);
+        })().finally(() => activeInternalJobRecoveries.delete(job.id));
+        activeInternalJobRecoveries.set(job.id, operation);
         return operation;
+      };
+
+      const recoverProjectDiscoveryJob = (job: OnboardingModelJob, missingIsInterrupted = false): Promise<void> => {
+        const existing = activeInternalJobRecoveries.get(job.id);
+        if (existing) return existing;
+        const operation = (async () => {
+          const project = projectsById.get(job.projectId);
+          if (!project || job.status !== 'running') return;
+          const session = await recoverInternalDiscoverySession(project.root, job.sessionId);
+          if (!session) {
+            if (!missingIsInterrupted) return;
+            job.status = 'error';
+            job.error = {
+              code: 'PREPARATION_INTERRUPTED',
+              message: 'Project discovery preparation was interrupted before its durable session was created',
+            };
+          } else if (session.status === 'running') {
+            return;
+          } else if (session.status === 'error') {
+            job.status = 'error';
+            job.error = session.error;
+          } else {
+            job.status = 'completed';
+            job.result = { success: true, model: job.model, ...session.result };
+          }
+          await persistOnboardingJob(job);
+          wakeListHubs();
+        })().finally(() => activeInternalJobRecoveries.delete(job.id));
+        activeInternalJobRecoveries.set(job.id, operation);
+        return operation;
+      };
+
+      const reconcileAgentRevisionRecord = async (
+        project: Project,
+        record: AgentRevisionRecord,
+      ): Promise<AgentRevisionRecord> => {
+        if (record.status !== 'running') return record;
+        const worker = workers.get(project.id);
+        if (!worker) return record;
+        const status = await worker.getSessionStatusInfo({
+          projectRoot: project.root,
+          sessionId: record.revisionSessionId,
+        });
+        if (!status.success) {
+          if (status.error.code !== 'SESSION_NOT_FOUND') return record;
+          // The durable record is written immediately before its preparing
+          // shell. Do not let a concurrent list request classify that tiny
+          // in-process handoff window as a restart loss.
+          if (Date.now() - record.createdAt < 30_000) return record;
+          return await failAgentRevision(project.root, record.revisionSessionId, {
+            code: 'REVISION_SESSION_MISSING',
+            message: 'The revision session was lost before execution started',
+          }) ?? record;
+        }
+        if (status.session.sessionStatus === 'error') {
+          return await failAgentRevision(project.root, record.revisionSessionId, {
+            code: status.session.errorCode ?? 'REVISION_SESSION_FAILED',
+            message: status.session.errorMessage ?? 'The revision session did not finish successfully',
+          }) ?? record;
+        }
+        if (status.session.sessionStatus === 'completed') {
+          return await failAgentRevision(project.root, record.revisionSessionId, {
+            code: 'REVISION_NOT_SUBMITTED',
+            message: 'The revision session ended without submitting a validated outcome',
+          }) ?? record;
+        }
+        return record;
       };
 
       // Helper to print hot reload messages
@@ -5717,7 +5838,10 @@ export function createServeCommand(): Command {
           }
           try {
             const absPath = resolveScopedAgentPath(project, requestedPath);
-            const records = (await listAgentRevisionRecords(project.root))
+            const records = (await Promise.all(
+              (await listAgentRevisionRecords(project.root))
+                .map((revision) => reconcileAgentRevisionRecord(project, revision))
+            ))
               .filter((record) => record.targetAgentRunPath === requestedPath || record.targetAgentPath === absPath);
             sendJSON(res, 200, {
               success: true,
@@ -7821,11 +7945,21 @@ export function createServeCommand(): Command {
               configuredProviders,
               availableModels,
             };
-            pruneOnboardingJobs();
-            onboardingJobs.set(job.id, job);
             agentCreationRecoveryInputs.set(job.id, recoveryInput);
-            await persistOnboardingJob(job);
-            wakeListHubs();
+            const prepared = await beginInternalAgentJob({
+              job,
+              worker,
+              project,
+              agentId: 'internal-agent-creator',
+              agentName: 'internal-agent-creator',
+              agentDescription: 'Turn a user brief into a production AgentUse agent',
+              timeout: 300,
+              maxSteps: 12,
+              trigger: 'onboarding',
+            });
+            if (!prepared.success) {
+              throw new AgentCreationError('CREATE_FAILED', prepared.error.message);
+            }
             const sessionToken = apiKey ? sessionViewToken(sessionId, apiKey) : undefined;
             sendJSON(res, 202, {
               success: true,
@@ -7864,6 +7998,7 @@ export function createServeCommand(): Command {
                   agentName: 'internal-agent-creator',
                   projectRoot: project.root,
                   newSessionId: sessionId,
+                  preparedSession: true,
                   trigger: 'onboarding',
                   timeout: 300,
                   maxSteps: 12,
@@ -7896,6 +8031,14 @@ export function createServeCommand(): Command {
                   code: error instanceof AgentCreationError ? error.code : 'AGENT_CREATE_FAILED',
                   message: (error as Error).message,
                 };
+                if (job.phase === 'preparing') {
+                  await worker.failPreparingSession({
+                    projectRoot: project.root,
+                    sessionId,
+                    code: job.error.code,
+                    message: job.error.message,
+                  }).catch(() => undefined);
+                }
               } finally {
                 await persistOnboardingJob(job).catch((error) => {
                   logger.warn(`Failed to persist internal agent job ${job.id}: ${(error as Error).message}`);
@@ -8101,7 +8244,10 @@ export function createServeCommand(): Command {
               sendError(res, found.status, found.code, found.message);
               return;
             }
-            const revisions = await listAgentRevisionRecords(found.project.root, originSessionId);
+            const revisions = await Promise.all(
+              (await listAgentRevisionRecords(found.project.root, originSessionId))
+                .map((revision) => reconcileAgentRevisionRecord(found.project, revision))
+            );
             sendJSON(res, 200, {
               success: true,
               revisions: revisions.map(({ proposedSource: _proposed, previousSource: _previous, ...record }) => {
@@ -8148,7 +8294,10 @@ export function createServeCommand(): Command {
               return;
             }
             revisionMutations.add(mutationKey);
-            const existingRevisions = await listAgentRevisionRecords(found.project.root, originSessionId);
+            const existingRevisions = await Promise.all(
+              (await listAgentRevisionRecords(found.project.root, originSessionId))
+                .map((revision) => reconcileAgentRevisionRecord(found.project, revision))
+            );
             const activeRevision = existingRevisions.find((revision) =>
               revision.status === 'running' || revision.status === 'proposed' || revision.status === 'no-change');
             if (activeRevision) {
@@ -8230,22 +8379,6 @@ export function createServeCommand(): Command {
               expectedSourceHash,
               previousSource: currentSource,
             });
-            const prepared = await worker.createPreparingSession({
-              projectRoot: found.project.root,
-              sessionId: revisionSessionId,
-              agentId: relative(found.project.root, internalAgentRevisionPath(found.project.root, revisionSessionId)).replace(/\.agentuse$/u, ''),
-              agentName: `Revise ${targetAgentName}`,
-              agentDescription: `Revise ${targetAgentName} using evidence from session ${originSessionId}`,
-              model,
-              trigger: 'manual',
-              timeout: 480,
-              maxSteps: 20,
-              owner: currentProcessRef(),
-            });
-            if (!prepared.success) {
-              await failAgentRevision(found.project.root, revisionSessionId, prepared.error).catch(() => undefined);
-              throw new Error(prepared.error.message);
-            }
             const job: OnboardingModelJob = {
               id: revisionSessionId,
               sessionId: revisionSessionId,
@@ -8256,8 +8389,21 @@ export function createServeCommand(): Command {
               model,
               createdAt: record.createdAt,
             };
-            pruneOnboardingJobs();
-            onboardingJobs.set(job.id, job);
+            const prepared = await beginInternalAgentJob({
+              job,
+              worker,
+              project: found.project,
+              agentId: relative(found.project.root, internalAgentRevisionPath(found.project.root, revisionSessionId)).replace(/\.agentuse$/u, ''),
+              agentName: `Revise ${targetAgentName}`,
+              agentDescription: `Revise ${targetAgentName} using evidence from session ${originSessionId}`,
+              trigger: 'manual',
+              timeout: 480,
+              maxSteps: 20,
+            });
+            if (!prepared.success) {
+              await failAgentRevision(found.project.root, revisionSessionId, prepared.error).catch(() => undefined);
+              throw new Error(prepared.error.message);
+            }
             const sessionToken = apiKey ? sessionViewToken(revisionSessionId, apiKey) : undefined;
             sendJSON(res, 202, { success: true, job: { ...job, ...(sessionToken && { sessionToken }) } });
             wakeListHubs();
@@ -8310,6 +8456,7 @@ export function createServeCommand(): Command {
                   cleanupView = undefined;
                 }
                 job.phase = 'running';
+                await persistOnboardingJob(job);
                 wakeListHubs();
                 const execution = await worker.execute({
                   agentPath: internalAgentPath,
@@ -8352,6 +8499,9 @@ export function createServeCommand(): Command {
                 }).catch(() => undefined);
                 await failAgentRevision(found.project.root, revisionSessionId, failure).catch(() => undefined);
               } finally {
+                await persistOnboardingJob(job).catch((error) => {
+                  logger.warn(`Failed to persist internal agent job ${job.id}: ${(error as Error).message}`);
+                });
                 await cleanupView?.().catch(() => undefined);
                 const latest = await readAgentRevisionRecord(found.project.root, revisionSessionId).catch(() => undefined);
                 if (latest && (latest.status === 'accepted' || latest.status === 'applied' || latest.status === 'discarded' || latest.status === 'restored' || latest.status === 'error')) {
@@ -8370,7 +8520,7 @@ export function createServeCommand(): Command {
         }
 
         const revisionActionMatch = !isApi
-          ? routePath.match(/^\/agent-revisions\/([^/?#]+)(?:\/(apply|discard|restore|request-changes))?$/)
+          ? routePath.match(/^\/agent-revisions\/([^/?#]+)(?:\/(apply|discard|restore|request-changes|cancel))?$/)
           : null;
         if (revisionActionMatch) {
           let mutationKey: string | undefined;
@@ -8393,7 +8543,10 @@ export function createServeCommand(): Command {
                 sendError(res, 403, 'AGENT_SOURCE_HIDDEN', 'Agent revision review is unavailable while serve.hideAgentSource is enabled');
                 return;
               }
-              const record = await readAgentRevisionRecord(project.root, revisionSessionId);
+              const storedRecord = await readAgentRevisionRecord(project.root, revisionSessionId);
+              const record = storedRecord
+                ? await reconcileAgentRevisionRecord(project, storedRecord)
+                : undefined;
               if (!record) {
                 sendError(res, 404, 'REVISION_NOT_FOUND', 'Revision not found');
                 return;
@@ -8449,6 +8602,39 @@ export function createServeCommand(): Command {
               startSessionContinue(res, { project, sessionId: revisionSessionId, prompt });
               return;
             }
+            if (action === 'cancel') {
+              const record = await readAgentRevisionRecord(project.root, revisionSessionId);
+              if (!record || record.status !== 'running') {
+                sendError(res, 409, 'REVISION_NOT_RUNNING', 'This revision is no longer running');
+                return;
+              }
+              const worker = workers.get(project.id);
+              if (worker) {
+                await worker.stopSession({
+                  projectRoot: project.root,
+                  sessionId: revisionSessionId,
+                  reason: 'Revision cancelled by operator',
+                }).catch(() => undefined);
+              }
+              const cancelled = await failAgentRevision(project.root, revisionSessionId, {
+                code: 'REVISION_CANCELLED',
+                message: 'The revision was cancelled by the operator',
+              });
+              const job = onboardingJobs.get(revisionSessionId);
+              if (job) {
+                job.status = 'error';
+                job.error = cancelled?.error ?? {
+                  code: 'REVISION_CANCELLED',
+                  message: 'The revision was cancelled by the operator',
+                };
+                await persistOnboardingJob(job);
+              }
+              await cleanupRevisionView(revisionSessionId);
+              wakeListHubs();
+              const { previousSource: _previous, ...visibleRecord } = cancelled ?? record;
+              sendJSON(res, 200, { success: true, revision: visibleRecord });
+              return;
+            }
             let record;
             if (action === 'apply') {
               const snapshot = await providerSetupSnapshot();
@@ -8493,10 +8679,38 @@ export function createServeCommand(): Command {
             if (persisted) {
               job = persisted.job;
               onboardingJobs.set(job.id, job);
+              // A running job cannot be pruned from this process's in-memory
+              // map. Therefore a legacy envelope that names our recycled PID
+              // still belongs to an earlier daemon instance.
+              const ownerAlive = persisted.owner
+                ? await isProcessRefAliveAsync(persisted.owner)
+                : persisted.ownerPid !== process.pid
+                  && await isProcessRefAliveAsync({ pid: persisted.ownerPid });
               if (persisted.agentCreation) {
                 agentCreationRecoveryInputs.set(job.id, persisted.agentCreation);
-                await recoverAgentCreationJob(job);
-              } else if (job.status === 'running' && persisted.ownerPid !== process.pid) {
+                await recoverAgentCreationJob(job, !ownerAlive);
+              } else if (job.kind === 'project-discovery') {
+                await recoverProjectDiscoveryJob(job, !ownerAlive);
+              } else if (job.kind === 'agent-revision') {
+                const project = projectsById.get(job.projectId);
+                const record = project
+                  ? await readAgentRevisionRecord(project.root, job.sessionId)
+                  : undefined;
+                const reconciled = project && record
+                  ? await reconcileAgentRevisionRecord(project, record)
+                  : record;
+                if (reconciled?.status === 'error') {
+                  job.status = 'error';
+                  job.error = reconciled.error ?? {
+                    code: 'REVISION_SESSION_FAILED',
+                    message: 'The revision session did not finish successfully',
+                  };
+                } else if (reconciled && reconciled.status !== 'running') {
+                  job.status = 'completed';
+                  job.result = reconciled;
+                }
+                await persistOnboardingJob(job);
+              } else if (job.status === 'running' && !ownerAlive) {
                 job.status = 'error';
                 job.error = {
                   code: 'INTERNAL_JOB_INTERRUPTED',
@@ -8544,9 +8758,17 @@ export function createServeCommand(): Command {
             sendError(res, 404, 'ONBOARDING_JOB_NOT_FOUND', 'This onboarding job is no longer available');
             return;
           }
+          if (job.status === 'running' && job.kind === 'agent-creation') {
+            await recoverAgentCreationJob(job);
+          } else if (job.status === 'running' && job.kind === 'project-discovery') {
+            await recoverProjectDiscoveryJob(job);
+          }
           if (job.kind === 'agent-revision') {
             const project = projectsById.get(job.projectId);
-            const record = project ? await readAgentRevisionRecord(project.root, job.sessionId) : undefined;
+            const storedRecord = project ? await readAgentRevisionRecord(project.root, job.sessionId) : undefined;
+            const record = project && storedRecord
+              ? await reconcileAgentRevisionRecord(project, storedRecord)
+              : storedRecord;
             if (record?.status === 'proposed' || record?.status === 'no-change' || record?.status === 'accepted' || record?.status === 'applied' || record?.status === 'restored' || record?.status === 'discarded') {
               job.status = 'completed';
               job.result = record;
@@ -8558,6 +8780,7 @@ export function createServeCommand(): Command {
               if (record.error) job.error = record.error;
               await cleanupRevisionView(job.sessionId);
             }
+            await persistOnboardingJob(job);
           }
           sendJSON(res, 200, { success: true, job });
           return;
@@ -8604,9 +8827,20 @@ export function createServeCommand(): Command {
               model: discoveryModel,
               createdAt: Date.now(),
             };
-            pruneOnboardingJobs();
-            onboardingJobs.set(job.id, job);
-            wakeListHubs();
+            const prepared = await beginInternalAgentJob({
+              job,
+              worker,
+              project,
+              agentId: 'onboarding-project-discovery',
+              agentName: 'onboarding-project-discovery',
+              agentDescription: 'Explore a sanitized project view and propose useful recurring agents',
+              timeout: 300,
+              maxSteps: 20,
+              trigger: 'onboarding',
+            });
+            if (!prepared.success) {
+              throw new Error(prepared.error.message);
+            }
             const sessionToken = apiKey ? sessionViewToken(sessionId, apiKey) : undefined;
             sendJSON(res, 202, {
               success: true,
@@ -8633,12 +8867,14 @@ export function createServeCommand(): Command {
                   existingAgents: view.existingAgents,
                 });
                 job.phase = 'running';
+                await persistOnboardingJob(job);
                 wakeListHubs();
                 const execution = await worker.execute({
                   agentContent,
                   agentName: 'onboarding-project-discovery',
                   projectRoot: project.root,
                   newSessionId: sessionId,
+                  preparedSession: true,
                   trigger: 'onboarding',
                   timeout: 300,
                   maxSteps: 20,
@@ -8671,7 +8907,18 @@ export function createServeCommand(): Command {
                   code: job.phase === 'preparing' ? 'PROJECT_DISCOVERY_START_FAILED' : 'PROJECT_DISCOVERY_FAILED',
                   message: (error as Error).message,
                 };
+                if (job.phase === 'preparing') {
+                  await worker.failPreparingSession({
+                    projectRoot: project.root,
+                    sessionId,
+                    code: job.error.code,
+                    message: job.error.message,
+                  }).catch(() => undefined);
+                }
               } finally {
+                await persistOnboardingJob(job).catch((error) => {
+                  logger.warn(`Failed to persist internal agent job ${job.id}: ${(error as Error).message}`);
+                });
                 await cleanupView?.().catch(() => {});
                 wakeListHubs();
               }

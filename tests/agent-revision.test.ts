@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseAgentContent } from '../src/parser';
 import { resolveSafeVariables } from '../src/tools/path-validator';
+import { getProjectDirSync } from '../src/storage/paths';
 import {
   agentRevisionSubmissionContract,
   applyAgentRevision,
@@ -168,6 +169,65 @@ describe('internal agent revision', () => {
     });
     expect(restored.status).toBe('restored');
     expect(await readFile(f.targetAgentPath, 'utf8')).toBe(f.currentSource);
+  });
+
+  it('recovers interrupted apply and restore mutations from the target source hash', async () => {
+    const f = await fixture();
+    const tool = createSubmitAgentRevisionTool({}, f.contract);
+    await (tool.execute as any)({
+      outcome: 'revision-proposed',
+      diagnosis: 'Terminal order statuses were unspecified.',
+      summary: 'Handle terminal orders explicitly.',
+      edits: [{
+        oldText: 'Classify active orders and prioritize urgent tickets.',
+        newText: 'Exclude refunded orders, then classify active orders and prioritize urgent tickets.',
+      }],
+    });
+    const proposal = (await readAgentRevisionRecord(f.projectRoot, f.revisionSessionId))!;
+    const recordPath = join(getProjectDirSync(f.projectRoot), 'revision', `${f.revisionSessionId}.json`);
+
+    await writeFile(recordPath, `${JSON.stringify({
+      ...proposal,
+      status: 'applying',
+      previousSource: f.currentSource,
+      appliedAt: Date.now(),
+    }, null, 2)}\n`);
+    await writeFile(f.targetAgentPath, proposal.proposedSource!);
+    const recoveredApply = await readAgentRevisionRecord(f.projectRoot, f.revisionSessionId);
+    expect(recoveredApply?.status).toBe('applied');
+
+    await writeFile(recordPath, `${JSON.stringify({
+      ...recoveredApply,
+      status: 'restoring',
+      restoredAt: Date.now(),
+    }, null, 2)}\n`);
+    await writeFile(f.targetAgentPath, f.currentSource);
+    const recoveredRestore = await readAgentRevisionRecord(f.projectRoot, f.revisionSessionId);
+    expect(recoveredRestore?.status).toBe('restored');
+  });
+
+  it('returns an interrupted pre-replacement apply to reviewable state', async () => {
+    const f = await fixture();
+    const tool = createSubmitAgentRevisionTool({}, f.contract);
+    await (tool.execute as any)({
+      outcome: 'revision-proposed',
+      diagnosis: 'Terminal order statuses were unspecified.',
+      summary: 'Handle terminal orders explicitly.',
+      edits: [{ oldText: 'Prioritize support tickets', newText: 'Prioritize active support tickets' }],
+    });
+    const proposal = (await readAgentRevisionRecord(f.projectRoot, f.revisionSessionId))!;
+    const recordPath = join(getProjectDirSync(f.projectRoot), 'revision', `${f.revisionSessionId}.json`);
+    await writeFile(recordPath, `${JSON.stringify({
+      ...proposal,
+      status: 'applying',
+      previousSource: f.currentSource,
+      appliedAt: Date.now(),
+    }, null, 2)}\n`);
+
+    const recovered = await readAgentRevisionRecord(f.projectRoot, f.revisionSessionId);
+    expect(recovered?.status).toBe('proposed');
+    expect(recovered?.previousSource).toBeUndefined();
+    expect(recovered?.appliedAt).toBeUndefined();
   });
 
   it('preserves an omitted frontmatter name while removing a schedule', async () => {

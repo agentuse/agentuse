@@ -397,13 +397,21 @@ Create the agent.
     });
     expect(contract).toEqual({ projectName: 'demo', inspectedFiles: 99, existingAgents: [] });
     const submission: { result?: unknown } = {};
-    const tool = createSubmitProjectSuggestionsTool(submission as any, contract!);
+    const checkpoints: Array<{ name: string; payload: unknown }> = [];
+    const tool = createSubmitProjectSuggestionsTool(submission as any, contract!, {
+      append: () => {},
+      checkpoint: (name, payload) => checkpoints.push({ name, payload }),
+    });
     await expect((tool.execute as any)({ summary: 'Demo project', suggestions: [] }))
       .rejects.toThrow('exactly three project suggestions');
 
     await expect((tool.execute as any)(JSON.parse(suggestions))).resolves.toContain('Accepted');
     expect((submission.result as any)?.suggestions).toHaveLength(3);
     expect((submission.result as any)?.inspectedFiles).toBe(99);
+    expect(checkpoints).toEqual([{
+      name: 'structured-delivery',
+      payload: { kind: 'project-suggestions', result: submission.result },
+    }]);
   });
 
   it('rejects suggestions that repeat an existing agent responsibility', async () => {

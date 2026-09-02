@@ -25,6 +25,7 @@ export interface AgentCreationDraft {
   name?: string;
   objective: string;
   model: string;
+  reasoning?: ReasoningLevel;
 }
 
 function defaultModel(payload: AgentCreationOptionsPayload): string {
@@ -165,6 +166,7 @@ export function AgentCreateDialog(props: {
   title?: string;
   initialProjectId?: string;
   initialModel?: string;
+  initialDraft?: AgentCreationDraft | null;
   lockProject?: boolean;
   onCreated: (agent: AgentRow) => void;
   onCodingAgent?: (draft: AgentCreationDraft) => void;
@@ -205,17 +207,18 @@ export function AgentCreateDialog(props: {
     setCreatedAgent(null);
     setProjectId('');
     setModel('');
-    setReasoning('medium');
-    setObjective('');
+    setReasoning(props.initialDraft?.reasoning ?? 'medium');
+    setObjective(props.initialDraft?.objective ?? '');
     void fetchAgentCreationOptions().then((next) => {
-      const initialSelection = initialModelSelection(next, props.initialModel);
+      const initialSelection = initialModelSelection(next, props.initialDraft?.model ?? props.initialModel);
       setPayload(next);
-      setProjectId(props.initialProjectId && next.projects.some((project) => project.id === props.initialProjectId)
-        ? props.initialProjectId
+      const requestedProjectId = props.initialDraft?.projectId ?? props.initialProjectId;
+      setProjectId(requestedProjectId && next.projects.some((project) => project.id === requestedProjectId)
+        ? requestedProjectId
         : next.default ?? next.projects[0]?.id ?? '');
       setModel(initialSelection);
     }, (caught) => setError((caught as Error).message || 'Could not load agent creation options.'));
-  }, [props.open, props.initialProjectId, props.initialModel]);
+  }, [props.open, props.initialProjectId, props.initialModel, props.initialDraft]);
 
   useEffect(() => {
     if (!props.open || phase !== 'creating') return;
@@ -258,7 +261,8 @@ export function AgentCreateDialog(props: {
     projectPath: project?.path ?? '',
     objective: objective.trim(),
     model: model.trim(),
-  }), [projectId, project?.path, objective, model]);
+    reasoning,
+  }), [projectId, project?.path, objective, model, reasoning]);
 
   const submit = async () => {
     if (!canSubmit) return;
@@ -398,6 +402,7 @@ export function NewAgentButton(props: { initialProjectId?: string; autoOpen?: bo
       {error && <span class="new-agent-error" role="alert">{error}</span>}
       <AgentCreateDialog
         open={createOpen}
+        initialDraft={draft}
         {...(props.initialProjectId ? { initialProjectId: props.initialProjectId } : {})}
         {...(props.initialProjectId ? { lockProject: true } : {})}
         onCreated={(agent) => {
