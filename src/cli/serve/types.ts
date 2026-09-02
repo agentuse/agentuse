@@ -99,7 +99,6 @@ export interface SessionSummary {
 
 export type SessionPurpose = {
   kind: 'agent-revision';
-  mode: 'fix' | 'improve';
   originSessionId: string;
   targetAgentName: string;
 };

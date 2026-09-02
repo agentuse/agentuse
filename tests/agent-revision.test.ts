@@ -24,7 +24,7 @@ afterEach(async () => {
   else process.env.AGENTUSE_DATA_DIR = priorDataDir;
 });
 
-async function fixture() {
+async function fixture(options: { explicitName?: boolean } = {}) {
   const projectRoot = await mkdtemp(join(tmpdir(), 'agent-revision-project-'));
   const dataRoot = await mkdtemp(join(tmpdir(), 'agent-revision-data-'));
   cleanups.push(
@@ -35,7 +35,7 @@ async function fixture() {
   const targetAgentPath = join(projectRoot, 'support-triage.agentuse');
   const currentSource = [
     '---',
-    'name: Support triage',
+    ...(options.explicitName === false ? [] : ['name: Support triage']),
     'model: openai:gpt-5.6-luna',
     'description: Prioritize support tickets',
     'schedule: 0 9 * * 1',
@@ -59,7 +59,6 @@ async function fixture() {
     targetAgentPath,
     targetAgentRunPath: 'support-triage.agentuse',
     targetAgentName: 'Support triage',
-    mode: 'fix',
     instruction: 'Exclude refunded orders.',
     authoringModel: 'openai:gpt-5.6-luna',
     expectedSourceHash: sourceHash(currentSource),
@@ -89,7 +88,6 @@ describe('internal agent revision', () => {
       projectRoot: f.projectRoot,
       targetAgentPath: f.targetAgentPath,
       targetAgentName: 'Support triage',
-      mode: 'fix',
       instruction: 'Exclude refunded orders.',
       model: 'openai:gpt-5.6-luna',
       expectedSourceHash: sourceHash(f.currentSource),
@@ -101,13 +99,17 @@ describe('internal agent revision', () => {
       availableSkills: [],
     });
     const parsed = parseAgentContent(source, 'revision');
-    expect(parsed.name).toBe('Fix Support triage');
+    expect(parsed.name).toBe('Revise Support triage');
     expect(parsed.config.tools?.await_human).toBe(true);
     expect(parsed.config.approval).toBeUndefined();
     expect(parsed.config.metadata?.reviser).toBe('agent');
     expect(source).toContain('submit_agent_revision');
     expect(source).toContain('The agent stopped when it encountered refunded orders.');
     expect(source).toContain('treat that as the primary incident unless the operator explicitly asks about an earlier failure');
+    expect(source).toContain('the authoritative scope boundary');
+    expect(source).toContain('removing a `schedule` field does not authorize changing “daily” to “on-demand.”');
+    expect(source).toContain('revert every change that cannot be tied to an exact phrase in the operator instruction');
+    expect(source).toContain('Classification changes the diagnosis, not the authorized edit scope.');
   });
 
   it('validates a proposal, applies it atomically, and restores the prior source', async () => {
@@ -145,6 +147,36 @@ describe('internal agent revision', () => {
     });
     expect(restored.status).toBe('restored');
     expect(await readFile(f.targetAgentPath, 'utf8')).toBe(f.currentSource);
+  });
+
+  it('preserves an omitted frontmatter name while removing a schedule', async () => {
+    const f = await fixture({ explicitName: false });
+    const tool = createSubmitAgentRevisionTool({}, f.contract);
+    const proposedSource = f.currentSource.replace('schedule: 0 9 * * 1\n', '');
+
+    await expect((tool.execute as any)({
+      outcome: 'revision-proposed',
+      diagnosis: 'The operator disabled recurring runs.',
+      summary: 'Remove the schedule.',
+      source: proposedSource,
+    })).resolves.toContain('ready for operator review');
+
+    const proposal = await readAgentRevisionRecord(f.projectRoot, f.revisionSessionId);
+    expect(proposal?.proposedSource).not.toContain('name:');
+    expect(proposal?.capabilityChanges).toEqual(['Schedule changed']);
+  });
+
+  it('rejects adding a synthetic name when the current source omits one', async () => {
+    const f = await fixture({ explicitName: false });
+    const tool = createSubmitAgentRevisionTool({}, f.contract);
+    const proposedSource = f.currentSource.replace('---\n', '---\nname: current-agent\n');
+
+    await expect((tool.execute as any)({
+      outcome: 'revision-proposed',
+      diagnosis: 'The operator disabled recurring runs.',
+      summary: 'Remove the schedule.',
+      source: proposedSource,
+    })).rejects.toThrow('must not add an explicit agent name');
   });
 
   it('returns a structured no-change diagnosis without touching source', async () => {

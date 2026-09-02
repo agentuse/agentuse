@@ -126,7 +126,7 @@ export function SessionRowView(props: {
   const agentActive = agentFilter === row.agent.id;
   const revision = row.purpose?.kind === 'agent-revision' ? row.purpose : undefined;
   const displayName = revision
-    ? `${revision.mode === 'fix' ? 'Fixing' : 'Improving'} ${revision.targetAgentName}`
+    ? `Revising ${revision.targetAgentName}`
     : row.agent.name || row.agent.id;
   const originHref = revision
     ? `/sessions/${encodeURIComponent(revision.originSessionId)}?project=${encodeURIComponent(row.project)}`

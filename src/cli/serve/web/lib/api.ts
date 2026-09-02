@@ -6,7 +6,7 @@ import type { ProviderCatalogEntry } from "../../../../auth/provider-setup";
 import type { ProviderStatus } from "../../../../auth/provider-status";
 import type { AgentCreationProvider } from "../../../../agents/create";
 import type { ReasoningLevel } from "../../../../model-compatibility";
-import type { AgentRevisionMode, AgentRevisionRecord } from "../../../../agents/revision";
+import type { AgentRevisionRecord } from "../../../../agents/revision";
 
 export type { SerializedSchedule };
 
@@ -720,7 +720,6 @@ export function startAgentRevision(input: {
   sessionId: string;
   token?: string;
   project?: string;
-  mode: AgentRevisionMode;
   instruction: string;
   model: string;
   reasoning?: ReasoningLevel;
@@ -728,7 +727,6 @@ export function startAgentRevision(input: {
   const path = withToken(`/sessions/${encodeURIComponent(input.sessionId)}/revisions`, input.token);
   return postJson(path, {
     ...(input.project && { project: input.project }),
-    mode: input.mode,
     instruction: input.instruction,
     model: input.model,
     ...(input.reasoning && { reasoning: input.reasoning }),

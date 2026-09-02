@@ -1372,7 +1372,7 @@ export default function SessionDetail() {
   // The name is the headline; the description (often a full sentence with
   // implementation notes) reads as a subhead rather than a giant multi-line H1.
   const revisionTitle = revisionIdentity
-    ? `${revisionIdentity.mode === 'fix' ? 'Fixing' : 'Improving'} ${revisionIdentity.targetAgentName}`
+    ? `Revising ${revisionIdentity.targetAgentName}`
     : undefined;
   const pageAgentLabel = revisionTitle ?? agentLabel;
   const agentIdentityLabel = isRevisionSession ? 'AgentUse Reviser' : agentLabel;

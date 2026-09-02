@@ -111,7 +111,6 @@ import {
   restoreAgentRevision,
   sourceHash,
   writeInternalAgentRevisionSource,
-  type AgentRevisionMode,
   type AgentRevisionRecord,
 } from "../agents/revision";
 import {
@@ -1950,11 +1949,10 @@ function sessionMatchesAgentFilter(session: SessionSummary, filter: string): boo
 }
 
 function agentRevisionSessionPurpose(
-  record: Pick<AgentRevisionRecord, 'mode' | 'originSessionId' | 'targetAgentName'>
+  record: Pick<AgentRevisionRecord, 'originSessionId' | 'targetAgentName'>
 ): SessionPurpose {
   return {
     kind: 'agent-revision',
-    mode: record.mode,
     originSessionId: record.originSessionId,
     targetAgentName: record.targetAgentName,
   };
@@ -8081,11 +8079,6 @@ export function createServeCommand(): Command {
               });
               return;
             }
-            const mode: AgentRevisionMode | undefined = body.mode === 'fix' || body.mode === 'improve' ? body.mode : undefined;
-            if (!mode) {
-              sendError(res, 400, 'REVISION_MODE_REQUIRED', 'Choose whether to fix or improve the agent');
-              return;
-            }
             const instruction = typeof body.instruction === 'string' ? body.instruction.trim() : '';
             if (!instruction || instruction.length > 12_000) {
               sendError(res, 400, 'REVISION_INSTRUCTION_REQUIRED', 'Describe what the revision should focus on');
@@ -8147,7 +8140,6 @@ export function createServeCommand(): Command {
               projectRoot: found.project.root,
               targetAgentPath: targetAgent.filePath,
               targetAgentName,
-              mode,
               instruction,
               model,
               ...(reasoning && { reasoning }),
@@ -8181,7 +8173,6 @@ export function createServeCommand(): Command {
                 ? { targetAgentRunPath: found.info.approval.agent.runPath }
                 : {}),
               targetAgentName,
-              mode,
               instruction,
               authoringModel: model,
               expectedSourceHash,

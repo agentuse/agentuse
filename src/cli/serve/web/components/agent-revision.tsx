@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ReasoningLevel } from '../../../../model-compatibility';
-import type { AgentRevisionMode, AgentRevisionRecord } from '../../../../agents/revision';
+import type { AgentRevisionRecord } from '../../../../agents/revision';
+import { revisionLineDiff } from '../lib/revision-diff';
 import {
   fetchAgentCreationOptions,
   fetchAgentRevision,
@@ -43,8 +44,8 @@ function storeAuthoring(patch: { model?: string; reasoning?: ReasoningLevel }): 
   } catch { /* remembering the last choice is a convenience only */ }
 }
 
-export function revisionLabel(revision: Pick<AgentRevisionSummary, 'status' | 'mode'>): string {
-  if (revision.status === 'running') return `${revision.mode === 'fix' ? 'Fix' : 'Improvement'} session is running`;
+export function revisionLabel(revision: Pick<AgentRevisionSummary, 'status'>): string {
+  if (revision.status === 'running') return 'Revision session is running';
   if (revision.status === 'proposed') return 'Revision ready to review';
   if (revision.status === 'no-change') return 'Revision needs review';
   if (revision.status === 'accepted') return 'Diagnosis accepted';
@@ -54,10 +55,10 @@ export function revisionLabel(revision: Pick<AgentRevisionSummary, 'status' | 'm
   return 'Revision stopped';
 }
 
-export function revisionOriginDescription(revision: Pick<AgentRevisionSummary, 'status' | 'mode' | 'targetAgentName'>): string {
+export function revisionOriginDescription(revision: Pick<AgentRevisionSummary, 'status' | 'targetAgentName'>): string {
   if (revision.status === 'no-change') return 'Review this diagnosis before starting another revision.';
   if (revision.status === 'accepted') return 'No agent source change was made. You can start another revision.';
-  return `${revision.mode === 'fix' ? 'Fixing' : 'Improving'} ${revision.targetAgentName} from this run.`;
+  return `Revising ${revision.targetAgentName} from this run.`;
 }
 
 export function revisionOriginAction(revision: Pick<AgentRevisionSummary, 'status'>, active: boolean): string {
@@ -83,9 +84,6 @@ export function AgentRevisionLauncher(props: {
 }) {
   const [open, setOpen] = useState(false);
   const [codingOpen, setCodingOpen] = useState(false);
-  const [mode, setMode] = useState<AgentRevisionMode>(
-    props.context.sessionStatus === 'completed' ? 'improve' : 'fix'
-  );
   const [instruction, setInstruction] = useState('');
   const [model, setModel] = useState('');
   const [reasoning, setReasoning] = useState<ReasoningLevel>('medium');
@@ -132,7 +130,6 @@ export function AgentRevisionLauncher(props: {
   }, [props.context.sessionId, props.context.projectId]);
 
   useEffect(() => {
-    setMode(props.context.sessionStatus === 'completed' ? 'improve' : 'fix');
     setInstruction('');
     setOpen(false);
     setCodingOpen(false);
@@ -190,7 +187,6 @@ export function AgentRevisionLauncher(props: {
         sessionId: props.context.sessionId,
         ...(props.token && { token: props.token }),
         ...(props.context.projectId && { project: props.context.projectId }),
-        mode,
         instruction: instruction.trim(),
         model,
         reasoning,
@@ -240,7 +236,7 @@ export function AgentRevisionLauncher(props: {
             <div class={`agent-revision-link is-compact is-${revision.status}`} key={revision.revisionSessionId}>
               <span class="agent-revision-link-copy">
                 <strong>{revisionLabel(revision)}</strong>
-                <span>{revision.mode === 'fix' ? 'Fix' : 'Improvement'} · {relativeTime(revision.updatedAt)}</span>
+                <span>Revision · {relativeTime(revision.updatedAt)}</span>
               </span>
               <a class="agent-revision-open" href={revisionHref(revision, undefined, props.context.projectId)}>View revision</a>
             </div>
@@ -253,11 +249,11 @@ export function AgentRevisionLauncher(props: {
         </div>
       )}
       {historyLoaded && !latest && !open && (
-        <button type="button" class={`debug-prompt-button${props.atGate ? '' : ' is-primary'}`} title="Fix or improve this agent's source from what this run did" onClick={() => void begin()}>
+        <button type="button" class={`debug-prompt-button${props.atGate ? '' : ' is-primary'}`} title="Diagnose this run and propose a change to this agent's source" onClick={() => void begin()}>
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
           </svg>
-          <span>Improve agent</span>
+          <span>Revise agent</span>
         </button>
       )}
       {open && <section class="agent-revision-form" aria-labelledby="agent-revision-title">
@@ -265,11 +261,7 @@ export function AgentRevisionLauncher(props: {
         <div class="agent-revision-form-body">
           <div class="agent-revision-intro"><span>Start one internal session to diagnose this run and propose a safe source change. Nothing changes until you review and apply it.</span></div>
           {props.atGate && <p class="agent-revision-gate-note">This will not change the run paused below — it revises the agent for the next run. Approve or reject the pending step to continue this one.</p>}
-          <div class="agent-revision-modes">
-            <button type="button" class={mode === 'fix' ? 'is-selected' : ''} aria-pressed={mode === 'fix'} onClick={() => setMode('fix')}><strong>Fix a problem</strong><span>Make the smallest durable correction.</span></button>
-            <button type="button" class={mode === 'improve' ? 'is-selected' : ''} aria-pressed={mode === 'improve'} onClick={() => setMode('improve')}><strong>Improve behavior</strong><span>Refine quality, cost, or reliability.</span></button>
-          </div>
-          <label class="agent-revision-field"><span>What should change?</span><textarea value={instruction} disabled={busy} placeholder={mode === 'fix' ? 'e.g. exclude refunded orders instead of treating them as unknown' : 'e.g. make future results shorter without missing urgent tickets'} onInput={(event) => setInstruction((event.target as HTMLTextAreaElement).value)} /></label>
+          <label class="agent-revision-field"><span>What should change?</span><textarea value={instruction} disabled={busy} placeholder="e.g. exclude refunded orders, or make results shorter without missing urgent tickets" onInput={(event) => setInstruction((event.target as HTMLTextAreaElement).value)} /></label>
           <div class="agent-revision-models">
             <label class="agent-revision-field"><span>Authoring model</span><select value={model} disabled={busy || loadingOptions} onChange={(event) => { const value = (event.target as HTMLSelectElement).value; setModel(value); storeAuthoring({ model: value }); }}>{models.map((option) => <option value={option.value}>{option.label}</option>)}</select></label>
             <label class="agent-revision-field"><span>Thinking effort</span><select value={reasoning} disabled={busy} onChange={(event) => { const value = (event.target as HTMLSelectElement).value as ReasoningLevel; setReasoning(value); storeAuthoring({ reasoning: value }); }}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
@@ -292,22 +284,6 @@ export function AgentRevisionLauncher(props: {
       />
     </>
   );
-}
-
-function simpleLineDiff(currentSource: string, proposedSource: string): Array<{ kind: 'same' | 'add' | 'remove'; text: string }> {
-  const current = currentSource.split('\n');
-  const proposed = proposedSource.split('\n');
-  let prefix = 0;
-  while (prefix < current.length && prefix < proposed.length && current[prefix] === proposed[prefix]) prefix++;
-  let suffix = 0;
-  while (suffix < current.length - prefix && suffix < proposed.length - prefix
-    && current[current.length - 1 - suffix] === proposed[proposed.length - 1 - suffix]) suffix++;
-  return [
-    ...current.slice(Math.max(0, prefix - 2), prefix).map((text) => ({ kind: 'same' as const, text })),
-    ...current.slice(prefix, current.length - suffix).map((text) => ({ kind: 'remove' as const, text })),
-    ...proposed.slice(prefix, proposed.length - suffix).map((text) => ({ kind: 'add' as const, text })),
-    ...proposed.slice(proposed.length - suffix, Math.min(proposed.length, proposed.length - suffix + 2)).map((text) => ({ kind: 'same' as const, text })),
-  ];
 }
 
 export function AgentRevisionSessionPanel(props: {
@@ -383,7 +359,7 @@ export function AgentRevisionSessionPanel(props: {
   };
 
   const diff = useMemo(() => revision?.proposedSource && (revision.baseSource ?? props.currentSource)
-    ? simpleLineDiff((revision.baseSource ?? props.currentSource)!, revision.proposedSource)
+    ? revisionLineDiff((revision.baseSource ?? props.currentSource)!, revision.proposedSource)
     : [], [revision?.proposedSource, revision?.baseSource, props.currentSource]);
 
   if (!isRevision) return null;
@@ -409,14 +385,14 @@ export function AgentRevisionSessionPanel(props: {
       )}
       {revision.status === 'proposed' && revision.proposedSource && (
         <>
-          <div class="agent-revision-proposal-title"><strong>{revision.summary}</strong><span>The agent file is unchanged.</span></div>
+          <div class="agent-revision-proposal-title"><strong>{revision.summary}</strong><span>No changes applied yet.</span></div>
           <div class="agent-revision-capabilities">
             <strong>Capability review</strong>
             {revision.capabilityChanges && revision.capabilityChanges.length > 0
               ? <ul>{revision.capabilityChanges.map((change) => <li>{change}</li>)}</ul>
               : <span>No model, schedule, tool, skill, integration, sub-agent, or channel changes.</span>}
           </div>
-          <pre class="agent-revision-diff" aria-label="Proposed agent source changes">{diff.length > 0 ? diff.map((line) => <span class={`is-${line.kind}`}>{line.kind === 'add' ? '+ ' : line.kind === 'remove' ? '- ' : '  '}{line.text}{'\n'}</span>) : revision.proposedSource}</pre>
+          <pre class="agent-revision-diff" aria-label="Proposed agent source changes">{diff.length > 0 ? diff.map((line) => <span class={`is-${line.kind}`}>{line.kind === 'add' ? '+ ' : line.kind === 'remove' ? '- ' : line.kind === 'same' ? '  ' : ''}{line.text}{'\n'}</span>) : revision.proposedSource}</pre>
           <div class="agent-revision-review-actions"><button type="button" class="agent-revision-primary" disabled={busy !== null} onClick={() => void act('apply')}>{busy === 'apply' ? 'Applying…' : 'Apply revision'}</button><button type="button" disabled={busy !== null} onClick={() => setRequestingChanges((value) => !value)}>Request changes</button><button type="button" class="is-quiet" disabled={busy !== null} onClick={() => void act('discard')}>Discard</button></div>
           {requestingChanges && <div class="agent-revision-change-request"><textarea value={changePrompt} placeholder="Keep the existing schedule, but make the output shorter…" onInput={(event) => setChangePrompt((event.target as HTMLTextAreaElement).value)} /><button type="button" class="agent-revision-primary" disabled={!changePrompt.trim()} onClick={() => void requestChanges()}>Continue revision session</button></div>}
         </>
@@ -429,7 +405,7 @@ export function AgentRevisionSessionPanel(props: {
 
 export type AgentRevisionSessionIdentity = Pick<
   AgentRevisionRecord,
-  'mode' | 'originSessionId' | 'targetAgentName'
+  'originSessionId' | 'targetAgentName'
 >;
 
 function revisionFallbackOriginHref(originSessionId: string, project?: string): string {
