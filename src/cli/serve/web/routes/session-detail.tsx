@@ -1927,6 +1927,7 @@ export default function SessionDetail() {
           ) : approval.agent.filePath && !isRevisionSession ? (
             <AgentRevisionLauncher
               ended={ended}
+              atGate={approval.sessionStatus === 'suspended'}
               token={token}
               context={{
                 sessionId: approval.sessionId,

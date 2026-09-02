@@ -7156,6 +7156,16 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   font-size: var(--font-size-micro);
 }
 .agent-revision-more:hover { color: var(--fg); background: var(--panel-hover); }
+.agent-revision-gate-note {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--muted);
+  border-left: 3px solid var(--amber);
+  border-radius: 4px;
+  background: var(--panel-hover);
+  font-size: var(--font-size-micro);
+  line-height: var(--lh-snug);
+}
 .agent-revision-link.is-compact .agent-revision-link-copy span { color: var(--muted-3); }
 .agent-revision-pulse {
   display: inline-block;

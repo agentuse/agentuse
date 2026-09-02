@@ -77,6 +77,8 @@ function revisionHref(revision: AgentRevisionSummary & { href?: string }, token?
 export function AgentRevisionLauncher(props: {
   context: DebugPromptContext;
   ended: boolean;
+  /** A run paused at an approval gate is the clearest evidence of a bad step, so it can be revised too. */
+  atGate?: boolean;
   token?: string | undefined;
 }) {
   const [open, setOpen] = useState(false);
@@ -211,7 +213,7 @@ export function AgentRevisionLauncher(props: {
   };
 
   const active = Boolean(activeRevision);
-  if (!props.ended || !props.context.agentFilePath) return null;
+  if ((!props.ended && !props.atGate) || !props.context.agentFilePath) return null;
 
   return (
     <>
@@ -251,7 +253,7 @@ export function AgentRevisionLauncher(props: {
         </div>
       )}
       {historyLoaded && !latest && !open && (
-        <button type="button" class="debug-prompt-button is-primary" title="Fix or improve this agent's source from what this run did" onClick={() => void begin()}>
+        <button type="button" class={`debug-prompt-button${props.atGate ? '' : ' is-primary'}`} title="Fix or improve this agent's source from what this run did" onClick={() => void begin()}>
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
           </svg>
@@ -262,6 +264,7 @@ export function AgentRevisionLauncher(props: {
         <div class="agent-revision-form-head"><span id="agent-revision-title">Revise {props.context.agentName ?? 'this agent'}</span><button type="button" aria-label="Close revision form" disabled={busy} onClick={() => setOpen(false)}>×</button></div>
         <div class="agent-revision-form-body">
           <div class="agent-revision-intro"><span>Start one internal session to diagnose this run and propose a safe source change. Nothing changes until you review and apply it.</span></div>
+          {props.atGate && <p class="agent-revision-gate-note">This will not change the run paused below — it revises the agent for the next run. Approve or reject the pending step to continue this one.</p>}
           <div class="agent-revision-modes">
             <button type="button" class={mode === 'fix' ? 'is-selected' : ''} aria-pressed={mode === 'fix'} onClick={() => setMode('fix')}><strong>Fix a problem</strong><span>Make the smallest durable correction.</span></button>
             <button type="button" class={mode === 'improve' ? 'is-selected' : ''} aria-pressed={mode === 'improve'} onClick={() => setMode('improve')}><strong>Improve behavior</strong><span>Refine quality, cost, or reliability.</span></button>
