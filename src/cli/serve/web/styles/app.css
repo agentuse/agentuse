@@ -1907,34 +1907,51 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+/* Same segmented control as .session-view-toggle: an inset track holding one
+   raised, selected tile. Kept deliberately quieter than that one -- this sits on
+   a section rule, not in the header -- but the shape has to read as the same
+   component, because it is. */
 .log-filter {
   display: inline-flex;
   align-items: center;
+  gap: 2px;
+  padding: 2px;
   border: 1px solid var(--line);
-  border-radius: 999px;
-  overflow: hidden;
+  border-radius: 8px;
+  background: var(--panel);
 }
-.log-filter-btn {
+/* The compound selector out-specifies the :where()-weakened 40px base button
+   rule, same trick .approval-copy uses above. Without it these render as four
+   full-size bordered buttons. */
+.log-filter-btn,
+.page-approval-detail button.log-filter-btn {
   appearance: none;
   border: 0;
+  border-radius: 6px;
   background: transparent;
   cursor: pointer;
   color: var(--muted-3);
-  font: inherit;
+  font-family: var(--sans);
   font-size: var(--font-size-micro);
+  font-weight: var(--weight-normal);
   letter-spacing: normal;
-  /* 28px keeps the row comfortably above the 24px pointer-target floor without
-     out-weighing the section rule it sits on. */
-  min-height: 28px;
-  padding: 0 10px;
+  /* 26px + the track's 2px padding clears the 24px pointer-target floor without
+     out-weighing the section title it sits beside. */
+  min-height: 26px;
+  padding: 0 9px;
 }
-.log-filter-btn + .log-filter-btn { border-left: 1px solid var(--line); }
-.log-filter-btn:hover { color: var(--fg); }
-.log-filter-btn.is-on {
-  color: var(--cyan);
-  background: var(--cyan-soft);
+.page-approval-detail button.log-filter-btn:hover {
+  color: var(--fg);
+  background: var(--panel-hover);
+  border-color: transparent;
 }
-.log-filter-btn:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: -2px; }
+.page-approval-detail button.log-filter-btn.is-on {
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.page-approval-detail button.log-filter-btn:active { transform: none; }
+.log-filter-btn:focus-visible { outline: 2px solid var(--cyan); outline-offset: 1px; }
 
 /* "debug" toggle in the session-log header. */
 .log-debug-toggle {

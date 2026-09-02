@@ -90,6 +90,12 @@ interface SessionViewState {
   scrollY: number;
 }
 const sessionViewState = new Map<string, SessionViewState>();
+
+/** Transcript disclosure for a session with no banked state: the remembered
+ *  preference, defaulting to open. */
+export function transcriptDefaultOpen(): boolean {
+  try { return localStorage.getItem('agentuse:session:transcriptOpen') !== '0'; } catch { return true; }
+}
 const SESSION_VIEW_STATE_CAP = 20;
 
 export function rememberSessionViewState(id: string, next: SessionViewState): void {
@@ -445,11 +451,14 @@ export default function SessionDetail() {
   const [logsTotal, setLogsTotal] = useState<number | null>(null);
   const [logQuery, setLogQuery] = useState('');
   const [showLogSearch, setShowLogSearch] = useState(false);
-  // Whether the summary-first transcript is open. Controlled rather than left to
-  // the uncontrolled <details> so it can be banked with the rest of the view
-  // state -- a re-collapsed transcript also makes the page too short for the
-  // scroll restore below to land anywhere useful.
-  const [transcriptOpen, setTranscriptOpen] = useState(false);
+  // Whether the summary-first transcript is open. Open by default: a collapsed
+  // log reads as absent rather than as available, so the common path was opening
+  // it by hand on every finished run. Collapsing it is remembered, so anyone who
+  // does want the tidy summary-only view keeps it. Controlled rather than left to
+  // the uncontrolled <details> so it can also be banked per session -- and a
+  // re-collapsed transcript leaves the page too short for the scroll restore
+  // below to land anywhere useful.
+  const [transcriptOpen, setTranscriptOpen] = useState<boolean>(transcriptDefaultOpen);
   // Entry-type filter. A long run is mostly tool calls, so free-text search is a
   // poor way to find the agent's reasoning spine or the thing that failed.
   const [logFilter, setLogFilter] = useState<LogFilter>(() => {
@@ -611,7 +620,7 @@ export default function SessionDetail() {
     setLogsTotal(null);
     setLogQuery(banked?.logQuery ?? '');
     setShowLogSearch(banked?.showLogSearch ?? false);
-    setTranscriptOpen(banked?.transcriptOpen ?? false);
+    setTranscriptOpen(banked?.transcriptOpen ?? transcriptDefaultOpen());
     restoreScrollRef.current = banked && banked.scrollY > 0 ? banked.scrollY : null;
     restoreAttemptsRef.current = 0;
     // Re-latch the summary-first decision, and the keyed uncontrolled
@@ -828,6 +837,10 @@ export default function SessionDetail() {
   useEffect(() => {
     try { localStorage.setItem('agentuse:session:logFilter', logFilter); } catch { /* ignore */ }
   }, [logFilter]);
+
+  useEffect(() => {
+    try { localStorage.setItem('agentuse:session:transcriptOpen', transcriptOpen ? '1' : '0'); } catch { /* ignore */ }
+  }, [transcriptOpen]);
 
   // Initial + follow scroll: stick to the page end while the user is near it.
   useLayoutEffect(() => {
