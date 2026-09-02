@@ -7306,6 +7306,14 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   color: var(--fg);
   background: var(--panel);
   overflow: hidden;
+  animation: agent-revision-form-in 0.12s ease-out both;
+}
+@keyframes agent-revision-form-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-revision-form { animation: none; }
 }
 
 .agent-revision-form-head {
