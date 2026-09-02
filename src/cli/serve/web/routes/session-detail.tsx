@@ -63,6 +63,45 @@ function formatUsagePercent(value: number | undefined): string | undefined {
   return typeof value === 'number' ? `${value.toFixed(1)}%` : undefined;
 }
 
+/** Entry-type filter for the session log. 'agent' = the model's own spine
+ *  (text/reasoning), 'tools' = tool calls, 'errors' = anything that failed. */
+export type LogFilter = 'all' | 'agent' | 'tools' | 'errors';
+
+/** Does an entry survive the type filter? The pending approval gate always
+ *  does — filtering the decision you're here to make off the page is never
+ *  what the reviewer meant. */
+export function matchesLogFilter(entry: ApprovalLogEntry, filter: LogFilter): boolean {
+  if (filter === 'all' || entry.type === 'approval') return true;
+  if (filter === 'agent') return entry.type === 'text' || entry.type === 'reasoning';
+  if (filter === 'tools') return entry.type === 'tool';
+  return entry.type === 'error' || entry.status === 'error' || entry.level === 'error';
+}
+
+/** Per-session view state, kept across in-app navigations so stepping into a
+ *  sub-agent and back doesn't re-collapse the parent's log, drop its search, or
+ *  throw away the reader's scroll position. Module-level (not state) because the
+ *  router reuses this component instance across /sessions/:id. */
+interface SessionViewState {
+  expandOverrides: Map<string, boolean>;
+  logQuery: string;
+  showLogSearch: boolean;
+  logsLimit: number;
+  transcriptOpen: boolean;
+  scrollY: number;
+}
+const sessionViewState = new Map<string, SessionViewState>();
+const SESSION_VIEW_STATE_CAP = 20;
+
+export function rememberSessionViewState(id: string, next: SessionViewState): void {
+  sessionViewState.delete(id);
+  sessionViewState.set(id, next);
+  while (sessionViewState.size > SESSION_VIEW_STATE_CAP) {
+    const oldest = sessionViewState.keys().next().value;
+    if (oldest === undefined) break;
+    sessionViewState.delete(oldest);
+  }
+}
+
 export function headerTokenUsage(
   approval: Pick<ApprovalPageInfo, 'sessionStatus' | 'tokenUsage'> | null
 ): ApprovalPageInfo['tokenUsage'] | undefined {
@@ -74,11 +113,11 @@ export function headerTokenUsage(
  * error after the actions. */
 export function shouldShowResultNotice(
   result: { text: string; error: boolean },
-  summaryFirst: boolean,
+  hasResultCard: boolean,
   resultErrorText: string
 ): boolean {
   return Boolean(result.text)
-    && !(summaryFirst && result.error && result.text === resultErrorText);
+    && !(hasResultCard && result.error && result.text === resultErrorText);
 }
 
 export interface TokenMetaItem {
@@ -406,11 +445,36 @@ export default function SessionDetail() {
   const [logsTotal, setLogsTotal] = useState<number | null>(null);
   const [logQuery, setLogQuery] = useState('');
   const [showLogSearch, setShowLogSearch] = useState(false);
+  // Whether the summary-first transcript is open. Controlled rather than left to
+  // the uncontrolled <details> so it can be banked with the rest of the view
+  // state -- a re-collapsed transcript also makes the page too short for the
+  // scroll restore below to land anywhere useful.
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
+  // Entry-type filter. A long run is mostly tool calls, so free-text search is a
+  // poor way to find the agent's reasoning spine or the thing that failed.
+  const [logFilter, setLogFilter] = useState<LogFilter>(() => {
+    try {
+      const stored = localStorage.getItem('agentuse:session:logFilter');
+      return stored === 'agent' || stored === 'tools' || stored === 'errors' ? stored : 'all';
+    } catch { return 'all'; }
+  });
   // Debug-level operational logs are hidden by default to keep the log readable;
   // the preference persists across sessions.
   const [showDebug, setShowDebug] = useState<boolean>(() => {
     try { return localStorage.getItem('agentuse:session:showDebug') === '1'; } catch { return false; }
   });
+  // Latest per-session view state, read by the [sessionId] cleanup below (which
+  // closes over the *outgoing* id) to bank what the reader had open.
+  const uiStateRef = useRef({ expandOverrides, logQuery, showLogSearch, logsLimit, transcriptOpen });
+  uiStateRef.current = { expandOverrides, logQuery, showLogSearch, logsLimit, transcriptOpen };
+  // Scroll offset to restore on the next first paint, set when returning to a
+  // session we have banked state for. null = no restore pending.
+  const restoreScrollRef = useRef<number | null>(null);
+  // Log commits arrive over several frames, so the page is often still too short
+  // to honour the restore on the first one. Retry across commits, bounded so a
+  // target that can never be reached (entries since trimmed) still releases the
+  // first-paint branch to its normal behaviour.
+  const restoreAttemptsRef = useRef(0);
   // True once the page is scrolled away from the top; reveals the session bar's
   // scroll-to-top control (the bar itself stays pinned for both view types).
   const [scrolled, setScrolled] = useState(false);
@@ -535,20 +599,33 @@ export default function SessionDetail() {
     setStatus('loading');
     setPendingActionable(false);
     setSelectedChoice(null);
-    setExpandOverrides(new Map());
+    const banked = sessionViewState.get(sessionId);
+    setExpandOverrides(banked ? new Map(banked.expandOverrides) : new Map());
     setResult({ text: '', error: false });
     setFatalError(null);
     setIsRevisionSession(false);
     setRevisionIdentity(null);
     setLogsVersion((v) => v + 1);
     setArtifacts([]);
-    setLogsLimit(400);
+    setLogsLimit(banked?.logsLimit ?? 400);
     setLogsTotal(null);
-    setLogQuery('');
-    setShowLogSearch(false);
+    setLogQuery(banked?.logQuery ?? '');
+    setShowLogSearch(banked?.showLogSearch ?? false);
+    setTranscriptOpen(banked?.transcriptOpen ?? false);
+    restoreScrollRef.current = banked && banked.scrollY > 0 ? banked.scrollY : null;
+    restoreAttemptsRef.current = 0;
     // Re-latch the summary-first decision, and the keyed uncontrolled
     // <details> transcript remounts closed for the new session.
     firstViewEndedRef.current = null;
+    // Bank this session's view state on the way out, so stepping into a
+    // sub-agent and coming back doesn't cost the reader their place.
+    return () => {
+      rememberSessionViewState(sessionId, {
+        ...uiStateRef.current,
+        expandOverrides: new Map(uiStateRef.current.expandOverrides),
+        scrollY: typeof window === 'undefined' ? 0 : window.scrollY,
+      });
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
@@ -662,8 +739,9 @@ export default function SessionDetail() {
       !nestedLogIds.has(e.id)
       && (showDebug || !isDebugLog(e))
       && !(e.type === 'learning' && e.status !== 'error')
+      && matchesLogFilter(e, logFilter)
     ),
-    [orderedLogs, showDebug, nestedLogIds]
+    [orderedLogs, showDebug, nestedLogIds, logFilter]
   );
   // Operational log lines (type 'log') can repeat identically many times in a row
   // (e.g. "Calling model: ..." or repeated MCP chatter). Collapse consecutive
@@ -747,10 +825,30 @@ export default function SessionDetail() {
     try { localStorage.setItem('agentuse:session:showDebug', showDebug ? '1' : '0'); } catch { /* ignore */ }
   }, [showDebug]);
 
+  useEffect(() => {
+    try { localStorage.setItem('agentuse:session:logFilter', logFilter); } catch { /* ignore */ }
+  }, [logFilter]);
+
   // Initial + follow scroll: stick to the page end while the user is near it.
   useLayoutEffect(() => {
     if (orderedLogs.length === 0) return;
     if (!hasScrolledRef.current) {
+      // Returning to a session we banked: put the reader back where they were,
+      // ahead of both the gate jump and live-follow. An explicit restore beats
+      // any default, and re-arming follow would yank them to the end.
+      if (restoreScrollRef.current !== null) {
+        const y = restoreScrollRef.current;
+        const maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+        window.scrollTo(0, Math.min(y, maxY));
+        restoreAttemptsRef.current += 1;
+        if (maxY >= y || restoreAttemptsRef.current >= 20) {
+          restoreScrollRef.current = null;
+          restoreAttemptsRef.current = 0;
+          hasScrolledRef.current = true;
+          followScrollRef.current = false;
+        }
+        return;
+      }
       // First paint for this session. An actionable gate takes priority over
       // live-follow: the reviewer's job is that decision, and it reads from the
       // card's top. Leave the ref unset until the card actually exists so a
@@ -1402,6 +1500,84 @@ export default function SessionDetail() {
     </label>
   ) : null;
 
+  const logFilterControl = orderedLogs.length > 0 ? (
+    <div class="log-filter" role="group" aria-label="Filter session log by entry type">
+      {(['all', 'agent', 'tools', 'errors'] as LogFilter[]).map((f) => (
+        <button
+          key={f}
+          type="button"
+          class={`log-filter-btn${logFilter === f ? ' is-on' : ''}`}
+          aria-pressed={logFilter === f}
+          onClick={() => setLogFilter(f)}
+        >
+          {f}
+        </button>
+      ))}
+    </div>
+  ) : null;
+
+  const logTools = logFilterControl || debugToggle ? (
+    <div class="log-tools">{logFilterControl}{debugToggle}</div>
+  ) : null;
+
+  // The run's outcome: verdict, timings, recorded metrics, final response and
+  // artifacts. Rendered for every ended run, not only ones that arrived ended --
+  // watching a run finish in an open tab used to leave the reader at the bottom
+  // of a raw log with no answer to "what did it do". summaryFirst now decides
+  // only where this sits: above the transcript, or after it.
+  const resultSection = ended && (hasFinalOutcome || resultErrorText || resultMeta || artifactTiles) ? (
+    <>
+            <div class="section-title result-title">
+              <span>result</span>
+              <span class="rule"></span>
+            </div>
+            <section class="panel session-result">
+              <div class="result-verdict">
+                <span class={`status ${displayStatus}`}>{displayStatus}</span>
+                {resultMeta && <span class="result-meta">{resultMeta}</span>}
+              </div>
+              {recordedMetrics.length > 0 && (
+                <div class="result-recorded">
+                  <span class="label">recorded</span>
+                  {recordedMetrics.map((m) => {
+                    const amount = recordedMetricAmount(m);
+                    return (
+                      <a
+                        key={m.metric}
+                        class="metric-chip"
+                        href={`/stores/metrics${projectId ? `?project=${encodeURIComponent(projectId)}` : ''}`}
+                        title={m.metric}
+                      >
+                        <span class="metric-chip-name">{humanizeMetric(m.metric)}</span>
+                        {amount && <span class="metric-chip-amount">{amount}</span>}
+                      </a>
+                    );
+                  })}
+                </div>
+              )}
+              {resultErrorText && <div class="result-error">{resultErrorText}</div>}
+              {hasFinalOutcome ? (
+                <>
+                  {finalOutcome.headline && (
+                    <p class="result-headline"><InlineMarkdown value={finalOutcome.headline} /></p>
+                  )}
+                  {finalOutcome.body && (
+                    <div class="result-body"><LogContent value={finalOutcome.body} forceMarkdown /></div>
+                  )}
+                </>
+              ) : !resultErrorText ? (
+                <div class="result-empty">This run ended without a final response; the session log {summaryFirst ? 'below' : 'above'} has the details.</div>
+              ) : null}
+              {artifactTiles && (
+                <div class="result-artifacts">
+                  <div class="label">artifacts</div>
+                  {artifactTiles}
+                </div>
+              )}
+            </section>
+    </>
+  ) : null;
+
   // The transcript feed, shared by both layouts: inline under its section
   // title (live/feed-first) or inside the collapsed <details> (summary-first).
   const logsFeed = (
@@ -1626,6 +1802,17 @@ export default function SessionDetail() {
           </div>
         </header>
 
+        {/* Why the run died, above the fold. In summary-first the result card
+            sits right here and already leads with it; in feed-first the card is
+            below a transcript that can run to hundreds of entries, so without
+            this the only way to learn the cause is to scroll past all of it. */}
+        {!summaryFirst && ended && resultErrorText && (
+          <div class="panel session-error-lede" role="alert">
+            <div class="label">error</div>
+            <div class="body">{resultErrorText}</div>
+          </div>
+        )}
+
         {approval.additionalInstruction && (
           <div class="panel additional-instruction">
             <div class="label">additional instruction</div>
@@ -1633,58 +1820,7 @@ export default function SessionDetail() {
           </div>
         )}
 
-        {summaryFirst && (
-          <>
-            <div class="section-title result-title">
-              <span>result</span>
-              <span class="rule"></span>
-            </div>
-            <section class="panel session-result">
-              <div class="result-verdict">
-                <span class={`status ${displayStatus}`}>{displayStatus}</span>
-                {resultMeta && <span class="result-meta">{resultMeta}</span>}
-              </div>
-              {recordedMetrics.length > 0 && (
-                <div class="result-recorded">
-                  <span class="label">recorded</span>
-                  {recordedMetrics.map((m) => {
-                    const amount = recordedMetricAmount(m);
-                    return (
-                      <a
-                        key={m.metric}
-                        class="metric-chip"
-                        href={`/stores/metrics${projectId ? `?project=${encodeURIComponent(projectId)}` : ''}`}
-                        title={m.metric}
-                      >
-                        <span class="metric-chip-name">{humanizeMetric(m.metric)}</span>
-                        {amount && <span class="metric-chip-amount">{amount}</span>}
-                      </a>
-                    );
-                  })}
-                </div>
-              )}
-              {resultErrorText && <div class="result-error">{resultErrorText}</div>}
-              {hasFinalOutcome ? (
-                <>
-                  {finalOutcome.headline && (
-                    <p class="result-headline"><InlineMarkdown value={finalOutcome.headline} /></p>
-                  )}
-                  {finalOutcome.body && (
-                    <div class="result-body"><LogContent value={finalOutcome.body} forceMarkdown /></div>
-                  )}
-                </>
-              ) : !resultErrorText ? (
-                <div class="result-empty">This run ended without a final response; the session log below has the details.</div>
-              ) : null}
-              {artifactTiles && (
-                <div class="result-artifacts">
-                  <div class="label">artifacts</div>
-                  {artifactTiles}
-                </div>
-              )}
-            </section>
-          </>
-        )}
+        {summaryFirst && resultSection}
 
         {reviewerComment && (
           <div class="panel reviewer-comment">
@@ -1694,7 +1830,7 @@ export default function SessionDetail() {
           </div>
         )}
 
-        {!summaryFirst && artifactTiles && (
+        {!summaryFirst && !resultSection && artifactTiles && (
           <div class="panel session-artifacts">
             <div class="label">artifacts</div>
             {artifactTiles}
@@ -1712,7 +1848,12 @@ export default function SessionDetail() {
         />
 
         {summaryFirst ? (
-          <details class="session-transcript" key={`transcript-${sessionId}`}>
+          <details
+            class="session-transcript"
+            key={`transcript-${sessionId}`}
+            open={transcriptOpen}
+            onToggle={(e) => setTranscriptOpen((e.currentTarget as HTMLDetailsElement).open)}
+          >
             <summary>
               <span>session log</span>
               {visibleLogs.length > 0 && (
@@ -1720,7 +1861,7 @@ export default function SessionDetail() {
               )}
               <span class="rule"></span>
             </summary>
-            {debugToggle && <div class="transcript-tools">{debugToggle}</div>}
+            {logTools && <div class="transcript-tools">{logTools}</div>}
             {logsFeed}
           </details>
         ) : (
@@ -1728,9 +1869,10 @@ export default function SessionDetail() {
             <div class="section-title">
               <span>session log</span>
               <span class="rule"></span>
-              {debugToggle}
+              {logTools}
             </div>
             {logsFeed}
+            {resultSection}
           </>
         )}
 
@@ -1854,7 +1996,7 @@ export default function SessionDetail() {
           This session is not accepting actions right now.
         </div>
 
-        {shouldShowResultNotice(result, summaryFirst, resultErrorText) && (
+        {shouldShowResultNotice(result, Boolean(resultSection), resultErrorText) && (
           <p ref={noticeRef} class={`notice${result.error ? ' error' : ''}`} role={result.error ? 'alert' : 'status'}>{result.text}</p>
         )}
       </main>

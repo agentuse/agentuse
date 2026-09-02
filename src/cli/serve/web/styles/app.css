@@ -1885,6 +1885,57 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 .log-item.log-level-error .log-marker { color: var(--red); opacity: 0.95; }
 .log-item.log-level-error .log-title { color: var(--red); }
 
+/* Why a feed-first run died, stated directly under the header instead of below
+   a transcript the reader would otherwise have to scroll in full. */
+.page-approval-detail .session-error-lede {
+  border-color: var(--red-border);
+  background: var(--red-soft);
+}
+.page-approval-detail .session-error-lede .label { color: var(--red); }
+.page-approval-detail .session-error-lede .body {
+  color: var(--fg);
+  font-size: var(--font-size-supporting);
+  line-height: var(--lh-snug);
+  overflow-wrap: anywhere;
+}
+
+/* Session-log header controls: entry-type filter plus the debug toggle. */
+.log-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.log-filter {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.log-filter-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--muted-3);
+  font: inherit;
+  font-size: var(--font-size-micro);
+  letter-spacing: normal;
+  /* 28px keeps the row comfortably above the 24px pointer-target floor without
+     out-weighing the section rule it sits on. */
+  min-height: 28px;
+  padding: 0 10px;
+}
+.log-filter-btn + .log-filter-btn { border-left: 1px solid var(--line); }
+.log-filter-btn:hover { color: var(--fg); }
+.log-filter-btn.is-on {
+  color: var(--cyan);
+  background: var(--cyan-soft);
+}
+.log-filter-btn:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: -2px; }
+
 /* "debug" toggle in the session-log header. */
 .log-debug-toggle {
   display: inline-flex;
