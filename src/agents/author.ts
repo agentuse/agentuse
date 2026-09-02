@@ -1,5 +1,5 @@
 import { parseAgentContent } from '../parser.js';
-import { grantsArbitraryCode, grantsUnnamedSubcommands, looksEffectful } from '../tools/effectful-heuristic.js';
+import { grantsArbitraryCode, grantsUnnamedSubcommands } from '../tools/effectful-heuristic.js';
 import { match as wildcardMatch } from '../tools/wildcard.js';
 import { AgentCreationError, validateAgentName } from './create.js';
 
@@ -83,7 +83,7 @@ export function validateAuthoredAgentSource(
   const gated = parsed.config.tools?.bash?.gated ?? [];
   const unsafeCommand = (parsed.config.tools?.bash?.commands ?? []).find((command) =>
     !gated.some((pattern) => wildcardMatch(command, pattern))
-      && (looksEffectful(command) || grantsArbitraryCode(command) || grantsUnnamedSubcommands(command)));
+      && (grantsArbitraryCode(command) || grantsUnnamedSubcommands(command)));
   if (unsafeCommand) {
     throw new AgentCreationError('INVALID_GENERATED_AGENT', `The selected model added an unsafe ungated command: ${unsafeCommand}`);
   }

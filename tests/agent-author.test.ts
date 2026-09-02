@@ -25,8 +25,8 @@ describe('authored agent validation', () => {
       .toThrow('runtime model that is not available');
   });
 
-  it('rejects unsafe generated capabilities unless an effectful command is gated', () => {
-    const unsafe = source.replace(
+  it('leaves named effect judgment to the model but rejects structurally unsafe grants', () => {
+    const namedEffect = source.replace(
       'description: Triage support requests and surface urgent replies',
       `description: Triage support requests and surface urgent replies
 tools:
@@ -34,12 +34,19 @@ tools:
     commands:
       - git push *`,
     );
-    expect(() => validateAuthoredAgentSource(unsafe, ['opencode-go:glm-5.1']))
-      .toThrow('unsafe ungated command: git push *');
+    expect(() => validateAuthoredAgentSource(namedEffect, ['opencode-go:glm-5.1']))
+      .not.toThrow();
 
-    const gated = unsafe.replace(
-      '    commands:\n      - git push *',
-      '    commands:\n      - git push *\n    gated:\n      - git *',
+    const broadGrant = namedEffect.replace(
+      '      - git push *',
+      '      - git *',
+    );
+    expect(() => validateAuthoredAgentSource(broadGrant, ['opencode-go:glm-5.1']))
+      .toThrow('unsafe ungated command: git *');
+
+    const gated = broadGrant.replace(
+      '    commands:\n      - git *',
+      '    commands:\n      - git *\n    gated:\n      - git *',
     );
     const authored = validateAuthoredAgentSource(gated, ['opencode-go:glm-5.1']);
     expect(authored.name).toBe('Support Triage');

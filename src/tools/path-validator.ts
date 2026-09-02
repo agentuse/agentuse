@@ -105,8 +105,14 @@ export function resolveRealPath(inputPath: string): string {
  * @returns The text with safe variables resolved
  */
 export function resolveSafeVariables(text: string, context: PathResolverContext): string {
+  const literals: string[] = [];
+  const protectedText = text.replace(/\\\$\{(?:root|agentDir|tmpDir)\}/g, (placeholder) => {
+    const marker = `\uE000agentuse-safe-variable-${literals.length}\uE001`;
+    literals.push(placeholder.slice(1));
+    return marker;
+  });
   const tmpDir = resolveRealPath(context.tmpDir ?? os.tmpdir());
-  let result = text
+  let result = protectedText
     .replace(/\$\{root\}/g, context.projectRoot)
     .replace(/\$\{tmpDir\}/g, tmpDir);
 
@@ -115,7 +121,17 @@ export function resolveSafeVariables(text: string, context: PathResolverContext)
     result = result.replace(/\$\{agentDir\}/g, context.agentDir);
   }
 
-  return result;
+  return result.replace(/\uE000agentuse-safe-variable-(\d+)\uE001/g, (_marker, index: string) => (
+    literals[Number(index)] ?? _marker
+  ));
+}
+
+/**
+ * Escape safe placeholders so prompt preparation leaves them as literal syntax.
+ * Use this when embedding source code or documentation inside agent instructions.
+ */
+export function escapeSafeVariables(text: string): string {
+  return text.replace(/(?<!\\)\$\{(?:root|agentDir|tmpDir)\}/g, '\\$&');
 }
 
 // ── Filesystem mount resolution for sandbox ─────────────────────────

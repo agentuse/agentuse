@@ -18,6 +18,12 @@ AgentUse supports variable placeholders in agent files (both YAML frontmatter an
   `${env:VAR_NAME}` is intentionally NOT supported in the system prompt (markdown content) to prevent accidental secret exposure to the LLM.
 </Warning>
 
+To show path-placeholder syntax literally in the model prompt instead of
+resolving it, escape the dollar sign with a backslash: `\${root}` becomes the
+literal text `${root}`. This is useful when an agent reviews or authors another
+AgentUse file. The escape applies to `${root}`, `${agentDir}`, and `${tmpDir}`;
+it does not enable environment-variable expansion.
+
 ## `${root}` - Project Root
 
 The `${root}` variable expands to your project's root directory, which is detected by looking for markers like `.git`, `package.json`, or `.agentuse` directory.

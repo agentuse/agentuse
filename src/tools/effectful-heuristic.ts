@@ -38,8 +38,14 @@ export function looksEffectful(commandPattern: string): boolean {
   const cmd = commandPattern.trim();
   if (!cmd) return false;
   if (EFFECTFUL_PATTERNS.some((re) => re.test(cmd))) return true;
-  const lower = cmd.toLowerCase();
-  return EFFECTFUL_VERBS.some((verb) => new RegExp(`\\b${verb}\\b`).test(lower));
+  // Dispatcher reads often name the object they inspect (`read-post`,
+  // `read-feed-post`). Remove those tokens before looking for effectful verbs;
+  // the heuristic is advisory and should not turn an explicit read into noise.
+  const advisoryText = cmd.toLowerCase().split(/\s+/).filter((token) => {
+    const unquoted = token.replace(/^["']|["']$/g, '');
+    return !/(?:^|\/)read-(?:[a-z0-9]+-)*[a-z0-9]+\*?$/i.test(unquoted);
+  }).join(' ');
+  return EFFECTFUL_VERBS.some((verb) => new RegExp(`\\b${verb}\\b`).test(advisoryText));
 }
 
 // Heads whose subcommands are all reads, so a wildcard grant of them carries no

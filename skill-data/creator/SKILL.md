@@ -103,6 +103,32 @@ Tell-tale it is off or too low: the agent makes defensible-but-wrong one-shot
 calls and a human has to nudge it to the answer it should have reached. Too
 high: latency and cost with no lift. Start moderate, tune on observed output.
 
+## Portable Path Placeholders
+
+AgentUse resolves these placeholders in filesystem paths and in the agent body:
+
+- `${root}` — project root. Prefer it for project-owned files and directories.
+- `${agentDir}` — directory containing the `.agentuse` file. Use it for scripts,
+  templates, or data shipped beside the agent; it is unavailable when the agent
+  was not loaded from a file.
+- `${tmpDir}` — runtime temporary directory. Use it for disposable working files.
+
+`${env:VAR_NAME}` is a separate secret placeholder supported only by
+`mcpServers.<name>.auth.token`. Never put it in the agent body, filesystem paths,
+or bash configuration; AgentUse intentionally does not expose environment
+secrets to the model.
+
+They are AgentUse placeholders, not shell environment variables. In tool
+configuration, use them only in supported path-valued fields such as
+`tools.filesystem[].path`, `tools.filesystem[].paths`, and
+`tools.bash.allowedPaths`; they do not make `${root}` inside an arbitrary shell
+command expand. `~` is also accepted by path resolvers where documented, but the
+AgentUse placeholders are clearer and portable across users.
+
+When editing an existing agent, preserve its placeholders exactly unless the
+requested behavior requires changing the path. Do not normalize them to the
+current machine's absolute paths.
+
 ## Authoring Checklist
 
 This is a review checklist, not a template to reproduce in the agent. Skip every

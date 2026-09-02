@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { PathValidator, resolveSafeVariables } from '../src/tools/path-validator';
+import { PathValidator, escapeSafeVariables, resolveSafeVariables } from '../src/tools/path-validator';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -867,5 +867,18 @@ describe('resolveSafeVariables', () => {
     const text = '${root}/a and ${root}/b';
     const result = resolveSafeVariables(text, { projectRoot });
     expect(result).toBe('/test/project/a and /test/project/b');
+  });
+
+  it('preserves escaped placeholders as literal syntax', () => {
+    const escaped = escapeSafeVariables('Paths: ${root}, ${agentDir}, ${tmpDir}');
+    expect(escaped).toBe('Paths: \\${root}, \\${agentDir}, \\${tmpDir}');
+    expect(resolveSafeVariables(escaped, { projectRoot, agentDir, tmpDir }))
+      .toBe('Paths: ${root}, ${agentDir}, ${tmpDir}');
+  });
+
+  it('resolves ordinary placeholders beside escaped literals', () => {
+    const text = 'Actual: ${root}; syntax: \\${root}';
+    expect(resolveSafeVariables(text, { projectRoot }))
+      .toBe('Actual: /test/project; syntax: ${root}');
   });
 });

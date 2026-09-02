@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseAgentContent } from '../src/parser';
+import { resolveSafeVariables } from '../src/tools/path-validator';
 import {
   agentRevisionSubmissionContract,
   applyAgentRevision,
@@ -24,7 +25,7 @@ afterEach(async () => {
   else process.env.AGENTUSE_DATA_DIR = priorDataDir;
 });
 
-async function fixture(options: { explicitName?: boolean } = {}) {
+async function fixture(options: { explicitName?: boolean; broadGrant?: boolean; gateBroadGrant?: boolean } = {}) {
   const projectRoot = await mkdtemp(join(tmpdir(), 'agent-revision-project-'));
   const dataRoot = await mkdtemp(join(tmpdir(), 'agent-revision-data-'));
   cleanups.push(
@@ -40,6 +41,11 @@ async function fixture(options: { explicitName?: boolean } = {}) {
     'description: Prioritize support tickets',
     'schedule: 0 9 * * 1',
     'tools:',
+    ...(options.broadGrant ? [
+      '  bash:',
+      '    commands: ["gh *"]',
+      ...(options.gateBroadGrant ? ['    gated: ["gh *"]'] : []),
+    ] : []),
     '  filesystem:',
     '    - path: ${root}',
     '      permissions: [read]',
@@ -108,26 +114,41 @@ describe('internal agent revision', () => {
     expect(source).toContain('treat that as the primary incident unless the operator explicitly asks about an earlier failure');
     expect(source).toContain('the authoritative scope boundary');
     expect(source).toContain('removing a `schedule` field does not authorize changing “daily” to “on-demand.”');
-    expect(source).toContain('revert every change that cannot be tied to an exact phrase in the operator instruction');
+    expect(source).toContain('derive the smallest ordered set of exact replacements against the current source');
+    expect(source).toContain('Leave all unrelated source unmentioned so it remains byte-for-byte unchanged');
+    expect(source).toContain('only the ordered exact edits');
     expect(source).toContain('Classification changes the diagnosis, not the authorized edit scope.');
+    const preparedInstructions = resolveSafeVariables(parsed.instructions, {
+      projectRoot: f.projectRoot,
+      agentDir: join(f.projectRoot, 'agents'),
+      tmpDir: '/tmp',
+    });
+    const embeddedSource = preparedInstructions.match(/<current_agent_source>\n([\s\S]*?)\n<\/current_agent_source>/)?.[1];
+    expect(embeddedSource).toContain('    - path: ${root}');
+    expect(embeddedSource).not.toContain(`    - path: ${f.projectRoot}`);
   });
 
   it('validates a proposal, applies it atomically, and restores the prior source', async () => {
     const f = await fixture();
     const submission: { outcome?: 'revision-proposed' | 'no-agent-change' } = {};
     const tool = createSubmitAgentRevisionTool(submission, f.contract);
-    const proposedSource = f.currentSource.replace(
-      'Classify active orders and prioritize urgent tickets.',
-      'Exclude refunded and cancelled orders, then classify active orders and prioritize urgent tickets.',
-    );
     await expect((tool.execute as any)({
       outcome: 'revision-proposed',
       diagnosis: 'Terminal order statuses were unspecified.',
       summary: 'Handle terminal orders explicitly.',
-      source: proposedSource,
+      edits: [{
+        oldText: 'Classify active orders and prioritize urgent tickets.',
+        newText: 'Exclude refunded and cancelled orders, then classify active orders and prioritize urgent tickets.',
+      }],
     })).resolves.toContain('ready for operator review');
     expect(submission.outcome).toBe('revision-proposed');
-    expect((await readAgentRevisionRecord(f.projectRoot, f.revisionSessionId))?.status).toBe('proposed');
+    const proposal = await readAgentRevisionRecord(f.projectRoot, f.revisionSessionId);
+    expect(proposal?.status).toBe('proposed');
+    expect(proposal?.proposedSource).toContain('    - path: ${root}');
+    expect(proposal?.proposedSource).toBe(f.currentSource.replace(
+      'Classify active orders and prioritize urgent tickets.',
+      'Exclude refunded and cancelled orders, then classify active orders and prioritize urgent tickets.',
+    ));
     expect(await readFile(f.targetAgentPath, 'utf8')).toBe(f.currentSource);
 
     const applied = await applyAgentRevision({
@@ -152,13 +173,11 @@ describe('internal agent revision', () => {
   it('preserves an omitted frontmatter name while removing a schedule', async () => {
     const f = await fixture({ explicitName: false });
     const tool = createSubmitAgentRevisionTool({}, f.contract);
-    const proposedSource = f.currentSource.replace('schedule: 0 9 * * 1\n', '');
-
     await expect((tool.execute as any)({
       outcome: 'revision-proposed',
       diagnosis: 'The operator disabled recurring runs.',
       summary: 'Remove the schedule.',
-      source: proposedSource,
+      edits: [{ oldText: 'schedule: 0 9 * * 1\n', newText: '' }],
     })).resolves.toContain('ready for operator review');
 
     const proposal = await readAgentRevisionRecord(f.projectRoot, f.revisionSessionId);
@@ -169,14 +188,70 @@ describe('internal agent revision', () => {
   it('rejects adding a synthetic name when the current source omits one', async () => {
     const f = await fixture({ explicitName: false });
     const tool = createSubmitAgentRevisionTool({}, f.contract);
-    const proposedSource = f.currentSource.replace('---\n', '---\nname: current-agent\n');
-
     await expect((tool.execute as any)({
       outcome: 'revision-proposed',
       diagnosis: 'The operator disabled recurring runs.',
       summary: 'Remove the schedule.',
-      source: proposedSource,
+      edits: [{ oldText: 'model: openai:gpt-5.6-luna', newText: 'name: current-agent\nmodel: openai:gpt-5.6-luna' }],
     })).rejects.toThrow('must not add an explicit agent name');
+  });
+
+  it('rejects ambiguous or no-op edits instead of guessing which source fragment to replace', async () => {
+    const f = await fixture();
+    const tool = createSubmitAgentRevisionTool({}, f.contract);
+
+    await expect((tool.execute as any)({
+      outcome: 'revision-proposed',
+      diagnosis: 'Tighten the wording.',
+      summary: 'Tighten wording.',
+      edits: [{ oldText: '---', newText: '---\nmetadata:\n  reviewed: true' }],
+    })).rejects.toThrow('ambiguous because it occurs more than once');
+
+    await expect((tool.execute as any)({
+      outcome: 'revision-proposed',
+      diagnosis: 'Tighten the wording.',
+      summary: 'Tighten wording.',
+      edits: [{ oldText: 'Prioritize support tickets', newText: 'Prioritize support tickets' }],
+    })).rejects.toThrow('does not change the source');
+
+    await expect((tool.execute as any)({
+      outcome: 'revision-proposed',
+      diagnosis: 'Tighten the wording.',
+      summary: 'Tighten wording.',
+      edits: [
+        { oldText: 'Prioritize support tickets', newText: 'Prioritize active support tickets' },
+        { oldText: 'Prioritize active support tickets', newText: 'Prioritize support tickets' },
+      ],
+    })).rejects.toThrow('combined revision edits do not change the source');
+  });
+
+  it('grandfathers unchanged structural grants but rejects newly added broad grants', async () => {
+    const f = await fixture({ broadGrant: true });
+    const existingTool = createSubmitAgentRevisionTool({}, f.contract);
+    await expect((existingTool.execute as any)({
+      outcome: 'revision-proposed',
+      diagnosis: 'Terminal order statuses were unspecified.',
+      summary: 'Handle terminal orders explicitly.',
+      edits: [{ oldText: 'Classify active orders', newText: 'Exclude refunded orders, then classify active orders' }],
+    })).resolves.toContain('ready for operator review');
+
+    const fresh = await fixture();
+    const freshTool = createSubmitAgentRevisionTool({}, fresh.contract);
+    await expect((freshTool.execute as any)({
+      outcome: 'revision-proposed',
+      diagnosis: 'Add repository access.',
+      summary: 'Add repository access.',
+      edits: [{ oldText: 'tools:\n', newText: 'tools:\n  bash:\n    commands: ["gh *"]\n' }],
+    })).rejects.toThrow('introduced or ungated a structurally unsafe command grant: gh *');
+
+    const gated = await fixture({ broadGrant: true, gateBroadGrant: true });
+    const gatedTool = createSubmitAgentRevisionTool({}, gated.contract);
+    await expect((gatedTool.execute as any)({
+      outcome: 'revision-proposed',
+      diagnosis: 'Remove the approval boundary.',
+      summary: 'Remove the approval boundary.',
+      edits: [{ oldText: '    gated: ["gh *"]\n', newText: '' }],
+    })).rejects.toThrow('introduced or ungated a structurally unsafe command grant: gh *');
   });
 
   it('returns a structured no-change diagnosis without touching source', async () => {
@@ -198,15 +273,14 @@ describe('internal agent revision', () => {
     const f = await fixture();
     f.contract.availableSkills = ['refund-policy'];
     const tool = createSubmitAgentRevisionTool({}, f.contract, () => ['refund-policy']);
-    const proposedSource = f.currentSource.replace(
-      'schedule: 0 9 * * 1',
-      'schedule: 0 9 * * 1\nskills:\n  auto: false\n  refund-policy:',
-    );
     await (tool.execute as any)({
       outcome: 'revision-proposed',
       diagnosis: 'The workflow needs the installed refund policy instructions.',
       summary: 'Load the refund policy skill.',
-      source: proposedSource,
+      edits: [{
+        oldText: 'schedule: 0 9 * * 1',
+        newText: 'schedule: 0 9 * * 1\nskills:\n  auto: false\n  refund-policy:',
+      }],
     });
     const proposal = await readAgentRevisionRecord(f.projectRoot, f.revisionSessionId);
     expect(proposal?.capabilityChanges).toContain('Skill access changed');
@@ -228,7 +302,7 @@ describe('internal agent revision', () => {
       outcome: 'revision-proposed',
       diagnosis: 'A revision is needed.',
       summary: 'Revise behavior.',
-      source: f.currentSource,
+      edits: [{ oldText: 'Prioritize support tickets', newText: 'Prioritize active support tickets' }],
     })).rejects.toThrow('changed after this revision session started');
   });
 

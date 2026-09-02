@@ -15,9 +15,25 @@ describe('looksEffectful heuristic (advisory nudge only)', () => {
   });
 
   test('leaves read-only / benign commands alone', () => {
-    for (const cmd of ['birdc read *', 'birdc search *', 'date *', 'ls tmp/*', 'cat tmp/*', 'git log', 'git status', 'curl -s *']) {
+    for (const cmd of [
+      'birdc read *',
+      'birdc search *',
+      'ego-scout.sh read-post *',
+      'ego-scout.sh read-feed-post *',
+      'date *',
+      'ls tmp/*',
+      'cat tmp/*',
+      'git log',
+      'git status',
+      'curl -s *',
+    ]) {
       expect(looksEffectful(cmd)).toBe(false);
     }
+  });
+
+  test('still flags effectful dispatcher subcommands', () => {
+    expect(looksEffectful('ego-scout.sh post-comment *')).toBe(true);
+    expect(looksEffectful('ego-scout.sh send-message *')).toBe(true);
   });
 
   test('empty is not effectful', () => {
