@@ -1176,11 +1176,16 @@ function LogEntryImpl(props: LogEntryProps) {
   const runOutcome = entry.details?.runOutcome;
   // A saved-artifact row shows its tile inline; there's nothing to expand into.
   const expandable = entry.type === 'tool' && !isApprovalEntry && !savedArtifact;
+  // A delegated call has no live output of its own to watch: its body is the
+  // static task and context it was handed, while what the child is actually
+  // doing shows on the subagent card above. Opening it by default buries the
+  // card under a wall of JSON, so it stays closed until asked for.
+  const delegated = Boolean(entry.subagentSession) || entry.tool?.startsWith('subagent__') === true;
   // A running tool opens itself (its live output is the point of watching), but
   // that is a default, not a lock: the reviewer can collapse it mid-run, and a
   // row they never touched closes again when the call completes rather than
   // leaving a finished command's output wedged in the stream.
-  const expanded = !expandable || (props.expanded ?? entry.status === 'running');
+  const expanded = !expandable || (props.expanded ?? (entry.status === 'running' && !delegated));
   const storeEvent = storeToolEvent(entry, props.projectId);
   const spinning = entry.status === 'streaming' || entry.status === 'running';
   // A failed tool call must read as failure without relying on color alone.

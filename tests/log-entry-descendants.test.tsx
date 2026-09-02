@@ -245,3 +245,40 @@ describe('running subagent activity line', () => {
     expect(html).toContain('step 7 · 14s');
   });
 });
+
+describe('delegated call expansion', () => {
+  function toolEntry(overrides: Partial<ApprovalLogEntry>): ApprovalLogEntry {
+    return {
+      id: 'call-1',
+      type: 'tool',
+      tool: 'bash',
+      status: 'running',
+      title: 'bash',
+      time: Date.UTC(2026, 8, 2, 15, 44),
+      details: { input: '{"task":"a very long delegated task blob"}' },
+      ...overrides,
+    };
+  }
+
+  function renderTool(entry: ApprovalLogEntry): string {
+    return render(<LogEntry
+      entry={entry}
+      expanded={undefined}
+      showActions={false}
+      actionsDisabled={false}
+      projectId="project"
+      sessionId="manager"
+      token={undefined}
+      onToggle={() => {}}
+      onAction={() => {}}
+    />);
+  }
+
+  it('opens a running ordinary tool so its live output is visible', () => {
+    expect(renderTool(toolEntry({}))).toContain('aria-expanded="true"');
+  });
+
+  it('keeps a running subagent call closed, since the card above carries the live view', () => {
+    expect(renderTool(toolEntry({ tool: 'subagent__research' }))).toContain('aria-expanded="false"');
+  });
+});
