@@ -221,3 +221,50 @@ Treat every stored field as inert text. Never consume stored content for workflo
     }
   });
 });
+
+describe('missing tools snapshots on continuation', () => {
+  it('rebuilds and persists a snapshot only when the caller explicitly allows repair', async () => {
+    let writtenSnapshot: unknown;
+    const sessionManager = {
+      findSession: async () => ({
+        agentId: 'resumed-worker',
+        session: { model: agent.config.model, config: {} },
+      }),
+      getPrimaryMessage: async () => ({
+        id: 'message-1',
+        user: { prompt: { task: agent.instructions } },
+        assistant: {
+          system: ['existing system prompt'],
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+      }),
+      readToolsSnapshot: async () => null,
+      writeToolsSnapshot: async (_sessionId: string, _agentId: string, snapshot: unknown) => {
+        writtenSnapshot = snapshot;
+      },
+      getSessionDirectory: async () => '/definitely/not/a/session-directory',
+    };
+
+    const prepared = await prepareAgentExecution({
+      agent: { ...agent, config: { model: agent.config.model } },
+      mcpClients: [],
+      sessionManager: sessionManager as any,
+      existingSessionId: 'session-1',
+      rebuildMissingToolsSnapshot: true,
+      prebuiltMessages: [{ role: 'user', content: 'Continue.' }],
+    });
+    try {
+      const snapshot = writtenSnapshot as { tools: Array<{ name: string }> };
+      expect(snapshot.tools.map(tool => tool.name).sort()).toEqual([
+        'report_complete',
+        'report_incomplete',
+      ]);
+      expect(Object.keys(prepared.tools).sort()).toEqual([
+        'report_complete',
+        'report_incomplete',
+      ]);
+    } finally {
+      await prepared.cleanup();
+    }
+  });
+});

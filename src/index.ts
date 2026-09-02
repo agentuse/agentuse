@@ -4149,6 +4149,10 @@ async function runInternalWorker() {
         abortSignal: abortController.signal,
         verbose: req.debug ?? false,
         existingSessionId,
+        // A continuation adds a new user turn to an ended run, so it can repair
+        // an older missing snapshot from today's agent definition. Approval
+        // resumes deliberately keep the strict historical-snapshot requirement.
+        ...(req.type === 'continue-session' && { rebuildMissingToolsSnapshot: true }),
         ...(req.trigger && { trigger: req.trigger }),
         // Detached runs only: pre-assign the fresh session's id. Ignored on the
         // resume/continue paths, which carry existingSessionId instead.

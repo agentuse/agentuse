@@ -47,6 +47,24 @@ describe('session view token', () => {
   });
 });
 
+describe('background session failures', () => {
+  it('surfaces a failed continuation on the ended session it failed to restart', () => {
+    const session = __testing.applyBackgroundSessionFailure(
+      { sessionStatus: 'completed' },
+      { status: 'continue', message: 'Missing tools snapshot', at: Date.now() },
+    );
+    expect(session.errorMessage).toBe("Couldn't continue this session: Missing tools snapshot");
+  });
+
+  it('does not attach an old approval failure after its gate has closed', () => {
+    const session = __testing.applyBackgroundSessionFailure(
+      { sessionStatus: 'completed' },
+      { status: 'approved', message: 'worker exited', at: Date.now() },
+    );
+    expect(session.errorMessage).toBeUndefined();
+  });
+});
+
 describe('agent revision transcript evidence', () => {
   it('keeps the latest continuation and terminal error when a resumed run exceeds the evidence cap', () => {
     const logs = [

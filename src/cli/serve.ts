@@ -2941,6 +2941,32 @@ function canContinueApprovalSession(options: {
     Boolean(approval.agent.filePath);
 }
 
+type BackgroundSessionFailure = { status: string; message: string; at: number };
+
+/** Add an asynchronous resume/continuation failure to the next session payload. */
+function applyBackgroundSessionFailure<T extends { errorMessage?: string; sessionStatus?: string }>(
+  session: T,
+  failure: BackgroundSessionFailure | undefined,
+): T {
+  if (!failure) return session;
+  if (failure.status === 'continue') {
+    session.errorMessage = `Couldn't continue this session: ${failure.message}`;
+    return session;
+  }
+  const stillOpen = session.sessionStatus === undefined
+    || session.sessionStatus === 'suspended'
+    || session.sessionStatus === 'waiting';
+  if (!stillOpen) return session;
+  const action = failure.status === 'approved' ? 'approve'
+    : failure.status === 'rejected' ? 'reject'
+      : failure.status === 'comment' ? 'send your comment on'
+        : 'act on';
+  const retryable = !failure.message.includes('CASCADE_GATE_UNRESOLVABLE');
+  session.errorMessage = `Couldn't ${action} this request: ${failure.message}`
+    + (retryable ? '; the gate is still open, try again.' : '');
+  return session;
+}
+
 function isExposedHost(host: string): boolean {
   return host !== "127.0.0.1" && host !== "localhost";
 }
@@ -4325,39 +4351,20 @@ export function createServeCommand(): Command {
 
       const activeApprovalResumes = new Map<string, Promise<unknown>>();
       const activeSessionContinuations = new Map<string, Promise<unknown>>();
-      // The last background resume failure per gate (keyed `${projectId}:${sessionId}`),
-      // so a failed approve/reject/comment surfaces an error on the still-pending
-      // gate instead of silently doing nothing (the resume is fire-and-forget, so
-      // the failure lands after the 202 and can't be returned in the response).
-      // Cleared when a fresh decision is submitted and when a resume succeeds.
-      const approvalResumeErrors = new Map<string, { status: string; message: string; at: number }>();
-      // Verb for the surfaced message, per decision status.
-      const resumeActionVerb = (status: string): string =>
-        status === 'approved' ? 'approve'
-          : status === 'rejected' ? 'reject'
-            : status === 'comment' ? 'send your comment on'
-              : 'act on';
-      // Attach any recorded resume failure to a pending gate's approval object as
-      // its errorMessage (empty on a live gate), so the existing web gate renders
-      // it. No-op once the gate leaves the suspended/waiting state.
+      // The last background resume/continuation failure per session (keyed
+      // `${projectId}:${sessionId}`). These operations are fire-and-forget after
+      // the 202 response, so this is the only way their eventual failure reaches
+      // the session page instead of appearing to fall back silently to its prior
+      // status. Cleared when a fresh attempt starts or succeeds.
+      const backgroundSessionFailures = new Map<string, BackgroundSessionFailure>();
+      // Attach any recorded failure to the session payload. Approval failures are
+      // relevant only while their gate remains open; continuation failures stay
+      // visible on the ended session they failed to restart.
       const applyResumeError = <T extends { errorMessage?: string; sessionStatus?: string }>(
         approvalObj: T,
         activeKey: string
       ): T => {
-        const failure = approvalResumeErrors.get(activeKey);
-        if (!failure) return approvalObj;
-        const stillOpen = approvalObj.sessionStatus === undefined
-          || approvalObj.sessionStatus === 'suspended'
-          || approvalObj.sessionStatus === 'waiting';
-        if (!stillOpen) return approvalObj;
-        // "try again" only holds when a gate is actually still there to decide on.
-        // A resume rejected as CASCADE_GATE_UNRESOLVABLE means the delegated child
-        // already ended, so retrying can never work — telling the reviewer to retry
-        // sends them into a loop.
-        const retryable = !failure.message.includes('CASCADE_GATE_UNRESOLVABLE');
-        approvalObj.errorMessage = `Couldn't ${resumeActionVerb(failure.status)} this request: ${failure.message}`
-          + (retryable ? ' — the gate is still open, try again.' : '');
-        return approvalObj;
+        return applyBackgroundSessionFailure(approvalObj, backgroundSessionFailures.get(activeKey));
       };
       const loggedApprovalRequests = new Map<string, number>();
       // Sessions whose terminal state already produced a push, so runner
@@ -4515,7 +4522,7 @@ export function createServeCommand(): Command {
         notifiedFinishedSessions.delete(targetSessionId);
         const activeKey = `${project.id}:${targetSessionId}`;
         // Fresh decision: drop any error from a previous failed attempt on this gate.
-        approvalResumeErrors.delete(activeKey);
+        backgroundSessionFailures.delete(activeKey);
         approvalLog.received('web', status, targetSessionId, 'web');
         const resumeStart = Date.now();
         approvalLog.resumeStarted(targetSessionId);
@@ -4564,12 +4571,12 @@ export function createServeCommand(): Command {
           if (!result.success) {
             const alreadyCompleted = /SESSION_NOT_SUSPENDED:\s*completed/i.test(result.error.message);
             if (alreadyCompleted) {
-              approvalResumeErrors.delete(activeKey);
+              backgroundSessionFailures.delete(activeKey);
               approvalLog.resumeCompleted(targetSessionId, Date.now() - resumeStart);
               return;
             }
             // Surface the failure on the still-pending gate (the 202 already went out).
-            approvalResumeErrors.set(activeKey, { status, message: result.error.message, at: Date.now() });
+            backgroundSessionFailures.set(activeKey, { status, message: result.error.message, at: Date.now() });
             approvalLog.resumeFailed(targetSessionId, Date.now() - resumeStart, result.error.message);
             logger.warn(`Approval resume ${targetSessionId} failed: ${result.error.message}`);
             try {
@@ -4595,7 +4602,7 @@ export function createServeCommand(): Command {
               }).catch((err) => logger.warn(`Slack approval status update failed: ${(err as Error).message}`));
             }
           } else {
-            approvalResumeErrors.delete(activeKey);
+            backgroundSessionFailures.delete(activeKey);
             approvalLog.resumeCompleted(targetSessionId, Date.now() - resumeStart);
             if (slackChannelMessage && info.approval.prompt) {
               void updateSlackApprovalRequestStatus({
@@ -4639,6 +4646,7 @@ export function createServeCommand(): Command {
         // first completion or the continuation's terminal state sends no push.
         notifiedFinishedSessions.delete(sessionId);
         const activeKey = `${project.id}:${sessionId}`;
+        backgroundSessionFailures.delete(activeKey);
         const continueStart = Date.now();
         approvalLog.continueStarted(sessionId);
         const continuePromise = Promise.resolve()
@@ -4653,10 +4661,16 @@ export function createServeCommand(): Command {
               logger.warn(`Failed to settle revision session ${sessionId}: ${(err as Error).message}`);
             });
             if (!result.success) {
+              backgroundSessionFailures.set(activeKey, {
+                status: 'continue',
+                message: result.error.message,
+                at: Date.now(),
+              });
               approvalLog.continueFailed(sessionId, Date.now() - continueStart, result.error.message);
               logger.warn(`Session continue ${sessionId} failed: ${result.error.message}`);
               return;
             }
+            backgroundSessionFailures.delete(activeKey);
             approvalLog.continueCompleted(sessionId, Date.now() - continueStart);
           })
           .finally(() => {
@@ -9910,6 +9924,7 @@ export const __testing = {
   formatSchedulesTable,
   bareServeMigrationWarning,
   canContinueApprovalSession,
+  applyBackgroundSessionFailure,
   isEndedSessionStatus,
   approvalListCreatedAfter,
   isPendingApprovalVisible,

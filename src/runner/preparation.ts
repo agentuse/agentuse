@@ -56,6 +56,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     abortSignal,
     verbose = false,
     existingSessionId,
+    rebuildMissingToolsSnapshot = false,
     prebuiltMessages,
     trigger,
     newSessionId,
@@ -376,9 +377,16 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
 
   if (sessionManager && sessionID) {
     if (existingSessionId) {
-      const snapshot = await sessionManager.readToolsSnapshot(sessionID, agentId);
+      let snapshot = await sessionManager.readToolsSnapshot(sessionID, agentId);
       if (!snapshot) {
-        throw new Error(`Missing tools snapshot for session ${sessionID}`);
+        if (!rebuildMissingToolsSnapshot) {
+          throw new Error(`Missing tools snapshot for session ${sessionID}`);
+        }
+        snapshot = createToolsSnapshot(tools);
+        await sessionManager.writeToolsSnapshot(sessionID, agentId, snapshot);
+        logger.warn(
+          `Session ${sessionID} had no tools snapshot; rebuilt it from the current agent definition for this continuation`
+        );
       }
       tools = bindToolsToSnapshot(tools, snapshot);
     } else {

@@ -428,15 +428,13 @@ export async function createSubAgentTool(
             }
           }
 
-          // Persist a tools snapshot so the child is resumable after a gate, mirroring
-          // the top-level path (preparation.ts). Without it, resuming the child throws
-          // "Missing tools snapshot".
+          // Persist a tools snapshot so the child is resumable after a gate or as
+          // an ended-session continuation, mirroring the top-level path
+          // (preparation.ts). This is part of creating a valid session, not
+          // best-effort observability: swallowing a failed write lets the child
+          // finish normally but bricks every later resume.
           if (subagentSessionManager && subagentSessionID) {
-            try {
-              await subagentSessionManager.writeToolsSnapshot(subagentSessionID, agentId, createToolsSnapshot(tools));
-            } catch (error) {
-              logger.debug(`[SubAgent] Failed to write tools snapshot: ${(error as Error).message}`);
-            }
+            await subagentSessionManager.writeToolsSnapshot(subagentSessionID, agentId, createToolsSnapshot(tools));
           }
 
           // Create doom loop detector for sub-agent

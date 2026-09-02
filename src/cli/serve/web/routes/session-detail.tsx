@@ -580,7 +580,11 @@ export default function SessionDetail() {
     }
 
     const transitionResult = /submitting decision|decision recorded|resuming the session|continuing session|follow-up recorded|stopping session/.test(resultRef.current.text);
-    if (nextStatus === 'error' || header.sessionStatus === 'error') {
+    const transitionFailure = header.errorMessage?.startsWith("Couldn't continue this session:");
+    if (transitionFailure) {
+      setResult({ text: header.errorMessage as string, error: true });
+      setSubmittingContinue(false);
+    } else if (nextStatus === 'error' || header.sessionStatus === 'error') {
       setResult({
         text: sessionErrorText(header) || 'Session finished with an error. Check the latest log entry for details.',
         error: true,

@@ -36,6 +36,14 @@ export interface PrepareAgentOptions {
   abortSignal?: AbortSignal | undefined;
   verbose?: boolean | undefined;
   existingSessionId?: string | undefined;
+  /**
+   * A follow-up on an already-ended session may repair a missing historical
+   * tools snapshot from the tools loaded from the current agent definition.
+   * Approval resumes must leave this false: consuming a human decision before
+   * proving the original tool contract is available can make the gate
+   * unrecoverable.
+   */
+  rebuildMissingToolsSnapshot?: boolean | undefined;
   prebuiltMessages?: ModelMessage[] | undefined;
   /** How this run was triggered. Only the fresh-session path records it. */
   trigger?: SessionTrigger | undefined;
