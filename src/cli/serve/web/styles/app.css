@@ -8608,20 +8608,6 @@ button.ctx-result[aria-expanded="true"] .ctx-chevron { transform: rotate(180deg)
 }
 .sidebar-brand .brand-wordmark,
 .mobile-brand .brand-wordmark { display: inline-flex; align-items: center; }
-.sidebar-brand .brand-name,
-.mobile-brand .brand-name {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--fg);
-  font-size: var(--font-size-caption);
-  font-weight: var(--weight-bold);
-  letter-spacing: var(--tracking-tight);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.sidebar-brand .brand-name { max-width: calc(100% - 86px); }
-.sidebar-brand .brand-sep,
-.mobile-brand .brand-sep { flex: 0 0 auto; margin: 0 6px; color: var(--muted); }
 .sidebar-brand .brand-mark,
 .mobile-brand .brand-mark { display: inline-flex; align-items: center; }
 .sidebar-brand .brand-mark svg { display: block; width: auto; height: 18px; }

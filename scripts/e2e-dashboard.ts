@@ -297,8 +297,8 @@ async function main(): Promise<void> {
   browser(['open', `${baseUrl}/agents`]);
   browser(['wait', '--text', 'Renewal Review']);
   expectBrowser(
-    `document.body.innerText.includes('AgentUse Control Room')`,
-    'brand renders on the Agents page',
+    `document.querySelector('.sidebar-brand .brand-wordmark svg') !== null && !document.querySelector('.sidebar-brand')?.textContent.includes('AgentUse Control Room')`,
+    'sidebar uses the AgentUse wordmark without the organization name',
   );
   expectBrowser(
     `document.body.innerText.toLowerCase().includes('revenue operations')`,

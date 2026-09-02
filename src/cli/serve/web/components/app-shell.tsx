@@ -19,7 +19,6 @@ import { openAgentPalette } from './agent-palette';
 import { useGlobalApprovals } from '../hooks/use-global-approvals';
 import { useMediaQuery } from '../hooks/use-media-query';
 import { useShellSessions } from '../hooks/use-shell-sessions';
-import { brandName, hasCustomBrand } from '../lib/brand';
 import { displayAgentName, formatRelativeTime, isRunningStatus, runTone } from '../lib/format';
 import { WORDMARK_SVG } from '../../brand';
 
@@ -29,16 +28,6 @@ const SIDEBAR_WIDTH_PREF_KEY = 'agentuse-sidebar-width';
 export const DEFAULT_SIDEBAR_WIDTH = 224;
 export const MIN_SIDEBAR_WIDTH = 180;
 export const MAX_SIDEBAR_WIDTH = 360;
-
-function BrandLockup(): ComponentChildren {
-  const customName = hasCustomBrand() ? brandName() : undefined;
-  return (
-    <>
-      {customName && <><span class="brand-name">{customName}</span><span class="brand-sep" aria-hidden="true">·</span></>}
-      <span class="brand-wordmark" dangerouslySetInnerHTML={{ __html: WORDMARK_SVG }} />
-    </>
-  );
-}
 
 export type NavigationPage = 'home' | 'agents' | 'sessions' | 'schedules' | 'stores' | 'approvals';
 
@@ -355,7 +344,7 @@ export function AppShell({ children }: { children: ComponentChildren }) {
               aria-controls="app-sidebar"
               onClick={() => setDrawerOpen((open) => !open)}
             ><Menu aria-hidden="true" strokeWidth={1.7} /></button>
-            <a class="mobile-brand" href="/" aria-label="AgentUse home"><BrandLockup /></a>
+            <a class="mobile-brand" href="/" aria-label="AgentUse home"><span class="brand-wordmark" dangerouslySetInnerHTML={{ __html: WORDMARK_SVG }} /></a>
             {/* The sidebar's palette trigger is behind the drawer on mobile, so
                 search gets its own button opposite the menu. */}
             <button
@@ -381,7 +370,7 @@ export function AppShell({ children }: { children: ComponentChildren }) {
       >
         <div class="sidebar-brand-row">
           <a class="sidebar-brand" href="/" aria-label="AgentUse home">
-            <BrandLockup />
+            <span class="brand-wordmark" dangerouslySetInnerHTML={{ __html: WORDMARK_SVG }} />
           </a>
           {!isDesktop && !isMobile && (
             <button
