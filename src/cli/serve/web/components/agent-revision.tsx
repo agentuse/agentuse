@@ -17,6 +17,17 @@ import { SendToCodingAgentDialog } from './send-to-coding-agent-dialog';
 const ACTIVE_REVISION_STATUSES = new Set(['running', 'proposed', 'no-change']);
 const AUTHORING_PREFS_KEY = 'agentuse:revision-authoring';
 
+/** Finished revisions read alike, so the list needs a time to tell them apart. */
+function relativeTime(updatedAt: number): string {
+  const seconds = Math.max(0, Math.round((Date.now() - updatedAt) / 1000));
+  if (seconds < 60) return 'just now';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
 function readStoredAuthoring(): { model?: string; reasoning?: ReasoningLevel } {
   try {
     const raw = localStorage.getItem(AUTHORING_PREFS_KEY);
@@ -227,7 +238,7 @@ export function AgentRevisionLauncher(props: {
             <div class={`agent-revision-link is-compact is-${revision.status}`} key={revision.revisionSessionId}>
               <span class="agent-revision-link-copy">
                 <strong>{revisionLabel(revision)}</strong>
-                <span>{revisionOriginDescription(revision)}</span>
+                <span>{revision.mode === 'fix' ? 'Fix' : 'Improvement'} · {relativeTime(revision.updatedAt)}</span>
               </span>
               <a class="agent-revision-open" href={revisionHref(revision, undefined, props.context.projectId)}>View revision</a>
             </div>

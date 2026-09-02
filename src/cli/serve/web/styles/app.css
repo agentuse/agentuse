@@ -7156,6 +7156,7 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   font-size: var(--font-size-micro);
 }
 .agent-revision-more:hover { color: var(--fg); background: var(--panel-hover); }
+.agent-revision-link.is-compact .agent-revision-link-copy span { color: var(--muted-3); }
 .agent-revision-pulse {
   display: inline-block;
   width: 7px;
