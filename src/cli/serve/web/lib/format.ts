@@ -250,6 +250,21 @@ export function isLiveStatus(status: string, logs: ApprovalLogEntry[]): boolean 
   return logs.some((entry) => entry.status === 'streaming' || entry.status === 'running');
 }
 
+/**
+ * Is the agent itself doing work right now? Narrower than isLiveStatus, which
+ * counts a human gate as live because the run has not finished. A run parked on
+ * an approval is waiting on the reader, so a "working" spinner there claims
+ * progress that is not happening — while a manager parked on a delegated gate
+ * still counts, because its child is the one working.
+ */
+export function isWorkingStatus(status: string, logs: ApprovalLogEntry[]): boolean {
+  if (isProjectedTerminalSessionStatus(status)) return false;
+  if (isExecutingSessionStatus(status)) return true;
+  return logs.some((entry) => entry.status === 'streaming'
+    || entry.status === 'running'
+    || isExecutingSessionStatus(entry.subagentSession?.displayStatus));
+}
+
 export function sessionErrorText(approval: Pick<ApprovalPageInfo, 'sessionStatus' | 'errorCode' | 'errorMessage'> | undefined): string {
   if (!approval || approval.sessionStatus !== 'error') return '';
   if (approval.errorCode === 'INCOMPLETE') {
