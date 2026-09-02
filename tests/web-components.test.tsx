@@ -8,7 +8,10 @@ import {
   clampSidebarWidth,
   isSidebarToggleShortcut,
   navigationPageForPath,
+  navigationPageForShortcut,
+  NAVIGATION_ORDER,
 } from '../src/cli/serve/web/components/app-shell';
+import { shellSessionsFromRows } from '../src/cli/serve/web/hooks/use-shell-sessions';
 import { pendingNewestFirst, PendingApprovalGroups, PendingApprovalRow } from '../src/cli/serve/web/components/pending-approval-card';
 import { StoreTable, type StoreTableColumn } from '../src/cli/serve/web/components/store-table';
 import { ContinuePanel } from '../src/cli/serve/web/components/continue-panel';
@@ -484,6 +487,54 @@ describe('Application sidebar sizing', () => {
     expect(isSidebarToggleShortcut({ key: 'B', metaKey: false, ctrlKey: true, altKey: false })).toBe(true);
     expect(isSidebarToggleShortcut({ key: 'b', metaKey: false, ctrlKey: false, altKey: false })).toBe(false);
     expect(isSidebarToggleShortcut({ key: 'b', metaKey: true, ctrlKey: false, altKey: true })).toBe(false);
+  });
+});
+
+describe('Application sidebar shortcuts', () => {
+  it('maps the modifier number keys to the same order the Mac Go menu binds', () => {
+    expect(NAVIGATION_ORDER).toEqual(['home', 'agents', 'sessions', 'schedules', 'stores', 'approvals']);
+    expect(navigationPageForShortcut({ key: '1', metaKey: true, ctrlKey: false, altKey: false, shiftKey: false })).toBe('home');
+    expect(navigationPageForShortcut({ key: '6', metaKey: false, ctrlKey: true, altKey: false, shiftKey: false })).toBe('approvals');
+  });
+
+  it('ignores plain digits, decorated chords, and out-of-range numbers', () => {
+    expect(navigationPageForShortcut({ key: '1', metaKey: false, ctrlKey: false, altKey: false, shiftKey: false })).toBeUndefined();
+    expect(navigationPageForShortcut({ key: '1', metaKey: true, ctrlKey: false, altKey: true, shiftKey: false })).toBeUndefined();
+    expect(navigationPageForShortcut({ key: '9', metaKey: true, ctrlKey: false, altKey: false, shiftKey: false })).toBeUndefined();
+    expect(navigationPageForShortcut({ key: 'b', metaKey: true, ctrlKey: false, altKey: false, shiftKey: false })).toBeUndefined();
+  });
+});
+
+describe('Application sidebar session snapshot', () => {
+  const row = (id: string, status: string, updatedAt: number, mock?: boolean): SessionRow => ({
+    sessionId: id,
+    project: 'demo',
+    agent: { id: `agent-${id}`, name: `Agent ${id}` },
+    status,
+    trigger: 'manual',
+    createdAt: updatedAt,
+    updatedAt,
+    ...(mock ? { mock: true } : {}),
+  });
+
+  it('counts in-flight runs and floats them above finished ones', () => {
+    const snapshot = shellSessionsFromRows([
+      row('a', 'completed', 500),
+      row('b', 'running', 100),
+      row('c', 'resuming', 200),
+    ]);
+    expect(snapshot.running).toBe(2);
+    expect(snapshot.recent.map((session) => session.sessionId)).toEqual(['c', 'b', 'a']);
+  });
+
+  it('excludes mock runs and keeps the list short', () => {
+    const snapshot = shellSessionsFromRows([
+      row('mock', 'running', 900, true),
+      ...Array.from({ length: 8 }, (_, index) => row(`s${index}`, 'completed', index)),
+    ]);
+    expect(snapshot.running).toBe(0);
+    expect(snapshot.recent).toHaveLength(5);
+    expect(snapshot.recent.some((session) => session.sessionId === 'mock')).toBe(false);
   });
 });
 

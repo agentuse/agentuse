@@ -18,6 +18,8 @@ import {
 import { openAgentPalette } from './agent-palette';
 import { useGlobalApprovals } from '../hooks/use-global-approvals';
 import { useMediaQuery } from '../hooks/use-media-query';
+import { useShellSessions } from '../hooks/use-shell-sessions';
+import { displayAgentName, formatRelativeTime, isRunningStatus, runTone } from '../lib/format';
 import { WORDMARK_SVG } from '../../brand';
 
 const IS_APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
@@ -28,6 +30,24 @@ export const MIN_SIDEBAR_WIDTH = 180;
 export const MAX_SIDEBAR_WIDTH = 360;
 
 export type NavigationPage = 'home' | 'agents' | 'sessions' | 'schedules' | 'stores' | 'approvals';
+
+/** Nav order, and the ⌘1-⌘6 order. The Mac app binds the same list in its Go
+ *  menu (apps/desktop/src/menus.ts); web registers the shortcuts itself only
+ *  because there is no native menu there. Keep both lists in the same order. */
+export const NAVIGATION_ORDER: readonly NavigationPage[] = [
+  'home',
+  'agents',
+  'sessions',
+  'schedules',
+  'stores',
+  'approvals',
+];
+
+export function navigationPageForShortcut(event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>): NavigationPage | undefined {
+  if (event.altKey || event.shiftKey || !(event.metaKey || event.ctrlKey)) return undefined;
+  const index = Number(event.key) - 1;
+  return Number.isInteger(index) ? NAVIGATION_ORDER[index] : undefined;
+}
 
 export function navigationPageForPath(pathname: string): NavigationPage | undefined {
   if (pathname === '/') return 'home';
@@ -89,6 +109,10 @@ function NavIcon({ page }: { page: NavigationPage }) {
   return <CircleCheck aria-hidden="true" strokeWidth={1.7} />;
 }
 
+function sessionHref(session: { sessionId: string; project: string }): string {
+  return `/sessions/${encodeURIComponent(session.sessionId)}?project=${encodeURIComponent(session.project)}`;
+}
+
 function navHref(page: NavigationPage): string {
   return page === 'home' ? '/' : `/${page}`;
 }
@@ -101,6 +125,9 @@ export function AppShell({ children }: { children: ComponentChildren }) {
   const isMobile = useMediaQuery('(max-width: 720px)');
   const approvals = useGlobalApprovals();
   const pending = approvals.data?.buckets.pending.length ?? 0;
+  // Capability-scoped deep links must not open operator-wide streams.
+  const scoped = location.query.token !== undefined;
+  const shellSessions = useShellSessions(!scoped);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarPreference);
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
@@ -122,9 +149,18 @@ export function AppShell({ children }: { children: ComponentChildren }) {
   useEffect(() => {
     if (isMobile) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!isSidebarToggleShortcut(event)) return;
+      // The Mac app owns ⌘B and ⌘1-⌘6 through its native menus; registering
+      // them again in the page would double-fire.
+      if (isDesktop) return;
+      if (isSidebarToggleShortcut(event)) {
+        event.preventDefault();
+        toggleSidebar();
+        return;
+      }
+      const page = navigationPageForShortcut(event);
+      if (!page) return;
       event.preventDefault();
-      toggleSidebar();
+      location.route(navHref(page));
     };
     const onNativeToggle = () => toggleSidebar();
     window.addEventListener('keydown', onKeyDown);
@@ -133,7 +169,7 @@ export function AppShell({ children }: { children: ComponentChildren }) {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('agentuse:toggle-sidebar', onNativeToggle);
     };
-  }, [isMobile]);
+  }, [isMobile, isDesktop]);
 
   useEffect(() => {
     if (drawerOpen) {
@@ -255,14 +291,30 @@ export function AppShell({ children }: { children: ComponentChildren }) {
   const navItem = (page: NavigationPage, label: string) => {
     const active = currentPage === page;
     const badge = page === 'approvals' && pending > 0 ? pending : null;
+    const running = page === 'sessions' ? shellSessions.running : 0;
+    const shortcutIndex = NAVIGATION_ORDER.indexOf(page);
+    const shortcut = shortcutIndex >= 0 ? `${IS_APPLE ? '⌘' : 'Ctrl+'}${shortcutIndex + 1}` : undefined;
     return (
-      <a class={`sidebar-nav-item${active ? ' active' : ''}`} href={navHref(page)} aria-current={active ? 'page' : undefined}>
+      <a
+        class={`sidebar-nav-item${active ? ' active' : ''}`}
+        href={navHref(page)}
+        aria-current={active ? 'page' : undefined}
+        title={shortcut ? `${label} (${shortcut})` : label}
+        aria-keyshortcuts={shortcut ? `Meta+${shortcutIndex + 1} Control+${shortcutIndex + 1}` : undefined}
+      >
         <NavIcon page={page} />
-        <span>{label}</span>
+        <span class="sidebar-nav-label">{label}</span>
+        {running > 0 && (
+          <span class="sidebar-running-count" aria-label={`${running} running`}>
+            <span class="sidebar-running-dot" aria-hidden="true" />{running}
+          </span>
+        )}
         {badge !== null && <span class="nav-badge" aria-label={`${badge} pending`}>{badge > 99 ? '99+' : badge}</span>}
       </a>
     );
   };
+
+  const recentSessions = sidebarCollapsed && !isMobile ? [] : shellSessions.recent;
 
   return (
     <div
@@ -304,29 +356,58 @@ export function AppShell({ children }: { children: ComponentChildren }) {
         class={`app-sidebar${drawerOpen ? ' is-open' : ''}`}
         aria-label="Primary navigation"
         tabIndex={-1}
-        aria-hidden={(isMobile && !drawerOpen) || (!isMobile && isDesktop && sidebarCollapsed) ? 'true' : undefined}
-        inert={(isMobile && !drawerOpen) || (!isMobile && isDesktop && sidebarCollapsed)}
+        aria-hidden={isMobile && !drawerOpen ? 'true' : undefined}
+        inert={isMobile && !drawerOpen}
       >
         <div class="sidebar-brand-row">
           <a class="sidebar-brand" href="/" aria-label="AgentUse home">
             <span class="brand-wordmark" dangerouslySetInnerHTML={{ __html: WORDMARK_SVG }} />
           </a>
+          {!isDesktop && !isMobile && (
+            <button
+              type="button"
+              class="toolbar-button sidebar-inline-toggle"
+              aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              aria-keyshortcuts="Meta+B Control+B"
+              aria-expanded={!sidebarCollapsed}
+              title={`${sidebarCollapsed ? 'Expand' : 'Collapse'} sidebar (${IS_APPLE ? '⌘' : 'Ctrl+'}B)`}
+              onClick={toggleSidebar}
+            ><PanelLeft aria-hidden="true" strokeWidth={1.7} /></button>
+          )}
         </div>
         <nav class="sidebar-nav" aria-label="AgentUse">
-          {navItem('home', 'home')}
-          {navItem('agents', 'agents')}
-          {navItem('sessions', 'sessions')}
+          {navItem('home', 'Home')}
+          {navItem('agents', 'Agents')}
+          {navItem('sessions', 'Sessions')}
           <span class="sidebar-divider" aria-hidden="true" />
-          {navItem('schedules', 'schedules')}
-          {navItem('stores', 'stores')}
-          {navItem('approvals', 'approvals')}
+          {navItem('schedules', 'Schedules')}
+          {navItem('stores', 'Stores')}
+          {navItem('approvals', 'Approvals')}
         </nav>
+        {recentSessions.length > 0 && (
+          <nav class="sidebar-recent" aria-label="Recent sessions">
+            <p class="sidebar-section-label">Recent</p>
+            {recentSessions.map((session) => (
+              <a
+                key={`${session.project}:${session.sessionId}`}
+                class={`sidebar-recent-item${pathname === `/sessions/${session.sessionId}` ? ' active' : ''}`}
+                href={sessionHref(session)}
+                title={`${displayAgentName(session.agent.name, session.agent.filePath, session.agent.id)} · ${session.status}`}
+              >
+                <span class={`sidebar-recent-dot tone-${runTone(session.status)}`} aria-hidden="true" />
+                <span class="sidebar-recent-name">{displayAgentName(session.agent.name, session.agent.filePath, session.agent.id)}</span>
+                <span class="sidebar-recent-time">{isRunningStatus(session.status) ? 'now' : formatRelativeTime(session.updatedAt).replace(' ago', '')}</span>
+              </a>
+            ))}
+          </nav>
+        )}
         <div class="sidebar-footer">
           <button type="button" class="palette-trigger sidebar-palette-trigger" aria-label="Go to agent" title={`Go to agent (${IS_APPLE ? '⌘' : 'Ctrl+'}K)`} onClick={() => openAgentPalette()}>
             <Search aria-hidden="true" strokeWidth={1.7} /><span class="palette-trigger-label">Go to agent</span><kbd class="palette-trigger-kbd">{IS_APPLE ? '⌘' : 'Ctrl'}K</kbd>
           </button>
+          <span class="sidebar-divider" aria-hidden="true" />
           <a class={`sidebar-nav-item${pathname === '/settings' ? ' active' : ''}`} href="/settings" aria-current={pathname === '/settings' ? 'page' : undefined}>
-            <Settings aria-hidden="true" strokeWidth={1.7} /><span>settings</span>
+            <Settings aria-hidden="true" strokeWidth={1.7} /><span class="sidebar-nav-label">Settings</span>
           </a>
         </div>
         <button

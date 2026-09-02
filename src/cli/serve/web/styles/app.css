@@ -8245,6 +8245,7 @@ button.ctx-result[aria-expanded="true"] .ctx-chevron { transform: rotate(180deg)
    narrow browser surfaces turn the same navigation into an overlay drawer. */
 .app-shell {
   --app-sidebar-width: 224px;
+  --app-sidebar-rail: 56px;
   display: grid;
   grid-template-columns: var(--app-sidebar-width) minmax(0, 1fr);
   min-height: 100vh;
@@ -8277,9 +8278,9 @@ button.ctx-result[aria-expanded="true"] .ctx-chevron { transform: rotate(180deg)
 }
 .sidebar-resize-handle {
   position: absolute;
-  inset: 0 -4px 0 auto;
+  inset: 0 -6px 0 auto;
   z-index: 3;
-  width: 8px;
+  width: 12px;
   min-height: 0;
   padding: 0;
   border: 0;
@@ -8291,7 +8292,7 @@ button.ctx-result[aria-expanded="true"] .ctx-chevron { transform: rotate(180deg)
 .sidebar-resize-handle::after {
   content: "";
   position: absolute;
-  inset: 0 auto 0 3px;
+  inset: 0 auto 0 5px;
   width: 2px;
   background: var(--cyan);
   opacity: 0;
@@ -8310,6 +8311,15 @@ button.ctx-result[aria-expanded="true"] .ctx-chevron { transform: rotate(180deg)
   min-height: 42px;
   padding: 0 8px 10px;
 }
+.sidebar-inline-toggle {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.app-sidebar:hover .sidebar-inline-toggle,
+.sidebar-inline-toggle:focus-visible { opacity: 1; }
 .sidebar-brand {
   min-width: 0;
   display: inline-flex;
@@ -8357,7 +8367,7 @@ button.ctx-result[aria-expanded="true"] .ctx-chevron { transform: rotate(180deg)
   color: var(--muted);
 }
 .sidebar-nav-item:hover { background: var(--panel-hover); color: var(--fg); }
-.sidebar-nav-item.active { background: var(--panel-hover); color: var(--fg); font-weight: var(--weight-bold); }
+.sidebar-nav-item.active { background: var(--panel-hover); color: var(--fg); }
 .sidebar-nav-item.active::before {
   content: "";
   position: absolute;
@@ -8376,6 +8386,84 @@ button.ctx-result[aria-expanded="true"] .ctx-chevron { transform: rotate(180deg)
   margin: 0 0 0 auto;
   padding: 0 5px;
   box-shadow: none;
+}
+.sidebar-running-count {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+  line-height: 1;
+}
+.sidebar-running-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.sidebar-nav-item .sidebar-running-count + .nav-badge { margin-left: 6px; }
+
+/* 3. Recent sessions: the common path is "open the run I was just watching",
+   so the shell keeps a few one-click targets under the primary nav. */
+.sidebar-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+  margin-top: 12px;
+  overflow-y: auto;
+}
+.sidebar-section-label {
+  margin: 0 0 4px;
+  padding: 0 10px;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: var(--font-size-micro);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.sidebar-recent-item {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--muted-3);
+  font-family: var(--sans);
+  font-size: var(--font-size-micro);
+  text-decoration: none;
+}
+.sidebar-recent-item:hover { background: var(--panel-hover); color: var(--fg); }
+.sidebar-recent-item.active { background: var(--panel-hover); color: var(--fg); }
+.sidebar-recent-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.sidebar-recent-dot.tone-running { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 1.4s ease-in-out infinite; }
+.sidebar-recent-dot.tone-waiting { background: var(--cyan); }
+.sidebar-recent-dot.tone-ok { background: var(--muted); }
+.sidebar-recent-dot.tone-failed { background: var(--red); }
+.sidebar-recent-name {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.sidebar-recent-time {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
 }
 .sidebar-divider {
   height: 1px;
@@ -8450,13 +8538,38 @@ button.ctx-result[aria-expanded="true"] .ctx-chevron { transform: rotate(180deg)
 .toolbar-drag-region { align-self: stretch; flex: 1; }
 .mobile-brand { display: none; color: var(--fg); text-decoration: none; }
 
-.app-shell[data-sidebar-collapsed="true"] { grid-template-columns: 0 minmax(0, 1fr); }
+/* 1. Collapsed is an icon rail, never an empty gutter: navigation stays
+   reachable (and reversible) without a native menu or a remembered shortcut. */
+.app-shell[data-sidebar-collapsed="true"] { grid-template-columns: var(--app-sidebar-rail) minmax(0, 1fr); }
 .app-shell[data-sidebar-collapsed="true"] .app-sidebar {
-  width: 0;
+  width: var(--app-sidebar-rail);
+  padding-inline: 8px;
+}
+.app-shell[data-sidebar-collapsed="true"] .sidebar-nav-item,
+.app-shell[data-sidebar-collapsed="true"] .sidebar-palette-trigger {
+  justify-content: center;
   padding-inline: 0;
-  border-right-color: transparent;
-  opacity: 0;
-  pointer-events: none;
+}
+.app-shell[data-sidebar-collapsed="true"] .sidebar-nav-label,
+.app-shell[data-sidebar-collapsed="true"] .palette-trigger-label,
+.app-shell[data-sidebar-collapsed="true"] .palette-trigger-kbd,
+.app-shell[data-sidebar-collapsed="true"] .sidebar-recent,
+.app-shell[data-sidebar-collapsed="true"] .sidebar-brand { display: none; }
+.app-shell[data-sidebar-collapsed="true"] .sidebar-brand-row { justify-content: center; padding-inline: 0; }
+.app-shell[data-sidebar-collapsed="true"] .sidebar-inline-toggle { margin-left: 0; opacity: 1; }
+/* The rail keeps the "something is running" signal, drops the digit. */
+.app-shell[data-sidebar-collapsed="true"] .sidebar-running-count {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  margin: 0;
+  font-size: 0;
+}
+.app-shell[data-sidebar-collapsed="true"] .app-sidebar .nav-badge {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  margin: 0;
 }
 .app-shell[data-sidebar-collapsed="true"] .sidebar-resize-handle { display: none; }
 
