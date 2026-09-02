@@ -210,6 +210,42 @@ describe('await_human approval URL', () => {
     }).success).toBe(true);
   });
 
+  it('requires displayContent when a change is a command carrying a payload', () => {
+    const tool = createAwaitHumanTool('session-1', { projectRoot: '/tmp/project-a' });
+    const schema = tool.inputSchema as { safeParse: (v: unknown) => { success: boolean } };
+
+    const command = 'uv run /Users/x/.claude/skills/postiz-social/postiz_api.py post_thread_x cm71 "2026-09-09T16:00:00Z" '
+      + '\'[{"text":"More advice is not the answer when the real gap is an action with no trigger. Pick one daily cue."}]\'';
+
+    // a wall of shell with no business content is unreviewable
+    expect(schema.safeParse({
+      prompt: 'Approve scheduling this quote short?',
+      changes: [{ label: 'Schedule X video', content: command }],
+    }).success).toBe(false);
+
+    // displayContent surfaces the post the reviewer is actually approving
+    expect(schema.safeParse({
+      prompt: 'Approve scheduling this quote short?',
+      changes: [{
+        label: 'Schedule X video',
+        content: command,
+        displayContent: 'More advice is not the answer when the real gap is an action with no trigger. Pick one daily cue.',
+      }],
+    }).success).toBe(true);
+
+    // a short command is its own whole story
+    expect(schema.safeParse({
+      prompt: 'Approve the deploy?',
+      changes: [{ label: 'Deploy', content: 'git push origin main && make deploy' }],
+    }).success).toBe(true);
+
+    // long prose is not a command
+    expect(schema.safeParse({
+      prompt: 'Approve this post?',
+      changes: [{ label: 'Post body', content: 'Knowing what to do is not the same as having it survive a full week. '.repeat(5) }],
+    }).success).toBe(true);
+  });
+
   it('defines actionable comments as revise-and-re-gate before choice ambiguity', () => {
     const tool = createAwaitHumanTool('session-1', { projectRoot: '/tmp/project-a' });
     const description = tool.description ?? '';

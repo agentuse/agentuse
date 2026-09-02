@@ -26,6 +26,19 @@ const RESPONSE_INTENT_RE = /\b(?:repl(?:y|ies|ying)|comment(?:ing)?|respond(?:in
  */
 const TRUNCATION_MARKER_RE = /\[\s*(?:\.{3}|…|truncated|snip|abridged|full text|continues)[^\]]*\]|\(\s*(?:truncated|snipped|abridged|shortened|full text|continues)[^)]*\)/i;
 
+/**
+ * A leading executable, optionally behind `$`/`sudo`/env assignments. Matched
+ * against the first non-empty line of a change's `content`.
+ */
+const COMMAND_CONTENT_RE = /^\s*(?:\$\s*)?(?:sudo\s+)?(?:[A-Z_][A-Z0-9_]*=\S*\s+)*(?:uv|uvx|python3?|node|npx|bun|pnpm|yarn|npm|deno|bash|sh|zsh|curl|wget|gh|git|docker|make|ruby|php|go|cargo|java|osascript|open)\b/;
+
+/**
+ * Above this, a bare command is a wall of shell hiding a payload the reviewer
+ * actually needs to read; below it (`git push`, `make deploy`) the command IS
+ * the whole story and a displayContent restatement would be noise.
+ */
+const COMMAND_PAYLOAD_MIN_LENGTH = 200;
+
 /** Every surface that states the gate's intent, minus the bodies being drafted. */
 function gateIntentText(val: {
   prompt?: string | undefined;
@@ -122,7 +135,7 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       changes: z.array(z.object({
         label: z.string().optional().describe('Short name for this action, e.g. "Comment to post", "Then: Like the post", "Email body"'),
         content: z.string().describe('The exact, final content or action, verbatim: what will literally be submitted on approval'),
-        displayContent: z.string().optional().describe('Human-facing business content to feature above `content` when `content` must be an executable command. For a post, reply, email, or message, use the exact body without the CLI wrapper. The UI keeps the command visible but visually secondary.'),
+        displayContent: z.string().optional().describe('Human-facing business content to feature above `content` when `content` must be an executable command. REQUIRED (validation rejects the call without it) once such a command carries an embedded payload. For a post, reply, email, or message, use the exact body without the CLI wrapper. The UI keeps the command visible but visually secondary.'),
         optionId: z.string().min(1).optional().describe('For a pick gate, the options[].id that authorizes this action. Omit for an action that should run regardless of the selected option.')
       })).optional().describe('The exact actions executed on approval, one entry per discrete action, in order. Rendered as highlighted "On approval" content. When `content` is an executable command, also provide `displayContent` so the reviewer sees the business content first and the exact command de-emphasized beneath it. Rationale belongs in summary or context.'),
       reference: z.object({
@@ -162,6 +175,28 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
             code: z.ZodIssueCode.custom,
             path: ['changes', index, 'optionId'],
             message: `optionId "${change.optionId}" does not reference an options[].id in this request`,
+          });
+        }
+      }
+
+      // An executable `content` carrying an embedded payload (a post body, an
+      // email, a JSON blob) renders as a wall of shell: the reviewer approves a
+      // public action without ever reading it. displayContent is the only field
+      // that surfaces the business content, so require it here rather than
+      // hoping the field description is honoured.
+      for (const [index, change] of (val.changes ?? []).entries()) {
+        const content = change.content ?? '';
+        const firstLine = content.split('\n').find((line) => line.trim()) ?? '';
+        const hasDisplay = Boolean(change.displayContent?.trim());
+        if (!hasDisplay && content.length > COMMAND_PAYLOAD_MIN_LENGTH && COMMAND_CONTENT_RE.test(firstLine)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['changes', index, 'displayContent'],
+            message:
+              'this change\'s content is an executable command carrying a payload, so displayContent is required: set it to ' +
+              'the exact human-facing content the command submits (the post, reply, email, or message body, verbatim, ' +
+              'without the CLI wrapper). The card shows displayContent first and keeps the command visible but secondary; ' +
+              'without it the reviewer approves a wall of shell they cannot read.',
           });
         }
       }
