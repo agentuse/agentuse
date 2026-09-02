@@ -91,7 +91,10 @@ launcher, controls native approval and session-completion notifications, and
 displays the current server log. The Settings window uses native
 SwiftUI controls while the dashboard remains the existing web interface. A
 server started outside the app is identified as external and is never stopped
-by the desktop controls. Login launches start in the background so the menu-bar
+by the desktop controls. If that external server restarts, Desktop keeps its
+port available and reconnects instead of starting a competing server. Use
+**Start Server** explicitly if the external server has been retired and you
+want Desktop to replace it. Login launches start in the background so the menu-bar
 status and approvals are available without opening the dashboard window.
 
 The dashboard gear opens **Dashboard preferences** for theme, Home layout,

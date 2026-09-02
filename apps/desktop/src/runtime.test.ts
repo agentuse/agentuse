@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isAbandonedDesktopServer, isDashboardNavigation, isLocalServer, isSafeExternalUrl, selectServer, serverRegistryDirectory, serverUrl } from "./runtime";
+import { isAbandonedDesktopServer, isDashboardNavigation, isLocalServer, isSafeExternalUrl, reconnectCandidates, selectServer, serverAcquisitionMode, serverRegistryDirectory, serverUrl } from "./runtime";
 
 describe("desktop runtime helpers", () => {
   it("uses AGENTUSE_DATA_DIR as the exact registry profile", () => {
@@ -26,6 +26,22 @@ describe("desktop runtime helpers", () => {
     expect(selected?.pid).toBe(1);
     expect(serverUrl({ host: "::1", port: 12233 })).toBe("http://[::1]:12233");
     expect(serverUrl({ host: "0.0.0.0", port: 12233 })).toBe("http://127.0.0.1:12233");
+  });
+
+  it("prefers a replacement on the disconnected external server's port", () => {
+    const candidates = reconnectCandidates([
+      { pid: 3, host: "127.0.0.1", port: 12234, projectRoot: "/c", startTime: 1, version: "1" },
+      { pid: 2, host: "127.0.0.1", port: 12233, projectRoot: "/b", startTime: 3, version: "1" },
+      { pid: 1, host: "127.0.0.1", port: 12233, projectRoot: "/a", startTime: 2, version: "1" },
+    ], { port: 12233 });
+
+    expect(candidates.map((candidate) => candidate.pid)).toEqual([1, 2, 3]);
+  });
+
+  it("does not replace a disconnected external server without an explicit request", () => {
+    expect(serverAcquisitionMode({ port: 12233 })).toBe("reconnect-external");
+    expect(serverAcquisitionMode({ port: 12233 }, true)).toBe("start-owned");
+    expect(serverAcquisitionMode(undefined)).toBe("start-owned");
   });
 
   it("keeps embedded navigation on the attached dashboard origin", () => {

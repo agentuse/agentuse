@@ -21,7 +21,7 @@ import {
 } from "./onboarding-state";
 import { createDesktopQuitPolicy, deferDesktopQuitAfterDrain, shouldWarnBeforeFullQuit } from "./quit-policy";
 import { shouldHideDashboardWindow } from "./dashboard-presentation";
-import { isAbandonedDesktopServer, isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, selectServer, serverUrl, type RegisteredServer } from "./runtime";
+import { isAbandonedDesktopServer, isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, reconnectCandidates, selectServer, serverAcquisitionMode, serverUrl, type RegisteredServer } from "./runtime";
 import { createAgentUseTrayIcon } from "./tray-icon";
 import { selectLoopbackPort } from "./port-selection";
 import { defaultCliLinkPath, inspectCliAvailability, loginShellPath, packagedCliLauncherPath, toggleCliLink, type CliLinkState } from "./cli-link";
@@ -51,6 +51,7 @@ import {
 const require = createRequire(__filename);
 const APP_NAME = "AgentUse";
 const STARTUP_TIMEOUT_MS = 15_000;
+const EXTERNAL_RECONNECT_TIMEOUT_MS = 10_000;
 const APPROVAL_POLL_INTERVAL_MS = 5_000;
 const DESKTOP_SERVER_LIFETIME_FD = 3;
 const desktopServerSupervisor: DesktopServerSupervisor = {
@@ -69,6 +70,10 @@ let trayMenu: Menu | undefined;
 let dashboardUrl: string | undefined;
 let dashboardApiKey: string | undefined;
 let currentServer: RegisteredServer | undefined;
+// Keep external ownership sticky across a restart gap. Without this hint, a
+// one-second failed probe can make Desktop see port 12233 as unowned and bind
+// its own daemon before the external supervisor restarts `agentuse serve`.
+let disconnectedExternalServer: RegisteredServer | undefined;
 let ownedServer: ChildProcess | undefined;
 let approvalPollTimer: ReturnType<typeof setInterval> | undefined;
 let notificationStreamController: AbortController | undefined;
@@ -460,6 +465,21 @@ async function waitForServer(pid: number, apiKey?: string): Promise<RegisteredSe
   throw new Error("AgentUse server did not become ready within 15 seconds.");
 }
 
+async function waitForExternalServer(previous: RegisteredServer, apiKey?: string): Promise<RegisteredServer | undefined> {
+  const deadline = Date.now() + EXTERNAL_RECONNECT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    for (const candidate of reconnectCandidates(listRegisteredServers(), previous)) {
+      const probe = await probeServer(serverUrl(candidate), apiKey);
+      if (probe === "unauthorized") {
+        throw new Error("The restarted AgentUse backend requires a different API key. Set AGENTUSE_API_KEY before opening the desktop app, or restart the backend without operator authentication on loopback.");
+      }
+      if (probe === "ready") return candidate;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  return undefined;
+}
+
 function registeredServerIsStillRunning(server: RegisteredServer): boolean {
   return listRegisteredServers().some((candidate) => candidate.pid === server.pid
     && (!server.procStartedAt || !candidate.procStartedAt || candidate.procStartedAt === server.procStartedAt));
@@ -500,11 +520,23 @@ async function reconcileAbandonedDesktopServers(): Promise<void> {
   }
 }
 
-async function acquireServer(): Promise<void> {
+async function acquireServer(allowReplacingExternal = false): Promise<void> {
   await reconcileAbandonedDesktopServers();
+  const inheritedApiKey = process.env.AGENTUSE_API_KEY;
+  if (disconnectedExternalServer && serverAcquisitionMode(disconnectedExternalServer, allowReplacingExternal) === "reconnect-external") {
+    const replacement = await waitForExternalServer(disconnectedExternalServer, inheritedApiKey);
+    if (replacement) {
+      currentServer = replacement;
+      dashboardUrl = serverUrl(replacement);
+      dashboardApiKey = inheritedApiKey;
+      disconnectedExternalServer = replacement;
+      return;
+    }
+    throw new Error(`The external AgentUse backend at ${serverUrl(disconnectedExternalServer)} is not running. Desktop left its port available so the external server can restart. Use Start Server in Settings if you want Desktop to replace it.`);
+  }
+
   const existing = selectServer(listRegisteredServers());
   if (existing) {
-    const inheritedApiKey = process.env.AGENTUSE_API_KEY;
     const probe = await probeServer(serverUrl(existing), inheritedApiKey);
     if (probe === "unauthorized") {
       throw new Error("The running AgentUse backend requires a different API key. Set AGENTUSE_API_KEY before opening the desktop app, or restart the backend without operator authentication on loopback.");
@@ -515,6 +547,7 @@ async function acquireServer(): Promise<void> {
     currentServer = existing;
     dashboardUrl = serverUrl(existing);
     dashboardApiKey = inheritedApiKey;
+    disconnectedExternalServer = existing;
     return;
   }
 
@@ -553,13 +586,14 @@ async function acquireServer(): Promise<void> {
   currentServer = await waitForServer(ownedPid);
   dashboardUrl = serverUrl(currentServer);
   dashboardApiKey = undefined;
+  disconnectedExternalServer = undefined;
 }
 
-async function ensureServer(): Promise<void> {
+async function ensureServer(allowReplacingExternal = false): Promise<void> {
   if (dashboardUrl && currentServer) return;
   if (!serverAcquisition) {
     serverOperation = "starting";
-    serverAcquisition = acquireServer().finally(() => {
+    serverAcquisition = acquireServer(allowReplacingExternal).finally(() => {
       serverAcquisition = undefined;
       serverOperation = undefined;
     });
@@ -1184,7 +1218,13 @@ async function toggleServerFromSettings() {
       serverOperation = undefined;
     }
   } else if (!activeServer) {
-    await ensureServer();
+    // This is the explicit escape hatch after an externally managed daemon has
+    // been intentionally retired. Background reconnects never take its port.
+    currentServer = undefined;
+    dashboardUrl = undefined;
+    dashboardApiKey = undefined;
+    stopNotificationStream();
+    await ensureServer(true);
     startApprovalPolling();
     startNotificationStream();
   }

@@ -61,6 +61,31 @@ export function selectServer(servers: readonly RegisteredServer[]): RegisteredSe
   return servers.filter(isLocalServer).sort((left, right) => left.startTime - right.startTime)[0];
 }
 
+/**
+ * Prefer a restarted daemon on the endpoint Desktop was already using. A
+ * supervisor can leave the old registry entry visible while the replacement
+ * is starting, so callers still need to probe every returned candidate.
+ */
+export function reconnectCandidates(
+  servers: readonly RegisteredServer[],
+  previous: Pick<RegisteredServer, "port">,
+): RegisteredServer[] {
+  return servers
+    .filter(isLocalServer)
+    .sort((left, right) => {
+      const leftPortRank = left.port === previous.port ? 0 : 1;
+      const rightPortRank = right.port === previous.port ? 0 : 1;
+      return leftPortRank - rightPortRank || left.startTime - right.startTime;
+    });
+}
+
+export function serverAcquisitionMode(
+  disconnectedExternalServer: unknown,
+  allowReplacingExternal = false,
+): "reconnect-external" | "start-owned" {
+  return disconnectedExternalServer && !allowReplacingExternal ? "reconnect-external" : "start-owned";
+}
+
 export function isAbandonedDesktopServer(
   server: RegisteredServer,
   supervisorState: (supervisor: DesktopServerSupervisor) => ProcessRefState = processRefState,
