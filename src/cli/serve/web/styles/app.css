@@ -4811,28 +4811,34 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 .page-home .now-desc { margin-top: 3px; font-size: var(--font-size-caption); color: var(--muted-3); line-height: var(--lh-snug); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .page-home .now-meta { font-size: var(--font-size-caption); color: var(--muted); white-space: nowrap; }
 .page-home .now-grid {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: grid;
+  /* auto-fit so a lone running session gets the full row instead of being
+     squeezed into a third of it; min() keeps the track from overflowing
+     narrow phones. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
   gap: 10px;
 }
 .page-home .now-grid a.now-row {
   min-width: 0; border: 1px solid var(--line); border-radius: 14px;
   background: var(--surface); box-shadow: var(--surface-shadow);
+  /* Top-align: the elapsed clock sits on the title line even when the
+     title wraps to two lines. */
+  align-items: flex-start;
 }
-.page-home .now-grid .now-head { display: block; }
+.page-home .now-grid .now-dot { margin-top: 6px; }
+.page-home .now-grid .now-elapsed { margin-top: 1px; }
+/* Title on its own line (it may wrap); project/trigger and the subagent pill
+   share the line below so the card stays short. */
+.page-home .now-grid .now-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 8px; }
 .page-home .now-grid .now-agent {
-  display: block; white-space: normal; overflow: visible; text-overflow: clip; line-height: var(--lh-snug);
+  flex: 0 0 100%; white-space: normal; overflow: visible; text-overflow: clip; line-height: var(--lh-snug);
 }
-.page-home .now-grid .now-meta { display: block; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; }
-.page-home .now-grid .now-subagent { margin-top: 4px; }
+.page-home .now-grid .now-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 560px) {
-  .page-home .now-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
-  .page-home .now-grid a.now-row { gap: 8px; padding: 11px 10px; align-items: flex-start; }
-  /* The card top-aligns its children on mobile so wrapped titles can grow.
-     Center the dot on the first 18px title line instead of its top edge. */
-  .page-home .now-grid .now-dot { margin-top: 5px; }
+  .page-home .now-grid { gap: 8px; }
+  .page-home .now-grid a.now-row { gap: 10px; padding: 12px 12px; }
+  .page-home .now-grid .now-agent { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .page-home .now-grid .now-elapsed { font-size: var(--font-size-micro); }
-  .page-home .now-grid .now-desc,
-  .page-home .now-grid .now-ticker { display: none; }
 }
 /* Live tail of the running session: the card "types" what the agent is doing. */
 @keyframes tick-in { from { opacity: 0; transform: translateY(4px); } }
@@ -7206,8 +7212,8 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 /* child-session card shown inside a log entry */
 .page-approval-detail .subagent-event {
   display: grid;
-  grid-template-columns: auto minmax(120px, 1fr) minmax(180px, auto);
-  gap: 10px 14px;
+  grid-template-columns: auto minmax(120px, 1fr) minmax(180px, auto) auto;
+  gap: 6px 14px;
   align-items: center;
   margin: 6px 0 10px;
   padding: 10px 12px;
@@ -7250,25 +7256,26 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
    vertical centering of the chip against the agent name, so reset it here. */
 .page-approval-detail .subagent-event .chip.status { margin: 0; }
 .page-approval-detail .subagent-command {
-  grid-column: 2 / -1;
+  grid-column: 1 / -1;
   color: var(--muted);
   font-size: var(--font-size-micro);
   font-family: var(--mono);
   overflow-wrap: anywhere;
 }
 .page-approval-detail .subagent-context {
-  grid-column: 2 / -1;
+  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   gap: 4px 10px;
   color: var(--muted-2);
   font-size: var(--font-size-micro);
 }
-.page-approval-detail .subagent-context strong { color: var(--amber); font-weight: var(--weight-bold); }
+.page-approval-detail .subagent-context strong { color: var(--muted-2); font-family: var(--mono); font-weight: var(--weight-medium); }
+.page-approval-detail .subagent-context > * + *::before { content: "·"; margin-right: 8px; color: var(--muted-3); }
 .page-approval-detail .subagent-context time,
 .page-approval-detail .subagent-context span { font-family: var(--mono); }
 .page-approval-detail .subagent-error {
-  grid-column: 2 / -1;
+  grid-column: 1 / -1;
   color: var(--red);
   font-size: var(--font-size-caption);
   overflow-wrap: anywhere;
@@ -7285,19 +7292,18 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 .page-approval-detail .subagent-tree-node.is-important > .subagent-event {
   border-color: var(--line-strong);
 }
-.page-approval-detail .verify-event {
-  border-left-color: var(--cyan-border);
-}
+.page-approval-detail .subagent-tree-node > .verify-event { border-left: 3px solid var(--cyan-border); }
+.page-approval-detail .subagent-tree-node > .verify-event.is-failure { border-left-color: var(--red); }
 .page-approval-detail .verify-event-critique {
-  grid-column: 2 / -1;
-  color: var(--muted-2);
+  grid-column: 1 / -1;
+  color: var(--fg);
   font-size: var(--font-size-caption);
+  line-height: var(--lh-snug);
   overflow-wrap: anywhere;
 }
-.page-approval-detail .verify-event-critique.is-failure { color: var(--red); }
-.page-approval-detail .reviewer-feedback-event { border-left-color: var(--amber-border); }
+.page-approval-detail .subagent-tree-node > .reviewer-feedback-event { border-left: 3px solid var(--amber-border); }
 .page-approval-detail .reviewer-feedback-comment {
-  grid-column: 2 / -1;
+  grid-column: 1 / -1;
   color: var(--fg);
   font-size: var(--font-size-caption);
   line-height: var(--lh-snug);
@@ -7770,6 +7776,11 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 
 /* Trailing "open" affordance inside a subagent card link: quiet until the card
    is hovered, then it brightens and nudges to signal it navigates. */
+.page-approval-detail .subagent-event .subagent-open-cue {
+  grid-column: 4;
+  grid-row: 1;
+  justify-self: end;
+}
 .subagent-open-cue {
   color: var(--muted);
   transition: color 120ms ease, transform 120ms ease;
