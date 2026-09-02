@@ -204,7 +204,9 @@ export async function createSubAgentTool(
       };
 
       try {
-        logger.info(`[SubAgent:depth=${depth}] Starting ${agent.name}${task ? ` with task: ${task.slice(0, 100)}...` : ''}`);
+        // Debug level: the parent's subagent card already names the child, its
+        // status, and its task, so an info line here only duplicates the card.
+        logger.debug(`[SubAgent:depth=${depth}] Starting ${agent.name}${task ? ` with task: ${task.slice(0, 100)}...` : ''}`);
 
         // Create the durable child before MCP/tool runtime preparation
         // (handshakes, skill loading, store locks). The parent log can then attach
@@ -697,7 +699,8 @@ export async function createSubAgentTools(
       // Add subagent__ prefix
       const prefixedName = `subagent__${name}`;
       tools[prefixedName] = tool;
-      logger.info(`[SubAgent] Registered sub-agent: ${prefixedName}`);
+      // Debug level: wiring a tool up at startup is not run activity.
+      logger.debug(`[SubAgent] Registered sub-agent: ${prefixedName}`);
 
       // Note: @ symbol is not allowed in tool names by the API
       // So we won't register @-prefixed versions anymore
