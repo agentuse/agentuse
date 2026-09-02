@@ -7352,6 +7352,7 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 .agent-revision-field textarea { min-height: 100px; padding: 10px; resize: vertical; }
 .agent-revision-field select { min-height: 38px; padding: 0 9px; }
 .agent-revision-models { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 12px; }
+.debug-prompt-button.is-open, .session-action-button.is-open { border-color: var(--cyan-border); color: var(--cyan); }
 .agent-revision-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .agent-revision-cancel {
   display: inline-flex;

@@ -263,12 +263,13 @@ export function AgentRevisionLauncher(props: {
           )}
         </div>
       )}
-      {historyLoaded && !showCard && !open && (
+      {historyLoaded && !showCard && (
         <button
           type="button"
-          class={props.buttonClassName ?? `debug-prompt-button${props.atGate ? '' : ' is-primary'}`}
+          class={`${props.buttonClassName ?? `debug-prompt-button${props.atGate ? '' : ' is-primary'}`}${open ? ' is-open' : ''}`}
           title={props.buttonTitle ?? "Diagnose this run and propose a change to this agent's source"}
-          onClick={() => void begin()}
+          aria-expanded={open}
+          onClick={() => { if (open) { if (!busy) setOpen(false); return; } void begin(); }}
         >
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
