@@ -696,7 +696,7 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 /* State pills stay uppercase (a recognizable status convention); identifier
    chips (project id) keep their natural case so names aren't shouted and stay
    consistent with the value chips used elsewhere in the app. */
-.page-approvals .chip.status, .page-approvals .chip.trigger,
+.page-approvals .chip.status,
 .page-sessions .chip.status, .page-sessions .chip.trigger {
   text-transform: uppercase;
   letter-spacing: var(--tracking-caps);
@@ -2606,6 +2606,10 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
    layer, and --muted-2 (0.35 light / 0.30 dark) sits near 2.5:1 against the
    surface. --muted clears AA in both themes while staying quieter than the
    clickable summaries below, so the hierarchy survives the fix. */
+/* These are <h4> so heading navigation can reach the card's structure; the
+   reset keeps that purely semantic, with no visual change from the divs. */
+.approval-section-title { margin: 0; }
+.approval-question { margin: 0; }
 .approval-section-title,
 .approval-context > summary,
 .approval-summary-collapsed > summary {
@@ -2942,6 +2946,14 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   cursor: pointer;
 }
 .approval-option-more:hover { text-decoration: underline; }
+/* Focusable so their clipped overflow is keyboard-scrollable; matches the
+   .content-table-scroll treatment already used for wide tables. */
+.approval-reference-excerpt:focus-visible,
+.approval-command-content:focus-visible {
+  outline: 2px solid var(--cyan-border);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
 .approval-option.selected .approval-option-label {
   color: var(--fg);
 }
@@ -3114,6 +3126,19 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   border-radius: 6px;
   background: transparent;
   cursor: pointer;
+}
+/* A finger needs about 44px; a mouse does not, and growing the chip everywhere
+   would make it compete with the change content it sits beside. Grow the tap
+   area only where the pointer is actually coarse. */
+@media (pointer: coarse) {
+  .approval-copy,
+  .page-approval-detail button:not(.icon-btn):not(.palette-trigger).approval-copy {
+    min-height: 44px;
+    padding: 0 12px;
+  }
+  .approval-command-summary { min-height: 44px; }
+  .approval-toast-dismiss { min-width: 44px; min-height: 44px; padding: 6px 10px; }
+  .approval-option-more { min-height: 44px; }
 }
 .approval-copy:hover { color: var(--fg); }
 .page-approval-detail button.primary {
@@ -7678,7 +7703,7 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 .page-home .card:focus-visible,
 .page-home a.proj:focus-visible,
 .page-sessions a.row:focus-visible,
-.page-approvals a.row:focus-visible,
+.page-approvals a.appr:focus-visible,
 .page-agents a.tree-label:focus-visible,
 .page-agents .pin-name:focus-visible,
 .page-agent-detail .run-row:focus-visible,

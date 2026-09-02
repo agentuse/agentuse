@@ -112,14 +112,17 @@ function SavedArtifactCard(props: { artifact: NonNullable<ApprovalLogDetails['sa
   );
 }
 
-function CopyButton(props: { text: string }) {
+/** `label` names what gets copied: a card can hold several of these, and
+ *  without it a screen reader offers a list of identical "copy" buttons. */
+function CopyButton(props: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false);
+  const what = props.label ? `Copy ${props.label} to clipboard` : 'Copy to clipboard';
   return (
     <button
       class="approval-copy"
       type="button"
-      title="Copy to clipboard"
-      aria-live="polite"
+      title={what}
+      aria-label={copied ? `${what} — copied` : what}
       onClick={() => {
         navigator.clipboard?.writeText(props.text).then(() => {
           setCopied(true);
@@ -148,8 +151,10 @@ function CommandDetail(props: { change: ApprovalChange }) {
     <details class="approval-command-detail">
       <summary class="approval-command-summary">
         <span class="approval-command-label">Command</span>
-        <code class="approval-command-content">{props.change.content}</code>
-        <CopyButton text={props.change.content} />
+        {/* Scrolls horizontally when the command overflows, so it needs to be
+            focusable or the tail is keyboard-unreachable. */}
+        <code class="approval-command-content" tabIndex={0}>{props.change.content}</code>
+        <CopyButton text={props.change.content} label="command" />
       </summary>
       <code class="approval-command-full">{props.change.content}</code>
     </details>
@@ -163,22 +168,56 @@ function stripUntrustedWrapper(text: string): string {
   return text.replace(/<\/?untrusted_input(?:\s[^>]*)?>/g, '').replace(/\n{3,}/g, '\n\n').trim();
 }
 
+/** Loose match for "these two strings say the same thing": case, surrounding
+ *  punctuation and Markdown heading marks are all noise for this comparison. */
+function sameText(a: string | undefined, b: string | undefined): boolean {
+  const norm = (v: string) => v.replace(/^#{1,6}\s*/, '').replace(/[\s*_`#:.–—-]+/g, ' ').trim().toLowerCase();
+  return Boolean(a && b && norm(a) === norm(b));
+}
+
+/**
+ * Agents routinely restate a section's own heading as the first line of that
+ * section's body — "Source context", "Why this request", "Draft notes" are the
+ * card's hardcoded labels, not the author's, so an agent that writes one is
+ * echoing the UI back at itself and the reviewer reads it twice. The schema
+ * tells agents not to; they do it anyway, and stripping it here fixes every
+ * gate already recorded rather than only the ones written after the next
+ * prompt change.
+ */
+function stripEchoedHeading(text: string, title: string): string {
+  const lines = text.split('\n');
+  const first = lines.findIndex((l) => l.trim() !== '');
+  if (first === -1 || !sameText(lines[first], title)) return text;
+  // Drop the echoed line plus the blank line that followed it, so the body
+  // does not start on a stray gap.
+  const rest = lines.slice(first + 1);
+  while (rest.length > 0 && rest[0]!.trim() === '') rest.shift();
+  return rest.join('\n');
+}
+
 /** The original being responded to, quoted beside (or above, when narrow) the
  *  changes so the reviewer judges original ↔ reply without leaving the card. */
 function ReferenceBlock(props: { reference: ApprovalReference }) {
   const ref = props.reference;
+  const excerpt = ref.excerpt ? stripUntrustedWrapper(ref.excerpt) : undefined;
+  // A one-line original (a question, a subject) makes title and excerpt the
+  // same sentence, and the card printed it twice in a row. Keep the excerpt,
+  // since that is the field the reviewer is told to judge against.
+  const title = sameText(ref.title, excerpt) ? undefined : ref.title;
   return (
     <section class="approval-section approval-reference">
-      <div class="approval-section-title">{ref.label || 'In reply to'}</div>
+      <h4 class="approval-section-title">{ref.label || 'In reply to'}</h4>
       <div class="approval-section-body">
         <div class="approval-reference-quote">
-          {(ref.author || ref.title) && (
+          {(ref.author || title) && (
             <div class="approval-reference-head">
               {ref.author && <span class="approval-reference-author">{ref.author}</span>}
-              {ref.title && <span class="approval-reference-title">{ref.title}</span>}
+              {title && <span class="approval-reference-title">{title}</span>}
             </div>
           )}
-          {ref.excerpt && <div class="approval-reference-excerpt"><LogContent value={stripUntrustedWrapper(ref.excerpt)} forceMarkdown /></div>}
+          {/* tabIndex: this box clips at 26em and scrolls, so without it the
+              hidden tail of a long original is unreachable by keyboard. */}
+          {excerpt && <div class="approval-reference-excerpt" tabIndex={0} role="group" aria-label="Original being responded to"><LogContent value={excerpt} forceMarkdown /></div>}
           {ref.url && <a class="approval-link" href={ref.url} target="_blank" rel="noopener noreferrer">Open original</a>}
         </div>
       </div>
@@ -190,7 +229,7 @@ function ReferenceBlock(props: { reference: ApprovalReference }) {
 function ChangesBlock(props: { changes: ApprovalChange[]; options: ApprovalOption[] }) {
   return (
     <section class="approval-section approval-changes">
-      <div class="approval-section-title">On approval</div>
+      <h4 class="approval-section-title">On approval</h4>
       <div class="approval-section-body">
         {props.changes.map((change, index) => (
           <div class="approval-change" key={index}>
@@ -201,7 +240,7 @@ function ChangesBlock(props: { changes: ApprovalChange[]; options: ApprovalOptio
                   Choice: {props.options.find((option) => option.id === change.optionId)?.label ?? change.optionId}
                 </span>
               )}
-              <CopyButton text={changeDisplayContent(change)} />
+              <CopyButton text={changeDisplayContent(change)} label={change.label || `action ${index + 1}`} />
             </div>
             <div class="approval-change-content"><LogContent value={changeDisplayContent(change)} forceMarkdown /></div>
             <CommandDetail change={change} />
@@ -370,6 +409,8 @@ function SelectedOptionActions(props: { children: ComponentChildren }) {
  * decided option marked. The recommended option is preselected by the page.
  */
 function OptionsBlock(props: {
+  /** Radio group name, scoped to the owning gate (see ApprovalDetailCard). */
+  groupName: string;
   options: ApprovalOption[];
   changes: ApprovalChange[];
   selected?: string | undefined;
@@ -379,7 +420,7 @@ function OptionsBlock(props: {
   const interactive = Boolean(props.onSelect);
   return (
     <section class="approval-section approval-options">
-      <div class="approval-section-title">Pick one</div>
+      <h4 class="approval-section-title">Pick one</h4>
       <div class="approval-options-list" role={interactive ? 'radiogroup' : 'list'} aria-label="Options to pick from">
         {props.options.map((opt) => {
           const isDecided = props.decided === opt.id;
@@ -416,7 +457,7 @@ function OptionsBlock(props: {
               <label class="approval-option-choice">
                 <input
                   type="radio"
-                  name="approval-option-pick"
+                  name={props.groupName}
                   value={opt.id}
                   checked={isSelected}
                   onChange={() => props.onSelect!(opt.id)}
@@ -439,12 +480,20 @@ function OptionsBlock(props: {
 
 function ApprovalDetailCard(props: {
   details: ApprovalLogDetails;
+  /** Log entry id. Scopes this card's element ids and its radio group name:
+   *  a session can render several gates, and a module-constant radio name
+   *  would silently merge them into one group where picking in one clears
+   *  the other. */
+  entryId: string;
   sessionId: string;
   token: string | undefined;
   selectedChoice?: string | undefined;
   onSelectChoice?: ((id: string) => void) | undefined;
 }) {
   const details = props.details;
+  // Non-alphanumerics out: an entry id ends up in an id/`for` pair and a radio
+  // group name, and a stray quote or space breaks the association silently.
+  const idBase = `gate-${props.entryId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
   const artifactPaths = details.artifactPaths ?? [];
   // Gate-time snapshots: path -> hash. Snapshot-known paths render frozen
   // bytes; when the gate recorded snapshots, they are the authoritative list
@@ -495,13 +544,18 @@ function ApprovalDetailCard(props: {
 
   return (
     <div class="approval-card">
-      {details.prompt && <div class="approval-question"><InlineMarkdown value={details.prompt} /></div>}
+      {/* A heading, not a div: it is the actual ask, so heading navigation has
+          to land on it. Without this a screen-reader user tabbing by heading
+          skipped straight past the question the whole card exists to pose. */}
+      {details.prompt && <h3 class="approval-question"><InlineMarkdown value={details.prompt} /></h3>}
       {/* What approving does in the world comes first: the reviewer needs it
-          before reading any candidate, not after scrolling past all of them. */}
+          before reading any candidate, not after scrolling past all of them.
+          role="note" so the warning survives without the amber wash, which is
+          otherwise the only thing marking this section as different in kind. */}
       {details.risk && (
-        <section class="approval-section approval-risk">
-          <div class="approval-section-title">Risk / consequence</div>
-          <div class="approval-section-body"><LogContent value={details.risk} forceMarkdown /></div>
+        <section class="approval-section approval-risk" role="note" aria-labelledby={`${idBase}-risk`}>
+          <h4 class="approval-section-title" id={`${idBase}-risk`}>Risk / consequence</h4>
+          <div class="approval-section-body"><LogContent value={stripEchoedHeading(details.risk, 'Risk / consequence')} forceMarkdown /></div>
         </section>
       )}
       {/* Reply gates are read as a comparison, not a sequence: the reviewer's
@@ -521,7 +575,7 @@ function ApprovalDetailCard(props: {
       )}
       {(artifactPaths.length > 0 || snapshotOnlyPaths.length > 0 || detectedImagePaths.length > 0) && (
         <section class="approval-section approval-artifact">
-          <div class="approval-section-title">{artifactPaths.length + snapshotOnlyPaths.length + detectedImagePaths.length > 1 ? 'Artifacts' : 'Artifact'}</div>
+          <h4 class="approval-section-title">{artifactPaths.length + snapshotOnlyPaths.length + detectedImagePaths.length > 1 ? 'Artifacts' : 'Artifact'}</h4>
           <div class="approval-section-body approval-artifact-body">
             {artifactPaths.map((path) => {
               const href = artifactHref(props.sessionId, path, props.token, snapshotByPath.get(path));
@@ -555,13 +609,13 @@ function ApprovalDetailCard(props: {
         )
         : (
           <section class="approval-section approval-primary">
-            <div class="approval-section-title">{primary.title}</div>
+            <h4 class="approval-section-title">{primary.title}</h4>
             <div class="approval-section-body">{primary.body}</div>
           </section>
         ))}
       {links.length > 0 && (
         <section class="approval-section approval-links">
-          <div class="approval-section-title">Links</div>
+          <h4 class="approval-section-title">Links</h4>
           <div class="approval-link-row">{links}</div>
         </section>
       )}
@@ -574,19 +628,19 @@ function ApprovalDetailCard(props: {
         ? (
           <details class="approval-section approval-secondary approval-summary-collapsed">
             <summary>Why this request</summary>
-            <div class="approval-section-body"><LogContent value={details.summary!} forceMarkdown /></div>
+            <div class="approval-section-body"><LogContent value={stripEchoedHeading(details.summary!, 'Why this request')} forceMarkdown /></div>
           </details>
         )
         : (
           <section class="approval-section approval-secondary">
-            <div class="approval-section-title">Why this request</div>
-            <div class="approval-section-body"><LogContent value={details.summary!} forceMarkdown /></div>
+            <h4 class="approval-section-title">Why this request</h4>
+            <div class="approval-section-body"><LogContent value={stripEchoedHeading(details.summary!, 'Why this request')} forceMarkdown /></div>
           </section>
         ))}
       {details.context && (
         <details class={`approval-section approval-context${changes.length === 0 ? ' approval-context-open' : ''}`} open={changes.length === 0}>
           <summary>Source context</summary>
-          <div class="approval-section-body"><LogContent value={details.context} forceMarkdown /></div>
+          <div class="approval-section-body"><LogContent value={stripEchoedHeading(details.context, 'Source context')} forceMarkdown /></div>
         </details>
       )}
       {options.length > 0 && (
@@ -594,6 +648,7 @@ function ApprovalDetailCard(props: {
         // the reviewer lands here, and the pick sits directly above the
         // Approve/Reject/Comment row it feeds. Evidence above, decision below.
         <OptionsBlock
+          groupName={`${idBase}-pick`}
           options={options}
           changes={optionChanges}
           selected={props.selectedChoice}
@@ -603,19 +658,19 @@ function ApprovalDetailCard(props: {
       )}
       {decisionLabel && (
         <section class="approval-section approval-decision">
-          <div class="approval-section-title">Decision</div>
+          <h4 class="approval-section-title">Decision</h4>
           <div class="approval-section-body">{decisionLabel}</div>
         </section>
       )}
       {details.decisionComment && (
         <section class="approval-section approval-secondary">
-          <div class="approval-section-title">Comment</div>
+          <h4 class="approval-section-title">Comment</h4>
           <div class="approval-section-body"><LogContent value={details.decisionComment} forceMarkdown /></div>
         </section>
       )}
       {details.errorMessage && (
         <section class="approval-section approval-risk">
-          <div class="approval-section-title">Error</div>
+          <h4 class="approval-section-title">Error</h4>
           <div class="approval-section-body">{details.errorMessage}</div>
         </section>
       )}
@@ -1175,6 +1230,7 @@ function LogEntryImpl(props: LogEntryProps) {
           {entry.details && (isApprovalEntry
             ? <ApprovalDetailCard
                 details={entry.details}
+                entryId={entry.id}
                 sessionId={props.sessionId}
                 token={props.token}
                 selectedChoice={props.selectedChoice}

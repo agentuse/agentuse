@@ -1327,12 +1327,23 @@ export default function SessionDetail() {
         target.tagName === 'TEXTAREA' ||
         (target.tagName === 'INPUT' && targetType !== 'radio' && targetType !== 'checkbox')
       ));
-      // Single-letter shortcuts must not steal keys from any interactive element
-      // (a focused link/button/select/summary/role=button/editable) or fire while
-      // any dialog is open, where the letter is likely meant for that surface.
+      // Single-letter shortcuts must not steal a key the focused element itself
+      // consumes. Only two kinds do: a <select> (type-ahead jumps to the option
+      // starting with that letter) and editable content. Buttons, links and
+      // summaries answer Enter and Space, never 'c' — and browsers focus a
+      // button on click, so treating those as interactive silently killed the
+      // advertised `c` shortcut for the rest of the page's life the moment the
+      // reviewer clicked anything.
       const active = document.activeElement as HTMLElement | null;
-      const inInteractive = Boolean(active?.closest('a, button, select, summary, [role="button"], [contenteditable]'));
-      const anyDialogOpen = Boolean(document.querySelector('dialog[open], [role="dialog"]'));
+      const inTypeAhead = Boolean(active?.closest('select, [contenteditable]'));
+      // Transient layers own Escape: they close on it via their own document
+      // listener, so firing the gate's reject dialog in the same keystroke
+      // dismisses the popover AND opens a decision the reviewer never asked
+      // for. Menus and tooltips are portalled, hence a document-wide query
+      // rather than a ref.
+      const anyDialogOpen = Boolean(document.querySelector(
+        'dialog[open], [role="dialog"], [role="menu"], [role="tooltip"], [role="listbox"]',
+      ));
       const canAct = actionable && !submittingDecision;
       if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
         // Reject and comment stay available on an unpicked gate; only approve
@@ -1340,10 +1351,10 @@ export default function SessionDetail() {
         if (!canAct || inField || awaitingPick) return;
         event.preventDefault();
         void submitDecision('approve');
-      } else if (event.key === 'Escape' && !inField) {
+      } else if (event.key === 'Escape' && !inField && !anyDialogOpen) {
         if (!canAct) return;
         setDecisionDialog('reject');
-      } else if ((event.key === 'c' || event.key === 'C') && !inField && !inInteractive && !anyDialogOpen && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      } else if ((event.key === 'c' || event.key === 'C') && !inField && !inTypeAhead && !anyDialogOpen && !event.metaKey && !event.ctrlKey && !event.altKey) {
         if (!canAct) return;
         event.preventDefault();
         setDecisionDialog('comment');
@@ -2018,6 +2029,7 @@ export default function SessionDetail() {
       <DecisionDialog
         open={decisionDialog !== null}
         mode={decisionDialog ?? 'comment'}
+        choiceLabel={gateOptions?.find((o) => o.id === effectiveChoice)?.label}
         allowRemember={canRememberLearning}
         rememberApplies={rememberApplies}
         onClose={() => setDecisionDialog(null)}

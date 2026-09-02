@@ -39,6 +39,13 @@ const COPY: Record<DecisionDialogMode, {
 export function DecisionDialog(props: {
   open: boolean;
   mode: DecisionDialogMode;
+  /** Label of the option currently picked on a pick gate, when there is one.
+   *  The server accepts `choice` only alongside an approve — that contract is
+   *  what lets the agent trust "approved implies a known id" — so a comment
+   *  about one candidate has nowhere structured to put it and the reviewer
+   *  ends up typing "the second one, but…" and hoping. Naming the option in
+   *  the comment text is the part the agent can actually act on. */
+  choiceLabel?: string | undefined;
   allowRemember?: boolean;
   /** Whether a saved rule will actually be injected into future runs
    *  (learning.apply). When false, the dialog notes the rule is stored but
@@ -50,6 +57,11 @@ export function DecisionDialog(props: {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [rememberChecked, setRememberChecked] = useState(false);
+  // Default on: the reviewer opened this dialog while a candidate was picked,
+  // so the note is about that candidate until they say otherwise. A checkbox
+  // rather than a silent prefix, because feedback on the gate as a whole is a
+  // real case and rewriting someone's words without showing them is not.
+  const [aboutChoice, setAboutChoice] = useState(true);
   const copy = COPY[props.mode];
 
   useEffect(() => {
@@ -58,6 +70,7 @@ export function DecisionDialog(props: {
     if (props.open && !dialog.open) {
       if (inputRef.current) inputRef.current.value = '';
       setRememberChecked(false);
+      setAboutChoice(true);
       if (typeof dialog.showModal === 'function') dialog.showModal();
       else dialog.setAttribute('open', '');
       requestAnimationFrame(() => inputRef.current?.focus());
@@ -68,11 +81,17 @@ export function DecisionDialog(props: {
   }, [props.open]);
 
   const submit = () => {
-    const text = (inputRef.current?.value ?? '').trim();
-    if (copy.requireText && !text) {
+    const raw = (inputRef.current?.value ?? '').trim();
+    if (copy.requireText && !raw) {
       inputRef.current?.focus();
       return;
     }
+    // Scoped to the candidate the reviewer had picked. The agent reads the
+    // comment literally, so the option has to be named in the text itself —
+    // there is no structured field for it on a non-approve decision.
+    const text = props.choiceLabel && aboutChoice && raw
+      ? `About option "${props.choiceLabel}": ${raw}`
+      : raw;
     // Ticking the box saves the comment itself as a durable instruction; the
     // server distills it into a grounded instruction. No separate field — comment
     // mode already requires text, so a checked box always has a comment.
@@ -117,6 +136,18 @@ export function DecisionDialog(props: {
             }}
           />
           <p class="dialog-hint">{copy.hint}</p>
+          {props.choiceLabel && (
+            <div class="remember-learning">
+              <label class="remember-toggle">
+                <input
+                  type="checkbox"
+                  checked={aboutChoice}
+                  onChange={(event) => setAboutChoice((event.currentTarget as HTMLInputElement).checked)}
+                />
+                <span>This is about option “{props.choiceLabel}”</span>
+              </label>
+            </div>
+          )}
           {props.mode === 'comment' && props.allowRemember && (
             <div class="remember-learning">
               <label class="remember-toggle">
