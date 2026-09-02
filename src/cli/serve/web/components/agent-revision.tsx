@@ -8,12 +8,29 @@ import {
   postAgentRevisionAction,
   requestAgentRevisionChanges,
   startAgentRevision,
+  ApiRequestError,
   type AgentRevisionSummary,
 } from '../lib/api';
 import { buildDebugPrompt, type DebugPromptContext } from './debug-prompt-button';
 import { SendToCodingAgentDialog } from './send-to-coding-agent-dialog';
 
 const ACTIVE_REVISION_STATUSES = new Set(['running', 'proposed', 'no-change']);
+const AUTHORING_PREFS_KEY = 'agentuse:revision-authoring';
+
+function readStoredAuthoring(): { model?: string; reasoning?: ReasoningLevel } {
+  try {
+    const raw = localStorage.getItem(AUTHORING_PREFS_KEY);
+    return raw ? JSON.parse(raw) as { model?: string; reasoning?: ReasoningLevel } : {};
+  } catch {
+    return {};
+  }
+}
+
+function storeAuthoring(patch: { model?: string; reasoning?: ReasoningLevel }): void {
+  try {
+    localStorage.setItem(AUTHORING_PREFS_KEY, JSON.stringify({ ...readStoredAuthoring(), ...patch }));
+  } catch { /* remembering the last choice is a convenience only */ }
+}
 
 export function revisionLabel(revision: Pick<AgentRevisionSummary, 'status' | 'mode'>): string {
   if (revision.status === 'running') return `${revision.mode === 'fix' ? 'Fix' : 'Improvement'} session is running`;
@@ -65,14 +82,17 @@ export function AgentRevisionLauncher(props: {
   const [loadingOptions, setLoadingOptions] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorHref, setErrorHref] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
   const currentSessionId = useRef(props.context.sessionId);
   currentSessionId.current = props.context.sessionId;
   const historyLoaded = historySessionId === props.context.sessionId;
   const currentRevisions = historyLoaded ? revisions : [];
   const activeRevision = currentRevisions.find((revision) => ACTIVE_REVISION_STATUSES.has(revision.status));
   const latest = activeRevision ?? currentRevisions[0];
+  const earlier = currentRevisions.filter((revision) => revision !== latest);
 
-  const refresh = async () => {
+  const refresh = async (): Promise<Array<AgentRevisionSummary & { href?: string }>> => {
     const requestedSessionId = props.context.sessionId;
     try {
       const payload = await fetchSessionRevisions(
@@ -80,12 +100,15 @@ export function AgentRevisionLauncher(props: {
         props.token,
         props.context.projectId,
       );
-      if (currentSessionId.current !== requestedSessionId) return;
-      setRevisions(payload.revisions as Array<AgentRevisionSummary & { href?: string }>);
+      if (currentSessionId.current !== requestedSessionId) return [];
+      const next = payload.revisions as Array<AgentRevisionSummary & { href?: string }>;
+      setRevisions(next);
+      return next;
     } catch {
       // Revision history is additive; the ordinary session remains usable.
-      if (currentSessionId.current !== requestedSessionId) return;
+      if (currentSessionId.current !== requestedSessionId) return [];
       setRevisions([]);
+      return [];
     } finally {
       if (currentSessionId.current === requestedSessionId) setHistorySessionId(requestedSessionId);
     }
@@ -101,6 +124,8 @@ export function AgentRevisionLauncher(props: {
     setOpen(false);
     setCodingOpen(false);
     setError(null);
+    setErrorHref(null);
+    setShowHistory(false);
   }, [props.context.sessionId]);
 
   useEffect(() => {
@@ -110,8 +135,18 @@ export function AgentRevisionLauncher(props: {
   }, [latest?.revisionSessionId, latest?.status]);
 
   const begin = async () => {
-    setOpen(true);
     setError(null);
+    setErrorHref(null);
+    // The list in hand can be stale, so confirm against the server before
+    // opening a form the server would reject on submit.
+    const fresh = await refresh();
+    const blocking = fresh.find((revision) => ACTIVE_REVISION_STATUSES.has(revision.status));
+    if (blocking) {
+      setError('This run already has a revision open. Finish or discard it before starting another.');
+      setErrorHref(revisionHref(blocking, undefined, props.context.projectId));
+      return;
+    }
+    setOpen(true);
     if (models.length > 0 || loadingOptions) return;
     setLoadingOptions(true);
     try {
@@ -121,7 +156,11 @@ export function AgentRevisionLauncher(props: {
         label: `${provider.name} · ${value.startsWith(`${provider.id}:`) ? value.slice(provider.id.length + 1) : value}`,
       })));
       setModels(next);
-      setModel(next[0]?.value ?? '');
+      const remembered = readStoredAuthoring();
+      setModel(remembered.model && next.some((option) => option.value === remembered.model)
+        ? remembered.model
+        : next[0]?.value ?? '');
+      if (remembered.reasoning) setReasoning(remembered.reasoning);
     } catch (caught) {
       setError((caught as Error).message || 'Could not load authoring models.');
     } finally {
@@ -151,6 +190,11 @@ export function AgentRevisionLauncher(props: {
       window.location.assign(`/sessions/${encodeURIComponent(job.sessionId)}?${params.toString()}`);
     } catch (caught) {
       setError((caught as Error).message || 'Could not start the revision session.');
+      const href = caught instanceof ApiRequestError && typeof caught.details.href === 'string'
+        ? caught.details.href
+        : null;
+      setErrorHref(href);
+      if (href) void refresh();
       setBusy(false);
     }
   };
@@ -161,17 +205,38 @@ export function AgentRevisionLauncher(props: {
   return (
     <>
       {latest && !open && (
-        <div class={`agent-revision-link is-${latest.status}`}>
-          <span class="agent-revision-link-copy">
-            <strong>{revisionLabel(latest)}</strong>
-            <span>{revisionOriginDescription(latest)}</span>
-          </span>
-          <span class="agent-revision-link-actions">
-            <a class="agent-revision-open" href={revisionHref(latest, undefined, props.context.projectId)}>
-              {revisionOriginAction(latest, active)}
-            </a>
-            {!active && <button type="button" onClick={() => void begin()}>Start another revision</button>}
-          </span>
+        <div class="agent-revision-history">
+          <div class={`agent-revision-link is-${latest.status}`}>
+            <span class="agent-revision-link-copy">
+              <strong>{latest.status === 'running' && <span class="agent-revision-pulse" aria-hidden="true" />}{revisionLabel(latest)}</strong>
+              <span>{revisionOriginDescription(latest)}</span>
+            </span>
+            <span class="agent-revision-link-actions">
+              <a class="agent-revision-open" href={revisionHref(latest, undefined, props.context.projectId)}>
+                {revisionOriginAction(latest, active)}
+              </a>
+              {!active && <button type="button" onClick={() => void begin()}>Start another revision</button>}
+            </span>
+          </div>
+          {earlier.length > 0 && (
+            <button type="button" class="agent-revision-more" aria-expanded={showHistory} onClick={() => setShowHistory((value) => !value)}>
+              {showHistory ? 'Hide earlier revisions' : `Show ${earlier.length} earlier revision${earlier.length === 1 ? '' : 's'}`}
+            </button>
+          )}
+          {showHistory && earlier.map((revision) => (
+            <div class={`agent-revision-link is-compact is-${revision.status}`} key={revision.revisionSessionId}>
+              <span class="agent-revision-link-copy">
+                <strong>{revisionLabel(revision)}</strong>
+                <span>{revisionOriginDescription(revision)}</span>
+              </span>
+              <a class="agent-revision-open" href={revisionHref(revision, undefined, props.context.projectId)}>View revision</a>
+            </div>
+          ))}
+          {error && (
+            <p class="agent-revision-error" role="alert">
+              {error}{errorHref && <> <a href={errorHref}>Open it</a></>}
+            </p>
+          )}
         </div>
       )}
       {historyLoaded && !latest && !open && (
@@ -183,19 +248,19 @@ export function AgentRevisionLauncher(props: {
         </button>
       )}
       {open && <section class="agent-revision-form" aria-labelledby="agent-revision-title">
-        <div class="agent-revision-form-head"><span id="agent-revision-title">Fix or improve agent</span><button type="button" aria-label="Close revision form" disabled={busy} onClick={() => setOpen(false)}>×</button></div>
+        <div class="agent-revision-form-head"><span id="agent-revision-title">Revise {props.context.agentName ?? 'this agent'}</span><button type="button" aria-label="Close revision form" disabled={busy} onClick={() => setOpen(false)}>×</button></div>
         <div class="agent-revision-form-body">
-          <div class="agent-revision-intro"><strong>Revise {props.context.agentName ?? 'this agent'}</strong><span>Start one internal session to diagnose this run and propose a safe source change. Nothing changes until you review and apply it.</span></div>
+          <div class="agent-revision-intro"><span>Start one internal session to diagnose this run and propose a safe source change. Nothing changes until you review and apply it.</span></div>
           <div class="agent-revision-modes">
             <button type="button" class={mode === 'fix' ? 'is-selected' : ''} aria-pressed={mode === 'fix'} onClick={() => setMode('fix')}><strong>Fix a problem</strong><span>Make the smallest durable correction.</span></button>
             <button type="button" class={mode === 'improve' ? 'is-selected' : ''} aria-pressed={mode === 'improve'} onClick={() => setMode('improve')}><strong>Improve behavior</strong><span>Refine quality, cost, or reliability.</span></button>
           </div>
           <label class="agent-revision-field"><span>What should change?</span><textarea value={instruction} disabled={busy} placeholder={mode === 'fix' ? 'e.g. exclude refunded orders instead of treating them as unknown' : 'e.g. make future results shorter without missing urgent tickets'} onInput={(event) => setInstruction((event.target as HTMLTextAreaElement).value)} /></label>
           <div class="agent-revision-models">
-            <label class="agent-revision-field"><span>Authoring model</span><select value={model} disabled={busy || loadingOptions} onChange={(event) => setModel((event.target as HTMLSelectElement).value)}>{models.map((option) => <option value={option.value}>{option.label}</option>)}</select></label>
-            <label class="agent-revision-field"><span>Thinking effort</span><select value={reasoning} disabled={busy} onChange={(event) => setReasoning((event.target as HTMLSelectElement).value as ReasoningLevel)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
+            <label class="agent-revision-field"><span>Authoring model</span><select value={model} disabled={busy || loadingOptions} onChange={(event) => { const value = (event.target as HTMLSelectElement).value; setModel(value); storeAuthoring({ model: value }); }}>{models.map((option) => <option value={option.value}>{option.label}</option>)}</select></label>
+            <label class="agent-revision-field"><span>Thinking effort</span><select value={reasoning} disabled={busy} onChange={(event) => { const value = (event.target as HTMLSelectElement).value as ReasoningLevel; setReasoning(value); storeAuthoring({ reasoning: value }); }}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
           </div>
-          {error && <p class="agent-revision-error" role="alert">{error}</p>}
+          {error && <p class="agent-revision-error" role="alert">{error}{errorHref && <> <a href={errorHref}>Open it</a></>}</p>}
           <div class="agent-revision-actions"><button type="button" class="agent-revision-primary" disabled={busy || loadingOptions || !instruction.trim() || !model} onClick={() => void submit()}>{busy ? 'Starting revision…' : 'Start revision session'}</button></div>
           <div class="agent-revision-handoff">
             <span><strong>Need project code or a custom integration?</strong><small>Use your coding agent when the change is larger than this AgentUse file.</small></span>

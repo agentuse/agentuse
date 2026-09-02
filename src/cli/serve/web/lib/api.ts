@@ -17,7 +17,13 @@ export interface ApiError {
 }
 
 export class ApiRequestError extends Error implements ApiError {
-  constructor(public status: number, public code: string, message: string) {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+    /** Extra fields the server attached to the error, e.g. a link to the blocking resource. */
+    public details: Record<string, unknown> = {},
+  ) {
     super(message);
   }
 }
@@ -40,7 +46,8 @@ async function getJson<T>(
     throw new ApiRequestError(
       response.status,
       payload?.error?.code ?? 'REQUEST_FAILED',
-      payload?.error?.message ?? `Request failed with status ${response.status}`
+      payload?.error?.message ?? `Request failed with status ${response.status}`,
+      payload?.error ?? {}
     );
   }
   return payload as T;
@@ -57,7 +64,8 @@ async function postJson<T>(path: string, body: Record<string, unknown>): Promise
     throw new ApiRequestError(
       response.status,
       payload?.error?.code ?? 'REQUEST_FAILED',
-      payload?.error?.message ?? `Request failed with status ${response.status}`
+      payload?.error?.message ?? `Request failed with status ${response.status}`,
+      payload?.error ?? {}
     );
   }
   return payload as T;
@@ -70,7 +78,8 @@ async function deleteJson<T>(path: string): Promise<T> {
     throw new ApiRequestError(
       response.status,
       payload?.error?.code ?? 'REQUEST_FAILED',
-      payload?.error?.message ?? `Request failed with status ${response.status}`
+      payload?.error?.message ?? `Request failed with status ${response.status}`,
+      payload?.error ?? {}
     );
   }
   return payload as T;

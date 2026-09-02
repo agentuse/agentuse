@@ -7142,6 +7142,32 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   font-size: var(--font-size-micro);
 }
 
+.agent-revision-history { display: grid; gap: 6px; width: 100%; }
+.agent-revision-link.is-compact { padding: 8px 12px; background: transparent; }
+.agent-revision-link.is-compact .agent-revision-link-copy strong { color: var(--muted); font-weight: var(--weight-normal); }
+.agent-revision-more {
+  justify-self: start;
+  min-height: 28px;
+  padding: 0 8px;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  font-size: var(--font-size-micro);
+}
+.agent-revision-more:hover { color: var(--fg); background: var(--panel-hover); }
+.agent-revision-pulse {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: agent-revision-pulse 1.6s ease-in-out infinite;
+}
+@keyframes agent-revision-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .agent-revision-pulse { animation: none; } }
+
 .agent-revision-form {
   width: 100%;
   border: 1px solid var(--line);
