@@ -30,4 +30,11 @@ describe('compareSessionsForList', () => {
     const done = mk({ id: 'done', status: 'completed', created: -1 * M });
     expect([done, running].sort(compareSessionsForList).map((r) => r.id)).toEqual(['run', 'done']);
   });
+
+  it('treats a preparing session as live before model execution starts', () => {
+    const preparing = mk({ id: 'preparing', status: 'preparing', created: -100 * M });
+    const completed = mk({ id: 'completed', status: 'completed', created: -1 * M });
+
+    expect(compareSessionsForList(preparing, completed)).toBeLessThan(0);
+  });
 });

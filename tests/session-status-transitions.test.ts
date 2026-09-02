@@ -29,6 +29,58 @@ async function setup() {
 }
 
 describe('session status transitions', () => {
+  it('promotes one durable preparing session into the running execution', async () => {
+    root = await mkdtemp(join(tmpdir(), 'agentuse-status-transition-'));
+    process.env.XDG_DATA_HOME = root;
+    await initStorage(root);
+    const manager = new SessionManager();
+    const agentId = 'internal-agent-revision';
+    const sessionId = '01PREPARINGSESSION000000000';
+    const base = {
+      agent: { id: agentId, name: 'Revise report', isSubAgent: false },
+      model: 'openai:test',
+      version: 'test',
+      config: { timeout: 480, maxSteps: 20 },
+      project: { root, cwd: root },
+    };
+
+    await manager.createSession({ ...base, id: sessionId, initialStatus: 'preparing' });
+    const prepared = await manager.findSession(sessionId);
+    expect(prepared?.session.status).toBe('preparing');
+    expect(prepared?.session.owner).toBeUndefined();
+    const createdAt = prepared?.session.time.created;
+
+    await manager.createSession({ ...base, id: sessionId, promotePrepared: true });
+    const running = await manager.findSession(sessionId);
+    expect(running?.session.status).toBe('running');
+    expect(running?.session.time.created).toBe(createdAt);
+    expect(running?.session.owner?.pid).toBe(process.pid);
+    expect((running?.session as Record<string, unknown>).initialStatus).toBeUndefined();
+  });
+
+  it('will not start a prepared session after it has been stopped', async () => {
+    root = await mkdtemp(join(tmpdir(), 'agentuse-status-transition-'));
+    process.env.XDG_DATA_HOME = root;
+    await initStorage(root);
+    const manager = new SessionManager();
+    const agentId = 'internal-agent-revision';
+    const sessionId = '01STOPPEDPREPARING00000000';
+    const base = {
+      agent: { id: agentId, name: 'Revise report', isSubAgent: false },
+      model: 'openai:test',
+      version: 'test',
+      config: {},
+      project: { root, cwd: root },
+    };
+
+    await manager.createSession({ ...base, id: sessionId, initialStatus: 'preparing' });
+    await manager.stopSessionTree(sessionId);
+    expect((await manager.findSession(sessionId))?.session.error?.code).toBe('USER_STOPPED');
+
+    await expect(manager.createSession({ ...base, id: sessionId, promotePrepared: true })).rejects.toThrow('SESSION_NOT_PREPARING');
+    expect((await manager.findSession(sessionId))?.session.status).toBe('error');
+  });
+
   it('clears an incomplete verdict atomically when a retry starts', async () => {
     const { manager, agentId, sessionId } = await setup();
     await manager.setSessionError(sessionId, agentId, { code: 'INCOMPLETE', message: 'MCP unavailable' });

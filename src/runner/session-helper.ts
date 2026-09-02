@@ -41,6 +41,8 @@ export interface CreateSessionParams {
   observability?: SessionInfo['observability'];
   /** Pre-assign the session id instead of generating one (serve detached run). */
   sessionId?: string;
+  /** Atomically promote a host-created durable preparing shell. */
+  preparedSession?: boolean;
 }
 
 /**
@@ -62,6 +64,7 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
     trigger,
     observability,
     sessionId,
+    preparedSession,
   } = params;
 
   // Extract agent ID from file path (relative to stateRoot, the agent's own
@@ -70,6 +73,7 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
 
   const sessionID = await sessionManager.createSession({
     ...(sessionId ? { id: sessionId } : {}),
+    ...(preparedSession ? { promotePrepared: true } : {}),
     ...(parentSessionID ? { parentSessionID } : {}),
     ...(trigger ? { trigger } : {}),
     ...(observability ? { observability } : {}),

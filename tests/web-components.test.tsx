@@ -39,7 +39,7 @@ import { TidyProgressView } from '../src/cli/serve/web/routes/learnings-tidy';
 import { sessionContextFetchKey } from '../src/cli/serve/web/routes/session-context';
 import { learningsTidyHref } from '../src/cli/serve/web/lib/links';
 import type { LearningSummary, SessionLearning, TidyResult } from '../src/cli/serve/web/lib/api';
-import { firstAgentRunTutorialCopy, RecentJobRow, recentJobSummary } from '../src/cli/serve/web/routes/agent-detail';
+import { firstAgentRunTutorialCopy, RecentJobRow, recentJobSummary, revisionContextSession } from '../src/cli/serve/web/routes/agent-detail';
 import {
   isTerminalInternalAgentSessionStatus,
   mergeInternalAgentJob,
@@ -51,6 +51,28 @@ import { ProjectsSettingsGroup, RestartOnboardingGroup } from '../src/cli/serve/
 import { AgentRevisionLauncher, revisionLabel, revisionOriginAction, revisionOriginDescription } from '../src/cli/serve/web/components/agent-revision';
 
 const noop = () => {};
+
+describe('agent detail revision entry', () => {
+  const row = (sessionId: string, status: string, project = 'support'): SessionRow => ({
+    sessionId,
+    project,
+    agent: { id: 'triage', name: 'Triage', filePath: '/project/triage.agentuse' },
+    status,
+    trigger: 'manual',
+    createdAt: 1,
+    updatedAt: 1,
+  });
+
+  it('uses the newest completed or approval-paused job from the current project', () => {
+    expect(revisionContextSession([
+      row('live', 'running'),
+      row('other', 'completed', 'other-project'),
+      row('paused', 'suspended'),
+      row('done', 'completed'),
+    ], 'support')?.sessionId).toBe('paused');
+    expect(revisionContextSession([row('live', 'running')], 'support')).toBeNull();
+  });
+});
 
 describe('agent revision entry', () => {
   it('explains that a no-change diagnosis must be reviewed before another revision', () => {

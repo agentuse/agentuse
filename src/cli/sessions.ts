@@ -418,6 +418,8 @@ function statusLabel(status?: SessionStatus, errorCode?: string): string {
   if (status === 'error' && errorCode === 'INCOMPLETE') return 'incomplete';
   return status === 'completed'
     ? 'done'
+    : status === 'preparing'
+      ? 'preparing'
     : status === 'error'
       ? 'fail'
       : status === 'suspended'
@@ -437,7 +439,7 @@ function sessionStatusText(session: Pick<SessionSummary, 'status' | 'errorCode' 
  *  sort ahead of everything else so in-flight work is never buried below runs
  *  that merely finished more recently. Requires subagentActive to be marked. */
 function sessionLiveRank(s: SessionSummary): number {
-  return (s.status === 'running' || s.subagentActive) ? 0 : 1;
+  return (s.status === 'preparing' || s.status === 'running' || s.subagentActive) ? 0 : 1;
 }
 
 /** Display order for the session list: live first, then most-recently-active
@@ -1647,8 +1649,8 @@ async function resumeSession(
     }
   }
 
-  if (found.session.status === "running") {
-    throw new Error(`Session ${summary.id} is already running`);
+  if (found.session.status === "preparing" || found.session.status === "running") {
+    throw new Error(`Session ${summary.id} is already ${found.session.status}`);
   }
 
   if (found.session.status === "suspended") {

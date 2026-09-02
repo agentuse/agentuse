@@ -123,6 +123,145 @@ function waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs = 5_000): 
 }
 
 describe('internal worker lifecycle', () => {
+  it('creates and fails a durable preparing session over worker IPC', async () => {
+    const originalXdg = process.env.XDG_DATA_HOME;
+    const sandbox = await mkdtemp(join(tmpdir(), 'agentuse-preparing-session-'));
+    const projectRoot = join(sandbox, 'project');
+    const dataHome = join(sandbox, 'xdg-data');
+    await mkdir(projectRoot, { recursive: true });
+    await mkdir(dataHome, { recursive: true });
+    process.env.XDG_DATA_HOME = dataHome;
+    await initStorage(projectRoot);
+    const sessionId = '01WORKERPREPARING000000000';
+    const child = spawn(process.execPath, ['src/index.ts', '--internal-worker'], {
+      cwd: process.cwd(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, XDG_DATA_HOME: dataHome, HOME: sandbox },
+    });
+
+    try {
+      await waitForReady(child);
+      send(child, {
+        id: 'prepare-1',
+        type: 'create-preparing-session',
+        projectRoot,
+        sessionId,
+        agentId: 'Revise report',
+        agentName: 'Revise report',
+        model: 'openai:test',
+        trigger: 'manual',
+        preparerOwner: { pid: process.pid },
+      });
+      expect(await waitForMessage(child, (message) => message.id === 'prepare-1')).toMatchObject({
+        success: true,
+        sessionId,
+      });
+
+      const manager = new SessionManager();
+      expect((await manager.findSession(sessionId))?.session.status).toBe('preparing');
+
+      send(child, {
+        id: 'prepare-detail-1',
+        type: 'approval-info',
+        projectRoot,
+        sessionId,
+        skipTokenCheck: true,
+      });
+      expect(await waitForMessage(child, (message) => message.id === 'prepare-detail-1')).toMatchObject({
+        success: true,
+        approval: {
+          sessionId,
+          sessionStatus: 'preparing',
+          logs: [],
+        },
+      });
+
+      send(child, {
+        id: 'prepare-fail-1',
+        type: 'fail-preparing-session',
+        projectRoot,
+        sessionId,
+        errorCode: 'REVISION_FAILED',
+        errorMessage: 'Could not sanitize the project',
+      });
+      expect(await waitForMessage(child, (message) => message.id === 'prepare-fail-1')).toMatchObject({
+        success: true,
+        sessionId,
+      });
+      const failed = await manager.findSession(sessionId);
+      expect(failed?.session.status).toBe('error');
+      expect(failed?.session.error).toMatchObject({
+        code: 'REVISION_FAILED',
+        message: 'Could not sanitize the project',
+      });
+    } finally {
+      if (!child.killed && child.exitCode === null) child.kill('SIGKILL');
+      if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdg;
+      await rm(sandbox, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it('promotes the same preparing session when worker execution starts', async () => {
+    const originalXdg = process.env.XDG_DATA_HOME;
+    const sandbox = await mkdtemp(join(tmpdir(), 'agentuse-promote-session-'));
+    const projectRoot = join(sandbox, 'project');
+    const dataHome = join(sandbox, 'xdg-data');
+    const agentPath = join(projectRoot, 'revision.agentuse');
+    await mkdir(projectRoot, { recursive: true });
+    await mkdir(dataHome, { recursive: true });
+    await writeFile(agentPath, ['---', 'name: Revision', 'model: demo:hello', '---', '', 'Say hello.'].join('\n'));
+    process.env.XDG_DATA_HOME = dataHome;
+    await initStorage(projectRoot);
+    const sessionId = '01WORKERPROMOTION000000000';
+    const child = spawn(process.execPath, ['src/index.ts', '--internal-worker'], {
+      cwd: process.cwd(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, XDG_DATA_HOME: dataHome, HOME: sandbox },
+    });
+
+    try {
+      await waitForReady(child);
+      send(child, {
+        id: 'prepare-promote-1',
+        type: 'create-preparing-session',
+        projectRoot,
+        sessionId,
+        agentId: 'revision',
+        agentName: 'Revision',
+        model: 'demo:hello',
+        trigger: 'manual',
+        preparerOwner: { pid: process.pid },
+      });
+      expect(await waitForMessage(child, (message) => message.id === 'prepare-promote-1')).toMatchObject({ success: true });
+      const manager = new SessionManager();
+      const createdAt = (await manager.findSession(sessionId))?.session.time.created;
+
+      send(child, {
+        id: 'execute-promote-1',
+        type: 'execute',
+        agentPath,
+        projectRoot,
+        newSessionId: sessionId,
+        preparedSession: true,
+        timeout: 30,
+      });
+      expect(await waitForMessage(child, (message) => message.id === 'execute-promote-1', 10_000)).toMatchObject({
+        success: true,
+        result: { sessionId },
+      });
+
+      const completed = await manager.findSession(sessionId);
+      expect(completed?.session.status).toBe('completed');
+      expect(completed?.session.time.created).toBe(createdAt);
+    } finally {
+      if (!child.killed && child.exitCode === null) child.kill('SIGKILL');
+      if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdg;
+      await rm(sandbox, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   it('exits when parent IPC stdin closes', async () => {
     const child = spawn(process.execPath, ['src/index.ts', '--internal-worker'], {
       cwd: process.cwd(),

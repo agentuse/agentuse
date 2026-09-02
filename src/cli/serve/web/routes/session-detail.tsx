@@ -955,7 +955,7 @@ export default function SessionDetail() {
   const tailEntry = visibleLogs.length > 0 ? visibleLogs[visibleLogs.length - 1] : undefined;
   const tailTyping = (tailEntry?.type === 'text' || tailEntry?.type === 'reasoning') && tailEntry?.status === 'streaming';
   const showWorking = live && !tailTyping;
-  const workingLabel = 'Agent is running';
+  const workingLabel = status === 'preparing' ? 'Preparing project context' : 'Agent is running';
   const ended = isEndedStatus(approval?.sessionStatus);
   if (approval !== null && firstViewEndedRef.current === null) {
     firstViewEndedRef.current = ended;

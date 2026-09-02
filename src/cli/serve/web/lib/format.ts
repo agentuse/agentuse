@@ -222,7 +222,7 @@ export function displayStatusLabel(status: string, errorCode?: string | undefine
  *  Unknown statuses read as failures rather than silently passing as ok. */
 export type RunTone = 'running' | 'waiting' | 'ok' | 'failed';
 export function runTone(status: string): RunTone {
-  if (status === 'running' || status === 'resuming' || status === 'continuing') return 'running';
+  if (status === 'preparing' || status === 'running' || status === 'resuming' || status === 'continuing') return 'running';
   if (status === 'completed') return 'ok';
   if (status === 'suspended') return 'waiting';
   return 'failed';
@@ -241,7 +241,7 @@ export function isEndedStatus(status: string | undefined): boolean {
 
 export function isLiveStatus(status: string, logs: ApprovalLogEntry[]): boolean {
   if (status === 'completed' || status === 'error' || status === 'expired' || status === 'failed' || status === 'stopped' || status === 'timeout' || status === 'incomplete') return false;
-  if (status === 'run' || status === 'running' || status === 'resuming' || status === 'continuing') return true;
+  if (status === 'preparing' || status === 'run' || status === 'running' || status === 'resuming' || status === 'continuing') return true;
   return logs.some((entry) => entry.status === 'streaming' || entry.status === 'running');
 }
 

@@ -58,7 +58,8 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     existingSessionId,
     prebuiltMessages,
     trigger,
-    newSessionId
+    newSessionId,
+    preparedSession
   } = options;
 
   // Resolve safe variables in instructions (${root}, ${agentDir}, ${tmpDir} - NOT ${env:*})
@@ -277,6 +278,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
         version: packageVersion,
         ...(trigger && { trigger }),
         ...(newSessionId && { sessionId: newSessionId }),
+        ...(preparedSession && { preparedSession: true }),
         config: {
           ...(agent.config.timeout !== undefined && { timeout: agent.config.timeout }),
           maxSteps,
@@ -295,6 +297,9 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       assistantMsgID = messageID;
       logger.debug(`Session created: ${sessionID}`);
     } catch (error) {
+      // A prepared shell is the durable lifecycle authority. If it was stopped
+      // or failed before dispatch, never continue as an untracked model run.
+      if (preparedSession) throw error;
       logger.warn(`Failed to create session: ${(error as Error).message}`);
       if (verbose) {
         logger.debug(`Session creation error stack: ${(error as Error).stack}`);

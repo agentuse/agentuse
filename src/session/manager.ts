@@ -662,29 +662,61 @@ export class SessionManager {
   /**
    * Create a new session
    */
-  async createSession(info: Omit<SessionInfo, 'id' | 'time' | 'status' | 'trigger'> & { trigger?: SessionTrigger; id?: string }): Promise<string> {
+  async createSession(
+    info: Omit<SessionInfo, 'id' | 'time' | 'status' | 'trigger'> & {
+      trigger?: SessionTrigger;
+      id?: string;
+      /** Host-owned setup can make the session visible before model execution. */
+      initialStatus?: Extract<SessionInfo['status'], 'preparing'>;
+      /** Atomically require and promote the matching durable preparing shell. */
+      promotePrepared?: boolean;
+    }
+  ): Promise<string> {
     // Callers may pre-assign the id (e.g. serve's detached run, which returns
     // the id to the client before the run has produced anything). Default to a
     // fresh ULID so every existing caller is unaffected.
     const id = info.id ?? ulid();
     const now = Date.now();
-
-    const session: SessionInfo = {
-      ...info,
-      id,
-      status: 'running',
-      // Default 'manual' so every existing caller stays valid; serve sets
-      // 'scheduled' / 'api' where it knows the origin.
-      trigger: info.trigger ?? 'manual',
-      owner: currentProcessRef(),
-      time: {
-        created: now,
-        updated: now
-      }
-    };
+    const { initialStatus, promotePrepared = false, ...sessionInfo } = info;
 
     const sessionPath = this.buildSessionPath(id, info.agent.id);
     await this.withSessionIndexMutation(async () => {
+      const existing = await readJSON<SessionInfo>(`${sessionPath}/session`);
+      if (promotePrepared && !existing) {
+        throw new Error(`PREPARING_SESSION_NOT_FOUND: ${id}`);
+      }
+      if (promotePrepared && existing?.status !== 'preparing') {
+        throw new Error(`SESSION_NOT_PREPARING: ${id}`);
+      }
+      // Preserve the historical fresh-session overwrite behavior for ordinary
+      // callers with a pre-assigned id. A preparing shell is different: it is
+      // a lifecycle claim and may only be consumed through promotePrepared.
+      if (!promotePrepared && initialStatus === 'preparing' && existing) {
+        throw new Error(`SESSION_ALREADY_EXISTS: ${id}`);
+      }
+      if (promotePrepared && initialStatus === 'preparing') {
+        throw new Error(`INVALID_SESSION_TRANSITION: ${id} cannot prepare twice`);
+      }
+      const status = initialStatus ?? 'running';
+      const session: SessionInfo = {
+        ...sessionInfo,
+        id,
+        status,
+        // Default 'manual' so every existing caller stays valid; serve sets
+        // 'scheduled' / 'api' where it knows the origin.
+        trigger: info.trigger ?? 'manual',
+        ...(status === 'running'
+          ? { owner: currentProcessRef() }
+          : info.owner
+            ? { owner: info.owner }
+            : {}),
+        time: {
+          // Promotion is one lifecycle, not a new run. Preserve the time the
+          // operator started preparation while refreshing the transition time.
+          created: existing?.time.created ?? now,
+          updated: now
+        }
+      };
       await writeJSON(`${sessionPath}/session`, session);
       await this.updateSessionIndex(session, sessionPath);
     });
@@ -1281,7 +1313,7 @@ export class SessionManager {
     const stopped: StoppedSession[] = [];
     for (const entry of ordered) {
       const wasStatus = entry.session.status;
-      const shouldStop = wasStatus === 'running' || wasStatus === 'suspended';
+      const shouldStop = wasStatus === 'preparing' || wasStatus === 'running' || wasStatus === 'suspended';
       // dismissEnded (reviewer-initiated stops only): stopping an already-
       // failed run is the reviewer's "reviewed, wave it off" — stamp
       // dismissedAt so needs-attention surfaces drop it, but keep status/error
@@ -1370,7 +1402,7 @@ export class SessionManager {
       .filter((session) => options.createdAfter === undefined || session.createdAt >= options.createdAfter)
       .filter((session) => options.updatedAfter === undefined
         || session.updatedAt >= options.updatedAfter
-        || (options.includeLiveBeforeUpdatedAfter && (session.status === 'running' || activeIds.has(session.sessionId))))
+        || (options.includeLiveBeforeUpdatedAfter && (session.status === 'preparing' || session.status === 'running' || activeIds.has(session.sessionId))))
       .sort((a, b) => b.createdAt - a.createdAt || b.sessionId.localeCompare(a.sessionId))
       .map((session) => activeIds.has(session.sessionId) ? { ...session, subagentActive: true } : session);
   }
@@ -1397,7 +1429,7 @@ export class SessionManager {
   async listReconcileCandidatesCreatedAfter(createdAfter: number): Promise<SessionEntry[]> {
     const summaries = await this.listSessionSummaries({ createdAfter, includeSubagents: true });
     const candidates = summaries.filter((session) =>
-      session.status === 'running' || session.status === 'suspended'
+      session.status === 'preparing' || session.status === 'running' || session.status === 'suspended'
     );
     const entries = await Promise.all(candidates.map((session) =>
       this.readSessionEntryAtPath(session.path, session.sessionId)

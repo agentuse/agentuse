@@ -29,8 +29,8 @@ export function OnboardingSessionLog(props: {
   const linesRef = useRef<HTMLDivElement>(null);
   const lines = useMemo(() => props.entries.map(entryLine).filter((entry): entry is { label: string; text: string } => Boolean(entry)), [props.entries]);
   const visible = expanded ? lines : lines.slice(-12);
-  const running = props.status === 'running' || props.status === 'waiting' || props.status === 'suspended';
-  const preparing = props.job.phase === 'preparing';
+  const running = props.status === 'preparing' || props.status === 'running' || props.status === 'waiting' || props.status === 'suspended';
+  const preparing = props.status === 'preparing' || props.job.phase === 'preparing';
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {

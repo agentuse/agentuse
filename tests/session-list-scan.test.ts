@@ -152,7 +152,7 @@ describe('session list scanning', () => {
     }
   });
 
-  it('lists only indexed running and suspended reconciliation candidates', async () => {
+  it('lists only indexed preparing, running, and suspended reconciliation candidates', async () => {
     const originalXdg = process.env.XDG_DATA_HOME;
     const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-reconcile-candidates-'));
     process.env.XDG_DATA_HOME = projectRoot;
@@ -162,6 +162,12 @@ describe('session list scanning', () => {
       const manager = new SessionManager();
       const runningId = await manager.createSession({
         agent: { id: 'agents/running', name: 'Running', isSubAgent: false },
+        model: 'demo:test', version: 'test', config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+      const preparingId = await manager.createSession({
+        initialStatus: 'preparing',
+        agent: { id: 'agents/preparing', name: 'Preparing', isSubAgent: false },
         model: 'demo:test', version: 'test', config: {},
         project: { root: projectRoot, cwd: projectRoot },
       });
@@ -203,6 +209,7 @@ describe('session list scanning', () => {
       expect(candidates.map(({ session }) => session.id).sort()).toEqual([
         childId,
         parentId,
+        preparingId,
         runningId,
         suspendedId,
       ].sort());

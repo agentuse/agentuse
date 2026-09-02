@@ -1132,22 +1132,31 @@ async function runInternalWorker() {
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute' | 'resume' | 'continue-session' | 'finish-cascade' | 'approval-info' | 'session-status' | 'session-context' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'session-final-responses' | 'stop-session' | 'reopen-gate' | 'invalidate-lists' | 'release';
+    type: 'execute' | 'resume' | 'continue-session' | 'finish-cascade' | 'approval-info' | 'session-status' | 'create-preparing-session' | 'fail-preparing-session' | 'session-context' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'session-final-responses' | 'stop-session' | 'reopen-gate' | 'invalidate-lists' | 'release';
     agentPath?: string;
     /** In-memory agent definition. Fresh execute only; never persisted as a file. */
     agentContent?: string;
     agentName?: string;
+    agentId?: string;
+    agentDescription?: string;
     projectRoot: string;
     /** invalidate-lists: hold the short list TTL for a window (start pokes). */
     externalActivity?: boolean;
     prompt?: string;
     model?: string;
     timeout?: number;
+    /** Runtime timeout persisted on a preparing shell; distinct from IPC timeout. */
+    sessionTimeout?: number;
     maxSteps?: number;
     debug?: boolean;
     sessionId?: string;
     /** Pre-assigned id for a fresh `execute` (serve detached run). */
     newSessionId?: string;
+    /** Fresh execution must atomically promote an existing preparing shell. */
+    preparedSession?: boolean;
+    preparerOwner?: { pid: number; procStartedAt?: string };
+    errorCode?: string;
+    errorMessage?: string;
     toolResult?: unknown;
     resumeToken?: string;
     allowHistorical?: boolean;
@@ -3014,6 +3023,81 @@ async function runInternalWorker() {
     }
   }
 
+  async function createPreparingSession(req: ExecuteRequest) {
+    try {
+      if (!req.sessionId || !req.agentId || !req.agentName || !req.model || !req.preparerOwner) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'PREPARING_SESSION_INVALID', message: 'Preparing session identity, model, and owner are required' },
+        };
+      }
+      await initStorage(req.projectRoot);
+      const sessionManager = new SessionManager();
+      const sessionId = await sessionManager.createSession({
+        id: req.sessionId,
+        initialStatus: 'preparing',
+        owner: req.preparerOwner,
+        agent: {
+          id: req.agentId,
+          name: req.agentName,
+          ...(req.agentDescription && { description: req.agentDescription }),
+          isSubAgent: false,
+        },
+        model: req.model,
+        version: packageVersion,
+        config: {
+          ...(req.sessionTimeout !== undefined && { timeout: req.sessionTimeout }),
+          ...(req.maxSteps !== undefined && { maxSteps: req.maxSteps }),
+        },
+        project: { root: req.projectRoot, cwd: req.projectRoot },
+        ...(req.trigger && { trigger: req.trigger }),
+      });
+      invalidateListCaches(req.projectRoot);
+      return { id: req.id, success: true as const, sessionId };
+    } catch (err) {
+      return {
+        id: req.id,
+        success: false as const,
+        error: { code: 'PREPARING_SESSION_CREATE_FAILED', message: (err as Error).message },
+      };
+    }
+  }
+
+  async function failPreparingSession(req: ExecuteRequest) {
+    try {
+      if (!req.sessionId) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'SESSION_REQUIRED', message: 'Missing preparing session id' },
+        };
+      }
+      await initStorage(req.projectRoot);
+      const sessionManager = new SessionManager();
+      const found = await sessionManager.findSession(req.sessionId);
+      if (!found || found.session.status !== 'preparing') {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'SESSION_NOT_PREPARING', message: `Session ${req.sessionId} is not preparing` },
+        };
+      }
+      await sessionManager.setSessionError(req.sessionId, found.agentId, {
+        code: req.errorCode || 'PREPARATION_FAILED',
+        message: req.errorMessage || 'Session preparation failed',
+      });
+      invalidateListCaches(req.projectRoot);
+      return { id: req.id, success: true as const, sessionId: req.sessionId };
+    } catch (err) {
+      return {
+        id: req.id,
+        success: false as const,
+        error: { code: 'PREPARING_SESSION_FAIL_FAILED', message: (err as Error).message },
+      };
+    }
+  }
+
   /**
    * The context stack for one session: what the model was actually sent.
    * Read-only, and built entirely from what the run already persisted (the
@@ -3394,7 +3478,7 @@ async function runInternalWorker() {
       if (typeof row !== 'object' || row === null) return false;
       const { status, subagentActive } = row as { status?: unknown; subagentActive?: unknown };
       return subagentActive === true
-        || status === 'running' || status === 'resuming' || status === 'continuing';
+        || status === 'preparing' || status === 'running' || status === 'resuming' || status === 'continuing';
     });
   }
 
@@ -3768,8 +3852,8 @@ async function runInternalWorker() {
           ...(session.subagentActive && { subagentActive: true }),
         }))
         .sort((a, b) =>
-          ((a.status === 'running' || a.subagentActive) ? 0 : 1)
-          - ((b.status === 'running' || b.subagentActive) ? 0 : 1)
+          ((a.status === 'preparing' || a.status === 'running' || a.subagentActive) ? 0 : 1)
+          - ((b.status === 'preparing' || b.status === 'running' || b.subagentActive) ? 0 : 1)
           || b.updatedAt - a.updatedAt
           || b.createdAt - a.createdAt
         );
@@ -3980,11 +4064,14 @@ async function runInternalWorker() {
             error: { code: 'SESSION_NOT_FOUND', message: `Session not found: ${req.sessionId}` },
           };
         }
-        if (found.session.status === 'running') {
+        if (found.session.status === 'preparing' || found.session.status === 'running') {
           return {
             id: req.id,
             success: false,
-            error: { code: 'SESSION_RUNNING', message: `Session ${req.sessionId} is already running` },
+            error: {
+              code: found.session.status === 'preparing' ? 'SESSION_PREPARING' : 'SESSION_RUNNING',
+              message: `Session ${req.sessionId} is already ${found.session.status}`,
+            },
           };
         }
         if (found.session.status === 'suspended') {
@@ -4065,7 +4152,8 @@ async function runInternalWorker() {
         ...(req.trigger && { trigger: req.trigger }),
         // Detached runs only: pre-assign the fresh session's id. Ignored on the
         // resume/continue paths, which carry existingSessionId instead.
-        ...(req.type === 'execute' && req.newSessionId && { newSessionId: req.newSessionId })
+        ...(req.type === 'execute' && req.newSessionId && { newSessionId: req.newSessionId }),
+        ...(req.type === 'execute' && req.preparedSession && { preparedSession: true })
       });
 
       activeSessionId = preparedExecution.sessionID ?? existingSessionId;
@@ -4558,6 +4646,10 @@ async function runInternalWorker() {
         dispatchOperation(request, () => getApprovalInfo(request));
       } else if (request.type === 'session-status') {
         dispatchOperation(request, () => getSessionStatusInfo(request));
+      } else if (request.type === 'create-preparing-session') {
+        dispatchOperation(request, () => createPreparingSession(request));
+      } else if (request.type === 'fail-preparing-session') {
+        dispatchOperation(request, () => failPreparingSession(request));
       } else if (request.type === 'session-context') {
         dispatchOperation(request, () => getSessionContext(request));
       } else if (request.type === 'sweep-expired') {

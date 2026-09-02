@@ -284,7 +284,7 @@ export function buildImportantDescendants(
       && !hasJudgeEvidence(session.id);
     const reviewerComments = humanReviewerComments(item.parts ?? []);
     const pendingGate = classified.gateLabel;
-    const active = session.status === 'running';
+    const active = session.status === 'preparing' || session.status === 'running';
     const phase = pendingGate
       ? 'awaiting-approval' as const
       : reviewerComments.length > 0 && active

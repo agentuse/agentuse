@@ -39,7 +39,7 @@ function awaitHumanPart(resumeToken = 'leaf-token', status: 'pending' | 'complet
 }
 
 type Node = {
-  status: 'suspended' | 'completed' | 'running' | 'error';
+  status: 'preparing' | 'suspended' | 'completed' | 'running' | 'error';
   parentSessionID?: string;
   parts: any[];
   agentName?: string;
@@ -207,6 +207,11 @@ describe('findStaleCascadeChild', () => {
       leaf: { status: 'running', parts: [] },
     });
     expect(await findStaleCascadeChild(reader, 'mid')).toBeNull();
+  });
+
+  it('returns null while a descendant is still preparing (not stranded)', async () => {
+    const reader = makeReader({ child: { status: 'preparing', parts: [] } });
+    expect(await findStaleCascadeChild(reader, 'child')).toBeNull();
   });
 
   it('finds the break several levels down', async () => {

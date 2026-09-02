@@ -46,6 +46,8 @@ export interface PrepareAgentOptions {
    * when `existingSessionId` is set (resume/continue reuse the existing id).
    */
   newSessionId?: string | undefined;
+  /** The pre-assigned id already names a durable `preparing` session shell. */
+  preparedSession?: boolean | undefined;
 }
 
 export interface PreparedAgentExecution {

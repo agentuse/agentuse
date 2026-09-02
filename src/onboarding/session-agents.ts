@@ -6,6 +6,7 @@ import {
   type ProjectSkillSummary,
 } from '../agents/discover.js';
 import type { ReasoningLevel } from '../model-compatibility.js';
+import { escapeSafeVariables } from '../tools/path-validator.js';
 
 function xmlText(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -170,7 +171,7 @@ export function buildAgentCreatorSessionAgent(input: {
   }, `Apply the complete, version-matched AgentUse Creator skill below. Produce one parser-valid production .agentuse file for the user brief. You may inspect the sanitized project view at ${input.safeViewRoot} when that improves the instructions.
 
 <creator_skill>
-${input.creatorSkill.trim()}
+${escapeSafeVariables(input.creatorSkill.trim())}
 </creator_skill>
 
 <agent_brief>
@@ -210,7 +211,7 @@ Source constraints:
 - Declare only capabilities required by the reviewed suggestion and grounded in the inspected project or an installed skill you loaded. Do not invent commands, integrations, credentials, destinations, trusted skills, or speculative capabilities.
 - For every irreversible or outward bash action such as push, deploy, publish, send, or delete, put the narrow command pattern in tools.bash.gated. Never rely on body prose for approval and never leave the action available only through tools.bash.commands. Keep preparation and read commands ungated. Declaring gated implies the approval gate.
 - If a consequential action cannot be expressed through a narrow mechanically gated command, have the agent stop at a reviewable draft instead of granting an ungated effectful capability.
-- When filesystem access is needed, tools.filesystem must be an array whose items are shaped { path: "\${root}", permissions: ["read"] }. Add "write" and/or "edit" to that permissions array only when the job needs them. Never put a read/write/edit mapping under tools.filesystem.
+- When filesystem access is needed, tools.filesystem must be an array whose items are shaped { path: "${escapeSafeVariables('${root}')}", permissions: ["read"] }. Add "write" and/or "edit" to that permissions array only when the job needs them. Never put a read/write/edit mapping under tools.filesystem.
 - Keep concrete, verified project paths that make the recurring work useful.
 - The body must be a concise recurring prompt with the outcome, inputs to inspect, judgment to perform, deliverable, and material boundaries.`);
 }

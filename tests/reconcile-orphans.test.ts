@@ -97,6 +97,34 @@ async function makeDelegatingPair(childStatus: 'running' | 'error' | 'suspended'
 }
 
 describe('reconcileOrphanedSessions', () => {
+  it('marks an abandoned preparing session as interrupted before any model run', async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-reconcile-'));
+    process.env.XDG_DATA_HOME = projectRoot;
+    await initStorage(projectRoot);
+    const sessionManager = new SessionManager();
+    const sessionID = await sessionManager.createSession({
+      initialStatus: 'preparing',
+      owner: { pid: DEAD_PID },
+      agent: { id: 'internal-agent-revision', name: 'Revise report', isSubAgent: false },
+      model: 'demo:test', version: 'test', config: {},
+      project: { root: projectRoot, cwd: projectRoot },
+    });
+    try {
+      const reconciled = await reconcileOrphanedSessions({
+        sessionManager,
+        cutoff: Date.now() + 60_000,
+      });
+
+      expect(reconciled.map((entry) => entry.sessionId)).toContain(sessionID);
+      const found = await sessionManager.findSession(sessionID);
+      expect(found?.session.status).toBe('error');
+      expect(found?.session.error?.code).toBe('PREPARATION_INTERRUPTED');
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
   it('flips a stuck-running session (touched before cutoff) to error(WORKER_INTERRUPTED)', async () => {
     const { projectRoot, sessionManager, sessionID, agentId } = await makeSession();
     try {

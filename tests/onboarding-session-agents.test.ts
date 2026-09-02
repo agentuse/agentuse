@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseAgentContent } from '../src/parser';
+import { resolveSafeVariables } from '../src/tools/path-validator';
 import { loadAgentTools } from '../src/runner/tools-loader';
 import {
   prepareProjectDiscoveryView,
@@ -160,7 +161,9 @@ describe('onboarding session agents', () => {
     expect(creator.instructions).toContain('separate lowercase kebab-case .agentuse filename');
     expect(creator.instructions).toContain('Do not stream the source as a normal assistant message');
     expect(creator.instructions).toContain('tools.filesystem must be an array');
-    expect(creator.instructions).toContain('{ path: "${root}", permissions: ["read"] }');
+    expect(creator.instructions).toContain('{ path: "\\${root}", permissions: ["read"] }');
+    expect(resolveSafeVariables(creator.instructions, { projectRoot: '/demo' }))
+      .toContain('{ path: "${root}", permissions: ["read"] }');
     expect(creator.instructions).toContain('tools.bash.gated');
     expect(creator.instructions).toContain('Declaring gated implies the approval gate');
     expect(creator.instructions).toContain('call tools__skill_load');
@@ -323,7 +326,7 @@ Read references/checklist.md before authoring a release workflow.`);
     })).rejects.toThrow('unavailable or ambiguous skill: invented-skill');
   });
 
-  it('accepts a reviewed action agent only when its irreversible command is gated', async () => {
+  it('accepts model-classified named actions but blocks structurally broad grants', async () => {
     const contract = agentSourceSubmissionContract({
       internal: true,
       onboarding: 'agent-creator',
@@ -333,14 +336,19 @@ Read references/checklist.md before authoring a release workflow.`);
     });
     const submission: { source?: string; name?: string; fileName?: string; model?: string } = {};
     const tool = createSubmitAgentSourceTool(submission, contract!);
-    const unsafe = '---\nname: Release publisher\nmodel: openai:gpt-5.6-luna\ndescription: Publish reviewed releases\nschedule: 0 9 * * 1\ntools:\n  bash:\n    commands:\n      - npm publish\n---\n\nPrepare and publish a release.\n';
+    const namedAction = '---\nname: Release publisher\nmodel: openai:gpt-5.6-luna\ndescription: Publish reviewed releases\nschedule: 0 9 * * 1\ntools:\n  bash:\n    commands:\n      - npm publish\n---\n\nPrepare and publish a release.\n';
     await expect((tool.execute as any)({
-      name: 'Release publisher', filename: 'release-publisher.agentuse', source: unsafe,
-    })).rejects.toThrow('unsafe ungated command: npm publish');
+      name: 'Release publisher', filename: 'release-publisher.agentuse', source: namedAction,
+    })).resolves.toContain('Accepted');
 
-    const gated = unsafe.replace(
-      '    commands:\n      - npm publish',
-      '    gated:\n      - npm publish',
+    const broadGrant = namedAction.replace('npm publish', 'npm *');
+    await expect((tool.execute as any)({
+      name: 'Release publisher', filename: 'release-publisher.agentuse', source: broadGrant,
+    })).rejects.toThrow('unsafe ungated command: npm *');
+
+    const gated = broadGrant.replace(
+      '    commands:\n      - npm *',
+      '    gated:\n      - npm *',
     );
     await expect((tool.execute as any)({
       name: 'Release publisher', filename: 'release-publisher.agentuse', source: gated,

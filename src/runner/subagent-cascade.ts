@@ -97,7 +97,7 @@ export interface StaleCascadeChild {
  * gate, and report the child it broke at.
  *
  * A healthy chain ends either at a suspended leaf holding a pending `await_human`
- * (a real approval, `descendToLeafGate`) or at a descendant still `running` (the
+ * (a real approval, `descendToLeafGate`) or at a descendant still preparing/running (the
  * manager is simply waiting out delegated work). Anything else is a stranded
  * ancestor: the child ended terminally, or is suspended with nothing pending, and
  * the parent will sit `suspended` forever because only the child's own resume can
@@ -116,7 +116,7 @@ export async function findStaleCascadeChild(
   }
   const { session } = found;
   // Still working: the parent is progressing, not stranded.
-  if (session.status === 'running') return null;
+  if (session.status === 'preparing' || session.status === 'running') return null;
   const describe = (): StaleCascadeChild => ({
     sessionId: childSessionId,
     agentName: session.agent.name || session.agent.id,

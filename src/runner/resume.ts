@@ -240,7 +240,7 @@ export async function restoreResumeToolResult(options: {
 
 export type ReopenGateResult =
   | { ok: true; agentId: string }
-  | { ok: false; code: 'SESSION_NOT_FOUND' | 'SESSION_RUNNING' | 'ALREADY_SUSPENDED' | 'NO_REOPENABLE_GATE'; message: string };
+  | { ok: false; code: 'SESSION_NOT_FOUND' | 'SESSION_PREPARING' | 'SESSION_RUNNING' | 'ALREADY_SUSPENDED' | 'NO_REOPENABLE_GATE'; message: string };
 
 /**
  * Decide whether a tool part is a resolved `await_human` gate that can be
@@ -293,8 +293,12 @@ export async function reopenSuspendedGate(options: {
   if (!found) {
     return { ok: false, code: 'SESSION_NOT_FOUND', message: `Session not found: ${sessionId}` };
   }
-  if (found.session.status === 'running') {
-    return { ok: false, code: 'SESSION_RUNNING', message: `Session ${sessionId} is still running` };
+  if (found.session.status === 'preparing' || found.session.status === 'running') {
+    return {
+      ok: false,
+      code: found.session.status === 'preparing' ? 'SESSION_PREPARING' : 'SESSION_RUNNING',
+      message: `Session ${sessionId} is still ${found.session.status}`,
+    };
   }
   if (found.session.status === 'suspended') {
     return { ok: false, code: 'ALREADY_SUSPENDED', message: `Session ${sessionId} is already suspended` };
@@ -407,7 +411,9 @@ async function pendingSubagentWaitChildId(
  * Call this the moment a project's worker (re)spawns. There is one worker per
  * project, so a freshly (re)spawned worker owns no executions yet: any 'running'
  * session last touched BEFORE it became ready (`time.updated < cutoff`) whose
- * recorded owner process is gone is orphaned. The owner probe matters because
+ * recorded owner process is gone is orphaned. The same rule terminates a
+ * `preparing` shell whose host died before it could dispatch model execution.
+ * The owner probe matters because
  * the storage is shared by every process serving the project (a terminal
  * `agentuse run`, a second daemon with a different data dir) and a live run
  * rewrites its session file only on status changes — a stale header alone does
@@ -437,6 +443,18 @@ export async function reconcileOrphanedSessions(options: {
   const reconciled: ReconciledOrphan[] = [];
   // Pass 1: runs killed mid-flight.
   for (const { session, agentId } of sessions) {
+    if (session.status === 'preparing') {
+      if (session.time.updated >= cutoff) continue;
+      if (session.owner && await isProcessRefAliveAsync(session.owner)) continue;
+      if (!dryRun) {
+        await sessionManager.setSessionError(session.id, agentId, {
+          code: 'PREPARATION_INTERRUPTED',
+          message: 'Session preparation was interrupted before model execution started.'
+        }).catch(() => {});
+      }
+      reconciled.push({ sessionId: session.id, agentId, agentName: session.agent.name || session.agent.id, reason: 'interrupted' });
+      continue;
+    }
     if (session.status !== 'running') continue;
     if (session.time.updated >= cutoff) continue; // owned by the current live worker
     // Sessions run by a process that is still alive (a terminal `agentuse run`,

@@ -287,7 +287,7 @@ export class ApprovalEventHub {
           if (!seen.has(id)) loop.logSignatures.delete(id);
         }
 
-        const live = status === 'resuming' || status === 'continuing' || status === 'running' || status === 'run';
+        const live = status === 'preparing' || status === 'resuming' || status === 'continuing' || status === 'running' || status === 'run';
         interval = live ? this.liveIntervalMs : this.idleIntervalMs;
       } else {
         // Transient failures should not kill streams; surface the error and

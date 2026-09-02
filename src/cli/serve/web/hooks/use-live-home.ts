@@ -79,7 +79,7 @@ export function labelFor(row: SessionRow, isNew: boolean, gates: SuspendedGateKi
     if (gates.expired.has(sessionRowKey(row))) return 'approval expired';
     return 'resuming';
   }
-  if (isNew && (status === 'running' || status === 'resuming' || status === 'continuing')) return 'started';
+  if (isNew && (status === 'preparing' || status === 'running' || status === 'resuming' || status === 'continuing')) return 'started';
   return status;
 }
 

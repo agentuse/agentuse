@@ -100,4 +100,22 @@ describe('internal AgentUse architecture', () => {
       expect(executed).toBeGreaterThan(prepared);
     }
   });
+
+  it('returns a durable revision session before preparing its project context', async () => {
+    const serve = await source('cli/serve.ts');
+    const revisionStart = serve.indexOf("routePath.match(/^\\/sessions\\/([^/?#]+)\\/revisions$/)");
+    const section = serve.slice(revisionStart, serve.indexOf('const revisionActionMatch', revisionStart));
+    const recorded = section.indexOf('createAgentRevisionRecord({');
+    const sessionCreated = section.indexOf('worker.createPreparingSession({');
+    const responded = section.indexOf('sendJSON(res, 202');
+    const prepared = section.indexOf('prepareProjectDiscoveryView');
+    const executed = section.indexOf('worker.execute({');
+
+    expect(recorded).toBeGreaterThan(-1);
+    expect(sessionCreated).toBeGreaterThan(recorded);
+    expect(responded).toBeGreaterThan(sessionCreated);
+    expect(prepared).toBeGreaterThan(responded);
+    expect(executed).toBeGreaterThan(prepared);
+    expect(section).toContain('preparedSession: true');
+  });
 });

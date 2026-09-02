@@ -254,10 +254,12 @@ export function FeedResponse(props: { value: string | undefined; status: string;
   const long = Boolean(props.value && (props.value.length > 1_800 || props.value.split(/\r?\n/).length > 18));
   // subagentActive reads as live (like running): the response lands when the
   // delegated sub-agent returns.
-  const live = props.status === 'running' || props.status === 'suspended' || props.subagentActive === true;
+  const live = props.status === 'preparing' || props.status === 'running' || props.status === 'suspended' || props.subagentActive === true;
   const emptyMessage = props.subagentActive
     ? 'Working in a delegated sub-agent. Its response will appear here when the sub-agent returns.'
-    : props.status === 'running'
+    : props.status === 'preparing'
+      ? 'Preparing project context. The agent will start when its safe workspace is ready.'
+      : props.status === 'running'
       ? 'Agent is working. Its response will appear here as it becomes available.'
       : props.status === 'suspended'
         ? 'Waiting on an approval or a delegated sub-agent. No final response yet.'

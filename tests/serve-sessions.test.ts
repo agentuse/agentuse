@@ -333,6 +333,13 @@ describe('session list helpers', () => {
     expect(__testing.sessionMatchesStatusFilter(incomplete, 'error')).toBe(true);
   });
 
+  it('matches durable preparing sessions without folding them into running', () => {
+    const preparing = { ...rows[0]!.session, status: 'preparing' };
+
+    expect(__testing.sessionMatchesStatusFilter(preparing, 'preparing')).toBe(true);
+    expect(__testing.sessionMatchesStatusFilter(preparing, 'running')).toBe(false);
+  });
+
   it('excludes mock sessions by default and honors include/only', () => {
     const real: { mock?: boolean } = {};
     const mock = { mock: true };
