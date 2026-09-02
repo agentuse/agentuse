@@ -447,7 +447,13 @@ function LearningsSection(props: {
       ))}
       {/* Never collapsed. Writing a correction is the one thing a reviewer comes
           to this panel to DO; folding it away behind the same toggle as the
-          reading material had it backwards. */}
+          reading material had it backwards.
+
+          Suppressed only when the load failed: learnings are stored against the
+          agent file, so a source we could not read is one we cannot append to
+          either, and offering the composer under the error just invites a second
+          failure. */}
+      {!error && (
       <div class="learnings-add">
         <textarea
           ref={inputRef}
@@ -464,7 +470,6 @@ function LearningsSection(props: {
         />
         <button
           type="button"
-          class="primary"
           disabled={adding}
           aria-busy={adding}
           onClick={() => void add()}
@@ -479,6 +484,7 @@ function LearningsSection(props: {
           )}
         </button>
       </div>
+      )}
     </div>
   );
 }

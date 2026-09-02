@@ -3494,25 +3494,31 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .learnings-discard:disabled { opacity: 0.5; cursor: default; }
 .learnings-add { display: flex; gap: 10px; align-items: flex-end; }
 .learnings-add-input { flex: 1; min-height: 56px; }
-/* Self-contained primary styling: the panel renders on pages without the
-   session view's `.page-approval-detail button…` base rules (agent detail),
-   where the button would otherwise fall back to native browser chrome. */
+/* Self-contained styling: the panel renders on pages without the session view's
+   `.page-approval-detail button…` base rules (agent detail), where the button
+   would otherwise fall back to native browser chrome.
+
+   Deliberately outlined, not filled. Adding a note for future runs is optional
+   and infrequent, while the same page carries Resume session, Send comment and
+   the approve/reject gate — the actions the reviewer actually came for. A filled
+   primary here read as the loudest thing on the page, and at mobile widths,
+   where it stretches full-bleed, it outshouted the decision itself. */
 .learnings-add button {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
   font-family: var(--sans);
   font-size: var(--font-size-supporting);
   font-weight: var(--weight-medium);
   letter-spacing: normal;
-  border: 1px solid var(--primary-bg);
-  background: var(--primary-bg);
-  color: var(--primary-fg);
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--fg);
   border-radius: 8px;
   min-height: 40px;
   padding: 0 16px;
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
 }
-.learnings-add button:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); }
+.learnings-add button:hover { background: var(--panel-hover); border-color: var(--line-strong); }
 .learnings-add button:active { transform: translateY(1px); }
 .learnings-add button:disabled { opacity: 0.55; cursor: not-allowed; }
 
