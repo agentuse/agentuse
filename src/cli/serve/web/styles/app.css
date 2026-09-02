@@ -772,8 +772,12 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   align-items: center;
   gap: 10px;
   margin-bottom: 16px;
-  /* Opaque band that bleeds to the edges of the centered main column (matching
-     padding keeps the content aligned) so log entries scroll cleanly beneath. */
+  /* Bleeds to the edges of the centered main column (matching padding keeps the
+     content aligned) so log entries scroll beneath it -- frosted rather than
+     hidden, so scroll position stays legible under the bar. Same recipe as
+     .topbar.app-toolbar, which sits directly above this one on mobile; the two
+     have to read as one piece of chrome. Opaque fallback first: a 60% fill with
+     no blur behind it is just unreadable text. */
   margin-inline: -16px;
   padding: 12px 16px;
   background: var(--bg);
@@ -787,6 +791,18 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 }
 .page-approval-detail .session-bar.is-scrolled {
   border-bottom-color: var(--line);
+}
+/* backdrop-filter makes an element a containing block for fixed-position
+   descendants, so it is only safe directly on a bar that has none. This one has
+   none: its children are .session-bar-lead and .session-bar-top, and the session
+   menu whose popover is position: fixed lives up in .header-title-row, outside
+   the bar. Re-check that before adding anything fixed in here. */
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .page-approval-detail .session-bar {
+    background: color-mix(in srgb, var(--bg) 60%, transparent);
+    backdrop-filter: blur(18px) saturate(115%);
+    -webkit-backdrop-filter: blur(18px) saturate(115%);
+  }
 }
 .page-approval-detail .session-bar-lead {
   display: flex;
@@ -2960,9 +2976,10 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
    fold; pinning the bar to the viewport bottom keeps Approve/Reject reachable
    while the reviewer scrolls the evidence. Sticky is bounded by the gate's own
    .log-item, which is fine because a pending gate is the run's last entry.
-   Deliberately frosted (--bar-bg + blur), unlike the opaque topbar/session-bar:
-   it floats OVER log text mid-scroll, and the see-through hint tells the
-   reviewer there's more evidence beneath. */
+   Frosted like the headers, but a denser fill (--bar-bg): this one floats over
+   log text rather than sitting at a page edge, and the text it covers is the
+   evidence the reviewer is reading. Enough see-through to say there is more
+   beneath, not enough to compete with it. */
 .log-actions {
   position: sticky;
   bottom: 12px;
