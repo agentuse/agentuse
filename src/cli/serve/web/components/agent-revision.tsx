@@ -88,6 +88,13 @@ export function AgentRevisionLauncher(props: {
   buttonTitle?: string | undefined;
 }) {
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
   const [handoffCopied, setHandoffCopied] = useState(false);
   const [instruction, setInstruction] = useState('');
   const [model, setModel] = useState('');
@@ -280,7 +287,7 @@ export function AgentRevisionLauncher(props: {
             <label class="agent-revision-field"><span>Thinking effort</span><select value={reasoning} disabled={busy} onChange={(event) => { const value = (event.target as HTMLSelectElement).value as ReasoningLevel; setReasoning(value); storeAuthoring({ reasoning: value }); }}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
           </div>
           {error && <p class="agent-revision-error" role="alert">{error}{errorHref && <> <a href={errorHref}>Open it</a></>}</p>}
-          <div class="agent-revision-actions"><button type="button" class="agent-revision-primary" disabled={busy || loadingOptions || !instruction.trim() || !model} onClick={() => void submit()}>{busy ? 'Starting revision…' : 'Start revision session'}</button></div>
+          <div class="agent-revision-actions"><button type="button" class="agent-revision-cancel" disabled={busy} onClick={() => setOpen(false)}>Cancel</button><button type="button" class="agent-revision-primary" disabled={busy || loadingOptions || !instruction.trim() || !model} onClick={() => void submit()}>{busy ? 'Starting revision…' : 'Start revision session'}</button></div>
           <div class="agent-revision-handoff">
             <span><strong>Need project code or a custom integration?</strong><small>Use your coding agent when the change is larger than this AgentUse file.</small></span>
             <button type="button" disabled={busy} onClick={() => { void copyText(buildDebugPrompt(props.context, instruction)).then((ok) => { if (!ok) return; setHandoffCopied(true); setTimeout(() => setHandoffCopied(false), 2000); }); }}>{handoffCopied ? 'Prompt copied — paste it into your coding agent' : 'Copy prompt for Coding Agent'}</button>
