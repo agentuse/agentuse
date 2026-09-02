@@ -14,7 +14,7 @@ import {
   type AgentRevisionSummary,
 } from '../lib/api';
 import { buildDebugPrompt, type DebugPromptContext } from './debug-prompt-button';
-import { SendToCodingAgentDialog } from './send-to-coding-agent-dialog';
+import { copyText } from './send-to-coding-agent-dialog';
 
 const ACTIVE_REVISION_STATUSES = new Set(['running', 'proposed', 'no-change']);
 const AUTHORING_PREFS_KEY = 'agentuse:revision-authoring';
@@ -88,7 +88,7 @@ export function AgentRevisionLauncher(props: {
   buttonTitle?: string | undefined;
 }) {
   const [open, setOpen] = useState(false);
-  const [codingOpen, setCodingOpen] = useState(false);
+  const [handoffCopied, setHandoffCopied] = useState(false);
   const [instruction, setInstruction] = useState('');
   const [model, setModel] = useState('');
   const [reasoning, setReasoning] = useState<ReasoningLevel>('medium');
@@ -137,7 +137,7 @@ export function AgentRevisionLauncher(props: {
   useEffect(() => {
     setInstruction('');
     setOpen(false);
-    setCodingOpen(false);
+    setHandoffCopied(false);
     setError(null);
     setErrorHref(null);
     setShowHistory(false);
@@ -283,18 +283,10 @@ export function AgentRevisionLauncher(props: {
           <div class="agent-revision-actions"><button type="button" class="agent-revision-primary" disabled={busy || loadingOptions || !instruction.trim() || !model} onClick={() => void submit()}>{busy ? 'Starting revision…' : 'Start revision session'}</button></div>
           <div class="agent-revision-handoff">
             <span><strong>Need project code or a custom integration?</strong><small>Use your coding agent when the change is larger than this AgentUse file.</small></span>
-            <button type="button" disabled={busy} onClick={() => { setOpen(false); setCodingOpen(true); }}>Send to Coding Agent…</button>
+            <button type="button" disabled={busy} onClick={() => { void copyText(buildDebugPrompt(props.context, instruction)).then((ok) => { if (!ok) return; setHandoffCopied(true); setTimeout(() => setHandoffCopied(false), 2000); }); }}>{handoffCopied ? 'Prompt copied — paste it into your coding agent' : 'Copy prompt for Coding Agent'}</button>
           </div>
         </div>
       </section>}
-      <SendToCodingAgentDialog
-        open={codingOpen}
-        title="send revision to coding agent"
-        buildPrompt={(detail) => buildDebugPrompt(props.context, detail || instruction)}
-        detailLabel="What should the coding agent focus on?"
-        initialDetail={instruction}
-        onClose={() => setCodingOpen(false)}
-      />
     </>
   );
 }
