@@ -1,3 +1,4 @@
+import type { ComponentChildren } from 'preact';
 import { memo } from 'preact/compat';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useSmoothText } from '../hooks/use-smooth-text';
@@ -323,6 +324,47 @@ function ArtifactPreview(props: { path: string; href: string }) {
 }
 
 /**
+ * The selected candidate is the one that renders in full, which on a long
+ * draft (a post, an answer, an email) pushes every other option a screen
+ * below: the reviewer never learns the alternatives exist, so a "pick one"
+ * gate degrades into a rubber stamp on whatever was recommended. Cap it at a
+ * readable slab and let the reviewer open the rest deliberately. Measured
+ * rather than counted, so a short candidate shows no control at all.
+ */
+function SelectedOptionActions(props: { children: ComponentChildren }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [clipped, setClipped] = useState(false);
+  useLayoutEffect(() => {
+    // Only while collapsed: expanded, scrollHeight equals clientHeight, and
+    // re-measuring would drop the control that collapses it again.
+    if (expanded) return;
+    const el = ref.current;
+    if (!el) return;
+    setClipped(el.scrollHeight > el.clientHeight + 4);
+  });
+  return (
+    <div class={`approval-option-body${expanded ? ' expanded' : ''}${clipped && !expanded ? ' is-clipped' : ''}`}>
+      <div class="approval-option-clamp" ref={ref}>{props.children}</div>
+      {(clipped || expanded) && (
+        <button
+          class="approval-option-more"
+          type="button"
+          aria-expanded={expanded}
+          onClick={(event) => {
+            // The card is a <label>, so a bare click here would also drive the
+            // radio; opening the text must not read as re-picking the option.
+            event.preventDefault();
+            event.stopPropagation();
+            setExpanded(!expanded);
+          }}
+        >{expanded ? 'Show less' : 'Show full'}</button>
+      )}
+    </div>
+  );
+}
+
+/**
  * Pick-among-options menu on an approval gate. Interactive (radio cards) while
  * the gate is pending and actionable; a static list afterwards, with the
  * decided option marked. The recommended option is preselected by the page.
@@ -343,6 +385,14 @@ function OptionsBlock(props: {
           const isDecided = props.decided === opt.id;
           const isSelected = interactive ? props.selected === opt.id : isDecided;
           const changes = props.changes.filter((change) => change.optionId === opt.id);
+          const actions = changes.map((change, index) => (
+            <div class="approval-option-action" key={index}>
+              {changes.length > 1 && (
+                <div class="approval-option-action-label">{change.label || `Action ${index + 1}`}</div>
+              )}
+              <LogContent value={changeDisplayContent(change)} forceMarkdown />
+            </div>
+          ));
           const body = (
             <div class="approval-option-main">
               <div class="approval-option-label">
@@ -351,14 +401,11 @@ function OptionsBlock(props: {
                 {isDecided && <span class="approval-option-badge picked">picked</span>}
               </div>
               {opt.description && <div class="approval-option-desc"><InlineMarkdown value={opt.description} /></div>}
-              {changes.map((change, index) => (
-                <div class="approval-option-action" key={index}>
-                  {changes.length > 1 && (
-                    <div class="approval-option-action-label">{change.label || `Action ${index + 1}`}</div>
-                  )}
-                  <LogContent value={changeDisplayContent(change)} forceMarkdown />
-                </div>
-              ))}
+              {/* Unselected candidates keep their 3-line CSS clamp: they are
+                  there to stay comparable, not to be read end to end. */}
+              {isSelected && actions.length > 0
+                ? <SelectedOptionActions>{actions}</SelectedOptionActions>
+                : actions}
             </div>
           );
           const commandDetails = changes

@@ -2602,10 +2602,14 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   border-radius: 0;
   background: transparent;
 }
+/* --muted, not --muted-2: these eyebrows are the card's whole navigation
+   layer, and --muted-2 (0.35 light / 0.30 dark) sits near 2.5:1 against the
+   surface. --muted clears AA in both themes while staying quieter than the
+   clickable summaries below, so the hierarchy survives the fix. */
 .approval-section-title,
 .approval-context > summary,
 .approval-summary-collapsed > summary {
-  color: var(--muted-2);
+  color: var(--muted);
   font-size: var(--font-size-micro);
   font-weight: var(--weight-medium);
   letter-spacing: var(--tracking-caps);
@@ -2911,6 +2915,33 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
 .approval-option:not(.selected) .approval-option-action > * + * { display: none; }
+/* The selected candidate reads in full, but not without a ceiling: a long post
+   or answer rendered whole pushes the remaining options a screen below, so the
+   reviewer never discovers there was anything to compare. Roughly a dozen
+   lines, then Show full opens it. */
+.approval-option-clamp { max-height: 19em; overflow: hidden; }
+.approval-option-body.expanded .approval-option-clamp { max-height: none; }
+/* Mask, not an overlay gradient: the clipped edge has to fade against the
+   selected card's cyan wash and the plain ground alike, and a mask needs no
+   colour to match. Only while actually clipped, or a short candidate would
+   fade its own last line for nothing. */
+.approval-option-body.is-clipped .approval-option-clamp {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 3.5em), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 3.5em), transparent);
+}
+.approval-option-more {
+  display: block;
+  margin-top: 4px;
+  padding: 6px 0;
+  min-height: 32px;
+  border: 0;
+  background: transparent;
+  color: var(--cyan);
+  font: inherit;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+.approval-option-more:hover { text-decoration: underline; }
 .approval-option.selected .approval-option-label {
   color: var(--fg);
 }
@@ -3029,7 +3060,7 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   font-size: var(--font-size-micro);
   border: 1px solid var(--line);
   border-radius: 4px;
-  color: var(--muted-2);
+  color: var(--muted);
   background: var(--bg);
 }
 /* flex: 1 keeps the buttons right-aligned even after a long approve label
@@ -3258,7 +3289,7 @@ dialog#decision-dialog form { margin: 0; padding: 0; }
   flex-shrink: 0;
   border: 0;
   background: transparent;
-  color: var(--muted-2);
+  color: var(--muted-3);
   font: inherit;
   font-size: var(--font-size-supporting);
   padding: 6px 4px;
