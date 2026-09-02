@@ -403,3 +403,31 @@ describe('running descendant activity', () => {
     expect(buildDescendantActivity(running, [])).toBeUndefined();
   });
 });
+
+describe('running descendants in the tree', () => {
+  it('gives a still-running routine grandchild a row without marking it important', () => {
+    const manager = session({ id: 'manager', name: 'Manager', createdAt: 1_000 });
+    const middle = session({ id: 'middle', parent: 'manager', name: 'Researcher', status: 'running', createdAt: 2_000 });
+    const worker = session({ id: 'worker', parent: 'middle', name: 'Worker', status: 'running', createdAt: 3_000 });
+
+    const rows = buildImportantDescendants(manager, [
+      { session: middle, parts: [] },
+      { session: worker, parts: [] },
+    ]);
+    const byId = new Map(rows.map((row) => [row.sessionId, row]));
+    expect([...byId.keys()].sort()).toEqual(['middle', 'worker']);
+    expect(byId.get('worker')!.kinds).toEqual(['active']);
+    expect(byId.get('worker')!.important).toBe(false);
+  });
+
+  it('drops a routine descendant again once it finishes with nothing to show', () => {
+    const manager = session({ id: 'manager', name: 'Manager', createdAt: 1_000 });
+    const middle = session({ id: 'middle', parent: 'manager', name: 'Researcher', createdAt: 2_000 });
+    const worker = session({ id: 'worker', parent: 'middle', name: 'Worker', createdAt: 3_000 });
+
+    expect(buildImportantDescendants(manager, [
+      { session: middle, parts: [] },
+      { session: worker, parts: [] },
+    ])).toEqual([]);
+  });
+});

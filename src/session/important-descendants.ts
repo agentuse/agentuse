@@ -1,7 +1,7 @@
 import type { Part, SessionInfo, SessionTrigger } from './types';
 import { isExecutingSessionStatus, isTerminalSessionStatus } from './status';
 
-export type ImportantDescendantKind = 'judge' | 'verification' | 'approval' | 'failure' | 'mutation' | 'context';
+export type ImportantDescendantKind = 'judge' | 'verification' | 'approval' | 'failure' | 'mutation' | 'active' | 'context';
 
 export interface DescendantBreadcrumb {
   sessionId: string;
@@ -265,6 +265,11 @@ export function buildImportantDescendants(
     if (verifyParts(parts).length > 0) kinds.push('verification');
     if (item.session.status === 'error' || item.session.error?.code === 'INCOMPLETE') kinds.push('failure');
     if (!judge && hasMutationEvidence(item.session, parts)) kinds.push('mutation');
+    // A descendant that is still executing earns a row purely so the reader can
+    // watch it. It is live context rather than an event, so it does not count
+    // toward `important`, and its row drops out once it finishes without having
+    // produced anything an operator needs to see.
+    if (isExecutingSessionStatus(item.session.status)) kinds.push('active');
     raw.set(item.session.id, { item, kinds, ...(gate && { gateLabel: gate }) });
   }
 
@@ -331,8 +336,8 @@ export function buildImportantDescendants(
     const session = item.session;
     if (!included.has(session.id) || !session.parentSessionID) continue;
     const classified = raw.get(session.id)!;
-    const important = classified.kinds.length > 0;
-    const kinds = important ? classified.kinds : ['context'] as ImportantDescendantKind[];
+    const important = classified.kinds.some((kind) => kind !== 'active');
+    const kinds = classified.kinds.length > 0 ? classified.kinds : ['context'] as ImportantDescendantKind[];
     const explicitAttempt = session.observability?.attempt;
     const ordinal = explicitAttempt ?? judgeOrdinals.get(session.id);
     const maxAttempts = session.observability?.maxAttempts;

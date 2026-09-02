@@ -2,6 +2,8 @@ import type { ComponentChildren } from 'preact';
 import { memo } from 'preact/compat';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useSmoothText } from '../hooks/use-smooth-text';
+import { useSessionTail } from '../hooks/use-session-tail';
+import { useTailSlot } from '../hooks/use-tail-slot';
 import type { ApprovalChange, ApprovalLogDetails, ApprovalLogEntry, ApprovalOption, ApprovalReference, LogSubagentEvent, LogSubagentSession } from '../../types';
 import { formatLogTime, isJsonLikeContent, logEntrySignature, storeItemPreview, storeItemTitle, valueAsRecord } from '../lib/format';
 import type { StoreItem } from '../../../../store/types';
@@ -690,25 +692,52 @@ function formatSessionDuration(durationMs: number | undefined): string | undefin
   return minuteRemainder ? `${hours}h ${minuteRemainder}m` : `${hours}h`;
 }
 
-/** The child's newest tool step, with a live timer. A running card otherwise
- * shows only the task the child was handed, which never answers what it is
- * doing now — the reader had to open the child session to find out. */
-function SubagentActivityLine(props: { activity: NonNullable<LogSubagentSession['activity']> }) {
-  const activity = props.activity;
+/**
+ * What the child is doing, on the parent's own card. A running card otherwise
+ * shows only the task the child was handed, so the reader had to open the child
+ * session to learn what it was working on.
+ *
+ * Two sources, in order of freshness: the child's own event stream when a live
+ * slot is free (moves with every step the child takes), and otherwise the newest
+ * tool step captured in the parent's last fetch, which only advances when the
+ * parent's log refetches.
+ */
+function SubagentActivity(props: { session: LogSubagentSession; projectId?: string }) {
+  const s = props.session;
+  const activity = s.activity;
+  const live = Boolean(props.projectId)
+    && !s.synthetic
+    && (isExecutingCardStatus(s.status) || isExecutingCardStatus(s.displayStatus));
+  const slot = useTailSlot(live);
+  const tail = useSessionTail(s.sessionId, props.projectId ?? '', live && slot);
+
   const [now, setNow] = useState(() => Date.now());
+  // Each new tail line restarts the timer, so the elapsed value answers "how
+  // long has it been on this step" rather than how long the card has existed.
+  const [since, setSince] = useState(() => Date.now());
+  useEffect(() => { setSince(Date.now()); }, [tail?.text]);
+  const running = tail ? true : activity?.running === true;
   useEffect(() => {
-    if (!activity.running) return;
+    if (!running) return;
     setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [activity.running, activity.startedAt]);
-  const elapsed = activity.running ? formatSessionDuration(Math.max(0, now - activity.startedAt)) : undefined;
+  }, [running, since, activity?.startedAt]);
+
+  if (!tail && !activity) return null;
+  const startedAt = tail ? since : activity!.startedAt;
+  const elapsed = running ? formatSessionDuration(Math.max(0, now - startedAt)) : undefined;
+  const label = tail ? 'now' : activity!.running ? 'now' : 'last';
+  const tool = tail ? tail.tool && tail.text : activity!.tool;
+  const detail = tail ? (tail.tool ? undefined : tail.text) : activity!.detail;
+  const steps = activity?.steps;
+  const meta = [steps !== undefined ? `step ${steps}` : undefined, elapsed].filter(Boolean).join(' · ');
   return (
-    <span class={`subagent-activity${activity.running ? ' is-running' : ''}`}>
-      <span class="subagent-activity-label">{activity.running ? 'now' : 'last'}</span>
-      <code class="subagent-activity-tool">{activity.tool}</code>
-      {activity.detail && <span class="subagent-activity-detail">{activity.detail}</span>}
-      <span class="subagent-activity-meta">{`step ${activity.steps}${elapsed ? ` · ${elapsed}` : ''}`}</span>
+    <span class={`subagent-activity${running ? ' is-running' : ''}`}>
+      <span class="subagent-activity-label">{label}</span>
+      {tool && <code class="subagent-activity-tool">{tool}</code>}
+      {detail && <span class="subagent-activity-detail">{detail}</span>}
+      {meta && <span class="subagent-activity-meta">{meta}</span>}
     </span>
   );
 }
@@ -768,7 +797,14 @@ function ReviewerFeedbackEventCard(props: { event: Extract<LogSubagentEvent, { t
   return <div class="subagent-tree-node is-important" data-event-id={event.id}>{row}</div>;
 }
 
-function SubagentCard(props: { session: LogSubagentSession }) {
+/** Statuses the card treats as still executing, mirroring the runtime's own
+ * projection without pulling a node module into the browser bundle. */
+function isExecutingCardStatus(status: string | undefined): boolean {
+  return status === 'preparing' || status === 'running' || status === 'resuming'
+    || status === 'continuing' || status === 'run' || status === 'revising';
+}
+
+function SubagentCard(props: { session: LogSubagentSession; projectId?: string }) {
   const s = props.session;
   const name = s.agent.name || s.agent.id;
   const judge = s.kinds?.includes('judge') === true;
@@ -794,7 +830,7 @@ function SubagentCard(props: { session: LogSubagentSession }) {
           {duration && <span>{duration}</span>}
         </span>
       )}
-      {s.activity && <SubagentActivityLine activity={s.activity} />}
+      <SubagentActivity session={s} {...(props.projectId && { projectId: props.projectId })} />
       {s.errorMessage && <span class="subagent-error">{s.errorMessage}</span>}
       {s.command && <span class="subagent-command">{s.command}</span>}
     </>
@@ -808,7 +844,7 @@ function SubagentCard(props: { session: LogSubagentSession }) {
       {nested.length > 0 && (
         <div class="subagent-children" aria-label={`Important descendants and events of ${name}`}>
           {nested.map((item) => item.type === 'session'
-            ? <SubagentCard key={item.session.sessionId} session={item.session} />
+            ? <SubagentCard key={item.session.sessionId} session={item.session} {...(props.projectId && { projectId: props.projectId })} />
             : item.event.type === 'reviewer-feedback'
               ? <ReviewerFeedbackEventCard key={item.event.id} event={item.event} />
               : <VerifyEventCard key={item.event.id} event={item.event} />)}
@@ -1242,7 +1278,7 @@ function LogEntryImpl(props: LogEntryProps) {
         {/* The sub-agent card carries status + a link to the child run, so keep
             it visible even when the row is collapsed; only the tool input/output
             below stays behind the expand toggle. */}
-        {entry.subagentSession && <SubagentCard session={entry.subagentSession} />}
+        {entry.subagentSession && <SubagentCard session={entry.subagentSession} {...(props.projectId && { projectId: props.projectId })} />}
         {subagentResult && <SubagentOutcome result={subagentResult} />}
         {runOutcome && <RunOutcomeCard outcome={runOutcome} />}
         {savedArtifact && <SavedArtifactCard artifact={savedArtifact} sessionId={props.sessionId} token={props.token} />}
