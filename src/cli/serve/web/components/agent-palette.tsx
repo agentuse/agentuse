@@ -1,5 +1,5 @@
 import type { VNode } from 'preact';
-import { useEffect, useId, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
 import type { AgentRow, ApprovalRow, SessionRow } from '../lib/api';
 import { fetchAgents, fetchSessions } from '../lib/api';
@@ -215,17 +215,27 @@ export function AgentPalette() {
     };
   }, []);
 
+  // Focus at commit time, not after paint: iOS only raises the software
+  // keyboard for a focus() that still runs under the tap that opened the
+  // palette, and a passive useEffect has already lost that activation.
+  useLayoutEffect(() => {
+    if (!open) return;
+    // Captured here rather than in the effect below, which now runs after the
+    // input already holds focus.
+    const returnFocusTo = document.activeElement as HTMLElement | null;
+    inputRef.current?.focus({ preventScroll: true });
+    return () => {
+      if (returnFocusTo && document.contains(returnFocusTo)) returnFocusTo.focus();
+    };
+  }, [open]);
+
   // Refresh agents and sessions on every open (sessions go stale fast), keeping
-  // the previous rows on screen meanwhile; reset transient state and focus the
-  // input.
+  // the previous rows on screen meanwhile; reset transient state.
   useEffect(() => {
     if (!open) return;
-    // Remember what had focus so we can hand it back when the palette closes.
-    const returnFocusTo = document.activeElement as HTMLElement | null;
     setQuery('');
     setActive(0);
     setLoadError(null);
-    inputRef.current?.focus();
     let live = true;
     fetchAgents()
       .then((payload) => { if (live) setAgents(payload.agents); })
@@ -235,7 +245,6 @@ export function AgentPalette() {
       .catch(() => { /* Sessions are one section; a dead API already surfaces via agents. */ });
     return () => {
       live = false;
-      if (returnFocusTo && document.contains(returnFocusTo)) returnFocusTo.focus();
     };
   }, [open]);
 
