@@ -749,6 +749,8 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 .page-approval-detail .status.waiting::before { animation: pulse 1.4s ease-in-out infinite; }
 .page-approval-detail .status.resuming, .page-approval-detail .status.continuing { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
 .page-approval-detail .status.resuming::before, .page-approval-detail .status.continuing::before { animation: pulse 0.8s ease-in-out infinite; }
+.page-approval-detail .status.preparing { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
+.page-approval-detail .status.preparing::before { animation: pulse 1.4s ease-in-out infinite; }
 .page-approval-detail .status.running, .page-approval-detail .status.streaming { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
 .page-approval-detail .status.running::before, .page-approval-detail .status.streaming::before { animation: pulse 1.4s ease-in-out infinite; }
 .page-approval-detail .status.revising { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
@@ -5794,6 +5796,33 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 }
 .page-agent-detail .run-cta-alt:hover { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
 .page-agent-detail .run-cta-alt:disabled { opacity: 0.5; cursor: not-allowed; }
+.page-agent-detail .agent-revise-row { display: contents; }
+.page-agent-detail .agent-revise-row:has(.agent-revision-form),
+.page-agent-detail .agent-revise-row:has(.agent-revision-history) {
+  display: flex; flex: 1 0 100%; justify-content: flex-end; min-width: 0;
+}
+.page-agent-detail .agent-revise-cta { display: inline-flex; align-items: center; gap: 7px; }
+.page-agent-detail .agent-revise-cta svg { flex: none; color: var(--cyan); }
+.page-agent-detail .agent-revise-row .agent-revision-form { width: 100%; }
+.page-agent-detail .agent-revise-row .agent-revision-history { width: 100%; }
+@media (min-width: 641px) {
+  .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
+    column-gap: 8px; row-gap: 16px;
+  }
+  .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) .hero-text { grid-column: 1; grid-row: 1; padding-right: 16px; }
+  .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) .hero-actions,
+  .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) .run-cta-row { display: contents; }
+  .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) .run-spotlight-anchor { grid-column: 2; grid-row: 1; }
+  .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) .run-cta-row > .run-cta-alt:not(.agent-revise-cta) { grid-column: 3; grid-row: 1; }
+  .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) .agent-revise-row {
+    grid-column: 1 / -1; grid-row: 2; width: 100%;
+  }
+  .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) .schedule-spotlight-anchor {
+    grid-column: 2 / -1; grid-row: 3; justify-self: end; width: min(448px, 100%);
+  }
+  .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) .run-err { grid-column: 2 / -1; justify-self: end; }
+}
 .page-agent-detail .agent-schedule-control {
   display: flex; align-items: center; justify-content: space-between; gap: 14px;
   width: 100%; min-width: 290px; padding-top: 8px; border-top: 1px solid var(--line);
@@ -6253,6 +6282,8 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   .page-agent-detail .hero-actions { align-items: flex-start; }
   .page-agent-detail .agent-schedule-control { min-width: 0; width: min(100%, 360px); }
   .page-agent-detail .run-cta-row { justify-content: flex-start; }
+  .page-agent-detail .agent-revise-row:has(.agent-revision-form),
+  .page-agent-detail .agent-revise-row:has(.agent-revision-history) { justify-content: flex-start; }
   .page-agent-detail .first-agent-spotlight-card {
     right: auto;
     left: -2px;
@@ -7133,6 +7164,16 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 .page-agent-detail .chip.status.running {
   color: var(--green); border-color: var(--green-border); background: var(--green-soft);
 }
+.page-sessions .chip.status.preparing,
+.page-agent-detail .chip.status.preparing {
+  color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft);
+}
+.page-sessions .chip.status.preparing::before,
+.page-agent-detail .chip.status.preparing::before {
+  content: ""; width: 6px; height: 6px; margin-right: 6px; border-radius: 999px;
+  background: currentColor; box-shadow: 0 0 8px currentColor;
+  animation: pulse 1.4s ease-in-out infinite;
+}
 .page-sessions .chip.status.running::before,
 .page-agent-detail .chip.status.running::before {
   content: ""; width: 6px; height: 6px; margin-right: 6px; border-radius: 999px;
@@ -7199,6 +7240,10 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 }
 
 .agent-revision-history { display: grid; gap: 6px; width: 100%; }
+.agent-revision-list { display: grid; gap: 8px; }
+.agent-revision-list .agent-revision-link { text-decoration: none; color: inherit; }
+.agent-revision-list .agent-revision-link:hover { border-color: var(--line-strong); background: var(--panel-hover); }
+.agent-revision-link-time { flex: none; color: var(--muted); font-size: var(--font-size-micro); font-family: var(--mono); }
 .agent-revision-link.is-compact { padding: 8px 12px; background: transparent; }
 .agent-revision-link.is-compact .agent-revision-link-copy strong { color: var(--muted); font-weight: var(--weight-normal); }
 .agent-revision-more {
@@ -7655,6 +7700,8 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
    but slow them so a load is still legible without spinning hard. */
 @media (prefers-reduced-motion: reduce) {
   .page-approval-detail .status::before,
+  .page-sessions .chip.status.preparing::before,
+  .page-agent-detail .chip.status.preparing::before,
   .page-sessions .chip.status.running::before,
   .page-agent-detail .chip.status.running::before,
   .log-working .log-title,

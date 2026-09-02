@@ -5,6 +5,7 @@ import { revisionLineDiff } from '../lib/revision-diff';
 import {
   fetchAgentCreationOptions,
   fetchAgentRevision,
+  fetchAgentRevisions,
   fetchSessionRevisions,
   postAgentRevisionAction,
   requestAgentRevisionChanges,
@@ -81,6 +82,10 @@ export function AgentRevisionLauncher(props: {
   /** A run paused at an approval gate is the clearest evidence of a bad step, so it can be revised too. */
   atGate?: boolean;
   token?: string | undefined;
+  /** Agent pages use the same safe revision flow with a context-specific action label and visual weight. */
+  buttonLabel?: string | undefined;
+  buttonClassName?: string | undefined;
+  buttonTitle?: string | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const [codingOpen, setCodingOpen] = useState(false);
@@ -209,11 +214,14 @@ export function AgentRevisionLauncher(props: {
   };
 
   const active = Boolean(activeRevision);
+  // A finished revision is history, not a task: it collapses to a quiet line so
+  // the agent header keeps reading as a row of actions.
+  const showCard = Boolean(latest) && (active || latest!.status === 'no-change');
   if ((!props.ended && !props.atGate) || !props.context.agentFilePath) return null;
 
   return (
     <>
-      {latest && !open && (
+      {latest && showCard && !open && (
         <div class="agent-revision-history">
           <div class={`agent-revision-link is-${latest.status}`}>
             <span class="agent-revision-link-copy">
@@ -248,12 +256,17 @@ export function AgentRevisionLauncher(props: {
           )}
         </div>
       )}
-      {historyLoaded && !latest && !open && (
-        <button type="button" class={`debug-prompt-button${props.atGate ? '' : ' is-primary'}`} title="Diagnose this run and propose a change to this agent's source" onClick={() => void begin()}>
+      {historyLoaded && !showCard && !open && (
+        <button
+          type="button"
+          class={props.buttonClassName ?? `debug-prompt-button${props.atGate ? '' : ' is-primary'}`}
+          title={props.buttonTitle ?? "Diagnose this run and propose a change to this agent's source"}
+          onClick={() => void begin()}
+        >
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
           </svg>
-          <span>Revise agent file</span>
+          <span>{props.buttonLabel ?? 'Revise agent file'}</span>
         </button>
       )}
       {open && <section class="agent-revision-form" aria-labelledby="agent-revision-title">
@@ -372,7 +385,8 @@ export function AgentRevisionSessionPanel(props: {
         <span><strong>{revision.status === 'running' ? 'Revision session' : revision.status === 'proposed' ? 'Review proposed revision' : revision.status === 'no-change' ? 'No agent change recommended' : revisionLabel(revision)}</strong><small>Started from <a href={originHref}>session {revision.originSessionId.slice(0, 8)}…</a></small></span>
         <span class="agent-revision-state">{revision.status}</span>
       </div>
-      {revision.status === 'running' && props.sessionStatus !== 'waiting' && <p>AgentUse is diagnosing the originating run. You can leave; this revision remains available from that run and Sessions.</p>}
+      {revision.status === 'running' && props.sessionStatus === 'preparing' && <p>AgentUse is preparing a safe project view. The reviser will start automatically when its context is ready.</p>}
+      {revision.status === 'running' && props.sessionStatus !== 'preparing' && props.sessionStatus !== 'waiting' && <p>AgentUse is diagnosing the originating run. You can leave; this revision remains available from that run and Sessions.</p>}
       {revision.status === 'running' && props.sessionStatus === 'waiting' && <p>The reviser needs your decision below. Answering resumes this same internal session.</p>}
       {revision.diagnosis && <div class="agent-revision-diagnosis"><strong>Diagnosis</strong><p>{revision.diagnosis}</p></div>}
       {revision.status === 'no-change' && revision.recommendedAction && <div class="agent-revision-diagnosis"><strong>Recommended next action</strong><p>{revision.recommendedAction}</p></div>}
@@ -412,4 +426,56 @@ function revisionFallbackOriginHref(originSessionId: string, project?: string): 
   const params = new URLSearchParams();
   if (project) params.set('project', project);
   return `/sessions/${encodeURIComponent(originSessionId)}${params.size ? `?${params.toString()}` : ''}`;
+}
+
+
+/**
+ * Revision history for one agent. The agent header only carries the action and
+ * anything still awaiting a decision; everything finished reads better as a
+ * list in its own tab, next to jobs and learnings.
+ */
+export function AgentRevisionsPanel(props: { project: string; path: string }) {
+  const [revisions, setRevisions] = useState<AgentRevisionSummary[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const payload = await fetchAgentRevisions(props.project, props.path);
+        if (!cancelled) { setRevisions(payload.revisions); setError(null); }
+      } catch (caught) {
+        if (!cancelled) { setError((caught as Error).message); setRevisions([]); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [props.project, props.path]);
+
+  if (error) return <p class="empty err">{error}</p>;
+  if (revisions === null) return <p class="empty">Loading revisions…</p>;
+  if (revisions.length === 0) {
+    return <p class="empty">No revisions yet. Use <strong>Revise Agent</strong> to diagnose a run and propose a change to this agent.</p>;
+  }
+
+  return (
+    <div class="agent-revision-list">
+      {revisions.map((revision) => (
+        <a
+          class={`agent-revision-link is-${revision.status}`}
+          key={revision.revisionSessionId}
+          href={revisionHref(revision, undefined, props.project)}
+        >
+          <span class="agent-revision-link-copy">
+            <strong>
+              {ACTIVE_REVISION_STATUSES.has(revision.status) && revision.status === 'running'
+                && <span class="agent-revision-pulse" aria-hidden="true" />}
+              {revisionLabel(revision)}
+            </strong>
+            <span>{revision.summary || revision.instruction}</span>
+          </span>
+          <span class="agent-revision-link-time">{relativeTime(revision.updatedAt)}</span>
+        </a>
+      ))}
+    </div>
+  );
 }

@@ -708,6 +708,13 @@ export interface AgentRevisionSummary extends Omit<AgentRevisionRecord, 'propose
   href?: string;
 }
 
+export function fetchAgentRevisions(
+  project: string,
+  path: string,
+): Promise<{ success: true; revisions: AgentRevisionSummary[] }> {
+  return getJson('/api/agents/revisions', { project, path });
+}
+
 export function fetchSessionRevisions(
   sessionId: string,
   token?: string,

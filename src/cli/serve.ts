@@ -105,6 +105,7 @@ import {
   createAgentRevisionRecord,
   discardAgentRevision,
   failAgentRevision,
+  internalAgentRevisionPath,
   listAgentRevisionRecords,
   readAgentRevisionRecord,
   reopenAgentRevision,
@@ -133,6 +134,7 @@ import { openBrowser } from "../utils/open-browser";
 import { pickLocalProjectFolder } from "../utils/folder-picker";
 import { canUseHostFolderPicker } from "../utils/local-request";
 import { resolveAgentModel } from "../utils/model-alias";
+import { currentProcessRef, type ProcessRef } from "../utils/process-info";
 import { REASONING_LEVELS, type ReasoningLevel } from "../model-compatibility";
 import {
   createIdempotentShutdown,
@@ -425,6 +427,8 @@ interface WorkerExecuteOptions {
   sessionId?: string | undefined;
   /** Pre-assigned id for a fresh `execute` (detached run). */
   newSessionId?: string | undefined;
+  /** The pre-assigned id already has a durable `preparing` session shell. */
+  preparedSession?: boolean | undefined;
   toolResult?: unknown;
   resumeToken?: string | undefined;
   trigger?: SessionTrigger | undefined;
@@ -535,6 +539,11 @@ interface WorkerSessionStatusResult {
   session: SessionStatusInfo;
 }
 
+interface WorkerPreparingSessionResult {
+  success: true;
+  sessionId: string;
+}
+
 interface WorkerSessionContextResult {
   success: true;
   context: SessionContextPayload;
@@ -557,7 +566,7 @@ interface WorkerSweepExpiredResult {
 
 type ApprovalSummaryStatus = 'pending' | 'approved' | 'rejected' | 'commented' | 'expired' | 'errored';
 type ApprovalSessionFilter = 'pending' | 'completed' | 'errored';
-type SessionStatusFilter = 'running' | 'suspended' | 'completed' | 'error' | 'incomplete';
+type SessionStatusFilter = 'preparing' | 'running' | 'suspended' | 'completed' | 'error' | 'incomplete';
 /** Triage axis, orthogonal to status: has an ended run been reviewed-and-discarded yet? */
 type SessionTriageFilter = 'undismissed' | 'dismissed';
 type SessionWindowFilter = `${number}h` | `${number}d` | 'all';
@@ -911,7 +920,7 @@ class AgentWorker {
   private readline: ReadlineInterface | null = null;
   private forceKillTimer: NodeJS.Timeout | null = null;
   private pendingRequests: Map<string, {
-    resolve: (value: WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerSessionContextResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerSessionFinalResponsesResult | WorkerStopSessionResult) => void;
+    resolve: (value: WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerPreparingSessionResult | WorkerSessionContextResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerSessionFinalResponsesResult | WorkerStopSessionResult) => void;
     timeoutId?: NodeJS.Timeout;
   }> = new Map();
   private requestCounter = 0;
@@ -1114,7 +1123,46 @@ class AgentWorker {
       toolResult: options.toolResult,
       resumeToken: options.resumeToken,
       trigger: options.trigger,
+      preparedSession: options.preparedSession,
     }, { signal: options.signal }) as Promise<WorkerExecuteResult | WorkerExecuteError>;
+  }
+
+  createPreparingSession(options: {
+    projectRoot: string;
+    sessionId: string;
+    agentId: string;
+    agentName: string;
+    agentDescription?: string | undefined;
+    model: string;
+    trigger: SessionTrigger;
+    timeout?: number | undefined;
+    maxSteps?: number | undefined;
+    owner: ProcessRef;
+  }): Promise<WorkerPreparingSessionResult | WorkerExecuteError> {
+    const { owner, timeout: sessionTimeout, ...request } = options;
+    return this.request({
+      type: 'create-preparing-session',
+      ...request,
+      ...(sessionTimeout !== undefined && { sessionTimeout }),
+      preparerOwner: owner,
+      timeout: 30,
+    }) as Promise<WorkerPreparingSessionResult | WorkerExecuteError>;
+  }
+
+  failPreparingSession(options: {
+    projectRoot: string;
+    sessionId: string;
+    code: string;
+    message: string;
+  }): Promise<WorkerPreparingSessionResult | WorkerExecuteError> {
+    const { code: errorCode, message: errorMessage, ...request } = options;
+    return this.request({
+      type: 'fail-preparing-session',
+      ...request,
+      errorCode,
+      errorMessage,
+      timeout: 30,
+    }) as Promise<WorkerPreparingSessionResult | WorkerExecuteError>;
   }
 
   stopSession(options: {
@@ -1303,7 +1351,7 @@ class AgentWorker {
   private async request(
     options: Record<string, unknown> & { timeout?: number | undefined },
     requestOptions: { signal?: AbortSignal | undefined } = {}
-  ): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerSessionContextResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerSessionFinalResponsesResult | WorkerStopSessionResult> {
+  ): Promise<WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerPreparingSessionResult | WorkerSessionContextResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerSessionFinalResponsesResult | WorkerStopSessionResult> {
     // A recycle hands the old child its release line and immediately spawns a
     // replacement; a request landing in that sub-second window should wait for
     // the new worker rather than fail. Only ever waits on a spawn already under
@@ -1803,7 +1851,7 @@ function isSessionWindowFilter(value: string): value is SessionWindowFilter {
 }
 
 function parseSessionStatusFilter(value: string | undefined): SessionStatusFilter | undefined {
-  return value === 'running' || value === 'suspended' || value === 'completed' || value === 'error' || value === 'incomplete'
+  return value === 'preparing' || value === 'running' || value === 'suspended' || value === 'completed' || value === 'error' || value === 'incomplete'
     ? value
     : undefined;
 }
@@ -4949,7 +4997,7 @@ export function createServeCommand(): Command {
         intervalMs: SESSION_LIST_SSE_INTERVAL_MS,
         liveIntervalMs: SESSION_LIST_SSE_LIVE_INTERVAL_MS,
         isLive: (payload) => payload.sessions.some(
-          (s) => s.status === 'running' || s.status === 'resuming' || s.status === 'continuing' || s.subagentActive === true
+          (s) => s.status === 'preparing' || s.status === 'running' || s.status === 'resuming' || s.status === 'continuing' || s.subagentActive === true
         ),
       });
       // Feed mode reads final assistant text from the durable transcript. Cache
@@ -5075,7 +5123,7 @@ export function createServeCommand(): Command {
         // buried below runs that merely finished more recently; within each tier,
         // most-recently-active first. The cursor relocates rows by their stable
         // key (createdAt+id), so this ordering does not affect pagination.
-        const isLive = (s: SessionSummary) => s.status === 'running' || s.subagentActive === true;
+        const isLive = (s: SessionSummary) => s.status === 'preparing' || s.status === 'running' || s.subagentActive === true;
         rows.sort((a, b) =>
           (isLive(a.session) ? 0 : 1) - (isLive(b.session) ? 0 : 1) ||
           b.session.updatedAt - a.session.updatedAt ||
@@ -5101,7 +5149,7 @@ export function createServeCommand(): Command {
           for (const row of page.items) {
             const cacheKey = `${row.projectId}\0${row.session.sessionId}`;
             const cached = sessionFinalResponseCache.get(cacheKey);
-            const stable = row.session.status !== 'running';
+            const stable = row.session.status !== 'preparing' && row.session.status !== 'running';
             if (stable && cached?.updatedAt === row.session.updatedAt) {
               finalResponses.set(cacheKey, cached.finalResponse);
               continue;
@@ -5132,7 +5180,7 @@ export function createServeCommand(): Command {
               const cacheKey = `${projectId}\0${row.session.sessionId}`;
               const finalResponse = result.responses[row.session.sessionId];
               finalResponses.set(cacheKey, finalResponse);
-              if (row.session.status !== 'running') {
+              if (row.session.status !== 'preparing' && row.session.status !== 'running') {
                 sessionFinalResponseCache.set(cacheKey, {
                   updatedAt: row.session.updatedAt,
                   finalResponse,
@@ -5649,6 +5697,42 @@ export function createServeCommand(): Command {
             });
           } catch (err) {
             sendError(res, 500, "AGENT_READ_FAILED", (err as Error).message);
+          }
+          return;
+        }
+
+        // The agent page lists this agent's revision history in its own tab, so
+        // it needs the records keyed by agent rather than by originating run.
+        if (req.method === "GET" && routePath === '/agents/revisions') {
+          const requestedProject = requestUrl.searchParams.get('project') ?? undefined;
+          const requestedPath = requestUrl.searchParams.get('path') ?? undefined;
+          if (!requestedProject || !requestedPath) {
+            sendError(res, 400, "MISSING_PARAMS", "Both project and path query params are required");
+            return;
+          }
+          const project = projects.find((p) => p.id === requestedProject);
+          if (!project || !project.agentFiles.includes(requestedPath)) {
+            sendError(res, 404, "AGENT_NOT_FOUND", `Agent not loaded: ${requestedPath}`);
+            return;
+          }
+          try {
+            const absPath = resolveScopedAgentPath(project, requestedPath);
+            const records = (await listAgentRevisionRecords(project.root))
+              .filter((record) => record.targetAgentRunPath === requestedPath || record.targetAgentPath === absPath);
+            sendJSON(res, 200, {
+              success: true,
+              revisions: records.map(({ proposedSource: _proposed, previousSource: _previous, ...record }) => {
+                const params = new URLSearchParams({ project: project.id });
+                const revisionToken = sessionViewToken(record.revisionSessionId, apiKey);
+                if (revisionToken) params.set('token', revisionToken);
+                return {
+                  ...record,
+                  href: `/sessions/${encodeURIComponent(record.revisionSessionId)}?${params.toString()}`,
+                };
+              }),
+            });
+          } catch (err) {
+            sendError(res, 400, 'REVISION_LIST_FAILED', (err as Error).message);
           }
           return;
         }
@@ -8040,7 +8124,6 @@ export function createServeCommand(): Command {
           ? routePath.match(/^\/sessions\/([^/?#]+)\/revisions$/)
           : null;
         if (startRevisionMatch) {
-          let cleanupView: (() => Promise<void>) | undefined;
           let mutationKey: string | undefined;
           try {
             if (!sessionAgentRevisionAllowed(req.headers.authorization, apiKey)) {
@@ -8093,14 +8176,15 @@ export function createServeCommand(): Command {
               sendError(res, 400, 'NO_AGENT_FILE', 'This session does not record an editable agent file');
               return;
             }
-            if (!isPathInside(found.project.scopeRoot, targetAgent.filePath) || !existsSync(targetAgent.filePath)) {
+            const targetAgentPath = targetAgent.filePath;
+            if (!isPathInside(found.project.scopeRoot, targetAgentPath) || !existsSync(targetAgentPath)) {
               sendError(res, 400, 'INVALID_AGENT_PATH', 'The session agent is outside the served project scope');
               return;
             }
             const [targetStat, realScope, realTarget] = await Promise.all([
-              lstat(targetAgent.filePath),
+              lstat(targetAgentPath),
               realpath(found.project.scopeRoot),
-              realpath(targetAgent.filePath),
+              realpath(targetAgentPath),
             ]);
             if (!targetStat.isFile() || targetStat.isSymbolicLink() || !isPathInside(realScope, realTarget)) {
               sendError(res, 400, 'INVALID_AGENT_PATH', 'The session agent must be a regular file inside the served project scope');
@@ -8128,52 +8212,16 @@ export function createServeCommand(): Command {
               reasoning = body.reasoning as ReasoningLevel;
             }
             const revisionSessionId = ulid();
-            const [currentSource, creatorSkill, availableSkills, view] = await Promise.all([
-              readFile(targetAgent.filePath, 'utf8'),
-              loadBuiltinSkillSource('creator'),
-              discoverProjectSkillCatalog(found.project.root),
-              prepareProjectDiscoveryView(found.project.scopeRoot),
-            ]);
-            cleanupView = view.cleanup;
+            const currentSource = await readFile(targetAgentPath, 'utf8');
             const expectedSourceHash = sourceHash(currentSource);
             const targetAgentName = targetAgent.name || found.info.approval.agent.name;
-            const agentContent = buildAgentRevisionSessionAgent({
-              revisionSessionId,
-              originSessionId,
-              projectId: found.project.id,
-              projectRoot: found.project.root,
-              targetAgentPath: targetAgent.filePath,
-              targetAgentName,
-              instruction,
-              model,
-              ...(reasoning && { reasoning }),
-              expectedSourceHash,
-              currentSource,
-              originTranscript: buildRunTranscript(found.info.approval.logs, 80_000, {
-                focus: 'latest-attempt',
-                terminal: {
-                  status: found.info.approval.sessionStatus,
-                  ...(found.info.approval.errorCode && { errorCode: found.info.approval.errorCode }),
-                  ...(found.info.approval.errorMessage && { errorMessage: found.info.approval.errorMessage }),
-                },
-              }),
-              safeViewRoot: view.root,
-              creatorSkill,
-              availableModels,
-              availableSkills,
-            });
-            const internalAgentPath = await writeInternalAgentRevisionSource(
-              found.project.root,
-              revisionSessionId,
-              agentContent,
-            );
             const record = await createAgentRevisionRecord({
               revisionSessionId,
               originSessionId,
               projectId: found.project.id,
               projectRoot: found.project.root,
-              targetAgentPath: targetAgent.filePath,
-              ...(found.info.approval.agent.runPath && targetAgent.filePath === found.info.approval.agent.filePath
+              targetAgentPath,
+              ...(found.info.approval.agent.runPath && targetAgentPath === found.info.approval.agent.filePath
                 ? { targetAgentRunPath: found.info.approval.agent.runPath }
                 : {}),
               targetAgentName,
@@ -8182,6 +8230,22 @@ export function createServeCommand(): Command {
               expectedSourceHash,
               previousSource: currentSource,
             });
+            const prepared = await worker.createPreparingSession({
+              projectRoot: found.project.root,
+              sessionId: revisionSessionId,
+              agentId: relative(found.project.root, internalAgentRevisionPath(found.project.root, revisionSessionId)).replace(/\.agentuse$/u, ''),
+              agentName: `Revise ${targetAgentName}`,
+              agentDescription: `Revise ${targetAgentName} using evidence from session ${originSessionId}`,
+              model,
+              trigger: 'manual',
+              timeout: 480,
+              maxSteps: 20,
+              owner: currentProcessRef(),
+            });
+            if (!prepared.success) {
+              await failAgentRevision(found.project.root, revisionSessionId, prepared.error).catch(() => undefined);
+              throw new Error(prepared.error.message);
+            }
             const job: OnboardingModelJob = {
               id: revisionSessionId,
               sessionId: revisionSessionId,
@@ -8198,17 +8262,60 @@ export function createServeCommand(): Command {
             sendJSON(res, 202, { success: true, job: { ...job, ...(sessionToken && { sessionToken }) } });
             wakeListHubs();
 
-            const finishRevisionView = cleanupView;
-            cleanupView = undefined;
-            if (finishRevisionView) revisionViewCleanups.set(revisionSessionId, finishRevisionView);
             void (async () => {
+              let cleanupView: (() => Promise<void>) | undefined;
               try {
+                const viewPromise = prepareProjectDiscoveryView(found.project.scopeRoot).then((view) => {
+                  cleanupView = view.cleanup;
+                  return view;
+                });
+                const [creatorSkill, availableSkills, view] = await Promise.all([
+                  loadBuiltinSkillSource('creator'),
+                  discoverProjectSkillCatalog(found.project.root),
+                  viewPromise,
+                ]);
+                const agentContent = buildAgentRevisionSessionAgent({
+                  revisionSessionId,
+                  originSessionId,
+                  projectId: found.project.id,
+                  projectRoot: found.project.root,
+                  targetAgentPath,
+                  targetAgentName,
+                  instruction,
+                  model,
+                  ...(reasoning && { reasoning }),
+                  expectedSourceHash,
+                  currentSource,
+                  originTranscript: buildRunTranscript(found.info.approval.logs, 80_000, {
+                    focus: 'latest-attempt',
+                    terminal: {
+                      status: found.info.approval.sessionStatus,
+                      ...(found.info.approval.errorCode && { errorCode: found.info.approval.errorCode }),
+                      ...(found.info.approval.errorMessage && { errorMessage: found.info.approval.errorMessage }),
+                    },
+                  }),
+                  safeViewRoot: view.root,
+                  creatorSkill,
+                  availableModels,
+                  availableSkills,
+                });
+                const internalAgentPath = await writeInternalAgentRevisionSource(
+                  found.project.root,
+                  revisionSessionId,
+                  agentContent,
+                );
+                const finishRevisionView = cleanupView;
+                if (finishRevisionView) {
+                  revisionViewCleanups.set(revisionSessionId, finishRevisionView);
+                  cleanupView = undefined;
+                }
                 job.phase = 'running';
                 wakeListHubs();
                 const execution = await worker.execute({
                   agentPath: internalAgentPath,
                   projectRoot: found.project.root,
                   newSessionId: revisionSessionId,
+                  preparedSession: true,
                   trigger: 'manual',
                   timeout: 480,
                   maxSteps: 20,
@@ -8237,8 +8344,15 @@ export function createServeCommand(): Command {
                 const failure = { code: 'REVISION_FAILED', message: (error as Error).message };
                 job.status = 'error';
                 job.error = failure;
+                await worker.failPreparingSession({
+                  projectRoot: found.project.root,
+                  sessionId: revisionSessionId,
+                  code: failure.code,
+                  message: failure.message,
+                }).catch(() => undefined);
                 await failAgentRevision(found.project.root, revisionSessionId, failure).catch(() => undefined);
               } finally {
+                await cleanupView?.().catch(() => undefined);
                 const latest = await readAgentRevisionRecord(found.project.root, revisionSessionId).catch(() => undefined);
                 if (latest && (latest.status === 'accepted' || latest.status === 'applied' || latest.status === 'discarded' || latest.status === 'restored' || latest.status === 'error')) {
                   await cleanupRevisionView(revisionSessionId);
@@ -8247,7 +8361,6 @@ export function createServeCommand(): Command {
               }
             })();
           } catch (err) {
-            await cleanupView?.().catch(() => undefined);
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, 'REVISION_START_FAILED', (err as Error).message);
           } finally {

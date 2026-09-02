@@ -11,9 +11,10 @@ import { Loading } from '../components/loading';
 import { SchedulePill } from '../components/schedule-pill';
 import { AgentLearningsPanel, StrandedLearningsBanner } from '../components/learnings-panel';
 import { SendToCodingAgentDialog } from '../components/send-to-coding-agent-dialog';
+import { AgentRevisionLauncher, AgentRevisionsPanel } from '../components/agent-revision';
 import { RunInstructionDialog } from '../components/run-instruction-dialog';
 import { LogContent } from '../components/content';
-import { formatApprovalTime, formatRelativeTime, displayStatusLabel, errorText } from '../lib/format';
+import { formatApprovalTime, formatRelativeTime, displayStatusLabel, errorText, isEndedStatus } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 import { agentDetailViewState, type AgentDetailTab } from '../lib/links';
 
@@ -208,6 +209,7 @@ export function recentJobSummary(value: string, max = 280): string {
 function recentJobFallback(row: SessionRow): string {
   if (row.errorMessage) return errorText(row.errorMessage);
   if (row.subagentActive) return 'Working in a delegated agent. Its response will appear here when it returns.';
+  if (row.status === 'preparing') return 'Preparing project context. The agent will start when its safe workspace is ready.';
   if (row.status === 'running' || row.status === 'resuming' || row.status === 'continuing') {
     return 'This job is running. Its response will appear here when available.';
   }
@@ -220,11 +222,12 @@ export function RecentJobRow(props: { row: SessionRow }) {
   const href = `/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`;
   const status = displayStatusLabel(row.status, row.errorCode);
   const summary = row.finalResponse?.trim() ? recentJobSummary(row.finalResponse) : recentJobFallback(row);
-  const live = row.status === 'running' || row.status === 'resuming' || row.status === 'continuing' || row.subagentActive === true;
+  const live = row.status === 'preparing' || row.status === 'running' || row.status === 'resuming' || row.status === 'continuing' || row.subagentActive === true;
+  const statusClass = row.status === 'preparing' ? 'preparing' : live ? 'running' : status;
   return (
     <article class={`job-row${live ? ' live' : ''}`}>
       <div class="job-row-head">
-        <span class={`chip status ${live ? 'running' : status}`}>{row.subagentActive ? 'running · subagent' : status}</span>
+        <span class={`chip status ${statusClass}`}>{row.subagentActive ? 'running · subagent' : status}</span>
         <span class="chip trigger">{row.trigger}</span>
         <span class="job-row-time" title={formatApprovalTime(row.updatedAt || row.createdAt)}>{formatRelativeTime(row.updatedAt || row.createdAt)}</span>
       </div>
@@ -243,14 +246,23 @@ export function RecentJobRow(props: { row: SessionRow }) {
   );
 }
 
-function RecentJobs(props: { agentId: string; project: string }) {
+export function revisionContextSession(rows: SessionRow[], project: string): SessionRow | null {
+  return rows.find((row) => row.project === project && (isEndedStatus(row.status) || row.status === 'suspended')) ?? null;
+}
+
+function RecentJobs(props: { agentId: string; project: string; onRevisionSession?: (row: SessionRow | null) => void }) {
   const { data, error, loading } = useFetch(
     `agent-jobs:${props.project}:${props.agentId}`,
     () => fetchSessions({ agent: props.agentId, window: '30d', detail: 'feed' }),
     { refreshMs: 15_000 }
   );
-  const rows = (data?.sessions ?? []).filter((r) => r.project === props.project).slice(0, 8);
+  const projectRows = (data?.sessions ?? []).filter((r) => r.project === props.project);
+  const rows = projectRows.slice(0, 8);
   const seeAll = `/sessions?agent=${encodeURIComponent(props.agentId)}`;
+
+  useEffect(() => {
+    props.onRevisionSession?.(revisionContextSession(data?.sessions ?? [], props.project));
+  }, [data, props.project]);
 
   return (
     <section class="group">
@@ -369,6 +381,7 @@ function SourcePanel(props: { source: string; runPath: string; project: string; 
 const AGENT_TABS: { id: AgentDetailTab; label: string }[] = [
   { id: 'jobs', label: 'Recent jobs' },
   { id: 'learnings', label: 'Learnings' },
+  { id: 'revisions', label: 'Revisions' },
   { id: 'source', label: 'Source' },
 ];
 
@@ -380,6 +393,8 @@ export default function AgentDetail() {
   const [tab, setTab] = useState<AgentDetailTab>(entryState.tab);
   const [tutorialStep, setTutorialStep] = useState(entryState.tutorialStep);
   const [runOpen, setRunOpen] = useState(false);
+  const [revisionFallbackOpen, setRevisionFallbackOpen] = useState(false);
+  const [revisionSession, setRevisionSession] = useState<SessionRow | null>(null);
   const [scheduleBusy, setScheduleBusy] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const runButtonRef = useRef<HTMLButtonElement>(null);
@@ -468,6 +483,11 @@ export default function AgentDetail() {
   }, [data, tutorialStep]);
 
   const runTutorialCopy = firstAgentRunTutorialCopy(Boolean(data?.schedule));
+  const currentRevisionSession = data
+    && revisionSession?.project === data.projectId
+    && revisionSession.agent.id === agentIdFromPath(data.path)
+    ? revisionSession
+    : null;
 
   return (
     <div class="page-agent-detail">
@@ -522,6 +542,41 @@ export default function AgentDetail() {
                   >
                     Run with instruction…
                   </button>
+                  {data.source !== undefined && (
+                    <div class="agent-revise-row">
+                      {!currentRevisionSession ? (
+                        <button
+                          type="button"
+                          class="run-cta-alt agent-revise-cta"
+                          title="Revise this agent with a coding agent"
+                          onClick={() => setRevisionFallbackOpen(true)}
+                        >
+                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
+                          </svg>
+                          <span>Revise Agent</span>
+                        </button>
+                      ) : (
+                        <AgentRevisionLauncher
+                          ended={isEndedStatus(currentRevisionSession.status)}
+                          atGate={currentRevisionSession.status === 'suspended'}
+                          buttonLabel="Revise Agent"
+                          buttonClassName="run-cta-alt agent-revise-cta"
+                          buttonTitle="Revise this agent using its latest completed job as context"
+                          context={{
+                            sessionId: currentRevisionSession.sessionId,
+                            projectId: data.projectId,
+                            agentName: data.name,
+                            agentFilePath: currentRevisionSession.agent.filePath ?? data.path,
+                            model: data.model,
+                            sessionStatus: currentRevisionSession.status,
+                            errorCode: currentRevisionSession.errorCode,
+                            errorMessage: currentRevisionSession.errorMessage,
+                          }}
+                        />
+                      )}
+                    </div>
+                  )}
                 </div>
                 {data.schedule && (
                   <div class={`schedule-spotlight-anchor${tutorialStep === 'schedule' ? ' is-active' : ''}`}>
@@ -578,10 +633,13 @@ export default function AgentDetail() {
             </div>
 
             <div id="panel-jobs" class="tab-panel" role="tabpanel" aria-labelledby="tab-jobs" hidden={tab !== 'jobs'}>
-              <RecentJobs agentId={agentIdFromPath(data.path)} project={data.projectId} />
+              <RecentJobs agentId={agentIdFromPath(data.path)} project={data.projectId} onRevisionSession={setRevisionSession} />
             </div>
             <div id="panel-learnings" class="tab-panel" role="tabpanel" aria-labelledby="tab-learnings" hidden={tab !== 'learnings'}>
               <LearningsGroup project={data.projectId} runPath={data.runPath} hoistStranded={setStrandedAt} />
+            </div>
+            <div id="panel-revisions" class="tab-panel" role="tabpanel" aria-labelledby="tab-revisions" hidden={tab !== 'revisions'}>
+              {tab === 'revisions' && <AgentRevisionsPanel project={data.projectId} path={data.runPath} />}
             </div>
             {data.source !== undefined && (
               <div id="panel-source" class="tab-panel" role="tabpanel" aria-labelledby="tab-source" hidden={tab !== 'source'}>
@@ -597,6 +655,16 @@ export default function AgentDetail() {
               onSubmit={(instruction) => { void run(instruction); }}
               onClose={() => { if (!busy) setRunOpen(false); }}
             />
+            {data.source !== undefined && (
+              <SendToCodingAgentDialog
+                open={revisionFallbackOpen}
+                title="revise agent"
+                buildPrompt={(detail) => buildCodingAgentPrompt({ project: data.projectId, path: data.path, source: data.source!, detail })}
+                detailLabel="What should change?"
+                placeholder="Describe the revision you want"
+                onClose={() => setRevisionFallbackOpen(false)}
+              />
+            )}
           </>
         )}
       </main>

@@ -5,7 +5,7 @@
  * route that renders it.
  */
 
-export type AgentDetailTab = 'jobs' | 'learnings' | 'source';
+export type AgentDetailTab = 'jobs' | 'learnings' | 'revisions' | 'source';
 export type AgentTutorialStep = 'run' | 'schedule' | null;
 
 export interface AgentDetailLinkOptions {
@@ -32,7 +32,7 @@ export function agentDetailHref(
 export function agentDetailViewState(search: string): { tab: AgentDetailTab; tutorialStep: AgentTutorialStep } {
   const params = new URLSearchParams(search);
   const requested = params.get('tab');
-  const tab: AgentDetailTab = requested === 'learnings' || requested === 'source' ? requested : 'jobs';
+  const tab: AgentDetailTab = requested === 'learnings' || requested === 'revisions' || requested === 'source' ? requested : 'jobs';
   const onboarding = params.get('onboarding');
   const tutorialStep: AgentTutorialStep = onboarding === 'first-agent'
     ? 'run'
