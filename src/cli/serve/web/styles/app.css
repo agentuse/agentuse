@@ -8814,6 +8814,18 @@ button.ctx-result[aria-expanded="true"] .ctx-chevron { transform: rotate(180deg)
     align-items: center;
     transform: translateX(-50%);
   }
+  /* Mirrors the menu button on the opposite edge; the brand between them is
+     absolutely centred, so the two pills bracket it. */
+  .mobile-search-button {
+    width: 40px;
+    height: 40px;
+    margin-left: auto;
+    margin-right: -2px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    box-shadow: var(--surface-shadow);
+  }
   .app-sidebar,
   .app-shell[data-desktop="true"] .app-sidebar,
   .app-shell[data-sidebar-collapsed="true"] .app-sidebar {
@@ -8848,7 +8860,8 @@ button.ctx-result[aria-expanded="true"] .ctx-chevron { transform: rotate(180deg)
   .app-shell[data-drawer-open="true"] .app-route {
     transform: translateX(min(84vw, 300px));
   }
-  .app-shell[data-drawer-open="true"] .mobile-menu-button { box-shadow: none; }
+  .app-shell[data-drawer-open="true"] .mobile-menu-button,
+  .app-shell[data-drawer-open="true"] .mobile-search-button { box-shadow: none; }
   .app-shell[data-drawer-open="true"] .app-toolbar {
     border-radius: 28px 0 0;
   }

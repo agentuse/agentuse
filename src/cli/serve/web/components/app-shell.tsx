@@ -345,6 +345,15 @@ export function AppShell({ children }: { children: ComponentChildren }) {
               onClick={() => setDrawerOpen((open) => !open)}
             ><Menu aria-hidden="true" strokeWidth={1.7} /></button>
             <a class="mobile-brand" href="/" aria-label="AgentUse home"><span class="brand-wordmark" dangerouslySetInnerHTML={{ __html: WORDMARK_SVG }} /></a>
+            {/* The sidebar's palette trigger is behind the drawer on mobile, so
+                search gets its own button opposite the menu. */}
+            <button
+              type="button"
+              class="toolbar-button mobile-search-button"
+              aria-label="Search"
+              aria-keyshortcuts="Meta+K Control+K"
+              onClick={() => openAgentPalette()}
+            ><Search aria-hidden="true" strokeWidth={1.7} /></button>
           </>
         )}
       </header>
