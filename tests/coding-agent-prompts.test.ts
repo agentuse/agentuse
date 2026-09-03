@@ -13,11 +13,10 @@ import {
 } from '../src/cli/serve/web/components/agent-create-dialog';
 
 describe('coding-agent handoff prompts', () => {
-  it('presents ChatGPT creator models as clear product tiers', () => {
-    expect(creationModelLabel('openai:gpt-5.6-luna', 'openai')).toBe('Fast · GPT-5.6 Luna');
-    expect(creationModelLabel('openai:gpt-5.6-terra', 'openai')).toBe('Balanced · GPT-5.6 Terra');
-    expect(creationModelLabel('openai:gpt-5.6-sol', 'openai')).toBe('Best · GPT-5.6 Sol');
+  it('labels creator models by stripping the provider prefix', () => {
+    expect(creationModelLabel('openai:gpt-5.6-terra', 'openai')).toBe('gpt-5.6-terra');
     expect(creationModelLabel('anthropic:claude-sonnet-5', 'anthropic')).toBe('claude-sonnet-5');
+    expect(creationModelLabel('pi:openai-codex/gpt-5.6-luna', 'pi')).toBe('openai-codex/gpt-5.6-luna');
   });
 
   it('requires the creator skill before reviewing or editing agent source', () => {

@@ -43,12 +43,6 @@ function initialModelSelection(payload: AgentCreationOptionsPayload, requestedMo
   return defaultModel(payload) || (provider?.models[0] ?? '');
 }
 
-const CHATGPT_CREATOR_MODEL_LABELS: Readonly<Record<string, string>> = {
-  'openai:gpt-5.6-luna': 'Fast · GPT-5.6 Luna',
-  'openai:gpt-5.6-terra': 'Balanced · GPT-5.6 Terra',
-  'openai:gpt-5.6-sol': 'Best · GPT-5.6 Sol',
-};
-
 const CREATOR_THINKING_OPTIONS: ReadonlyArray<{ value: ReasoningLevel; label: string }> = [
   { value: 'none', label: 'None' },
   { value: 'minimal', label: 'Minimal' },
@@ -60,7 +54,7 @@ const CREATOR_THINKING_OPTIONS: ReadonlyArray<{ value: ReasoningLevel; label: st
 ];
 
 export function creationModelLabel(model: string, providerId: string): string {
-  return CHATGPT_CREATOR_MODEL_LABELS[model] ?? model.replace(`${providerId}:`, '');
+  return model.replace(`${providerId}:`, '');
 }
 
 function creationModelOptions(payload: AgentCreationOptionsPayload): Array<{ value: string; label: string }> {

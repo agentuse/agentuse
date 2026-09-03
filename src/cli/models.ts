@@ -4,11 +4,7 @@ import { readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
 import { join, relative, resolve } from 'path';
 import { MODELS, SUGGESTED_MODEL_IDS, type Provider, type ModelInfo } from '../generated/models';
 import { AuthStorage } from '../auth/storage';
-import {
-  OPENCODE_GO_DISPLAY_NAME,
-  OPENCODE_GO_MODELS,
-  OPENCODE_GO_PROVIDER_ID,
-} from '../providers/opencode-go';
+import { OPENCODE_GO_DISPLAY_NAME, OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go';
 import {
   MODEL_ALIAS_SIGIL,
   MODEL_DEFAULT_ENV,
@@ -42,7 +38,6 @@ export function createModelsCommand(): Command {
       const pluginNames = pluginProviders.map((item) => item.id);
       const isCustomFilter = Boolean(provider && customNames.includes(provider));
       const isPluginFilter = Boolean(provider && pluginNames.includes(provider));
-      const isOpenCodeGoFilter = provider === OPENCODE_GO_PROVIDER_ID;
 
       // Validate provider
       if (provider && !registryProviders.includes(provider as Provider) && !isCustomFilter && !isPluginFilter) {
@@ -52,18 +47,15 @@ export function createModelsCommand(): Command {
       }
 
       // Registry buckets rendered generically. Default view = curated flagships
-      // for the primary providers; --all = every registry provider. opencode-go
-      // has a dedicated section (below) in the curated view, so it is dropped
-      // from the generic loop unless --all renders its full bucket there.
+      // for the primary providers; --all = every registry provider.
       let providers: Provider[];
       if (provider) {
         providers = isCustomFilter || isPluginFilter ? [] : [provider as Provider];
       } else if (options.all) {
         providers = registryProviders;
       } else {
-        providers = ['anthropic', 'openai', 'openrouter'];
+        providers = ['anthropic', 'openai', 'openrouter', OPENCODE_GO_PROVIDER_ID];
       }
-      if (!options.all) providers = providers.filter((p) => p !== OPENCODE_GO_PROVIDER_ID);
 
       console.log(chalk.bold(options.all ? '\nAll Models\n' : '\nRecommended Models\n'));
       console.log(chalk.gray(options.all
@@ -74,7 +66,7 @@ export function createModelsCommand(): Command {
         const entries = entriesForProvider(p, options.all ?? false);
         if (entries.length === 0) continue;
 
-        console.log(chalk.cyan.bold(`${p.charAt(0).toUpperCase() + p.slice(1)}`));
+        console.log(chalk.cyan.bold(p === OPENCODE_GO_PROVIDER_ID ? OPENCODE_GO_DISPLAY_NAME : `${p.charAt(0).toUpperCase() + p.slice(1)}`));
 
         for (const [modelId, model] of entries) {
           const fullId = `${p}:${modelId}`;
@@ -86,32 +78,6 @@ export function createModelsCommand(): Command {
           }
         }
 
-        console.log();
-      }
-
-      if ((!provider || isOpenCodeGoFilter) && !options.all) {
-        console.log(chalk.cyan.bold(OPENCODE_GO_DISPLAY_NAME));
-
-        for (const model of OPENCODE_GO_MODELS) {
-          const fullId = `${OPENCODE_GO_PROVIDER_ID}:${model.id}`;
-          const modelInfo: ModelInfo = {
-            id: model.id,
-            name: model.name,
-            reasoning: true,
-            toolCall: true,
-            modalities: { input: ['text'], output: ['text'] },
-            limit: { context: 0, output: 0 },
-            cost: { input: 0, output: 0 },
-          };
-
-          if (options.verbose) {
-            printVerboseModel(fullId, modelInfo);
-          } else {
-            printCompactModel(fullId, modelInfo);
-          }
-        }
-
-        console.log(chalk.gray(`  Live list: https://opencode.ai/zen/go/v1/models`));
         console.log();
       }
 

@@ -6,35 +6,6 @@ export const OPENCODE_GO_BASE_URL = 'https://opencode.ai/zen/go/v1';
 
 export type OpenCodeGoProtocol = 'anthropic' | 'openai-compatible' | 'openai-responses';
 
-export interface OpenCodeGoModel {
-  id: string;
-  name: string;
-  protocol: OpenCodeGoProtocol;
-}
-
-export const OPENCODE_GO_MODELS: OpenCodeGoModel[] = [
-  { id: 'grok-4.6', name: 'Grok 4.6', protocol: 'openai-responses' },
-  { id: 'gpt-5.6-luna', name: 'GPT 5.6 Luna', protocol: 'openai-responses' },
-  { id: 'glm-5.1', name: 'GLM-5.1', protocol: 'openai-compatible' },
-  { id: 'glm-5', name: 'GLM-5', protocol: 'openai-compatible' },
-  { id: 'kimi-k2.7-code', name: 'Kimi K2.7 Code', protocol: 'openai-compatible' },
-  { id: 'kimi-k2.6', name: 'Kimi K2.6', protocol: 'openai-compatible' },
-  { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', protocol: 'openai-compatible' },
-  { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', protocol: 'openai-compatible' },
-  { id: 'mimo-v2.5', name: 'MiMo-V2.5', protocol: 'openai-compatible' },
-  { id: 'mimo-v2.5-pro', name: 'MiMo-V2.5-Pro', protocol: 'openai-compatible' },
-  { id: 'minimax-m3', name: 'MiniMax M3', protocol: 'anthropic' },
-  { id: 'minimax-m2.7', name: 'MiniMax M2.7', protocol: 'anthropic' },
-  { id: 'minimax-m2.5', name: 'MiniMax M2.5', protocol: 'anthropic' },
-  { id: 'qwen3.7-max', name: 'Qwen3.7 Max', protocol: 'anthropic' },
-  { id: 'qwen3.7-plus', name: 'Qwen3.7 Plus', protocol: 'anthropic' },
-  { id: 'qwen3.6-plus', name: 'Qwen3.6 Plus', protocol: 'anthropic' },
-];
-
-const OPENCODE_GO_ANTHROPIC_COMPATIBLE_MODELS = new Set(
-  OPENCODE_GO_MODELS.filter((model) => model.protocol === 'anthropic').map((model) => model.id)
-);
-
 export function getOpenCodeGoProtocol(modelName: string): OpenCodeGoProtocol {
   // OpenCode Go exposes these through the native OpenAI Responses API, not
   // its OpenAI-compatible Chat Completions endpoint.
@@ -42,11 +13,7 @@ export function getOpenCodeGoProtocol(modelName: string): OpenCodeGoProtocol {
     return 'openai-responses';
   }
 
-  if (
-    OPENCODE_GO_ANTHROPIC_COMPATIBLE_MODELS.has(modelName) ||
-    modelName.startsWith('minimax-') ||
-    /^qwen\d/.test(modelName)
-  ) {
+  if (modelName.startsWith('minimax-') || /^qwen\d/.test(modelName)) {
     return 'anthropic';
   }
 
