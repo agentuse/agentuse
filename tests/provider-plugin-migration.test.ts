@@ -45,7 +45,7 @@ describe('legacy provider plugin installation', () => {
     });
 
     expect(installed).toEqual(['claude-code-subscription']);
-    expect(sources).toEqual(['cb7337/agentuse-claude-code-provider@v0.1.0']);
+    expect(sources).toEqual(['https://github.com/cb7337/agentuse-claude-code-provider@b3240daac509f0512321cb4677b2e9ee39651a8d']);
     expect(await AuthStorage.getOAuth('anthropic')).toBeUndefined();
     expect(await AuthStorage.getPluginCredential('anthropic', 'subscription')).toMatchObject({
       access: 'legacy-access',

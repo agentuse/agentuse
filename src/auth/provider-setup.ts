@@ -6,6 +6,7 @@ import { BUILTIN_PROVIDERS } from '../providers/registry-sources.js';
 import {
   PROVIDER_PLUGIN_REGISTRY,
   getProviderPluginRegistryEntry,
+  providerPluginInstallSource,
   type ProviderPluginRegistryEntry,
 } from '../plugin/provider-registry.js';
 import {
@@ -102,8 +103,11 @@ export async function providerSetupSnapshot(): Promise<ProviderSetupSnapshot> {
     catalog: PROVIDER_CATALOG,
     pluginRegistry: PROVIDER_PLUGIN_REGISTRY,
     installedPlugins: records.map((record) => {
+      // A record is curated when it matches the reviewed commit, or the
+      // pre-pinning tag source recorded by earlier releases.
       const curated = PROVIDER_PLUGIN_REGISTRY.find((entry) =>
-        entry.packageName === record.name && entry.source === record.source && entry.version === record.version,
+        entry.packageName === record.name && entry.version === record.version
+        && (record.commit === entry.commit || record.source === entry.source),
       );
       const providers = contributions
         .filter((contribution) => contribution.owner.name === record.name)
@@ -189,7 +193,7 @@ export async function installProviderPluginFromRegistry(id: unknown): Promise<Pr
   const entry = registryPlugin(id);
   const installed = await readInstalledPluginRecords();
   if (!installed.some((record) => record.name === entry.packageName)) {
-    await installPlugin(entry.source);
+    await installPlugin(providerPluginInstallSource(entry));
   }
   return providerSetupSnapshot();
 }
@@ -244,8 +248,12 @@ async function beginProviderPluginOAuth(
   provider: ProviderDefinition,
   installed: ProviderSetupSnapshot,
 ): Promise<ProviderPluginOAuthStart> {
-  const status = installed.status.providers.find((item) => item.id === providerId);
-  if (status?.configured) return { connected: true, snapshot: installed };
+  // Only this method's own credential counts. The provider-level `configured`
+  // flag also covers API keys and env vars, which would report a login that
+  // never happened.
+  if (await AuthStorage.getPluginCredential(providerId, authMethodId)) {
+    return { connected: true, snapshot: installed };
+  }
 
   pruneOAuthAttempts();
   const flowId = randomUUID();
@@ -316,9 +324,6 @@ async function beginProviderPluginOAuth(
 export async function startProviderPluginOAuth(id: unknown): Promise<ProviderPluginOAuthStart> {
   const entry = registryPlugin(id);
   const installed = await installProviderPluginFromRegistry(entry.id);
-  const status = installed.status.providers.find((provider) => provider.id === entry.provider);
-  if (status?.configured) return { connected: true, snapshot: installed };
-
   const candidate = (await getProviderAdapters(entry.provider)).find(({ provider }) =>
     provider.auth?.methods.some((method) => method.id === entry.authMethodId),
   );

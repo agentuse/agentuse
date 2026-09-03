@@ -214,6 +214,7 @@ describe('Dashboard provider setup service', () => {
       name: 'Claude Code Subscription',
       description: 'Use Anthropic models through an eligible Claude Pro or Max subscription.',
       source: 'cb7337/agentuse-claude-code-provider@v0.1.0',
+      commit: 'b3240daac509f0512321cb4677b2e9ee39651a8d',
       repository: 'https://github.com/cb7337/agentuse-claude-code-provider',
       publisher: 'cb7337',
       provenance: 'community',
@@ -319,6 +320,16 @@ describe('Dashboard provider setup service', () => {
     }
   });
 
+  it('does not report the subscription as connected when only an API key exists', async () => {
+    await addClaudePluginFixture();
+    process.env.ANTHROPIC_API_KEY = 'api-key-only';
+
+    const started = await startProviderPluginOAuth('claude-code-subscription');
+
+    expect(started.connected).toBe(false);
+    expect(await AuthStorage.getPluginCredential('anthropic', 'subscription')).toBeUndefined();
+  });
+
   it('runs new Claude subscription login through the shortlisted plugin', async () => {
     await addClaudePluginFixture();
     const started = await startProviderPluginOAuth('claude-code-subscription');
@@ -364,7 +375,7 @@ describe('Dashboard provider setup service', () => {
 
     expect(payload.status.providers.find((provider) => provider.id === 'anthropic')).toMatchObject({
       configured: false,
-      actionRequired: 'Claude subscription OAuth is present but its provider plugin is not installed',
+      actionRequired: 'Claude subscription OAuth is present but its provider plugin is not installed. Run: agentuse plugins install cb7337/agentuse-claude-code-provider@v0.1.0',
     });
     expect(defaultProviderSetupSelection({ success: true, ...payload })).toBe('plugin:claude-code-subscription');
   });

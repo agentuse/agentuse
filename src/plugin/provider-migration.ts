@@ -1,6 +1,6 @@
 import { AuthStorage } from '../auth/storage.js';
 import { installPlugin } from './provider-installer.js';
-import { PROVIDER_PLUGIN_REGISTRY } from './provider-registry.js';
+import { PROVIDER_PLUGIN_REGISTRY, providerPluginInstallSource } from './provider-registry.js';
 import { readInstalledPluginRecords } from './provider-runtime.js';
 
 export type ProviderPluginInstaller = typeof installPlugin;
@@ -22,7 +22,7 @@ export async function installLegacyProviderPlugins(
     if (!await AuthStorage.getOAuth(entry.provider)) continue;
 
     if (!installedNames.has(entry.packageName)) {
-      await install(entry.source);
+      await install(providerPluginInstallSource(entry));
       installedNames.add(entry.packageName);
       installed.push(entry.id);
     }

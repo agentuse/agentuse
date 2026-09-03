@@ -307,13 +307,12 @@ export async function discoverProviderModels(provider: ProviderDefinition): Prom
 
 const discoveredModelsCache = new WeakMap<ProviderDefinition, Promise<ProviderModelDefinition[]>>();
 
-export function loadedPluginRegistryProviderCached(id: string): string | undefined {
+export function loadedPluginRegistryProvider(id: string): string | undefined {
   const models = scopedProvider(id)?.models;
   if (models && !Array.isArray(models) && typeof models === 'object' && 'inherit' in models) return models.inherit;
   return undefined;
 }
 
-export const loadedPluginRegistryProvider = loadedPluginRegistryProviderCached;
 
 export function loadedPluginModel(providerId: string, modelId: string): ProviderModelDefinition | undefined {
   const provider = scopedProvider(providerId);
@@ -729,8 +728,10 @@ export async function createProviderPluginModel(provider: ProviderDefinition, mo
   const authenticatedFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const headers = new Headers(init?.headers);
     mergeProviderTransportHeaders(headers, transport.headers ?? {});
-    mergeAuthHeaders(headers, await context.auth.resolve());
-    if (initialAuth?.bearerToken && transport.baseURL) {
+    const auth = await context.auth.resolve();
+    mergeAuthHeaders(headers, auth);
+    const hasCredential = Boolean(auth?.bearerToken || auth?.apiKey || Object.keys(auth?.headers ?? {}).length > 0);
+    if (hasCredential && transport.baseURL) {
       const actual = new URL(input instanceof Request ? input.url : input);
       const expected = new URL(transport.baseURL);
       if (actual.origin !== expected.origin) {
@@ -741,7 +742,8 @@ export async function createProviderPluginModel(provider: ProviderDefinition, mo
       ...init,
       headers,
       signal: init?.signal ?? context.signal,
-      ...(initialAuth?.bearerToken && { redirect: 'error' as const }),
+      // Never follow a redirect while carrying a credential of any kind.
+      ...(hasCredential && { redirect: 'error' as const }),
     });
   };
 

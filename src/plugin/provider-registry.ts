@@ -14,8 +14,13 @@ export interface ProviderPluginRegistryEntry {
   version: string;
   name: string;
   description: string;
-  /** GitHub source accepted by `agentuse plugins install`. */
+  /** GitHub source accepted by `agentuse plugins install`. Shown to users. */
   source: string;
+  /**
+   * Full commit the tag pointed at when this entry was reviewed. Installs use
+   * this so a moved tag can never change the code that runs.
+   */
+  commit: string;
   repository: string;
   publisher: string;
   provenance: 'community';
@@ -35,6 +40,7 @@ export const PROVIDER_PLUGIN_REGISTRY: readonly ProviderPluginRegistryEntry[] = 
     name: 'Claude Code Subscription',
     description: 'Use Anthropic models through an eligible Claude Pro or Max subscription.',
     source: 'cb7337/agentuse-claude-code-provider@v0.1.0',
+    commit: 'b3240daac509f0512321cb4677b2e9ee39651a8d',
     repository: 'https://github.com/cb7337/agentuse-claude-code-provider',
     publisher: 'cb7337',
     provenance: 'community',
@@ -44,6 +50,11 @@ export const PROVIDER_PLUGIN_REGISTRY: readonly ProviderPluginRegistryEntry[] = 
     apiVersion: 1,
   },
 ];
+
+/** Immutable install source: the reviewed commit, not the movable tag. */
+export function providerPluginInstallSource(entry: ProviderPluginRegistryEntry): string {
+  return `${entry.repository}@${entry.commit}`;
+}
 
 export function getProviderPluginRegistryEntry(id: string): ProviderPluginRegistryEntry | undefined {
   return PROVIDER_PLUGIN_REGISTRY.find((entry) => entry.id === id);

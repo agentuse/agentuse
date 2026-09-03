@@ -137,7 +137,7 @@ export async function getProviderStatus(): Promise<ProviderStatus> {
       configured: sources.length > 0,
       sources,
       ...(missingClaudeAdapter && {
-        actionRequired: 'Claude subscription OAuth is present but its provider plugin is not installed',
+        actionRequired: `Claude subscription OAuth is present but its provider plugin is not installed. Run: agentuse plugins install ${shortlistedPlugin!.source}`,
       }),
     });
   }

@@ -20,6 +20,7 @@ import {
   startProviderOAuth,
 } from "../auth/provider-setup.js";
 import { getProviderAdapters, getProviderPlugin, loadProviderPlugins, loginProviderPlugin, logoutProviderPlugin, providerPluginAuthStatus } from '../plugin/provider-runtime.js';
+import { PROVIDER_PLUGIN_REGISTRY } from '../plugin/provider-registry.js';
 import type { AuthInteraction } from '../plugin/types.js';
 
 const GITHUB_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -142,8 +143,8 @@ export function createProviderCommand(): Command {
       process.stdout.write("PRIORITY ORDER:\n");
       process.stdout.write("─".repeat(40) + "\n");
       process.stdout.write("1. OAuth tokens (OpenAI Codex or installed provider plugins)\n");
-      process.stdout.write("2. Stored API keys (via auth login)\n");
-      process.stdout.write("3. Environment variables\n\n");
+      process.stdout.write("2. Environment variables\n");
+      process.stdout.write("3. Stored API keys (via provider login)\n\n");
       
       process.stdout.write("COMMANDS:\n");
       process.stdout.write("─".repeat(40) + "\n");
@@ -152,7 +153,8 @@ export function createProviderCommand(): Command {
       process.stdout.write("  provider add <name> --url <url> - Add custom endpoint\n");
       process.stdout.write("  provider remove <name>          - Remove a provider\n");
       process.stdout.write("  provider list [--json]          - Show provider authentication status\n");
-      process.stdout.write("  provider help                   - Show this help message\n\n");
+      process.stdout.write("  provider help                   - Show this help message\n");
+      process.stdout.write("  plugins list|install|remove     - Manage provider plugins (e.g. Claude Pro/Max)\n\n");
       
       process.stdout.write("GETTING API KEYS:\n");
       process.stdout.write("─".repeat(40) + "\n");
@@ -675,6 +677,10 @@ Use these only when an endpoint reports a protocol compatibility error.
 async function handleAnthropicLogin() {
   const adapter = (await getProviderAdapters('anthropic')).find((candidate) => candidate.provider.auth);
   if (!adapter) {
+    const subscription = PROVIDER_PLUGIN_REGISTRY.find((entry) => entry.provider === 'anthropic');
+    if (subscription) {
+      process.stdout.write(`Tip: Claude Pro/Max login needs a plugin: agentuse plugins install ${subscription.source}\n\n`);
+    }
     await handleGenericLogin("anthropic", "Anthropic API Key");
     return;
   }

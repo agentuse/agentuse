@@ -14,6 +14,7 @@ import {
 import type { InstalledPluginRecord } from './types';
 import { readPackageManifest } from './loader';
 import { findProjectRoot } from '../utils/project';
+import { AuthStorage } from '../auth/storage';
 
 const exec = promisify(execFile);
 const GITHUB_REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -130,6 +131,17 @@ function assertPinnedRemoteSource(source: string): ResolvedSource & { ref: strin
 }
 
 async function cloneResolvedSource(staging: string, resolvedSource: ResolvedSource): Promise<void> {
+  try {
+    await cloneResolvedSourceRaw(staging, resolvedSource);
+  } catch (error) {
+    // git prints the full command and the temp path; users need the source.
+    const label = `${resolvedSource.url}${resolvedSource.ref ? `@${resolvedSource.ref}` : ''}`;
+    const stderr = (error as { stderr?: string }).stderr?.trim().split(/\r?\n/).at(-1);
+    throw new Error(`Could not fetch plugin ${label}. Check that the repository exists and the ref is published.${stderr ? ` (${stderr})` : ''}`);
+  }
+}
+
+async function cloneResolvedSourceRaw(staging: string, resolvedSource: ResolvedSource): Promise<void> {
   if (resolvedSource.ref && FULL_COMMIT_REF.test(resolvedSource.ref)) {
     await exec('git', ['init', staging], { maxBuffer: 10 * 1024 * 1024 });
     await exec('git', ['-C', staging, 'remote', 'add', 'origin', resolvedSource.url], { maxBuffer: 10 * 1024 * 1024 });
@@ -204,26 +216,56 @@ function assertManagedDirectory(record: InstalledPluginRecord, options?: PluginI
   if (target === home || dirname(target) !== home) throw new Error(`Refusing to modify unmanaged plugin directory: ${record.directory}`);
 }
 
-async function writeRegistry(records: InstalledPluginRecord[], options?: PluginInstallOptions): Promise<void> {
-  const file = registryPath(options);
-  await mkdir(dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-  await writeFile(temp, `${JSON.stringify(records, null, 2)}\n`, { mode: 0o600 });
-  await rename(temp, file);
+async function readRecords(options?: PluginInstallOptions): Promise<InstalledPluginRecord[]> {
+  return options?.local ? readProjectPluginRecords(options) : readInstalledPluginRecords();
+}
+
+/**
+ * Re-read the registry under the shared auth lock and apply `mutate` to the
+ * latest records, so concurrent installs cannot overwrite each other's entry.
+ */
+async function mutateRegistry(
+  options: PluginInstallOptions | undefined,
+  mutate: (records: InstalledPluginRecord[]) => InstalledPluginRecord[],
+): Promise<void> {
+  await AuthStorage.withAuthLock(async () => {
+    const records = mutate(await readRecords(options));
+    const file = registryPath(options);
+    await mkdir(dirname(file), { recursive: true });
+    const temp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+    await writeFile(temp, `${JSON.stringify(records, null, 2)}\n`, { mode: 0o600 });
+    await rename(temp, file);
+  });
   resetProviderPluginCache();
 }
 
+function upsert(record: InstalledPluginRecord): (records: InstalledPluginRecord[]) => InstalledPluginRecord[] {
+  return (records) => [...records.filter((item) => item.name !== record.name), record];
+}
+
+function without(name: string): (records: InstalledPluginRecord[]) => InstalledPluginRecord[] {
+  return (records) => records.filter((item) => item.name !== name);
+}
+
 async function installRuntimeDependencies(root: string): Promise<void> {
+  let pkg: { dependencies?: Record<string, string> };
   try {
-    const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as { dependencies?: Record<string, string> };
-    if (Object.keys(pkg.dependencies ?? {}).length === 0) return;
+    pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')) as typeof pkg;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
+  }
+  if (Object.keys(pkg.dependencies ?? {}).length === 0) return;
+  try {
     await exec('npm', ['install', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], {
       cwd: root,
       maxBuffer: 10 * 1024 * 1024,
       env: { ...process.env, npm_config_ignore_scripts: 'true' },
     });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      throw new Error('This plugin has dependencies but npm was not found on PATH. Install Node.js/npm and retry.');
+    }
     throw error;
   }
 }
@@ -286,7 +328,7 @@ export async function installPlugin(source: string, options?: PluginInstallOptio
     const record = await inspectLinkedPlugin(source, options);
     const existing = records.find((item) => item.name === record.name);
     if (existing) throw new Error(`Plugin '${existing.name}' is already installed; run agentuse plugins update ${existing.name}`);
-    await writeRegistry([...records, record], options);
+    await mutateRegistry(options, upsert(record));
     return record;
   }
   const candidate = await cloneAndInspect(source, options);
@@ -306,7 +348,7 @@ export async function installPlugin(source: string, options?: PluginInstallOptio
   const now = new Date().toISOString();
   const record: InstalledPluginRecord = { ...candidate.record, directory, installedAt: now, updatedAt: now };
   try {
-    await writeRegistry([...records, record], options);
+    await mutateRegistry(options, upsert(record));
   } catch (error) {
     await rm(directory, { recursive: true, force: true });
     throw error;
@@ -318,7 +360,6 @@ export async function updatePlugins(name?: string, options?: PluginInstallOption
   const records = options?.local ? await readProjectPluginRecords(options) : await readInstalledPluginRecords();
   const targets = name ? records.filter((item) => item.name === name) : records;
   if (name && targets.length === 0) throw new Error(`Plugin '${name}' is not installed`);
-  const updated = [...records];
   const results: InstalledPluginRecord[] = [];
   for (const current of targets) {
     if (current.linked) {
@@ -332,8 +373,7 @@ export async function updatePlugins(name?: string, options?: PluginInstallOption
         version: manifest.version,
         updatedAt: new Date().toISOString(),
       };
-      updated[updated.findIndex((item) => item.name === current.name)] = next;
-      await writeRegistry(updated, options);
+      await mutateRegistry(options, upsert(next));
       results.push(next);
       continue;
     }
@@ -353,8 +393,7 @@ export async function updatePlugins(name?: string, options?: PluginInstallOption
         ...(candidate.record.commit && { commit: candidate.record.commit }),
         updatedAt: new Date().toISOString(),
       };
-      updated[updated.findIndex((item) => item.name === current.name)] = next;
-      await writeRegistry(updated, options);
+      await mutateRegistry(options, upsert(next));
       await rm(backup, { recursive: true, force: true });
       results.push(next);
     } catch (error) {
@@ -371,14 +410,14 @@ export async function removePlugin(name: string, options?: PluginInstallOptions)
   const record = records.find((item) => item.name === name);
   if (!record) throw new Error(`Plugin '${name}' is not installed`);
   if (record.linked) {
-    await writeRegistry(records.filter((item) => item.name !== name), options);
+    await mutateRegistry(options, without(name));
     return record;
   }
   assertManagedDirectory(record, options);
   const staged = `${record.directory}.remove-${process.pid}-${randomBytes(3).toString('hex')}`;
   await rename(record.directory, staged);
   try {
-    await writeRegistry(records.filter((item) => item.name !== name), options);
+    await mutateRegistry(options, without(name));
   } catch (error) {
     await rename(staged, record.directory).catch(() => {});
     throw error;
@@ -387,7 +426,3 @@ export async function removePlugin(name: string, options?: PluginInstallOptions)
   return record;
 }
 
-// Compatibility names for the pre-v1 provider-only package commands.
-export const installProviderPlugin = installPlugin;
-export const updateProviderPlugins = updatePlugins;
-export const uninstallProviderPlugin = removePlugin;

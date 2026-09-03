@@ -1461,7 +1461,7 @@ async function* executeAgentAttempt(
           // Tool inputs are object schemas throughout AgentUse. Keep the exact
           // object reference so Pi-style in-place mutations reach core policy
           // checks and the eventual execute call.
-          if (opts.toolCall.input !== input && opts.toolCall.input && typeof opts.toolCall.input === 'object') {
+          if (opts.toolCall.input !== input && opts.toolCall.input && typeof opts.toolCall.input === 'object' && !Array.isArray(opts.toolCall.input)) {
             opts.toolCall.input = input;
           }
           const decision = await options.pluginEvents.toolCall({

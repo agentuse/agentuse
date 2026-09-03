@@ -75,10 +75,9 @@ export function providerSetupOptions(
     const providerId = selectedPlugin?.provider ?? initialProvider;
     return [
       ...builtIn.filter((item) => item.value === providerId),
-      ...community.filter((_, index) => {
-        const plugin = payload.pluginRegistry[index];
-        return plugin?.provider === providerId && installedNames.has(plugin.packageName);
-      }),
+      // Uninstalled shortlist plugins stay visible so a Claude Pro/Max user
+      // starting from the Anthropic row can install from here.
+      ...community.filter((_, index) => payload.pluginRegistry[index]?.provider === providerId),
     ];
   }
   return [...builtIn, ...(allowCustom ? [custom] : []), ...community];
@@ -344,7 +343,7 @@ function ProviderSetupForm(props: {
           else setProvider(setupOptions[0]?.value ?? props.payload.catalog[0]?.id ?? 'anthropic');
         }} disabled={busy}>Back</button>}
         <button type="button" class="provider-setup-primary" onClick={() => void submit()} disabled={busy} aria-busy={busy}>
-          {busy ? flow ? 'Connecting…' : provider === advancedPluginSelection || (pluginEntry && !installedPlugin) ? 'Installing…' : pluginEntry ? 'Connecting…' : 'Working…'
+          {busy ? flow ? 'Connecting…' : provider === advancedPluginSelection && !pluginInspection ? 'Reading manifest…' : provider === advancedPluginSelection || (pluginEntry && !installedPlugin) ? 'Installing…' : pluginEntry ? 'Connecting…' : 'Working…'
             : provider === advancedPluginSelection ? pluginInspection ? 'Install and connect' : 'Read manifest'
             : provider === 'custom' ? customCheck ? 'Save provider' : 'Check endpoint'
             : method === 'api_key' ? 'Save provider'
@@ -418,69 +417,49 @@ export function ProviderSettingsGroup() {
   const catalog = payload?.catalog ?? [];
   const providers = useMemo(() => catalog.map((entry) => ({ entry, status: payload?.status.providers.find((item) => item.id === entry.id) })), [catalog, payload]);
 
-  const remove = async (provider: string, source: ProviderAuthSourceStatus) => {
-    const kind = source.kind === 'oauth' ? 'oauth' : 'api_key';
-    const key = `${provider}:${kind}:${source.plugin?.name ?? 'core'}:${source.plugin?.authMethodId ?? ''}`;
-    setBusyKey(key);
-    setError(null);
-    try { setPayload(await removeProviderCredential(provider, kind, source.plugin)); }
-    catch (caught) { setError((caught as Error).message || 'Could not remove credential.'); }
-    finally { setBusyKey(null); }
-  };
+  /** Busy key shared by a stored credential's Remove button and its handler. */
+  const credentialKey = (provider: string, source: ProviderAuthSourceStatus) =>
+    `${provider}:${source.kind === 'oauth' ? 'oauth' : 'api_key'}:${source.plugin?.name ?? 'core'}:${source.plugin?.authMethodId ?? ''}`;
 
-  const removeCustom = async (name: string) => {
-    setBusyKey(`custom:${name}`);
-    setError(null);
-    try { setPayload(await removeCustomProvider(name)); }
-    catch (caught) { setError((caught as Error).message || 'Could not remove provider.'); }
-    finally { setBusyKey(null); }
-  };
-
-  const refreshCustom = async (name: string) => {
-    setBusyKey(`refresh:${name}`);
-    setError(null);
-    try { setPayload(await refreshCustomProviderModels(name)); }
-    catch (caught) { setError((caught as Error).message || 'Could not refresh models.'); }
-    finally { setBusyKey(null); }
-  };
-
-  const continueUpgrade = async (plugin: string, provider: string) => {
-    const key = `plugin:${plugin}`;
+  /** Run one mutating provider action with a busy key and a fallback error message. */
+  const run = async (
+    key: string,
+    action: () => Promise<ProviderSetupPayload>,
+    fallback: string,
+    after?: (next: ProviderSetupPayload) => void,
+  ) => {
     setBusyKey(key);
     setError(null);
     try {
-      const next = await installProviderPlugin(plugin);
+      const next = await action();
       setPayload(next);
-      if (!next.status.providers.find((item) => item.id === provider)?.configured) {
-        setDialog({
-          scope: 'provider',
-          title: `connect ${next.catalog.find((item) => item.id === provider)?.name ?? provider}`,
-          initialProvider: pluginSelection(plugin),
-        });
-      }
+      after?.(next);
     } catch (caught) {
-      setError((caught as Error).message || 'Could not install provider plugin.');
+      setError((caught as Error).message || fallback);
     } finally {
       setBusyKey(null);
     }
   };
 
-  const updatePlugin = async (name: string) => {
-    const key = `update-plugin:${name}`;
-    setBusyKey(key);
-    setError(null);
-    try { setPayload(await updateProviderPlugin(name)); }
-    catch (caught) { setError((caught as Error).message || 'Could not update plugin.'); }
-    finally { setBusyKey(null); }
+  const remove = (provider: string, source: ProviderAuthSourceStatus) => {
+    const kind = source.kind === 'oauth' ? 'oauth' : 'api_key';
+    return run(credentialKey(provider, source), () => removeProviderCredential(provider, kind, source.plugin), 'Could not remove credential.');
   };
-
+  const removeCustom = (name: string) => run(`custom:${name}`, () => removeCustomProvider(name), 'Could not remove provider.');
+  const refreshCustom = (name: string) => run(`refresh:${name}`, () => refreshCustomProviderModels(name), 'Could not refresh models.');
+  const continueUpgrade = (plugin: string, provider: string) => run(`plugin:${plugin}`, () => installProviderPlugin(plugin), 'Could not install provider plugin.', (next) => {
+    if (!next.status.providers.find((item) => item.id === provider)?.configured) {
+      setDialog({
+        scope: 'provider',
+        title: `connect ${next.catalog.find((item) => item.id === provider)?.name ?? provider}`,
+        initialProvider: pluginSelection(plugin),
+      });
+    }
+  });
+  const updatePlugin = (name: string) => run(`update-plugin:${name}`, () => updateProviderPlugin(name), 'Could not update plugin.');
   const removePlugin = async (name: string) => {
-    const key = `remove-plugin:${name}`;
-    setBusyKey(key);
-    setError(null);
-    try { setPayload(await removeProviderPlugin(name)); }
-    catch (caught) { setError((caught as Error).message || 'Could not remove plugin.'); }
-    finally { setBusyKey(null); setConfirmingPlugin(null); }
+    await run(`remove-plugin:${name}`, () => removeProviderPlugin(name), 'Could not remove plugin.');
+    setConfirmingPlugin(null);
   };
 
   return (
@@ -509,7 +488,7 @@ export function ProviderSettingsGroup() {
               <div class="settings-row-control provider-settings-control">
                 <span class={`provider-status${status?.configured ? ' is-ready' : ''}`}>{status?.configured ? 'Connected' : 'Not connected'}</span>
                 {stored.map((source) => {
-                  const removeKey = `${entry.id}:${source.kind}:${source.plugin?.name ?? 'core'}:${source.plugin?.authMethodId ?? ''}`;
+                  const removeKey = credentialKey(entry.id, source);
                   return <button key={removeKey} type="button" class="settings-item" disabled={busyKey === removeKey} onClick={() => void remove(entry.id, source)}>Remove {source.kind === 'oauth' ? 'OAuth' : 'key'}</button>;
                 })}
                 <button
