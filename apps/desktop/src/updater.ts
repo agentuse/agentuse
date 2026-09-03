@@ -18,6 +18,8 @@ export interface DesktopUpdateState {
   actionDisabled: boolean;
 }
 
+export type DesktopUpdateCheckResult = "completed" | "failed" | "skipped";
+
 interface UpdateInfo {
   version: string;
 }
@@ -54,6 +56,7 @@ function errorDetail(error: unknown): string {
 
 export class DesktopUpdater {
   private readonly enabled: boolean;
+  private checkInProgress = false;
   private installInProgress = false;
   private stateValue: DesktopUpdateState;
 
@@ -135,8 +138,14 @@ export class DesktopUpdater {
     return { ...this.stateValue };
   }
 
-  async checkForUpdates(): Promise<void> {
-    if (!this.enabled || this.stateValue.status === "checking" || this.stateValue.status === "downloading") return;
+  async checkForUpdates(): Promise<DesktopUpdateCheckResult> {
+    if (
+      !this.enabled
+      || this.checkInProgress
+      || this.stateValue.status === "downloading"
+      || this.stateValue.status === "ready"
+    ) return "skipped";
+    this.checkInProgress = true;
     this.setState({
       status: "checking",
       detail: "Checking GitHub Releases…",
@@ -145,8 +154,12 @@ export class DesktopUpdater {
     });
     try {
       await this.autoUpdater.checkForUpdates();
+      return "completed";
     } catch (error) {
       this.setError(error);
+      return "failed";
+    } finally {
+      this.checkInProgress = false;
     }
   }
 

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, Notification, shell, Tray, type Event, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, Notification, powerMonitor, shell, Tray, type Event, type IpcMainInvokeEvent } from "electron";
 import { autoUpdater } from "electron-updater";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -41,6 +41,7 @@ import { getProviderStatus } from "../../../src/auth/provider-status";
 import { loadGlobalConfig } from "../../../src/utils/global-config";
 import { initializeDesktopGlobalDefaults } from "./global-defaults";
 import { DesktopUpdater, type DesktopUpdateState } from "./updater";
+import { DesktopUpdateScheduler } from "./update-scheduler";
 import { currentProcessRef } from "../../../src/utils/process-info";
 import {
   DESKTOP_LIFETIME_FD_ENV,
@@ -95,6 +96,7 @@ let desktopNotificationPreferences: DesktopNotificationPreferences = { ...DEFAUL
 let registeredDashboardShortcut: string | undefined;
 let dashboardShortcutError: string | undefined;
 let desktopUpdater: DesktopUpdater | undefined;
+let desktopUpdateScheduler: DesktopUpdateScheduler | undefined;
 const pendingDesktopTelemetry: Array<{
   payload: Record<string, unknown>;
   clientSurface: "mac_app" | "mac_setup";
@@ -931,7 +933,7 @@ async function handleNativeSettingsCommand(line: string, child: ChildProcess): P
       break;
     }
     case "checkForUpdates":
-      await desktopUpdater?.checkForUpdates();
+      await desktopUpdateScheduler?.checkNow();
       await pushNativeSettingsState(child);
       break;
     case "downloadUpdate":
@@ -1201,10 +1203,14 @@ function initializeDesktopUpdater(): void {
     onStateChange: () => void pushNativeSettingsState(),
   });
 
-  // Checking and background download are best-effort and deliberately detached
-  // from launch. Installation still requires an explicit restart decision.
-  const timer = setTimeout(() => void desktopUpdater?.checkForUpdates(), 5_000);
-  timer.unref();
+  // Packaged macOS clients check shortly after launch, every six hours while
+  // running, and after a sufficiently long sleep. Jitter avoids release-time
+  // request spikes; installation still requires an explicit restart decision.
+  if (app.isPackaged && process.platform === "darwin") {
+    desktopUpdateScheduler = new DesktopUpdateScheduler(() => desktopUpdater!.checkForUpdates());
+    desktopUpdateScheduler.start();
+    powerMonitor.on("resume", () => desktopUpdateScheduler?.handleResume());
+  }
 }
 
 async function toggleServerFromSettings() {

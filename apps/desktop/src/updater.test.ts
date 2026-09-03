@@ -109,7 +109,7 @@ describe("desktop updater", () => {
     const { fake, updater } = createUpdater();
     fake.checkError = new Error("network unavailable");
 
-    await expect(updater.checkForUpdates()).resolves.toBeUndefined();
+    await expect(updater.checkForUpdates()).resolves.toBe("failed");
     expect(updater.state).toMatchObject({
       status: "error",
       actionDisabled: false,
@@ -120,6 +120,27 @@ describe("desktop updater", () => {
     await updater.checkForUpdates();
     expect(fake.checks).toBe(2);
     expect(updater.state.status).toBe("checking");
+  });
+
+  it("prevents overlapping checks and preserves a downloaded update", async () => {
+    let releaseCheck: (() => void) | undefined;
+    const fake = new FakeAutoUpdater();
+    fake.checkForUpdates = async () => {
+      fake.checks += 1;
+      await new Promise<void>((resolve) => { releaseCheck = resolve; });
+    };
+    const { updater } = createUpdater(fake);
+
+    const firstCheck = updater.checkForUpdates();
+    expect(await updater.checkForUpdates()).toBe("skipped");
+    expect(fake.checks).toBe(1);
+    releaseCheck?.();
+    await firstCheck;
+
+    fake.emit("update-downloaded", { version: "0.19.2" });
+    expect(await updater.checkForUpdates()).toBe("skipped");
+    expect(fake.checks).toBe(1);
+    expect(updater.state.status).toBe("ready");
   });
 
   it("keeps a downloaded update ready when the native prompt fails", async () => {
