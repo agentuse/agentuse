@@ -220,6 +220,40 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
     });
   });
 
+  test('malformed attached command is rejected before suspension or lease creation', async () => {
+    const marker = path.join(projectRoot, 'malformed-marker.txt');
+    const malformedCommand = `touch '${marker}`;
+    const { model, calls } = makeModel([
+      turn([
+        toolCallPart('gate-1', 'await_human', { prompt: 'Approve this action?' }),
+        toolCallPart('bash-1', 'tools__bash', { command: malformedCommand }),
+      ]),
+      turn([
+        { type: 'text-start', id: 't1' },
+        { type: 'text-delta', id: 't1', delta: 'I will correct the command before asking again.' },
+        { type: 'text-end', id: 't1' },
+      ], 'stop'),
+    ]);
+    currentModel = model;
+
+    const chunks = await runCore(makeTools());
+
+    expect(chunks.some((chunk) => chunk.type === 'suspended')).toBe(false);
+    expect(calls()).toBe(2);
+    expect(fs.existsSync(marker)).toBe(false);
+    expect(fs.existsSync(path.join(sessionDir, LEASE_FILENAME))).toBe(false);
+
+    const preflight = chunks.find(
+      (chunk) => chunk.type === 'tool-result' && chunk.toolName === 'await_human'
+    );
+    expect((preflight as any)?.toolResultRaw?.source).toBe('gate-preflight');
+    expect((preflight as any)?.toolResultRaw?.comment).toContain('invalid shell syntax');
+
+    const records = readWAL();
+    expect(records.some((r) => r.event === 'gate-command-attached' && r.callId === 'bash-1')).toBe(true);
+    expect(records.some((r) => r.event === 'bash-spawn')).toBe(false);
+  });
+
   test('content-only authorization is rejected inline before waking the human', async () => {
     const { model, calls } = makeModel([
       turn([toolCallPart('gate-1', 'await_human', {

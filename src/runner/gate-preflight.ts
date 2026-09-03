@@ -1,8 +1,30 @@
 import type { Tool } from 'ai';
+import { execFile } from 'node:child_process';
 import { isEffectful } from './approval-lease.js';
 import { isSuspendSignal } from './suspend.js';
+import { getBuiltinPayloadCommandInvocation } from '../tools/command-validator.js';
 
 const RUNTIME_REVIEWER = { username: 'agentuse-runtime' };
+
+function checkShellSyntax(command: string): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    execFile('/bin/sh', ['-n', '-c', command], {
+      encoding: 'utf8',
+      timeout: 1_000,
+      maxBuffer: 64 * 1024,
+    }, (error, _stdout, stderr) => {
+      if (!error) {
+        resolve(undefined);
+        return;
+      }
+
+      resolve(
+        stderr.trim().split('\n').find((line) => line.trim())
+        ?? error.message
+      );
+    });
+  });
+}
 
 function changeContents(input: Record<string, unknown>): string[] {
   if (!Array.isArray(input.changes)) return [];
@@ -75,6 +97,46 @@ export function validateEffectfulGatePlan(
   return undefined;
 }
 
+/**
+ * Validate the shell syntax of every command an approval would authorize.
+ * This runs before the gate suspends so a reviewer never approves a command
+ * that the bash tool cannot execute, and a one-shot lease is never burned on a
+ * deterministic parse failure.
+ */
+export async function validateEffectfulGateCommandSyntax(
+  input: Record<string, unknown>,
+  effectPatterns: string[],
+): Promise<string | undefined> {
+  if (effectPatterns.length === 0 || !Array.isArray(input.changes)) return undefined;
+
+  for (const [index, entry] of input.changes.entries()) {
+    if (!entry || typeof entry !== 'object') continue;
+    const record = entry as Record<string, unknown>;
+    const content = typeof record.content === 'string' ? record.content.trim() : '';
+    if (!content || !isEffectful(content, effectPatterns)) continue;
+
+    // Built-in payload commands execute as direct argv, not through a shell.
+    // Applying shell grammar to JavaScript or another embedded language would
+    // reject valid payloads, so mirror the bash tool's dispatch decision.
+    const payloadInvocation = getBuiltinPayloadCommandInvocation(content, effectPatterns);
+    if (payloadInvocation && !payloadInvocation.matchedPattern.startsWith('blocked:')) continue;
+
+    // tools__bash uses Node's `shell: true`, which resolves to /bin/sh on the
+    // supported Unix runtime. `-n` parses without executing, so this catches
+    // unterminated quotes and other deterministic shell failures before a
+    // reviewer sees the gate or a one-shot lease can be granted.
+    const syntaxFailure = await checkShellSyntax(content);
+    if (syntaxFailure) {
+      const label = typeof record.label === 'string' && record.label.trim()
+        ? ` “${record.label.trim()}”`
+        : ` at changes[${index}]`;
+      return `The gated command${label} has invalid shell syntax and cannot be approved: ${syntaxFailure}. Fix the command, then submit the corrected exact command for review.`;
+    }
+  }
+
+  return undefined;
+}
+
 /** Append one exact command to a plain pending gate, without creating a second
  * authorization when the agent already included the command verbatim. Pick
  * gates are intentionally excluded: an automatically attached unconditional
@@ -113,7 +175,8 @@ export function withGatePlanPreflight<T extends Tool>(
   return {
     ...tool,
     execute: async (input: Record<string, unknown>, callOptions: unknown) => {
-      const failure = validateEffectfulGatePlan(input, options.effectPatterns);
+      const failure = validateEffectfulGatePlan(input, options.effectPatterns)
+        ?? await validateEffectfulGateCommandSyntax(input, options.effectPatterns);
       if (failure) {
         const result = {
           status: 'rejected',

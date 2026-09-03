@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import {
   attachCommandToPendingGate,
+  validateEffectfulGateCommandSyntax,
   validateEffectfulGatePlan,
+  withGatePlanPreflight,
 } from '../src/runner/gate-preflight';
 
 const patterns = ['birdc reply *'];
@@ -12,6 +14,58 @@ describe('gate plan preflight', () => {
     expect(validateEffectfulGatePlan({
       changes: [{ content: 'birdc reply 1 "approved"' }],
     }, patterns)).toBeUndefined();
+  });
+
+  it('rejects gated commands with unterminated shell quotes before review', async () => {
+    const failure = await validateEffectfulGateCommandSyntax({
+      changes: [{
+        label: 'Schedule X post',
+        content: `birdc reply 1 '[{"text":"approved"}]`,
+      }],
+    }, patterns);
+
+    expect(failure).toContain('Schedule X post');
+    expect(failure).toContain('invalid shell syntax');
+  });
+
+  it('accepts a gated command with a complete quoted JSON payload', async () => {
+    const failure = await validateEffectfulGateCommandSyntax({
+      changes: [{
+        label: 'Schedule X post',
+        content: `birdc reply 1 '[{"text":"approved"}]'`,
+      }],
+    }, patterns);
+
+    expect(failure).toBeUndefined();
+  });
+
+  it('does not apply shell syntax rules to direct-argv payload commands', async () => {
+    const failure = await validateEffectfulGateCommandSyntax({
+      changes: [{
+        content: `agent-browser eval Array.from(document.querySelectorAll('a[href*="/in/"]')).map(a=>({text:a.innerText,href:a.href}))`,
+      }],
+    }, ['agent-browser eval *']);
+
+    expect(failure).toBeUndefined();
+  });
+
+  it('resolves malformed commands as machine preflight feedback without opening the gate', async () => {
+    let gateExecuted = false;
+    const wrapped = withGatePlanPreflight({
+      execute: async () => {
+        gateExecuted = true;
+        throw new Error('gate should not execute');
+      },
+    } as any, { effectPatterns: patterns });
+
+    const result = await wrapped.execute?.({
+      prompt: 'Approve?',
+      changes: [{ content: `birdc reply 1 '[{"text":"approved"}]` }],
+    } as never, {} as never) as any;
+
+    expect(gateExecuted).toBe(false);
+    expect(result.source).toBe('gate-preflight');
+    expect(result.comment).toContain('invalid shell syntax');
   });
 
   it('rejects content-only changes that would grant no command', () => {
