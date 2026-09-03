@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ApiRequestError, ApprovalRow, SessionRow, SessionsPayload, ApprovalsListPayload } from '../lib/api';
 import { fetchSessions } from '../lib/api';
 import { useFetch } from './use-fetch';
@@ -161,7 +161,7 @@ export function useLiveHome(): LiveHome {
   const [feed, setFeed] = useState<ActivityEvent[]>([]);
   const prevLabels = useRef<Map<string, string> | null>(null);
   const seq = useRef(0);
-  const gates = suspendedGateKinds(approvalsData);
+  const gates = useMemo(() => suspendedGateKinds(approvalsData), [approvalsData]);
 
   useEffect(() => {
     if (!sessionsData) return;
@@ -199,12 +199,17 @@ export function useLiveHome(): LiveHome {
     }
   }, [sessionsData, approvalsData]);
 
+  // Stable references between snapshots: Home memoizes its derived lists on
+  // these, so a re-render with unchanged data must not hand out fresh arrays.
+  const sessions = useMemo(() => sessionsData?.sessions ?? [], [sessionsData]);
+  const pendingRows = useMemo(() => [...(approvalsData?.buckets.pending ?? [])]
+    .sort((a, b) => (b.suspendedAt ?? b.createdAt ?? 0) - (a.suspendedAt ?? a.createdAt ?? 0)), [approvalsData]);
+
   return {
-    sessions: sessionsData?.sessions ?? [],
+    sessions,
     feed,
     pendingApprovals: approvalsData?.buckets.pending.length ?? 0,
-    pendingRows: [...(approvalsData?.buckets.pending ?? [])]
-      .sort((a, b) => (b.suspendedAt ?? b.createdAt ?? 0) - (a.suspendedAt ?? a.createdAt ?? 0)),
+    pendingRows,
     suspendedGates: gates,
     live: !sessionsFallback,
     error: fetchedSessions.error ?? (!sessionsData ? streamError : null),

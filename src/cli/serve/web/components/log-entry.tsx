@@ -1304,7 +1304,7 @@ function LogEntryImpl(props: LogEntryProps) {
             : <ToolDetails details={entry.details} sessionId={props.sessionId} token={props.token} />)}
           {/* The counts are the whole corrections row; anything the session log
               also wrote about them would restate the line above. */}
-          {message && !corrections && !storeEvent && !entry.subagentSession && <LogContent value={message} forceMarkdown={prose} />}
+          {message && !corrections && !storeEvent && !entry.subagentSession && <LogContent value={message} forceMarkdown={prose} streaming={typing} />}
           {warnings.length > 0 && <LogWarnings warnings={warnings} />}
         </div>
         {props.showActions && (

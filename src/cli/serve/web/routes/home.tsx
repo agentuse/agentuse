@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { useCountUp } from '../hooks/use-count-up';
 import type { ApprovalRow, ProjectInfo, SerializedSchedule, SessionRow, StoreRowsPayload } from '../lib/api';
 import { fetchInfo, fetchAgents, fetchSchedules, fetchStoreRows, postSessionStop } from '../lib/api';
@@ -105,6 +105,20 @@ function RunningRow(props: { row: SessionRow; now: number; ticker: boolean }) {
       </div>
       <span class="now-elapsed">{formatElapsed(now - row.createdAt)}</span>
     </a>
+  );
+}
+
+/** Owns the 1s elapsed-time clock so the tick re-renders these rows only, not
+ *  the whole dashboard. */
+function WorkingNow(props: { running: SessionRow[] }) {
+  const now = useNow(true);
+  return (
+    <section class="group">
+      <h2 class="group-title"><span>Working now</span><span class="count">{props.running.length}</span><span class="rule"></span></h2>
+      <div class="now-grid">
+        {props.running.map((row, i) => <RunningRow key={`${row.project}:${row.sessionId}`} row={row} now={now} ticker={i < 3} />)}
+      </div>
+    </section>
   );
 }
 
@@ -314,7 +328,7 @@ function RunBarRow(props: { bar: AgentRuns; max: number }) {
  *  tiles above it are the quantitative half). */
 function RunsByAgent(props: { sessions: SessionRow[]; loading: boolean }) {
   const [expanded, setExpanded] = useState(false);
-  const all = tallyRunsByAgent(props.sessions);
+  const all = useMemo(() => tallyRunsByAgent(props.sessions), [props.sessions]);
   const bars = expanded ? all : all.slice(0, TOP_AGENTS);
   // Off the full list, so bar lengths don't rescale when the tail unfolds.
   const max = Math.max(1, ...all.map((b) => b.total));
@@ -650,6 +664,39 @@ function formatClock(now: number): string {
   return `${day} · ${time}`;
 }
 
+/** The header clock line ticks once a second; isolating it keeps that tick
+ *  from re-rendering the whole page. */
+function HomeClock() {
+  const now = useNow(true);
+  return <div class="home-date">{formatClock(now)}</div>;
+}
+
+/** "· next run <agent> in 12:34" for the header stat line. Owns its own 1s
+ *  clock and the post-fire refetch loop. */
+function NextRunStat(props: { nextSchedule: { at: number; agentPath: string }; refetch: () => void }) {
+  const now = useNow(true);
+  const countdownMs = props.nextSchedule.at - now;
+  // When the countdown fires, the schedule's nextRun is stale until the
+  // scheduler actually triggers (jitter can hold it past zero); keep
+  // refetching every few seconds until nextRun rolls forward so the hero
+  // never hangs on a fired schedule.
+  const countdownFired = countdownMs <= 0;
+  const { refetch } = props;
+  useEffect(() => {
+    if (!countdownFired) return;
+    const timer = setInterval(() => refetch(), 4000);
+    return () => clearInterval(timer);
+  }, [countdownFired, refetch]);
+  return (
+    <>
+      {' '}· next run <span class="home-stat-agent">{props.nextSchedule.agentPath.replace(/\.agentuse$/, '')}</span>
+      {countdownFired
+        ? <> <span class="home-countdown">is starting…</span></>
+        : <> in <span class="home-countdown">{formatCountdown(countdownMs)}</span></>}
+    </>
+  );
+}
+
 export default function Home() {
   useTitle(pageTitle());
   const [previewRequested] = useState(() => consumeUpdatePreview());
@@ -673,7 +720,7 @@ export default function Home() {
   // Soonest upcoming scheduled run powers the hero countdown; refresh often
   // enough that a fired schedule rolls over to the next one without a reload.
   const schedules = useFetch('home-schedules', () => fetchSchedules(), { refreshMs: 60_000, enabled: primaryReady });
-  const nextSchedule = (() => {
+  const nextSchedule = useMemo(() => {
     let best: { at: number; agentPath: string } | null = null;
     for (const s of schedules.data?.schedules ?? []) {
       if (!s.enabled || !s.nextRun) continue;
@@ -682,7 +729,7 @@ export default function Home() {
       if (!best || at < best.at) best = { at, agentPath: s.agentPath };
     }
     return best;
-  })();
+  }, [schedules.data]);
 
   // Agent-recorded business metrics (reserved "metrics" store). Missing store
   // is normal and returns empty rows, so the section simply doesn't render.
@@ -699,16 +746,17 @@ export default function Home() {
     }
     setMetricsWindowState(days);
   };
-  const metricAggs = aggregateMetrics(metricRows.data, metricsWindow);
-  const hasAnyMetrics = metricsWindow === 30
-    ? metricAggs.length > 0
-    : aggregateMetrics(metricRows.data, 30).length > 0;
+  const metricAggs = useMemo(() => aggregateMetrics(metricRows.data, metricsWindow), [metricRows.data, metricsWindow]);
+  const hasAnyMetrics = useMemo(
+    () => (metricsWindow === 30 ? metricAggs : aggregateMetrics(metricRows.data, 30)).length > 0,
+    [metricRows.data, metricsWindow, metricAggs]
+  );
 
   // Per-viewer tile customization: manual order, hidden metrics, and per-metric
   // display. Edit mode keeps hidden tiles on the board so they can come back.
   const metricPrefs = useMetricPrefs();
   const [editMetrics, setEditMetrics] = useState(false);
-  const orderedAggs = orderMetrics(metricAggs, metricPrefs.prefs.order);
+  const orderedAggs = useMemo(() => orderMetrics(metricAggs, metricPrefs.prefs.order), [metricAggs, metricPrefs.prefs.order]);
   const shownAggs = editMetrics
     ? orderedAggs
     : orderedAggs.filter((agg) => !metricPrefs.prefs.hidden.includes(agg.metric));
@@ -727,11 +775,17 @@ export default function Home() {
   const sections = useHomeSections();
   // The guided demo is product education, not fleet activity, so exclude it
   // from operational counts, attention queues, charts, and the activity feed.
-  const operationalSessions = liveHome.sessions.filter((session) => session.trigger !== 'onboarding');
-  const running = operationalSessions.filter(isLiveRow);
+  const operationalSessions = useMemo(
+    () => liveHome.sessions.filter((session) => session.trigger !== 'onboarding'),
+    [liveHome.sessions]
+  );
+  const running = useMemo(() => operationalSessions.filter(isLiveRow), [operationalSessions]);
   // subagentActive rows are live work (counted in `running`), not blocked on a
   // human, so they must not also show up as waiting.
-  const waiting = operationalSessions.filter((s) => s.status === 'suspended' && !s.subagentActive);
+  const waiting = useMemo(
+    () => operationalSessions.filter((s) => s.status === 'suspended' && !s.subagentActive),
+    [operationalSessions]
+  );
   // Recent failures surface in "Needs your attention" alongside pending gates.
   // Not every failed-tone run is waiting on a human: runs the reviewer stopped
   // themselves (USER_STOPPED) or already reviewed and discarded (dismissedAt,
@@ -747,40 +801,28 @@ export default function Home() {
         attentionState.restoreAttentionSession(identity);
       });
   }, [attentionState.dismissAttentionSession, attentionState.restoreAttentionSession]);
+  const dismissedAttention = attentionState.dismissedAttentionSessions;
   // Not truncated here: the section itself folds the tail behind "show all", so
   // the header count is the real number of runs waiting on a review.
-  const failedRecent = operationalSessions
+  const failedRecent = useMemo(() => operationalSessions
     .filter((s) => runTone(s.status) === 'failed' && s.errorCode !== 'USER_STOPPED' && s.dismissedAt === undefined
-      && !isAttentionSessionDismissed(attentionState.dismissedAttentionSessions, s))
-    .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
+      && !isAttentionSessionDismissed(dismissedAttention, s))
+    .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)), [operationalSessions, dismissedAttention]);
   // Runs parked on a delegated sub-agent that has since ended. They read as
   // `suspended`, so neither the failed filter above nor the pending-gate list
   // catches them, yet nothing will ever move them: the only way out is a human
   // stopping the run. Dismissing one stops it, which is exactly the fix.
-  const strandedRecent = operationalSessions
-    .filter((s) => liveHome.suspendedGates.orphaned.has(sessionRowKey(s)) && s.dismissedAt === undefined
-      && !isAttentionSessionDismissed(attentionState.dismissedAttentionSessions, s))
-    .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
+  const orphanedGates = liveHome.suspendedGates.orphaned;
+  const strandedRecent = useMemo(() => operationalSessions
+    .filter((s) => orphanedGates.has(sessionRowKey(s)) && s.dismissedAt === undefined
+      && !isAttentionSessionDismissed(dismissedAttention, s))
+    .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)), [operationalSessions, orphanedGates, dismissedAttention]);
   const pendingApprovals = liveHome.pendingApprovals;
   // Suspended rows with no live or expired gate are mid-flight (a delegated
   // leaf running under a decided cascade approval, or a resume in progress),
   // so don't advertise them as blocked on a human.
   const allWaitingResuming = liveHome.suspendedGates.loaded && waiting.every((s) =>
     !liveHome.suspendedGates.pending.has(sessionRowKey(s)) && !liveHome.suspendedGates.expired.has(sessionRowKey(s)));
-  // Always ticking: the header carries a live clock, not just timers.
-  const now = useNow(true);
-
-  // When the countdown fires, the schedule's nextRun is stale until the
-  // scheduler actually triggers (jitter can hold it past zero); keep
-  // refetching every few seconds until nextRun rolls forward so the hero
-  // never hangs on a fired schedule.
-  const countdownMs = nextSchedule ? nextSchedule.at - now : null;
-  const countdownFired = countdownMs !== null && countdownMs <= 0;
-  useEffect(() => {
-    if (!countdownFired) return;
-    const timer = setInterval(() => schedules.refetch(), 4000);
-    return () => clearInterval(timer);
-  }, [countdownFired, schedules.refetch]);
 
   const projects = data?.projects ?? [];
   const noProjects = Boolean(data) && projects.length === 0;
@@ -811,7 +853,7 @@ export default function Home() {
           ? <UpdateBanner update={previewUpdate(data.version)} persistDismissal={false} />
           : data?.update && <UpdateBanner update={data.update} />}
         <header class="home-head" aria-live="polite">
-          <div class="home-date">{formatClock(now)}</div>
+          <HomeClock />
           <h1 class="home-sentence">
             <span class={`hero-dot${running.length > 0 ? ' on' : ''}`} aria-hidden="true"></span>
             {running.length === 0
@@ -832,27 +874,13 @@ export default function Home() {
                   {failed24h > 0 && <> · <a class="home-stat-failed" href="/sessions?status=error">{failed24h} failed</a></>}
                 </>
               : 'No runs in the last 24 hours'}
-            {nextSchedule && countdownMs !== null && (
-              <>
-                {' '}· next run <span class="home-stat-agent">{nextSchedule.agentPath.replace(/\.agentuse$/, '')}</span>
-                {countdownFired
-                  ? <> <span class="home-countdown">is starting…</span></>
-                  : <> in <span class="home-countdown">{formatCountdown(countdownMs)}</span></>}
-              </>
-            )}
+            {nextSchedule && <NextRunStat nextSchedule={nextSchedule} refetch={schedules.refetch} />}
           </div>
           {error && <div class="errors" role="alert">Failed to load: {error.message}</div>}
           {liveHome.error && <div class="errors" role="alert">Failed to load sessions: {liveHome.error.message}</div>}
         </header>
 
-        {sections.isVisible('running') && running.length > 0 && (
-          <section class="group">
-            <h2 class="group-title"><span>Working now</span><span class="count">{running.length}</span><span class="rule"></span></h2>
-            <div class="now-grid">
-              {running.map((row, i) => <RunningRow key={`${row.project}:${row.sessionId}`} row={row} now={now} ticker={i < 3} />)}
-            </div>
-          </section>
-        )}
+        {sections.isVisible('running') && running.length > 0 && <WorkingNow running={running} />}
 
         {sections.isVisible('attention') && (
           <AttentionSection pending={liveHome.pendingRows} failed={failedRecent} stranded={strandedRecent} onDismissFailed={dismissFailed} />
