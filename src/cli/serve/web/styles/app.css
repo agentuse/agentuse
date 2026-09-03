@@ -6179,6 +6179,7 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   color: var(--muted); font-family: var(--sans); font-size: var(--font-size-micro); text-transform: uppercase; letter-spacing: normal;
 }
 .provider-status.is-ready { border-color: var(--green-border); background: var(--green-soft); color: var(--green); }
+.provider-status.is-warning { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
 @media (max-width: 560px) {
   .provider-settings-row { flex-direction: column; align-items: stretch; }
   .provider-settings-control { justify-content: flex-start; }

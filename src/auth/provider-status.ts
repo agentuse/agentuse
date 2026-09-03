@@ -4,7 +4,14 @@ import {
   OPENCODE_GO_DISPLAY_NAME,
   OPENCODE_GO_PROVIDER_ID,
 } from '../providers/opencode-go.js';
-import { getProviderAdapters, loadProviderPlugins, providerPluginAuthStatus } from '../plugin/provider-runtime.js';
+import {
+  checkProviderReadiness,
+  describeReadinessFailure,
+  getProviderAdapters,
+  loadProviderPlugins,
+  providerPluginAuthStatus,
+  type ProviderReadiness,
+} from '../plugin/provider-runtime.js';
 import { PROVIDER_PLUGIN_REGISTRY } from '../plugin/provider-registry.js';
 
 export type ProviderAuthSourceKind = 'oauth' | 'api_key' | 'environment';
@@ -21,9 +28,12 @@ export interface ProviderAuthSourceStatus {
 export interface ProviderAuthStatus {
   id: string;
   name: string;
+  /** Usable now: credentials present (when required) and the readiness check passed. */
   configured: boolean;
   sources: ProviderAuthSourceStatus[];
   actionRequired?: string;
+  /** Result of the plugin's `check()` hook; absent for providers without one. */
+  readiness?: ProviderReadiness;
 }
 
 export interface CustomProviderStatus {
@@ -146,11 +156,14 @@ export async function getProviderStatus(): Promise<ProviderStatus> {
     // A plugin without auth methods (e.g. one wrapping a local CLI) needs no
     // credential, so it is usable as soon as it is installed.
     const sources = plugin.auth ? await providerPluginAuthStatus(plugin) : [];
+    const readiness = plugin.check ? await checkProviderReadiness(plugin) : undefined;
     providers.push({
       id: plugin.id,
       name: plugin.name,
-      configured: !plugin.auth || sources.length > 0,
+      configured: (!plugin.auth || sources.length > 0) && (readiness?.ok ?? true),
       sources,
+      ...(readiness && { readiness }),
+      ...(readiness && !readiness.ok && { actionRequired: describeReadinessFailure(plugin, readiness) }),
     });
   }
 

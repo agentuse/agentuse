@@ -377,7 +377,26 @@ export interface ProviderDefinition {
   prompts?: ProviderPromptDefinition;
   media?: { image: boolean; pdf: boolean };
   override?: boolean;
+  /**
+   * Reports whether the provider can serve requests right now beyond having
+   * credentials, e.g. a bridged local CLI being installed. Failures surface in
+   * `agentuse provider list`, the dashboard, and as the error of a run that
+   * selects this provider.
+   */
+  check?(context: ProviderCheckContext): ProviderCheckResult | Promise<ProviderCheckResult>;
 }
+
+export interface ProviderCheckContext {
+  env: Readonly<Record<string, string | undefined>>;
+  signal: AbortSignal;
+  log: PluginLogger;
+}
+
+export type ProviderCheckResult =
+  /** `detail` is shown next to the connected badge, e.g. "pi 0.9.1". */
+  | { ok: true; detail?: string }
+  /** `message` says what is missing; `fix` is a command the user can run. */
+  | { ok: false; message: string; fix?: string };
 
 /**
  * A conditional transport contributed to an existing provider namespace.
@@ -393,6 +412,8 @@ export interface ProviderAdapter {
   media?: { image: boolean; pdf: boolean };
   priority?: number;
   when(context: ProviderRuntimeContext): boolean | Promise<boolean>;
+  /** See {@link ProviderDefinition.check}. */
+  check?(context: ProviderCheckContext): ProviderCheckResult | Promise<ProviderCheckResult>;
 }
 
 export interface ProviderPatch {

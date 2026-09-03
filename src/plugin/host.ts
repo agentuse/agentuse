@@ -81,6 +81,7 @@ function validateProviderAdapter(providerId: string, adapter: ProviderAdapter, i
     ...(adapter.auth && { auth: adapter.auth }),
     ...(adapter.prompts && { prompts: adapter.prompts }),
     ...(adapter.media && { media: adapter.media }),
+    ...(adapter.check && { check: adapter.check }),
   }, identity);
 }
 

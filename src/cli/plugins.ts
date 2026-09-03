@@ -7,7 +7,8 @@ import {
   updatePlugins,
   type PluginInstallOptions,
 } from '../plugin/provider-installer';
-import { readInstalledPluginRecords } from '../plugin/provider-runtime';
+import { getInstalledPluginHost, readInstalledPluginRecords, resetProviderPluginCache } from '../plugin/provider-runtime';
+import { getProviderStatus } from '../auth/provider-status';
 import { logger } from '../utils/logger';
 
 /** Print one actionable line instead of a Node stack trace. */
@@ -20,6 +21,25 @@ function run<T extends unknown[]>(action: (...args: T) => Promise<void>): (...ar
       process.exit(1);
     }
   };
+}
+
+/**
+ * After install or update, say right away when a contributed provider still
+ * needs something on this machine (a bridged CLI, for example) instead of
+ * letting the first agent run discover it.
+ */
+async function reportProviderReadiness(pluginNames: string[]): Promise<void> {
+  resetProviderPluginCache();
+  const host = await getInstalledPluginHost();
+  const owned = new Set(host.listProviderContributions()
+    .filter((contribution) => pluginNames.includes(contribution.owner.name))
+    .map((contribution) => contribution.providerId));
+  if (owned.size === 0) return;
+  const { providers } = await getProviderStatus();
+  for (const provider of providers.filter((item) => owned.has(item.id))) {
+    if (provider.readiness && !provider.readiness.ok) process.stdout.write(`⚠️  ${provider.name} - ${provider.actionRequired}\n`);
+    else if (provider.readiness?.ok) process.stdout.write(`✅ ${provider.name} ready${provider.readiness.detail ? ` (${provider.readiness.detail})` : ''}\n`);
+  }
 }
 
 function scopeOptions(command: Command): Command {
@@ -37,6 +57,7 @@ export function createInstallCommand(name = 'install'): Command {
     .action(run(async (source: string, value: { local?: boolean }) => {
       const plugin = await installPlugin(source, options(value));
       process.stdout.write(`Installed ${plugin.name}@${plugin.version} (${plugin.scope})\n`);
+      await reportProviderReadiness([plugin.name]);
     }));
 }
 
@@ -48,6 +69,7 @@ export function createUpdateCommand(name = 'update'): Command {
       const plugins = await updatePlugins(packageName, options(value));
       if (plugins.length === 0) process.stdout.write('No plugins installed\n');
       for (const plugin of plugins) process.stdout.write(`Updated ${plugin.name}@${plugin.version}\n`);
+      await reportProviderReadiness(plugins.map((plugin) => plugin.name));
     }));
 }
 

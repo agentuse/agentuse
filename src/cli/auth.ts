@@ -532,6 +532,7 @@ Use these only when an endpoint reports a protocol compatibility error.
           const priorityLabel = `[${source.priority}]`;
           process.stdout.write(`  ${priorityLabel} ${icon} ${source.name}${activeMarker}\n`);
         }
+        if (provider.readiness?.ok) process.stdout.write(`  ✅ ready${provider.readiness.detail ? ` (${provider.readiness.detail})` : ''}\n`);
         if (provider.actionRequired) process.stdout.write(`  ⚠️  ${provider.actionRequired}\n`);
         process.stdout.write("\n");
       }

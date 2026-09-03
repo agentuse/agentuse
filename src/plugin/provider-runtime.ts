@@ -39,6 +39,7 @@ import type {
   PluginLogger,
   ProviderAuthContext,
   ProviderAuthMethod,
+  ProviderCheckResult,
   ProviderDefinition,
   ProviderAdapter,
   ProviderFinishReason,
@@ -212,6 +213,7 @@ function adapterProvider(providerId: string, adapter: ProviderAdapter): Provider
     ...(adapter.auth && { auth: adapter.auth }),
     ...(adapter.prompts && { prompts: adapter.prompts }),
     ...(adapter.media && { media: adapter.media }),
+    ...(adapter.check && { check: adapter.check }),
   };
 }
 
@@ -363,6 +365,47 @@ function authContext(name: string, signal?: AbortSignal): ProviderAuthContext {
     env: process.env,
     log: hostLogger(name),
   };
+}
+
+export interface ProviderReadiness {
+  ok: boolean;
+  /** Short note beside a ready provider, e.g. the bridged CLI version. */
+  detail?: string;
+  /** What is missing when the provider is not ready. */
+  message?: string;
+  /** Command the user can run to resolve `message`. */
+  fix?: string;
+}
+
+const READINESS_CHECK_TIMEOUT_MS = 10_000;
+
+/**
+ * Runs a provider's optional `check()` hook. A missing hook is ready; a hook
+ * that throws or hangs is reported as not ready so a broken bridge never
+ * reads as "Connected".
+ */
+export async function checkProviderReadiness(provider: ProviderDefinition): Promise<ProviderReadiness> {
+  if (!provider.check) return { ok: true };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), READINESS_CHECK_TIMEOUT_MS);
+  try {
+    const result: ProviderCheckResult = await Promise.race([
+      provider.check({ env: process.env, signal: controller.signal, log: hostLogger(provider.id) }),
+      new Promise<never>((_, reject) => controller.signal.addEventListener('abort', () => reject(new Error('readiness check timed out')), { once: true })),
+    ]);
+    return result.ok
+      ? { ok: true, ...(result.detail && { detail: result.detail }) }
+      : { ok: false, message: result.message, ...(result.fix && { fix: result.fix }) };
+  } catch (error) {
+    return { ok: false, message: `${provider.name} readiness check failed: ${error instanceof Error ? error.message : String(error)}` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** One-line form of a failed readiness result for CLI output and errors. */
+export function describeReadinessFailure(provider: ProviderDefinition, readiness: ProviderReadiness): string {
+  return `${readiness.message ?? `${provider.name} is not ready`}${readiness.fix ? ` Fix: ${readiness.fix}` : ''}`;
 }
 
 async function readCredential(providerId: string, method: ProviderAuthMethod): Promise<PluginCredential | undefined> {
@@ -727,6 +770,8 @@ export function createCustomProviderModel(provider: ProviderDefinition, modelId:
 
 export async function createProviderPluginModel(provider: ProviderDefinition, modelId: string, sessionId?: string): Promise<LanguageModel> {
   await loadProviderPlugins();
+  const readiness = await checkProviderReadiness(provider);
+  if (!readiness.ok) throw new Error(describeReadinessFailure(provider, readiness));
   if (provider.transport.kind === 'custom') return createCustomProviderModel(provider, modelId, sessionId);
   const context = createProviderPluginContext(provider, modelId, undefined, sessionId);
 

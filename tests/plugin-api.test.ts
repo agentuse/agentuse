@@ -317,6 +317,57 @@ describe('project-local activation scope', () => {
     expect(await getProviderPatch('scoped-provider')).toBeUndefined();
   });
 
+  it('reports a failed readiness check as not configured and refuses to build the model', async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-readiness-plugin-'));
+    const plugins = path.join(root, 'plugins');
+    const dataDir = path.join(root, 'data');
+    await fs.mkdir(plugins);
+    await fs.mkdir(path.join(dataDir, 'plugins'), { recursive: true });
+    await fs.writeFile(path.join(plugins, 'local.js'), `
+      export default function (agentuse) {
+        agentuse.registerProvider({
+          id: 'bridge', name: 'Bridge',
+          models: [{ id: 'model', name: 'Model', input: ['text'], reasoning: false, contextWindow: 1000, maxOutputTokens: 100 }],
+          transport: { kind: 'openai-chat-completions', baseURL: 'http://localhost:1234/v1' },
+          check: (context) => context.env.BRIDGE_READY === '1'
+            ? { ok: true, detail: 'bridge 1.0' }
+            : { ok: false, message: 'Bridge CLI not found.', fix: 'npm install -g bridge' },
+        });
+      }
+    `);
+    oldDataDir = process.env.AGENTUSE_DATA_DIR;
+    process.env.AGENTUSE_DATA_DIR = dataDir;
+    delete process.env.BRIDGE_READY;
+    resetProviderPluginCache();
+    const manager = new PluginManager();
+    await manager.loadPlugins([plugins]);
+
+    const missing = (await getProviderStatus()).providers.find((provider) => provider.id === 'bridge');
+    expect(missing).toMatchObject({
+      configured: false,
+      readiness: { ok: false, message: 'Bridge CLI not found.', fix: 'npm install -g bridge' },
+      actionRequired: 'Bridge CLI not found. Fix: npm install -g bridge',
+    });
+    // try/catch rather than expect().rejects: the matcher's continuation
+    // leaves the plugin activation scope that the follow-up status read needs.
+    let failure: unknown;
+    try {
+      await createModel('bridge:model');
+    } catch (error) {
+      failure = error;
+    }
+    expect((failure as Error).message).toBe('Bridge CLI not found. Fix: npm install -g bridge');
+
+    process.env.BRIDGE_READY = '1';
+    try {
+      const ready = (await getProviderStatus()).providers.find((provider) => provider.id === 'bridge');
+      expect(ready).toMatchObject({ configured: true, readiness: { ok: true, detail: 'bridge 1.0' } });
+      expect(ready?.actionRequired).toBeUndefined();
+    } finally {
+      delete process.env.BRIDGE_READY;
+    }
+  });
+
   it('activates a built-in provider adapter only when its credential predicate matches', async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-extension-plugin-'));
     const plugins = path.join(root, 'plugins');

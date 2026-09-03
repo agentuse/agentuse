@@ -295,6 +295,39 @@ Login interaction is UI-neutral and supports browser authorization, device codes
 
 Credentials with a numeric `expires` property are refreshed five minutes before expiry. AgentUse serializes refreshes and persists the returned credential before resolving request authentication. Declared environment credentials are resolved first, so an explicit process token is never blocked by an expired stored credential. When an adapter takes ownership of legacy provider OAuth, AgentUse moves it atomically into the adapter's method-specific credential slot.
 
+### Readiness checks
+
+A provider that needs something on the machine besides a credential, such as a
+bridged local CLI, declares an optional `check()`. AgentUse runs it for
+`agentuse provider list`, the dashboard Providers tab, and right after
+`agentuse plugins install`, and refuses to build a model for the provider while
+it fails, so an installed bridge never reports as connected when it cannot run.
+
+```ts
+agentuse.registerProvider({
+  id: 'acme-cli',
+  name: 'Acme CLI',
+  models: discoverAcmeModels,
+  transport: { kind: 'custom', apiVersion: 1, stream: streamAcme },
+  async check({ env, signal }) {
+    try {
+      const version = await runAcme(['--version'], { env, signal });
+      return { ok: true, detail: `acme ${version}` };
+    } catch (error) {
+      return {
+        ok: false,
+        message: `Acme CLI not found: ${error.message}.`,
+        fix: 'npm install -g @acme/cli',
+      };
+    }
+  },
+});
+```
+
+`detail` is shown beside the connected badge. `message` says what is missing
+and `fix` is a command the user can run. A check that throws or takes longer
+than ten seconds counts as not ready.
+
 ### Provider-owned prompts
 
 Prompt contributions have stable IDs and ownership metadata:

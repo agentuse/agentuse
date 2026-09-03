@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { ProviderAuthSourceStatus, ProviderStatus } from '../../../../auth/provider-status';
+import type { ProviderAuthSourceStatus, ProviderAuthStatus, ProviderStatus } from '../../../../auth/provider-status';
 import {
   checkCustomProvider,
   completeProviderPluginOAuth,
@@ -402,6 +402,22 @@ export function ProviderSetupDialog(props: {
   );
 }
 
+/**
+ * Plugin rows have no dashboard login dialog. A failed readiness check (say a
+ * bridged CLI that is not installed) explains itself here, with the fix
+ * command, so the row never reads "Connected" for something that cannot run.
+ */
+function pluginProviderHint(status: ProviderAuthStatus) {
+  if (status.readiness && !status.readiness.ok) {
+    return <>{status.readiness.message}{status.readiness.fix && <> Fix: <code>{status.readiness.fix}</code></>}</>;
+  }
+  if (status.configured) {
+    const source = status.sources.find((item) => item.active)?.name ?? 'Connected';
+    return status.readiness?.detail ? `${source} · ${status.readiness.detail}` : source;
+  }
+  return <>Connect with <code>agentuse provider login {status.id}</code></>;
+}
+
 export function ProviderSettingsGroup() {
   const [payload, setPayload] = useState<ProviderSetupPayload | null>(null);
   const [dialog, setDialog] = useState<{
@@ -455,6 +471,7 @@ export function ProviderSettingsGroup() {
   };
   const removeCustom = (name: string) => run(`custom:${name}`, () => removeCustomProvider(name), 'Could not remove provider.');
   const refreshCustom = (name: string) => run(`refresh:${name}`, () => refreshCustomProviderModels(name), 'Could not refresh models.');
+  const recheck = () => run('recheck', () => fetchProviderSetup(), 'Could not recheck providers.');
   const continueUpgrade = (plugin: string, provider: string) => run(`plugin:${plugin}`, () => installProviderPlugin(plugin), 'Could not install provider plugin.', (next) => {
     if (!next.status.providers.find((item) => item.id === provider)?.configured) {
       setDialog({
@@ -519,10 +536,11 @@ export function ProviderSettingsGroup() {
           <div class="settings-row provider-settings-row" key={status.id}>
             <div class="settings-row-text">
               <div class="settings-row-label">{status.name}</div>
-              <div class="settings-row-hint">{plugin ? `via ${plugin.name} · ` : ''}{status.configured ? status.sources.find((source) => source.active)?.name ?? 'Connected' : <>Connect with <code>agentuse provider login {status.id}</code></>}</div>
+              <div class="settings-row-hint">{plugin ? `via ${plugin.name} · ` : ''}{pluginProviderHint(status)}</div>
             </div>
             <div class="settings-row-control provider-settings-control">
-              <span class={`provider-status${status.configured ? ' is-ready' : ''}`}>{status.configured ? 'Connected' : 'Not connected'}</span>
+              <span class={`provider-status${status.configured ? ' is-ready' : status.readiness && !status.readiness.ok ? ' is-warning' : ''}`}>{status.configured ? 'Connected' : status.readiness && !status.readiness.ok ? 'Needs setup' : 'Not connected'}</span>
+              {status.readiness && <button type="button" class="settings-item" disabled={busyKey === 'recheck'} onClick={() => void recheck()}>{busyKey === 'recheck' ? 'Checking…' : 'Recheck'}</button>}
               {status.sources.filter((source) => source.stored).map((source) => {
                 const removeKey = credentialKey(status.id, source);
                 return <button key={removeKey} type="button" class="settings-item" disabled={busyKey === removeKey} onClick={() => void remove(status.id, source)}>Remove {source.kind === 'oauth' ? 'OAuth' : 'key'}</button>;
