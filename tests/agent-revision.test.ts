@@ -256,6 +256,17 @@ describe('internal agent revision', () => {
     })).rejects.toThrow('must not add an explicit agent name');
   });
 
+  it('rejects an unknown runtime model and names the valid ids for that provider', async () => {
+    const f = await fixture({ explicitName: false });
+    const tool = createSubmitAgentRevisionTool({}, f.contract);
+    await expect((tool.execute as any)({
+      outcome: 'revision-proposed',
+      diagnosis: 'The operator asked for a different model.',
+      summary: 'Switch model.',
+      edits: [{ oldText: 'model: openai:gpt-5.6-luna', newText: 'model: openai:gpt-5.6-lunar' }],
+    })).rejects.toThrow('unavailable runtime model: openai:gpt-5.6-lunar. Available openai models: openai:gpt-5.6-luna');
+  });
+
   it('rejects ambiguous or no-op edits instead of guessing which source fragment to replace', async () => {
     const f = await fixture();
     const tool = createSubmitAgentRevisionTool({}, f.contract);

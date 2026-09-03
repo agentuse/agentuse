@@ -238,7 +238,12 @@ function validateRevisionSource(input: {
   }
   if (!proposed.instructions.trim()) throw new Error('The revised agent must include instructions');
   if (proposed.config.model !== current.config.model && !input.availableModels.includes(proposed.config.model)) {
-    throw new Error(`The revision selected an unavailable runtime model: ${proposed.config.model}`);
+    const provider = proposed.config.model.split(':')[0];
+    const sameProvider = input.availableModels.filter((model) => model.startsWith(`${provider}:`));
+    const hint = sameProvider.length > 0
+      ? `Available ${provider} models: ${sameProvider.join(', ')}`
+      : `Available models: ${input.availableModels.join(', ')}`;
+    throw new Error(`The revision selected an unavailable runtime model: ${proposed.config.model}. ${hint}`);
   }
 
   const availableSkills = new Set(input.availableSkills);
