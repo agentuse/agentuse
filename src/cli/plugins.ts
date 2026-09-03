@@ -52,7 +52,7 @@ function options(value: { local?: boolean }): PluginInstallOptions {
 
 export function createInstallCommand(name = 'install'): Command {
   return scopeOptions(new Command(name)
-    .description('Install an AgentUse plugin from GitHub or a local Git checkout')
+    .description('Install an AgentUse plugin from GitHub, or link a local folder')
     .argument('<source>', 'Git source, optionally followed by @tag, @branch, or @commit'))
     .action(run(async (source: string, value: { local?: boolean }) => {
       const plugin = await installPlugin(source, options(value));

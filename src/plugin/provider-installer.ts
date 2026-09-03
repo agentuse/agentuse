@@ -118,7 +118,7 @@ export function resolvePluginSource(source: string): ResolvedSource {
     if (/^git@github\.com:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/.test(split.source)) {
       return { url: split.source, ...(split.ref && { ref: split.ref }) };
     }
-    throw new Error('Plugin source must be a local Git checkout, owner/repo, github:owner/repo, or a GitHub Git URL');
+    throw new Error('Plugin source must be a local directory path, owner/repo, github:owner/repo, or a GitHub Git URL');
   }
 }
 
@@ -270,17 +270,6 @@ async function installRuntimeDependencies(root: string): Promise<void> {
   }
 }
 
-async function assertLocalGitCheckout(resolvedSource: ResolvedSource): Promise<void> {
-  try {
-    await exec('git', ['-C', resolvedSource.url, 'rev-parse', '--is-inside-work-tree']);
-  } catch {
-    throw new Error(
-      `${resolvedSource.url} is not a Git repository. Global installs copy a Git checkout, so run \`git init\` and commit there first, `
-      + 'or use `agentuse plugin install --local <path>` to link the folder into the current project as-is.',
-    );
-  }
-}
-
 async function cloneAndInspect(source: string, options?: PluginInstallOptions): Promise<{
   staging: string;
   record: Omit<InstalledPluginRecord, 'installedAt' | 'updatedAt'>;
@@ -289,7 +278,6 @@ async function cloneAndInspect(source: string, options?: PluginInstallOptions): 
   await mkdir(home, { recursive: true });
   const staging = await mkdtemp(join(home, '.install-'));
   const resolvedSource = resolvePluginSource(source);
-  if (isLocalPath(source)) await assertLocalGitCheckout(resolvedSource);
   try {
     await cloneResolvedSource(staging, resolvedSource);
     await installRuntimeDependencies(staging);
@@ -315,9 +303,10 @@ async function cloneAndInspect(source: string, options?: PluginInstallOptions): 
   }
 }
 
-async function inspectLinkedPlugin(source: string, options: PluginInstallOptions): Promise<InstalledPluginRecord> {
+async function inspectLinkedPlugin(source: string, options?: PluginInstallOptions): Promise<InstalledPluginRecord> {
   const directory = resolve(source);
-  const { manifest, host } = await loadPluginPackageDirectory(directory, 'project');
+  const scope = options?.local ? 'project' : 'global';
+  const { manifest, host } = await loadPluginPackageDirectory(directory, scope);
   await host.dispose();
   const now = new Date().toISOString();
   return {
@@ -326,8 +315,8 @@ async function inspectLinkedPlugin(source: string, options: PluginInstallOptions
     source,
     directory,
     linked: true,
-    scope: 'project',
-    projectRoot: projectRoot(options),
+    scope,
+    ...(options?.local && { projectRoot: projectRoot(options) }),
     installedAt: now,
     updatedAt: now,
   };
@@ -335,8 +324,10 @@ async function inspectLinkedPlugin(source: string, options: PluginInstallOptions
 
 export async function installPlugin(source: string, options?: PluginInstallOptions): Promise<InstalledPluginRecord> {
   const records = options?.local ? await readProjectPluginRecords(options) : await readInstalledPluginRecords();
+  // A path on disk always links (edits are live); only a path pinned to a full
+  // commit, or a remote source, is cloned into the managed plugin home.
   const resolvedLocal = isLocalPath(source) ? resolvePluginSource(source) : undefined;
-  if (options?.local && resolvedLocal && !resolvedLocal.ref) {
+  if (resolvedLocal && !resolvedLocal.ref) {
     const record = await inspectLinkedPlugin(source, options);
     const existing = records.find((item) => item.name === record.name);
     if (existing) throw new Error(`Plugin '${existing.name}' is already installed; run agentuse plugins update ${existing.name}`);
@@ -375,7 +366,7 @@ export async function updatePlugins(name?: string, options?: PluginInstallOption
   const results: InstalledPluginRecord[] = [];
   for (const current of targets) {
     if (current.linked) {
-      const { manifest, host } = await loadPluginPackageDirectory(current.directory, 'project');
+      const { manifest, host } = await loadPluginPackageDirectory(current.directory, current.scope);
       await host.dispose();
       if (manifest.name !== current.name) {
         throw new Error(`Linked plugin changed name from '${current.name}' to '${manifest.name}'`);

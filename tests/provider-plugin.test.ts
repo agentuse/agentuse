@@ -106,7 +106,7 @@ describe('plugin lifecycle', () => {
     }
   });
 
-  it('installs, updates, and uninstalls an independently versioned Git repository', async () => {
+  it('links an unpinned local Git checkout in place instead of cloning it', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-plugin-lifecycle-test-'));
     const source = path.join(root, 'source');
     const dataDir = path.join(root, 'data');
@@ -128,8 +128,7 @@ describe('plugin lifecycle', () => {
     git('commit', '-m', 'initial');
     try {
       const installed = await installPlugin(source);
-      expect(installed.version).toBe('1.0.0');
-      expect(await fs.stat(installed.directory)).toBeTruthy();
+      expect(installed).toMatchObject({ version: '1.0.0', directory: source, linked: true, scope: 'global' });
 
       await fs.writeFile(path.join(source, 'package.json'), JSON.stringify({
         name: 'lifecycle-provider', version: '1.1.0', agentuse: { apiVersion: 1, extensions: ['./index.js'] },
@@ -140,7 +139,45 @@ describe('plugin lifecycle', () => {
       expect(updated?.version).toBe('1.1.0');
 
       await removePlugin('lifecycle-provider');
-      await expect(fs.stat(installed.directory)).rejects.toThrow();
+      expect(await fs.stat(source)).toBeTruthy();
+    } finally {
+      if (oldDataDir === undefined) delete process.env.AGENTUSE_DATA_DIR;
+      else process.env.AGENTUSE_DATA_DIR = oldDataDir;
+      resetProviderPluginCache();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('links a plain non-git directory globally without cloning it', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-global-link-test-'));
+    const dataDir = path.join(root, 'data');
+    const source = path.join(root, 'source');
+    await fs.mkdir(source);
+    await fs.writeFile(path.join(source, 'package.json'), JSON.stringify({
+      name: 'global-linked', version: '1.0.0', agentuse: { apiVersion: 1, extensions: ['./index.js'] },
+    }));
+    await fs.writeFile(path.join(source, 'index.js'), 'export default function () {}\n');
+    const oldDataDir = process.env.AGENTUSE_DATA_DIR;
+    process.env.AGENTUSE_DATA_DIR = dataDir;
+    resetProviderPluginCache();
+    try {
+      const installed = await installPlugin(source);
+      expect(installed).toMatchObject({ name: 'global-linked', scope: 'global', directory: source, linked: true });
+      expect(installed.projectRoot).toBeUndefined();
+      expect(installed.commit).toBeUndefined();
+      // Nothing was copied into the managed plugin home.
+      const home = providerPluginHome();
+      const copied = await fs.readdir(home).catch(() => [] as string[]);
+      expect(copied.filter((entry) => !entry.endsWith('.json'))).toEqual([]);
+
+      await fs.writeFile(path.join(source, 'package.json'), JSON.stringify({
+        name: 'global-linked', version: '1.1.0', agentuse: { apiVersion: 1, extensions: ['./index.js'] },
+      }));
+      const [updated] = await updatePlugins('global-linked');
+      expect(updated).toMatchObject({ version: '1.1.0', directory: source, linked: true, scope: 'global' });
+
+      await removePlugin('global-linked');
+      expect(await fs.stat(source)).toBeTruthy();
     } finally {
       if (oldDataDir === undefined) delete process.env.AGENTUSE_DATA_DIR;
       else process.env.AGENTUSE_DATA_DIR = oldDataDir;

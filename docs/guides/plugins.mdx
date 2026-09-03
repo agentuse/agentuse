@@ -483,9 +483,9 @@ agentuse plugins update -l
 agentuse plugins remove -l @example/agentuse-provider
 ```
 
-`agentuse plugins install -l ./my-plugin` links the local directory directly. AgentUse validates and activates its current working tree without cloning it, so uncommitted edits are available on the next process start. Updating a linked plugin revalidates its manifest; removing it only removes the project record and never deletes the source directory.
+`agentuse plugins install ./my-plugin` links the local directory directly, globally by default or into the project with `-l`. AgentUse validates and activates its current working tree without cloning it, so the folder does not need to be a Git repository and uncommitted edits are available on the next process start. Updating a linked plugin revalidates its manifest; removing it only removes the registry record and never deletes the source directory. Append a full commit SHA (`./my-plugin@<sha>`) to clone and pin a local Git checkout instead of linking it.
 
-Global packages live under `$AGENTUSE_DATA_DIR/plugins`, which defaults to `~/.local/share/agentuse/plugins`. Managed project packages live under `.agentuse/packages`; linked project plugins remain in their original directories. Both are recorded in `.agentuse/plugins.json`. `agentuse plugins list --all-scopes` displays every scope and marks linked entries.
+Global packages live under `$AGENTUSE_DATA_DIR/plugins`, which defaults to `~/.local/share/agentuse/plugins`. Managed project packages live under `.agentuse/packages`; linked plugins in either scope remain in their original directories. Both are recorded in `.agentuse/plugins.json`. `agentuse plugins list --all-scopes` displays every scope and marks linked entries.
 
 Git tags, branches, and commits can be selected with `@ref`. Updates retain the configured ref. Git installation and updates clone into staging, install safe runtime dependencies, compile and activate every entry, and only then replace the active checkout. A failed validation leaves the working version in place.
 
