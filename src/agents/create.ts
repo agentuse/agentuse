@@ -7,6 +7,7 @@ import { getModelFromRegistry, getSuggestedModelIds } from '../generated/models.
 import { parseAgentContent } from '../parser.js';
 import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go.js';
 import type { ProviderStatus } from '../auth/provider-status.js';
+import { getProviderPlugin, suggestedProviderPluginModels } from '../plugin/provider-runtime.js';
 import { isPathInside } from '../utils/path-policy.js';
 
 export interface AgentCreationProject {
@@ -176,21 +177,15 @@ const BALANCED_CREATOR_DEFAULTS: Readonly<Record<string, string>> = {
   [OPENCODE_GO_PROVIDER_ID]: `${OPENCODE_GO_PROVIDER_ID}:glm-5.3`,
 };
 
-/** ChatGPT OAuth uses the Codex endpoint, whose model surface is intentionally
- * smaller than the OpenAI API registry. Keep creation to one clear fast,
- * balanced, and best option that this transport can actually run. */
-const CHATGPT_OAUTH_CREATION_MODELS = [
-  'openai:gpt-5.6-luna',
-  'openai:gpt-5.6-terra',
-  'openai:gpt-5.6-sol',
-] as const;
-
-function registryModelsForProvider(provider: ProviderStatus['providers'][number]): string[] {
-  const activeSource = provider.sources.find((source) => source.active);
-  const candidates = provider.id === 'openai' && activeSource?.kind === 'oauth' && activeSource.name === 'ChatGPT OAuth'
-    ? CHATGPT_OAUTH_CREATION_MODELS
-    : getSuggestedModelIds().filter((model) => model.startsWith(`${provider.id}:`));
-  return candidates.filter((model) => {
+async function modelsForProvider(provider: ProviderStatus['providers'][number]): Promise<string[]> {
+  // Plugin providers (e.g. `pi:`) are absent from the generated registry, so
+  // their catalog comes from the plugin itself; every plugin model outputs text.
+  const plugin = await getProviderPlugin(provider.id);
+  if (plugin) {
+    return (await suggestedProviderPluginModels(plugin)).map((model) => `${provider.id}:${model.id}`);
+  }
+  return getSuggestedModelIds().filter((model) => {
+    if (!model.startsWith(`${provider.id}:`)) return false;
     const info = getModelFromRegistry(model);
     return info?.modalities.output.length === 1 && info.modalities.output[0] === 'text';
   });
@@ -204,14 +199,14 @@ function orderModels(models: readonly string[], preferredModel: string | undefin
 /** Providers and text-output models available to the dashboard create flow.
  * The optional configured default wins when that provider can run it; otherwise
  * each first-class provider starts on a deliberately balanced authoring model. */
-export function agentCreationProviders(
+export async function agentCreationProviders(
   status: ProviderStatus,
   preferredModel?: string,
-): AgentCreationProvider[] {
+): Promise<AgentCreationProvider[]> {
   const providers: AgentCreationProvider[] = [];
   for (const provider of status.providers) {
     if (!provider.configured) continue;
-    const catalog = registryModelsForProvider(provider);
+    const catalog = await modelsForProvider(provider);
     const models = orderModels(catalog, preferredModel, BALANCED_CREATOR_DEFAULTS[provider.id]);
     providers.push({
       id: provider.id,

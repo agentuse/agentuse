@@ -143,12 +143,13 @@ export async function getProviderStatus(): Promise<ProviderStatus> {
   }
 
   for (const plugin of await loadProviderPlugins()) {
-    if (!plugin.auth) continue;
-    const sources = await providerPluginAuthStatus(plugin);
+    // A plugin without auth methods (e.g. one wrapping a local CLI) needs no
+    // credential, so it is usable as soon as it is installed.
+    const sources = plugin.auth ? await providerPluginAuthStatus(plugin) : [];
     providers.push({
       id: plugin.id,
       name: plugin.name,
-      configured: sources.length > 0,
+      configured: !plugin.auth || sources.length > 0,
       sources,
     });
   }

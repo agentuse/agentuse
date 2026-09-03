@@ -17,8 +17,8 @@ import {
   resolveModelString,
 } from '../utils/model-alias';
 import { loadModelSettings } from '../utils/global-config';
-import { discoverProviderModels, loadProviderPlugins } from '../plugin/provider-runtime';
-import type { ProviderDefinition, ProviderModelDefinition } from '../plugin/types';
+import { loadProviderPlugins, suggestedProviderPluginModels } from '../plugin/provider-runtime';
+import type { ProviderModelDefinition } from '../plugin/types';
 import {
   currentModelsFromRegistry,
   findCurrentModel,
@@ -119,7 +119,7 @@ export function createModelsCommand(): Command {
         ? pluginProviders.filter((item) => item.id === provider)
         : provider ? [] : pluginProviders;
       for (const pluginProvider of visiblePluginProviders) {
-        const entries = await visiblePluginModelEntries(pluginProvider, options.all ?? false);
+        const entries = await suggestedProviderPluginModels(pluginProvider, options.all ?? false);
         console.log(chalk.cyan.bold(pluginProvider.name) + chalk.gray(` (${pluginProvider.id})`));
         for (const model of entries) {
           const fullId = `${pluginProvider.id}:${model.id}`;
@@ -163,13 +163,6 @@ export function createModelsCommand(): Command {
   modelsCommand.addCommand(createUnpinCommand());
 
   return modelsCommand;
-}
-
-async function visiblePluginModelEntries(provider: ProviderDefinition, all: boolean): Promise<ProviderModelDefinition[]> {
-  const models = await discoverProviderModels(provider);
-  if (all || typeof provider.models === 'function' || Array.isArray(provider.models)) return models;
-  const inheritedFrom = provider.models.inherit;
-  return models.filter((model) => SUGGESTED_MODEL_IDS.includes(`${inheritedFrom}:${model.id}`));
 }
 
 function pluginModelInfo(model: ProviderModelDefinition): ModelInfo {

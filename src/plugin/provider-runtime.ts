@@ -15,7 +15,7 @@ import type {
 import type { LanguageModel } from 'ai';
 import { minimatch } from 'minimatch';
 import { AuthStorage } from '../auth/storage';
-import { MODELS, type ModelInfo, type Provider as RegistryProvider } from '../generated/models';
+import { MODELS, SUGGESTED_MODEL_IDS, type ModelInfo, type Provider as RegistryProvider } from '../generated/models';
 import type { ProviderAuthSourceStatus } from '../auth/provider-status';
 import { logger } from '../utils/logger';
 import { getAgentuseDataDir } from '../utils/data-dir';
@@ -306,6 +306,16 @@ export async function discoverProviderModels(provider: ProviderDefinition): Prom
 }
 
 const discoveredModelsCache = new WeakMap<ProviderDefinition, Promise<ProviderModelDefinition[]>>();
+
+/** The plugin's catalog as shown to users: a provider that inherits a registry
+ * catalog is trimmed to the registry's suggested models unless `all` is set;
+ * plugins that declare their own list or discover it live are shown whole. */
+export async function suggestedProviderPluginModels(provider: ProviderDefinition, all = false): Promise<ProviderModelDefinition[]> {
+  const models = await discoverProviderModels(provider);
+  if (all || typeof provider.models === 'function' || Array.isArray(provider.models)) return models;
+  const inheritedFrom = provider.models.inherit;
+  return models.filter((model) => SUGGESTED_MODEL_IDS.includes(`${inheritedFrom}:${model.id}`));
+}
 
 export function loadedPluginRegistryProvider(id: string): string | undefined {
   const models = scopedProvider(id)?.models;

@@ -7855,7 +7855,7 @@ export function createServeCommand(): Command {
             const snapshot = await providerSetupSnapshot();
             sendJSON(res, 200, {
               success: true,
-              providers: agentCreationProviders(
+              providers: await agentCreationProviders(
                 snapshot.status,
                 preferredAgentCreationModel,
               ),
@@ -7890,7 +7890,7 @@ export function createServeCommand(): Command {
               return;
             }
             const snapshot = await providerSetupSnapshot();
-            const providers = agentCreationProviders(snapshot.status, preferredAgentCreationModel);
+            const providers = await agentCreationProviders(snapshot.status, preferredAgentCreationModel);
             const configuredProviders = providers.map((provider) => provider.id);
             const availableModels = [...new Set(providers.flatMap((provider) => provider.models))];
             const request = validateAgentCreationRequest(
@@ -8335,7 +8335,7 @@ export function createServeCommand(): Command {
               return;
             }
             const snapshot = await providerSetupSnapshot();
-            const providers = agentCreationProviders(snapshot.status, preferredAgentCreationModel);
+            const providers = await agentCreationProviders(snapshot.status, preferredAgentCreationModel);
             const availableModels = [...new Set(providers.flatMap((provider) => provider.models))];
             const model = typeof body.model === 'string' ? body.model.trim() : '';
             if (!model || !availableModels.includes(model)) {
@@ -8626,7 +8626,7 @@ export function createServeCommand(): Command {
             let record;
             if (action === 'apply') {
               const snapshot = await providerSetupSnapshot();
-              const availableModels = [...new Set(agentCreationProviders(snapshot.status, preferredAgentCreationModel).flatMap((provider) => provider.models))];
+              const availableModels = [...new Set((await agentCreationProviders(snapshot.status, preferredAgentCreationModel)).flatMap((provider) => provider.models))];
               const availableSkills = (await discoverProjectSkillCatalog(project.root)).filter((skill) => !skill.ambiguous).map((skill) => skill.name);
               record = await applyAgentRevision({
                 projectRoot: project.root,
@@ -8715,7 +8715,7 @@ export function createServeCommand(): Command {
               const session = await recoverInternalCreatorSession(project.root, jobId);
               if (!session || session.status !== 'completed') continue;
               const snapshot = await providerSetupSnapshot();
-              const providers = agentCreationProviders(snapshot.status, preferredAgentCreationModel);
+              const providers = await agentCreationProviders(snapshot.status, preferredAgentCreationModel);
               const recovery: AgentCreationRecoveryInput = {
                 request: {
                   objective: session.submission.source,
@@ -8792,7 +8792,7 @@ export function createServeCommand(): Command {
               return;
             }
             const providerSnapshot = await providerSetupSnapshot();
-            const providers = agentCreationProviders(providerSnapshot.status, preferredAgentCreationModel);
+            const providers = await agentCreationProviders(providerSnapshot.status, preferredAgentCreationModel);
             const models = [...new Set(providers.flatMap((provider) => provider.models))];
             if (models.length === 0) {
               sendError(res, 409, 'PROVIDER_REQUIRED', 'Connect a model provider before scanning this project');

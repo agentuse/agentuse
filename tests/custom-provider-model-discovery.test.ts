@@ -85,13 +85,13 @@ describe('custom provider model discovery', () => {
     expect(fetchSpy).toHaveBeenCalledWith(`http://localhost:1234/v1${suffix}`, expect.objectContaining({ method: 'POST' }));
   });
 
-  it('merges discovered models into custom provider creation options', () => {
+  it('merges discovered models into custom provider creation options', async () => {
     const status: ProviderStatus = {
       credentialStore: '/redacted/path',
       providers: [],
       customProviders: [{ id: 'lmstudio', baseURL: 'http://localhost:1234/v1', hasApiKey: false, models: ['qwen/qwen3-8b', 'google/gemma-3'] }],
     };
-    expect(agentCreationProviders(status)[0]).toEqual({
+    expect((await agentCreationProviders(status))[0]).toEqual({
       id: 'lmstudio',
       name: 'lmstudio',
       models: ['lmstudio:qwen/qwen3-8b', 'lmstudio:google/gemma-3'],

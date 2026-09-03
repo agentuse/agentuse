@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, spyOn } from 'bun:test';
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -164,7 +164,7 @@ Triage support tickets.
     }, ['openai'])).rejects.toMatchObject({ code: 'CREATE_FAILED' });
   });
 
-  it('offers recommended models, ignores stale defaults, and accepts keyless custom providers', () => {
+  it('offers recommended models, ignores stale defaults, and accepts keyless custom providers', async () => {
     const status: ProviderStatus = {
       credentialStore: '/redacted/path',
       providers: [
@@ -176,7 +176,7 @@ Triage support tickets.
       customProviders: [{ id: 'local', baseURL: 'http://localhost:11434/v1', hasApiKey: false }],
     };
 
-    const options = agentCreationProviders(status, 'openai:o3-mini');
+    const options = await agentCreationProviders(status, 'openai:o3-mini');
     expect(options.map((provider) => provider.id)).toEqual(['openai', 'opencode-go', 'local']);
     expect(options[0]?.defaultModel).toBe('openai:gpt-5.6-terra');
     expect(options[0]?.models[0]).toBe('openai:gpt-5.6-terra');
@@ -190,8 +190,8 @@ Triage support tickets.
     expect(options[2]).toMatchObject({ custom: true, models: [] });
   });
 
-  it('starts first-class providers on a balanced creator model without a configured default', () => {
-    const options = agentCreationProviders({
+  it('starts first-class providers on a balanced creator model without a configured default', async () => {
+    const options = await agentCreationProviders({
       credentialStore: '/redacted/path',
       providers: [
         { id: 'anthropic', name: 'Anthropic', configured: true, sources: [] },
@@ -204,26 +204,30 @@ Triage support tickets.
     expect(options[1]?.defaultModel).toBe('openai:gpt-5.6-terra');
   });
 
-  it('offers only Codex-compatible fast, balanced, and best models for ChatGPT OAuth', () => {
-    const options = agentCreationProviders({
-      credentialStore: '/redacted/path',
-      providers: [
-        {
-          id: 'openai',
-          name: 'OpenAI',
-          configured: true,
-          sources: [{ priority: 1, kind: 'oauth', name: 'ChatGPT OAuth', stored: true, active: true }],
-        },
-      ],
-      customProviders: [],
-    });
-
-    expect(options[0]?.models).toEqual([
-      'openai:gpt-5.6-terra',
-      'openai:gpt-5.6-luna',
-      'openai:gpt-5.6-sol',
-    ]);
-    expect(options[0]?.defaultModel).toBe('openai:gpt-5.6-terra');
+  it('lists a plugin provider catalog from the plugin runtime', async () => {
+    const pluginRuntime = await import('../src/plugin/provider-runtime');
+    const spy = spyOn(pluginRuntime, 'getProviderPlugin').mockImplementation(async (id: string) => id === 'pi'
+      ? {
+          id: 'pi',
+          name: 'Pi CLI',
+          models: [
+            { id: 'openai-codex/gpt-5.6-luna', name: 'GPT-5.6 Luna', input: ['text'], reasoning: true, contextWindow: 1, maxOutputTokens: 1 },
+            { id: 'default', name: 'Default', input: ['text'], reasoning: true, contextWindow: 1, maxOutputTokens: 1 },
+          ],
+          transport: { protocol: 'openai', baseURL: 'http://localhost' },
+        } as never
+      : undefined);
+    try {
+      const options = await agentCreationProviders({
+        credentialStore: '/redacted/path',
+        providers: [{ id: 'pi', name: 'Pi CLI', configured: true, sources: [] }],
+        customProviders: [],
+      }, 'pi:default');
+      expect(options[0]?.models).toEqual(['pi:default', 'pi:openai-codex/gpt-5.6-luna']);
+      expect(options[0]?.defaultModel).toBe('pi:default');
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('rejects a stale creator model even when its provider is configured', () => {
@@ -233,8 +237,8 @@ Triage support tickets.
     }, ['openai'], ['openai:gpt-5.6-terra'])).toThrow('Choose a currently supported model');
   });
 
-  it('starts on the preferred provider but falls back from its stale default', () => {
-    const options = agentCreationProviders({
+  it('starts on the preferred provider but falls back from its stale default', async () => {
+    const options = await agentCreationProviders({
       credentialStore: '/redacted/path',
       providers: [
         { id: 'anthropic', name: 'Anthropic', configured: true, sources: [] },
