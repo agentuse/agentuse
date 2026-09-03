@@ -331,9 +331,19 @@ export async function startProviderPluginOAuth(id: unknown): Promise<ProviderPlu
   return beginProviderPluginOAuth(entry.name, entry.provider, entry.authMethodId, candidate.provider, installed);
 }
 
-export async function startUnreviewedProviderPluginOAuth(source: unknown): Promise<ProviderPluginOAuthStart> {
+/**
+ * `commit` is the SHA the user consented to on the inspection card. Refusing
+ * any other value means an install can only ever run the code that was shown.
+ */
+export async function startUnreviewedProviderPluginOAuth(source: unknown, commit: unknown): Promise<ProviderPluginOAuthStart> {
   if (typeof source !== 'string' || !source.trim()) throw new Error('Provider plugin source is required');
+  if (typeof commit !== 'string' || !/^[0-9a-f]{40}$/i.test(commit)) {
+    throw new Error('Read the plugin manifest and confirm the commit before installing');
+  }
   const inspected = await inspectPluginSource(source.trim());
+  if (inspected.commit.toLowerCase() !== commit.toLowerCase()) {
+    throw new Error(`${inspected.name} changed since it was inspected (expected ${commit.slice(0, 8)}, found ${inspected.commit.slice(0, 8)}). Read the manifest again.`);
+  }
   const immutableSource = `${inspected.repository}@${inspected.commit}`;
   const records = await readInstalledPluginRecords();
   const existing = records.find((record) => record.name === inspected.name);

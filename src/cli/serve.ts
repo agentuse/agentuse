@@ -1692,7 +1692,7 @@ const PROVIDER_POST_ROUTES: Record<string, { code: string; handle(body: Record<s
   "/providers/plugins/install": { code: "PROVIDER_PLUGIN_INSTALL_FAILED", handle: (body) => installProviderPluginFromRegistry(body.plugin) },
   "/providers/plugins/inspect": { code: "PROVIDER_PLUGIN_INSPECTION_FAILED", handle: async (body) => ({ plugin: await inspectUnreviewedProviderPlugin(body.source) }) },
   "/providers/plugins/oauth/start": { code: "PROVIDER_PLUGIN_OAUTH_START_FAILED", handle: async (body) => oauthStartResult(await startProviderPluginOAuth(body.plugin)) },
-  "/providers/plugins/oauth/start-unreviewed": { code: "PROVIDER_PLUGIN_OAUTH_START_FAILED", handle: async (body) => oauthStartResult(await startUnreviewedProviderPluginOAuth(body.source)) },
+  "/providers/plugins/oauth/start-unreviewed": { code: "PROVIDER_PLUGIN_OAUTH_START_FAILED", handle: async (body) => oauthStartResult(await startUnreviewedProviderPluginOAuth(body.source, body.commit)) },
   "/providers/plugins/oauth/complete": { code: "PROVIDER_PLUGIN_OAUTH_COMPLETE_FAILED", handle: (body) => completeProviderPluginOAuth(body.flowId, body.code) },
   "/providers/plugins/update": { code: "PROVIDER_PLUGIN_UPDATE_FAILED", handle: (body) => updateInstalledProviderPlugin(body.name) },
   "/providers/plugins/remove": { code: "PROVIDER_PLUGIN_REMOVE_FAILED", handle: (body) => removeInstalledProviderPlugin(body.name) },

@@ -158,7 +158,7 @@ function ProviderSetupForm(props: {
           setPluginInspection(inspected.plugin);
           return;
         }
-        const started = await startUnreviewedProviderPluginOAuth(pluginInspection.source);
+        const started = await startUnreviewedProviderPluginOAuth(pluginInspection.source, pluginInspection.commit);
         if (started.connected) {
           next = started;
         } else {

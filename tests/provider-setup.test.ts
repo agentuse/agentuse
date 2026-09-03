@@ -16,6 +16,7 @@ import {
   saveCustomProvider,
   saveProviderApiKey,
   startProviderPluginOAuth,
+  startUnreviewedProviderPluginOAuth,
   startProviderOAuth,
 } from '../src/auth/provider-setup';
 import { AuthStorage } from '../src/auth/storage';
@@ -296,6 +297,22 @@ describe('Dashboard provider setup service', () => {
     await expect(completeProviderOAuth(started.flowId, 'authorization-code')).rejects.toThrow('expired or was not found');
     exchange.mockRestore();
     authorize.mockRestore();
+  });
+
+  it('names the missing subscription plugin when only a migrated credential exists', async () => {
+    await AuthStorage.setPluginCredential('anthropic', 'subscription', {
+      type: 'oauth', access: 'saved-access', refresh: 'saved-refresh', expires: Date.now() + 3600_000,
+    });
+    const { createModel } = await import('../src/models');
+    await expect(createModel('anthropic:claude-sonnet-5'))
+      .rejects.toThrow('agentuse plugins install cb7337/agentuse-claude-code-provider@v0.1.0');
+  });
+
+  it('refuses an unreviewed plugin install without the inspected commit', async () => {
+    await expect(startUnreviewedProviderPluginOAuth('owner/some-plugin@v1.0.0', undefined))
+      .rejects.toThrow('confirm the commit before installing');
+    await expect(startUnreviewedProviderPluginOAuth('owner/some-plugin@v1.0.0', 'main'))
+      .rejects.toThrow('confirm the commit before installing');
   });
 
   it('rejects new Anthropic OAuth through the removed built-in flow', async () => {

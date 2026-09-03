@@ -900,8 +900,8 @@ export function startProviderPluginOAuth(plugin: string): Promise<ProviderPlugin
   return postJson('/api/providers/plugins/oauth/start', { plugin });
 }
 
-export function startUnreviewedProviderPluginOAuth(source: string): Promise<ProviderPluginOAuthStart> {
-  return postJson('/api/providers/plugins/oauth/start-unreviewed', { source });
+export function startUnreviewedProviderPluginOAuth(source: string, commit: string): Promise<ProviderPluginOAuthStart> {
+  return postJson('/api/providers/plugins/oauth/start-unreviewed', { source, commit });
 }
 
 export function completeProviderPluginOAuth(flowId: string, code: string): Promise<ProviderSetupPayload> {

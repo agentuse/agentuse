@@ -5,6 +5,7 @@ import type { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { wrapLanguageModel } from 'ai';
 import { CodexAuth } from './auth/codex';
 import { AuthStorage } from './auth/storage';
+import { PROVIDER_PLUGIN_REGISTRY } from './plugin/provider-registry';
 import { normalizeCustomProviderBaseURL } from './auth/custom-provider-models';
 import { logger } from './utils/logger';
 import { warnIfModelNotInRegistry, loadCustomProviderNames } from './utils/model-utils';
@@ -312,6 +313,20 @@ export async function createModel(modelString: string, options: { sessionId?: st
       }
 
       if (!apiKey) {
+        // A migrated Claude subscription credential is only usable through
+        // its plugin. If that install failed (offline, repo unreachable),
+        // say exactly what to run instead of claiming nothing is configured.
+        const subscription = PROVIDER_PLUGIN_REGISTRY.find((entry) => entry.provider === 'anthropic');
+        const strandedSubscription = subscription
+          && (await AuthStorage.getPluginCredential('anthropic', subscription.authMethodId)
+            || await AuthStorage.getOAuth('anthropic'));
+        if (subscription && strandedSubscription) {
+          throw new AuthenticationError(
+            'anthropic',
+            'ANTHROPIC_API_KEY',
+            `Claude subscription credentials are saved but the ${subscription.name} plugin is not installed. Run \`agentuse plugins install ${subscription.source}\` (or set ANTHROPIC_API_KEY)`
+          );
+        }
         throw new AuthenticationError(
           'anthropic',
           'ANTHROPIC_API_KEY',
