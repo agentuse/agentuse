@@ -151,7 +151,7 @@ export class PluginHost {
       if (typeof exported === 'function') {
         await (exported as AgentUseExtension)(api);
       } else if (isLegacyEventPlugin(exported)) {
-        for (const [event, handler] of Object.entries(exported) as Array<[keyof PluginEvents, (event: any) => unknown]>) {
+        for (const [event, handler] of Object.entries(exported) as Array<[keyof PluginEvents, (event: unknown) => unknown]>) {
           api.on(event, async (payload) => { await handler(payload); });
         }
         log.debug('Loaded through the legacy event-object compatibility adapter');
@@ -193,11 +193,6 @@ export class PluginHost {
         kind: 'adapter' as const,
       }))),
     ];
-  }
-  getProviderAdapters(providerId: string): ProviderAdapter[] {
-    return (this.adapters.get(providerId) ?? [])
-      .map((item) => item.value)
-      .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
   }
   getProviderAdapterContributions(providerId: string): Array<{ owner: PluginIdentity; adapter: ProviderAdapter }> {
     return (this.adapters.get(providerId) ?? [])
@@ -293,5 +288,6 @@ export class PluginHost {
     this.events.clear();
     this.providers.clear();
     this.patches.clear();
+    this.adapters.clear();
   }
 }

@@ -167,7 +167,7 @@ describe('AgentUse activation API', () => {
     expect(host.getProviderPatch('openai')).toEqual({
       baseURL: 'https://proxy.test/v1', headers: { 'X-Test': 'yes' },
     });
-    expect(host.getProviderAdapters('anthropic')).toHaveLength(1);
+    expect(host.getProviderAdapterContributions('anthropic')).toHaveLength(1);
   });
 
   it('adapts the stable custom stream contract without exposing AI SDK types to plugins', async () => {

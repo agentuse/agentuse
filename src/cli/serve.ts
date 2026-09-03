@@ -89,6 +89,7 @@ import {
   completeProviderOAuth,
   inspectUnreviewedProviderPlugin,
   installProviderPluginFromRegistry,
+  type ProviderPluginOAuthStart,
   providerSetupSnapshot,
   removeCustomProvider,
   removeInstalledProviderPlugin,
@@ -1679,6 +1680,30 @@ function parseRequestBody(req: IncomingMessage): Promise<RunRequest> {
     }, reject);
   });
 }
+
+/** Flatten a plugin OAuth start so the dashboard reads one shape. */
+function oauthStartResult(started: ProviderPluginOAuthStart): Record<string, unknown> {
+  return started.connected ? { connected: true, ...started.snapshot } : started;
+}
+
+/** Provider setup POST endpoints: every one parses a JSON body and answers 400 on failure. */
+const PROVIDER_POST_ROUTES: Record<string, { code: string; handle(body: Record<string, unknown>): Promise<object> }> = {
+  "/providers/api-key": { code: "PROVIDER_SETUP_INVALID", handle: (body) => saveProviderApiKey(body.provider, body.key) },
+  "/providers/plugins/install": { code: "PROVIDER_PLUGIN_INSTALL_FAILED", handle: (body) => installProviderPluginFromRegistry(body.plugin) },
+  "/providers/plugins/inspect": { code: "PROVIDER_PLUGIN_INSPECTION_FAILED", handle: async (body) => ({ plugin: await inspectUnreviewedProviderPlugin(body.source) }) },
+  "/providers/plugins/oauth/start": { code: "PROVIDER_PLUGIN_OAUTH_START_FAILED", handle: async (body) => oauthStartResult(await startProviderPluginOAuth(body.plugin)) },
+  "/providers/plugins/oauth/start-unreviewed": { code: "PROVIDER_PLUGIN_OAUTH_START_FAILED", handle: async (body) => oauthStartResult(await startUnreviewedProviderPluginOAuth(body.source)) },
+  "/providers/plugins/oauth/complete": { code: "PROVIDER_PLUGIN_OAUTH_COMPLETE_FAILED", handle: (body) => completeProviderPluginOAuth(body.flowId, body.code) },
+  "/providers/plugins/update": { code: "PROVIDER_PLUGIN_UPDATE_FAILED", handle: (body) => updateInstalledProviderPlugin(body.name) },
+  "/providers/plugins/remove": { code: "PROVIDER_PLUGIN_REMOVE_FAILED", handle: (body) => removeInstalledProviderPlugin(body.name) },
+  "/providers/oauth/start": { code: "PROVIDER_OAUTH_START_FAILED", handle: (body) => startProviderOAuth(body.provider) },
+  "/providers/oauth/complete": { code: "PROVIDER_OAUTH_COMPLETE_FAILED", handle: (body) => completeProviderOAuth(body.flowId, body.code) },
+  "/providers/remove": { code: "PROVIDER_REMOVE_FAILED", handle: (body) => removeProviderCredential(body.provider, body.kind, body.pluginName, body.authMethodId) },
+  "/providers/custom": { code: "CUSTOM_PROVIDER_INVALID", handle: (body) => saveCustomProvider({ name: body.name, baseURL: body.baseURL, key: body.key, api: body.api, models: body.models }) },
+  "/providers/custom/check": { code: "CUSTOM_PROVIDER_CHECK_FAILED", handle: (body) => checkCustomProvider({ name: body.name, baseURL: body.baseURL, key: body.key, api: body.api, models: body.models }) },
+  "/providers/custom/refresh": { code: "CUSTOM_PROVIDER_REFRESH_FAILED", handle: (body) => refreshCustomProviderModels(body.name) },
+  "/providers/custom/remove": { code: "CUSTOM_PROVIDER_REMOVE_FAILED", handle: (body) => removeCustomProvider(body.name) },
+};
 
 function parseJSONBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
@@ -7807,173 +7832,14 @@ export function createServeCommand(): Command {
           return;
         }
 
-        if (isApi && routePath === "/providers/api-key" && req.method === "POST") {
+        const providerRoute = isApi && req.method === "POST" ? PROVIDER_POST_ROUTES[routePath] : undefined;
+        if (providerRoute) {
           try {
             const body = await parseJSONBody(req);
-            sendJSON(res, 200, { success: true, ...await saveProviderApiKey(body.provider, body.key) });
+            sendJSON(res, 200, { success: true, ...await providerRoute.handle(body) });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "PROVIDER_SETUP_INVALID", (err as Error).message);
-          }
-          return;
-        }
-
-        if (isApi && routePath === "/providers/plugins/install" && req.method === "POST") {
-          try {
-            const body = await parseJSONBody(req);
-            sendJSON(res, 200, { success: true, ...await installProviderPluginFromRegistry(body.plugin) });
-          } catch (err) {
-            if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "PROVIDER_PLUGIN_INSTALL_FAILED", (err as Error).message);
-          }
-          return;
-        }
-
-        if (isApi && routePath === "/providers/plugins/inspect" && req.method === "POST") {
-          try {
-            const body = await parseJSONBody(req);
-            sendJSON(res, 200, { success: true, plugin: await inspectUnreviewedProviderPlugin(body.source) });
-          } catch (err) {
-            if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "PROVIDER_PLUGIN_INSPECTION_FAILED", (err as Error).message);
-          }
-          return;
-        }
-
-        if (isApi && routePath === "/providers/plugins/oauth/start" && req.method === "POST") {
-          try {
-            const body = await parseJSONBody(req);
-            const started = await startProviderPluginOAuth(body.plugin);
-            sendJSON(res, 200, started.connected
-              ? { success: true, connected: true, ...started.snapshot }
-              : { success: true, ...started });
-          } catch (err) {
-            if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "PROVIDER_PLUGIN_OAUTH_START_FAILED", (err as Error).message);
-          }
-          return;
-        }
-
-        if (isApi && routePath === "/providers/plugins/oauth/complete" && req.method === "POST") {
-          try {
-            const body = await parseJSONBody(req);
-            sendJSON(res, 200, { success: true, ...await completeProviderPluginOAuth(body.flowId, body.code) });
-          } catch (err) {
-            if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "PROVIDER_PLUGIN_OAUTH_COMPLETE_FAILED", (err as Error).message);
-          }
-          return;
-        }
-
-        if (isApi && routePath === "/providers/plugins/oauth/start-unreviewed" && req.method === "POST") {
-          try {
-            const body = await parseJSONBody(req);
-            const started = await startUnreviewedProviderPluginOAuth(body.source);
-            sendJSON(res, 200, started.connected
-              ? { success: true, connected: true, ...started.snapshot }
-              : { success: true, ...started });
-          } catch (err) {
-            if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "PROVIDER_PLUGIN_OAUTH_START_FAILED", (err as Error).message);
-          }
-          return;
-        }
-
-        if (isApi && routePath === "/providers/plugins/update" && req.method === "POST") {
-          try {
-            const body = await parseJSONBody(req);
-            sendJSON(res, 200, { success: true, ...await updateInstalledProviderPlugin(body.name) });
-          } catch (err) {
-            if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "PROVIDER_PLUGIN_UPDATE_FAILED", (err as Error).message);
-          }
-          return;
-        }
-
-        if (isApi && routePath === "/providers/plugins/remove" && req.method === "POST") {
-          try {
-            const body = await parseJSONBody(req);
-            sendJSON(res, 200, { success: true, ...await removeInstalledProviderPlugin(body.name) });
-          } catch (err) {
-            if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "PROVIDER_PLUGIN_REMOVE_FAILED", (err as Error).message);
-          }
-          return;
-        }
-
-        if (isApi && routePath === "/providers/oauth/start" && req.method === "POST") {
-          try {
-            const body = await parseJSONBody(req);
-            sendJSON(res, 200, { success: true, ...await startProviderOAuth(body.provider) });
-          } catch (err) {
-            if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "PROVIDER_OAUTH_START_FAILED", (err as Error).message);
-          }
-          return;
-        }
-
-        if (isApi && routePath === "/providers/oauth/complete" && req.method === "POST") {
-          try {
-            const body = await parseJSONBody(req);
-            sendJSON(res, 200, { success: true, ...await completeProviderOAuth(body.flowId, body.code) });
-          } catch (err) {
-            if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "PROVIDER_OAUTH_COMPLETE_FAILED", (err as Error).message);
-          }
-          return;
-        }
-
-        if (isApi && routePath === "/providers/remove" && req.method === "POST") {
-          try {
-            const body = await parseJSONBody(req);
-            sendJSON(res, 200, { success: true, ...await removeProviderCredential(body.provider, body.kind, body.pluginName, body.authMethodId) });
-          } catch (err) {
-            if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "PROVIDER_REMOVE_FAILED", (err as Error).message);
-          }
-          return;
-        }
-
-        if (isApi && routePath === "/providers/custom" && req.method === "POST") {
-          try {
-            const body = await parseJSONBody(req);
-            sendJSON(res, 200, { success: true, ...await saveCustomProvider({ name: body.name, baseURL: body.baseURL, key: body.key, api: body.api, models: body.models }) });
-          } catch (err) {
-            if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "CUSTOM_PROVIDER_INVALID", (err as Error).message);
-          }
-          return;
-        }
-
-        if (isApi && routePath === "/providers/custom/check" && req.method === "POST") {
-          try {
-            const body = await parseJSONBody(req);
-            sendJSON(res, 200, { success: true, ...await checkCustomProvider({ name: body.name, baseURL: body.baseURL, key: body.key, api: body.api, models: body.models }) });
-          } catch (err) {
-            if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "CUSTOM_PROVIDER_CHECK_FAILED", (err as Error).message);
-          }
-          return;
-        }
-
-        if (isApi && routePath === "/providers/custom/refresh" && req.method === "POST") {
-          try {
-            const body = await parseJSONBody(req);
-            sendJSON(res, 200, { success: true, ...await refreshCustomProviderModels(body.name) });
-          } catch (err) {
-            if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "CUSTOM_PROVIDER_REFRESH_FAILED", (err as Error).message);
-          }
-          return;
-        }
-
-        if (isApi && routePath === "/providers/custom/remove" && req.method === "POST") {
-          try {
-            const body = await parseJSONBody(req);
-            sendJSON(res, 200, { success: true, ...await removeCustomProvider(body.name) });
-          } catch (err) {
-            if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "CUSTOM_PROVIDER_REMOVE_FAILED", (err as Error).message);
+            sendError(res, 400, providerRoute.code, (err as Error).message);
           }
           return;
         }
