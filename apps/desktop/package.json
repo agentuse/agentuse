@@ -1,6 +1,6 @@
 {
   "name": "@agentuse/desktop",
-  "version": "0.19.3",
+  "version": "0.20.0",
   "private": true,
   "description": "Native macOS shell for the AgentUse dashboard",
   "main": "dist/main.cjs",

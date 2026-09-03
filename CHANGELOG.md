@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-09-02
+
 ### Added
 
 - **Completed runs and runs paused at an approval gate can now revise their AgentUse agent through a visible internal revision session.** The reviser diagnoses the originating transcript against the current agent and a sanitized project view, pauses in the same session when one material decision is missing, and either returns a validated source proposal or explains why the agent should not change. Proposals show their source and capability changes before an operator applies them; source-hash checks prevent stale overwrites, replacement is atomic, the previous version can be restored, and the originating run keeps a durable link back to the revision session. Revision runs are identified as AgentUse-owned internal sessions in both Sessions layouts and their detail view, while **Copy prompt for Coding Agent** remains available inside the revision form for work that requires project code or a custom integration.
