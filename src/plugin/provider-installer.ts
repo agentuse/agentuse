@@ -270,6 +270,17 @@ async function installRuntimeDependencies(root: string): Promise<void> {
   }
 }
 
+async function assertLocalGitCheckout(resolvedSource: ResolvedSource): Promise<void> {
+  try {
+    await exec('git', ['-C', resolvedSource.url, 'rev-parse', '--is-inside-work-tree']);
+  } catch {
+    throw new Error(
+      `${resolvedSource.url} is not a Git repository. Global installs copy a Git checkout, so run \`git init\` and commit there first, `
+      + 'or use `agentuse plugin install --local <path>` to link the folder into the current project as-is.',
+    );
+  }
+}
+
 async function cloneAndInspect(source: string, options?: PluginInstallOptions): Promise<{
   staging: string;
   record: Omit<InstalledPluginRecord, 'installedAt' | 'updatedAt'>;
@@ -278,6 +289,7 @@ async function cloneAndInspect(source: string, options?: PluginInstallOptions): 
   await mkdir(home, { recursive: true });
   const staging = await mkdtemp(join(home, '.install-'));
   const resolvedSource = resolvePluginSource(source);
+  if (isLocalPath(source)) await assertLocalGitCheckout(resolvedSource);
   try {
     await cloneResolvedSource(staging, resolvedSource);
     await installRuntimeDependencies(staging);
