@@ -163,6 +163,20 @@ When `agentuse serve` is running, the same sessions are browsable as web pages:
   session is suspended on an approval gate, the approve / reject / comment and
   resume controls.
 
+### Internal agent-revision sessions
+
+A completed, failed, or approval-paused run can start a reviewable agent
+revision. The original session remains the launch point and durable history,
+with a link to each revision. The revision session links back to that origin and
+holds the diagnosis, source proposal or no-change result, reviewer feedback,
+apply decision, and restore action.
+
+The Sessions list and feed label these AgentUse-owned jobs as `internal
+revision`, group them under **Internal revisions**, and name them **Revising
+_agent_**. They are distinct from delegated subagents and automated Judge
+sessions. See [Agent Revisions](/guides/agent-revisions) for the full review and
+write-safety workflow.
+
 For delegated runs, the parent timeline also surfaces important work from nested
 descendants. Reviewer comments appear as timestamped feedback; a child working
 on that feedback is labeled `revising`, and its next gate is labeled
@@ -170,8 +184,8 @@ on that feedback is labeled `revising`, and its next gate is labeled
 attempts so they are not mistaken for human decisions.
 
 The `/agents` page opens each agent's detail hub, where you can inspect source,
-recent runs, and start a run. Schedule rows also link to the agent detail hub;
-last-run badges still link to the matching session page.
+recent runs and revisions, and start a run. Schedule rows also link to the agent
+detail hub; last-run badges still link to the matching session page.
 
 When the model streams its reasoning, it renders inline in the log as dimmed
 "Reasoning" entries (the model's "why", subordinate to the visible answer it

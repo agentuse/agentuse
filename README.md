@@ -173,6 +173,11 @@ Every run is a durable session. Inspect the result, tool calls, token usage,
 artifacts, verification verdicts, and follow-up context without reconstructing
 the run from terminal logs.
 
+Turn the evidence from a completed or approval-paused run into a safe agent
+improvement through a reviewable internal revision session. Apply a validated
+source proposal, restore the previous source, or copy a prompt to a coding agent
+when the fix belongs in project code. See [Agent Revisions](https://docs.agentuse.io/guides/agent-revisions).
+
 Test runs stay out of these operational views by default, so validating an agent
 never pollutes the picture of what production is doing.
 
@@ -221,7 +226,7 @@ complete configuration, reviewer flows, and enforcement details.
 | [Tools](https://docs.agentuse.io/reference/builtin-tools) | Allowlisted filesystem and shell access plus built-in runtime tools |
 | [MCP](https://docs.agentuse.io/reference/agent-syntax#mcp-servers) | Connect databases, APIs, browsers, and external services through Model Context Protocol servers |
 | [Skills](https://docs.agentuse.io/guides/skills) | Discover and load reusable `SKILL.md` instruction packages |
-| [Sessions](https://docs.agentuse.io/guides/session-logs) | Persistent run history, usage, artifacts, resume, and failure visibility |
+| [Sessions](https://docs.agentuse.io/guides/session-logs) | Persistent run history, usage, artifacts, resume, failure visibility, and reviewable internal agent revisions |
 | [Subagents](https://docs.agentuse.io/guides/subagents) | Delegate bounded work to specialized child agents |
 | [Stores](https://docs.agentuse.io/guides/store) | Persistent, structured state shared across runs and cooperating agents |
 | [Learning](https://docs.agentuse.io/guides/learning) | Capture reviewer feedback as durable instructions and apply the best of them to later runs |

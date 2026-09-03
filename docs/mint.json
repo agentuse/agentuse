@@ -67,6 +67,7 @@
         "guides/cicd",
         "guides/remote-agents",
         "guides/self-hosting",
+        "guides/agent-revisions",
         "guides/session-logs",
         "guides/sandbox"
       ]

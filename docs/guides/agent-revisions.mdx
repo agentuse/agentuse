@@ -1,0 +1,70 @@
+---
+title: Agent Revisions
+description: Safely improve an agent from the evidence in a completed or approval-paused run
+---
+
+AgentUse can turn the evidence from a real run into a reviewable change to the
+agent that produced it. Start a revision from a completed run, a failed run, or
+a run paused at an approval gate. The revision changes future runs; it does not
+rewrite or resume the originating run.
+
+## Start a revision
+
+Open the run in the dashboard and choose **Revise agent file**. Describe the
+behavior you want to fix or improve, choose the authoring model, and start the
+revision.
+
+AgentUse creates a durable internal session linked to the originating run. The
+reviser compares the run transcript with the current agent source and a
+sanitized, read-only view of the project. If one material decision is missing,
+it asks for that decision inside the same session instead of guessing.
+
+Only one active revision can belong to an originating run at a time. Return to
+the origin session to see its current revision and revision history.
+
+## Review the result
+
+The reviser returns one of two outcomes:
+
+- a validated source proposal, with the source diff and any capability changes
+- a `no-agent-change` diagnosis explaining why changing the agent is not the
+  right response to the run
+
+Review the proposal from the internal revision session. You can apply it,
+request changes and continue the same session, or discard it. A no-change
+diagnosis can likewise be accepted or reconsidered.
+
+Use **Copy prompt for Coding Agent** when the work belongs in project code or a
+custom integration rather than in the agent file.
+
+## Write safety and recovery
+
+Nothing changes the agent source until an operator applies the proposal.
+AgentUse validates the proposed source and displays capability changes before
+the write. A source-hash check rejects the apply if the agent changed after the
+proposal was created, so a revision cannot overwrite newer work. The accepted
+replacement is atomic.
+
+After an apply, **Restore previous source** puts back the immediately preceding
+agent source. The revision session and originating run retain durable links so
+the diagnosis, proposal, decision, and restore path remain inspectable.
+
+## Find revision sessions
+
+The Sessions list and feed label these AgentUse-owned jobs as **internal
+revision** and group them under **Internal revisions**. Their titles read
+**Revising _agent_**, and each links back to the originating run. An agent's
+**Revisions** tab collects its revision history.
+
+Internal revision sessions are different from delegated subagents and automated
+Judge sessions. They are an operator-started workflow for changing an agent's
+future behavior.
+
+<Warning>
+  Agent revision is unavailable when `serve.hideAgentSource` or
+  `--hide-agent-source` is enabled. A deployment that does not expose agent
+  source cannot review or apply source revisions.
+</Warning>
+
+See [Session Logs](/guides/session-logs) for the complete run record and
+[Operations Dashboard](/guides/serve-dashboard) for the surrounding workflow.

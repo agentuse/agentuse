@@ -4,7 +4,20 @@
 
 ### Added
 
-- **Completed runs can now fix or improve their own AgentUse agent through a visible internal revision session.** The reviser diagnoses the originating transcript against the current agent and a sanitized project view, pauses in the same session when one material decision is missing, and either returns a validated source proposal or explains why the agent should not change. Proposals show their source and capability changes before an operator applies them; source-hash checks prevent stale overwrites, replacement is atomic, the previous version can be restored, and the originating run keeps a durable link back to the revision session. Revision runs are identified as AgentUse-owned internal sessions in both Sessions layouts and their detail view, while **Send to Coding Agent** remains available inside the revision form for work that requires project code or a custom integration.
+- **Completed runs and runs paused at an approval gate can now revise their AgentUse agent through a visible internal revision session.** The reviser diagnoses the originating transcript against the current agent and a sanitized project view, pauses in the same session when one material decision is missing, and either returns a validated source proposal or explains why the agent should not change. Proposals show their source and capability changes before an operator applies them; source-hash checks prevent stale overwrites, replacement is atomic, the previous version can be restored, and the originating run keeps a durable link back to the revision session. Revision runs are identified as AgentUse-owned internal sessions in both Sessions layouts and their detail view, while **Copy prompt for Coding Agent** remains available inside the revision form for work that requires project code or a custom integration.
+- **The dashboard now has a command palette for pending approvals, recent sessions, agents, pages, and quick actions.** Open it with `⌘/Ctrl+K`; mobile has a dedicated search button.
+
+### Changed
+
+- **Dashboard navigation now keeps live work close at hand.** It shows the running-session count and recent sessions, keeps a usable icon rail when collapsed, and supports `⌘/Ctrl+1–6` section shortcuts.
+- **Session detail now presents a finished run's outcome, failure, timing, metrics, and artifacts without requiring a reload.** Logs can be filtered to agent activity, tools, or errors, and their reading state is preserved while moving into and back from child sessions.
+- **Parent session logs now keep delegated work visible and show nested running subagents with live current activity.** Approval waits no longer misleadingly display a working spinner.
+- **Approval gates are clearer and more accessible.** Pick decisions, risks, source context, keyboard behavior, scoped feedback, and payload-carrying actions are rendered and validated consistently.
+
+### Fixed
+
+- **Interrupted setup, onboarding, revision, continuation, and delegated runs now recover more reliably across preparation, restart, retry, and request-changes boundaries while preserving their session evidence.**
+- **AgentUse for Mac now reconnects to an external server after it restarts instead of starting a competing local server.** Desktop only replaces it after an explicit **Start Server** action.
 
 ## [0.19.3] - 2026-09-01
 
