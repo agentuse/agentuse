@@ -33,26 +33,20 @@ These environment variables are required for authenticating with AI providers.
   export ANTHROPIC_API_KEY="sk-ant-api03-..."
   ```
 
-  You can also use the OAuth configuration flow:
-  ```bash
-  agentuse auth login anthropic
-  ```
+  Claude subscription OAuth is provided by the shortlisted
+  [Claude Code Subscription plugin](/guides/plugins#curated-provider-plugins).
 </ParamField>
 
-<ParamField path="ANTHROPIC_REFRESH_TOKEN" type="string">
-  OAuth refresh token for Anthropic. Alternative to `ANTHROPIC_API_KEY`.
+<ParamField path="CLAUDE_CODE_OAUTH_TOKEN" type="string">
+  Long-lived Claude subscription token used by the shortlisted Claude Code
+  Subscription plugin. It is not used by the built-in Anthropic API transport.
 
-  Useful for Docker/container deployments where you want to use OAuth instead of API keys.
+  Install the plugin before using this variable:
 
   ```bash
-  export ANTHROPIC_REFRESH_TOKEN="your-refresh-token"
+  agentuse plugins install cb7337/agentuse-claude-code-provider@v0.1.0
+  export CLAUDE_CODE_OAUTH_TOKEN="your-access-token"
   ```
-
-  To get your refresh token:
-  1. Run `agentuse auth login anthropic` locally
-  2. Extract from `~/.local/share/agentuse/auth.json`
-
-  The token is automatically refreshed when expired and stored in memory.
 </ParamField>
 
 <ParamField path="OPENAI_API_KEY" type="string">
@@ -473,8 +467,8 @@ Large tool results are re-sent to the model on every subsequent step, so a singl
 
 <ParamField path="AGENTUSE_DATA_DIR" type="string" default="~/.local/share/agentuse">
   Exact directory containing AgentUse-owned durable data: provider credentials,
-  sessions, learnings, schedules, server registry and logs, push state,
-  telemetry identity, and update state.
+  installed global plugins, sessions, learnings, schedules, server registry and
+  logs, push state, telemetry identity, and update state.
 
   ```bash
   export AGENTUSE_DATA_DIR="/custom/agentuse-data"
@@ -815,7 +809,8 @@ For MCP servers that require specific environment variables, they will fail with
     agentuse auth list
     ```
     
-    The tool prioritizes OAuth tokens over API keys for Anthropic.
+    When the Claude Code Subscription plugin is installed, subscription OAuth
+    takes priority over the built-in Anthropic API-key transport.
   </Accordion>
   
   <Accordion title="MAX_STEPS not working">

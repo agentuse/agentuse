@@ -246,7 +246,7 @@ Loose plugins are TypeScript or JavaScript modules loaded from these directories
 
 Project plugins load before user-global plugins.
 
-Installed global packages are recorded under `~/.local/share/agentuse/plugins`. Plugins installed with `agentuse plugins install -l` live under `.agentuse/packages` and are recorded in `.agentuse/plugins.json`.
+Installed global packages are recorded under `$AGENTUSE_DATA_DIR/plugins`, which defaults to `~/.local/share/agentuse/plugins`. Plugins installed with `agentuse plugins install -l` live under `.agentuse/packages` and are recorded in `.agentuse/plugins.json`.
 
 See [Plugins](/guides/plugins) for the plugin API.
 

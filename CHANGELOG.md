@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 - **Codex, Claude Code, Pi, and portable Agent Skills integrations now build directly from AgentUse's canonical builtin skills.** One deterministic build produces self-contained local marketplaces, an npm-ready Pi package, and stable release archives without checking generated copies into sibling repositories. The release gate verifies archive structure, version coupling, bundled checksums, and byte-identical guidance before GitHub Release creation attaches all four packages.
+- **Provider setup now installs from a release-reviewed plugin shortlist.** The first entry pins the community-maintained Claude Code Subscription provider at v0.1.0. Existing Anthropic OAuth users receive the compatibility plugin and credential migration automatically without a picker, consent screen, or another login. New subscription users explicitly choose and install the community plugin, while Anthropic API keys remain built into core. Missing-package status also recognizes already-migrated credentials so reinstalling preserves the login.
+- **Installed global plugins now follow `AGENTUSE_DATA_DIR`.** Their unchanged default remains `~/.local/share/agentuse/plugins`, while isolated and custom data profiles keep credentials, plugin packages, and the plugin registry under one durable-data root.
 
 ## [0.20.0] - 2026-09-02
 

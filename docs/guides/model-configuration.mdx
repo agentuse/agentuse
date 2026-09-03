@@ -125,11 +125,24 @@ The simplest way to authenticate:
 agentuse provider login
 
 # Or login to specific provider
-agentuse provider login anthropic
 agentuse provider login openai
 agentuse provider login openrouter
 agentuse provider login opencode-go
 ```
+
+Anthropic API keys remain built in. Claude Pro/Max OAuth is supplied by the
+shortlisted community plugin and can be installed from provider setup or from
+the CLI:
+
+```bash
+agentuse plugins install cb7337/agentuse-claude-code-provider@v0.1.0
+agentuse provider login anthropic
+```
+
+Users upgrading with an Anthropic OAuth credential created by the former core
+flow do not need to run these commands. AgentUse installs the pinned
+compatibility plugin and adopts that credential automatically. The explicit
+community-plugin installation flow is shown only for new configuration.
 
 ### 2. Environment Variables
 
@@ -335,7 +348,7 @@ Output:
 📁 Credentials stored in: ~/.local/share/agentuse/auth.json
 
 Stored credentials:
-  🔑 anthropic (oauth) → Use as: anthropic:claude-sonnet-5
+  🔑 anthropic (Claude subscription OAuth) → Use as: anthropic:claude-sonnet-5
   🎫 openai (api) → Use as: openai:gpt-5.6
 
 Environment variables:

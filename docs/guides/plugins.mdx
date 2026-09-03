@@ -373,6 +373,32 @@ Accidental built-in ID collisions are rejected. Registrations are removed when t
 
 ## Distributed packages
 
+### Curated provider plugins
+
+AgentUse maintains a deliberately small, release-reviewed shortlist for the
+provider setup experience. These plugins remain third-party executable code:
+review their source and project status before installing them.
+
+| Plugin | Provider | Authentication | Install |
+| --- | --- | --- | --- |
+| [Claude Code Subscription](https://github.com/cb7337/agentuse-claude-code-provider) v0.1.0 (community, maintained by `cb7337`) | Anthropic | Claude Pro/Max OAuth | `agentuse plugins install cb7337/agentuse-claude-code-provider@v0.1.0` |
+
+The shortlist is bundled with AgentUse rather than fetched from a mutable
+remote marketplace. A new or changed listing therefore goes through the normal
+AgentUse release review.
+
+The dashboard also exposes an advanced GitHub installation path. It requires an
+explicit tag or full commit, reads only `package.json` before showing consent,
+and installs the exact commit that was inspected. The resulting plugin is
+labelled **Unreviewed**. Installed provider plugins can be updated or removed
+from **Settings > Providers**; removing a package does not delete its saved
+credential.
+
+The v0.21 compatibility migration is narrower than normal installation: when
+AgentUse finds an Anthropic OAuth credential written by the removed core flow,
+it installs the pinned Claude Code Subscription plugin and adopts the credential
+without interrupting the user. New users still choose the plugin explicitly.
+
 A Git repository package declares its resources in `package.json`:
 
 ```json
@@ -385,12 +411,20 @@ A Git repository package declares its resources in `package.json`:
   },
   "agentuse": {
     "apiVersion": 1,
-    "extensions": ["./src/index.ts"]
+    "extensions": ["./src/index.ts"],
+    "providers": [
+      { "id": "acme", "auth": ["oauth"] }
+    ]
   }
 }
 ```
 
-Extension entry paths must stay inside the plugin package. Runtime dependencies belong in `dependencies`. Git installation uses `npm install --omit=dev --ignore-scripts`; package lifecycle scripts never run implicitly.
+`agentuse.providers` is optional static metadata for the dashboard's safe
+pre-install preview. It does not register the provider; the extension still
+does that during activation. Extension entry paths must stay inside the plugin
+package. Runtime dependencies belong in `dependencies`. Git installation uses
+`npm install --omit=dev --ignore-scripts`; package lifecycle scripts never run
+implicitly.
 
 ## Installing and managing packages
 
@@ -418,7 +452,7 @@ agentuse plugins remove -l @example/agentuse-provider
 
 `agentuse plugins install -l ./my-plugin` links the local directory directly. AgentUse validates and activates its current working tree without cloning it, so uncommitted edits are available on the next process start. Updating a linked plugin revalidates its manifest; removing it only removes the project record and never deletes the source directory.
 
-Global packages live under `~/.local/share/agentuse/plugins`. Managed project packages live under `.agentuse/packages`; linked project plugins remain in their original directories. Both are recorded in `.agentuse/plugins.json`. `agentuse plugins list --all-scopes` displays every scope and marks linked entries.
+Global packages live under `$AGENTUSE_DATA_DIR/plugins`, which defaults to `~/.local/share/agentuse/plugins`. Managed project packages live under `.agentuse/packages`; linked project plugins remain in their original directories. Both are recorded in `.agentuse/plugins.json`. `agentuse plugins list --all-scopes` displays every scope and marks linked entries.
 
 Git tags, branches, and commits can be selected with `@ref`. Updates retain the configured ref. Git installation and updates clone into staging, install safe runtime dependencies, compile and activate every entry, and only then replace the active checkout. A failed validation leaves the working version in place.
 
