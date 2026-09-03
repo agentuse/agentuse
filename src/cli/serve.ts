@@ -5847,6 +5847,10 @@ export function createServeCommand(): Command {
               ...(build.dev && { dev: true }),
               ...(update && { update }),
               brand: { name: brandNameCfg ?? "AgentUse" },
+              // Externally reachable base for "copy link" in the UI; the Mac
+              // app loads the page from 127.0.0.1, so the page's own origin
+              // is useless off this machine.
+              publicUrl: effectivePublicUrl,
               capabilities: {
                 projectFolderPicker: canUseHostFolderPicker(effectiveHost, req.socket.remoteAddress, req.headers.host),
               },

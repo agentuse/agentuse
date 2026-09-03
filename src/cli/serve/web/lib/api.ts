@@ -576,6 +576,8 @@ export interface InfoPayload {
     command: string;
   };
   default: string | null;
+  /** Externally reachable base URL (serve.publicUrl / --public-url), else the listen address. */
+  publicUrl?: string;
   capabilities?: {
     projectFolderPicker: boolean;
   };

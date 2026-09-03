@@ -3,6 +3,7 @@ import { useEffect } from 'preact/hooks';
 import { AppShell } from './components/app-shell';
 import { AgentPalette } from './components/agent-palette';
 import { ApprovalToast } from './components/approval-toast';
+import { CopyLinkToast } from './components/copy-link-toast';
 import { NavTracker } from './hooks/use-smart-back';
 import { GlobalApprovalsProvider } from './hooks/use-global-approvals';
 import { reloadOnChunkError } from './lib/lazy-route';
@@ -106,6 +107,7 @@ export function App() {
         <GlobalApprovalsProvider>
           <AgentPalette />
           <ApprovalToast />
+          <CopyLinkToast />
           <RoutedApp />
         </GlobalApprovalsProvider>
       </ErrorBoundary>

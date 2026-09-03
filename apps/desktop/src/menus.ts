@@ -12,6 +12,11 @@ export interface FindCommands {
   open(): void;
 }
 
+export interface ShareCommands {
+  /** Copies a shareable URL for the page the dashboard is showing. */
+  copyPageLink(): void;
+}
+
 export interface SidebarCommands {
   toggle(): void;
 }
@@ -36,7 +41,7 @@ export function createTrayMenu(commands: TrayMenuCommands): MenuItemConstructorO
   ];
 }
 
-export function createEditMenu(find: FindCommands): MenuItemConstructorOptions {
+export function createEditMenu(find: FindCommands, share: ShareCommands): MenuItemConstructorOptions {
   return {
     label: "Edit",
     submenu: [
@@ -50,6 +55,8 @@ export function createEditMenu(find: FindCommands): MenuItemConstructorOptions {
       { role: "delete" },
       { type: "separator" },
       { role: "selectAll" },
+      { type: "separator" },
+      { label: "Copy Link to Page", accelerator: "Command+Shift+C", click: share.copyPageLink },
       {
         label: "Find",
         submenu: [

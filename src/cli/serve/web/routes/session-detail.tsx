@@ -12,6 +12,7 @@ import { SessionMenu } from '../components/session-menu';
 import { Loading } from '../components/loading';
 import { postSessionDecision, postSessionContinue, postSessionStop, postSessionReopen, fetchSessionArtifacts, fetchApprovals, type SessionArtifact } from '../lib/api';
 import { syncAppBadge } from '../lib/badge';
+import { writeClipboardText } from '../lib/clipboard';
 import { useApprovalStream } from '../hooks/use-approval-stream';
 import { useGlobalApprovals } from '../hooks/use-global-approvals';
 import { useCountUp } from '../hooks/use-count-up';
@@ -192,32 +193,6 @@ export function tokenUsageMetaItems(tokenUsage: ApprovalPageInfo['tokenUsage'] |
 function CountUpValue(props: { num: number; format: (n: number) => string }) {
   const display = useCountUp(props.num, { duration: 600, startAtTarget: true, round: false });
   return <>{props.format(display)}</>;
-}
-
-async function writeClipboardText(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // Fall through to the selection-based path used by older webviews.
-  }
-
-  try {
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.readOnly = true;
-    textarea.style.position = 'fixed';
-    textarea.style.opacity = '0';
-    document.body.appendChild(textarea);
-    textarea.select();
-    const copied = document.execCommand('copy');
-    textarea.remove();
-    return copied;
-  } catch {
-    return false;
-  }
 }
 
 /** The identifier itself is the copy target, with inline confirmation so the

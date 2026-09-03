@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pendingApprovalCount, pendingApprovalTitle, pendingApprovalTooltip, type ApprovalBucketsPayload } from "./approval-status";
 import { bundledCliCommand } from "./bundled-cli";
-import { createEditMenu, createNavigationMenu, createTrayMenu, createViewMenu, type FindCommands, type NavigationCommands, type ViewCommands } from "./menus";
+import { createEditMenu, createNavigationMenu, createTrayMenu, createViewMenu, type FindCommands, type NavigationCommands, type ShareCommands, type ViewCommands } from "./menus";
 import { parseNotificationFrames, type NativeNotificationEvent } from "./notification-stream";
 import { encodeNativeSettingsMessage, isNativeSettingsPipeClosure, parseNativeSettingsCommand, type NativeSettingsMessage } from "./native-settings";
 import {
@@ -1318,6 +1318,15 @@ const findCommands: FindCommands = {
   open: focusSessionLogSearch,
 };
 
+// Bound in the Edit menu so ⌘⇧C reaches the page even while a native menu
+// owns the key; the page's CopyLinkToast does the copy and shows the notice.
+const shareCommands: ShareCommands = {
+  copyPageLink: () => {
+    if (!window || window.isDestroyed() || !window.isVisible()) return;
+    void window.webContents.executeJavaScript("window.dispatchEvent(new Event('agentuse:copy-page-link'))");
+  },
+};
+
 function toggleDashboardSidebar(): void {
   if (window && !window.isDestroyed() && window.isVisible()) {
     void window.webContents.executeJavaScript("window.dispatchEvent(new Event('agentuse:toggle-sidebar'))");
@@ -1362,7 +1371,7 @@ function refreshApplicationMenu(): void {
         { label: "Quit AgentUse", accelerator: "Command+Q", click: () => app.quit() },
       ],
     },
-    createEditMenu(findCommands),
+    createEditMenu(findCommands, shareCommands),
     createViewMenu(viewCommands),
     createNavigationMenu(navigationCommands),
   ]));

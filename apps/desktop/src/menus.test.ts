@@ -23,7 +23,7 @@ describe("desktop application menus", () => {
   });
 
   it("uses native editing roles in standard macOS order", () => {
-    const menu = createEditMenu({ open: () => {} });
+    const menu = createEditMenu({ open: () => {} }, { copyPageLink: () => {} });
     const items = menu.submenu as Array<{ role?: string }>;
     expect(items.map((item) => item.role).filter(Boolean)).toEqual([
       "undo",
@@ -39,13 +39,23 @@ describe("desktop application menus", () => {
 
   it("provides standard macOS find commands", () => {
     const open = mock(() => undefined);
-    const menu = createEditMenu({ open });
+    const menu = createEditMenu({ open }, { copyPageLink: () => {} });
     const find = (menu.submenu as MenuItemConstructorOptions[]).find((item) => item.label === "Find");
     const items = find?.submenu as MenuItemConstructorOptions[];
 
     expect(items.map((item) => item.accelerator)).toEqual(["Command+F"]);
     items[0]?.click?.({} as never, undefined as never, {} as never);
     expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("binds Copy Link to Page to Command+Shift+C in the Edit menu", () => {
+    const copyPageLink = mock(() => undefined);
+    const menu = createEditMenu({ open: () => {} }, { copyPageLink });
+    const item = (menu.submenu as MenuItemConstructorOptions[]).find((entry) => entry.label === "Copy Link to Page");
+
+    expect(item?.accelerator).toBe("Command+Shift+C");
+    item?.click?.({} as never, undefined as never, {} as never);
+    expect(copyPageLink).toHaveBeenCalledTimes(1);
   });
 
   it("provides standard reload and sidebar shortcuts in the View menu", () => {
