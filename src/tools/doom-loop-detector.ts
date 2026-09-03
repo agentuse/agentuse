@@ -8,6 +8,9 @@
 export interface ToolCall {
   name: string;
   args: unknown;
+  /** Normalized args, computed once when the call is recorded so each later
+   *  comparison against it is a string equality, not a deep sort + stringify. */
+  key?: string;
 }
 
 export interface DoomLoopConfig {
@@ -67,7 +70,9 @@ export class DoomLoopDetector {
    */
   private areIdentical(a: ToolCall, b: ToolCall): boolean {
     if (a.name !== b.name) return false;
-    return this.normalizeArgs(a.args) === this.normalizeArgs(b.args);
+    a.key ??= this.normalizeArgs(a.args);
+    b.key ??= this.normalizeArgs(b.args);
+    return a.key === b.key;
   }
 
   /**

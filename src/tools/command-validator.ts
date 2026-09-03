@@ -242,6 +242,8 @@ export class CommandValidator {
   private readonly projectRoot: string | null;
   private readonly allowedPaths: string[];
   private readonly context: PathResolverContext | null;
+  /** Compiled wildcard patterns; the same handful is tested on every command. */
+  private readonly patternRegexCache = new Map<string, RegExp>();
 
   constructor(
     allowedPatterns: string[],
@@ -433,11 +435,15 @@ export class CommandValidator {
    * Match a string against a pattern (for simple checks)
    */
   private matchesPattern(str: string, pattern: string): boolean {
-    const regexPattern = pattern
-      .split('*')
-      .map(part => part.replace(/[.+?^${}()|[\]\\]/g, char => '\\' + char))
-      .join('.*');
-    const regex = new RegExp(`^${regexPattern}$`, 'is');
+    let regex = this.patternRegexCache.get(pattern);
+    if (!regex) {
+      const regexPattern = pattern
+        .split('*')
+        .map(part => part.replace(/[.+?^${}()|[\]\\]/g, char => '\\' + char))
+        .join('.*');
+      regex = new RegExp(`^${regexPattern}$`, 'is');
+      this.patternRegexCache.set(pattern, regex);
+    }
     return regex.test(str);
   }
 

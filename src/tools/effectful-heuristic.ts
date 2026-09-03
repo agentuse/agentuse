@@ -15,7 +15,7 @@
 const EFFECTFUL_VERBS = [
   'reply', 'tweet', 'post', 'send', 'publish', 'deploy', 'release',
   'delete', 'destroy', 'purge',
-];
+].map((verb) => new RegExp(`\\b${verb}\\b`));
 
 // Specific command shapes that are effectful regardless of surrounding words.
 const EFFECTFUL_PATTERNS: RegExp[] = [
@@ -45,7 +45,7 @@ export function looksEffectful(commandPattern: string): boolean {
     const unquoted = token.replace(/^["']|["']$/g, '');
     return !/(?:^|\/)read-(?:[a-z0-9]+-)*[a-z0-9]+\*?$/i.test(unquoted);
   }).join(' ');
-  return EFFECTFUL_VERBS.some((verb) => new RegExp(`\\b${verb}\\b`).test(advisoryText));
+  return EFFECTFUL_VERBS.some((verb) => verb.test(advisoryText));
 }
 
 // Heads whose subcommands are all reads, so a wildcard grant of them carries no

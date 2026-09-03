@@ -37,7 +37,7 @@ import {
   type WebUITelemetryEvent,
 } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
-import { getBuildInfo } from "../utils/build-info";
+import { getBuildInfo, isDevCheckout } from "../utils/build-info";
 import { getCachedAvailableUpdate, refreshUpdateCacheInBackground } from "../update-check";
 import { registerServer, unregisterServer, updateServer, listServers, formatUptime, getDefaultLogFilePath, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { acquireSchedulerLock, releaseSchedulerLock } from "../utils/scheduler-lock";
@@ -3388,7 +3388,7 @@ export function createServeCommand(): Command {
 
       // Initialize telemetry
       await telemetry.init(packageVersion, { batchDelivery: true });
-      if (!getBuildInfo().dev) refreshUpdateCacheInBackground(packageVersion);
+      if (!isDevCheckout()) refreshUpdateCacheInBackground(packageVersion);
 
       // Spawn one worker per project. Each worker loads its own project's
       // .env / .env.local on each execute request, so per-project env stays
@@ -4328,17 +4328,24 @@ export function createServeCommand(): Command {
         const selectedProjects = selection.projects;
 
         const nonSessionErrors: Array<{ status: number; code: string; message: string }> = [];
-        for (const project of selectedProjects) {
+        // A session id lives in exactly one project, so when the caller did not
+        // say which, ask every worker at once instead of one after another; the
+        // first project (in configured order) that knows the id still wins.
+        const probes = await Promise.all(selectedProjects.map(async (project) => {
           const projectWorker = workers.get(project.id);
-          if (!projectWorker) {
-            nonSessionErrors.push({ status: 500, code: "WORKER_UNAVAILABLE", message: `No worker for project ${project.id}` });
-            continue;
-          }
+          if (!projectWorker) return { project, info: null };
           const info = await projectWorker.getApprovalInfo({
             projectRoot: project.root,
             sessionId,
             trusted: true,
           });
+          return { project, info };
+        }));
+        for (const { project, info } of probes) {
+          if (!info) {
+            nonSessionErrors.push({ status: 500, code: "WORKER_UNAVAILABLE", message: `No worker for project ${project.id}` });
+            continue;
+          }
           if (info.success) {
             // Stamp the resolved project id so clients that landed on a
             // session URL without ?project= (push links, multi-project
@@ -4380,16 +4387,20 @@ export function createServeCommand(): Command {
         const selectedProjects = selection.projects;
 
         const nonSessionErrors: Array<{ status: number; code: string; message: string }> = [];
-        for (const project of selectedProjects) {
+        const probes = await Promise.all(selectedProjects.map(async (project) => {
           const projectWorker = workers.get(project.id);
-          if (!projectWorker) {
-            nonSessionErrors.push({ status: 500, code: "WORKER_UNAVAILABLE", message: `No worker for project ${project.id}` });
-            continue;
-          }
+          if (!projectWorker) return { project, info: null };
           const info = await projectWorker.getSessionStatusInfo({
             projectRoot: project.root,
             sessionId,
           });
+          return { project, info };
+        }));
+        for (const { project, info } of probes) {
+          if (!info) {
+            nonSessionErrors.push({ status: 500, code: "WORKER_UNAVAILABLE", message: `No worker for project ${project.id}` });
+            continue;
+          }
           if (info.success) {
             return { success: true, project, session: info.session };
           }

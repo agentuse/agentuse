@@ -40,11 +40,8 @@ import * as readline from 'readline';
 import { PluginManager } from './plugin';
 import { getProviderPlugin } from './plugin/provider-runtime';
 import { version as packageVersion } from '../package.json';
-import { getBuildInfo, formatVersionLine } from './utils/build-info';
+import { isDevCheckout, formatVersionLine } from './utils/build-info';
 import { createHash } from 'crypto';
-
-const buildInfo = getBuildInfo();
-const version = formatVersionLine(buildInfo);
 import { AuthenticationError } from './models';
 import * as dotenv from 'dotenv';
 import { existsSync } from 'fs';
@@ -155,7 +152,14 @@ function isURL(input: string): boolean {
 program
   .name('agentuse')
   .description('Run AI agents from natural language markdown files')
-  .version(version)
+  // Hand-rolled instead of .version(): the dev-build suffix comes from a
+  // synchronous `git describe`, which must only run when the version is
+  // actually printed, not on every command start.
+  .option('-V, --version', 'output the version number')
+  .on('option:version', () => {
+    process.stdout.write(`${formatVersionLine()}\n`);
+    process.exit(0);
+  })
   .showHelpAfterError('(add --help for additional information)')
   .configureOutput({
     outputError: (str, write) => {
@@ -183,7 +187,7 @@ program.hook('preAction', (_command, actionCommand) => {
   }
   // A dev checkout is ahead of every published release; nagging it to
   // "update" to the version it already surpasses would be noise.
-  if (buildInfo.dev) return;
+  if (isDevCheckout()) return;
   refreshUpdateCacheInBackground(packageVersion);
   const options = actionCommand.optsWithGlobals() as { quiet?: boolean; json?: boolean };
   // The long-lived daemon surfaces the same information in its Web UI; do not

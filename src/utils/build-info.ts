@@ -64,12 +64,31 @@ function describeCheckout(root: string): ReturnType<typeof parseDescribe> {
 }
 
 let cached: BuildInfo | null = null;
+let checkoutRoot: string | null | undefined;
+
+/** Package root when running from a git checkout, null for a published install. */
+function devCheckoutRoot(): string | null {
+  if (checkoutRoot === undefined) {
+    const root = findPackageRoot();
+    checkoutRoot = root !== null && existsSync(join(root, '.git')) ? root : null;
+  }
+  return checkoutRoot;
+}
+
+/**
+ * Whether this is a dev checkout, from two stat calls. Use this on hot paths
+ * (every CLI start, every worker spawn) instead of getBuildInfo(), whose
+ * synchronous `git describe` costs ~45ms and is only needed to print a version.
+ */
+export function isDevCheckout(): boolean {
+  return devCheckoutRoot() !== null;
+}
 
 /** Version plus whether this is an unreleased checkout. Computed once per process. */
 export function getBuildInfo(): BuildInfo {
   if (cached) return cached;
-  const root = findPackageRoot();
-  const dev = root !== null && existsSync(join(root, '.git'));
+  const root = devCheckoutRoot();
+  const dev = root !== null;
   if (!dev) {
     cached = { version: packageVersion, baseVersion: packageVersion, dev: false };
     return cached;
