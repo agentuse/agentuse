@@ -205,6 +205,18 @@ a, button, select, summary, label, input, textarea,
   box-shadow: 0 0 6px var(--cyan);
 }
 .group-rail-item.active .group-rail-label { color: var(--cyan); }
+/* The rail floats over the page, so the expanded label gets a solid backdrop
+   to stay legible when it lands on content instead of the gutter. */
+.group-rail-label { background: var(--bg); box-shadow: 0 0 0 4px var(--bg); border-radius: 3px; }
+/* Wide pages (1120px main) leave no gutter for a 180px label on ordinary
+   laptop and desktop widths, so the always-on active label would cover the
+   last table column (the Run buttons on /agents). Below the width where the
+   gutter can fit it, keep the active dot and show labels on hover only. */
+@media (max-width: 1839px) {
+  .page-agents .group-rail-item.active:not(:hover) .group-rail-label,
+  .page-schedules .group-rail-item.active:not(:hover) .group-rail-label,
+  .page-stores .group-rail-item.active:not(:hover) .group-rail-label { max-width: 0; opacity: 0; }
+}
 
 /* ---------------- topbar ---------------- */
 .topbar {
