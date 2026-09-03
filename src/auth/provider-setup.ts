@@ -394,6 +394,18 @@ export async function completeProviderPluginOAuth(
   }
 }
 
+/** Drop a pending OAuth attempt when the user backs out, so a retry never collides. */
+export function cancelProviderOAuth(flowId: unknown): { cancelled: boolean } {
+  if (typeof flowId !== 'string' || !flowId) throw new Error('OAuth flow is required');
+  const plugin = pluginOAuthAttempts.get(flowId);
+  if (plugin) {
+    pluginOAuthAttempts.delete(flowId);
+    plugin.cancel(new Error('OAuth flow was cancelled'));
+    return { cancelled: true };
+  }
+  return { cancelled: oauthAttempts.delete(flowId) };
+}
+
 export async function removeProviderCredential(
   provider: unknown,
   kind: unknown,

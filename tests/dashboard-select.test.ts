@@ -30,7 +30,7 @@ describe('DashboardSelect menu placement', () => {
       { left: 40, top: 100, bottom: 140, width: 300 },
       800,
       700,
-    )).toEqual({ left: 40, top: 145, width: 300, maxHeight: 320 });
+    )).toEqual({ left: 40, top: 145, width: 300, maxHeight: 400 });
   });
 
   it('opens above and limits its height in a short viewport', () => {
@@ -46,6 +46,6 @@ describe('DashboardSelect menu placement', () => {
       { left: -20, top: 20, bottom: 60, width: 500 },
       360,
       640,
-    )).toEqual({ left: 8, top: 65, width: 344, maxHeight: 320 });
+    )).toEqual({ left: 8, top: 65, width: 344, maxHeight: 400 });
   });
 });

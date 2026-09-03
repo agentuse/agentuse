@@ -26,7 +26,8 @@ export function getDashboardSelectMenuPosition(
 ): DashboardSelectMenuPosition {
   const viewportGap = 8;
   const triggerGap = 5;
-  const preferredMaxHeight = 320;
+  // Tall enough for the built-in group plus the community plugin group.
+  const preferredMaxHeight = 400;
   const availableBelow = Math.max(0, viewportHeight - trigger.bottom - triggerGap - viewportGap);
   const availableAbove = Math.max(0, trigger.top - triggerGap - viewportGap);
   const openAbove = availableAbove > availableBelow && availableBelow < 240;

@@ -912,6 +912,10 @@ export function updateProviderPlugin(name: string): Promise<ProviderSetupPayload
   return postJson('/api/providers/plugins/update', { name });
 }
 
+export function cancelProviderOAuth(flowId: string): Promise<{ success: true; cancelled: boolean }> {
+  return postJson('/api/providers/oauth/cancel', { flowId });
+}
+
 export function removeProviderPlugin(name: string): Promise<ProviderSetupPayload> {
   return postJson('/api/providers/plugins/remove', { name });
 }

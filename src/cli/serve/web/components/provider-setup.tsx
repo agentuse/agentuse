@@ -7,6 +7,7 @@ import {
   fetchProviderSetup,
   inspectProviderPlugin,
   installProviderPlugin,
+  cancelProviderOAuth,
   removeCustomProvider,
   removeProviderCredential,
   removeProviderPlugin,
@@ -338,7 +339,7 @@ function ProviderSetupForm(props: {
       {error && <p class="provider-setup-error" role="alert">{error}</p>}
       <div class="provider-setup-actions">
         {(flow || (scope === 'all' && pluginEntry) || (provider === advancedPluginSelection && pluginInspection)) && <button type="button" class="provider-setup-secondary" onClick={() => {
-          if (flow) { setFlow(null); setCode(''); }
+          if (flow) { void cancelProviderOAuth(flow.id).catch(() => {}); setFlow(null); setCode(''); }
           else if (provider === advancedPluginSelection && pluginInspection) setPluginInspection(null);
           else setProvider(setupOptions[0]?.value ?? props.payload.catalog[0]?.id ?? 'anthropic');
         }} disabled={busy}>Back</button>}
@@ -416,6 +417,13 @@ export function ProviderSettingsGroup() {
   useEffect(() => { void fetchProviderSetup().then(setPayload, (caught) => setError((caught as Error).message || 'Could not load providers.')); }, []);
   const catalog = payload?.catalog ?? [];
   const providers = useMemo(() => catalog.map((entry) => ({ entry, status: payload?.status.providers.find((item) => item.id === entry.id) })), [catalog, payload]);
+  // Providers that exist only because an installed plugin registered them.
+  // They have no dashboard login bridge yet, so the row shows status and
+  // points at the CLI instead of opening a dialog that would be empty.
+  const pluginProviders = useMemo(() => (payload?.status.providers ?? [])
+    .filter((status) => !catalog.some((entry) => entry.id === status.id))
+    .map((status) => ({ status, plugin: payload?.installedPlugins.find((item) => item.providers.some((provided) => provided.id === status.id)) })),
+  [catalog, payload]);
 
   /** Busy key shared by a stored credential's Remove button and its handler. */
   const credentialKey = (provider: string, source: ProviderAuthSourceStatus) =>
@@ -507,6 +515,21 @@ export function ProviderSettingsGroup() {
             </div>
           );
         })}
+        {pluginProviders.map(({ status, plugin }) => (
+          <div class="settings-row provider-settings-row" key={status.id}>
+            <div class="settings-row-text">
+              <div class="settings-row-label">{status.name}</div>
+              <div class="settings-row-hint">{plugin ? `via ${plugin.name} · ` : ''}{status.configured ? status.sources.find((source) => source.active)?.name ?? 'Connected' : <>Connect with <code>agentuse provider login {status.id}</code></>}</div>
+            </div>
+            <div class="settings-row-control provider-settings-control">
+              <span class={`provider-status${status.configured ? ' is-ready' : ''}`}>{status.configured ? 'Connected' : 'Not connected'}</span>
+              {status.sources.filter((source) => source.stored).map((source) => {
+                const removeKey = credentialKey(status.id, source);
+                return <button key={removeKey} type="button" class="settings-item" disabled={busyKey === removeKey} onClick={() => void remove(status.id, source)}>Remove {source.kind === 'oauth' ? 'OAuth' : 'key'}</button>;
+              })}
+            </div>
+          </div>
+        ))}
         {payload?.status.customProviders.map((provider) => (
           <div class="settings-row provider-settings-row" key={provider.id}>
             <div class="settings-row-text"><div class="settings-row-label">{provider.id}</div><div class="settings-row-hint">{provider.baseURL} · {provider.models?.length ?? 0} {provider.models?.length === 1 ? 'model' : 'models'}</div></div>
@@ -535,6 +558,11 @@ export function ProviderSettingsGroup() {
                 <button type="button" class="settings-item" disabled={busyKey === `update-plugin:${plugin.packageName}`} onClick={() => void updatePlugin(plugin.packageName)}>{busyKey === `update-plugin:${plugin.packageName}` ? 'Updating…' : 'Update'}</button>
                 {confirmingPlugin === plugin.packageName ? (
                   <>
+                    <span class="settings-row-hint provider-remove-warning" role="status">
+                      {plugin.providers.length > 0
+                        ? `Logins through ${plugin.providers.map((provided) => provided.id).join(', ')} stop working until it is reinstalled. Saved credentials are kept.`
+                        : 'Saved credentials are kept.'}
+                    </span>
                     <button type="button" class="settings-item" disabled={busyKey === `remove-plugin:${plugin.packageName}`} onClick={() => setConfirmingPlugin(null)}>Cancel</button>
                     <button type="button" class="settings-item is-danger" disabled={busyKey === `remove-plugin:${plugin.packageName}`} onClick={() => void removePlugin(plugin.packageName)}>{busyKey === `remove-plugin:${plugin.packageName}` ? 'Removing…' : 'Confirm remove'}</button>
                   </>

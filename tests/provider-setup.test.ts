@@ -7,6 +7,7 @@ import {
   clearProviderOAuthAttempts,
   checkCustomProvider,
   completeProviderPluginOAuth,
+  cancelProviderOAuth,
   completeProviderOAuth,
   configureCustomProvider,
   installProviderPluginFromRegistry,
@@ -306,6 +307,17 @@ describe('Dashboard provider setup service', () => {
     const { createModel } = await import('../src/models');
     await expect(createModel('anthropic:claude-sonnet-5'))
       .rejects.toThrow('agentuse plugins install cb7337/agentuse-claude-code-provider@v0.1.0');
+  });
+
+  it('cancels a pending plugin OAuth flow so it cannot be completed later', async () => {
+    await addClaudePluginFixture();
+    const started = await startProviderPluginOAuth('claude-code-subscription');
+    if (started.connected) throw new Error('Expected an OAuth flow');
+
+    expect(cancelProviderOAuth(started.flowId)).toEqual({ cancelled: true });
+    expect(cancelProviderOAuth(started.flowId)).toEqual({ cancelled: false });
+    await expect(completeProviderPluginOAuth(started.flowId, 'valid-code'))
+      .rejects.toThrow('expired or was not found');
   });
 
   it('refuses an unreviewed plugin install without the inspected commit', async () => {

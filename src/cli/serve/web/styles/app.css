@@ -6167,6 +6167,7 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 .provider-setup-secondary:disabled { opacity: 0.5; cursor: default; }
 .provider-settings-row { align-items: flex-start; }
 .provider-settings-control { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 7px; }
+.provider-remove-warning { flex-basis: 100%; text-align: right; color: var(--amber); }
 .provider-status {
   display: inline-flex; align-items: center; min-height: 22px; padding: 1px 8px;
   border: 1px solid var(--line); border-radius: 999px; background: var(--panel);
