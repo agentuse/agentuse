@@ -123,6 +123,9 @@ describe('createProviderCommand', () => {
 
     expect(output.join('')).toContain('OpenCode Go');
     expect(output.join('')).toContain('OPENCODE_GO_API_KEY');
+    // The community shortlist is advertised, never auto-installed.
+    expect(output.join('')).toContain('Community provider plugins:');
+    expect(output.join('')).toContain('Install: agentuse plugins install cb7337/agentuse-claude-code-provider@v0.1.0');
     expect(output.join('')).toContain('[2]');
   });
 

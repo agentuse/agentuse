@@ -19,7 +19,7 @@ import {
   saveProviderApiKey,
   startProviderOAuth,
 } from "../auth/provider-setup.js";
-import { getProviderAdapters, getProviderPlugin, loadProviderPlugins, loginProviderPlugin, logoutProviderPlugin, providerPluginAuthStatus } from '../plugin/provider-runtime.js';
+import { getProviderAdapters, getProviderPlugin, loadProviderPlugins, loginProviderPlugin, logoutProviderPlugin, providerPluginAuthStatus, readInstalledPluginRecords } from '../plugin/provider-runtime.js';
 import { PROVIDER_PLUGIN_REGISTRY } from '../plugin/provider-registry.js';
 import type { AuthInteraction } from '../plugin/types.js';
 
@@ -279,7 +279,7 @@ Use these only when an endpoint reports a protocol compatibility error.
           pluginProviders.forEach((plugin, index) => {
             process.stdout.write(`  ${index + 5}. ${plugin.id}  - ${plugin.name} (plugin)\n`);
           });
-          process.stdout.write("\n");
+          process.stdout.write("\nNeed another provider, such as a Claude Pro/Max subscription? Run `agentuse provider list` to see community plugins.\n\n");
           
           const selection = await promptInput(`Select provider (1-${pluginProviders.length + 4} or name): `);
           
@@ -547,6 +547,21 @@ Use these only when an endpoint reports a protocol compatibility error.
         }
         process.stdout.write("\n");
       }
+
+      // The shortlist is shown, never auto-installed: the user copies the
+      // command and consents to the community package themselves.
+      const installedPlugins = new Set((await readInstalledPluginRecords()).map((record) => record.name));
+      process.stdout.write("Community provider plugins:\n");
+      process.stdout.write("─".repeat(50) + "\n");
+      for (const entry of PROVIDER_PLUGIN_REGISTRY) {
+        const installed = installedPlugins.has(entry.packageName);
+        process.stdout.write(`  🧩 ${entry.name} (${entry.publisher}, v${entry.version})${installed ? " - installed" : ""}\n`);
+        process.stdout.write(`     ${entry.description}\n`);
+        process.stdout.write(installed
+          ? `     Login: agentuse provider login ${entry.provider}\n`
+          : `     Install: agentuse plugins install ${entry.source}\n`);
+      }
+      process.stdout.write("\n");
 
       if (status.customProviders.length > 0) {
         const customProviderAuth = await AuthStorage.getCustomProviders();
