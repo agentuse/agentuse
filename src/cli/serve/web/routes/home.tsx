@@ -973,7 +973,10 @@ export default function Home() {
         {data && (
           <footer class="home-version-foot">
             <span>AgentUse</span>
-            <span>v{data.version}</span>
+            <span>
+              {data.dev && <span class="home-dev-tag" title="Unreleased development build">dev</span>}
+              v{data.version}
+            </span>
           </footer>
         )}
       </main>

@@ -567,6 +567,8 @@ export interface ProjectInfo {
 
 export interface InfoPayload {
   version: string;
+  /** Set when the daemon runs from a git checkout, not a published release. */
+  dev?: boolean;
   update?: {
     currentVersion: string;
     latestVersion: string;

@@ -4864,7 +4864,12 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--line);
   font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted-2);
 }
-.page-home .home-version-foot span:first-child { color: var(--muted); font-weight: var(--weight-medium); }
+.page-home .home-version-foot > span:first-child { color: var(--muted); font-weight: var(--weight-medium); }
+.page-home .home-dev-tag {
+  display: inline-block; margin-right: 8px; padding: 1px 6px; border-radius: 4px;
+  font-size: 10px; font-weight: var(--weight-medium); letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--amber); border: 1px solid currentColor;
+}
 
 /* --- home: live mission-control layer --- */
 /* Ambient state wash: a fixed, non-interactive tint that fades in green while

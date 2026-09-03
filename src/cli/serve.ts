@@ -37,6 +37,7 @@ import {
   type WebUITelemetryEvent,
 } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
+import { getBuildInfo } from "../utils/build-info";
 import { getCachedAvailableUpdate, refreshUpdateCacheInBackground } from "../update-check";
 import { registerServer, unregisterServer, updateServer, listServers, formatUptime, getDefaultLogFilePath, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { acquireSchedulerLock, releaseSchedulerLock } from "../utils/scheduler-lock";
@@ -3387,7 +3388,7 @@ export function createServeCommand(): Command {
 
       // Initialize telemetry
       await telemetry.init(packageVersion, { batchDelivery: true });
-      refreshUpdateCacheInBackground(packageVersion);
+      if (!getBuildInfo().dev) refreshUpdateCacheInBackground(packageVersion);
 
       // Spawn one worker per project. Each worker loads its own project's
       // .env / .env.local on each execute request, so per-project env stays
@@ -5825,11 +5826,14 @@ export function createServeCommand(): Command {
             // The helper enforces the 24-hour cache interval. Calling it from
             // the polled info route lets a daemon discover releases that land
             // weeks after startup without introducing a separate live timer.
-            refreshUpdateCacheInBackground(packageVersion);
+            const build = getBuildInfo();
+            // A dev checkout is ahead of every published release; never offer an "update".
+            if (!build.dev) refreshUpdateCacheInBackground(packageVersion);
             res.writeHead(200, { "Content-Type": "application/json" });
-            const update = getCachedAvailableUpdate(packageVersion);
+            const update = build.dev ? null : getCachedAvailableUpdate(packageVersion);
             res.end(JSON.stringify({
-              version: packageVersion,
+              version: build.version,
+              ...(build.dev && { dev: true }),
               ...(update && { update }),
               brand: { name: brandNameCfg ?? "AgentUse" },
               capabilities: {
@@ -9466,7 +9470,7 @@ export function createServeCommand(): Command {
           startTime: serverStartTime,
           agentCount: totalAgents,
           scheduleCount: schedules.length,
-          version: packageVersion,
+          version: getBuildInfo().version,
           projects: registryProjects,
           ...(logFilePath && { logFile: logFilePath }),
           ...(desktopSupervisor && { supervisor: desktopSupervisor }),

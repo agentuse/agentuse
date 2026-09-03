@@ -36,24 +36,15 @@ import { applyRunModelOverride, resolveModelString, type RunModelOverride } from
 import { logger, LogLevel } from './utils/logger';
 import { safeHttpUrl } from './utils/url';
 import { basename, resolve, dirname, join } from 'path';
-import { fileURLToPath } from 'url';
 import * as readline from 'readline';
 import { PluginManager } from './plugin';
 import { getProviderPlugin } from './plugin/provider-runtime';
 import { version as packageVersion } from '../package.json';
-import { existsSync as existsSyncFs } from 'fs';
+import { getBuildInfo, formatVersionLine } from './utils/build-info';
 import { createHash } from 'crypto';
 
-// Detect if running from a linked/local development build
-function getVersionString(): string {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-  const packageRoot = join(__dirname, '..');
-  const isLocalDev = existsSyncFs(join(packageRoot, '.git'));
-  return isLocalDev ? `${packageVersion} (local)` : packageVersion;
-}
-
-const version = getVersionString();
+const buildInfo = getBuildInfo();
+const version = formatVersionLine(buildInfo);
 import { AuthenticationError } from './models';
 import * as dotenv from 'dotenv';
 import { existsSync } from 'fs';
@@ -190,6 +181,9 @@ program.hook('preAction', (_command, actionCommand) => {
   } catch {
     return;
   }
+  // A dev checkout is ahead of every published release; nagging it to
+  // "update" to the version it already surpasses would be noise.
+  if (buildInfo.dev) return;
   refreshUpdateCacheInBackground(packageVersion);
   const options = actionCommand.optsWithGlobals() as { quiet?: boolean; json?: boolean };
   // The long-lived daemon surfaces the same information in its Web UI; do not
