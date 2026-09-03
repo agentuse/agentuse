@@ -2946,6 +2946,16 @@ function canContinueApprovalSession(options: {
     Boolean(approval.agent.filePath);
 }
 
+function isAgentRevisionContinuationInFlight(
+  projectId: string,
+  revisionSessionId: string,
+  revisionMutations: ReadonlySet<string>,
+  activeSessionContinuations: ReadonlyMap<string, unknown>,
+): boolean {
+  return revisionMutations.has(`revision:${projectId}:${revisionSessionId}`)
+    || activeSessionContinuations.has(`${projectId}:${revisionSessionId}`);
+}
+
 type BackgroundSessionFailure = { status: string; message: string; at: number };
 
 /** Add an asynchronous resume/continuation failure to the next session payload. */
@@ -3354,6 +3364,7 @@ export function createServeCommand(): Command {
       const activeInternalJobRecoveries = new Map<string, Promise<void>>();
       const revisionViewCleanups = new Map<string, () => Promise<void>>();
       const revisionMutations = new Set<string>();
+      const activeSessionContinuations = new Map<string, Promise<unknown>>();
       const cleanupRevisionView = async (revisionSessionId: string): Promise<void> => {
         const cleanup = revisionViewCleanups.get(revisionSessionId);
         if (!cleanup) return;
@@ -3898,6 +3909,16 @@ export function createServeCommand(): Command {
         record: AgentRevisionRecord,
       ): Promise<AgentRevisionRecord> => {
         if (record.status !== 'running') return record;
+        // Requesting changes reopens the durable revision before the worker has
+        // changed the underlying session from completed to running. During that
+        // handoff, the old terminal session status is stale and must not turn
+        // the freshly reopened revision into REVISION_NOT_SUBMITTED.
+        if (isAgentRevisionContinuationInFlight(
+          project.id,
+          record.revisionSessionId,
+          revisionMutations,
+          activeSessionContinuations,
+        )) return record;
         const worker = workers.get(project.id);
         if (!worker) return record;
         const status = await worker.getSessionStatusInfo({
@@ -4350,7 +4371,6 @@ export function createServeCommand(): Command {
       };
 
       const activeApprovalResumes = new Map<string, Promise<unknown>>();
-      const activeSessionContinuations = new Map<string, Promise<unknown>>();
       // The last background resume/continuation failure per session (keyed
       // `${projectId}:${sessionId}`). These operations are fire-and-forget after
       // the 202 response, so this is the only way their eventual failure reaches
@@ -9911,6 +9931,7 @@ export const __testing = {
   bareServeMigrationWarning,
   canContinueApprovalSession,
   applyBackgroundSessionFailure,
+  isAgentRevisionContinuationInFlight,
   isEndedSessionStatus,
   approvalListCreatedAfter,
   isPendingApprovalVisible,

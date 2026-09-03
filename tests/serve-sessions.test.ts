@@ -65,6 +65,38 @@ describe('background session failures', () => {
   });
 });
 
+describe('agent revision continuation reconciliation', () => {
+  const projectId = 'content';
+  const sessionId = '01REVISIONSESSION00000000000';
+
+  it('defers reconciliation while request-changes is reopening the revision', () => {
+    expect(__testing.isAgentRevisionContinuationInFlight(
+      projectId,
+      sessionId,
+      new Set([`revision:${projectId}:${sessionId}`]),
+      new Map(),
+    )).toBe(true);
+  });
+
+  it('defers reconciliation after the continuation starts but before worker status updates', () => {
+    expect(__testing.isAgentRevisionContinuationInFlight(
+      projectId,
+      sessionId,
+      new Set(),
+      new Map([[`${projectId}:${sessionId}`, Promise.resolve()]]),
+    )).toBe(true);
+  });
+
+  it('allows reconciliation after the request and continuation have settled', () => {
+    expect(__testing.isAgentRevisionContinuationInFlight(
+      projectId,
+      sessionId,
+      new Set(),
+      new Map(),
+    )).toBe(false);
+  });
+});
+
 describe('agent revision transcript evidence', () => {
   it('keeps the latest continuation and terminal error when a resumed run exceeds the evidence cap', () => {
     const logs = [
