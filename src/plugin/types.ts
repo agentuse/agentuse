@@ -414,6 +414,11 @@ export type AgentUseExtension = (api: AgentUsePluginAPI) => void | Promise<void>
 export interface AgentUsePackageManifest {
   apiVersion: 1;
   extensions: string[];
+  /** Optional static metadata used to preview provider plugins before activation. */
+  providers?: Array<{
+    id: string;
+    auth?: Array<'oauth' | 'api_key'>;
+  }>;
 }
 
 export interface InstalledPluginRecord {

@@ -393,6 +393,24 @@ export class AuthStorage {
       const destinationKey = this.pluginCredentialKey(providerID, methodID);
       const destination = data[destinationKey];
       if (destination && typeof destination === "object" && !Array.isArray(destination)) {
+        let changed = false;
+        const sourceKey = `${sourceProviderID}:oauth`;
+        if (sourceKey in data) {
+          delete data[sourceKey];
+          changed = true;
+        }
+        const legacy = data[sourceProviderID];
+        if (legacy && typeof legacy === "object" && !Array.isArray(legacy)) {
+          const legacyType = (legacy as { type?: unknown }).type;
+          if (legacyType === "oauth" || legacyType === "codex-oauth") {
+            delete data[sourceProviderID];
+            changed = true;
+          }
+        }
+        if (changed) {
+          await this.writeAll(data as Record<string, AuthInfo>);
+          this.oauthCache.clear();
+        }
         return destination as PluginCredential;
       }
 

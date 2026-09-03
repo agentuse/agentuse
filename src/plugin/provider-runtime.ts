@@ -1,5 +1,4 @@
 import { readFile } from 'fs/promises';
-import { homedir } from 'os';
 import { join, resolve } from 'path';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -19,6 +18,7 @@ import { AuthStorage } from '../auth/storage';
 import { MODELS, type ModelInfo, type Provider as RegistryProvider } from '../generated/models';
 import type { ProviderAuthSourceStatus } from '../auth/provider-status';
 import { logger } from '../utils/logger';
+import { getAgentuseDataDir } from '../utils/data-dir';
 import { findProjectRoot } from '../utils/project';
 import { PluginHost } from './host';
 import {
@@ -54,7 +54,7 @@ import type { PluginIdentity } from './internal-types';
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
 export function providerPluginHome(): string {
-  return process.env.AGENTUSE_PLUGIN_HOME || join(homedir(), '.local', 'share', 'agentuse', 'plugins');
+  return join(getAgentuseDataDir(), 'plugins');
 }
 
 export function providerPluginRegistryPath(): string {
@@ -109,13 +109,39 @@ export async function loadPluginPackageDirectory(
 }
 
 const installedHosts = new Map<string, Promise<PluginHost>>();
+let legacyProviderPluginMigration: Promise<void> | undefined;
+
+async function ensureLegacyProviderPlugins(): Promise<void> {
+  if (!legacyProviderPluginMigration) {
+    legacyProviderPluginMigration = import('./provider-migration.js')
+      .then(async ({ installLegacyProviderPlugins }) => {
+        const installed = await installLegacyProviderPlugins();
+        if (installed.length > 0) {
+          logger.info('Installed Claude Code Subscription plugin and migrated existing Anthropic OAuth credentials');
+        }
+      })
+      .catch((error) => {
+        logger.warn(`Could not automatically upgrade existing provider credentials: ${error instanceof Error ? error.message : String(error)}`);
+      });
+  }
+  const pending = legacyProviderPluginMigration;
+  try {
+    await pending;
+  } finally {
+    // Keep concurrent callers on one upgrade attempt, but recheck on a future
+    // provider load in case a credential was imported or connectivity returned.
+    if (legacyProviderPluginMigration === pending) legacyProviderPluginMigration = undefined;
+  }
+}
 
 export function resetProviderPluginCache(): void {
   installedHosts.clear();
+  legacyProviderPluginMigration = undefined;
   clearActiveProviders();
 }
 
 export async function getInstalledPluginHost(): Promise<PluginHost> {
+  await ensureLegacyProviderPlugins();
   const root = resolve(process.env.AGENTUSE_PROJECT_ROOT ?? currentPluginProjectRoot() ?? findProjectRoot(process.cwd()));
   const key = `${providerPluginRegistryPath()}\0${root}`;
   let pending = installedHosts.get(key);
@@ -190,14 +216,14 @@ function adapterProvider(providerId: string, adapter: ProviderAdapter): Provider
 }
 
 /** Higher-priority conditional adapters win; ties preserve local-first registration order. */
-export async function getProviderAdapters(id: string): Promise<Array<{ adapter: ProviderAdapter; provider: ProviderDefinition }>> {
+export async function getProviderAdapters(id: string): Promise<Array<{ owner: PluginIdentity; adapter: ProviderAdapter; provider: ProviderDefinition }>> {
   const installedHost = await getInstalledPluginHost();
   enterInstalledPluginHost(installedHost);
-  const local = currentPluginHost()?.getProviderAdapters(id) ?? [];
-  const installed = installedHost.getProviderAdapters(id);
+  const local = currentPluginHost()?.getProviderAdapterContributions(id) ?? [];
+  const installed = installedHost.getProviderAdapterContributions(id);
   return [...local, ...installed]
-    .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))
-    .map((adapter) => ({ adapter, provider: adapterProvider(id, adapter) }));
+    .sort((a, b) => (b.adapter.priority ?? 0) - (a.adapter.priority ?? 0))
+    .map(({ owner, adapter }) => ({ owner, adapter, provider: adapterProvider(id, adapter) }));
 }
 
 export async function getActiveProviderAdapter(
@@ -393,6 +419,7 @@ export async function loginProviderPlugin(
   provider: ProviderDefinition,
   interaction: AuthInteraction,
   methodId?: string,
+  signal?: AbortSignal,
 ): Promise<void> {
   const methods = provider.auth?.methods ?? [];
   let selectedMethodId = methodId;
@@ -404,12 +431,18 @@ export async function loginProviderPlugin(
   }
   const method = selectedMethodId ? methods.find((item) => item.id === selectedMethodId) : methods[0];
   if (!method) throw new Error(`Provider '${provider.id}' does not support login`);
-  const credential = await method.login(interaction, authContext(provider.id));
+  const credential = await method.login(interaction, authContext(provider.id, signal));
   await AuthStorage.setPluginCredential(provider.id, method.id, credential);
 }
 
-export async function logoutProviderPlugin(provider: ProviderDefinition): Promise<void> {
+export async function logoutProviderPlugin(
+  provider: ProviderDefinition,
+  methodType?: 'oauth' | 'api-key',
+  methodId?: string,
+): Promise<void> {
   for (const method of provider.auth?.methods ?? []) {
+    if (methodType && method.type !== methodType) continue;
+    if (methodId && method.id !== methodId) continue;
     const credential = await readCredential(provider.id, method);
     await method.logout?.(credential, authContext(provider.id));
     await AuthStorage.removePluginCredential(provider.id, method.id);
@@ -418,7 +451,10 @@ export async function logoutProviderPlugin(provider: ProviderDefinition): Promis
   }
 }
 
-export async function providerPluginAuthStatus(provider: ProviderDefinition): Promise<ProviderAuthSourceStatus[]> {
+export async function providerPluginAuthStatus(
+  provider: ProviderDefinition,
+  owner?: PluginIdentity,
+): Promise<ProviderAuthSourceStatus[]> {
   const sources: ProviderAuthSourceStatus[] = [];
   for (const method of provider.auth?.methods ?? []) {
     for (const envName of method.environment ?? []) {
@@ -432,6 +468,7 @@ export async function providerPluginAuthStatus(provider: ProviderDefinition): Pr
         name: method.name,
         stored: true,
         active: sources.length === 0,
+        ...(owner && { plugin: { name: owner.name, authMethodId: method.id } }),
       });
     }
   }

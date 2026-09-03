@@ -25,6 +25,7 @@ import type {
 const provider = (configured: boolean): ProviderSetupPayload => ({
   success: true,
   catalog: [],
+  pluginRegistry: [],
   status: {
     credentialStore: '/tmp/auth.json',
     providers: [{ id: 'openai', name: 'OpenAI', configured, sources: [] }],

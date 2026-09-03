@@ -5,6 +5,7 @@ import {
   OPENCODE_GO_PROVIDER_ID,
 } from '../providers/opencode-go.js';
 import { getProviderAdapters, loadProviderPlugins, providerPluginAuthStatus } from '../plugin/provider-runtime.js';
+import { PROVIDER_PLUGIN_REGISTRY } from '../plugin/provider-registry.js';
 
 export type ProviderAuthSourceKind = 'oauth' | 'api_key' | 'environment';
 
@@ -14,6 +15,7 @@ export interface ProviderAuthSourceStatus {
   name: string;
   stored: boolean;
   active: boolean;
+  plugin?: { name: string; authMethodId: string };
 }
 
 export interface ProviderAuthStatus {
@@ -77,7 +79,7 @@ export async function getProviderStatus(): Promise<ProviderStatus> {
     // Conditional adapters are part of the built-in namespace. Their auth
     // sources lead the list because a selected OAuth transport wins over API.
     for (const adapter of adapters) {
-      for (const source of await providerPluginAuthStatus(adapter.provider)) {
+      for (const source of await providerPluginAuthStatus(adapter.provider, adapter.owner)) {
         sources.push({ ...source, active: sources.length === 0 });
       }
     }
@@ -118,12 +120,17 @@ export async function getProviderStatus(): Promise<ProviderStatus> {
       });
     }
 
-    const hasClaudeAdapter = adapters.some(({ provider: adapted }) =>
-      adapted.auth?.methods.some((method) => method.environment?.includes('CLAUDE_CODE_OAUTH_TOKEN')),
-    );
+    const shortlistedPlugin = PROVIDER_PLUGIN_REGISTRY.find((entry) => entry.provider === provider.id);
+    const hasClaudeAdapter = shortlistedPlugin
+      ? adapters.some(({ provider: adapted }) =>
+          adapted.auth?.methods.some((method) => method.id === shortlistedPlugin.authMethodId))
+      : false;
+    const migratedPluginCredential = shortlistedPlugin
+      ? await AuthStorage.getPluginCredential(provider.id, shortlistedPlugin.authMethodId)
+      : undefined;
     const missingClaudeAdapter = provider.id === 'anthropic'
       && !hasClaudeAdapter
-      && Boolean(providerAuth.oauth || process.env.CLAUDE_CODE_OAUTH_TOKEN);
+      && Boolean(providerAuth.oauth || migratedPluginCredential || process.env.CLAUDE_CODE_OAUTH_TOKEN);
     providers.push({
       id: provider.id,
       name: provider.name,

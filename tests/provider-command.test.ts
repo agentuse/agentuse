@@ -5,6 +5,7 @@ import { AuthStorage } from '../src/auth/storage';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { resetProviderPluginCache } from '../src/plugin/provider-runtime';
 
 describe('createProviderCommand', () => {
   let errorSpy: ReturnType<typeof spyOn> | undefined;
@@ -129,6 +130,7 @@ describe('createProviderCommand', () => {
     const command = createProviderCommand();
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-provider-command-test-'));
     const originalAuthFile = (AuthStorage as any).AUTH_FILE;
+    const originalDataDir = process.env.AGENTUSE_DATA_DIR;
     const envNames = [
       'CLAUDE_CODE_OAUTH_TOKEN',
       'ANTHROPIC_API_KEY',
@@ -140,6 +142,27 @@ describe('createProviderCommand', () => {
     const output: string[] = [];
 
     (AuthStorage as any).AUTH_FILE = path.join(tempDir, 'auth.json');
+    const pluginHome = path.join(tempDir, 'plugins');
+    const pluginDirectory = path.join(pluginHome, 'claude-code-provider');
+    process.env.AGENTUSE_DATA_DIR = tempDir;
+    await fs.mkdir(pluginDirectory, { recursive: true });
+    await fs.writeFile(path.join(pluginDirectory, 'package.json'), JSON.stringify({
+      name: 'agentuse-claude-code-provider', version: '0.1.0', type: 'module',
+      agentuse: { apiVersion: 1, extensions: ['./index.js'] },
+    }));
+    await fs.writeFile(path.join(pluginDirectory, 'index.js'), `export default function (agentuse) {
+      agentuse.registerProvider('anthropic', {
+        name: 'Claude Code Subscription', models: { inherit: 'anthropic' }, transport: { kind: 'anthropic-messages' },
+        auth: { methods: [{ id: 'subscription', type: 'oauth', name: 'Claude subscription OAuth', environment: ['CLAUDE_CODE_OAUTH_TOKEN'], async login() { throw new Error('unused'); }, resolve({ credential }) { return credential?.access ? { bearerToken: credential.access, source: 'OAuth' } : undefined; } }] },
+        async when(context) { return Boolean(await context.auth.resolve('subscription')); }
+      });
+    }`);
+    await fs.writeFile(path.join(pluginHome, 'registry.json'), JSON.stringify([{
+      name: 'agentuse-claude-code-provider', version: '0.1.0',
+      source: 'cb7337/agentuse-claude-code-provider@v0.1.0', directory: pluginDirectory, scope: 'global',
+      installedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    }]));
+    resetProviderPluginCache();
     for (const name of envNames) delete process.env[name];
     process.env.CLAUDE_CODE_OAUTH_TOKEN = 'environment-oauth-secret';
     process.env.OPENAI_API_KEY = 'environment-secret';
@@ -164,6 +187,9 @@ describe('createProviderCommand', () => {
       await command.parseAsync(['list', '--json'], { from: 'user' });
     } finally {
       (AuthStorage as any).AUTH_FILE = originalAuthFile;
+      if (originalDataDir === undefined) delete process.env.AGENTUSE_DATA_DIR;
+      else process.env.AGENTUSE_DATA_DIR = originalDataDir;
+      resetProviderPluginCache();
       for (const [name, value] of originalEnv) {
         if (value === undefined) delete process.env[name];
         else process.env[name] = value;
@@ -198,9 +224,24 @@ describe('createProviderCommand', () => {
     expect(result.providers.find((provider: any) => provider.id === 'anthropic')).toEqual({
       id: 'anthropic',
       name: 'Anthropic',
-      configured: false,
-      sources: [],
-      actionRequired: 'Claude subscription OAuth is present but its provider plugin is not installed',
+      configured: true,
+      sources: [
+        {
+          priority: 1,
+          kind: 'environment',
+          name: 'CLAUDE_CODE_OAUTH_TOKEN',
+          stored: false,
+          active: true,
+        },
+        {
+          priority: 1,
+          kind: 'oauth',
+          name: 'Claude subscription OAuth',
+          stored: true,
+          active: false,
+          plugin: { name: 'agentuse-claude-code-provider', authMethodId: 'subscription' },
+        },
+      ],
     });
     expect(result.providers.find((provider: any) => provider.id === 'openrouter').sources).toEqual([{
       priority: 2,

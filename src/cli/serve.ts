@@ -85,15 +85,22 @@ import type { SessionContextPayload, SessionPurpose } from "./serve/types";
 import { startOrphanReconcileLoop } from "./serve/orphan-reconcile";
 import { ONBOARDING_AGENT_ID, ONBOARDING_AGENT_SOURCE } from "../onboarding";
 import {
+  completeProviderPluginOAuth,
   completeProviderOAuth,
+  inspectUnreviewedProviderPlugin,
+  installProviderPluginFromRegistry,
   providerSetupSnapshot,
   removeCustomProvider,
+  removeInstalledProviderPlugin,
   removeProviderCredential,
   checkCustomProvider,
   refreshCustomProviderModels,
   saveCustomProvider,
   saveProviderApiKey,
   startProviderOAuth,
+  startProviderPluginOAuth,
+  startUnreviewedProviderPluginOAuth,
+  updateInstalledProviderPlugin,
 } from "../auth/provider-setup";
 import {
   AgentCreationError,
@@ -7811,10 +7818,93 @@ export function createServeCommand(): Command {
           return;
         }
 
+        if (isApi && routePath === "/providers/plugins/install" && req.method === "POST") {
+          try {
+            const body = await parseJSONBody(req);
+            sendJSON(res, 200, { success: true, ...await installProviderPluginFromRegistry(body.plugin) });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "PROVIDER_PLUGIN_INSTALL_FAILED", (err as Error).message);
+          }
+          return;
+        }
+
+        if (isApi && routePath === "/providers/plugins/inspect" && req.method === "POST") {
+          try {
+            const body = await parseJSONBody(req);
+            sendJSON(res, 200, { success: true, plugin: await inspectUnreviewedProviderPlugin(body.source) });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "PROVIDER_PLUGIN_INSPECTION_FAILED", (err as Error).message);
+          }
+          return;
+        }
+
+        if (isApi && routePath === "/providers/plugins/oauth/start" && req.method === "POST") {
+          try {
+            const body = await parseJSONBody(req);
+            const started = await startProviderPluginOAuth(body.plugin);
+            sendJSON(res, 200, started.connected
+              ? { success: true, connected: true, ...started.snapshot }
+              : { success: true, ...started });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "PROVIDER_PLUGIN_OAUTH_START_FAILED", (err as Error).message);
+          }
+          return;
+        }
+
+        if (isApi && routePath === "/providers/plugins/oauth/complete" && req.method === "POST") {
+          try {
+            const body = await parseJSONBody(req);
+            sendJSON(res, 200, { success: true, ...await completeProviderPluginOAuth(body.flowId, body.code) });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "PROVIDER_PLUGIN_OAUTH_COMPLETE_FAILED", (err as Error).message);
+          }
+          return;
+        }
+
+        if (isApi && routePath === "/providers/plugins/oauth/start-unreviewed" && req.method === "POST") {
+          try {
+            const body = await parseJSONBody(req);
+            const started = await startUnreviewedProviderPluginOAuth(body.source);
+            sendJSON(res, 200, started.connected
+              ? { success: true, connected: true, ...started.snapshot }
+              : { success: true, ...started });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "PROVIDER_PLUGIN_OAUTH_START_FAILED", (err as Error).message);
+          }
+          return;
+        }
+
+        if (isApi && routePath === "/providers/plugins/update" && req.method === "POST") {
+          try {
+            const body = await parseJSONBody(req);
+            sendJSON(res, 200, { success: true, ...await updateInstalledProviderPlugin(body.name) });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "PROVIDER_PLUGIN_UPDATE_FAILED", (err as Error).message);
+          }
+          return;
+        }
+
+        if (isApi && routePath === "/providers/plugins/remove" && req.method === "POST") {
+          try {
+            const body = await parseJSONBody(req);
+            sendJSON(res, 200, { success: true, ...await removeInstalledProviderPlugin(body.name) });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "PROVIDER_PLUGIN_REMOVE_FAILED", (err as Error).message);
+          }
+          return;
+        }
+
         if (isApi && routePath === "/providers/oauth/start" && req.method === "POST") {
           try {
             const body = await parseJSONBody(req);
-            sendJSON(res, 200, { success: true, ...await startProviderOAuth(body.provider, body.mode) });
+            sendJSON(res, 200, { success: true, ...await startProviderOAuth(body.provider) });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "PROVIDER_OAUTH_START_FAILED", (err as Error).message);
@@ -7836,7 +7926,7 @@ export function createServeCommand(): Command {
         if (isApi && routePath === "/providers/remove" && req.method === "POST") {
           try {
             const body = await parseJSONBody(req);
-            sendJSON(res, 200, { success: true, ...await removeProviderCredential(body.provider, body.kind) });
+            sendJSON(res, 200, { success: true, ...await removeProviderCredential(body.provider, body.kind, body.pluginName, body.authMethodId) });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "PROVIDER_REMOVE_FAILED", (err as Error).message);

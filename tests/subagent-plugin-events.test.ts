@@ -10,13 +10,14 @@ import { createSubAgentTool } from '../src/subagent';
 describe('delegated agent plugin enforcement', () => {
   it('propagates tool policy and emits delegated lifecycle events', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-subagent-plugin-'));
-    const installed = path.join(root, 'installed');
+    const dataDir = path.join(root, 'data');
+    const installed = path.join(dataDir, 'plugins');
     const loose = path.join(root, 'loose');
     const agentPath = path.join(root, 'child.agentuse');
-    const oldHome = process.env.AGENTUSE_PLUGIN_HOME;
-    await Promise.all([fs.mkdir(installed), fs.mkdir(loose)]);
+    const oldDataDir = process.env.AGENTUSE_DATA_DIR;
+    await Promise.all([fs.mkdir(installed, { recursive: true }), fs.mkdir(loose)]);
     await fs.writeFile(agentPath, `---\nname: child\nmodel: demo:test\n---\n\nDo the delegated work.\n`);
-    process.env.AGENTUSE_PLUGIN_HOME = installed;
+    process.env.AGENTUSE_DATA_DIR = dataDir;
     resetProviderPluginCache();
 
     const lifecycle: string[] = [];
@@ -75,8 +76,8 @@ describe('delegated agent plugin enforcement', () => {
       expect(result.output).toBe('transformed: raw delegated output');
     } finally {
       core.mockRestore();
-      if (oldHome === undefined) delete process.env.AGENTUSE_PLUGIN_HOME;
-      else process.env.AGENTUSE_PLUGIN_HOME = oldHome;
+      if (oldDataDir === undefined) delete process.env.AGENTUSE_DATA_DIR;
+      else process.env.AGENTUSE_DATA_DIR = oldDataDir;
       resetProviderPluginCache();
       await fs.rm(root, { recursive: true, force: true });
     }

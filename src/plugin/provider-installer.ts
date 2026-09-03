@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'crypto';
 import { execFile } from 'child_process';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'fs/promises';
 import { dirname, join, resolve } from 'path';
+import { tmpdir } from 'os';
 import { promisify } from 'util';
 import {
   loadPluginPackageDirectory,
@@ -11,6 +12,7 @@ import {
   resetProviderPluginCache,
 } from './provider-runtime';
 import type { InstalledPluginRecord } from './types';
+import { readPackageManifest } from './loader';
 import { findProjectRoot } from '../utils/project';
 
 const exec = promisify(execFile);
@@ -24,6 +26,18 @@ export interface PluginInstallOptions {
 interface ResolvedSource { url: string; ref?: string }
 
 const FULL_COMMIT_REF = /^[0-9a-f]{40}$/i;
+
+export interface PluginSourceInspection {
+  source: string;
+  repository: string;
+  publisher: string;
+  ref: string;
+  commit: string;
+  name: string;
+  version: string;
+  apiVersion: 1;
+  providers: Array<{ id: string; auth: Array<'oauth' | 'api_key'> }>;
+}
 
 function isLocalPath(source: string): boolean {
   return source.startsWith('./') || source.startsWith('../') || source.startsWith('/');
@@ -107,6 +121,70 @@ export function resolvePluginSource(source: string): ResolvedSource {
   }
 }
 
+function assertPinnedRemoteSource(source: string): ResolvedSource & { ref: string } {
+  if (isLocalPath(source)) throw new Error('Provider plugin source must be a pinned GitHub repository');
+  const resolved = resolvePluginSource(source);
+  if (!resolved.ref) throw new Error('Provider plugin source must include a tag or full commit');
+  if (/^(?:head|main|master)$/i.test(resolved.ref)) throw new Error('Provider plugin source must use a release tag or full commit, not a moving branch');
+  return { ...resolved, ref: resolved.ref };
+}
+
+async function cloneResolvedSource(staging: string, resolvedSource: ResolvedSource): Promise<void> {
+  if (resolvedSource.ref && FULL_COMMIT_REF.test(resolvedSource.ref)) {
+    await exec('git', ['init', staging], { maxBuffer: 10 * 1024 * 1024 });
+    await exec('git', ['-C', staging, 'remote', 'add', 'origin', resolvedSource.url], { maxBuffer: 10 * 1024 * 1024 });
+    await exec('git', ['-C', staging, 'fetch', '--depth', '1', 'origin', resolvedSource.ref], { maxBuffer: 10 * 1024 * 1024 });
+    await exec('git', ['-C', staging, 'checkout', '--detach', 'FETCH_HEAD'], { maxBuffer: 10 * 1024 * 1024 });
+    return;
+  }
+  const args = ['clone', '--depth', '1'];
+  if (resolvedSource.ref) args.push('--branch', resolvedSource.ref);
+  args.push(resolvedSource.url, staging);
+  await exec('git', args, { maxBuffer: 10 * 1024 * 1024 });
+}
+
+/** Read static package metadata without importing or executing plugin code. */
+export async function inspectPluginSource(source: string): Promise<PluginSourceInspection> {
+  const resolvedSource = assertPinnedRemoteSource(source);
+  const staging = await mkdtemp(join(tmpdir(), 'agentuse-plugin-inspect-'));
+  try {
+    await cloneResolvedSource(staging, resolvedSource);
+    if (!FULL_COMMIT_REF.test(resolvedSource.ref)) {
+      const { stdout } = await exec('git', ['-C', staging, 'tag', '--points-at', 'HEAD']);
+      if (!stdout.split(/\r?\n/).includes(resolvedSource.ref)) {
+        throw new Error(`Provider plugin ref must resolve to a Git tag: ${resolvedSource.ref}`);
+      }
+    }
+    const manifest = await readPackageManifest(staging);
+    const { stdout: commitOutput } = await exec('git', ['-C', staging, 'rev-parse', 'HEAD']);
+    const repository = resolvedSource.url
+      .replace(/^git@github\.com:/, 'https://github.com/')
+      .replace(/^ssh:\/\/git@github\.com\//, 'https://github.com/')
+      .replace(/\.git$/, '');
+    const publisher = new URL(repository).pathname.split('/').filter(Boolean)[0] ?? 'unknown';
+    const providers = (manifest.agentuse.providers ?? []).flatMap((provider) => {
+      if (!provider || typeof provider.id !== 'string' || !provider.id) return [];
+      const auth = Array.isArray(provider.auth)
+        ? provider.auth.filter((method): method is 'oauth' | 'api_key' => method === 'oauth' || method === 'api_key')
+        : [];
+      return [{ id: provider.id, auth }];
+    });
+    return {
+      source,
+      repository,
+      publisher,
+      ref: resolvedSource.ref,
+      commit: commitOutput.trim(),
+      name: manifest.name,
+      version: manifest.version,
+      apiVersion: 1,
+      providers,
+    };
+  } finally {
+    await rm(staging, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 export async function readProjectPluginRecords(options?: PluginInstallOptions): Promise<InstalledPluginRecord[]> {
   try {
     const value = JSON.parse(await readFile(projectPluginRegistryPath(options), 'utf8')) as unknown;
@@ -159,20 +237,7 @@ async function cloneAndInspect(source: string, options?: PluginInstallOptions): 
   const staging = await mkdtemp(join(home, '.install-'));
   const resolvedSource = resolvePluginSource(source);
   try {
-    if (resolvedSource.ref && FULL_COMMIT_REF.test(resolvedSource.ref)) {
-      // `git clone --branch` accepts branches and tags, not arbitrary commit
-      // objects. Initialize explicitly and fetch the requested commit so the
-      // documented owner/repo@commit form resolves to that exact revision.
-      await exec('git', ['init', staging], { maxBuffer: 10 * 1024 * 1024 });
-      await exec('git', ['-C', staging, 'remote', 'add', 'origin', resolvedSource.url], { maxBuffer: 10 * 1024 * 1024 });
-      await exec('git', ['-C', staging, 'fetch', '--depth', '1', 'origin', resolvedSource.ref], { maxBuffer: 10 * 1024 * 1024 });
-      await exec('git', ['-C', staging, 'checkout', '--detach', 'FETCH_HEAD'], { maxBuffer: 10 * 1024 * 1024 });
-    } else {
-      const args = ['clone', '--depth', '1'];
-      if (resolvedSource.ref) args.push('--branch', resolvedSource.ref);
-      args.push(resolvedSource.url, staging);
-      await exec('git', args, { maxBuffer: 10 * 1024 * 1024 });
-    }
+    await cloneResolvedSource(staging, resolvedSource);
     await installRuntimeDependencies(staging);
     const { manifest, host } = await loadPluginPackageDirectory(staging, options?.local ? 'project' : 'global');
     await host.dispose();

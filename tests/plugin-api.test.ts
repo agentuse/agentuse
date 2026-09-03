@@ -278,12 +278,12 @@ describe('AgentUse activation API', () => {
 
 describe('project-local activation scope', () => {
   let root: string | undefined;
-  let oldHome: string | undefined;
+  let oldDataDir: string | undefined;
 
   afterEach(async () => {
     resetProviderPluginCache();
-    if (oldHome === undefined) delete process.env.AGENTUSE_PLUGIN_HOME;
-    else process.env.AGENTUSE_PLUGIN_HOME = oldHome;
+    if (oldDataDir === undefined) delete process.env.AGENTUSE_DATA_DIR;
+    else process.env.AGENTUSE_DATA_DIR = oldDataDir;
     if (root) await fs.rm(root, { recursive: true, force: true });
     root = undefined;
   });
@@ -291,9 +291,10 @@ describe('project-local activation scope', () => {
   it('makes a loose activation-function provider available in its async run scope', async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-activation-plugin-'));
     const plugins = path.join(root, 'plugins');
-    const installed = path.join(root, 'installed');
+    const dataDir = path.join(root, 'data');
+    const installed = path.join(dataDir, 'plugins');
     await fs.mkdir(plugins);
-    await fs.mkdir(installed);
+    await fs.mkdir(installed, { recursive: true });
     await fs.writeFile(path.join(plugins, 'local.js'), `
       export default async function (agentuse) {
         agentuse.registerProvider({
@@ -303,8 +304,8 @@ describe('project-local activation scope', () => {
         });
       }
     `);
-    oldHome = process.env.AGENTUSE_PLUGIN_HOME;
-    process.env.AGENTUSE_PLUGIN_HOME = installed;
+    oldDataDir = process.env.AGENTUSE_DATA_DIR;
+    process.env.AGENTUSE_DATA_DIR = dataDir;
     resetProviderPluginCache();
 
     const manager = new PluginManager();
@@ -319,9 +320,10 @@ describe('project-local activation scope', () => {
   it('activates a built-in provider adapter only when its credential predicate matches', async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-extension-plugin-'));
     const plugins = path.join(root, 'plugins');
-    const installed = path.join(root, 'installed');
+    const dataDir = path.join(root, 'data');
+    const installed = path.join(dataDir, 'plugins');
     await fs.mkdir(plugins);
-    await fs.mkdir(installed);
+    await fs.mkdir(installed, { recursive: true });
     await fs.writeFile(path.join(plugins, 'local.js'), `
       export default function (agentuse) {
         agentuse.registerProvider('anthropic', {
@@ -342,8 +344,8 @@ describe('project-local activation scope', () => {
         });
       }
     `);
-    oldHome = process.env.AGENTUSE_PLUGIN_HOME;
-    process.env.AGENTUSE_PLUGIN_HOME = installed;
+    oldDataDir = process.env.AGENTUSE_DATA_DIR;
+    process.env.AGENTUSE_DATA_DIR = dataDir;
     delete process.env.TEST_CLAUDE_OAUTH;
     const originalAuthFile = (AuthStorage as any).AUTH_FILE;
     const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
@@ -380,6 +382,7 @@ describe('project-local activation scope', () => {
           name: 'Subscription OAuth',
           stored: true,
           active: false,
+          plugin: { name: 'local.js', authMethodId: 'subscription' },
         },
         {
           priority: 2,
@@ -403,10 +406,11 @@ describe('project-local activation scope', () => {
 
   it('keeps conditional adapter metadata isolated across concurrent project scopes', async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-adapter-scope-'));
-    const installed = path.join(root, 'installed');
+    const dataDir = path.join(root, 'data');
+    const installed = path.join(dataDir, 'plugins');
     const pluginsA = path.join(root, 'plugins-a');
     const pluginsB = path.join(root, 'plugins-b');
-    await Promise.all([fs.mkdir(installed), fs.mkdir(pluginsA), fs.mkdir(pluginsB)]);
+    await Promise.all([fs.mkdir(installed, { recursive: true }), fs.mkdir(pluginsA), fs.mkdir(pluginsB)]);
     const extension = (name: string, output: number, transport: string) => `
       export default function (agentuse) {
         agentuse.registerProvider('anthropic', {
@@ -421,8 +425,8 @@ describe('project-local activation scope', () => {
       fs.writeFile(path.join(pluginsA, 'adapter.js'), extension('Project A', 111, 'anthropic-messages')),
       fs.writeFile(path.join(pluginsB, 'adapter.js'), extension('Project B', 222, 'openai-responses')),
     ]);
-    oldHome = process.env.AGENTUSE_PLUGIN_HOME;
-    process.env.AGENTUSE_PLUGIN_HOME = installed;
+    oldDataDir = process.env.AGENTUSE_DATA_DIR;
+    process.env.AGENTUSE_DATA_DIR = dataDir;
     resetProviderPluginCache();
 
     let ready = 0;
@@ -450,9 +454,10 @@ describe('project-local activation scope', () => {
 
   it('honors an explicit API-key suffix even when a provider adapter matches', async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-adapter-explicit-env-'));
-    const installed = path.join(root, 'installed');
+    const dataDir = path.join(root, 'data');
+    const installed = path.join(dataDir, 'plugins');
     const plugins = path.join(root, 'plugins');
-    await Promise.all([fs.mkdir(installed), fs.mkdir(plugins)]);
+    await Promise.all([fs.mkdir(installed, { recursive: true }), fs.mkdir(plugins)]);
     await fs.writeFile(path.join(plugins, 'adapter.js'), `
       export default function (agentuse) {
         agentuse.registerProvider('anthropic', {
@@ -463,8 +468,8 @@ describe('project-local activation scope', () => {
         });
       }
     `);
-    oldHome = process.env.AGENTUSE_PLUGIN_HOME;
-    process.env.AGENTUSE_PLUGIN_HOME = installed;
+    oldDataDir = process.env.AGENTUSE_DATA_DIR;
+    process.env.AGENTUSE_DATA_DIR = dataDir;
     const oldKey = process.env.ANTHROPIC_API_KEY_DEV;
     const oldBase = process.env.ANTHROPIC_BASE_URL_DEV;
     process.env.ANTHROPIC_API_KEY_DEV = 'explicit-key';
@@ -535,12 +540,35 @@ describe('project-local activation scope', () => {
     await expect(readPackageManifest(root)).rejects.toThrow('stay inside the package');
   });
 
+  it('validates static provider metadata used by pre-install inspection', async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-package-provider-metadata-'));
+    await fs.writeFile(path.join(root, 'index.js'), 'export default function () {}');
+    await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
+      name: 'provider-preview', version: '1.0.0',
+      agentuse: {
+        apiVersion: 1,
+        extensions: ['./index.js'],
+        providers: [{ id: 'anthropic', auth: ['oauth'] }],
+      },
+    }));
+    await expect(readPackageManifest(root)).resolves.toMatchObject({
+      agentuse: { providers: [{ id: 'anthropic', auth: ['oauth'] }] },
+    });
+
+    await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({
+      name: 'provider-preview', version: '1.0.0',
+      agentuse: { apiVersion: 1, extensions: ['./index.js'], providers: [{ id: 'anthropic', auth: ['token'] }] },
+    }));
+    await expect(readPackageManifest(root)).rejects.toThrow('only oauth or api_key');
+  });
+
   it('emits lifecycle events to installed activation packages', async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-installed-event-'));
-    const home = path.join(root, 'home');
+    const dataDir = path.join(root, 'data');
+    const home = path.join(dataDir, 'plugins');
     const pkg = path.join(root, 'package');
     const loose = path.join(root, 'loose');
-    await fs.mkdir(home);
+    await fs.mkdir(home, { recursive: true });
     await fs.mkdir(pkg);
     await fs.mkdir(loose);
     await fs.writeFile(path.join(pkg, 'package.json'), JSON.stringify({
@@ -553,8 +581,8 @@ describe('project-local activation scope', () => {
       name: 'installed-events', version: '1.0.0', source: 'test', directory: pkg, scope: 'global',
       installedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     }]));
-    oldHome = process.env.AGENTUSE_PLUGIN_HOME;
-    process.env.AGENTUSE_PLUGIN_HOME = home;
+    oldDataDir = process.env.AGENTUSE_DATA_DIR;
+    process.env.AGENTUSE_DATA_DIR = dataDir;
     resetProviderPluginCache();
     (globalThis as any).__agentuseInstalledEventCount = 0;
 

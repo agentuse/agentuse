@@ -173,10 +173,36 @@ export class PluginHost {
   getProvider(providerId: string): ProviderDefinition | undefined { return this.providers.get(providerId)?.value; }
   getProviderOwner(providerId: string): PluginIdentity | undefined { return this.providers.get(providerId)?.owner; }
   listProviders(): ProviderDefinition[] { return [...this.providers.values()].map((item) => item.value); }
+  listProviderContributions(): Array<{
+    owner: PluginIdentity;
+    providerId: string;
+    provider: ProviderDefinition | ProviderAdapter;
+    kind: 'provider' | 'adapter';
+  }> {
+    return [
+      ...[...this.providers.entries()].map(([providerId, item]) => ({
+        owner: item.owner,
+        providerId,
+        provider: item.value,
+        kind: 'provider' as const,
+      })),
+      ...[...this.adapters.entries()].flatMap(([providerId, items]) => items.map((item) => ({
+        owner: item.owner,
+        providerId,
+        provider: item.value,
+        kind: 'adapter' as const,
+      }))),
+    ];
+  }
   getProviderAdapters(providerId: string): ProviderAdapter[] {
     return (this.adapters.get(providerId) ?? [])
       .map((item) => item.value)
       .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+  }
+  getProviderAdapterContributions(providerId: string): Array<{ owner: PluginIdentity; adapter: ProviderAdapter }> {
+    return (this.adapters.get(providerId) ?? [])
+      .map((item) => ({ owner: item.owner, adapter: item.value }))
+      .sort((a, b) => (b.adapter.priority ?? 0) - (a.adapter.priority ?? 0));
   }
 
   getProviderPatch(providerId: string): ProviderPatch | undefined {

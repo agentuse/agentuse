@@ -2,8 +2,10 @@ import type { AgentSummary, ApprovalLogEntry, ApprovalPageInfo, ApprovalSummary,
 import type { StoreBrowserRows, StoreBrowserSummary } from "../../stores";
 import type { StoreItem } from "../../../../store/types";
 import type { SerializedSchedule } from "../../../../scheduler";
-import type { ProviderCatalogEntry } from "../../../../auth/provider-setup";
+import type { InstalledProviderPluginEntry, ProviderCatalogEntry } from "../../../../auth/provider-setup";
 import type { ProviderStatus } from "../../../../auth/provider-status";
+import type { ProviderPluginRegistryEntry } from "../../../../plugin/provider-registry";
+import type { PluginSourceInspection } from "../../../../plugin/provider-installer";
 import type { AgentCreationProvider } from "../../../../agents/create";
 import type { ReasoningLevel } from "../../../../model-compatibility";
 import type { AgentRevisionRecord } from "../../../../agents/revision";
@@ -844,6 +846,8 @@ export function runOnboardingDetached(project?: string): Promise<DetachedRunResp
 export interface ProviderSetupPayload {
   success: true;
   catalog: readonly ProviderCatalogEntry[];
+  pluginRegistry: readonly ProviderPluginRegistryEntry[];
+  installedPlugins: readonly InstalledProviderPluginEntry[];
   status: ProviderStatus;
 }
 
@@ -855,22 +859,73 @@ export function saveProviderApiKey(provider: string, key: string): Promise<Provi
   return postJson('/api/providers/api-key', { provider, key });
 }
 
-export function startProviderOAuth(provider: string, mode?: 'max' | 'console'): Promise<{
+export function startProviderOAuth(provider: string): Promise<{
   success: true;
   flowId: string;
-  provider: 'anthropic' | 'openai';
+  provider: 'openai';
   authorizationUrl: string;
   expiresAt: number;
 }> {
-  return postJson('/api/providers/oauth/start', { provider, ...(mode ? { mode } : {}) });
+  return postJson('/api/providers/oauth/start', { provider });
 }
 
 export function completeProviderOAuth(flowId: string, code: string): Promise<ProviderSetupPayload> {
   return postJson('/api/providers/oauth/complete', { flowId, code });
 }
 
-export function removeProviderCredential(provider: string, kind: 'oauth' | 'api_key'): Promise<ProviderSetupPayload> {
-  return postJson('/api/providers/remove', { provider, kind });
+export function installProviderPlugin(plugin: string): Promise<ProviderSetupPayload> {
+  return postJson('/api/providers/plugins/install', { plugin });
+}
+
+export function inspectProviderPlugin(source: string): Promise<{ success: true; plugin: PluginSourceInspection }> {
+  return postJson('/api/providers/plugins/inspect', { source });
+}
+
+export type ProviderPluginOAuthStart = {
+  success: true;
+  connected: true;
+  catalog: readonly ProviderCatalogEntry[];
+  pluginRegistry: readonly ProviderPluginRegistryEntry[];
+  installedPlugins: readonly InstalledProviderPluginEntry[];
+  status: ProviderStatus;
+} | {
+  success: true;
+  connected: false;
+  flowId: string;
+  authorizationUrl: string;
+  expiresAt: number;
+};
+
+export function startProviderPluginOAuth(plugin: string): Promise<ProviderPluginOAuthStart> {
+  return postJson('/api/providers/plugins/oauth/start', { plugin });
+}
+
+export function startUnreviewedProviderPluginOAuth(source: string): Promise<ProviderPluginOAuthStart> {
+  return postJson('/api/providers/plugins/oauth/start-unreviewed', { source });
+}
+
+export function completeProviderPluginOAuth(flowId: string, code: string): Promise<ProviderSetupPayload> {
+  return postJson('/api/providers/plugins/oauth/complete', { flowId, code });
+}
+
+export function updateProviderPlugin(name: string): Promise<ProviderSetupPayload> {
+  return postJson('/api/providers/plugins/update', { name });
+}
+
+export function removeProviderPlugin(name: string): Promise<ProviderSetupPayload> {
+  return postJson('/api/providers/plugins/remove', { name });
+}
+
+export function removeProviderCredential(
+  provider: string,
+  kind: 'oauth' | 'api_key',
+  plugin?: { name: string; authMethodId: string },
+): Promise<ProviderSetupPayload> {
+  return postJson('/api/providers/remove', {
+    provider,
+    kind,
+    ...(plugin ? { pluginName: plugin.name, authMethodId: plugin.authMethodId } : {}),
+  });
 }
 
 export type CustomProviderApi = 'openai-completions' | 'openai-responses' | 'anthropic-messages';
