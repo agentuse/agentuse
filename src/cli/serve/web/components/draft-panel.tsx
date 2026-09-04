@@ -101,26 +101,39 @@ export function DraftComposer(props: {
 }
 
 export function DraftPanel(props: {
-  breadcrumb: ComponentChildren;
-  pill: ComponentChildren;
-  /** Top-bar actions: discard on the left, the accepting action on the right. */
-  actions: ComponentChildren;
-  /** Left column: the brief for a new agent, or the run evidence for a revision. */
-  aside: ComponentChildren;
+  /** Row 1, left: the file this page is about, its version, and its state. */
   filePath: string;
   versionLabel: string;
-  /** Short line above the tabs, e.g. "Changes since draft 1". */
-  changeLabel: ComponentChildren;
+  pill: ComponentChildren;
+  /** Row 1, right: the accepting and discarding actions. */
+  actions: ComponentChildren;
+  /** Row 1, right of the actions: quiet links out. */
+  links?: ComponentChildren;
+  /** Row 2, left: the standing facts this page is working from. */
+  meta: ComponentChildren;
+  /** Row 2, right: the session's context and cost. */
+  tokens?: ComponentChildren;
+  /** Row 2, full width: capability changes, when this revision has any. */
+  capabilityNote?: ComponentChildren;
+  /** Row 2, full width: something the operator has to act on, e.g. a question
+   *  the author stopped to ask. */
+  notice?: ComponentChildren;
+  /** Badge on the Diff tab, e.g. "+3 −1". */
+  diffBadge?: ComponentChildren;
+  /** Short note beside the tabs, e.g. "no capability changes". */
+  headerNote?: ComponentChildren;
   baseSource?: string | undefined;
   source: string;
   tab: DraftFileTab;
   onTab: (tab: DraftFileTab) => void;
+  /** A turn is producing steps right now; Changes carries a live dot. */
+  running?: boolean;
   /** Rendered in place of the file body when the Test run tab is active. */
   testRun?: ComponentChildren;
   /** Hidden when the surface has no mock-run support. */
   showTestTab?: boolean;
-  /** Short note beside the change counts, e.g. "no capability changes". */
-  headerNote?: ComponentChildren;
+  /** A mock run exists, so the tab says so. */
+  hasTestRun?: boolean;
   exchange: ComponentChildren;
   composer: ComponentChildren;
   error?: string | null | undefined;
@@ -142,7 +155,7 @@ export function DraftPanel(props: {
     return () => document.documentElement.removeAttribute('data-page');
   }, []);
 
-  const tabButton = (id: DraftFileTab, label: string) => (
+  const tabButton = (id: DraftFileTab, label: string, badge?: ComponentChildren) => (
     <button
       type="button"
       role="tab"
@@ -151,49 +164,49 @@ export function DraftPanel(props: {
       onClick={() => props.onTab(id)}
     >
       {label}
+      {badge !== undefined && badge !== false && <span class="draft-tab-badge">{badge}</span>}
     </button>
   );
 
   return (
     <div class="page-draft">
-      <div class="draft-topbar">
-        <div class="draft-breadcrumb">{props.breadcrumb}{props.pill}</div>
-        <div class="draft-topbar-actions">{props.actions}</div>
-      </div>
-      <div class="draft-columns">
-        <aside class="draft-aside">{props.aside}</aside>
-        <section class="draft-main">
-          <div class="draft-file">
-            <div class="draft-file-head">
-              <div class="draft-file-id">
-                <code>{props.filePath}</code>
-                <span class="draft-file-version">{props.versionLabel}</span>
-              </div>
-              <div class="draft-file-meta">
-                <span class="draft-file-changes">{props.changeLabel}</span>
-                {props.headerNote && <span class="draft-file-note">{props.headerNote}</span>}
-                <div class="draft-tabs" role="tablist" aria-label="Draft view">
-                  {tabButton('changes', 'Changes')}
-                  {tabButton('diff', 'Diff')}
-                  {tabButton('source', 'Source')}
-                  {props.showTestTab && tabButton('test', 'Test run')}
-                </div>
-              </div>
-            </div>
-            <div class={`draft-file-scroll${props.tab === 'changes' ? ' is-changes' : ''}`} ref={bodyRef}>
-              {props.tab === 'test'
-                ? props.testRun
-                : props.tab === 'source'
-                  ? <pre class="draft-file-body" aria-label="Agent source">{props.source}</pre>
-                  : props.tab === 'changes'
-                    ? props.exchange
-                    : <DraftDiff baseSource={props.baseSource} source={props.source} />}
-            </div>
-            {props.error && <p class="draft-error" role="alert">{props.error}</p>}
-            {props.composer}
+      <header class="draft-header">
+        <div class="draft-header-row">
+          <div class="draft-identity">
+            <code>{props.filePath}</code>
+            <span class="draft-file-version">{props.versionLabel}</span>
+            {props.pill}
           </div>
-        </section>
+          <div class="draft-header-actions">
+            {props.links}
+            {props.actions}
+          </div>
+        </div>
+        <div class="draft-header-row is-meta">
+          <div class="draft-meta">{props.meta}</div>
+          {props.tokens}
+        </div>
+        {props.capabilityNote && <p class="draft-capability-note">{props.capabilityNote}</p>}
+        {props.notice && <p class="draft-waiting" role="status">{props.notice}</p>}
+      </header>
+      <div class="draft-tabs" role="tablist" aria-label="Draft view">
+        {tabButton('changes', 'Changes', props.running ? <span class="draft-tab-dot" aria-label="running" /> : undefined)}
+        {tabButton('diff', 'Diff', props.diffBadge)}
+        {tabButton('source', 'Source')}
+        {props.showTestTab && tabButton('test', 'Test run', props.hasTestRun ? 'mock' : undefined)}
+        {props.headerNote && <span class="draft-tabs-note">{props.headerNote}</span>}
       </div>
+      <div class={`draft-file-scroll${props.tab === 'changes' ? ' is-changes' : ''}`} ref={bodyRef}>
+        {props.tab === 'test'
+          ? props.testRun
+          : props.tab === 'source'
+            ? <pre class="draft-file-body" aria-label="Agent source">{props.source}</pre>
+            : props.tab === 'changes'
+              ? props.exchange
+              : <DraftDiff baseSource={props.baseSource} source={props.source} />}
+      </div>
+      {props.error && <p class="draft-error" role="alert">{props.error}</p>}
+      {props.composer}
     </div>
   );
 }

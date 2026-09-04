@@ -169,53 +169,35 @@ export default function AgentDraft() {
   };
 
   const skillsUsed = latest?.loadedSkills ?? [];
-  const briefLabel = draft.idea ? 'Brief · from idea' : 'Brief';
 
-  const aside = (
+  const meta = (
     <>
-      <div class="draft-brief">
-        <div class="draft-card-head"><span class="draft-card-label">{briefLabel}</span></div>
-        <p class="draft-brief-objective">{draft.objective}</p>
-        <dl class="draft-brief-facts">
-          <dt>Project</dt><dd>{draft.projectId}</dd>
-          {draft.idea?.evidence && (<><dt>Evidence</dt><dd>{draft.idea.evidence}</dd></>)}
-          <dt>Creator</dt><dd>{draft.authoringModel}</dd>
-          <dt>Skills</dt>
-          <dd class="draft-brief-skills">
-            {skillsUsed.map((skill) => <code key={skill}>{skill}</code>)}
-            <span class="draft-brief-skill-pool">
-              {skillsUsed.length > 0 ? 'used · ' : 'none used · '}
-              of {draft.skillCounts.project} project · {draft.skillCounts.global} global
-            </span>
-          </dd>
-        </dl>
-      </div>
-      <div class="draft-session">
-        <span class="draft-card-label">Creator session</span>
-        {creatorSession.streamError && <p class="draft-error" role="alert">{creatorSession.streamError}</p>}
-        <TokenUsageStrip
-          tokenUsage={creatorSession.approval?.tokenUsage}
-          estimatedCost={pricing && creatorSession.approval
-            ? pricing.estimateSessionCostUsd(creatorSession.approval.model, creatorSession.approval.tokenUsage)
-            : undefined}
-          formatUsd={pricing?.formatUsd}
-          compact
-          ariaLabel="Creator session usage"
-        />
-        <span class="draft-session-note">
-          Test runs are mock sessions. Stores stay isolated and they are hidden from Sessions and Home by default.
+      <span><span class="draft-meta-key">Project</span> {draft.projectId}</span>
+      {draft.idea?.evidence && <span><span class="draft-meta-key">Evidence</span> {draft.idea.evidence}</span>}
+      <span><span class="draft-meta-key">Creator</span> {draft.authoringModel}</span>
+      <span class="draft-meta-skills">
+        <span class="draft-meta-key">Skills</span>
+        {skillsUsed.map((skill) => <code key={skill}>{skill}</code>)}
+        <span class="draft-meta-muted">
+          {skillsUsed.length > 0 ? 'used · ' : 'none used · '}
+          of {draft.skillCounts.project} project · {draft.skillCounts.global} global
         </span>
-      </div>
+      </span>
     </>
   );
 
   return (
     <DraftPanel
-      breadcrumb={<><a href={`/agents/${encodeURIComponent(project)}`}>Agents</a><span aria-hidden="true">›</span><strong>{latest?.name ?? 'New agent'}</strong></>}
+      filePath={latest ? `agents/${latest.fileName}` : 'agents/…'}
+      versionLabel={latest ? `draft ${latest.index}` : running ? 'drafting…' : '—'}
       pill={<DraftStatusPill
         label={draft.status === 'saved' ? 'Saved' : draft.status === 'discarded' ? 'Discarded' : draft.status === 'error' ? 'Stopped' : running ? 'Drafting' : 'Draft'}
         tone={draft.status === 'saved' ? 'done' : draft.status === 'error' ? 'error' : running ? 'running' : 'draft'}
       />}
+      links={<>
+        <a class="draft-quiet-link" href={`/agents/${encodeURIComponent(project)}`}>All agents</a>
+        <a class="draft-quiet-link" href={draft.sessionHref}>Open full session log</a>
+      </>}
       actions={!closed && (
         <>
           <button type="button" class="draft-secondary" disabled={busy !== null} onClick={() => void act('discard')}>
@@ -226,17 +208,27 @@ export default function AgentDraft() {
           </button>
         </>
       )}
-      aside={aside}
-      filePath={latest ? `agents/${latest.fileName}` : 'agents/…'}
-      versionLabel={latest ? `draft ${latest.index}` : running ? 'drafting…' : '—'}
-      changeLabel={changeCounts
-        ? <>Changes since draft {previous!.index} <span class="draft-added">+{changeCounts.added}</span> <span class="draft-removed">−{changeCounts.removed}</span></>
-        : latest ? 'First draft · whole file is new' : ''}
+      meta={meta}
+      tokens={<TokenUsageStrip
+        tokenUsage={creatorSession.approval?.tokenUsage}
+        estimatedCost={pricing && creatorSession.approval
+          ? pricing.estimateSessionCostUsd(creatorSession.approval.model, creatorSession.approval.tokenUsage)
+          : undefined}
+        formatUsd={pricing?.formatUsd}
+        compact
+        ariaLabel="Creator session usage"
+      />}
+      diffBadge={changeCounts
+        ? <><span class="draft-added">+{changeCounts.added}</span> <span class="draft-removed">−{changeCounts.removed}</span></>
+        : undefined}
+      headerNote={latest && !previous ? 'first draft · whole file is new' : undefined}
       baseSource={previous?.source}
       source={latest?.source ?? ''}
       tab={tab}
       onTab={(next) => { setTabPinned(true); setTab(next); }}
+      running={running}
       showTestTab={Boolean(latest)}
+      hasTestRun={draft.testRuns.length > 0}
       testRun={<DraftTestRun
         project={project}
         session={testSession}
@@ -252,7 +244,7 @@ export default function AgentDraft() {
         sessionId={draft.jobId}
         projectId={draft.projectId}
         token={draft.sessionToken}
-        sessionHref={draft.sessionHref}
+        leadRequest={draft.objective}
         emptyHint="The creator is working. Its steps appear here as it goes."
       />}
       composer={!closed && (
@@ -264,7 +256,7 @@ export default function AgentDraft() {
           onSend={requestChange}
         />
       )}
-      error={actionError ?? draft.error?.message ?? null}
+      error={actionError ?? creatorSession.streamError ?? draft.error?.message ?? null}
     />
   );
 }

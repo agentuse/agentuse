@@ -1,3 +1,4 @@
+import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ApprovalLogEntry } from '../../types';
 import { LogEntry } from './log-entry';
@@ -124,7 +125,10 @@ export function DraftThread(props: {
   sessionId: string;
   projectId: string | undefined;
   token: string | undefined;
-  sessionHref: string;
+  /** The brief or instruction that started this session: turn 0's request. */
+  leadRequest?: string | undefined;
+  /** Extra context for turn 0, e.g. the evidence a revision was started from. */
+  leadExtra?: ComponentChildren;
   emptyHint?: string;
 }) {
   const groups = useMemo(() => groupDraftTurns(props.entries, props.turns), [props.entries, props.turns]);
@@ -142,7 +146,8 @@ export function DraftThread(props: {
     return () => cancelAnimationFrame(frame);
   }, [groups.length, lastGroup?.steps.length, lastGroup?.turn?.reply, props.running]);
 
-  const hasContent = groups.some((group) => group.steps.length > 0 || group.turn?.request || group.turn?.reply);
+  const hasContent = Boolean(props.leadRequest)
+    || groups.some((group) => group.steps.length > 0 || group.turn?.request || group.turn?.reply);
   if (!hasContent) {
     return (
       <div class="draft-exchange is-empty" ref={ref}>
@@ -157,6 +162,10 @@ export function DraftThread(props: {
         const isLast = group.index === groups.length - 1;
         return (
           <div class="draft-exchange-turn" key={group.index}>
+            {group.index === 0 && props.leadRequest && (
+              <div class="draft-exchange-request is-lead">{props.leadRequest}</div>
+            )}
+            {group.index === 0 && props.leadExtra}
             {group.turn?.request && <div class="draft-exchange-request">{group.turn.request}</div>}
             <DraftSteps
               steps={group.steps}
@@ -169,7 +178,6 @@ export function DraftThread(props: {
           </div>
         );
       })}
-      <a class="draft-thread-link" href={props.sessionHref}>Open full session log</a>
     </div>
   );
 }

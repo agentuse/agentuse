@@ -9451,40 +9451,298 @@ main[tabindex="-1"]:focus,
 
 /* ── Draft and refine ─────────────────────────────────────────────────────────
    One shared surface for creating an agent, drafting an idea, and revising an
-   existing file. The file is the centre of the page; the composer under it is a
-   way to request a change to that file, and every accepted turn produces a new
-   numbered version with a diff. */
+   existing file. A header strip states what is being changed and its standing
+   facts, a tab bar chooses the view, and the composer under it is a way to
+   request a change to that file. Every accepted turn produces a new numbered
+   version with a diff. */
 .page-draft {
   display: flex;
   flex-direction: column;
-  /* Height comes from the flex chain below, never from a viewport unit: the
+  /* Height comes from the flex chain above, never from a viewport unit: the
      Mac app's title bar, the mobile toolbar, and any banner all sit above this
      page, and 100vh would overflow the window by exactly their height. */
   flex: 1;
   min-height: 0;
   overflow: hidden;
 }
-.draft-topbar {
+
+.draft-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 14px 24px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.draft-header-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  min-height: 56px;
-  padding: 0 24px;
-  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
 }
-.draft-breadcrumb {
+.draft-header-row.is-meta { align-items: flex-end; gap: 10px 20px; }
+.draft-identity {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
-  color: var(--muted);
+  flex-wrap: wrap;
 }
-.draft-breadcrumb a { color: var(--muted); border-bottom: 0; text-decoration: none; }
-.draft-breadcrumb a:hover { color: var(--cyan); }
-.draft-breadcrumb strong { color: var(--fg); font-weight: var(--weight-medium); }
-.draft-breadcrumb span[aria-hidden] { color: var(--muted-2); }
-.draft-topbar-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.draft-identity code {
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: var(--font-size-caption);
+  word-break: break-all;
+}
+.draft-file-version { color: var(--muted); font-size: var(--font-size-caption); }
+.draft-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.draft-quiet-link {
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+  border-bottom: 0;
+  text-decoration: none;
+}
+.draft-quiet-link:hover { color: var(--cyan); }
+
+/* One line of standing facts. Keys are quiet labels so the values read first. */
+.draft-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px 18px;
+  flex-wrap: wrap;
+  min-width: 0;
+  color: var(--muted-3);
+  font-size: var(--font-size-caption);
+}
+.draft-meta-key {
+  color: var(--muted-2);
+  font-size: var(--font-size-micro);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.draft-meta-muted { color: var(--muted); }
+.draft-meta-skills { display: inline-flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.draft-meta-skills code {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--panel-hover);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+}
+.draft-capability-note {
+  margin: 0;
+  color: var(--amber);
+  font-size: var(--font-size-caption);
+  line-height: var(--lh-snug);
+}
+/* An internal session paused on a question is not stuck; say so and point at
+   the page that can answer it. */
+.draft-waiting {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--amber-border);
+  border-radius: 8px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: var(--font-size-caption);
+  line-height: var(--lh-snug);
+}
+.draft-waiting a { color: inherit; }
+
+/* The token strip is a row-2 citizen here, so it drops the raised card and sits
+   inline at the right of the facts. */
+.page-draft .meta.meta-context.is-compact {
+  margin: 0;
+  gap: 10px 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  flex-shrink: 0;
+}
+.page-draft .meta-context.is-compact .token-cell .value { font-size: var(--font-size-caption); }
+.page-draft .meta-context.is-compact .token-cell:first-child { min-width: 112px; }
+
+/* The one place tabs should look like tabs. */
+.draft-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  flex-shrink: 0;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.draft-tabs::-webkit-scrollbar { display: none; }
+.draft-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 40px;
+  padding: 0 20px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--font-size-caption);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.draft-tabs button:hover { color: var(--fg); }
+.draft-tabs button.is-active { color: var(--fg); border-bottom-color: var(--fg); }
+.draft-tab-badge {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+  font-weight: var(--weight-normal);
+}
+.draft-tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: draft-tab-pulse 1.4s ease-in-out infinite;
+}
+@keyframes draft-tab-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.draft-tabs-note {
+  align-self: center;
+  margin-left: auto;
+  padding-left: 16px;
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
+}
+
+.draft-file-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.draft-file-scroll.is-changes { display: flex; flex-direction: column; }
+.draft-file-body {
+  margin: 0;
+  padding: 16px 24px;
+  color: var(--muted-3);
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.draft-file-body.is-diff span { display: block; }
+.draft-file-body.is-diff .is-add { background: rgba(74, 222, 128, 0.12); color: var(--green); }
+.draft-file-body.is-diff .is-remove { background: var(--red-soft); color: var(--red); }
+.draft-file-body.is-diff .is-meta { color: var(--muted-2); }
+.draft-added { color: var(--green); }
+.draft-removed { color: var(--red); }
+
+.draft-exchange {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  padding: 16px 24px;
+  overflow: auto;
+}
+.draft-exchange.is-empty { align-items: stretch; justify-content: center; }
+.draft-exchange.is-empty p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+  text-align: center;
+}
+.draft-exchange-turn { display: flex; flex-direction: column; gap: 6px; }
+.draft-exchange-request {
+  align-self: flex-end;
+  max-width: 620px;
+  padding: 10px 14px;
+  border: 1px solid var(--cyan-border);
+  border-radius: 10px;
+  background: var(--cyan-soft);
+  white-space: pre-wrap;
+}
+/* The brief that started the session: the same shape as any other request,
+   because that is what it is. */
+.draft-exchange-request.is-lead { border-style: dashed; }
+.draft-exchange-reply {
+  max-width: 680px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  /* A reply can carry a headline and the diagnosis behind it, separated by a
+     blank line. Collapsing that runs the two into one sentence. */
+  white-space: pre-wrap;
+}
+.draft-evidence-row {
+  align-self: flex-start;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+  border-bottom: 0;
+  text-decoration: none;
+}
+.draft-evidence-row:hover { background: var(--panel-hover); color: var(--cyan); }
+
+.draft-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 12px 24px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+.draft-composer-label {
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.draft-composer textarea {
+  min-height: 40px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: var(--font-size-body);
+  resize: vertical;
+}
+.draft-composer textarea:focus { outline: none; }
+.draft-composer-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.draft-composer-hint { color: var(--muted); font-size: var(--font-size-caption); }
+.draft-composer-hint kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+}
+.draft-error {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 8px 24px;
+  border-top: 1px solid var(--line);
+  color: var(--red);
+  font-size: var(--font-size-caption);
+}
 
 .draft-pill {
   padding: 2px 8px;
@@ -9521,252 +9779,7 @@ main[tabindex="-1"]:focus,
 .draft-primary:disabled,
 .draft-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.draft-columns {
-  display: grid;
-  grid-template-columns: 340px minmax(0, 1fr);
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-.draft-aside {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  padding: 20px;
-  border-right: 1px solid var(--line);
-  overflow: auto;
-}
-.draft-main {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  padding: 20px 24px;
-  overflow: hidden;
-}
-
-.draft-card-label {
-  color: var(--muted);
-  font-size: var(--font-size-micro);
-  font-weight: var(--weight-medium);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-}
-.draft-brief {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: var(--surface-shadow);
-}
-.draft-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.draft-brief-objective { margin: 0; line-height: var(--lh-snug); }
-.draft-brief-facts {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: 4px 10px;
-  margin: 0;
-  font-size: var(--font-size-caption);
-}
-.draft-brief-facts dt { color: var(--muted); }
-.draft-brief-facts dd { margin: 0; color: var(--fg); overflow-wrap: anywhere; }
-.draft-brief-skills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.draft-brief-skills code {
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--panel-hover);
-  color: var(--fg);
-  font-family: var(--mono);
-  font-size: var(--font-size-micro);
-}
-.draft-brief-skill-pool { color: var(--muted); }
-
-.draft-session { display: flex; flex-direction: column; gap: 8px; }
-/* A glance at what the author is doing, not a transcript: the full log has its
-   own page, linked below. */
-.draft-session .onboarding-session-lines {
-  max-height: 220px;
-  overflow: auto;
-}
-.draft-session-link { font-size: var(--font-size-caption); }
-.draft-session-note {
-  color: var(--muted);
-  font-size: var(--font-size-micro);
-  line-height: var(--lh-snug);
-}
-/* The side column is narrow, so the strip wraps into a denser two-line grid
-   instead of the header's single wide row. */
-.page-draft .meta.meta-context.is-compact {
-  margin-top: 0;
-  gap: 10px 18px;
-  padding: 11px 12px;
-  border-radius: 10px;
-}
-.page-draft .meta-context.is-compact .token-cell .value { font-size: var(--font-size-caption); }
-.page-draft .meta-context.is-compact .token-cell:first-child { min-width: 118px; }
-
-.draft-file {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: var(--surface-shadow);
-  overflow: hidden;
-}
-.draft-file-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--line);
-}
-.draft-file-id { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.draft-file-id code {
-  color: var(--fg);
-  font-family: var(--mono);
-  font-size: var(--font-size-micro);
-  word-break: break-all;
-}
-.draft-file-version { color: var(--muted); font-size: var(--font-size-caption); }
-.draft-file-meta {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: var(--font-size-caption);
-}
-.draft-file-changes { color: var(--muted); }
-.draft-added { color: var(--green); }
-.draft-removed { color: var(--red); }
-.draft-tabs {
-  display: flex;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  overflow: hidden;
-}
-.draft-tabs button {
-  padding: 3px 9px;
-  border: 0;
-  border-left: 1px solid var(--line-strong);
-  background: transparent;
-  color: var(--muted);
-  font-family: inherit;
-  font-size: var(--font-size-caption);
-  cursor: pointer;
-}
-.draft-tabs button:first-child { border-left: 0; }
-.draft-tabs button.is-active { background: var(--panel-hover); color: var(--fg); }
-.draft-file-scroll {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-}
-.draft-file-scroll.is-changes { display: flex; flex-direction: column; }
-.draft-file-body {
-  margin: 0;
-  padding: 14px 16px;
-  color: var(--muted-3);
-  font-family: var(--mono);
-  font-size: var(--font-size-micro);
-  line-height: 1.7;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.draft-file-body.is-diff span { display: block; }
-.draft-file-body.is-diff .is-add { background: rgba(74, 222, 128, 0.12); color: var(--green); }
-.draft-file-body.is-diff .is-remove { background: var(--red-soft); color: var(--red); }
-.draft-file-body.is-diff .is-meta { color: var(--muted-2); }
-
-.draft-exchange {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  flex: 1;
-  min-height: 0;
-  padding: 14px 16px;
-  overflow: auto;
-}
-.draft-exchange.is-empty { align-items: stretch; justify-content: center; }
-.draft-exchange.is-empty p {
-  margin: 0;
-  color: var(--muted);
-  font-size: var(--font-size-caption);
-  text-align: center;
-}
-.draft-exchange-turn { display: flex; flex-direction: column; gap: 6px; }
-.draft-exchange-request {
-  align-self: flex-end;
-  max-width: 520px;
-  padding: 10px 14px;
-  border: 1px solid var(--cyan-border);
-  border-radius: 10px;
-  background: var(--cyan-soft);
-}
-.draft-exchange-reply {
-  max-width: 620px;
-  padding: 10px 14px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  /* A reply can carry a headline and the diagnosis behind it, separated by a
-     blank line. Collapsing that runs the two into one sentence. */
-  white-space: pre-wrap;
-}
-.draft-exchange-request { white-space: pre-wrap; }
-
-.draft-composer {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  flex-shrink: 0;
-  padding: 12px 16px;
-  border-top: 1px solid var(--line);
-  background: var(--panel);
-}
-.draft-composer-label {
-  color: var(--muted);
-  font-size: var(--font-size-micro);
-  font-weight: var(--weight-bold);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-}
-.draft-composer textarea {
-  min-height: 40px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--fg);
-  font-family: inherit;
-  font-size: var(--font-size-body);
-  resize: vertical;
-}
-.draft-composer textarea:focus { outline: none; }
-.draft-composer-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.draft-composer-hint { color: var(--muted); font-size: var(--font-size-caption); }
-.draft-composer-hint kbd {
-  padding: 1px 5px;
-  border: 1px solid var(--line-strong);
-  border-radius: 4px;
-  font-family: var(--mono);
-  font-size: var(--font-size-micro);
-}
-.draft-error {
-  flex-shrink: 0;
-  margin: 0;
-  padding: 8px 16px;
-  border-top: 1px solid var(--line);
-  color: var(--red);
-  font-size: var(--font-size-caption);
-}
-.draft-file-note { color: var(--muted); }
-
-.draft-testrun { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; }
+.draft-testrun { display: flex; flex-direction: column; gap: 12px; padding: 16px 24px; }
 .draft-testrun.is-empty { align-items: flex-start; gap: 10px; color: var(--muted-3); }
 .draft-testrun.is-empty p { margin: 0; max-width: 60ch; line-height: var(--lh-snug); }
 .draft-testrun-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -9799,122 +9812,20 @@ main[tabindex="-1"]:focus,
 }
 .draft-testrun-result .value { color: var(--fg); font-family: var(--mono); font-size: var(--font-size-caption); }
 
-
-/* Skill pool on the New agent form: shown before the brief is written, because
-   a thin catalog usually means a thin agent. */
-.agent-create-skills {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-}
-.agent-create-skills-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-.agent-create-skills-head span {
-  color: var(--muted);
-  font-size: var(--font-size-micro);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-}
-.agent-create-skills-toggle {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--cyan);
-  font-family: inherit;
-  font-size: var(--font-size-caption);
-  cursor: pointer;
-}
-.agent-create-skills-counts { display: flex; gap: 8px; flex-wrap: wrap; font-size: var(--font-size-caption); }
-.agent-create-skills-counts span {
-  padding: 3px 9px;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  color: var(--muted-3);
-}
-.agent-create-skills-counts .is-project { border-color: var(--green-border); background: var(--green-soft); color: var(--fg); }
-.agent-create-skills-counts .is-ambiguous { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
-.agent-create-skills-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px 14px;
-  color: var(--muted-3);
-  font-size: var(--font-size-caption);
-}
-.agent-create-skills-list code { color: var(--fg); font-family: var(--mono); font-size: var(--font-size-micro); }
-.agent-create-skills-list .is-ambiguous { color: var(--amber); }
-.agent-create-skills-list .is-more { color: var(--muted); }
-.agent-create-skills-note {
-  color: var(--muted);
-  font-size: var(--font-size-micro);
-  line-height: var(--lh-snug);
-}
-
-/* Idea cards cite the files they came from, and the pre-scan screen states the
-   skill pool the scan will weigh. */
-.agent-suggestion-evidence {
-  color: var(--muted);
-  font-size: var(--font-size-micro);
-  line-height: var(--lh-snug);
-}
-.discovery-skills {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-}
-.discovery-skills > span {
-  color: var(--muted);
-  font-size: var(--font-size-micro);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-}
-
-/* The revision review reuses the draft aside cards; capability review is the
-   one list that appears there. */
-.draft-capability-list {
-  margin: 0;
-  padding-left: 18px;
-  display: grid;
-  gap: 4px;
-  color: var(--muted-3);
-  font-size: var(--font-size-caption);
-  line-height: var(--lh-snug);
-}
-.draft-brief-facts dd a { color: var(--cyan); }
-
-/* An internal session paused on a question is not stuck; say so and point at
-   the page that can answer it. */
-.draft-waiting {
-  margin: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--amber-border);
-  border-radius: 8px;
-  background: var(--amber-soft);
-  color: var(--amber);
-  font-size: var(--font-size-caption);
-  line-height: var(--lh-snug);
-}
-.draft-waiting a { color: inherit; }
-
 @media (max-width: 720px) {
-  /* One column, and the pair of them scrolls together: two side-by-side scroll
-     regions do not survive a phone-width screen. */
-  .draft-columns { grid-template-columns: minmax(0, 1fr); overflow: auto; }
-  .draft-aside { border-right: 0; border-bottom: 1px solid var(--line); overflow: visible; }
-  .draft-main { overflow: visible; min-height: 60vh; }
+  /* The header rows stack and the tab bar scrolls sideways rather than wrapping
+     into two rows of tabs, which reads as two tab bars. */
+  .draft-header { padding: 12px 16px; }
+  .draft-header-row { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .draft-header-row.is-meta { align-items: flex-start; }
+  .draft-tabs { padding: 0 16px; }
+  .draft-tabs button { padding: 0 14px; }
+  .draft-tabs-note { display: none; }
+  .draft-file-body,
+  .draft-exchange,
+  .draft-testrun,
+  .draft-composer { padding-inline: 16px; }
+  .draft-error { padding-inline: 16px; }
 }
 
 /* ── Draft panel: the height chain ────────────────────────────────────────────

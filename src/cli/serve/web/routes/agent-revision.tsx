@@ -179,59 +179,17 @@ export default function AgentRevision() {
     if (token) params.set('token', token);
     return `/sessions/${encodeURIComponent(sessionId)}?${params.toString()}`;
   })();
-  const aside = (
+  const meta = (
     <>
-      <div class="draft-brief">
-        <div class="draft-card-head"><span class="draft-card-label">What should change</span></div>
-        <p class="draft-brief-objective">{revision.instruction}</p>
-        <dl class="draft-brief-facts">
-          <dt>From run</dt>
-          <dd>{revision.originHref
-            ? <a href={revision.originHref}>{`${revision.originSessionId.slice(0, 8)}…`}</a>
-            : `${revision.originSessionId.slice(0, 8)}…`}</dd>
-          <dt>Agent</dt><dd>{revision.targetAgentName}</dd>
-          <dt>Reviser</dt><dd>{revision.authoringModel}</dd>
-        </dl>
-      </div>
-      <div class="draft-session">
-        <span class="draft-card-label">Revision session</span>
-        {/* The reviser may stop and ask one focused question. Answering resumes
-            this same session, and that happens on the session page, which owns
-            every approval gate in the product. */}
-        {reviserSession.status === 'waiting' && (
-          <p class="draft-waiting" role="status">
-            The reviser needs your answer before it can propose a change.{' '}
-            <a href={reviserSessionHref}>Answer it in the session</a>
-          </p>
-        )}
-        {reviserSession.streamError && <p class="draft-error" role="alert">{reviserSession.streamError}</p>}
-        <TokenUsageStrip
-          tokenUsage={reviserSession.approval?.tokenUsage}
-          estimatedCost={pricing && reviserSession.approval
-            ? pricing.estimateSessionCostUsd(reviserSession.approval.model, reviserSession.approval.tokenUsage)
-            : undefined}
-          formatUsd={pricing?.formatUsd}
-          compact
-          ariaLabel="Revision session usage"
-        />
-      </div>
-      {/* A capability change is the one thing here that can widen what the agent
-          may do, so it keeps a card. "Nothing changed" is a one-line
-          reassurance and rides in the file header instead. */}
-      {capabilityChanges.length > 0 && (
-        <div class="draft-brief">
-          <div class="draft-card-head"><span class="draft-card-label">Capability review</span></div>
-          <ul class="draft-capability-list">{capabilityChanges.map((change) => <li key={change}>{change}</li>)}</ul>
-        </div>
-      )}
-      <div class="draft-brief">
-        <div class="draft-card-head"><span class="draft-card-label">Earlier revisions</span></div>
-        <p class="draft-brief-objective">
-          <a href={agentDetailHref(revision.projectId, revision.targetAgentRunPath ?? revision.targetAgentName, { tab: 'revisions' })}>
-            See every revision of this agent
-          </a>
-        </p>
-      </div>
+      <span><span class="draft-meta-key">Project</span> {revision.projectId}</span>
+      <span>
+        <span class="draft-meta-key">From run</span>{' '}
+        {revision.originHref
+          ? <a href={revision.originHref}>{`${revision.originSessionId.slice(0, 8)}…`}</a>
+          : `${revision.originSessionId.slice(0, 8)}…`}
+      </span>
+      <span><span class="draft-meta-key">Agent</span> {revision.targetAgentName}</span>
+      <span><span class="draft-meta-key">Reviser</span> {revision.authoringModel}</span>
     </>
   );
 
@@ -261,30 +219,46 @@ export default function AgentRevision() {
 
   return (
     <DraftPanel
-      breadcrumb={<>
-        <a href={agentDetailHref(revision.projectId, revision.targetAgentRunPath ?? revision.targetAgentName, { tab: 'revisions' })}>{revision.targetAgentName}</a>
-        <span aria-hidden="true">›</span>
-        <strong>Revise agent file</strong>
-      </>}
+      filePath={revision.targetAgentRunPath ?? revision.targetAgentPath}
+      versionLabel={proposed ? `proposal ${proposalNumber}` : running ? 'diagnosing…' : '—'}
       pill={<DraftStatusPill
         label={revision.status}
         tone={revision.status === 'applied' || revision.status === 'restored' ? 'done'
           : revision.status === 'error' ? 'error'
           : running ? 'running' : 'draft'}
       />}
+      links={<>
+        <a class="draft-quiet-link" href={agentDetailHref(revision.projectId, revision.targetAgentRunPath ?? revision.targetAgentName, { tab: 'revisions' })}>Earlier revisions</a>
+        <a class="draft-quiet-link" href={reviserSessionHref}>Open full session log</a>
+      </>}
       actions={actions}
-      aside={aside}
-      filePath={revision.targetAgentRunPath ?? revision.targetAgentPath}
-      versionLabel={proposed ? `proposal ${proposalNumber}` : running ? 'diagnosing…' : '—'}
-      changeLabel={changeCounts
-        ? <>Changes vs current file <span class="draft-added">+{changeCounts.added}</span> <span class="draft-removed">−{changeCounts.removed}</span></>
-        : revision.status === 'no-change' ? 'No source change recommended' : ''}
+      meta={meta}
+      tokens={<TokenUsageStrip
+        tokenUsage={reviserSession.approval?.tokenUsage}
+        estimatedCost={pricing && reviserSession.approval
+          ? pricing.estimateSessionCostUsd(reviserSession.approval.model, reviserSession.approval.tokenUsage)
+          : undefined}
+        formatUsd={pricing?.formatUsd}
+        compact
+        ariaLabel="Revision session usage"
+      />}
+      notice={reviserSession.status === 'waiting'
+        ? <>The reviser needs your answer before it can propose a change. <a href={reviserSessionHref}>Answer it in the session</a></>
+        : undefined}
+      capabilityNote={capabilityChanges.length > 0
+        ? <>Capability changes: {capabilityChanges.join('; ')}</>
+        : undefined}
+      diffBadge={changeCounts
+        ? <><span class="draft-added">+{changeCounts.added}</span> <span class="draft-removed">−{changeCounts.removed}</span></>
+        : undefined}
+      headerNote={revision.capabilityChanges && capabilityChanges.length === 0 ? 'no capability changes' : undefined}
       baseSource={revision.baseSource}
       source={proposed ?? revision.baseSource ?? ''}
       tab={tab}
       onTab={(next) => { setTabPinned(true); setTab(next); }}
+      running={running}
       showTestTab={Boolean(proposed)}
-      headerNote={revision.capabilityChanges && capabilityChanges.length === 0 ? 'no capability changes' : undefined}
+      hasTestRun={Boolean(testSession)}
       testRun={<DraftTestRun
         project={project}
         session={testSession}
@@ -299,7 +273,12 @@ export default function AgentRevision() {
         sessionId={sessionId}
         projectId={project}
         token={token}
-        sessionHref={reviserSessionHref}
+        leadRequest={revision.instruction}
+        leadExtra={revision.originHref
+          ? <a class="draft-evidence-row" href={revision.originHref}>
+              Evidence · run {revision.originSessionId.slice(0, 8)}…
+            </a>
+          : undefined}
         emptyHint="The reviser is diagnosing the run. Its steps and findings appear here."
       />}
       composer={open && (
@@ -310,7 +289,7 @@ export default function AgentRevision() {
           onSend={requestChange}
         />
       )}
-      error={actionError ?? revision.error?.message ?? null}
+      error={actionError ?? reviserSession.streamError ?? revision.error?.message ?? null}
     />
   );
 }

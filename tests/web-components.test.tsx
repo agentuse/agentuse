@@ -257,7 +257,7 @@ describe('draft Changes thread', () => {
     expect(groups[1]!.steps).toEqual([]);
   });
 
-  it('renders the steps between the bubbles with a link to the full log', () => {
+  it('renders the steps between the bubbles', () => {
     const html = renderToString(<DraftThread
       turns={[{ reply: 'Created it' }]}
       entries={[step('a', 'tool', 'skill_load', 1_000), step('b', 'tool', 'submit_agent_source', 12_000)]}
@@ -265,13 +265,11 @@ describe('draft Changes thread', () => {
       sessionId="creator-session"
       projectId="demo"
       token="view-token"
-      sessionHref="/sessions/creator-session?project=demo&token=view-token"
     />);
 
     expect(html).toContain('2 steps');
     expect(html).toContain('11s');
     expect(html).toContain('Created it');
-    expect(html).toContain('Open full session log');
   });
 
   it('says nothing has been asked for yet when the thread is empty', () => {
@@ -282,7 +280,6 @@ describe('draft Changes thread', () => {
       sessionId="creator-session"
       projectId="demo"
       token={undefined}
-      sessionHref="/sessions/creator-session"
       emptyHint="The creator is working."
     />);
     expect(html).toContain('The creator is working.');
