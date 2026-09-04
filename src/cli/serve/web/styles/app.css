@@ -113,6 +113,9 @@
 @media (pointer: coarse) {
   :focus, :focus-visible { outline: none !important; }
 }
+/* Mac desktop app: the keyboard focus ring uses the system accent color, the
+   way native controls do, instead of the app's cyan. */
+.app-shell[data-desktop="true"] :focus-visible { outline-color: AccentColor; }
 html, body { background: var(--bg); }
 
 /* Raised card: the one container shape of the calm console. Rows inside
