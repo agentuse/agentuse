@@ -450,3 +450,73 @@ describe('per-candidate verdicts on verify events', () => {
     expect(events[0]).toMatchObject({ type: 'verify', verdict: 'fail', candidates });
   });
 });
+
+describe('judge child verdicts', () => {
+  const candidates = [
+    { id: 'A', pass: false, critique: 'Claims Leon retired a supervision interface he never ran.' },
+    { id: 'B', pass: true, critique: 'Bounded to the one observed handoff.' },
+  ];
+
+  it('copies the parent marker matching the judge session explicit attempt', () => {
+    const manager = session({ id: 'manager', name: 'Manager', createdAt: 1_000 });
+    const leaf = session({ id: 'leaf', parent: manager.id, name: 'X Engage Reply', createdAt: 2_000 });
+    const judge1 = session({
+      id: 'judge-1', parent: leaf.id, name: 'Reply Judge', createdAt: 3_000,
+      observability: { role: 'verify-judge', attempt: 0, maxAttempts: 3 },
+    });
+    const judge2 = session({
+      id: 'judge-2', parent: leaf.id, name: 'Reply Judge', createdAt: 5_000,
+      observability: { role: 'verify-judge', attempt: 1, maxAttempts: 3 },
+    });
+    const rows = buildImportantDescendants(manager, [
+      { session: leaf, parts: [
+        verifyPart({ id: 'v1', sessionId: leaf.id, attempt: 0, verdict: 'fail', time: 3_500, critique: 'A overclaims', candidates }),
+        verifyPart({ id: 'v2', sessionId: leaf.id, attempt: 1, verdict: 'pass', time: 5_500, candidates: [
+          { id: 'A', pass: true, critique: 'fixed' }, { id: 'B', pass: true, settled: true },
+        ] }),
+      ] },
+      { session: judge1, parts: [] },
+      { session: judge2, parts: [] },
+    ]);
+    const byId = new Map(rows.map((row) => [row.sessionId, row]));
+    expect(byId.get('judge-1')).toMatchObject({
+      attempt: 0, verdict: 'fail', critique: 'A overclaims', maxAttempts: 3, candidates,
+    });
+    expect(byId.get('judge-2')).toMatchObject({ attempt: 1, verdict: 'pass' });
+    expect(byId.get('judge-2')?.candidates?.[1]).toMatchObject({ id: 'B', settled: true });
+    // The leaf itself ran the gate; it is not a judge and carries no verdict.
+    expect(byId.get('leaf')?.verdict).toBeUndefined();
+  });
+
+  it('falls back to the chronological ordinal when the judge has no attempt metadata', () => {
+    const manager = session({ id: 'manager', name: 'Manager', createdAt: 1_000 });
+    const leaf = session({ id: 'leaf', parent: manager.id, name: 'X Engage Reply', createdAt: 2_000 });
+    const older = session({ id: 'judge-older', parent: leaf.id, name: 'Reply Judge', createdAt: 3_000 });
+    const newer = session({ id: 'judge-newer', parent: leaf.id, name: 'Reply Judge', createdAt: 5_000 });
+    const rows = buildImportantDescendants(manager, [
+      { session: leaf, parts: [
+        verifyPart({ id: 'v1', sessionId: leaf.id, attempt: 0, verdict: 'fail', time: 3_500, critique: 'first bounce' }),
+        verifyPart({ id: 'v2', sessionId: leaf.id, attempt: 1, verdict: 'pass', time: 5_500 }),
+      ] },
+      { session: newer, parts: [] },
+      { session: older, parts: [] },
+    ]);
+    const byId = new Map(rows.map((row) => [row.sessionId, row]));
+    expect(byId.get('judge-older')).toMatchObject({ verdict: 'fail', critique: 'first bounce' });
+    expect(byId.get('judge-newer')).toMatchObject({ verdict: 'pass' });
+  });
+
+  it('reads the root own markers when the judge hangs directly off the root', () => {
+    const root = session({ id: 'root', name: 'X Engage Reply', createdAt: 1_000 });
+    const judge = session({
+      id: 'judge-1', parent: root.id, name: 'Reply Judge', createdAt: 2_000,
+      observability: { role: 'verify-judge', attempt: 0, maxAttempts: 3 },
+    });
+    const marker = verifyPart({ id: 'v1', sessionId: root.id, attempt: 0, verdict: 'fail', time: 2_500, critique: 'A overclaims', candidates });
+
+    expect(buildImportantDescendants(root, [{ session: judge, parts: [] }])[0]?.verdict).toBeUndefined();
+    expect(buildImportantDescendants(root, [{ session: judge, parts: [] }], [marker])[0]).toMatchObject({
+      sessionId: 'judge-1', verdict: 'fail', critique: 'A overclaims', candidates,
+    });
+  });
+});

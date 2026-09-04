@@ -34,13 +34,18 @@ const descendant: ApprovalLogEntry = {
 };
 
 describe('collectJudgeRows', () => {
-  it('gathers own verify entries and descendant verify events, oldest first', () => {
-    const rows = collectJudgeRows([ownPass, descendant, ownVerify]);
-    expect(rows.map((row) => [row.id, row.verdict])).toEqual([
-      ['verify-event-leaf-1', 'error'], ['v-own', 'fail'], ['v-own-2', 'pass'],
-    ]);
-    expect(rows[0]).toMatchObject({ owner: 'Leaf', href: '/s/leaf#log-p1', attemptLabel: 'Attempt 1 of 2' });
-    expect(rows[1]).toMatchObject({ href: '#log-v-own', judge: '../shared/content-reader-judge.agentuse' });
+  it('gathers the session own verify entries, oldest first', () => {
+    const rows = collectJudgeRows([ownPass, ownVerify]);
+    expect(rows.map((row) => [row.id, row.verdict])).toEqual([['v-own', 'fail'], ['v-own-2', 'pass']]);
+    expect(rows[0]).toMatchObject({
+      href: '#log-v-own', judge: '../shared/content-reader-judge.agentuse', attemptLabel: 'Attempt 1 of 3',
+    });
+  });
+
+  // Descendant verdicts render on their own judge card in the session tree;
+  // collecting them here as well printed each one twice.
+  it('leaves descendant verify events to the tree that already shows them', () => {
+    expect(collectJudgeRows([descendant])).toEqual([]);
   });
 
   it('ignores entries without a structured verdict', () => {
@@ -64,7 +69,11 @@ describe('JudgePanel', () => {
   });
 
   it('says so when the judge never produced a verdict', () => {
-    const html = render(<JudgePanel rows={collectJudgeRows([descendant])} />);
+    const errored: ApprovalLogEntry = {
+      id: 'v-err', type: 'verify', status: 'error', title: 'Verification judge error', time: 500,
+      verify: { verdict: 'error', attempt: 0, maxAttempts: 2, critique: 'judge returned no parseable verdict JSON' },
+    };
+    const html = render(<JudgePanel rows={collectJudgeRows([errored])} />);
     expect(html).toContain('not reviewed · judge error');
     expect(html).toContain('judge returned no parseable verdict JSON');
   });

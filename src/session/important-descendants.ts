@@ -36,6 +36,17 @@ export interface ImportantDescendantSummary {
   label?: string;
   gateLabel?: string;
   attemptLabel?: string;
+  /** Judge children: 0-based attempt this session judged, matched to the
+   * parent's verify marker. */
+  attempt?: number;
+  /** Judge children: the verdict the parent's matching verify marker recorded.
+   * The marker lives on the parent (the session that ran the gate), so without
+   * this a manager's tree showed a judge child that completed and nothing
+   * about what it decided. */
+  verdict?: 'pass' | 'fail' | 'error';
+  critique?: string;
+  candidates?: VerifyCandidateSummary[];
+  maxAttempts?: number;
   activity?: DescendantActivity;
 }
 
@@ -255,7 +266,10 @@ export function buildDescendantActivity(session: SessionInfo, parts: Part[]): De
  * attempt metadata are numbered chronologically among Judge siblings. */
 export function buildImportantDescendants(
   root: SessionInfo,
-  evidence: DescendantEvidence[]
+  evidence: DescendantEvidence[],
+  /** The root's own parts. `evidence` covers descendants only, so without this
+   * a judge whose parent IS the root has no marker to read its verdict from. */
+  rootParts?: Part[]
 ): ImportantDescendantSummary[] {
   if (evidence.length === 0) return [];
   const byId = new Map(evidence.map((item) => [item.session.id, item]));
@@ -322,6 +336,24 @@ export function buildImportantDescendants(
     return false;
   };
 
+  const partsOf = (sessionId: string): Part[] =>
+    sessionId === root.id ? (rootParts ?? []) : (byId.get(sessionId)?.parts ?? []);
+
+  // The verify marker a judge child produced lives on its PARENT (the session
+  // that ran the gate). Explicit attempt metadata matches exactly; historical
+  // judges without it fall back to their chronological ordinal among siblings,
+  // the same numbering `attemptLabel` uses.
+  const markerForJudge = (session: SessionInfo): Extract<Part, { type: 'verify' }> | undefined => {
+    const parentId = session.parentSessionID;
+    if (!parentId) return undefined;
+    const markers = verifyParts(partsOf(parentId));
+    if (markers.length === 0) return undefined;
+    const explicit = session.observability?.attempt;
+    if (explicit !== undefined) return markers.find((marker) => marker.attempt === explicit);
+    const ordinal = judgeOrdinals.get(session.id);
+    return ordinal === undefined ? undefined : markers[ordinal];
+  };
+
   const contextFor = (session: SessionInfo): { depth: number; breadcrumb: DescendantBreadcrumb[] } => {
     const lineage: SessionInfo[] = [];
     let parentId = session.parentSessionID;
@@ -380,6 +412,7 @@ export function buildImportantDescendants(
             : fallbackLabel;
     const terminal = isTerminalSessionStatus(session.status);
     const activity = buildDescendantActivity(session, item.parts ?? []);
+    const marker = kinds.includes('judge') ? markerForJudge(session) : undefined;
     result.push({
       sessionId: session.id,
       parentSessionId: session.parentSessionID,
@@ -402,6 +435,13 @@ export function buildImportantDescendants(
       ...(label && { label }),
       ...(classified.gateLabel && { gateLabel: classified.gateLabel }),
       ...(attemptLabel && { attemptLabel }),
+      ...(kinds.includes('judge') && ordinal !== undefined && { attempt: ordinal }),
+      ...(marker && {
+        verdict: marker.verdict,
+        maxAttempts: maxAttempts ?? marker.maxRedos + 1,
+        ...(marker.critique && { critique: marker.critique }),
+        ...(marker.candidates && marker.candidates.length > 0 && { candidates: marker.candidates }),
+      }),
       ...(activity && { activity }),
     });
   }

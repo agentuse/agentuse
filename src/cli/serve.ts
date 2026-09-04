@@ -50,7 +50,7 @@ import { saveManualLearning, LearningStore, effectiveCap, partitionLearnings, co
 import { homedir } from "os";
 import type { StoreItem } from "../store/types";
 import type { ActiveContextUsage, SessionTrigger } from "../session/types";
-import type { DescendantActivity, DescendantBreadcrumb, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary } from "../session/important-descendants";
+import type { DescendantActivity, DescendantBreadcrumb, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary, VerifyCandidateSummary } from "../session/important-descendants";
 import { ulid } from "ulid";
 import { sessionViewToken, validateSessionToken } from "../utils/session-token";
 import { readArtifactManifest, getManifestPath } from "../tools/artifact-manifest";
@@ -905,6 +905,13 @@ interface LogSubagentSession extends ChildSessionSummary {
   label?: string;
   gateLabel?: string;
   attemptLabel?: string;
+  /** Judge children: 0-based attempt, and the verdict its parent's verify
+   *  marker recorded for it. */
+  attempt?: number;
+  verdict?: 'pass' | 'fail' | 'error';
+  critique?: string;
+  candidates?: VerifyCandidateSummary[];
+  maxAttempts?: number;
   events?: LogSubagentEvent[];
   children?: LogSubagentSession[];
 }
@@ -938,6 +945,18 @@ interface ApprovalLogDetails {
   artifactUrl?: string;
   /** Project-root-relative paths to local file artifacts, viewable via /sessions/:id/artifacts/*. */
   artifactPaths?: string[];
+  /** The pre-review verdict that immediately preceded this gate. `sessionId`
+   *  names the judge child; this layer resolves it to `sessionHref`. */
+  judge?: {
+    verdict: 'pass' | 'fail' | 'error';
+    attempt: number;
+    maxAttempts: number;
+    judge?: string;
+    critique?: string;
+    candidates?: VerifyCandidateSummary[];
+    sessionId?: string;
+    sessionHref?: string;
+  };
   decisionStatus?: string;
   decisionComment?: string;
   decisionChoice?: string;
@@ -2809,6 +2828,11 @@ function importantDescendantTree(
       ...(descendant.label && { label: descendant.label }),
       ...(descendant.gateLabel && { gateLabel: descendant.gateLabel }),
       ...(descendant.attemptLabel && { attemptLabel: descendant.attemptLabel }),
+      ...(descendant.attempt !== undefined && { attempt: descendant.attempt }),
+      ...(descendant.verdict && { verdict: descendant.verdict }),
+      ...(descendant.critique && { critique: descendant.critique }),
+      ...(descendant.candidates && { candidates: descendant.candidates }),
+      ...(descendant.maxAttempts !== undefined && { maxAttempts: descendant.maxAttempts }),
       ...(descendant.activity && { activity: descendant.activity }),
     }));
   }
@@ -2939,11 +2963,22 @@ function logsWithChildSessions(
     matchedChildIds.add(candidate.child.sessionId);
   }
 
+  // A gate's judge verdict travels with the judge child's session id; only this
+  // layer knows how to mint a viewable link for it.
+  const withJudgeHref = (entry: ApprovalLogEntry): ApprovalLogEntry => {
+    const judge = entry.details?.judge;
+    if (!judge?.sessionId || !childSessionHref) return entry;
+    return {
+      ...entry,
+      details: { ...entry.details, judge: { ...judge, sessionHref: childSessionHref(judge.sessionId) } },
+    };
+  };
+
   const enrichedLogs = logs.map((entry) => {
     const child = assignedChildren.get(entry.id);
-    if (child) return { ...entry, subagentSession: child };
+    if (child) return withJudgeHref({ ...entry, subagentSession: child });
     const fallback = fallbackSubagentSession(entry);
-    return fallback ? { ...entry, subagentSession: fallback } : entry;
+    return withJudgeHref(fallback ? { ...entry, subagentSession: fallback } : entry);
   });
 
   for (const child of childTree) {

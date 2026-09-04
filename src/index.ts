@@ -1236,6 +1236,16 @@ async function runInternalWorker() {
     recommended?: boolean;
   }
 
+  /** Structured verdict of one verify marker (mirrors serve/types LogVerifySummary). */
+  interface LogVerifySummary {
+    verdict: 'pass' | 'fail' | 'error';
+    attempt: number;
+    maxAttempts: number;
+    judge?: string;
+    critique?: string;
+    candidates?: Array<{ id: string; pass: boolean; critique?: string; settled?: boolean }>;
+  }
+
   interface ApprovalLogDetails {
     resumeToken?: string;
     prompt?: string;
@@ -1292,6 +1302,11 @@ async function runInternalWorker() {
       title?: string;
       group?: string;
     };
+    /** The pre-review verdict that immediately preceded this gate, so the
+     *  reviewer sees which candidate the judge failed and why without hunting
+     *  the log for the marker. `sessionId` names the judge child; serve
+     *  resolves it to `sessionHref`. */
+    judge?: LogVerifySummary & { sessionId?: string; sessionHref?: string };
     decisionStatus?: string;
     decisionComment?: string;
     decisionChoice?: string;
@@ -1508,7 +1523,38 @@ async function runInternalWorker() {
     return { outcomeByPartId, deliveredTextIds };
   }
 
-  function buildApprovalLogs(parts: any[]): Array<{ id: string; type: string; tool?: string; callId?: string; toolId?: string; status?: string; level?: LogPartLevel; title: string; message?: string; time?: number; details?: ApprovalLogDetails }> {
+  /** The structured verdict of a stored `type: 'verify'` part. */
+  function verifySummaryFromPart(part: any): LogVerifySummary {
+    const attempt = typeof part.attempt === 'number' ? part.attempt : 0;
+    const maxRedos = typeof part.maxRedos === 'number' ? part.maxRedos : 0;
+    const critique = typeof part.critique === 'string' ? part.critique : undefined;
+    const judge = typeof part.judge === 'string' ? part.judge : undefined;
+    const candidates = Array.isArray(part.candidates)
+      ? (part.candidates as Array<{ id: string; pass: boolean; critique?: string; settled?: boolean }>)
+      : undefined;
+    return {
+      verdict: part.verdict as 'pass' | 'fail' | 'error',
+      attempt,
+      maxAttempts: maxRedos + 1,
+      ...(judge && { judge }),
+      ...(critique && { critique }),
+      ...(candidates && candidates.length > 0 && { candidates }),
+    };
+  }
+
+  /** The latest verify marker recorded before `gatePartId` in the same session.
+   *  A gate that bounced back from the judge is the one place a reviewer needs
+   *  that verdict, and it is otherwise buried further up the folded log. */
+  function judgeSummaryForGate(parts: any[], gatePartId: string): LogVerifySummary | undefined {
+    let latest: LogVerifySummary | undefined;
+    for (const part of parts) {
+      if (String(part?.id) === gatePartId) break;
+      if (part?.type === 'verify') latest = verifySummaryFromPart(part);
+    }
+    return latest;
+  }
+
+  function buildApprovalLogs(parts: any[]): Array<{ id: string; type: string; tool?: string; callId?: string; toolId?: string; status?: string; level?: LogPartLevel; title: string; message?: string; time?: number; details?: ApprovalLogDetails; verify?: LogVerifySummary }> {
     const { outcomeByPartId, deliveredTextIds } = collectRunOutcomes(parts);
     // The runtime records an outcome tool's delivered report as an assistant
     // text part as well, so `sessions show`, a resumed run and a sub-agent's
@@ -1516,7 +1562,7 @@ async function runInternalWorker() {
     // that report on the tool row that produced it, so keeping the text part
     // too would print the whole report twice — once as the report, once as an
     // "Assistant response" the model never wrote.
-    return parts.filter((part: any) => !deliveredTextIds.has(String(part?.id))).map((part: any) => {
+    const entries = parts.filter((part: any) => !deliveredTextIds.has(String(part?.id))).map((part: any) => {
       if (part?.type === 'log') {
         const view = describeLogPart(part);
         return {
@@ -1620,23 +1666,13 @@ async function runInternalWorker() {
         const message = part.verdict === 'error'
           ? critique ?? 'Judge failed; output shipped unverified'
           : critique ?? (judge ? `Judged by ${judge}` : undefined);
-        const candidates = Array.isArray(part.candidates)
-          ? (part.candidates as Array<{ id: string; pass: boolean; critique?: string; settled?: boolean }>)
-          : undefined;
         return {
           id: String(part.id),
           type: 'verify',
           status: part.verdict === 'pass' ? 'completed' : 'error',
           title,
           ...(message !== undefined && { message }),
-          verify: {
-            verdict: part.verdict as 'pass' | 'fail' | 'error',
-            attempt,
-            maxAttempts: maxRedos + 1,
-            ...(judge && { judge }),
-            ...(critique && { critique }),
-            ...(candidates && candidates.length > 0 && { candidates }),
-          },
+          verify: verifySummaryFromPart(part),
           ...(typeof part.time?.start === 'number' && { time: part.time.start })
         };
       }
@@ -1697,6 +1733,20 @@ async function runInternalWorker() {
         title: String(part?.type ?? 'Session event')
       };
     });
+    // Second pass: hand every gate the verdict that preceded it. The judge runs
+    // before await_human suspends, so a bounced draft's reason is already in the
+    // log — just far above the card the reviewer is actually looking at.
+    let latestVerify: LogVerifySummary | undefined;
+    for (const entry of entries) {
+      if (entry.type === 'verify' && 'verify' in entry && entry.verify) {
+        latestVerify = entry.verify as LogVerifySummary;
+        continue;
+      }
+      if (entry.type !== 'tool' || !('tool' in entry) || entry.tool !== 'await_human' || !latestVerify) continue;
+      const withJudge = entry as { details?: ApprovalLogDetails };
+      withJudge.details = { ...(withJudge.details ?? {}), judge: latestVerify };
+    }
+    return entries;
   }
 
   function approvalLogTitle(state: any): string {
@@ -2096,7 +2146,10 @@ async function runInternalWorker() {
     sessionManager: InstanceType<typeof SessionManager>,
     rootSession: SessionInfo,
     sessionId: string,
-    sessionPath?: string
+    sessionPath?: string,
+    /** The root's own parts: judge children hanging directly off the root read
+     *  their verdict from the root's verify markers, which `evidence` omits. */
+    rootParts?: Part[]
   ) {
     const descendants = await sessionManager.listDescendantSessions(sessionId, sessionPath);
     const summarize = ({ session, parts }: { session: SessionInfo; parts?: Part[] }) => ({
@@ -2136,7 +2189,7 @@ async function runInternalWorker() {
       .map(summarize);
     return {
       childSessions,
-      importantDescendants: buildImportantDescendants(rootSession, evidence),
+      importantDescendants: buildImportantDescendants(rootSession, evidence, rootParts),
       importantDescendantEvents: buildImportantDescendantEvents(rootSession, evidence),
       evidence,
     };
@@ -2680,8 +2733,23 @@ async function runInternalWorker() {
         sessionManager,
         found.session,
         req.sessionId,
-        found.path
+        found.path,
+        parts as Part[]
       );
+      // Name the judge child behind each gate's verdict so the card can link to
+      // it. serve turns the id into a tokenized href.
+      logs = logs.map((entry) => {
+        const judge = entry.details?.judge;
+        if (!judge || judge.sessionId) return entry;
+        const match = importantDescendants.find((descendant) =>
+          descendant.parentSessionId === req.sessionId
+          && descendant.kinds.includes('judge')
+          && descendant.attempt === judge.attempt
+        );
+        return match
+          ? { ...entry, details: { ...entry.details, judge: { ...judge, sessionId: match.sessionId } } }
+          : entry;
+      });
       const timing = summarizeSessionTiming(found.session, [
         { session: found.session, parts: parts as Part[] },
         ...descendantEvidence,
@@ -2897,8 +2965,23 @@ async function runInternalWorker() {
           const bookmarkId = String(bookmarkPart.id);
           const leafGateDetails = buildAwaitHumanDetails(state);
           if (leafGateDetails) {
+            // The gate is the leaf's, and so is the verdict that produced it:
+            // the manager's own parts carry neither.
+            const leafJudge = judgeSummaryForGate(cascadeLeaf.parts, String(effectiveApprovalPart.id));
+            const leafJudgeSession = leafJudge && importantDescendants.find((descendant) =>
+              descendant.parentSessionId === cascadeLeaf!.session.id
+              && descendant.kinds.includes('judge')
+              && descendant.attempt === leafJudge.attempt
+            );
             logs = logs.map((entry) => entry.id === bookmarkId
-              ? { ...entry, details: { ...(entry.details ?? {}), ...leafGateDetails } }
+              ? { ...entry, details: {
+                  ...(entry.details ?? {}),
+                  ...leafGateDetails,
+                  ...(leafJudge && { judge: {
+                    ...leafJudge,
+                    ...(leafJudgeSession && { sessionId: leafJudgeSession.sessionId }),
+                  } }),
+                } }
               : entry);
           }
         }

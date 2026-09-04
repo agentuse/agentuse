@@ -8034,6 +8034,11 @@ a.lastrun.waiting { color: var(--cyan); }
 }
 .page-approval-detail .subagent-tree-node > .verify-event { border-left: 3px solid var(--cyan-border); }
 .page-approval-detail .subagent-tree-node > .verify-event.is-failure { border-left-color: var(--red); }
+/* A real Judge child carries the same verdict rail as an inline verify event:
+   the two are the same fact, and only differ in whether the judge got its own
+   session. */
+.page-approval-detail .subagent-tree-node > .subagent-event.is-judge-pass { border-left: 3px solid var(--cyan-border); }
+.page-approval-detail .subagent-tree-node > .subagent-event.is-judge-fail { border-left: 3px solid var(--red); }
 .page-approval-detail .verify-event-critique {
   grid-column: 1 / -1;
   color: var(--fg);
@@ -8050,6 +8055,61 @@ a.lastrun.waiting { color: var(--cyan); }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* The judge's mark on a gate: one strip per candidate, sitting under the option
+   it judged, and a footer saying where the run stands with its reviewer. */
+.page-approval-detail .approval-judge-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin-top: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: var(--font-size-caption);
+  line-height: var(--lh-snug);
+}
+.page-approval-detail .approval-judge-strip.is-pass { background: var(--cyan-soft); }
+.page-approval-detail .approval-judge-strip.is-fail { background: var(--red-soft); }
+.page-approval-detail .approval-judge-mark { flex: none; font-weight: 600; }
+.page-approval-detail .approval-judge-strip.is-pass .approval-judge-mark { color: var(--cyan); }
+.page-approval-detail .approval-judge-strip.is-fail .approval-judge-mark { color: var(--red); }
+.page-approval-detail .approval-judge-note {
+  flex: 1 1 200px;
+  min-width: 0;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.page-approval-detail .approval-judge-strip.is-settled .approval-judge-note { color: var(--muted); font-style: italic; }
+.page-approval-detail .approval-judge-meta {
+  flex: none;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  white-space: nowrap;
+}
+.page-approval-detail .approval-judge-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: var(--font-size-caption);
+}
+.page-approval-detail .approval-judge-footer-label {
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.page-approval-detail .approval-judge-footer-label::before { content: "\2696 "; color: var(--cyan); opacity: 0.7; }
+.page-approval-detail .approval-judge-path { color: var(--muted); font-size: var(--font-size-micro); overflow-wrap: anywhere; }
+.page-approval-detail .approval-judge-footer-state { color: var(--fg); }
+.page-approval-detail .approval-judge-footer.is-fail .approval-judge-footer-state { color: var(--red); }
+.page-approval-detail .approval-judge-footer.is-error .approval-judge-footer-state { color: var(--amber); }
+.page-approval-detail .approval-judge-link { margin-left: auto; white-space: nowrap; }
+
 /* Mobile: the 3-column grid (chip / name / long session id) overflows on
    narrow screens because the id and command tracks size to their unbreakable
    content. Stack into a wrapping flex row so the chip + name stay on the first

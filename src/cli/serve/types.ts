@@ -499,6 +499,13 @@ export interface LogSubagentSession extends ChildSessionSummary {
   label?: string;
   gateLabel?: string;
   attemptLabel?: string;
+  /** Judge children: 0-based attempt, and the verdict its parent's verify
+   *  marker recorded for it. */
+  attempt?: number;
+  verdict?: 'pass' | 'fail' | 'error';
+  critique?: string;
+  candidates?: VerifyCandidateSummary[];
+  maxAttempts?: number;
   events?: LogSubagentEvent[];
   children?: LogSubagentSession[];
 }
@@ -615,6 +622,16 @@ export interface ApprovalLogDetails {
     body?: string;
     /** Paths and URLs the run produced or changed. */
     artifacts?: string[];
+  };
+  /** The pre-review verdict that immediately preceded this gate: which
+   *  candidate the judge failed, why, and how much redo budget is left. Set on
+   *  the leaf's own gate and on the manager's bookmark entry when the gate
+   *  cascaded up. */
+  judge?: LogVerifySummary & {
+    /** The judge child session that produced it. */
+    sessionId?: string;
+    /** Tokenized link to that session, resolved by the serve layer. */
+    sessionHref?: string;
   };
   /** A deliverable saved by `tools__artifact_save`, rendered as a viewable tile linking to the artifact. */
   savedArtifact?: {

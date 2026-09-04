@@ -12,6 +12,10 @@ function row(options: {
   breadcrumb: Array<{ sessionId: string; agentName: string }>;
   label?: string;
   judge?: boolean;
+  attemptLabel?: string;
+  verdict?: 'pass' | 'fail' | 'error';
+  critique?: string;
+  candidates?: LogSubagentSession['candidates'];
   events?: LogSubagentEvent[];
   children?: LogSubagentSession[];
 }): LogSubagentSession {
@@ -30,6 +34,10 @@ function row(options: {
     breadcrumb: options.breadcrumb,
     ...(options.judge && { kinds: ['judge'] as const, important: true }),
     ...(options.label && { label: options.label }),
+    ...(options.attemptLabel && { attemptLabel: options.attemptLabel }),
+    ...(options.verdict && { verdict: options.verdict }),
+    ...(options.critique && { critique: options.critique }),
+    ...(options.candidates && { candidates: options.candidates }),
     ...(options.events && { events: options.events }),
     ...(options.children && { children: options.children }),
   };
@@ -306,5 +314,70 @@ describe('per-candidate verdict rendering', () => {
     expect(html).toContain('C overclaims');
     // The list replaces the joined critique string, so the reason is not shown twice.
     expect(html.split('C overclaims').length - 1).toBe(1);
+  });
+});
+
+describe('judge child verdicts on the descendant card', () => {
+  const judgeRow = (extra: Partial<Parameters<typeof row>[0]> & { id: string }) => row({
+    name: 'Reply Judge',
+    href: `/sessions/${extra.id}`,
+    createdAt: Date.UTC(2026, 8, 3, 23, 18, 49),
+    parentSessionId: 'leaf',
+    breadcrumb: [
+      { sessionId: 'manager', agentName: 'X Growth Manager' },
+      { sessionId: 'leaf', agentName: 'X Engage Reply' },
+    ],
+    judge: true,
+    attemptLabel: 'Judge attempt 1 of 3',
+    ...extra,
+  });
+
+  it('leads a failed judge child with the verdict, a red rail, and one line per candidate', () => {
+    const html = renderEntry(judgeRow({
+      id: 'judge-1',
+      verdict: 'fail',
+      candidates: [
+        { id: 'A', pass: false, critique: 'Claims Leon retired a supervision interface he never ran.' },
+        { id: 'B', pass: true, critique: 'Bounded to the one observed handoff.' },
+      ],
+    }));
+    expect(html).toContain('chip status error');
+    expect(html).toContain('>failed<');
+    expect(html).toContain('subagent-event is-judge-fail');
+    expect(html).toContain('Judge attempt 1 of 3');
+    expect(html).toContain('X Growth Manager › X Engage Reply');
+    expect(html).toContain('verify-candidate is-fail');
+    expect(html).toContain('Claims Leon retired a supervision interface he never ran.');
+    expect(html).toContain('Bounded to the one observed handoff.');
+    expect(html).not.toContain('>completed<');
+  });
+
+  it('marks a passing judge child with the cyan rail and carries settled candidates forward', () => {
+    const html = renderEntry(judgeRow({
+      id: 'judge-2',
+      attemptLabel: 'Judge attempt 2 of 3',
+      verdict: 'pass',
+      candidates: [{ id: 'B', pass: true, settled: true }],
+    }));
+    expect(html).toContain('chip status completed');
+    expect(html).toContain('>passed<');
+    expect(html).toContain('subagent-event is-judge-pass');
+    expect(html).toContain('unchanged · carried forward');
+  });
+
+  it('falls back to the one-line critique when the run recorded no candidates', () => {
+    const html = renderEntry(judgeRow({ id: 'judge-3', verdict: 'fail', critique: 'Reply overclaims the handoff.' }));
+    expect(html).toContain('verify-event-critique');
+    expect(html).toContain('Reply overclaims the handoff.');
+  });
+
+  it('leaves a non-judge child on its plain status chip', () => {
+    const html = renderEntry(row({
+      id: 'leaf', name: 'X Engage Reply', href: '/sessions/leaf', createdAt: 2_000,
+      parentSessionId: 'manager', breadcrumb: [],
+    }));
+    expect(html).toContain('chip status completed');
+    expect(html).not.toContain('is-judge-pass');
+    expect(html).not.toContain('is-judge-fail');
   });
 });

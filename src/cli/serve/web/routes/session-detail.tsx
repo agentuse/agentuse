@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation, useRoute } from 'preact-iso';
-import type { ApprovalLogEntry, ApprovalPageInfo, LogSubagentEvent, LogSubagentSession, LogVerifySummary } from '../../types';
+import type { ApprovalLogEntry, ApprovalPageInfo, LogVerifySummary } from '../../types';
 import { CandidateVerdictList, LogEntry, toolChipLabel } from '../components/log-entry';
 import { InlineMarkdown, LogContent } from '../components/content';
 import { DecisionDialog, type DecisionDialogMode } from '../components/comment-dialog';
@@ -295,40 +295,25 @@ export interface JudgeRow {
   href: string;
 }
 
+/**
+ * This session's OWN verify markers only. Descendant verdicts used to be walked
+ * in here too, but a judge child now renders its verdict on its own card in the
+ * tree, so collecting them again printed every judge result twice.
+ */
 export function collectJudgeRows(logs: ApprovalLogEntry[]): JudgeRow[] {
   const rows: JudgeRow[] = [];
-  const walk = (session: LogSubagentSession) => {
-    for (const event of session.events ?? []) {
-      if (event.type !== 'verify') continue;
-      const verify = event as Extract<LogSubagentEvent, { type: 'verify' }>;
-      rows.push({
-        id: verify.id,
-        time: verify.time,
-        verdict: verify.verdict,
-        attemptLabel: verify.attemptLabel,
-        ...(verify.judge && { judge: verify.judge }),
-        ...(verify.critique && { critique: verify.critique }),
-        ...(verify.candidates && { candidates: verify.candidates }),
-        owner: session.agent.name || session.agent.id,
-        href: verify.href ?? `#log-${encodeURIComponent(session.sessionId)}`,
-      });
-    }
-    for (const child of session.children ?? []) walk(child);
-  };
   for (const entry of logs) {
-    if (entry.type === 'verify' && entry.verify) {
-      rows.push({
-        id: entry.id,
-        time: entry.time ?? 0,
-        verdict: entry.verify.verdict,
-        attemptLabel: `Attempt ${entry.verify.attempt + 1} of ${entry.verify.maxAttempts}`,
-        ...(entry.verify.judge && { judge: entry.verify.judge }),
-        ...(entry.verify.critique && { critique: entry.verify.critique }),
-        ...(entry.verify.candidates && { candidates: entry.verify.candidates }),
-        href: `#log-${encodeURIComponent(entry.id)}`,
-      });
-    }
-    if (entry.subagentSession) walk(entry.subagentSession);
+    if (entry.type !== 'verify' || !entry.verify) continue;
+    rows.push({
+      id: entry.id,
+      time: entry.time ?? 0,
+      verdict: entry.verify.verdict,
+      attemptLabel: `Attempt ${entry.verify.attempt + 1} of ${entry.verify.maxAttempts}`,
+      ...(entry.verify.judge && { judge: entry.verify.judge }),
+      ...(entry.verify.critique && { critique: entry.verify.critique }),
+      ...(entry.verify.candidates && { candidates: entry.verify.candidates }),
+      href: `#log-${encodeURIComponent(entry.id)}`,
+    });
   }
   return rows.sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
 }

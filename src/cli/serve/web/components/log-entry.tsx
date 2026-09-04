@@ -410,6 +410,52 @@ function SelectedOptionActions(props: { children: ComponentChildren }) {
  * the gate is pending and actionable; a static list afterwards, with the
  * decided option marked. The recommended option is preselected by the page.
  */
+type JudgeSummary = NonNullable<ApprovalLogDetails['judge']>;
+type JudgeCandidate = NonNullable<LogVerifySummary['candidates']>[number];
+
+/**
+ * The judge's mark on one candidate, sitting directly under the thing it
+ * judged. A gate that bounced already carries this verdict; before it was
+ * shown here the reviewer had to scroll the folded log to find out which
+ * draft the judge rejected and why.
+ */
+function JudgeStrip(props: { candidate: JudgeCandidate; attempt: number }) {
+  const candidate = props.candidate;
+  const note = candidate.settled
+    ? 'unchanged · carried forward'
+    : candidate.critique ?? (candidate.pass ? 'passed pre-review' : 'failed pre-review');
+  return (
+    <div class={`approval-judge-strip ${candidate.pass ? 'is-pass' : 'is-fail'}${candidate.settled ? ' is-settled' : ''}`}>
+      <span class="approval-judge-mark" aria-label={candidate.pass ? 'judge pass' : 'judge fail'}>{candidate.pass ? '✓' : '✗'}</span>
+      <span class="approval-judge-note">{note}</span>
+      <span class="approval-judge-meta">judge · attempt {props.attempt + 1}</span>
+    </div>
+  );
+}
+
+/** Where the gate stands with its automated reviewer, and how much redo budget
+ *  is left — the reason this reached a human at all. */
+function JudgeFooter(props: { judge: JudgeSummary }) {
+  const judge = props.judge;
+  const outcome = judge.verdict === 'pass'
+    ? 'passed pre-review'
+    : judge.verdict === 'error'
+      ? 'not reviewed · judge error'
+      : judge.attempt + 1 >= judge.maxAttempts
+        ? 'budget spent · escalated to you'
+        : 'escalated to you';
+  return (
+    <div class={`approval-judge-footer is-${judge.verdict}`}>
+      <span class="approval-judge-footer-label">Judge</span>
+      {judge.judge && <code class="approval-judge-path">{judge.judge}</code>}
+      <span class="approval-judge-footer-state">attempt {judge.attempt + 1} of {judge.maxAttempts} · {outcome}</span>
+      {judge.sessionHref && (
+        <a class="approval-judge-link" href={judge.sessionHref}>open judge ›</a>
+      )}
+    </div>
+  );
+}
+
 function OptionsBlock(props: {
   /** Radio group name, scoped to the owning gate (see ApprovalDetailCard). */
   groupName: string;
@@ -418,6 +464,8 @@ function OptionsBlock(props: {
   selected?: string | undefined;
   decided?: string | undefined;
   onSelect?: ((id: string) => void) | undefined;
+  /** Per-candidate verdicts, keyed to option ids by the gate. */
+  judge?: JudgeSummary | undefined;
 }) {
   const interactive = Boolean(props.onSelect);
   return (
@@ -454,6 +502,10 @@ function OptionsBlock(props: {
           const commandDetails = changes
             .filter(hasDistinctCommand)
             .map((change, index) => <CommandDetail change={change} key={index} />);
+          const verdict = props.judge?.candidates?.find((candidate) => candidate.id === opt.id);
+          const strip = verdict
+            ? <JudgeStrip candidate={verdict} attempt={props.judge!.attempt} />
+            : null;
           return interactive ? (
             <div class={`approval-option interactive${isSelected ? ' selected' : ''}`} key={opt.id}>
               <label class="approval-option-choice">
@@ -467,11 +519,13 @@ function OptionsBlock(props: {
                 {body}
               </label>
               {commandDetails}
+              {strip}
             </div>
           ) : (
             <div class={`approval-option static${isSelected ? ' selected' : ''}`} role="listitem" key={opt.id}>
               <div class="approval-option-static-body">{body}</div>
               {commandDetails}
+              {strip}
             </div>
           );
         })}
@@ -534,6 +588,16 @@ function ApprovalDetailCard(props: {
   // show every candidate, so the prose draft would make the reviewer read each
   // one twice. A pick gate with bare options (no per-option change) keeps the
   // draft open, since then it is the only place the candidates live.
+  const judge = details.judge;
+  // A gate with no options is one draft: the judge's verdict on it is the sole
+  // candidate when the gate recorded one, else the marker's own verdict.
+  const soloVerdict: JudgeCandidate | undefined = judge && options.length === 0
+    ? judge.candidates?.[0] ?? {
+        id: 'draft',
+        pass: judge.verdict === 'pass',
+        ...(judge.critique && { critique: judge.critique }),
+      }
+    : undefined;
   const optionsCarryText = options.length > 0 && options.every((o) => optionChanges.some((c) => c.optionId === o.id));
   const demotePrimary = Boolean(primary) && (optionsCarryText || (options.length === 0 && standaloneChanges.length > 0));
   const primaryTitle = primary && demotePrimary && optionsCarryText ? `${primary.title} notes` : primary?.title;
@@ -541,7 +605,7 @@ function ApprovalDetailCard(props: {
     details.draftUrl ? <a class="approval-link" href={details.draftUrl} target="_blank" rel="noopener noreferrer">Open draft</a> : null,
     details.artifactUrl ? <a class="approval-link" href={details.artifactUrl} target="_blank" rel="noopener noreferrer">Open artifact</a> : null,
   ].filter(Boolean);
-  const hasContent = details.prompt || primary || changes.length > 0 || options.length > 0 || details.reference || details.risk || showSummary || details.context || links.length > 0 || artifactPaths.length > 0 || snapshotOnlyPaths.length > 0 || detectedImagePaths.length > 0 || decisionLabel || details.decisionComment || details.errorMessage;
+  const hasContent = details.prompt || primary || changes.length > 0 || options.length > 0 || details.reference || details.risk || showSummary || details.context || links.length > 0 || artifactPaths.length > 0 || snapshotOnlyPaths.length > 0 || detectedImagePaths.length > 0 || decisionLabel || details.decisionComment || details.errorMessage || judge;
   if (!hasContent) return null;
 
   return (
@@ -575,6 +639,7 @@ function ApprovalDetailCard(props: {
           {standaloneChanges.length > 0 && <ChangesBlock changes={standaloneChanges} options={options} />}
         </>
       )}
+      {soloVerdict && <JudgeStrip candidate={soloVerdict} attempt={judge!.attempt} />}
       {(artifactPaths.length > 0 || snapshotOnlyPaths.length > 0 || detectedImagePaths.length > 0) && (
         <section class="approval-section approval-artifact">
           <h4 class="approval-section-title">{artifactPaths.length + snapshotOnlyPaths.length + detectedImagePaths.length > 1 ? 'Artifacts' : 'Artifact'}</h4>
@@ -656,6 +721,7 @@ function ApprovalDetailCard(props: {
           selected={props.selectedChoice}
           decided={details.decisionChoice}
           onSelect={props.onSelectChoice}
+          judge={judge}
         />
       )}
       {decisionLabel && (
@@ -676,6 +742,7 @@ function ApprovalDetailCard(props: {
           <div class="approval-section-body">{details.errorMessage}</div>
         </section>
       )}
+      {judge && <JudgeFooter judge={judge} />}
     </div>
   );
 }
@@ -832,36 +899,48 @@ function SubagentCard(props: { session: LogSubagentSession; projectId?: string }
   const s = props.session;
   const name = s.agent.name || s.agent.id;
   const judge = s.kinds?.includes('judge') === true;
+  // A judge child that COMPLETED says only that the judge ran. What it decided
+  // lives on its parent's verify marker, carried here so the row leads with the
+  // verdict instead of the process.
+  const verdict = judge ? s.verdict : undefined;
+  const verdictStatus = verdict === 'pass' ? 'passed' : verdict === 'fail' ? 'failed' : 'error';
   const breadcrumb = s.breadcrumb?.map((entry) => entry.agentName).join(' › ');
   const duration = formatSessionDuration(s.durationMs);
+  const contextLabel = verdict && s.attemptLabel ? s.attemptLabel : s.label;
   const nested = [
     ...(s.children ?? []).map((session) => ({ type: 'session' as const, time: session.createdAt, session })),
     ...(s.events ?? []).map((event) => ({ type: 'event' as const, time: event.time, event })),
   ].sort((a, b) => a.time - b.time);
   const inner = (
     <>
-      <span class={`chip status ${s.displayStatus}`}>{s.displayStatus}</span>
+      <span class={`chip status ${verdict ? (verdict === 'pass' ? 'completed' : 'error') : s.displayStatus}`}>
+        {verdict ? verdictStatus : s.displayStatus}
+      </span>
       <span class="subagent-identity">
         <span class="subagent-name">{name}</span>
         {judge && <span class="subagent-role judge">Judge</span>}
       </span>
       <code class="subagent-id">{s.synthetic ? `call ${s.sessionId}` : s.sessionId}</code>
-      {(s.label || breadcrumb || s.createdAt) && (
+      {(contextLabel || breadcrumb || s.createdAt) && (
         <span class="subagent-context">
-          {s.label && <strong>{s.label}</strong>}
+          {contextLabel && <strong>{contextLabel}</strong>}
           {breadcrumb && <span>{breadcrumb}</span>}
           {s.createdAt && <time dateTime={new Date(s.createdAt).toISOString()}>{formatLogTime(s.createdAt)}</time>}
           {duration && <span>{duration}</span>}
         </span>
       )}
+      {verdict && (s.candidates && s.candidates.length > 0
+        ? <span class="verify-event-critique"><CandidateVerdictList candidates={s.candidates} /></span>
+        : s.critique && <span class="verify-event-critique">{s.critique}</span>)}
       <SubagentActivity session={s} {...(props.projectId && { projectId: props.projectId })} />
       {s.errorMessage && <span class="subagent-error">{s.errorMessage}</span>}
       {s.command && <span class="subagent-command">{s.command}</span>}
     </>
   );
+  const verdictClass = verdict ? (verdict === 'pass' ? ' is-judge-pass' : ' is-judge-fail') : '';
   const row = s.href
-    ? <a class="subagent-event" href={s.href} aria-label={`Open subagent session ${name || s.sessionId}`}>{inner}<span class="subagent-open-cue" aria-hidden="true">open ›</span></a>
-    : <div class="subagent-event">{inner}</div>;
+    ? <a class={`subagent-event${verdictClass}`} href={s.href} aria-label={`Open subagent session ${name || s.sessionId}`}>{inner}<span class="subagent-open-cue" aria-hidden="true">open ›</span></a>
+    : <div class={`subagent-event${verdictClass}`}>{inner}</div>;
   return (
     <div class={`subagent-tree-node${s.important ? ' is-important' : ''}`} data-session-id={s.sessionId}>
       {row}

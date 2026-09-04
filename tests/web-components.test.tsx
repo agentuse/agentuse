@@ -2035,3 +2035,102 @@ describe('schedules page helpers', () => {
     expect(runsFor(schedules[2]!).map((s) => s.sessionId)).toEqual(['s4']);
   });
 });
+
+describe('judge verdict on an approval gate card', () => {
+  const gate = (details: NonNullable<ApprovalLogEntry['details']>): ApprovalLogEntry => ({
+    id: 'gate-1',
+    type: 'tool',
+    tool: 'await_human',
+    title: 'Approval requested',
+    status: 'pending',
+    time: Date.UTC(2026, 8, 3, 23, 18, 49),
+    details,
+  });
+
+  it('marks each option with the judge verdict for that candidate', () => {
+    const html = renderEntry(gate({
+      prompt: 'Pick a reply',
+      options: [
+        { id: 'A', label: 'Draft A' },
+        { id: 'B', label: 'Draft B' },
+      ],
+      changes: [
+        { optionId: 'A', content: 'first reply' },
+        { optionId: 'B', content: 'second reply' },
+      ],
+      judge: {
+        verdict: 'fail',
+        attempt: 0,
+        maxAttempts: 3,
+        judge: '../shared/reply-judge.agentuse',
+        candidates: [
+          { id: 'A', pass: false, critique: 'Claims Leon retired a supervision interface he never ran.' },
+          { id: 'B', pass: true, critique: 'Bounded to the one observed handoff.' },
+        ],
+      },
+    }), { expanded: true });
+
+    expect(html).toContain('approval-judge-strip is-fail');
+    expect(html).toContain('approval-judge-strip is-pass');
+    expect(html).toContain('Claims Leon retired a supervision interface he never ran.');
+    expect(html).toContain('Bounded to the one observed handoff.');
+    expect(html.split('judge · attempt 1').length - 1).toBe(2);
+  });
+
+  it('renders a carried-forward pass as settled rather than a fresh verdict', () => {
+    const html = renderEntry(gate({
+      options: [{ id: 'B', label: 'Draft B' }],
+      changes: [{ optionId: 'B', content: 'second reply' }],
+      judge: { verdict: 'pass', attempt: 1, maxAttempts: 3, candidates: [{ id: 'B', pass: true, settled: true }] },
+    }), { expanded: true });
+
+    expect(html).toContain('approval-judge-strip is-pass is-settled');
+    expect(html).toContain('unchanged · carried forward');
+    expect(html).toContain('judge · attempt 2');
+  });
+
+  it('renders one strip for a single-draft gate and names the budget in the footer', () => {
+    const html = renderEntry(gate({
+      draft: 'the only reply',
+      judge: {
+        verdict: 'fail',
+        attempt: 2,
+        maxAttempts: 3,
+        judge: '../shared/reply-judge.agentuse',
+        critique: 'Reply overclaims the handoff.',
+        sessionHref: '/sessions/judge-3?token=t',
+      },
+    }), { expanded: true });
+
+    expect(html.split('approval-judge-strip').length - 1).toBe(1);
+    expect(html).toContain('Reply overclaims the handoff.');
+    expect(html).toContain('approval-judge-footer is-fail');
+    expect(html).toContain('attempt 3 of 3 · budget spent · escalated to you');
+    expect(html).toContain('../shared/reply-judge.agentuse');
+    expect(html).toContain('href="/sessions/judge-3?token=t"');
+    expect(html).toContain('open judge ›');
+  });
+
+  it('says the gate passed pre-review when the judge cleared it', () => {
+    const html = renderEntry(gate({
+      draft: 'the only reply',
+      judge: { verdict: 'pass', attempt: 0, maxAttempts: 3 },
+    }), { expanded: true });
+    expect(html).toContain('approval-judge-footer is-pass');
+    expect(html).toContain('attempt 1 of 3 · passed pre-review');
+  });
+
+  it('says the judge never produced a verdict on an error', () => {
+    const html = renderEntry(gate({
+      draft: 'the only reply',
+      judge: { verdict: 'error', attempt: 0, maxAttempts: 3 },
+    }), { expanded: true });
+    expect(html).toContain('attempt 1 of 3 · not reviewed · judge error');
+  });
+
+  it('leaves an unjudged gate exactly as it was', () => {
+    const html = renderEntry(gate({ prompt: 'Ship it?', draft: 'the only reply' }), { expanded: true });
+    expect(html).not.toContain('approval-judge-strip');
+    expect(html).not.toContain('approval-judge-footer');
+  });
+});
