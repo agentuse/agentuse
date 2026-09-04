@@ -109,9 +109,15 @@ export function DraftExchange(props: { turns: DraftExchangeTurn[]; emptyHint?: s
   const turns = props.turns.filter((turn) => turn.request || turn.reply);
   const ref = useRef<HTMLDivElement>(null);
   const lastTurn = turns[turns.length - 1];
+  // After paint, so the measurement sees the laid-out thread. This also runs on
+  // mount, which is what lands the operator at the newest turn when they switch
+  // to this tab rather than at the top of an old conversation.
   useEffect(() => {
-    const element = ref.current;
-    if (element) element.scrollTop = element.scrollHeight;
+    const frame = requestAnimationFrame(() => {
+      const element = ref.current;
+      if (element) element.scrollTop = element.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
   }, [turns.length, lastTurn?.reply, lastTurn?.request]);
 
   if (turns.length === 0) {
@@ -164,6 +170,16 @@ export function DraftPanel(props: {
     // resetting to the top here would fight it.
     if (props.tab !== 'changes' && bodyRef.current) bodyRef.current.scrollTop = 0;
   }, [props.source, props.tab]);
+
+  // This page is a workspace, not a document: it claims the space the shell has
+  // left and scrolls inside itself. The flag turns the whole chain above it
+  // (root, app, shell, route) into height-constrained flex boxes for as long as
+  // this page is mounted, so the panel adapts to whatever chrome sits above it
+  // rather than assuming a height. Every other route keeps document scroll.
+  useEffect(() => {
+    document.documentElement.setAttribute('data-page', 'draft-panel');
+    return () => document.documentElement.removeAttribute('data-page');
+  }, []);
 
   const tabButton = (id: DraftFileTab, label: string) => (
     <button

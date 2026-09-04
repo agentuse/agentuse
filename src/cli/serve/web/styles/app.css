@@ -9457,10 +9457,10 @@ main[tabindex="-1"]:focus,
 .page-draft {
   display: flex;
   flex-direction: column;
-  /* The panel is a workspace, not a document: it fills the window and each
-     region scrolls itself, so the composer never falls below the fold. */
-  height: 100vh;
-  height: 100dvh;
+  /* Height comes from the flex chain below, never from a viewport unit: the
+     Mac app's title bar, the mobile toolbar, and any banner all sit above this
+     page, and 100vh would overflow the window by exactly their height. */
+  flex: 1;
   min-height: 0;
   overflow: hidden;
 }
@@ -9910,10 +9910,60 @@ main[tabindex="-1"]:focus,
 .draft-waiting a { color: inherit; }
 
 @media (max-width: 720px) {
-  /* The mobile shell puts a toolbar above the route, so the workspace is the
-     window minus that bar. */
-  .page-draft { height: calc(100dvh - 52px); }
+  /* One column, and the pair of them scrolls together: two side-by-side scroll
+     regions do not survive a phone-width screen. */
   .draft-columns { grid-template-columns: minmax(0, 1fr); overflow: auto; }
   .draft-aside { border-right: 0; border-bottom: 1px solid var(--line); overflow: visible; }
-  .draft-main { overflow: visible; }
+  .draft-main { overflow: visible; min-height: 60vh; }
+}
+
+/* ── Draft panel: the height chain ────────────────────────────────────────────
+   Set by DraftPanel while it is mounted, and only then. Every box between the
+   document root and the page becomes a height-constrained flex column, so the
+   page receives whatever space the shell has left over and nothing below the
+   fold. Sizing it against the viewport instead would overflow by the height of
+   the Mac app title bar, the mobile toolbar, or any banner above the route. */
+html[data-page="draft-panel"],
+html[data-page="draft-panel"] body {
+  height: 100%;
+  overflow: hidden;
+}
+html[data-page="draft-panel"] #app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+/* A banner or toast rendered in flow above the shell takes its own space and
+   the shell keeps the remainder, rather than pushing the page off-screen. */
+html[data-page="draft-panel"] .app-shell {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  overflow: hidden;
+  /* The single grid row must be allowed to shrink; `auto` would size it to
+     content and reintroduce the overflow. */
+  grid-template-rows: minmax(0, 1fr);
+}
+html[data-page="draft-panel"] .app-route {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+@media (max-width: 720px) {
+  /* The mobile shell is a block with an in-flow toolbar. As a flex column the
+     toolbar keeps its own height and the route takes the rest, with no number
+     written down anywhere. */
+  html[data-page="draft-panel"] .app-shell,
+  html[data-page="draft-panel"] .app-shell[data-desktop="true"],
+  html[data-page="draft-panel"] .app-shell[data-sidebar-collapsed="true"] {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  html[data-page="draft-panel"] .topbar.app-toolbar { flex: 0 0 auto; }
+  html[data-page="draft-panel"] .app-route { flex: 1; min-height: 0; }
 }
