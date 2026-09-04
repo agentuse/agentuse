@@ -2,7 +2,6 @@ import { useEffect, useState } from 'preact/hooks';
 import { ThemeToggle } from '../components/theme-toggle';
 import { useTitle } from '../hooks/use-title';
 import { pageTitle, brandName } from '../lib/brand';
-import { useSessionListView } from '../hooks/use-session-list-view';
 import { HOME_SECTIONS, useHomeSections } from '../hooks/use-home-sections';
 import { usePushBell } from '../hooks/use-push';
 import { debugSettingsEnabled, requestUpdatePreview } from '../lib/update-preview';
@@ -78,7 +77,6 @@ export default function Settings() {
   useTitle(pageTitle('Dashboard preferences'));
   const showDebug = debugSettingsEnabled(location.search);
   const isDesktop = typeof window !== 'undefined' && Boolean(window.agentuseDesktop);
-  const sessionList = useSessionListView();
   const homeSections = useHomeSections();
   const [clearing, setClearing] = useState(false);
   const [activeTab, setActiveTab] = useState<SettingsTab>(() => settingsTabFromSearch(location.search));
@@ -196,15 +194,6 @@ export default function Settings() {
                     </label>
                   ))}
                 </div>
-              </Group>
-
-              <Group title="Sessions">
-                <Row label="List style" hint="Summary groups runs by agent; Feed lists every run in order.">
-                  <span class="session-view-toggle" role="group" aria-label="Session list view">
-                    <button type="button" aria-pressed={sessionList.view === 'summary'} onClick={() => sessionList.setView('summary')}>Summary</button>
-                    <button type="button" aria-pressed={sessionList.view === 'feed'} onClick={() => sessionList.setView('feed')}>Feed</button>
-                  </span>
-                </Row>
               </Group>
 
               {!isDesktop && <BrowserNotificationsGroup />}

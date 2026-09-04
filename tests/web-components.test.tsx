@@ -21,7 +21,7 @@ import { parseChartSpec } from '../src/cli/serve/web/lib/chart-svg';
 import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { displayAgentName, isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
 import { aggregateToolStats, hasActionableApproval, headerTokenUsage, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, shouldShowResultNotice, tokenUsageMetaItems, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
-import { FeedResponse, NewSinceLastVisit, SessionRowView } from '../src/cli/serve/web/routes/sessions-list';
+import { dayLabel, formatElapsed, Highlight, outputPreview, SessionListItem, statusDot } from '../src/cli/serve/web/routes/sessions-list';
 import { labelFor, suspendedGateKinds } from '../src/cli/serve/web/hooks/use-live-home';
 import { formatUntil, scheduleRunFinder } from '../src/cli/serve/web/routes/schedules';
 import type { SerializedSchedule } from '../src/scheduler';
@@ -606,136 +606,93 @@ describe('Application sidebar session snapshot', () => {
   });
 });
 
-describe('Session feed response', () => {
-  it('distinguishes internal revisions from user-authored agent runs in both layouts', () => {
-    const row: SessionRow = {
-      sessionId: '01REVISIONSESSION0000000000',
-      project: 'demo',
-      agent: { id: '.agentuse/internal/reviser', name: 'Fix Support triage' },
-      status: 'running',
-      trigger: 'manual',
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      purpose: {
-        kind: 'agent-revision',
-        mode: 'fix',
-        originSessionId: '01ORIGINSESSION000000000000',
-        targetAgentName: 'Support triage',
-      },
-    };
-    const render = (view: 'summary' | 'feed') => renderToString(<SessionRowView
-      view={view}
-      multiProject={false}
-      statusFilter=""
-      triggerFilter=""
-      agentFilter=""
-      dismissed={false}
-      onDiscard={noop}
-      filterHref={(key, value) => `/sessions?${key}=${value}`}
-      row={row}
-    />);
+describe('Session list item', () => {
+  const base: SessionRow = {
+    sessionId: '01SESSION0000000000000000',
+    project: 'demo',
+    agent: { id: 'agents/inbox-triage', name: 'inbox-triage' },
+    status: 'completed',
+    trigger: 'scheduled',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  const render = (row: SessionRow, query = '') => renderToString(
+    <SessionListItem row={row} selected={false} query={query} href="/sessions/x?project=demo" now={row.createdAt + 360_000} />
+  );
 
-    const summary = render('summary');
-    expect(summary).toContain('internal revision');
-    expect(summary).toContain('Revising Support triage');
-    expect(summary).toContain('From session 01ORIGI');
-    expect(summary).not.toContain('.agentuse/internal/reviser');
+  it('stacks the agent name over one line of what the run produced', () => {
+    const html = render({ ...base, finalResponse: '## Inbox triage\n\nArchived 61. Two need a reply from you today.' });
 
-    const feed = render('feed');
-    expect(feed).toContain('session-feed-avatar is-internal');
-    expect(feed).toContain('Revising Support triage');
-    expect(feed).toContain('/sessions/01ORIGINSESSION000000000000?project=demo');
-    expect(feed).toContain('internal revision');
+    expect(html).toContain('class="it-agent"');
+    expect(html).toContain('inbox-triage');
+    // The heading is skipped: the first line worth reading is the sentence.
+    expect(html).toContain('Archived 61. Two need a reply from you today.');
+    expect(html).not.toContain('##');
   });
 
-  it('separates agent identity, run metadata, response, and action into feed regions', () => {
-    const html = renderToString(
-      <SessionRowView
-        view="feed"
-        multiProject={false}
-        statusFilter=""
-        triggerFilter=""
-        agentFilter=""
-        dismissed={false}
-        onDiscard={noop}
-        filterHref={(key, value) => `/sessions?${key}=${value}`}
-        row={{
-          sessionId: 'session-1',
-          project: 'demo',
-          agent: { id: 'agents/weekly-research', name: 'Weekly Research', description: 'Finds important signals' },
-          status: 'completed',
-          trigger: 'scheduled',
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          finalResponse: '## Key signal\n\nThe market changed.',
-        }}
-      />
-    );
+  it('shows a live working line with elapsed time instead of an output line', () => {
+    const html = render({ ...base, status: 'running' });
 
-    expect(html).toContain('role="article"');
-    // j/k move focus card to card, so a feed card must be programmatically
-    // focusable without joining the Tab order.
-    expect(html).toContain('tabindex="-1"');
-    expect(html).toContain('session-feed-header');
-    expect(html).toContain('session-feed-avatar');
-    // The avatar is a filter-shortcut link, not a static tile.
-    expect(html).toContain('>WR</a>');
-    expect(html).toContain('session-feed-byline');
-    expect(html).toContain('session-feed-response');
-    expect(html).toContain('session-feed-footer');
-    expect(html).not.toContain('class="row-head"');
+    expect(html).toContain('class="dot running"');
+    expect(html).toContain('it-line live');
+    expect(html).toContain('Working · 6m');
+    expect(html).toContain('now');
   });
 
-  it('renders the final agent response as safe Markdown', () => {
-    const html = renderToString(
-      <FeedResponse
-        status="completed"
-        href="/sessions/session-1?project=demo"
-        value={'**Shipped.**\n\n- First result\n- Second result\n\n<script>alert(1)</script>'}
-      />
-    );
+  it('puts the failure on the line in mono red, not a generic status word', () => {
+    const html = render({ ...base, status: 'error', errorCode: 'TOOL_ERROR', errorMessage: 'github 401' });
 
-    expect(html).toContain('Final response');
-    expect(html).toContain('<strong>Shipped.</strong>');
-    expect(html).toContain('<li>First result</li>');
-    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
-    expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html).toContain('class="dot failed"');
+    expect(html).toContain('it-line err');
+    expect(html).toContain('TOOL_ERROR · github 401');
   });
 
-  it('collapses very long responses behind an accessible show-more control', () => {
-    const html = renderToString(
-      <FeedResponse
-        status="completed"
-        href="/sessions/session-1?project=demo"
-        value={'A'.repeat(1_801)}
-      />
-    );
+  it('marks the search hit inside the output line', () => {
+    const html = render({ ...base, finalResponse: 'One refund request needs you.' }, 'refund');
 
-    expect(html).toContain('session-feed-content is-collapsed');
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).toContain('Show more');
+    expect(html).toContain('<mark>refund</mark>');
   });
 
-  it('marks where the last visit ended without any per-session read state', () => {
-    const html = renderToString(<NewSinceLastVisit count={3} />);
+  it('says so rather than leaving the line blank when a run produced nothing', () => {
+    const html = render(base);
 
-    expect(html).toContain('role="separator"');
-    expect(html).toContain('aria-label="3 new since your last visit"');
-    expect(html).toContain('3 new since your last visit');
+    expect(html).toContain('No final output.');
+  });
+});
+
+describe('Session list helpers', () => {
+  it('maps every run state onto one of four dots', () => {
+    expect(statusDot({ status: 'running' })).toBe('running');
+    expect(statusDot({ status: 'suspended', subagentActive: true })).toBe('running');
+    expect(statusDot({ status: 'suspended' })).toBe('waiting');
+    expect(statusDot({ status: 'error' })).toBe('failed');
+    expect(statusDot({ status: 'completed' })).toBe('done');
   });
 
-  it('explains when a running session has not produced an answer yet', () => {
-    const html = renderToString(
-      <FeedResponse
-        status="running"
-        href="/sessions/session-1?project=demo"
-        value={undefined}
-      />
-    );
+  it('strips markdown down to the first line that carries meaning', () => {
+    expect(outputPreview('# Title\n\n- **Shipped** the [thing](http://x)')).toBe('Shipped the thing');
+    expect(outputPreview('```\n\n```\nDone.')).toBe('Done.');
+    expect(outputPreview(undefined)).toBe('');
+  });
 
-    expect(html).toContain('Latest response');
-    expect(html).toContain('Agent is working');
-    expect(html).toContain('View session details');
+  it('reads elapsed time in the largest unit that stays exact enough', () => {
+    expect(formatElapsed(45_000)).toBe('45s');
+    expect(formatElapsed(360_000)).toBe('6m');
+    expect(formatElapsed(3_600_000)).toBe('1h');
+    expect(formatElapsed(5_400_000)).toBe('1h 30m');
+  });
+
+  it('names the two days a reader thinks in, and dates the rest', () => {
+    const now = new Date('2026-09-03T12:00:00').getTime();
+    expect(dayLabel(new Date('2026-09-03T07:00:00').getTime(), now)).toBe('Today');
+    expect(dayLabel(new Date('2026-09-02T22:00:00').getTime(), now)).toBe('Yesterday');
+    expect(dayLabel(new Date('2026-09-01T22:00:00').getTime(), now)).not.toBe('Yesterday');
+  });
+
+  it('leaves text untouched when nothing is being searched for', () => {
+    expect(renderToString(<span><Highlight text="plain text" query="" /></span>)).toBe('<span>plain text</span>');
+    expect(renderToString(<span><Highlight text="a Refund here" query="refund" /></span>))
+      .toBe('<span>a <mark>Refund</mark> here</span>');
   });
 });
 

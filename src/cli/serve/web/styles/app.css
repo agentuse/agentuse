@@ -172,7 +172,6 @@ a, button, select, summary, label, input, textarea,
 .page-agents .group-rail-item,
 .page-home .group-rail-item,
 .page-schedules .group-rail-item,
-.page-sessions .group-rail-item { border-bottom: 0; }
 .group-rail-tick {
   flex-shrink: 0;
   width: 14px;
@@ -400,33 +399,6 @@ a, button, select, summary, label, input, textarea,
 .settings-check-error { margin-top: 2px; font-size: var(--font-size-caption); line-height: var(--lh-snug); color: var(--red); }
 @media (max-width: 480px) {
   .settings-row { flex-direction: column; align-items: flex-start; gap: 8px; }
-}
-.session-view-toggle {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
-}
-.session-view-toggle button {
-  min-width: 76px;
-  min-height: 28px;
-  padding: 4px 8px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted-2);
-  font: inherit;
-  font-size: var(--font-size-caption);
-  cursor: pointer;
-}
-.session-view-toggle button:hover { color: var(--fg); background: var(--panel-hover); }
-.session-view-toggle button[aria-pressed="true"] {
-  background: var(--bg);
-  color: var(--fg);
-  box-shadow: inset 0 0 0 1px var(--line-strong);
 }
 .settings-item {
   padding: 7px 12px;
@@ -6959,18 +6931,19 @@ a.lastrun.waiting { color: var(--cyan); }
 }
 
 /* --- sessions list --- */
-/* Two shapes share this page: the compact .row (summary view, same markup as
-   the approvals list) and the .session-feed-card the feed view builds on top of
-   it — a raised surface holding an identity header, the run's response, and a
-   meta footer. Both sit in the same reading column under the filter panel. */
+/* One job: find a finished run and read what it produced. A narrow list of runs
+   (agent name + the first line of its output) on the left, the whole output on
+   the right. Everything else on this page exists to narrow that list. */
 .page-sessions a { color: inherit; text-decoration: none; }
-/* A reading column, matching home: the feed is prose-shaped, not a table. */
-.page-sessions main { width: min(880px, calc(100vw - 32px)); margin: 0 auto; padding: 44px 0 64px; }
+/* Wider than the app's reading column: this page is a list beside a reader, not
+   prose, and 880px would squeeze the output into a gutter. */
+.page-sessions main { width: min(1140px, calc(100vw - 32px)); margin: 0 auto; padding: 44px 0 64px; }
 .page-sessions .sessions-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
 }
 .page-sessions h1 {
   display: inline-flex;
@@ -6982,6 +6955,7 @@ a.lastrun.waiting { color: var(--cyan); }
   margin: 0;
   font-weight: var(--weight-medium);
 }
+.page-sessions .sessions-lede { color: var(--muted); font-size: var(--font-size-supporting); }
 .page-sessions .sessions-count {
   margin-left: auto;
   color: var(--muted);
@@ -6990,46 +6964,114 @@ a.lastrun.waiting { color: var(--cyan); }
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-/* Not .surface: the agent picker's popup is positioned inside this panel and
-   would be clipped by that class's overflow: hidden. */
-.page-sessions .filters {
+.page-sessions .sessions-split {
   display: grid;
-  gap: 14px;
-  margin: 0 0 26px;
-  padding: 16px 18px 14px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--surface);
-  box-shadow: var(--surface-shadow);
+  grid-template-columns: 380px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
 }
-.page-sessions .filters-heading {
+.page-sessions .sessions-pane { min-width: 0; }
+
+/* Search is the first control because the fastest lookup is a remembered word
+   from the output itself, not a filter. */
+.page-sessions .sessions-search {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 12px;
+  align-items: center;
+  gap: 9px;
+  min-height: 40px;
+  padding: 0 13px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--muted);
 }
-.page-sessions .filters-heading-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; margin-left: auto; }
-.page-sessions .group-toggle {
-  appearance: none; border: 1px solid var(--line); border-radius: 999px; background: none;
-  cursor: pointer; font-family: var(--sans); font-size: var(--font-size-micro); color: var(--muted-2);
-  padding: 3px 10px; transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
-}
-.page-sessions .group-toggle:hover { color: var(--fg); background: var(--panel-hover); }
-.page-sessions .group-toggle.on { background: var(--cyan-soft); color: var(--cyan); border-color: var(--cyan-border); }
-.page-sessions .filters-title {
+.page-sessions .sessions-search:focus-within { border-color: var(--cyan-border); }
+.page-sessions .sessions-search svg { flex: none; }
+.page-sessions .sessions-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
   color: var(--fg);
   font-family: var(--sans);
-  font-size: var(--font-size-supporting);
-  font-weight: var(--weight-bold);
+  font-size: var(--field-font-size);
+  padding: 8px 0;
 }
-.page-sessions .filters-description { color: var(--muted); font-size: var(--font-size-caption); }
-.page-sessions .filter-grid {
-  display: grid;
-  gap: 10px;
+.page-sessions .sessions-search input:focus-visible { outline: none; }
+.page-sessions .sessions-search input::placeholder { color: var(--muted); }
+.page-sessions .sessions-search kbd {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+  color: var(--muted-2);
 }
-.page-sessions .filter-grid-primary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.page-sessions .sessions-hint { margin: 6px 2px 0; color: var(--muted-2); font-size: var(--font-size-micro); }
+
+/* Status chips carry their own counts, so the shape of the window is legible
+   before anything is clicked. */
+.page-sessions .quick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 10px 0 4px; }
+.page-sessions .qc {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted-3);
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.page-sessions .qc:hover { color: var(--fg); background: var(--panel-hover); }
+.page-sessions .qc.on { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
+.page-sessions .qc .n { font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted); font-variant-numeric: tabular-nums; }
+.page-sessions .qc.on .n { color: var(--cyan); }
+.page-sessions .seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+}
+.page-sessions .seg-i {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 11px;
+  border-radius: 999px;
+  color: var(--muted-3);
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+}
+.page-sessions .seg-i:hover { color: var(--fg); background: var(--panel-hover); }
+.page-sessions .seg-i.on { background: var(--panel-hover); color: var(--fg); font-weight: var(--weight-bold); }
+/* The agent picker sits in the chip row, so it has to look and size like a chip
+   rather than like the form field it is elsewhere. */
+.page-sessions .quick .agent-select { flex: none; width: 168px; }
+.page-sessions .agent-select input {
+  width: 100%;
+  min-height: 28px;
+  padding: 0 24px 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+.page-sessions .agent-select input::placeholder { color: var(--muted-3); }
+.page-sessions .agent-select input:hover { background: var(--panel-hover); }
+.page-sessions .agent-select input:focus-visible { outline: none; border-color: var(--cyan-border); }
+
+.page-sessions .filter-grid { display: grid; gap: 10px; }
 .page-sessions .filter-grid-advanced { grid-template-columns: repeat(3, minmax(0, 1fr)); padding-top: 10px; }
-.page-sessions .filters-advanced { border-top: 1px solid var(--line); }
+.page-sessions .filters-advanced { margin-top: 10px; border-top: 1px solid var(--line); }
 .page-sessions .filters-advanced > summary {
   display: inline-flex;
   align-items: center;
@@ -7050,7 +7092,7 @@ a.lastrun.waiting { color: var(--cyan); }
   color: var(--cyan);
   font: var(--font-size-micro)/1 var(--sans);
 }
-.page-sessions .filters label {
+.page-sessions .filter-field {
   display: grid;
   gap: 5px;
   min-width: 0;
@@ -7060,8 +7102,7 @@ a.lastrun.waiting { color: var(--cyan); }
   letter-spacing: var(--tracking-caps);
   text-transform: uppercase;
 }
-.page-sessions .filters select,
-.page-sessions .filters input {
+.page-sessions .filter-field select {
   min-height: 34px;
   border: 1px solid var(--line);
   border-radius: 9px;
@@ -7074,13 +7115,183 @@ a.lastrun.waiting { color: var(--cyan); }
   padding: 6px 11px;
   cursor: pointer;
 }
-.page-sessions .filters input {
-  cursor: text;
-  width: 100%;
-  font-size: var(--field-font-size);
+
+/* Status dot: the whole state vocabulary in 6px, so the agent name never has to
+   share its line with a status word. */
+.page-sessions .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
+.page-sessions .dot.running { background: var(--green); box-shadow: 0 0 6px var(--green); animation: sessions-dot-pulse 1.4s ease-in-out infinite; }
+.page-sessions .dot.waiting { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+.page-sessions .dot.failed { background: var(--red); }
+.page-sessions .dot.done { background: var(--muted-2); }
+@keyframes sessions-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) {
+  .page-sessions .dot.running { animation: none; }
 }
-.page-sessions .filters input::placeholder { color: var(--muted); }
-.page-sessions .filters input:focus-visible { outline: none; border-color: var(--cyan-border); }
+
+.page-sessions .list { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.page-sessions .day {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 14px 6px 6px;
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.page-sessions .day .rule { flex: 1; height: 1px; background: var(--line); }
+/* Name over line, not name beside line: the output line is the reason to open
+   this page, so it gets the full width of the column. */
+.page-sessions .it {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  column-gap: 10px;
+  align-items: start;
+  padding: 9px 10px;
+  border-radius: 10px;
+}
+.page-sessions .it:hover { background: var(--panel-hover); }
+.page-sessions .it.sel { background: var(--panel-hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.page-sessions .it .dot { margin-top: 8px; }
+.page-sessions .it-body { min-width: 0; }
+.page-sessions .it-agent {
+  display: block;
+  font-weight: var(--weight-bold);
+  font-size: var(--font-size-supporting);
+  color: var(--fg);
+  line-height: var(--lh-normal);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.page-sessions .it-line {
+  display: block;
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+  line-height: var(--lh-normal);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.page-sessions .it-line mark { background: var(--cyan-soft); color: var(--fg); border-radius: 3px; padding: 0 2px; }
+.page-sessions .it-agent mark { background: var(--cyan-soft); color: var(--fg); border-radius: 3px; padding: 0 2px; }
+.page-sessions .it-line.live { color: var(--green); }
+.page-sessions .it-line.err { color: var(--red); font-family: var(--mono); font-size: var(--font-size-micro); }
+.page-sessions .it-line.is-empty { color: var(--muted-2); font-style: italic; }
+.page-sessions .it-time {
+  color: var(--muted-2);
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+  font-variant-numeric: tabular-nums;
+  margin-top: 3px;
+  white-space: nowrap;
+}
+
+/* The reader: the output at full length, with the three things anyone does with
+   it (copy it, run it again, open the session behind it) in reach of the title. */
+.page-sessions .reader {
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 32px);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--surface-shadow);
+  overflow: hidden;
+}
+.page-sessions .reader-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.page-sessions .reader-identity { min-width: 0; flex: 1; }
+.page-sessions .reader-title {
+  font-size: var(--font-size-title);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--lh-tight);
+  color: var(--fg);
+}
+.page-sessions .reader-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  font-family: var(--mono);
+}
+.page-sessions .reader-meta code { font-family: var(--mono); }
+/* Separators come from CSS, not markup, so a wrap never starts a line with a
+   dangling interpunct. */
+.page-sessions .reader-meta > span:not(.chip) + span:not(.chip)::before,
+.page-sessions .reader-meta > span:not(.chip) + code::before { content: "· "; color: var(--muted-2); }
+.page-sessions .reader-actions { display: flex; gap: 8px; flex: none; }
+.page-sessions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: none;
+  color: var(--muted-3);
+  font-family: var(--sans);
+  font-size: var(--font-size-supporting);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.page-sessions .btn:hover:not(:disabled) { background: var(--panel-hover); color: var(--fg); }
+.page-sessions .btn:disabled { opacity: 0.5; cursor: default; }
+.page-sessions .btn.primary { color: var(--primary-fg); background: var(--primary-bg); border-color: transparent; font-weight: var(--weight-bold); }
+.page-sessions .btn.primary:hover:not(:disabled) { background: var(--primary-bg-hover); color: var(--primary-fg); }
+.page-sessions .out { padding: 18px 22px 24px; overflow-y: auto; flex: 1; }
+.page-sessions .out-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  color: var(--muted-2);
+  font-size: var(--font-size-micro);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.page-sessions .out-live { display: inline-flex; align-items: center; gap: 5px; color: var(--green); }
+.page-sessions .out-error { color: var(--red); font-family: var(--mono); font-size: var(--font-size-micro); margin: 0 0 12px; }
+.page-sessions .out-empty { color: var(--muted); font-size: var(--font-size-supporting); }
+.page-sessions .reader-blank { align-items: center; justify-content: center; min-height: 320px; padding: 24px; }
+.page-sessions .reader-back {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--muted-3);
+  font-size: var(--font-size-supporting);
+}
+.page-sessions .prevnext {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+}
+.page-sessions .prevnext a { color: var(--muted-3); min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.page-sessions .prevnext a:hover { color: var(--cyan); }
+.page-sessions .prevnext-gap { margin-left: auto; }
+.page-sessions .prevnext-end { color: var(--muted-2); }
+.page-sessions .prevnext-keys kbd,
+.page-sessions .sessions-keys kbd { font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted-3); }
+.page-sessions .sessions-keys { margin-top: 14px; text-align: center; color: var(--muted-2); font-size: var(--font-size-micro); }
 
 /* Searchable agent picker: type to search the list, choose to apply. min-width
    0 so it takes an even share of the filter grid; the popup keeps its own
@@ -7123,17 +7334,6 @@ a.lastrun.waiting { color: var(--cyan); }
   font-size: var(--font-size-micro); color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.page-sessions .filters-reset {
-  flex: none;
-  align-self: center;
-  color: var(--muted-3);
-  font-size: var(--font-size-micro);
-  text-decoration: underline;
-  text-decoration-color: var(--line-strong);
-  text-underline-offset: 3px;
-  transition: color 120ms ease, text-decoration-color 120ms ease;
-}
-.page-sessions .filters-reset:hover { color: var(--cyan); text-decoration-color: var(--cyan-border); }
 .page-sessions .load-more {
   display: flex;
   align-items: center;
@@ -7174,379 +7374,46 @@ a.lastrun.waiting { color: var(--cyan); }
   color: var(--red);
   font-size: var(--font-size-caption);
 }
-.page-sessions .rows { display: flex; flex-direction: column; gap: 8px; }
-.page-sessions .agent-groups { display: flex; flex-direction: column; gap: 18px; }
-.page-sessions .agent-group { min-width: 0; scroll-margin-top: 80px; }
-.page-sessions .agent-group > summary {
-  display: flex; align-items: center; gap: 8px;
-  padding: 7px 2px 9px;
-  color: var(--muted); cursor: pointer; list-style: none; user-select: none;
-}
-.page-sessions .agent-group > summary::-webkit-details-marker { display: none; }
-.page-sessions .agent-group > summary::marker { content: ""; }
-.page-sessions .agent-group > summary:hover .agent-group-name { color: var(--cyan); }
-.page-sessions .agent-group-name {
-  font-family: var(--sans); font-size: var(--font-size-supporting); font-weight: var(--weight-medium); color: var(--fg);
-  transition: color 120ms ease;
-}
-.page-sessions .agent-group-live {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-family: var(--mono); font-size: var(--font-size-micro); color: var(--green);
-}
-.page-sessions .agent-group-live::before {
-  content: ""; width: 6px; height: 6px; border-radius: 50%;
-  background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 1.4s ease-in-out infinite;
-}
-.page-sessions .agent-group-count { font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted); }
-.page-sessions .agent-group-rule { flex: 1; height: 1px; background: var(--line); }
-.page-sessions .agent-group:not([open]) > summary { padding-bottom: 7px; }
-/* The row is a div with a stretched link (.row-link::after) covering it, so
-   the whole card still navigates to the session while the status/trigger chips
-   stay real, un-nested anchors layered above the overlay. */
-.page-sessions .row {
-  position: relative;
-  display: block;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  box-shadow: var(--surface-shadow);
-  padding: 14px 16px;
-  transition: background 120ms ease, border-color 120ms ease;
-}
-.page-sessions .row:hover { background: var(--panel-hover); border-color: var(--line-strong); }
-.page-sessions .row-link { display: block; text-decoration: none; }
-.page-sessions .row-link::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 14px;
-  cursor: pointer;
-}
-.page-sessions .row-head a.chip { position: relative; z-index: 1; text-decoration: none; cursor: pointer; }
-.page-sessions .row-head a.chip:hover { border-color: currentColor; }
-/* Agent-id chip: a filter shortcut like status/trigger. Mono + as-typed case
-   because it is an id (possibly a path), not a state label; ellipsize so a
-   deep path can't crowd out the other chips. */
-.page-sessions .chip.agent {
-  font-family: var(--mono);
-  letter-spacing: 0;
-  display: inline-block;
-  max-width: 220px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.page-sessions .row-head {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-  margin-bottom: 8px;
-}
-.page-sessions .row-time { color: var(--muted); font-size: var(--font-size-caption); margin-left: auto; }
-.page-sessions .row-title {
-  font-family: var(--sans);
-  font-size: var(--font-size-body);
-  font-weight: var(--weight-bold);
-  line-height: var(--lh-snug);
-  color: var(--fg);
-  overflow-wrap: anywhere;
-}
-/* Agent description demoted to a supporting line: skimming the list is by agent
-   name (the title above); clamp so a long description can't dominate the row. */
-.page-sessions .row-sub {
-  margin-top: 3px;
-  color: var(--muted-3);
-  font-size: var(--font-size-caption);
-  line-height: var(--lh-snug);
-  overflow-wrap: anywhere;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-}
-.page-sessions .row-decision { margin-top: 6px; color: var(--muted); font-size: var(--font-size-caption); }
-.page-sessions .row-meta { margin-top: 8px; color: var(--muted); font-size: var(--font-size-micro); }
-.page-sessions .row-meta code { font-family: var(--mono); font-size: var(--font-size-micro); }
-.page-sessions .rows.session-feed {
-  gap: 12px;
-}
-/* One divider marks where the reader's last visit ended; everything above it
-   started since. Deliberately quiet: it orients a skim, it is not an alert. */
-.page-sessions .feed-watermark {
+.page-sessions .load-more {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 4px 0;
-  color: var(--cyan);
-  font-family: var(--sans);
-  font-size: var(--font-size-micro);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.page-sessions .feed-watermark::before,
-.page-sessions .feed-watermark::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--cyan-border);
-}
-.page-sessions .session-feed-card {
-  padding: 16px 18px 14px;
-  border-radius: 14px;
-  background: var(--surface);
-  box-shadow: var(--surface-shadow);
-  /* Keeps a j/k-selected card clear of the sticky topbar when it scrolls in. */
-  scroll-margin-top: 80px;
-}
-.page-sessions .session-feed-card:hover { background: var(--surface); }
-/* :focus, not :focus-visible: the card is only ever focused by the j/k keys or
-   by a click on it, so every focus here is a selection worth drawing. */
-.page-sessions .session-feed-card:focus {
-  outline: 2px solid var(--cyan-border);
-  outline-offset: 2px;
-  border-color: var(--cyan-border);
-}
-.page-sessions .session-feed-header {
-  display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 12px;
-}
-.page-sessions .session-feed-avatar {
-  width: 36px;
-  height: 36px;
-  display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--line);
+  gap: 8px;
+  margin: 20px auto 0;
+  min-height: 36px;
+  padding: 8px 22px;
+  border: 1px solid var(--line-strong);
   border-radius: 10px;
-  background: var(--panel-hover);
+  background: none;
   color: var(--muted-3);
-  font-family: var(--mono);
-  font-size: var(--font-size-caption);
-  font-weight: var(--weight-bold);
-  transition: color 120ms ease, border-color 120ms ease;
-}
-.page-sessions .session-feed-avatar:hover { color: var(--cyan); border-color: var(--cyan-border); }
-.page-sessions .session-feed-avatar.is-internal {
-  color: var(--cyan);
-  border-color: var(--cyan-border);
-  background: var(--cyan-soft);
-  font-size: var(--font-size-body);
-}
-.page-sessions .session-feed-identity { min-width: 0; }
-.page-sessions .session-feed-card .row-title {
-  display: inline-block;
-  color: var(--fg);
-  font-size: var(--font-size-supporting);
-  font-weight: var(--weight-medium);
-  letter-spacing: var(--tracking-tight);
-  line-height: var(--lh-snug);
-  text-decoration: none;
-}
-.page-sessions .session-feed-card .row-title:hover { color: var(--cyan); }
-.page-sessions .session-feed-card .row-sub {
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: var(--font-size-caption);
-  line-height: var(--lh-snug);
-  -webkit-line-clamp: 1;
-}
-.page-sessions .session-feed-byline {
-  min-width: 0;
-  margin-top: 2px;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 5px;
-  color: var(--muted);
   font-family: var(--sans);
-  font-size: var(--font-size-micro);
-  line-height: var(--lh-snug);
-}
-.page-sessions .session-feed-byline a {
-  color: inherit;
-  text-decoration: none;
-}
-.page-sessions .session-feed-byline a:hover { color: var(--cyan); }
-.page-sessions .session-feed-status {
-  display: inline-flex; align-items: center; gap: 8px;
-  justify-content: flex-end;
-}
-.page-sessions .session-feed-header .chip.status {
-  margin-top: 1px;
-  text-decoration: none;
-}
-/* One quiet mono line, not a red slab: the failure reads as a fact about the
-   run, and the card's error chip already carries the alarm. */
-.page-sessions .session-feed-error {
-  margin-top: 10px;
-  color: var(--red);
-  font-family: var(--mono);
-  font-size: var(--font-size-caption);
-  line-height: var(--lh-snug);
-}
-.page-sessions .session-feed-response {
-  margin-top: 12px;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel);
-}
-.page-sessions .session-feed-response-label {
-  margin-bottom: 6px;
-  color: var(--muted-2);
-  font-family: var(--sans);
-  font-size: var(--font-size-micro);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-}
-.page-sessions .session-feed-content {
-  position: relative;
-  color: var(--muted-3);
-}
-.page-sessions .session-feed-content.is-collapsed {
-  max-height: 30rem;
-  overflow: hidden;
-}
-.page-sessions .session-feed-content.is-collapsed::after {
-  content: "";
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 72px;
-  pointer-events: none;
-  background: linear-gradient(to bottom, transparent, var(--surface));
-}
-.page-sessions .session-feed-content .content-markdown {
-  padding: 0;
-  color: var(--muted-3);
   font-size: var(--font-size-supporting);
-  line-height: var(--lh-loose);
-}
-/* Treat an opening paragraph as a lead, then step down into supporting prose.
-   This gives answer-only sessions a skimmable entry point even when the agent
-   did not write an explicit Markdown heading. */
-.page-sessions .session-feed-content .content-markdown > p:first-child {
-  color: var(--fg);
-  font-size: var(--font-size-supporting);
-  line-height: var(--lh-loose);
-}
-.page-sessions .session-feed-content .content-markdown p { margin-bottom: 12px; }
-.page-sessions .session-feed-content .content-markdown h2,
-.page-sessions .session-feed-content .content-markdown h3,
-.page-sessions .session-feed-content .content-markdown h4,
-.page-sessions .session-feed-content .content-markdown h5,
-.page-sessions .session-feed-content .content-markdown h6 {
-  letter-spacing: var(--tracking-tight);
-}
-.page-sessions .session-feed-content .content-markdown h2 {
-  margin: 18px 0 8px;
-  font-size: var(--font-size-subtitle);
-  line-height: var(--lh-tight);
-}
-.page-sessions .session-feed-content .content-markdown h3 {
-  margin: 16px 0 7px;
-  font-size: var(--font-size-body);
-  line-height: var(--lh-tight);
-}
-.page-sessions .session-feed-content .content-markdown h4 {
-  margin: 15px 0 6px;
-  font-size: var(--font-size-supporting);
-  line-height: var(--lh-snug);
-}
-.page-sessions .session-feed-content .content-markdown h5,
-.page-sessions .session-feed-content .content-markdown h6 {
-  margin: 16px 0 6px;
-  color: var(--muted-2);
-  font-size: var(--font-size-micro);
-  letter-spacing: var(--tracking-caps);
-  line-height: var(--lh-snug);
-  text-transform: uppercase;
-}
-.page-sessions .session-feed-content .content-markdown > :first-child { margin-top: 0; }
-.page-sessions .session-feed-content .content-markdown ul,
-.page-sessions .session-feed-content .content-markdown ol {
-  margin: 9px 0 14px;
-  padding-left: 24px;
-}
-.page-sessions .session-feed-content .content-markdown li ul,
-.page-sessions .session-feed-content .content-markdown li ol {
-  margin: 4px 0;
-  padding-left: 20px;
-}
-.page-sessions .session-feed-content .content-markdown li {
-  margin: 5px 0;
-  padding-left: 2px;
-}
-.page-sessions .session-feed-content .content-markdown blockquote {
-  margin: 14px 0;
-  padding: 2px 0 2px 14px;
-  color: var(--muted-2);
-  font-size: var(--font-size-supporting);
-  line-height: var(--lh-loose);
-}
-.page-sessions .session-feed-content .content-markdown strong {
-  color: var(--fg);
-  font-weight: var(--weight-bold);
-}
-.page-sessions .session-feed-content .content-markdown .content-code {
-  font-size: var(--font-size-caption);
-  line-height: var(--lh-loose);
-}
-.page-sessions .session-feed-content .content-markdown a {
-  position: relative;
-  z-index: 1;
-  color: var(--cyan);
-  text-decoration: underline;
-  text-decoration-color: var(--cyan-border);
-  text-underline-offset: 3px;
-}
-.page-sessions .session-feed-empty {
-  margin: 0;
-  color: var(--muted);
-  font-size: var(--font-size-supporting);
-  line-height: var(--lh-loose);
-}
-.page-sessions .session-feed-empty a {
-  color: var(--cyan);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-.page-sessions .session-feed-more {
-  position: relative;
-  z-index: 2;
-  min-height: 0;
-  margin-top: 8px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--cyan);
-  font: inherit;
-  font-size: var(--font-size-caption);
-  font-weight: var(--weight-bold);
   cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
-.page-sessions .session-feed-more:hover { text-decoration: underline; text-underline-offset: 3px; }
-.page-sessions .session-feed-footer {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 12px;
-  color: var(--muted-2);
-  font-family: var(--mono);
-  font-size: var(--font-size-micro);
+.page-sessions .load-more:hover:not(:disabled) { background: var(--panel-hover); color: var(--fg); border-color: var(--line-strong); }
+.page-sessions .load-more:disabled { opacity: 0.7; cursor: default; }
+.page-sessions .empty { color: var(--muted); font-style: italic; padding: 14px 0; }
+/* One-click escape hatches in the empty state (widen window / clear filters). */
+.page-sessions .empty .empty-action {
+  margin-left: 12px;
+  color: var(--fg);
+  font-style: normal;
+  font-size: var(--font-size-caption);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
-.page-sessions .session-feed-footer code {
-  min-width: 0;
-  overflow: hidden;
-  font-family: var(--mono);
-  font-size: var(--font-size-micro);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.page-sessions .session-feed-open {
-  flex: none;
-  margin-left: auto;
-  color: var(--cyan);
-  font-family: var(--sans);
+.page-sessions .empty .empty-action:hover { color: var(--cyan); }
+.page-sessions .errors,
+.page-approval-detail .errors {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--red-border);
+  background: var(--red-soft);
+  border-radius: 10px;
+  color: var(--red);
   font-size: var(--font-size-caption);
 }
-.page-sessions .session-feed-open:hover { text-decoration: underline; text-underline-offset: 3px; }
 /* Chips carry data (a state word, an id, a trigger), so they read in mono. */
 .page-sessions .chip {
   display: inline-flex; align-items: center;
@@ -7584,38 +7451,6 @@ a.lastrun.waiting { color: var(--cyan); }
   background: var(--panel);
   letter-spacing: normal;
 }
-.page-sessions .row.is-dismissed { opacity: 0.6; }
-.page-sessions .row.is-dismissed:hover { opacity: 1; }
-/* Per-row triage action: a quiet text button until hovered, then it warms to
-   the same red the failure chips use. Mirrors the home panel's dismiss "×". */
-.page-sessions .row-discard {
-  flex: none;
-  margin-left: 8px;
-  padding: 2px 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  background: none;
-  color: var(--muted-2);
-  font-family: var(--sans);
-  font-size: var(--font-size-micro);
-  font-weight: var(--weight-bold);
-  cursor: pointer;
-  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
-}
-.page-sessions .row-discard:hover { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
-/* In the card footer the pill would compete with "Open session"; there it is a
-   plain mono word sitting in the same meta line as the session id. */
-.page-sessions .session-feed-footer .row-discard {
-  margin-left: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  color: var(--muted-3);
-  font-family: var(--sans);
-  font-size: var(--font-size-micro);
-  font-weight: var(--weight-normal);
-}
-.page-sessions .session-feed-footer .row-discard:hover { color: var(--red); background: none; }
 .page-sessions footer {
   color: var(--muted-2);
   font-family: var(--sans);
@@ -7623,37 +7458,36 @@ a.lastrun.waiting { color: var(--cyan); }
   margin-top: 16px;
   text-align: center;
 }
-.page-sessions .feed-keys kbd {
-  font-family: var(--mono); font-size: var(--font-size-micro);
-  color: var(--muted-3);
+.page-sessions footer {
+  color: var(--muted-2);
+  font-family: var(--sans);
+  font-size: var(--font-size-micro);
+  margin-top: 16px;
+  text-align: center;
 }
-/* Six across only while they fit: each control still has to show its current
-   value, which is the point of the row. (Under 700px the filters disclosure
-   below takes over with its own two-column grid.) */
-@media (max-width: 900px) {
-  .page-sessions .filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/* Below the two-pane threshold the reader gets its own view (?open=), so the
+   list takes the full width and every row is a 44px tap target. */
+@media (max-width: 1000px) {
+  .page-sessions .sessions-split { grid-template-columns: 320px minmax(0, 1fr); }
+  .page-sessions .quick .agent-select { width: 150px; }
 }
-@media (max-width: 640px) {
-  .page-sessions .session-feed-card { padding: 14px; }
-  .page-sessions .session-feed-header {
-    grid-template-columns: 32px minmax(0, 1fr) auto;
-    gap: 10px;
-  }
-  .page-sessions .session-feed-avatar {
-    width: 32px;
-    height: 32px;
-    border-radius: 9px;
-    font-size: var(--font-size-micro);
-  }
-  .page-sessions .session-feed-status .chip.status {
-    max-width: 84px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .page-sessions .session-feed-content.is-collapsed { max-height: 24rem; }
-  .page-sessions .session-feed-footer code { max-width: 58%; }
+@media (max-width: 700px) {
+  .page-sessions main { width: min(720px, calc(100vw - 24px)); padding: 24px 0 48px; }
+  .page-sessions .sessions-lede { display: none; }
+  .page-sessions .sessions-count { margin-left: 0; width: 100%; }
+  .page-sessions .it { padding: 11px 10px; min-height: 44px; }
+  .page-sessions .reader { position: static; max-height: none; }
+  .page-sessions .reader-head { flex-direction: column; }
+  .page-sessions .reader-actions { width: 100%; }
+  .page-sessions .reader-actions .btn { flex: 1; justify-content: center; min-height: 44px; }
+  /* Its own row: squeezed into the chip line it would run off the screen edge. */
+  .page-sessions .quick .agent-select { flex: 1 0 100%; width: auto; }
+  .page-sessions .filter-grid-advanced { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+@media (max-width: 380px) {
+  .page-sessions .filter-grid-advanced { grid-template-columns: 1fr; }
+}
+
 /* --- shared chip variants (sessions / approvals rows) --- */
 .chip.trigger { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
 .chip.project { color: var(--cyan); }
@@ -8331,7 +8165,7 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-agents .pin-name:focus-visible,
 .page-agent-detail .run-row:focus-visible,
 .page-agent-detail .back:focus-visible,
-.page-sessions .filters select:focus-visible,
+.page-sessions .filter-field select:focus-visible,
 .store-table .sort-header:focus-visible {
   outline: 2px solid var(--cyan-border);
   outline-offset: 2px;
@@ -8466,8 +8300,7 @@ a.lastrun.waiting { color: var(--cyan); }
 @media (pointer: coarse) {
   .palette-foot,
   .palette-trigger-kbd,
-  .palette-esc,
-  .page-sessions .feed-keys { display: none; }
+  .palette-esc { display: none; }
 }
 
 /* ============================================================
@@ -8501,109 +8334,8 @@ a.lastrun.waiting { color: var(--cyan); }
   outline-offset: 2px;
 }
 
-/* Filters disclosure (sessions list): on narrow screens the persistent summary
-   carries the active constraints, while the form opens only when refinement is
-   needed. This keeps the first session visible instead of making every filter
-   look equally important. */
-.page-sessions .filters-summary { display: none; }
-.page-sessions .filters-toggle {
-  display: none;
-  align-items: center;
-  gap: 7px;
-  min-height: 34px;
-  padding: 6px 11px;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--muted-3);
-  font: inherit;
-  font-size: var(--font-size-caption);
-  text-transform: lowercase;
-  cursor: pointer;
-  transition: border-color 120ms ease, color 120ms ease, background 120ms ease;
-}
-.page-sessions .filters-toggle:hover { color: var(--fg); background: var(--panel-hover); }
-.page-sessions .filters-toggle-count {
-  display: inline-grid;
-  place-items: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--cyan-soft);
-  color: var(--cyan);
-  font-family: var(--mono);
-  font-size: var(--font-size-micro);
-  font-variant-numeric: tabular-nums;
-}
-.page-sessions .filters-toggle-caret {
-  font-family: var(--sans);
-  font-size: var(--font-size-body);
-  line-height: 1;
-  transform: translateY(-1px);
-  transition: transform 160ms ease;
-}
-.page-sessions .filters-toggle.is-open .filters-toggle-caret { transform: translateY(1px) rotate(180deg); }
 @media (max-width: 700px) {
-  .page-sessions .filters-summary {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-    gap: 8px;
-    margin: 0 0 12px;
-  }
-  .page-sessions .filters-toggle { display: inline-flex; flex: none; }
-  .page-sessions .active-filters {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-    flex: 1;
-    gap: 6px;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .page-sessions .active-filters::-webkit-scrollbar { display: none; }
-  .page-sessions .active-filter {
-    display: inline-flex;
-    align-items: center;
-    flex: none;
-    min-width: 0;
-    gap: 5px;
-    padding: 5px 7px;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    background: var(--panel);
-    color: var(--fg);
-    font-family: var(--sans);
-    font-size: var(--font-size-micro);
-    line-height: var(--lh-tight);
-    transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
-  }
-  .page-sessions .active-filter:hover { border-color: var(--cyan-border); background: var(--cyan-soft); color: var(--cyan); }
-  .page-sessions .active-filter-label { color: var(--muted); font-family: var(--sans); font-size: var(--font-size-micro); }
-  .page-sessions .active-filter-value { max-width: 20ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .page-sessions .active-filter-remove { color: var(--muted-2); font-family: var(--sans); font-size: var(--font-size-supporting); line-height: 8px; }
-  .page-sessions .filters-context { color: var(--muted); font-size: var(--font-size-micro); white-space: nowrap; }
-  .page-sessions .filters-summary > .filters-reset {
-    display: inline-flex;
-    flex: none;
-    min-height: 30px;
-    align-items: center;
-  }
-  .page-sessions .filters.collapsed { display: none; }
-  .page-sessions .filters { padding: 14px; }
-  .page-sessions .filter-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 10px; }
-  .page-sessions .filters label { min-width: 0; }
-  .page-sessions .filters select { width: 100%; }
-  .page-sessions .filter-field-agent { grid-column: 1 / -1; }
-  .page-sessions .agent-select { width: 100%; min-width: 0; }
   .page-sessions .agent-select-pop { width: 100%; }
-}
-@media (max-width: 380px) {
-  .page-sessions .filters-heading { gap: 8px; }
-  .page-sessions .filters-description { font-size: var(--font-size-micro); }
-  .page-sessions .filter-grid { grid-template-columns: 1fr; }
-  .page-sessions .filter-field-agent { grid-column: auto; }
 }
 
 /* Trailing "open" affordance inside a subagent card link: quiet until the card

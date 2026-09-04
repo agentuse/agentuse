@@ -67,7 +67,7 @@ export function AgentFilterSelect(props: {
         ref={inputRef}
         type="text"
         value={open ? query : props.value}
-        placeholder="any"
+        placeholder="Any agent"
         spellcheck={false}
         autocomplete="off"
         role="combobox"
