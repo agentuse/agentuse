@@ -10,6 +10,7 @@ export function useSessionsStream(options: {
   triage: string | undefined;
   trigger: string | undefined;
   approval: string | undefined;
+  q?: string | undefined;
   window: string | undefined;
   limit?: number | undefined;
   detail?: 'feed' | 'agents' | undefined;
@@ -44,6 +45,7 @@ export function useSessionsStream(options: {
         triage: options.triage,
         trigger: options.trigger,
         approval: options.approval,
+        q: options.q,
         window: options.window,
         limit: options.limit,
         detail: options.detail,
@@ -96,5 +98,5 @@ export function useSessionsStream(options: {
       document.removeEventListener('visibilitychange', onVisible);
       source?.close();
     };
-  }, [options.agent, options.status, options.triage, options.trigger, options.approval, options.window, options.limit, options.detail, options.mock, options.enabled]);
+  }, [options.agent, options.status, options.triage, options.trigger, options.approval, options.q, options.window, options.limit, options.detail, options.mock, options.enabled]);
 }

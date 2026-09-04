@@ -407,6 +407,44 @@ describe('session list helpers', () => {
     expect(__testing.sessionMatchesMockFilter(mock, 'only')).toBe(true);
   });
 
+  it('partitions SSE snapshots by the search query', () => {
+    const none = __testing.sessionListStreamKey(new URL('http://localhost/sessions/events'));
+    const refund = __testing.sessionListStreamKey(new URL('http://localhost/sessions/events?q=refund'));
+    const invoice = __testing.sessionListStreamKey(new URL('http://localhost/sessions/events?q=invoice'));
+
+    expect(new Set([none, refund, invoice]).size).toBe(3);
+  });
+
+  it('matches a search query against agent id and name before reading any transcript', () => {
+    const session = rows[0]!.session;
+
+    expect(__testing.sessionMatchesSearchIdentity(session, 'review')).toBe(true);
+    expect(__testing.sessionMatchesSearchIdentity(session, 'agents/rev')).toBe(true);
+    expect(__testing.sessionMatchesSearchIdentity(session, 'review agent')).toBe(true);
+    expect(__testing.sessionMatchesSearchIdentity(session, 'refund')).toBe(false);
+  });
+
+  it('bounds how many transcripts one search may read', () => {
+    expect(__testing.SESSION_SEARCH_SCAN_LIMIT).toBeGreaterThan(0);
+    expect(__testing.SESSION_SEARCH_SCAN_LIMIT).toBeLessThanOrEqual(1_000);
+  });
+
+  it('splits the window into the counts the list chips render', () => {
+    const counts = __testing.sessionStatusCounts([
+      { status: 'running' },
+      { status: 'preparing' },
+      // A parent parked on a running child is live work, not a human gate.
+      { status: 'suspended', subagentActive: true },
+      // A real human gate belongs to none of the three chips, but still to All.
+      { status: 'suspended' },
+      { status: 'completed' },
+      { status: 'completed' },
+      { status: 'error' },
+    ]);
+
+    expect(counts).toEqual({ all: 7, running: 3, done: 2, failed: 1 });
+  });
+
   it('keeps the sessions SSE list refresh at the old page polling cadence', () => {
     expect(__testing.SESSION_LIST_SSE_INTERVAL_MS).toBe(10_000);
   });

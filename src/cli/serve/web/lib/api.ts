@@ -1003,6 +1003,14 @@ export function fetchSchedules(): Promise<SchedulesPayload> {
 
 export type SessionRow = SessionSummary & { project: string };
 
+/** Status split of the window, taken before the status filter narrows the page. */
+export interface SessionStatusCounts {
+  all: number;
+  running: number;
+  done: number;
+  failed: number;
+}
+
 export interface SessionsPayload {
   success: true;
   sessions: SessionRow[];
@@ -1012,6 +1020,8 @@ export interface SessionsPayload {
   triage?: string;
   trigger?: string;
   approval?: string;
+  q?: string;
+  counts: SessionStatusCounts;
   errors: Array<{ projectId: string; message: string }>;
   nextCursor?: string;
   limit?: number;
@@ -1023,6 +1033,8 @@ export function fetchSessions(options: {
   triage?: string | undefined;
   trigger?: string | undefined;
   approval?: string | undefined;
+  /** Free text matched against agent id/name and the run's final output. */
+  q?: string | undefined;
   window?: string | undefined;
   limit?: number | undefined;
   cursor?: string | undefined;
@@ -1036,6 +1048,7 @@ export function fetchSessions(options: {
     triage: options.triage,
     trigger: options.trigger,
     approval: options.approval,
+    q: options.q,
     window: options.window,
     ...(options.limit !== undefined && { limit: String(options.limit) }),
     cursor: options.cursor,
@@ -1080,6 +1093,7 @@ export function sessionsEventUrl(options: {
   triage?: string | undefined;
   trigger?: string | undefined;
   approval?: string | undefined;
+  q?: string | undefined;
   window?: string | undefined;
   limit?: number | undefined;
   detail?: 'feed' | 'agents' | undefined;
@@ -1091,6 +1105,7 @@ export function sessionsEventUrl(options: {
   if (options.triage !== undefined) url.searchParams.set('triage', options.triage);
   if (options.trigger !== undefined) url.searchParams.set('trigger', options.trigger);
   if (options.approval !== undefined) url.searchParams.set('approval', options.approval);
+  if (options.q !== undefined) url.searchParams.set('q', options.q);
   if (options.window !== undefined) url.searchParams.set('window', options.window);
   if (options.limit !== undefined) url.searchParams.set('limit', String(options.limit));
   if (options.detail !== undefined) url.searchParams.set('detail', options.detail);

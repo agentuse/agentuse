@@ -165,6 +165,12 @@ const APPROVAL_LIST_SSE_INTERVAL_MS = 10_000;
 const SESSION_LIST_SSE_INTERVAL_MS = 10_000;
 /** Faster session-list cadence while any session is live, so the dashboard tracks runs in near-real-time. */
 const SESSION_LIST_SSE_LIVE_INTERVAL_MS = 2_000;
+/** Ceiling on how many rows one ?q= search may read final output for. Identity
+ *  matches are free; this bounds only the transcript reads behind a text match. */
+const SESSION_SEARCH_SCAN_LIMIT = 400;
+/** How many rows of a window the status counts are taken over. Bounds the rows
+ *  a worker ships across IPC when the page itself only needs the first 50. */
+const SESSION_COUNT_SCAN_LIMIT = 500;
 
 /**
  * A tidy-up in flight, or one this process finished recently.
@@ -680,6 +686,14 @@ interface SessionSummary {
 
 type SessionRow = SessionSummary & { project: string };
 
+/** Status split of a session-list window, used by the list's filter chips. */
+interface SessionStatusCounts {
+  all: number;
+  running: number;
+  done: number;
+  failed: number;
+}
+
 interface SessionsPayload {
   success: true;
   sessions: SessionRow[];
@@ -689,6 +703,11 @@ interface SessionsPayload {
   triage?: SessionTriageFilter;
   trigger?: SessionTrigger;
   approval?: string;
+  /** Free-text search echoed back, matched against agent id/name and final output. */
+  q?: string;
+  /** How the window's rows split by status, BEFORE the status filter narrows the
+   *  page. Lets the list's status chips show their size without a round trip. */
+  counts: SessionStatusCounts;
   errors: Array<{ projectId: string; message: string }>;
   /** Present only when the caller opted into cursor pagination. */
   nextCursor?: string;
@@ -1939,6 +1958,35 @@ function parseSessionMockFilter(value: string | undefined): SessionMockFilter {
   return value === 'include' || value === 'only' ? value : 'exclude';
 }
 
+/**
+ * Identity half of ?q=: the agent this run belongs to. Matched in memory for
+ * every row, so only the rows it misses pay for a transcript read.
+ */
+function sessionMatchesSearchIdentity(
+  session: Pick<SessionSummary, 'agent'>,
+  query: string
+): boolean {
+  return session.agent.id.toLowerCase().includes(query)
+    || (session.agent.name ?? '').toLowerCase().includes(query);
+}
+
+/**
+ * The status split the list's chips render. Live work (running, or a parent
+ * parked on a running child) counts as running wherever it is durably parked,
+ * matching the dot the list draws.
+ */
+function sessionStatusCounts(
+  sessions: ReadonlyArray<Pick<SessionSummary, 'status' | 'subagentActive'>>
+): SessionStatusCounts {
+  const counts: SessionStatusCounts = { all: sessions.length, running: 0, done: 0, failed: 0 };
+  for (const session of sessions) {
+    if (isExecutingSessionStatus(session.status) || session.subagentActive === true) counts.running += 1;
+    else if (session.status === 'completed') counts.done += 1;
+    else if (session.status === 'error') counts.failed += 1;
+  }
+  return counts;
+}
+
 /** Every filter captured by the first SSE subscriber must partition the hub. */
 function sessionListStreamKey(requestUrl: URL): string {
   return [
@@ -1951,6 +1999,7 @@ function sessionListStreamKey(requestUrl: URL): string {
     requestUrl.searchParams.get('trigger') ?? '',
     requestUrl.searchParams.get('agent') ?? '',
     requestUrl.searchParams.get('approval') ?? '',
+    requestUrl.searchParams.get('q') ?? '',
     requestUrl.searchParams.get('mock') ?? '',
     requestUrl.searchParams.get('detail') ?? '',
     requestUrl.searchParams.get('limit') ?? '',
@@ -5242,6 +5291,10 @@ export function createServeCommand(): Command {
         const updatedAfter = sessionListUpdatedAfter(requestUrl);
         const daysFilter = sessionDaysFilterValue(requestUrl);
         const detail = requestUrl.searchParams.get('detail');
+        // Free-text lookup over agent identity and final output text. Matching the
+        // output means the answer to "which run said X" no longer requires opening
+        // runs one by one, which is the only reason this list gets opened at all.
+        const searchQuery = (requestUrl.searchParams.get('q') ?? '').trim().toLowerCase();
         const rawLimit = requestUrl.searchParams.get('limit');
         const parsedLimit = rawLimit === null ? undefined : Number(rawLimit);
         const requestedLimit = parsedLimit !== undefined && Number.isFinite(parsedLimit) && parsedLimit > 0
@@ -5249,7 +5302,7 @@ export function createServeCommand(): Command {
           : rawLimit === null ? undefined : LIST_PAGE_DEFAULT_LIMIT;
         const canPrelimit = requestedLimit !== undefined &&
           !requestUrl.searchParams.get('cursor') &&
-          !agentFilter && !statusFilter && !triageFilter && !triggerFilter && !approvalFilter;
+          !agentFilter && !statusFilter && !triageFilter && !triggerFilter && !approvalFilter && !searchQuery;
 
         type ProjectSessionRow = { projectId: string; session: SessionSummary };
         const rows: ProjectSessionRow[] = [];
@@ -5266,7 +5319,10 @@ export function createServeCommand(): Command {
             {
               ...(updatedAfter !== undefined && { updatedAfter }),
               ...(approvalFilter && { includeSubagents: true }),
-              ...(canPrelimit && { limit: requestedLimit }),
+              // The trim is an IPC-payload optimization (the worker has already
+              // read every summary), so widen it to the count scan: chips that
+              // report only the first page's split would be worse than no chips.
+              ...(canPrelimit && { limit: Math.max(requestedLimit, SESSION_COUNT_SCAN_LIMIT) }),
               ...(detail === 'agents' && { perAgent: 12 }),
               mock: mockFilter,
             }
@@ -5312,7 +5368,8 @@ export function createServeCommand(): Command {
           }
           for (const session of result.sessions ?? []) {
             if (!sessionMatchesMockFilter(session, mockFilter)) continue;
-            if (!sessionMatchesStatusFilter(session, statusFilter)) continue;
+            // Status is applied AFTER the chip counts are taken, so "Done 128"
+            // stays true while the reader is looking at the Failed subset.
             if (!sessionMatchesTriageFilter(session, triageFilter)) continue;
             if (triggerFilter && session.trigger !== triggerFilter) continue;
             if (approvalFilter && !approvalSessionIdsByProject.get(result.project.id)?.has(session.sessionId)) continue;
@@ -5334,22 +5391,16 @@ export function createServeCommand(): Command {
           a.projectId.localeCompare(b.projectId) ||
           a.session.sessionId.localeCompare(b.session.sessionId)
         );
-        // Fingerprint on the window FILTER, not the resolved updatedAfter
-        // cutoff: the cutoff is minute-quantized (listWindowNow), so embedding
-        // it would silently expire every cursor at the next minute boundary and
-        // restart Load more from page 1. A cursor row that slides out of the
-        // window is still caught by cursorPage's row-lookup fallback.
-        const fingerprint = ['sessions', daysFilter, agentFilter ?? '', statusFilter ?? '', triageFilter ?? '', triggerFilter ?? '', approvalFilter ?? ''].join('\0');
-        const page = cursorPage(requestUrl, fingerprint, rows, (row) =>
-          `${row.session.createdAt}\0${row.projectId}\0${row.session.sessionId}`
-        );
-
-        let pageItems = page.items;
-        if (detail === 'feed') {
+        // Final assistant text, cache-first. Search needs it for rows the page
+        // may never show, and feed detail needs it for the page itself, so both
+        // go through one resolver (and one cache) rather than two walks of disk.
+        const resolveFinalResponses = async (
+          targets: ProjectSessionRow[]
+        ): Promise<Map<string, string | undefined>> => {
           const finalResponses = new Map<string, string | undefined>();
           const missingByProject = new Map<string, ProjectSessionRow[]>();
 
-          for (const row of page.items) {
+          for (const row of targets) {
             const cacheKey = `${row.projectId}\0${row.session.sessionId}`;
             const cached = sessionFinalResponseCache.get(cacheKey);
             const stable = row.session.status !== 'preparing' && row.session.status !== 'running';
@@ -5399,7 +5450,51 @@ export function createServeCommand(): Command {
             if (oldest === undefined) break;
             sessionFinalResponseCache.delete(oldest);
           }
+          return finalResponses;
+        };
 
+        // Search runs over the whole window, not the current page, so a match on
+        // a run from Tuesday is findable without paging to it. Agent identity is
+        // matched in memory; only the rows that miss on identity pay for a
+        // transcript read, and that scan is capped so one broad query cannot walk
+        // an unbounded history.
+        let scopedRows = rows;
+        if (searchQuery) {
+          const matchesIdentity = (row: ProjectSessionRow): boolean =>
+            sessionMatchesSearchIdentity(row.session, searchQuery);
+          const needsText = rows.filter((row) => !matchesIdentity(row)).slice(0, SESSION_SEARCH_SCAN_LIMIT);
+          const texts = await resolveFinalResponses(needsText);
+          const textMatches = new Set<string>();
+          for (const row of needsText) {
+            const key = `${row.projectId}\0${row.session.sessionId}`;
+            if (texts.get(key)?.toLowerCase().includes(searchQuery)) textMatches.add(key);
+          }
+          scopedRows = rows.filter((row) =>
+            matchesIdentity(row) || textMatches.has(`${row.projectId}\0${row.session.sessionId}`));
+        }
+
+        // Counts describe the window as the reader narrowed it by search/agent,
+        // but BEFORE the status chip: a chip that changed its own number when
+        // clicked could never tell you how big the other buckets are.
+        const counts = sessionStatusCounts(scopedRows.map((row) => row.session));
+
+        const statusRows = statusFilter
+          ? scopedRows.filter((row) => sessionMatchesStatusFilter(row.session, statusFilter))
+          : scopedRows;
+
+        // Fingerprint on the window FILTER, not the resolved updatedAfter
+        // cutoff: the cutoff is minute-quantized (listWindowNow), so embedding
+        // it would silently expire every cursor at the next minute boundary and
+        // restart Load more from page 1. A cursor row that slides out of the
+        // window is still caught by cursorPage's row-lookup fallback.
+        const fingerprint = ['sessions', daysFilter, agentFilter ?? '', statusFilter ?? '', triageFilter ?? '', triggerFilter ?? '', approvalFilter ?? '', searchQuery].join('\0');
+        const page = cursorPage(requestUrl, fingerprint, statusRows, (row) =>
+          `${row.session.createdAt}\0${row.projectId}\0${row.session.sessionId}`
+        );
+
+        let pageItems = page.items;
+        if (detail === 'feed') {
+          const finalResponses = await resolveFinalResponses(page.items);
           pageItems = page.items.map((row) => {
             const finalResponse = finalResponses.get(`${row.projectId}\0${row.session.sessionId}`);
             return finalResponse === undefined
@@ -5456,6 +5551,8 @@ export function createServeCommand(): Command {
             ...(triageFilter && { triage: triageFilter }),
             ...(triggerFilter && { trigger: triggerFilter }),
             ...(approvalFilter && { approval: approvalFilter }),
+            ...(searchQuery && { q: searchQuery }),
+            counts,
             ...(page.limit !== undefined && { limit: page.limit }),
             ...(page.nextCursor && { nextCursor: page.nextCursor }),
             errors
@@ -6108,7 +6205,8 @@ export function createServeCommand(): Command {
         // GET /sessions (+ /api/sessions): operator surface listing every run.
         // API-key gated (not a capability route). Filters: ?agent= ?status=
         // ?triage=<undismissed|dismissed> ?trigger= ?approval=
-        // ?window=<1h|6h|24h|7d|30d|90d|all> (default: 24h).
+        // ?q=<text> (agent id/name + final output) ?window=<1h|6h|24h|7d|30d|90d|all>
+        // (default: 24h).
         // Legacy ?days=<n|all> and ?hours=<n> still work.
         if (req.method === "GET" && routePath === '/sessions') {
           if (isApi) {
@@ -9936,6 +10034,9 @@ export const __testing = {
   parseSessionMockFilter,
   sessionMatchesMockFilter,
   sessionListStreamKey,
+  sessionMatchesSearchIdentity,
+  sessionStatusCounts,
+  SESSION_SEARCH_SCAN_LIMIT,
   sessionLearningTidyAllowed,
   buildRunTranscript,
   importantDescendantTree,
