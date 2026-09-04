@@ -100,45 +100,6 @@ export function DraftComposer(props: {
   );
 }
 
-/**
- * The Changes tab: what was asked for and what the author says it did, oldest
- * first so the newest turn sits at the bottom the way the composer below it
- * expects. It is a record of requests against the file, not a chat.
- */
-export function DraftExchange(props: { turns: DraftExchangeTurn[]; emptyHint?: string }) {
-  const turns = props.turns.filter((turn) => turn.request || turn.reply);
-  const ref = useRef<HTMLDivElement>(null);
-  const lastTurn = turns[turns.length - 1];
-  // After paint, so the measurement sees the laid-out thread. This also runs on
-  // mount, which is what lands the operator at the newest turn when they switch
-  // to this tab rather than at the top of an old conversation.
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      const element = ref.current;
-      if (element) element.scrollTop = element.scrollHeight;
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [turns.length, lastTurn?.reply, lastTurn?.request]);
-
-  if (turns.length === 0) {
-    return (
-      <div class="draft-exchange is-empty" ref={ref}>
-        <p>{props.emptyHint ?? 'No changes requested yet. Ask for one below and it becomes the next version.'}</p>
-      </div>
-    );
-  }
-  return (
-    <div class="draft-exchange" ref={ref}>
-      {turns.map((turn, index) => (
-        <div class="draft-exchange-turn" key={index}>
-          {turn.request && <div class="draft-exchange-request">{turn.request}</div>}
-          {turn.reply && <div class="draft-exchange-reply">{turn.reply}</div>}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export function DraftPanel(props: {
   breadcrumb: ComponentChildren;
   pill: ComponentChildren;

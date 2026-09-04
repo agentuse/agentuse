@@ -9967,3 +9967,83 @@ html[data-page="draft-panel"] .app-route {
   html[data-page="draft-panel"] .topbar.app-toolbar { flex: 0 0 auto; }
   html[data-page="draft-panel"] .app-route { flex: 1; min-height: 0; }
 }
+
+/* ── Changes thread: steps between the bubbles ────────────────────────────────
+   The steps are the same rows the session page renders, compacted to one line
+   each so a settled turn reads as two bubbles with a small "12 steps" line
+   between them, and every row still opens to its full content. */
+.draft-steps {
+  align-self: stretch;
+  margin: 2px 0;
+}
+.draft-steps-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+  cursor: pointer;
+}
+.draft-steps-summary:hover { background: var(--panel-hover); color: var(--muted-3); }
+.draft-steps-caret { color: var(--muted-2); }
+.draft-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 4px 0 0;
+  padding: 4px 0 4px 10px;
+  border-left: 1px solid var(--line);
+  list-style: none;
+}
+/* Compact form of the shared log row: one muted mono line, its own padding and
+   type scale, with the expanded body still available underneath. */
+.draft-steps-list .log-item {
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  font-size: var(--font-size-micro);
+}
+.draft-steps-list .log-head { gap: 8px; align-items: baseline; }
+.draft-steps-list .log-title {
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+  color: var(--muted-3);
+}
+.draft-steps-list .log-time { color: var(--muted-2); font-size: var(--font-size-micro); }
+.draft-steps-list .log-intent { color: var(--muted); }
+/* Thinking and prose are headlines here: the thread is a record of what the
+   author did, and its full transcript is one link away at the end of it. Line
+   clamping cannot be used because these bodies are nested blocks, so the height
+   is capped and faded instead. */
+.draft-steps-list .log-item[data-log-type="reasoning"] .log-content,
+.draft-steps-list .log-item[data-log-type="text"] .log-content {
+  position: relative;
+  max-height: 3.2em;
+  overflow: hidden;
+  color: var(--muted);
+}
+.draft-steps-list .log-item[data-log-type="reasoning"] .log-content::after,
+.draft-steps-list .log-item[data-log-type="text"] .log-content::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 1.4em;
+  background: linear-gradient(transparent, var(--surface));
+  pointer-events: none;
+}
+.draft-steps-list .log-content { font-size: var(--font-size-micro); }
+/* The run outcome is the reply bubble sitting directly below this step, so the
+   step keeps the verdict line and drops the body it would otherwise repeat at
+   full length. */
+.draft-steps-list .run-outcome { border: 0; padding: 0; background: none; }
+.draft-steps-list .run-outcome-body { display: none; }
+.draft-thread-link {
+  align-self: flex-start;
+  margin-top: 4px;
+  font-size: var(--font-size-caption);
+}

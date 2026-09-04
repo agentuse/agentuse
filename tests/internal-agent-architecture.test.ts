@@ -90,9 +90,11 @@ describe('internal AgentUse architecture', () => {
     expect(webApi).toContain("postJson('/api/agents', { ...input, guided: true })");
     expect(webApi).not.toContain('fetchAgentCreationJob');
     expect(webApi).not.toContain('fetchOnboardingJob');
-    // The create dialog hands off the moment the session exists; the draft
-    // page owns the wait and follows the job through the one SSE controller.
-    expect(draftPage).toContain('useInternalAgentJob(jobHandle)');
+    // The create dialog hands off the moment the session exists. The draft page
+    // then follows the session log itself, because the panel outlives the job:
+    // the session settles, the operator asks for a change, and it runs again.
+    expect(draftPage).toContain('useSessionLog({');
+    expect(draftPage).not.toContain('useInternalAgentJob');
     expect(onboarding).toContain('useInternalAgentJob(activeJob)');
     expect(controller).toContain('useApprovalStream({');
   });

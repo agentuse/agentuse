@@ -7,42 +7,25 @@ import {
   saveAgentDraft,
   startAgentDraftTestRun,
   type AgentDraftPayload,
-  type OnboardingJobHandle,
 } from '../lib/api';
-import { useInternalAgentJob } from '../hooks/use-internal-agent-job';
+import { useSessionLog } from '../hooks/use-session-log';
 import { useTitle } from '../hooks/use-title';
 import { Loading } from '../components/loading';
-import { OnboardingSessionLog } from '../components/onboarding-session-log';
 import { TokenUsageStrip } from '../components/token-usage-strip';
 import {
   DraftComposer,
-  DraftExchange,
   DraftPanel,
   DraftStatusPill,
   diffChangeCounts,
   type DraftFileTab,
 } from '../components/draft-panel';
 import { DraftTestRun } from '../components/draft-test-run';
+import { DraftThread } from '../components/draft-thread';
 import { revisionLineDiff } from '../lib/revision-diff';
 import { agentDetailHref } from '../lib/links';
 import { pageTitle } from '../lib/brand';
 
 const POLL_MS = 1200;
-
-/** The draft record doubles as the handle for streaming its creator session. */
-function creatorJobHandle(draft: AgentDraftPayload): OnboardingJobHandle {
-  return {
-    id: draft.jobId,
-    sessionId: draft.jobId,
-    projectId: draft.projectId,
-    kind: 'agent-creation',
-    status: draft.status === 'running' ? 'running' : draft.status === 'error' ? 'error' : 'completed',
-    phase: 'running',
-    model: draft.authoringModel,
-    createdAt: draft.createdAt,
-    ...(draft.sessionToken && { sessionToken: draft.sessionToken }),
-  };
-}
 
 export default function AgentDraft() {
   const location = useLocation();
@@ -96,8 +79,13 @@ export default function AgentDraft() {
     return () => clearInterval(timer);
   }, [draft?.jobId, draft?.status]);
 
-  const jobHandle = useMemo(() => (draft ? creatorJobHandle(draft) : null), [draft?.jobId, draft?.status]);
-  const creatorSession = useInternalAgentJob(jobHandle);
+  // The panel outlives any single creator turn, so it follows the session log
+  // directly rather than a job that settles after the first draft.
+  const creatorSession = useSessionLog({
+    sessionId: draft?.jobId ?? '',
+    token: draft?.sessionToken,
+    project: draft?.projectId,
+  });
 
   const latest = draft?.drafts[draft.drafts.length - 1];
   const previous = draft && draft.drafts.length > 1 ? draft.drafts[draft.drafts.length - 2] : undefined;
@@ -204,15 +192,7 @@ export default function AgentDraft() {
       </div>
       <div class="draft-session">
         <span class="draft-card-label">Creator session</span>
-        {jobHandle && (
-          <OnboardingSessionLog
-            job={jobHandle}
-            title={`Creator session · ${draft.authoringModel}`}
-            status={running ? creatorSession.sessionStatus : 'idle · waiting for you'}
-            entries={creatorSession.entries}
-            streamError={creatorSession.streamError}
-          />
-        )}
+        {creatorSession.streamError && <p class="draft-error" role="alert">{creatorSession.streamError}</p>}
         <TokenUsageStrip
           tokenUsage={creatorSession.approval?.tokenUsage}
           estimatedCost={pricing && creatorSession.approval
@@ -222,7 +202,6 @@ export default function AgentDraft() {
           compact
           ariaLabel="Creator session usage"
         />
-        <a class="draft-session-link" href={draft.sessionHref}>Open full session log</a>
         <span class="draft-session-note">
           Test runs are mock sessions. Stores stay isolated and they are hidden from Sessions and Home by default.
         </span>
@@ -266,7 +245,16 @@ export default function AgentDraft() {
         onRun={() => void runTest()}
         onFinished={() => void refresh()}
       />}
-      exchange={<DraftExchange turns={draft.drafts.map((entry) => ({ request: entry.request, reply: entry.reply }))} />}
+      exchange={<DraftThread
+        turns={draft.drafts.map((entry) => ({ request: entry.request, reply: entry.reply }))}
+        entries={creatorSession.entries}
+        running={running}
+        sessionId={draft.jobId}
+        projectId={draft.projectId}
+        token={draft.sessionToken}
+        sessionHref={draft.sessionHref}
+        emptyHint="The creator is working. Its steps appear here as it goes."
+      />}
       composer={!closed && (
         <DraftComposer
           placeholder="Tell the creator what to change in this draft…"

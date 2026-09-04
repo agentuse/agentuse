@@ -6,22 +6,20 @@ import {
   postAgentRevisionAction,
   requestAgentRevisionChanges,
   startAgentRevisionTestRun,
-  type OnboardingJobHandle,
 } from '../lib/api';
-import { useInternalAgentJob } from '../hooks/use-internal-agent-job';
+import { useSessionLog } from '../hooks/use-session-log';
 import { useTitle } from '../hooks/use-title';
 import { Loading } from '../components/loading';
-import { OnboardingSessionLog } from '../components/onboarding-session-log';
 import { TokenUsageStrip } from '../components/token-usage-strip';
 import {
   DraftComposer,
-  DraftExchange,
   DraftPanel,
   DraftStatusPill,
   diffChangeCounts,
   type DraftFileTab,
 } from '../components/draft-panel';
 import { DraftTestRun } from '../components/draft-test-run';
+import { DraftThread } from '../components/draft-thread';
 import { revisionLineDiff } from '../lib/revision-diff';
 import { agentDetailHref } from '../lib/links';
 import { pageTitle } from '../lib/brand';
@@ -32,20 +30,6 @@ type RevisionView = Omit<AgentRevisionRecord, 'previousSource'> & {
   baseSource?: string;
   originHref?: string;
 };
-
-function revisionJobHandle(revision: RevisionView, token?: string): OnboardingJobHandle {
-  return {
-    id: revision.revisionSessionId,
-    sessionId: revision.revisionSessionId,
-    projectId: revision.projectId,
-    kind: 'agent-revision',
-    status: revision.status === 'running' ? 'running' : revision.status === 'error' ? 'error' : 'completed',
-    phase: 'running',
-    model: revision.authoringModel,
-    createdAt: revision.createdAt,
-    ...(token && { sessionToken: token }),
-  };
-}
 
 const OPEN_STATUSES = new Set(['running', 'proposed', 'no-change']);
 
@@ -97,11 +81,14 @@ export default function AgentRevision() {
     return () => clearInterval(timer);
   }, [revision?.revisionSessionId, revision?.status]);
 
-  const jobHandle = useMemo(
-    () => (revision ? revisionJobHandle(revision, token) : null),
-    [revision?.revisionSessionId, revision?.status, token],
-  );
-  const reviserSession = useInternalAgentJob(jobHandle);
+  // The panel outlives any single reviser turn, so it follows the session log
+  // directly rather than a job that settles after the first proposal.
+  const reviserSession = useSessionLog({
+    sessionId,
+    token,
+    project,
+    enabled: Boolean(sessionId && project),
+  });
 
   // Changes leads while the reviser works and once it has answered. A settled
   // proposal nobody has questioned yet opens on the diff, which is the thing
@@ -211,21 +198,13 @@ export default function AgentRevision() {
         {/* The reviser may stop and ask one focused question. Answering resumes
             this same session, and that happens on the session page, which owns
             every approval gate in the product. */}
-        {reviserSession.sessionStatus === 'waiting' && (
+        {reviserSession.status === 'waiting' && (
           <p class="draft-waiting" role="status">
             The reviser needs your answer before it can propose a change.{' '}
             <a href={reviserSessionHref}>Answer it in the session</a>
           </p>
         )}
-        {jobHandle && (
-          <OnboardingSessionLog
-            job={jobHandle}
-            title={`Revision session · ${revision.authoringModel}`}
-            status={running ? reviserSession.sessionStatus : 'idle · waiting for you'}
-            entries={reviserSession.entries}
-            streamError={reviserSession.streamError}
-          />
-        )}
+        {reviserSession.streamError && <p class="draft-error" role="alert">{reviserSession.streamError}</p>}
         <TokenUsageStrip
           tokenUsage={reviserSession.approval?.tokenUsage}
           estimatedCost={pricing && reviserSession.approval
@@ -313,9 +292,15 @@ export default function AgentRevision() {
         busy={busy === 'test'}
         onRun={() => void runTest()}
       />}
-      exchange={<DraftExchange
+      exchange={<DraftThread
         turns={exchangeTurns}
-        emptyHint="The reviser is diagnosing the run. Its findings appear here."
+        entries={reviserSession.entries}
+        running={running}
+        sessionId={sessionId}
+        projectId={project}
+        token={token}
+        sessionHref={reviserSessionHref}
+        emptyHint="The reviser is diagnosing the run. Its steps and findings appear here."
       />}
       composer={open && (
         <DraftComposer

@@ -48,7 +48,7 @@ import {
   isTerminalInternalAgentSessionStatus,
   mergeInternalAgentJob,
 } from '../src/cli/serve/web/hooks/use-internal-agent-job';
-import { AgentCreationProgressPanel } from '../src/cli/serve/web/components/agent-create-dialog';
+import { DraftThread, groupDraftTurns } from '../src/cli/serve/web/components/draft-thread';
 import { firstUsefulAgentSetupSteps } from '../src/cli/serve/web/components/onboarding-shell';
 import { ProjectFolderField } from '../src/cli/serve/web/components/project-folder-field';
 import { ProjectsSettingsGroup, RestartOnboardingGroup } from '../src/cli/serve/web/components/project-settings';
@@ -224,49 +224,68 @@ describe('onboarding session completion', () => {
   });
 });
 
-describe('New Agent creation progress', () => {
-  it('renders the real internal session log and a full-session link', () => {
-    const html = renderToString(<AgentCreationProgressPanel
-      phase="creating"
-      modelLabel="gpt-5.6-sol"
-      job={{
-        id: 'creator-session',
-        sessionId: 'creator-session',
-        projectId: 'demo',
-        kind: 'agent-creation',
-        status: 'running',
-        phase: 'running',
-        model: 'openai:gpt-5.6-sol',
-        createdAt: 1,
-        sessionToken: 'view-token',
-      }}
-    />);
+describe('draft Changes thread', () => {
+  const step = (id: string, type: string, title: string, time: number): ApprovalLogEntry =>
+    ({ id, type, title, time, ...(type === 'tool' ? { tool: title, status: 'completed' } : {}) });
 
-    expect(html).toContain('Live AgentUse session');
-    expect(html).toContain('Open full session log');
-    expect(html).toContain('/sessions/creator-session?project=demo&amp;token=view-token');
-    expect(html).not.toContain('Creation log');
+  it('splits turns on the continue prompt and pairs them with their bubbles', () => {
+    const entries: ApprovalLogEntry[] = [
+      { id: 'd', type: 'log', level: 'debug', title: 'telemetry noise' },
+      step('a', 'tool', 'skill_load', 1_000),
+      step('b', 'tool', 'submit_agent_source', 4_000),
+      { id: 'c', type: 'text', title: 'User response', message: 'make it shorter' },
+      step('e', 'tool', 'submit_agent_source', 9_000),
+    ];
+    const groups = groupDraftTurns(entries, [
+      { reply: 'Created it' },
+      { request: 'make it shorter', reply: 'Shortened it' },
+    ]);
+
+    expect(groups).toHaveLength(2);
+    // The continue marker itself is a boundary, not a step, and debug noise
+    // never reaches the thread.
+    expect(groups[0]!.steps.map((entry) => entry.id)).toEqual(['a', 'b']);
+    expect(groups[1]!.steps.map((entry) => entry.id)).toEqual(['e']);
+    expect(groups[0]!.turn?.reply).toBe('Created it');
+    expect(groups[1]!.turn?.request).toBe('make it shorter');
   });
 
-  it('shows preparation progress before connecting to the creator session', () => {
-    const html = renderToString(<AgentCreationProgressPanel
-      phase="creating"
-      modelLabel="gpt-5.6-terra"
-      job={{
-        id: 'preparing-creator',
-        sessionId: 'preparing-creator',
-        projectId: 'demo',
-        kind: 'agent-creation',
-        status: 'running',
-        phase: 'preparing',
-        model: 'openai:gpt-5.6-terra',
-        createdAt: 1,
-      }}
+  it('keeps a turn with no steps yet, so a fresh request still shows its bubble', () => {
+    const groups = groupDraftTurns([], [{ reply: 'Created it' }, { request: 'change it' }]);
+    expect(groups).toHaveLength(2);
+    expect(groups[1]!.turn?.request).toBe('change it');
+    expect(groups[1]!.steps).toEqual([]);
+  });
+
+  it('renders the steps between the bubbles with a link to the full log', () => {
+    const html = renderToString(<DraftThread
+      turns={[{ reply: 'Created it' }]}
+      entries={[step('a', 'tool', 'skill_load', 1_000), step('b', 'tool', 'submit_agent_source', 12_000)]}
+      running={false}
+      sessionId="creator-session"
+      projectId="demo"
+      token="view-token"
+      sessionHref="/sessions/creator-session?project=demo&token=view-token"
     />);
 
-    expect(html).toContain('Preparing project context');
-    expect(html).toContain('Scanning project files and discovering available skills');
-    expect(html).not.toContain('Open full session log');
+    expect(html).toContain('2 steps');
+    expect(html).toContain('11s');
+    expect(html).toContain('Created it');
+    expect(html).toContain('Open full session log');
+  });
+
+  it('says nothing has been asked for yet when the thread is empty', () => {
+    const html = renderToString(<DraftThread
+      turns={[]}
+      entries={[]}
+      running
+      sessionId="creator-session"
+      projectId="demo"
+      token={undefined}
+      sessionHref="/sessions/creator-session"
+      emptyHint="The creator is working."
+    />);
+    expect(html).toContain('The creator is working.');
   });
 });
 
