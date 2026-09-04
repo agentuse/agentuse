@@ -768,6 +768,8 @@ export function startOnboardingAgentCreation(input: {
   objective: string;
   model: string;
   schedule: string;
+  /** Files the idea cited, carried onto the draft's brief card. */
+  evidence?: string;
 }): Promise<{ success: true; job: OnboardingJobHandle }> {
   return postJson('/api/agents', { ...input, guided: true });
 }

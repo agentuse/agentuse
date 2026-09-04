@@ -59,7 +59,7 @@ export function ProjectAgentDiscovery(props: {
   };
 
   useEffect(() => {
-    void Promise.all([fetchProviderSetup(), fetchAgentCreationOptions()]).then(([provider, options]) => {
+    void Promise.all([fetchProviderSetup(), fetchAgentCreationOptions(props.projectId)]).then(([provider, options]) => {
       dispatch({ type: 'BOOT_SUCCEEDED', provider, options });
       const storedResume = typeof sessionStorage === 'undefined' ? null : sessionStorage.getItem(resumeKey);
       const resume = parseProjectDiscoveryResume(storedResume);
@@ -141,7 +141,7 @@ export function ProjectAgentDiscovery(props: {
     setModal(null);
     setProviderRouteState(props.projectId, false);
     try {
-      const options = await fetchAgentCreationOptions();
+      const options = await fetchAgentCreationOptions(props.projectId);
       dispatch({ type: 'PROVIDER_CONNECTED', provider, options });
       if (props.startDirectCreate) setModal('direct-create');
     } catch (caught) {
@@ -171,8 +171,12 @@ export function ProjectAgentDiscovery(props: {
         objective: suggestion.objective,
         model,
         schedule: suggestion.schedule,
+        ...(suggestion.evidence.length > 0 && { evidence: suggestion.evidence.join(', ') }),
       });
-      dispatch({ type: 'CREATION_SESSION_STARTED', job });
+      // An idea lands on the same draft page as a hand-written brief, so review,
+      // refinement, and a test run are one flow rather than two.
+      clearResume();
+      window.location.href = agentDraftHref(props.projectId, job.id);
     } catch (caught) {
       dispatch({ type: 'CREATION_FAILED', error: (caught as Error).message || 'Could not create this agent.' });
     }
@@ -255,7 +259,7 @@ export function ProjectAgentDiscovery(props: {
                     ? 'AgentUse is reading the project, considering installed skills, and preparing three ideas.'
                     : isCreationStage
                       ? 'AgentUse is loading relevant skill instructions, then writing and validating the agent source.'
-                      : discovery?.summary ?? 'Choose one idea to continue.'}
+                      : discovery?.summary ?? 'Pick one and the draft opens for you to refine and test.'}
         </p>
 
         <div class="onboarding-project">
@@ -267,6 +271,21 @@ export function ProjectAgentDiscovery(props: {
             ? 'Read-only view · up to 400 files available to the model'
             : `Read-only view · ${discovery.inspectedFiles} files available to the model`}</small>}
         </div>
+
+        {/* The skill pool the scan will weigh, shown before it runs: it changes
+            what kinds of idea are even possible. */}
+        {!directCreateStage && state.type === 'ready' && setup?.options.skills && (
+          <div class="discovery-skills">
+            <span>Skills considered</span>
+            <div class="agent-create-skills-counts">
+              <span class="is-project">{setup.options.skills.counts.project} project</span>
+              <span class="is-global">{setup.options.skills.counts.global} global</span>
+              {setup.options.skills.counts.ambiguous > 0 && (
+                <span class="is-ambiguous">{setup.options.skills.counts.ambiguous} ambiguous</span>
+              )}
+            </div>
+          </div>
+        )}
 
         {!directCreateStage && state.type === 'ready' && (
           <div class="discovery-model-field">
@@ -354,8 +373,11 @@ export function ProjectAgentDiscovery(props: {
                   <h3>{suggestion.name}</h3>
                   <p>{suggestion.description}</p>
                   <div class="agent-suggestion-meta"><span>{suggestion.scheduleHuman}</span></div>
+                  {suggestion.evidence.length > 0 && (
+                    <span class="agent-suggestion-evidence">Evidence: {suggestion.evidence.join(', ')}</span>
+                  )}
                 </div>
-                <button type="button" class="onboarding-primary" onClick={() => void create(suggestion)}>Create agent</button>
+                <button type="button" class="onboarding-primary" onClick={() => void create(suggestion)}>Draft this agent</button>
               </article>
             ))}
             <div class="agent-suggestion-footer">

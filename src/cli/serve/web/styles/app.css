@@ -9816,3 +9816,28 @@ main[tabindex="-1"]:focus,
   font-size: var(--font-size-micro);
   line-height: var(--lh-snug);
 }
+
+/* Idea cards cite the files they came from, and the pre-scan screen states the
+   skill pool the scan will weigh. */
+.agent-suggestion-evidence {
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  line-height: var(--lh-snug);
+}
+.discovery-skills {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.discovery-skills > span {
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
