@@ -8826,6 +8826,12 @@ button.ctx-result[aria-expanded="true"] .ctx-chevron { transform: rotate(180deg)
   grid-column: 2;
   min-width: 0;
 }
+/* Route changes and "skip to content" move focus to <main> (and the drawer
+   to its <aside>) so assistive tech lands on the new page. Those are landmark
+   containers, not controls: no focus ring (iOS Safari otherwise draws its blue
+   box around the whole page). Controls inside keep their own :focus-visible. */
+main[tabindex="-1"]:focus,
+.app-sidebar[tabindex="-1"]:focus { outline: none; }
 .app-route main { max-width: calc(100% - 32px); }
 
 .app-sidebar {
