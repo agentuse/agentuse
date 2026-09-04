@@ -7254,7 +7254,9 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-sessions .btn:disabled { opacity: 0.5; cursor: default; }
 .page-sessions .btn.primary { color: var(--primary-fg); background: var(--primary-bg); border-color: transparent; font-weight: var(--weight-bold); }
 .page-sessions .btn.primary:hover:not(:disabled) { background: var(--primary-bg-hover); color: var(--primary-fg); }
-.page-sessions .out { padding: 18px 22px 24px; overflow-y: auto; flex: 1; }
+/* min-height: 0 lets the output shrink inside the capped reader, so a long
+   response scrolls here and the Newer/Older footer stays on screen. */
+.page-sessions .out { padding: 18px 22px 24px; overflow-y: auto; flex: 1; min-height: 0; }
 .page-sessions .out-label {
   display: flex;
   align-items: center;
@@ -7277,6 +7279,8 @@ a.lastrun.waiting { color: var(--cyan); }
   font-size: var(--font-size-supporting);
 }
 .page-sessions .prevnext {
+  flex: none;
+  background: var(--surface);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -7476,7 +7480,10 @@ a.lastrun.waiting { color: var(--cyan); }
   .page-sessions .sessions-lede { display: none; }
   .page-sessions .sessions-count { margin-left: 0; width: 100%; }
   .page-sessions .it { padding: 11px 10px; min-height: 44px; }
-  .page-sessions .reader { position: static; max-height: none; }
+  .page-sessions .reader { position: static; max-height: none; overflow: visible; }
+  /* The phone reader scrolls with the page, so the footer floats at the bottom
+     of the screen while a long output is on it. */
+  .page-sessions .prevnext { position: sticky; bottom: 0; border-radius: 0 0 14px 14px; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
   .page-sessions .reader-head { flex-direction: column; }
   .page-sessions .reader-actions { width: 100%; }
   .page-sessions .reader-actions .btn { flex: 1; justify-content: center; min-height: 44px; }
