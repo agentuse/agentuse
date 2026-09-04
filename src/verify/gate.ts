@@ -11,6 +11,9 @@
 import type { Tool } from 'ai';
 import { judgeOutput } from './judge.js';
 import type { CandidateVerdict, CanonicalVerifyConfig, GateCandidate, VerifyPlacement, VerifyVerdict } from './types.js';
+import { extractGateCandidates, fingerprintText } from './candidates.js';
+
+export { extractGateCandidates, fingerprintText } from './candidates.js';
 import { logger } from '../utils/logger.js';
 import type { SessionManager } from '../session/manager.js';
 import type { Part, VerifyPart } from '../session/types.js';
@@ -216,48 +219,6 @@ export async function renderGatePayload(
   return sections.join('\n\n');
 }
 
-/** The reviewable candidates on a gate. Slate gates key each `changes[]`
- * entry by its `optionId`; single-draft gates key by position. A gate with no
- * changes but a `draft` is one candidate. Empty when nothing is reviewable. */
-export function extractGateCandidates(input: Record<string, unknown>): GateCandidate[] {
-  const str = (v: unknown): string | undefined =>
-    typeof v === 'string' && v.trim() ? v.trim() : undefined;
-  const options = Array.isArray(input.options) ? input.options as Array<Record<string, unknown>> : [];
-  const optionLabels = new Map<string, string>();
-  for (const option of options) {
-    const id = str(option?.id);
-    if (id) optionLabels.set(id, str(option?.label) ?? id);
-  }
-  const changes = Array.isArray(input.changes)
-    ? input.changes as Array<{ label?: unknown; content?: unknown; displayContent?: unknown; optionId?: unknown }>
-    : [];
-  const candidates: GateCandidate[] = [];
-  const seen = new Set<string>();
-  changes.forEach((change, index) => {
-    const text = str(change?.displayContent) ?? str(change?.content);
-    if (!text) return;
-    const optionId = str(change?.optionId);
-    let id = optionId ?? `change-${index + 1}`;
-    // Two changes under one option (post + first comment) are one candidate:
-    // the reviewer picks the option, not the individual action.
-    if (seen.has(id)) {
-      const existing = candidates.find((candidate) => candidate.id === id)!;
-      existing.text = `${existing.text}\n\n${text}`;
-      return;
-    }
-    seen.add(id);
-    const label = optionId
-      ? optionLabels.get(optionId) ?? str(change?.label) ?? optionId
-      : str(change?.label) ?? `Action ${index + 1}`;
-    candidates.push({ id, label, text });
-  });
-  if (candidates.length === 0) {
-    const draft = str(input.draft);
-    if (draft) candidates.push({ id: 'draft', label: 'Draft', text: draft });
-  }
-  return candidates;
-}
-
 /**
  * Fold the gate's memory into the judge's answer. A candidate that passed on an
  * earlier attempt and whose text is byte-identical keeps its pass no matter
@@ -277,12 +238,13 @@ export function reconcileCandidateVerdicts(
   const judged = new Map((verdict.candidates ?? []).map((entry) => [entry.id, entry]));
   if (judged.size === 0 && settledIds.size === 0) return verdict;
   const merged: CandidateVerdict[] = candidates.map((candidate) => {
-    if (settledIds.has(candidate.id)) return { id: candidate.id, pass: true, settled: true };
+    const fingerprint = fingerprintText(candidate.text);
+    if (settledIds.has(candidate.id)) return { id: candidate.id, pass: true, settled: true, fingerprint };
     const entry = judged.get(candidate.id);
-    if (entry) return { id: candidate.id, pass: entry.pass, ...(entry.critique && { critique: entry.critique }) };
+    if (entry) return { id: candidate.id, pass: entry.pass, ...(entry.critique && { critique: entry.critique }), fingerprint };
     // The judge skipped this candidate: inherit the slate-level verdict so an
     // omitted failure cannot slip through as a pass.
-    return { id: candidate.id, pass: verdict.pass, ...(!verdict.pass && verdict.critique && { critique: verdict.critique }) };
+    return { id: candidate.id, pass: verdict.pass, ...(!verdict.pass && verdict.critique && { critique: verdict.critique }), fingerprint };
   });
   const failing = merged.filter((entry) => !entry.pass);
   const pass = failing.length === 0;
@@ -349,8 +311,16 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
         ? await gatherHumanApprovalHistory(sessionManager, sessionID, agentId)
         : [];
 
+      // A gate that reaches the human without a judge look gets a marker
+      // saying so. Without it the card shows the previous verdict as if it
+      // were about the text now on screen, which it is not.
       if (shouldDeferGateReviewToHuman(humanDecisions)) {
         logger.info('[Verify] Gate pre-review skipped after a human reviewer comment; returning the revision directly to the reviewer');
+        await recordVerifyPart({
+          type: 'verify', verdict: 'skipped', attempt: gateRejections, maxRedos: config.maxRedos,
+          critique: 'Not judged: returned straight to the reviewer who commented.',
+          judge: judgeName, time: { start: Date.now() },
+        });
         return suspend();
       }
 
@@ -358,6 +328,11 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
         logger.warn(
           `[Verify] Gate pre-review budget exhausted (${gateRejections} rejection${gateRejections === 1 ? '' : 's'}); escalating to the human reviewer with the critique unresolved`
         );
+        await recordVerifyPart({
+          type: 'verify', verdict: 'skipped', attempt: gateRejections, maxRedos: config.maxRedos,
+          critique: 'Not judged: pre-review budget spent, escalated to you.',
+          judge: judgeName, time: { start: Date.now() },
+        });
         return suspend();
       }
 
@@ -372,7 +347,7 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
         await recordVerifyPart({
           type: 'verify', verdict: 'pass', attempt, maxRedos: config.maxRedos,
           critique: 'Unchanged since the previous pass; carried forward without a new judge call.',
-          candidates: candidates.map((candidate) => ({ id: candidate.id, pass: true, settled: true })),
+          candidates: candidates.map((candidate) => ({ id: candidate.id, pass: true, settled: true, fingerprint: fingerprintText(candidate.text) })),
           judge: judgeName, time: { start: Date.now() },
         });
         return suspend();

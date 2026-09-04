@@ -389,9 +389,10 @@ describe('slate candidates', () => {
       new Set(['A'])
     );
     expect(verdict.pass).toBe(true);
-    expect(verdict.candidates).toEqual([
+    expect(verdict.candidates).toMatchObject([
       { id: 'A', pass: true, settled: true }, { id: 'B', pass: true }, { id: 'C', pass: true },
     ]);
+    expect(verdict.candidates!.every((entry) => typeof entry.fingerprint === 'string')).toBe(true);
   });
 
   it('lists every failing candidate in one critique and inherits the slate verdict for skipped ones', () => {
@@ -438,7 +439,7 @@ describe('slate candidates', () => {
     expect(secondCall.input.settledCandidateIds?.sort()).toEqual(['A', 'B']);
     const passPart = parts[1] as { verdict: string; candidates: Array<{ id: string; pass: boolean; settled?: boolean }> };
     expect(passPart.verdict).toBe('pass');
-    expect(passPart.candidates.find((c) => c.id === 'A')).toEqual({ id: 'A', pass: true, settled: true });
+    expect(passPart.candidates.find((c) => c.id === 'A')).toMatchObject({ id: 'A', pass: true, settled: true });
   });
 
   it('does not call the judge at all when every candidate already passed unchanged', async () => {
@@ -451,5 +452,76 @@ describe('slate candidates', () => {
     await expect(gated.execute(slate, {})).rejects.toThrow('SUSPENDED');
     expect(judgeOutputMock).toHaveBeenCalledTimes(1);
     expect(suspend).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('unjudged gates and verdict fingerprints', () => {
+  let fingerprintText: typeof import('../src/verify/candidates').fingerprintText;
+  beforeAll(async () => { ({ fingerprintText } = await import('../src/verify/candidates')); });
+
+  const slate = {
+    prompt: 'Which post?',
+    options: [{ id: 'A', label: 'A' }, { id: 'B', label: 'B' }],
+    changes: [{ optionId: 'A', content: 'post A' }, { optionId: 'B', content: 'post B' }],
+  };
+
+  it('stamps each recorded candidate with the fingerprint of the text it judged', async () => {
+    const { tool } = makeGateTool();
+    const parts: any[] = [];
+    const sessionManager = { addPart: mock(async (_s: string, _a: string, _m: string, part: unknown) => { parts.push(part); }) } as any;
+    const gated = withGateVerify(tool, { ...baseOptions, config: { criteria: 'q', maxRedos: 2 }, sessionManager, sessionID: 's', agentId: 'a', messageID: 'm' });
+    judgeOutputMock.mockResolvedValueOnce({ status: 'verdict', verdict: { pass: false, critique: 'A bad', candidates: [{ id: 'A', pass: false, critique: 'A bad' }, { id: 'B', pass: true }] } });
+    await gated.execute(slate, {});
+    expect(parts[0].candidates.map((c: any) => [c.id, c.fingerprint])).toEqual([
+      ['A', fingerprintText('post A')], ['B', fingerprintText('post B')],
+    ]);
+  });
+
+  it('records a skipped marker when the redo budget is spent, so the card knows nothing judged the final text', async () => {
+    const { tool, suspend } = makeGateTool();
+    const parts: any[] = [];
+    const sessionManager = { addPart: mock(async (_s: string, _a: string, _m: string, part: unknown) => { parts.push(part); }) } as any;
+    const gated = withGateVerify(tool, { ...baseOptions, config: { criteria: 'q', maxRedos: 1 }, sessionManager, sessionID: 's', agentId: 'a', messageID: 'm' });
+    judgeOutputMock.mockResolvedValueOnce({ status: 'verdict', verdict: { pass: false, critique: 'too long' } });
+    await gated.execute(gateInput, {});
+    await expect(gated.execute({ ...gateInput, changes: [{ label: 'Reply', content: 'shorter' }] }, {})).rejects.toThrow('SUSPENDED');
+    expect(suspend).toHaveBeenCalledTimes(1);
+    expect(judgeOutputMock).toHaveBeenCalledTimes(1);
+    expect(parts.map((p) => p.verdict)).toEqual(['fail', 'skipped']);
+    expect(parts[1]).toMatchObject({ attempt: 1, maxRedos: 1 });
+    expect(parts[1].critique).toContain('budget spent');
+  });
+
+  it('records a skipped marker when a reviewer comment routes the revision straight back', async () => {
+    const parts: any[] = [];
+    const sessionManager = {
+      getSessionMessages: async () => [{ id: 'message-1' }],
+      getMessageParts: async () => [{
+        type: 'tool',
+        tool: 'await_human',
+        state: {
+          status: 'completed',
+          input: { prompt: 'Pick?', draft: 'Original slate' },
+          output: { status: 'commented', comment: 'Cut the second sentence', reviewer: { username: 'web' } },
+        },
+      }],
+      addPart: async (_s: string, _a: string, _m: string, part: unknown) => { parts.push(part); },
+    } as any;
+    const { tool, suspend } = makeGateTool();
+    const gated = withGateVerify(tool, { ...baseOptions, sessionManager, sessionID: 's', agentId: 'a', messageID: 'm' });
+    await expect(gated.execute(gateInput, {})).rejects.toThrow('SUSPENDED');
+    expect(suspend).toHaveBeenCalledTimes(1);
+    expect(judgeOutputMock).not.toHaveBeenCalled();
+    expect(parts.map((p) => p.verdict)).toEqual(['skipped']);
+    expect(parts[0].critique).toContain('reviewer who commented');
+  });
+});
+
+describe('fingerprintText', () => {
+  it('is stable for equal text and differs on any change', async () => {
+    const { fingerprintText } = await import('../src/verify/candidates');
+    expect(fingerprintText('hello')).toBe(fingerprintText('hello'));
+    expect(fingerprintText('hello')).not.toBe(fingerprintText('hello!'));
+    expect(fingerprintText('hello')).toMatch(/^[0-9a-f]{8}:5$/);
   });
 });

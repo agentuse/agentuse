@@ -1238,7 +1238,7 @@ async function runInternalWorker() {
 
   /** Structured verdict of one verify marker (mirrors serve/types LogVerifySummary). */
   interface LogVerifySummary {
-    verdict: 'pass' | 'fail' | 'error';
+    verdict: 'pass' | 'fail' | 'error' | 'skipped';
     attempt: number;
     maxAttempts: number;
     judge?: string;
@@ -1306,7 +1306,7 @@ async function runInternalWorker() {
      *  reviewer sees which candidate the judge failed and why without hunting
      *  the log for the marker. `sessionId` names the judge child; serve
      *  resolves it to `sessionHref`. */
-    judge?: LogVerifySummary & { sessionId?: string; sessionHref?: string };
+    judge?: LogVerifySummary & { sessionId?: string; sessionHref?: string; previous?: LogVerifySummary };
     decisionStatus?: string;
     decisionComment?: string;
     decisionChoice?: string;
@@ -1530,10 +1530,10 @@ async function runInternalWorker() {
     const critique = typeof part.critique === 'string' ? part.critique : undefined;
     const judge = typeof part.judge === 'string' ? part.judge : undefined;
     const candidates = Array.isArray(part.candidates)
-      ? (part.candidates as Array<{ id: string; pass: boolean; critique?: string; settled?: boolean }>)
+      ? (part.candidates as Array<{ id: string; pass: boolean; critique?: string; settled?: boolean; fingerprint?: string }>)
       : undefined;
     return {
-      verdict: part.verdict as 'pass' | 'fail' | 'error',
+      verdict: part.verdict as 'pass' | 'fail' | 'error' | 'skipped',
       attempt,
       maxAttempts: maxRedos + 1,
       ...(judge && { judge }),
@@ -1545,12 +1545,27 @@ async function runInternalWorker() {
   /** The latest verify marker recorded before `gatePartId` in the same session.
    *  A gate that bounced back from the judge is the one place a reviewer needs
    *  that verdict, and it is otherwise buried further up the folded log. */
-  function judgeSummaryForGate(parts: any[], gatePartId: string): LogVerifySummary | undefined {
+  function judgeSummaryForGate(parts: any[], gatePartId: string): (LogVerifySummary & { previous?: LogVerifySummary }) | undefined {
     let latest: LogVerifySummary | undefined;
+    let lastJudged: LogVerifySummary | undefined;
     for (const part of parts) {
       if (String(part?.id) === gatePartId) break;
-      if (part?.type === 'verify') latest = verifySummaryFromPart(part);
+      if (part?.type !== 'verify') continue;
+      latest = verifySummaryFromPart(part);
+      if (latest.verdict !== 'skipped') lastJudged = latest;
     }
+    return withPreviousVerdict(latest, lastJudged);
+  }
+
+  /** A skipped marker says "no judge looked at this"; the last real verdict
+   *  rides along so the card can still show what the judge said about the
+   *  earlier text, labelled as such. */
+  function withPreviousVerdict(
+    latest: LogVerifySummary | undefined,
+    lastJudged: LogVerifySummary | undefined
+  ): (LogVerifySummary & { previous?: LogVerifySummary }) | undefined {
+    if (!latest) return undefined;
+    if (latest.verdict === 'skipped' && lastJudged && lastJudged !== latest) return { ...latest, previous: lastJudged };
     return latest;
   }
 
@@ -1662,14 +1677,18 @@ async function runInternalWorker() {
           ? `Verification passed${attempt > 0 ? ` (after ${attempt} redo${attempt === 1 ? '' : 's'})` : ''}`
           : part.verdict === 'fail'
             ? `Verification failed (attempt ${attempt + 1} of ${maxRedos + 1})`
-            : 'Verification judge error';
+            : part.verdict === 'skipped'
+              ? 'Verification skipped'
+              : 'Verification judge error';
         const message = part.verdict === 'error'
           ? critique ?? 'Judge failed; output shipped unverified'
-          : critique ?? (judge ? `Judged by ${judge}` : undefined);
+          : part.verdict === 'skipped'
+            ? critique ?? 'Not judged'
+            : critique ?? (judge ? `Judged by ${judge}` : undefined);
         return {
           id: String(part.id),
           type: 'verify',
-          status: part.verdict === 'pass' ? 'completed' : 'error',
+          status: part.verdict === 'pass' ? 'completed' : part.verdict === 'skipped' ? 'skipped' : 'error',
           title,
           ...(message !== undefined && { message }),
           verify: verifySummaryFromPart(part),
@@ -1737,14 +1756,16 @@ async function runInternalWorker() {
     // before await_human suspends, so a bounced draft's reason is already in the
     // log — just far above the card the reviewer is actually looking at.
     let latestVerify: LogVerifySummary | undefined;
+    let lastJudged: LogVerifySummary | undefined;
     for (const entry of entries) {
       if (entry.type === 'verify' && 'verify' in entry && entry.verify) {
         latestVerify = entry.verify as LogVerifySummary;
+        if (latestVerify.verdict !== 'skipped') lastJudged = latestVerify;
         continue;
       }
       if (entry.type !== 'tool' || !('tool' in entry) || entry.tool !== 'await_human' || !latestVerify) continue;
       const withJudge = entry as { details?: ApprovalLogDetails };
-      withJudge.details = { ...(withJudge.details ?? {}), judge: latestVerify };
+      withJudge.details = { ...(withJudge.details ?? {}), judge: withPreviousVerdict(latestVerify, lastJudged)! };
     }
     return entries;
   }

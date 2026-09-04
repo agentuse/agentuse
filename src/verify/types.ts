@@ -101,4 +101,7 @@ export interface CandidateVerdict {
   /** True when the gate carried this verdict forward from an earlier attempt
    * because the candidate's text did not change, instead of re-judging it. */
   settled?: boolean;
+  /** Fingerprint of the text this verdict judged (see `fingerprintText`), so a
+   * card can tell whether the draft it shows is still that text. */
+  fingerprint?: string;
 }

@@ -78,3 +78,16 @@ describe('JudgePanel', () => {
     expect(html).toContain('judge returned no parseable verdict JSON');
   });
 });
+
+describe('JudgePanel with a skipped final marker', () => {
+  it('says the gate went to the human unjudged', () => {
+    const skipped: ApprovalLogEntry = {
+      id: 'v-skip', type: 'verify', status: 'skipped', title: 'Verification skipped', time: 3_000,
+      verify: { verdict: 'skipped', attempt: 2, maxAttempts: 3, critique: 'Not judged: pre-review budget spent, escalated to you.' },
+    };
+    const html = render(<JudgePanel rows={collectJudgeRows([ownVerify, skipped])} />);
+    expect(html).toContain('not judged · escalated to you');
+    expect(html).toContain('judge-row is-skipped');
+    expect(html).toContain('Not judged: pre-review budget spent, escalated to you.');
+  });
+});

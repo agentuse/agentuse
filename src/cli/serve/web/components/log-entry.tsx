@@ -5,6 +5,7 @@ import { useSmoothText } from '../hooks/use-smooth-text';
 import { useSessionTail } from '../hooks/use-session-tail';
 import { useTailSlot } from '../hooks/use-tail-slot';
 import type { ApprovalChange, ApprovalLogDetails, ApprovalLogEntry, ApprovalOption, ApprovalReference, LogSubagentEvent, LogSubagentSession, LogVerifySummary } from '../../types';
+import { extractGateCandidates, fingerprintText } from '../../../../verify/candidates';
 import { formatLogTime, isJsonLikeContent, logEntrySignature, storeItemPreview, storeItemTitle, valueAsRecord } from '../lib/format';
 import type { StoreItem } from '../../../../store/types';
 import { LogContent, InlineMarkdown } from './content';
@@ -419,8 +420,22 @@ type JudgeCandidate = NonNullable<LogVerifySummary['candidates']>[number];
  * shown here the reviewer had to scroll the folded log to find out which
  * draft the judge rejected and why.
  */
-function JudgeStrip(props: { candidate: JudgeCandidate; attempt: number }) {
+function JudgeStrip(props: { candidate: JudgeCandidate; attempt: number; stale?: boolean }) {
   const candidate = props.candidate;
+  if (props.stale) {
+    // The draft on the card is not the text this verdict judged. Say so
+    // instead of painting an old failure red under a revised draft.
+    return (
+      <div class="approval-judge-strip is-stale">
+        <span class="approval-judge-mark" aria-label="revised since the judge looked">✎</span>
+        <span class="approval-judge-note">
+          revised since attempt {props.attempt + 1} · not re-judged
+          {candidate.critique && <span class="approval-judge-was"> · was: {candidate.critique}</span>}
+        </span>
+        <span class="approval-judge-meta">judge · attempt {props.attempt + 1}</span>
+      </div>
+    );
+  }
   const note = candidate.settled
     ? 'unchanged · carried forward'
     : candidate.critique ?? (candidate.pass ? 'passed pre-review' : 'failed pre-review');
@@ -433,6 +448,37 @@ function JudgeStrip(props: { candidate: JudgeCandidate; attempt: number }) {
   );
 }
 
+/**
+ * The verdict whose per-candidate marks belong on the card, and whether each
+ * mark still describes the text on screen. A skipped marker carries the last
+ * real verdict as `previous`; a fingerprint that no longer matches the current
+ * candidate text means the draft was revised after the judge looked.
+ */
+function judgeMarksFor(judge: JudgeSummary | undefined, details: ApprovalLogDetails): {
+  attempt: number;
+  marks: Map<string, { candidate: JudgeCandidate; stale: boolean }>;
+} | undefined {
+  if (!judge) return undefined;
+  const source = judge.candidates && judge.candidates.length > 0
+    ? judge
+    : judge.previous && judge.previous.candidates && judge.previous.candidates.length > 0
+      ? judge.previous
+      : undefined;
+  if (!source?.candidates) return undefined;
+  const current = new Map(extractGateCandidates({
+    ...(details.options && { options: details.options }),
+    ...(details.changes && { changes: details.changes }),
+    ...(details.draft && { draft: details.draft }),
+  }).map((candidate) => [candidate.id, fingerprintText(candidate.text)]));
+  const marks = new Map<string, { candidate: JudgeCandidate; stale: boolean }>();
+  for (const candidate of source.candidates) {
+    const now = current.get(candidate.id);
+    const stale = Boolean(candidate.fingerprint) && now !== undefined && now !== candidate.fingerprint;
+    marks.set(candidate.id, { candidate, stale });
+  }
+  return { attempt: source.attempt, marks };
+}
+
 /** Where the gate stands with its automated reviewer, and how much redo budget
  *  is left — the reason this reached a human at all. */
 function JudgeFooter(props: { judge: JudgeSummary }) {
@@ -441,9 +487,11 @@ function JudgeFooter(props: { judge: JudgeSummary }) {
     ? 'passed pre-review'
     : judge.verdict === 'error'
       ? 'not reviewed · judge error'
-      : judge.attempt + 1 >= judge.maxAttempts
-        ? 'budget spent · escalated to you'
-        : 'escalated to you';
+      : judge.verdict === 'skipped'
+        ? `not judged · ${judge.critique?.replace(/^Not judged:\s*/i, '').replace(/\.$/, '') ?? 'no judge look'}`
+        : judge.attempt + 1 >= judge.maxAttempts
+          ? 'budget spent · escalated to you'
+          : 'escalated to you';
   return (
     <div class={`approval-judge-footer is-${judge.verdict}`}>
       <span class="approval-judge-footer-label">Judge</span>
@@ -464,8 +512,8 @@ function OptionsBlock(props: {
   selected?: string | undefined;
   decided?: string | undefined;
   onSelect?: ((id: string) => void) | undefined;
-  /** Per-candidate verdicts, keyed to option ids by the gate. */
-  judge?: JudgeSummary | undefined;
+  /** Per-candidate verdicts keyed to option ids, with staleness resolved. */
+  judgeMarks?: ReturnType<typeof judgeMarksFor> | undefined;
 }) {
   const interactive = Boolean(props.onSelect);
   return (
@@ -502,9 +550,9 @@ function OptionsBlock(props: {
           const commandDetails = changes
             .filter(hasDistinctCommand)
             .map((change, index) => <CommandDetail change={change} key={index} />);
-          const verdict = props.judge?.candidates?.find((candidate) => candidate.id === opt.id);
-          const strip = verdict
-            ? <JudgeStrip candidate={verdict} attempt={props.judge!.attempt} />
+          const mark = props.judgeMarks?.marks.get(opt.id);
+          const strip = mark
+            ? <JudgeStrip candidate={mark.candidate} attempt={props.judgeMarks!.attempt} stale={mark.stale} />
             : null;
           return interactive ? (
             <div class={`approval-option interactive${isSelected ? ' selected' : ''}`} key={opt.id}>
@@ -589,15 +637,19 @@ function ApprovalDetailCard(props: {
   // one twice. A pick gate with bare options (no per-option change) keeps the
   // draft open, since then it is the only place the candidates live.
   const judge = details.judge;
+  const judgeMarks = judgeMarksFor(judge, details);
   // A gate with no options is one draft: the judge's verdict on it is the sole
-  // candidate when the gate recorded one, else the marker's own verdict.
-  const soloVerdict: JudgeCandidate | undefined = judge && options.length === 0
-    ? judge.candidates?.[0] ?? {
-        id: 'draft',
-        pass: judge.verdict === 'pass',
-        ...(judge.critique && { critique: judge.critique }),
-      }
+  // candidate when the gate recorded one, else the marker's own verdict. A
+  // skipped marker with no earlier verdict has nothing to put under the draft;
+  // the footer says why.
+  const soloMark = judge && options.length === 0
+    ? judgeMarks
+      ? [...judgeMarks.marks.values()][0]
+      : judge.verdict === 'skipped'
+        ? undefined
+        : { candidate: { id: 'draft', pass: judge.verdict === 'pass', ...(judge.critique && { critique: judge.critique }) } as JudgeCandidate, stale: false }
     : undefined;
+  const soloAttempt = judgeMarks?.attempt ?? judge?.attempt ?? 0;
   const optionsCarryText = options.length > 0 && options.every((o) => optionChanges.some((c) => c.optionId === o.id));
   const demotePrimary = Boolean(primary) && (optionsCarryText || (options.length === 0 && standaloneChanges.length > 0));
   const primaryTitle = primary && demotePrimary && optionsCarryText ? `${primary.title} notes` : primary?.title;
@@ -639,7 +691,7 @@ function ApprovalDetailCard(props: {
           {standaloneChanges.length > 0 && <ChangesBlock changes={standaloneChanges} options={options} />}
         </>
       )}
-      {soloVerdict && <JudgeStrip candidate={soloVerdict} attempt={judge!.attempt} />}
+      {soloMark && <JudgeStrip candidate={soloMark.candidate} attempt={soloAttempt} stale={soloMark.stale} />}
       {(artifactPaths.length > 0 || snapshotOnlyPaths.length > 0 || detectedImagePaths.length > 0) && (
         <section class="approval-section approval-artifact">
           <h4 class="approval-section-title">{artifactPaths.length + snapshotOnlyPaths.length + detectedImagePaths.length > 1 ? 'Artifacts' : 'Artifact'}</h4>
@@ -721,7 +773,7 @@ function ApprovalDetailCard(props: {
           selected={props.selectedChoice}
           decided={details.decisionChoice}
           onSelect={props.onSelectChoice}
-          judge={judge}
+          judgeMarks={judgeMarks}
         />
       )}
       {decisionLabel && (
@@ -835,8 +887,8 @@ function VerifyEventCard(props: { event: Extract<LogSubagentEvent, { type: 'veri
   const event = props.event;
   const name = event.mode === 'inline' ? 'Inline criteria' : 'Judge setup';
   const breadcrumb = event.breadcrumb.map((entry) => entry.agentName).join(' › ');
-  const failed = event.verdict !== 'pass';
-  const statusClass = failed ? 'error' : 'completed';
+  const failed = event.verdict === 'fail' || event.verdict === 'error';
+  const statusClass = event.verdict === 'pass' ? 'completed' : event.verdict === 'skipped' ? 'skipped' : 'error';
   const ownerName = event.breadcrumb.at(-1)?.agentName ?? 'owning session';
   const inner = (
     <>

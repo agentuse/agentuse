@@ -8080,6 +8080,16 @@ a.lastrun.waiting { color: var(--cyan); }
   overflow-wrap: anywhere;
 }
 .page-approval-detail .approval-judge-strip.is-settled .approval-judge-note { color: var(--muted); font-style: italic; }
+/* Stale: the draft was revised after this verdict. Amber, never red, because
+   nothing has judged the text on screen. */
+.page-approval-detail .approval-judge-strip.is-stale { background: var(--amber-soft); }
+.page-approval-detail .approval-judge-strip.is-stale .approval-judge-mark { color: var(--amber); }
+.page-approval-detail .approval-judge-strip.is-stale .approval-judge-note { color: var(--fg); }
+.page-approval-detail .approval-judge-was { color: var(--muted); }
+.page-approval-detail .approval-judge-footer.is-skipped .approval-judge-footer-state { color: var(--amber); }
+.judge-row.is-skipped { border-left-color: var(--amber-border); }
+.judge-row.is-skipped .judge-row-mark { color: var(--amber); }
+.chip.status.skipped { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
 .page-approval-detail .approval-judge-meta {
   flex: none;
   margin-left: auto;

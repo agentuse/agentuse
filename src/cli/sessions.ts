@@ -1338,19 +1338,21 @@ async function showSession(
           } else if (part.type === "verify") {
             const v = part as Part & {
               type: "verify";
-              verdict: "pass" | "fail" | "error";
+              verdict: "pass" | "fail" | "error" | "skipped";
               critique?: string;
               judge?: string;
               attempt: number;
               maxRedos: number;
               candidates?: Array<{ id: string; pass: boolean; critique?: string; settled?: boolean }>;
             };
-            const mark = v.verdict === "pass" ? "✓" : v.verdict === "fail" ? "✗" : "⚠";
+            const mark = v.verdict === "pass" ? "✓" : v.verdict === "fail" ? "✗" : v.verdict === "skipped" ? "–" : "⚠";
             const label = v.verdict === "pass"
               ? `Verification passed${v.attempt > 0 ? ` (after ${v.attempt} redo${v.attempt === 1 ? "" : "s"})` : ""}`
               : v.verdict === "fail"
                 ? `Verification failed (attempt ${v.attempt + 1} of ${v.maxRedos + 1})`
-                : "Verification judge error";
+                : v.verdict === "skipped"
+                  ? `Verification skipped (attempt ${v.attempt + 1} of ${v.maxRedos + 1})`
+                  : "Verification judge error";
             const by = v.judge ? ` (judged by ${v.judge})` : "";
             process.stdout.write(`\n${mark} ${label}${by}\n`);
             if (v.candidates && v.candidates.length > 0) {

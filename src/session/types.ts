@@ -452,7 +452,9 @@ export interface LearningPart extends PartBase {
 
 /** Verdict of one verify judge invocation. `error` = the judge itself failed
  * (model/parse error in `detail`) and the output shipped unverified. */
-export type VerifyPartVerdict = 'pass' | 'fail' | 'error';
+/** `skipped`: the gate went to the human with no judge look (redo budget spent,
+ * or a reviewer comment routed the revision straight back). */
+export type VerifyPartVerdict = 'pass' | 'fail' | 'error' | 'skipped';
 
 /**
  * Marker recorded per verify judge invocation, so each verdict — and the
@@ -464,13 +466,13 @@ export interface VerifyPart extends PartBase {
   /** 0 = the run's first output, N = the output produced by the Nth redo. */
   attempt: number;
   maxRedos: number;
-  /** The judge's critique (fail) or failure detail (error). */
+  /** The judge's critique (fail), failure detail (error), or why no judge ran (skipped). */
   critique?: string;
   /** Judge identity: model string (built-in) or judge agent name. */
   judge?: string;
   /** Slate gates: one verdict per candidate. A `settled` entry was carried
    * forward unchanged from an earlier attempt rather than judged again. */
-  candidates?: Array<{ id: string; pass: boolean; critique?: string; settled?: boolean }>;
+  candidates?: Array<{ id: string; pass: boolean; critique?: string; settled?: boolean; fingerprint?: string }>;
   time: {
     start: number;
   };

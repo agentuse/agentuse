@@ -331,18 +331,22 @@ export function JudgePanel(props: { rows: JudgeRow[] }) {
   const failed = props.rows.filter((row) => row.verdict === 'fail').length;
   const lede = last.verdict === 'pass'
     ? failed > 0 ? `passed after ${failed} bounce${failed === 1 ? '' : 's'}` : 'passed first time'
-    : last.verdict === 'fail' ? 'still failing · escalated to you' : 'not reviewed · judge error';
+    : last.verdict === 'fail'
+      ? 'still failing · escalated to you'
+      : last.verdict === 'skipped'
+        ? 'not judged · escalated to you'
+        : 'not reviewed · judge error';
   return (
     <section class="panel judge-panel" aria-label="Judge verdicts">
       <div class="judge-panel-head">
         <span class="judge-label">judge</span>
-        <span class={`chip status ${last.verdict === 'pass' ? 'completed' : 'error'}`}>{lede}</span>
+        <span class={`chip status ${last.verdict === 'pass' ? 'completed' : last.verdict === 'skipped' ? 'skipped' : 'error'}`}>{lede}</span>
       </div>
       <ol class="judge-rows">
         {props.rows.map((row) => (
           <li key={row.id} class={`judge-row is-${row.verdict}`}>
             <a class="judge-row-head" href={row.href}>
-              <span class="judge-row-mark" aria-hidden="true">{row.verdict === 'pass' ? '✓' : row.verdict === 'fail' ? '✗' : '⚠'}</span>
+              <span class="judge-row-mark" aria-hidden="true">{row.verdict === 'pass' ? '✓' : row.verdict === 'fail' ? '✗' : row.verdict === 'skipped' ? '–' : '⚠'}</span>
               <span class="judge-row-attempt">{row.attemptLabel}</span>
               {row.owner && <span class="judge-row-owner">{row.owner}</span>}
               {row.judge && <code class="judge-row-judge">{row.judge}</code>}

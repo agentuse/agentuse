@@ -908,7 +908,7 @@ interface LogSubagentSession extends ChildSessionSummary {
   /** Judge children: 0-based attempt, and the verdict its parent's verify
    *  marker recorded for it. */
   attempt?: number;
-  verdict?: 'pass' | 'fail' | 'error';
+  verdict?: 'pass' | 'fail' | 'error' | 'skipped';
   critique?: string;
   candidates?: VerifyCandidateSummary[];
   maxAttempts?: number;
@@ -2852,7 +2852,7 @@ function importantDescendantTree(
       ...event,
       displayStatus: event.type === 'reviewer-feedback'
         ? 'commented'
-        : event.verdict === 'pass' ? 'passed' : event.verdict === 'fail' ? 'failed' : 'error',
+        : event.verdict === 'pass' ? 'passed' : event.verdict === 'fail' ? 'failed' : event.verdict === 'skipped' ? 'not judged' : 'error',
       ...(ownerHref && { href: `${ownerHref}#log-${encodeURIComponent(event.sourceLogId)}` }),
     };
     owner.events = [...(owner.events ?? []), projected];

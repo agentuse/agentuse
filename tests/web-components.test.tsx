@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { fingerprintText } from '../src/verify/candidates';
 import { renderToString } from 'preact-render-to-string';
 import { LogEntry } from '../src/cli/serve/web/components/log-entry';
 import {
@@ -2126,6 +2127,48 @@ describe('judge verdict on an approval gate card', () => {
       judge: { verdict: 'error', attempt: 0, maxAttempts: 3 },
     }), { expanded: true });
     expect(html).toContain('attempt 1 of 3 · not reviewed · judge error');
+  });
+
+  it('labels a verdict as stale when the draft on the card is not the text it judged', () => {
+    const html = renderEntry(gate({
+      prompt: 'Pick a reply',
+      options: [{ id: 'A', label: 'Draft A' }, { id: 'B', label: 'Draft B' }],
+      changes: [
+        { optionId: 'A', content: 'first reply, now shorter' },
+        { optionId: 'B', content: 'second reply' },
+      ],
+      judge: {
+        verdict: 'skipped', attempt: 2, maxAttempts: 3, judge: '../shared/reply-judge.agentuse',
+        critique: 'Not judged: pre-review budget spent, escalated to you.',
+        previous: {
+          verdict: 'fail', attempt: 1, maxAttempts: 3,
+          candidates: [
+            { id: 'A', pass: false, critique: 'Fails the 280-character limit at 297 characters', fingerprint: fingerprintText('first reply') },
+            { id: 'B', pass: false, critique: 'Fails the platform constraint only', fingerprint: fingerprintText('second reply') },
+          ],
+        },
+      },
+    }), { expanded: true });
+
+    // A was revised after attempt 2: amber, not red, and the old reason kept as history.
+    expect(html).toContain('approval-judge-strip is-stale');
+    expect(html).toContain('revised since attempt 2 · not re-judged');
+    expect(html).toContain('was: Fails the 280-character limit at 297 characters');
+    // B is byte-identical to what the judge failed: still a real fail.
+    expect(html).toContain('approval-judge-strip is-fail');
+    expect(html).toContain('Fails the platform constraint only');
+    // The footer tells the truth about the latest marker.
+    expect(html).toContain('approval-judge-footer is-skipped');
+    expect(html).toContain('attempt 3 of 3 · not judged · pre-review budget spent, escalated to you');
+  });
+
+  it('shows no strip and a skipped footer when nothing has ever judged a single draft', () => {
+    const html = renderEntry(gate({
+      draft: 'the only reply',
+      judge: { verdict: 'skipped', attempt: 0, maxAttempts: 2, critique: 'Not judged: returned straight to the reviewer who commented.' },
+    }), { expanded: true });
+    expect(html).not.toContain('approval-judge-strip');
+    expect(html).toContain('attempt 1 of 2 · not judged · returned straight to the reviewer who commented');
   });
 
   it('leaves an unjudged gate exactly as it was', () => {

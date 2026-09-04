@@ -474,7 +474,7 @@ export interface ApprovalLogEntry {
 }
 
 export interface LogVerifySummary {
-  verdict: 'pass' | 'fail' | 'error';
+  verdict: 'pass' | 'fail' | 'error' | 'skipped';
   attempt: number;
   maxAttempts: number;
   judge?: string;
@@ -502,7 +502,7 @@ export interface LogSubagentSession extends ChildSessionSummary {
   /** Judge children: 0-based attempt, and the verdict its parent's verify
    *  marker recorded for it. */
   attempt?: number;
-  verdict?: 'pass' | 'fail' | 'error';
+  verdict?: 'pass' | 'fail' | 'error' | 'skipped';
   critique?: string;
   candidates?: VerifyCandidateSummary[];
   maxAttempts?: number;
@@ -632,6 +632,10 @@ export interface ApprovalLogDetails {
     sessionId?: string;
     /** Tokenized link to that session, resolved by the serve layer. */
     sessionHref?: string;
+    /** When the latest marker is `skipped`, the last verdict the judge did
+     *  give, so the card can still show per-candidate marks (as stale when
+     *  the text moved on). */
+    previous?: LogVerifySummary;
   };
   /** A deliverable saved by `tools__artifact_save`, rendered as a viewable tile linking to the artifact. */
   savedArtifact?: {

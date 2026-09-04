@@ -43,7 +43,7 @@ export interface ImportantDescendantSummary {
    * The marker lives on the parent (the session that ran the gate), so without
    * this a manager's tree showed a judge child that completed and nothing
    * about what it decided. */
-  verdict?: 'pass' | 'fail' | 'error';
+  verdict?: 'pass' | 'fail' | 'error' | 'skipped';
   critique?: string;
   candidates?: VerifyCandidateSummary[];
   maxAttempts?: number;
@@ -82,7 +82,7 @@ interface ImportantDescendantEventBase {
 
 export interface VerifyDescendantEvent extends ImportantDescendantEventBase {
   type: 'verify';
-  verdict: 'pass' | 'fail' | 'error';
+  verdict: 'pass' | 'fail' | 'error' | 'skipped';
   judge?: string;
   mode: 'inline' | 'sessionless-agent';
   attempt: number;
@@ -99,6 +99,8 @@ export interface VerifyCandidateSummary {
   critique?: string;
   /** Carried forward unchanged from an earlier attempt, not judged again. */
   settled?: boolean;
+  /** Fingerprint of the text this verdict judged. */
+  fingerprint?: string;
 }
 
 export interface ReviewerFeedbackDescendantEvent extends ImportantDescendantEventBase {
