@@ -7285,8 +7285,8 @@ a.lastrun.waiting { color: var(--cyan); }
   color: var(--muted);
   font-size: var(--font-size-caption);
 }
-.page-sessions .prevnext a { color: var(--muted-3); min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.page-sessions .prevnext a:hover { color: var(--cyan); }
+.page-sessions .prevnext-step { min-width: 0; min-height: 0; padding: 0; border: 0; background: none; color: var(--muted-3); font: inherit; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
+.page-sessions .prevnext-step:hover { color: var(--cyan); }
 .page-sessions .prevnext-gap { margin-left: auto; }
 .page-sessions .prevnext-end { color: var(--muted-2); }
 .page-sessions .prevnext-keys kbd,

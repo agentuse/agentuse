@@ -307,12 +307,16 @@ export function SessionReader(props: {
           )}
       </div>
       <div class="prevnext">
+        {/* Buttons, not links: the SPA router routes every same-origin anchor
+            click at the document level (it never checks defaultPrevented), so
+            an <a> here would open the full session page instead of moving
+            the reader to the neighbouring run. */}
         {props.newer
-          ? <a href={sessionHref(props.newer)} onClick={(e) => { if (props.onNavigate) { e.preventDefault(); props.onNavigate(props.newer!); } }}>← Newer: {displayName(props.newer)}</a>
+          ? <button type="button" class="prevnext-step" onClick={() => props.onNavigate?.(props.newer!)}>← Newer: {displayName(props.newer)}</button>
           : <span class="prevnext-end">Newest run</span>}
         <span class="prevnext-gap" />
         {props.older
-          ? <a href={sessionHref(props.older)} onClick={(e) => { if (props.onNavigate) { e.preventDefault(); props.onNavigate(props.older!); } }}>Older: {displayName(props.older)} →</a>
+          ? <button type="button" class="prevnext-step" onClick={() => props.onNavigate?.(props.older!)}>Older: {displayName(props.older)} →</button>
           : <span class="prevnext-end">Oldest loaded run</span>}
         {props.showKeyHints && <span class="prevnext-keys"><kbd>j</kbd>/<kbd>k</kbd></span>}
       </div>
