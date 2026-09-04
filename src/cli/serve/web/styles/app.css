@@ -8100,7 +8100,6 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-approval-detail .approval-judge-strip.is-stale .approval-judge-mark { color: var(--amber); }
 .page-approval-detail .approval-judge-strip.is-stale .approval-judge-note { color: var(--fg); }
 .page-approval-detail .approval-judge-was { color: var(--muted); }
-.page-approval-detail .approval-judge-footer.is-skipped .approval-judge-footer-state { color: var(--amber); }
 .judge-row.is-skipped { border-left-color: var(--amber-border); }
 .judge-row.is-skipped .judge-row-mark { color: var(--amber); }
 .chip.status.skipped { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
@@ -8111,28 +8110,9 @@ a.lastrun.waiting { color: var(--cyan); }
   font-size: var(--font-size-micro);
   white-space: nowrap;
 }
-.page-approval-detail .approval-judge-footer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 10px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
-  font-size: var(--font-size-caption);
-}
-.page-approval-detail .approval-judge-footer-label {
-  color: var(--muted);
-  font-size: var(--font-size-micro);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-}
-.page-approval-detail .approval-judge-footer-label::before { content: "\2696 "; color: var(--cyan); opacity: 0.7; }
+.page-approval-detail a.approval-judge-meta { text-decoration: none; }
+.page-approval-detail a.approval-judge-meta:hover { color: var(--fg); text-decoration: underline; }
 .page-approval-detail .approval-judge-path { color: var(--muted); font-size: var(--font-size-micro); overflow-wrap: anywhere; }
-.page-approval-detail .approval-judge-footer-state { color: var(--fg); }
-.page-approval-detail .approval-judge-footer.is-fail .approval-judge-footer-state { color: var(--red); }
-.page-approval-detail .approval-judge-footer.is-error .approval-judge-footer-state { color: var(--amber); }
-.page-approval-detail .approval-judge-link { margin-left: auto; white-space: nowrap; }
 
 /* Mobile: the 3-column grid (chip / name / long session id) overflows on
    narrow screens because the id and command tracks size to their unbreakable

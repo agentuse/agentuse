@@ -420,8 +420,12 @@ type JudgeCandidate = NonNullable<LogVerifySummary['candidates']>[number];
  * shown here the reviewer had to scroll the folded log to find out which
  * draft the judge rejected and why.
  */
-function JudgeStrip(props: { candidate: JudgeCandidate; attempt: number; stale?: boolean }) {
+function JudgeStrip(props: { candidate: JudgeCandidate; attempt: number; stale?: boolean; href?: string | undefined }) {
   const candidate = props.candidate;
+  const meta = `judge · attempt ${props.attempt + 1}`;
+  const metaNode = props.href
+    ? <a class="approval-judge-meta" href={props.href} title="Open the judge session">{meta} ›</a>
+    : <span class="approval-judge-meta">{meta}</span>;
   if (props.stale) {
     // The draft on the card is not the text this verdict judged. Say so
     // instead of painting an old failure red under a revised draft.
@@ -432,7 +436,7 @@ function JudgeStrip(props: { candidate: JudgeCandidate; attempt: number; stale?:
           revised since attempt {props.attempt + 1} · not re-judged
           {candidate.critique && <span class="approval-judge-was"> · was: {candidate.critique}</span>}
         </span>
-        <span class="approval-judge-meta">judge · attempt {props.attempt + 1}</span>
+        {metaNode}
       </div>
     );
   }
@@ -443,7 +447,7 @@ function JudgeStrip(props: { candidate: JudgeCandidate; attempt: number; stale?:
     <div class={`approval-judge-strip ${candidate.pass ? 'is-pass' : 'is-fail'}${candidate.settled ? ' is-settled' : ''}`}>
       <span class="approval-judge-mark" aria-label={candidate.pass ? 'judge pass' : 'judge fail'}>{candidate.pass ? '✓' : '✗'}</span>
       <span class="approval-judge-note">{note}</span>
-      <span class="approval-judge-meta">judge · attempt {props.attempt + 1}</span>
+      {metaNode}
     </div>
   );
 }
@@ -457,6 +461,7 @@ function JudgeStrip(props: { candidate: JudgeCandidate; attempt: number; stale?:
 function judgeMarksFor(judge: JudgeSummary | undefined, details: ApprovalLogDetails): {
   attempt: number;
   marks: Map<string, { candidate: JudgeCandidate; stale: boolean }>;
+  href?: string | undefined;
 } | undefined {
   if (!judge) return undefined;
   const source = judge.candidates && judge.candidates.length > 0
@@ -476,32 +481,7 @@ function judgeMarksFor(judge: JudgeSummary | undefined, details: ApprovalLogDeta
     const stale = Boolean(candidate.fingerprint) && now !== undefined && now !== candidate.fingerprint;
     marks.set(candidate.id, { candidate, stale });
   }
-  return { attempt: source.attempt, marks };
-}
-
-/** Where the gate stands with its automated reviewer, and how much redo budget
- *  is left — the reason this reached a human at all. */
-function JudgeFooter(props: { judge: JudgeSummary }) {
-  const judge = props.judge;
-  const outcome = judge.verdict === 'pass'
-    ? 'passed pre-review'
-    : judge.verdict === 'error'
-      ? 'not reviewed · judge error'
-      : judge.verdict === 'skipped'
-        ? `not judged · ${judge.critique?.replace(/^Not judged:\s*/i, '').replace(/\.$/, '') ?? 'no judge look'}`
-        : judge.attempt + 1 >= judge.maxAttempts
-          ? 'budget spent · escalated to you'
-          : 'escalated to you';
-  return (
-    <div class={`approval-judge-footer is-${judge.verdict}`}>
-      <span class="approval-judge-footer-label">Judge</span>
-      {judge.judge && <code class="approval-judge-path">{judge.judge}</code>}
-      <span class="approval-judge-footer-state">attempt {judge.attempt + 1} of {judge.maxAttempts} · {outcome}</span>
-      {judge.sessionHref && (
-        <a class="approval-judge-link" href={judge.sessionHref}>open judge ›</a>
-      )}
-    </div>
-  );
+  return { attempt: source.attempt, marks, href: judge.sessionHref };
 }
 
 function OptionsBlock(props: {
@@ -552,7 +532,7 @@ function OptionsBlock(props: {
             .map((change, index) => <CommandDetail change={change} key={index} />);
           const mark = props.judgeMarks?.marks.get(opt.id);
           const strip = mark
-            ? <JudgeStrip candidate={mark.candidate} attempt={props.judgeMarks!.attempt} stale={mark.stale} />
+            ? <JudgeStrip candidate={mark.candidate} attempt={props.judgeMarks!.attempt} stale={mark.stale} href={props.judgeMarks!.href} />
             : null;
           return interactive ? (
             <div class={`approval-option interactive${isSelected ? ' selected' : ''}`} key={opt.id}>
@@ -640,14 +620,12 @@ function ApprovalDetailCard(props: {
   const judgeMarks = judgeMarksFor(judge, details);
   // A gate with no options is one draft: the judge's verdict on it is the sole
   // candidate when the gate recorded one, else the marker's own verdict. A
-  // skipped marker with no earlier verdict has nothing to put under the draft;
-  // the footer says why.
+  // skipped marker with no earlier verdict still gets a strip, carrying the
+  // reason it was never judged.
   const soloMark = judge && options.length === 0
     ? judgeMarks
       ? [...judgeMarks.marks.values()][0]
-      : judge.verdict === 'skipped'
-        ? undefined
-        : { candidate: { id: 'draft', pass: judge.verdict === 'pass', ...(judge.critique && { critique: judge.critique }) } as JudgeCandidate, stale: false }
+      : { candidate: { id: 'draft', pass: judge.verdict === 'pass', ...(judge.critique && { critique: judge.critique }) } as JudgeCandidate, stale: false }
     : undefined;
   const soloAttempt = judgeMarks?.attempt ?? judge?.attempt ?? 0;
   const optionsCarryText = options.length > 0 && options.every((o) => optionChanges.some((c) => c.optionId === o.id));
@@ -691,7 +669,7 @@ function ApprovalDetailCard(props: {
           {standaloneChanges.length > 0 && <ChangesBlock changes={standaloneChanges} options={options} />}
         </>
       )}
-      {soloMark && <JudgeStrip candidate={soloMark.candidate} attempt={soloAttempt} stale={soloMark.stale} />}
+      {soloMark && <JudgeStrip candidate={soloMark.candidate} attempt={soloAttempt} stale={soloMark.stale} href={judgeMarks?.href ?? judge?.sessionHref} />}
       {(artifactPaths.length > 0 || snapshotOnlyPaths.length > 0 || detectedImagePaths.length > 0) && (
         <section class="approval-section approval-artifact">
           <h4 class="approval-section-title">{artifactPaths.length + snapshotOnlyPaths.length + detectedImagePaths.length > 1 ? 'Artifacts' : 'Artifact'}</h4>
@@ -794,7 +772,6 @@ function ApprovalDetailCard(props: {
           <div class="approval-section-body">{details.errorMessage}</div>
         </section>
       )}
-      {judge && <JudgeFooter judge={judge} />}
     </div>
   );
 }

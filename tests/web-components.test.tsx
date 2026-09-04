@@ -2090,7 +2090,7 @@ describe('judge verdict on an approval gate card', () => {
     expect(html).toContain('judge · attempt 2');
   });
 
-  it('renders one strip for a single-draft gate and names the budget in the footer', () => {
+  it('renders one strip for a single-draft gate and links the judge session from its meta', () => {
     const html = renderEntry(gate({
       draft: 'the only reply',
       judge: {
@@ -2105,11 +2105,10 @@ describe('judge verdict on an approval gate card', () => {
 
     expect(html.split('approval-judge-strip').length - 1).toBe(1);
     expect(html).toContain('Reply overclaims the handoff.');
-    expect(html).toContain('approval-judge-footer is-fail');
-    expect(html).toContain('attempt 3 of 3 · budget spent · escalated to you');
-    expect(html).toContain('../shared/reply-judge.agentuse');
+    expect(html).toContain('approval-judge-strip is-fail');
     expect(html).toContain('href="/sessions/judge-3?token=t"');
-    expect(html).toContain('open judge ›');
+    expect(html).toContain('judge · attempt 3 ›');
+    expect(html).not.toContain('approval-judge-footer');
   });
 
   it('says the gate passed pre-review when the judge cleared it', () => {
@@ -2117,8 +2116,8 @@ describe('judge verdict on an approval gate card', () => {
       draft: 'the only reply',
       judge: { verdict: 'pass', attempt: 0, maxAttempts: 3 },
     }), { expanded: true });
-    expect(html).toContain('approval-judge-footer is-pass');
-    expect(html).toContain('attempt 1 of 3 · passed pre-review');
+    expect(html).toContain('approval-judge-strip is-pass');
+    expect(html).toContain('passed pre-review');
   });
 
   it('says the judge never produced a verdict on an error', () => {
@@ -2126,7 +2125,8 @@ describe('judge verdict on an approval gate card', () => {
       draft: 'the only reply',
       judge: { verdict: 'error', attempt: 0, maxAttempts: 3 },
     }), { expanded: true });
-    expect(html).toContain('attempt 1 of 3 · not reviewed · judge error');
+    expect(html).toContain('approval-judge-strip is-fail');
+    expect(html).toContain('failed pre-review');
   });
 
   it('labels a verdict as stale when the draft on the card is not the text it judged', () => {
@@ -2157,18 +2157,16 @@ describe('judge verdict on an approval gate card', () => {
     // B is byte-identical to what the judge failed: still a real fail.
     expect(html).toContain('approval-judge-strip is-fail');
     expect(html).toContain('Fails the platform constraint only');
-    // The footer tells the truth about the latest marker.
-    expect(html).toContain('approval-judge-footer is-skipped');
-    expect(html).toContain('attempt 3 of 3 · not judged · pre-review budget spent, escalated to you');
+    expect(html).not.toContain('approval-judge-footer');
   });
 
-  it('shows no strip and a skipped footer when nothing has ever judged a single draft', () => {
+  it('carries the not-judged reason on the strip when nothing has ever judged a single draft', () => {
     const html = renderEntry(gate({
       draft: 'the only reply',
       judge: { verdict: 'skipped', attempt: 0, maxAttempts: 2, critique: 'Not judged: returned straight to the reviewer who commented.' },
     }), { expanded: true });
-    expect(html).not.toContain('approval-judge-strip');
-    expect(html).toContain('attempt 1 of 2 · not judged · returned straight to the reviewer who commented');
+    expect(html).toContain('approval-judge-strip is-fail');
+    expect(html).toContain('Not judged: returned straight to the reviewer who commented.');
   });
 
   it('leaves an unjudged gate exactly as it was', () => {
