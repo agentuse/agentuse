@@ -431,6 +431,14 @@ export default function SessionsList() {
     seen.add(id);
     return true;
   });
+  // The server orders by last activity (a run that started yesterday and timed
+  // out this morning sorts among today's runs), but the list shows start times
+  // and groups by start day, so order by start here. Live runs still lead.
+  rows.sort((a, b) =>
+    (isRunningRow(a) ? 0 : 1) - (isRunningRow(b) ? 0 : 1) ||
+    b.createdAt - a.createdAt ||
+    a.sessionId.localeCompare(b.sessionId)
+  );
   const counts = resolvedData?.counts;
   const runningCount = counts?.running ?? rows.filter(isRunningRow).length;
 
