@@ -387,3 +387,23 @@ describe('internal agent revision', () => {
     })).rejects.toThrow('private revision contract does not match');
   });
 });
+
+describe('revision submission schema', () => {
+  it('is a plain object so the provider tool API accepts it', () => {
+    const tool = createSubmitAgentRevisionTool({}, {
+      revisionSessionId: '01K4ABCDEFGHJKMNPQRSTVWXYZ',
+      originSessionId: '01K3ABCDEFGHJKMNPQRSTVWXYZ',
+      projectId: 'demo',
+      projectRoot: '/tmp/demo',
+      targetAgentPath: '/tmp/demo/a.agentuse',
+      expectedSourceHash: 'hash',
+      availableModels: [],
+      availableSkills: [],
+    });
+    // A discriminated union converts to a schema with no top-level "type",
+    // which Anthropic rejects with "input_schema.type: Field required", so the
+    // outcome must stay one object with an enum discriminator.
+    const schema = tool.inputSchema as { _def?: { typeName?: string } };
+    expect(schema._def?.typeName).toBe('ZodObject');
+  });
+});

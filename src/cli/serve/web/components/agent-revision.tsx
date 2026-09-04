@@ -1,14 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { agentRevisionHref } from '../lib/links';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ReasoningLevel } from '../../../../model-compatibility';
 import type { AgentRevisionRecord } from '../../../../agents/revision';
-import { revisionLineDiff } from '../lib/revision-diff';
 import {
   fetchAgentCreationOptions,
   fetchAgentRevision,
   fetchAgentRevisions,
   fetchSessionRevisions,
   postAgentRevisionAction,
-  requestAgentRevisionChanges,
   startAgentRevision,
   ApiRequestError,
   type AgentRevisionSummary,
@@ -68,12 +67,7 @@ export function revisionOriginAction(revision: Pick<AgentRevisionSummary, 'statu
 }
 
 function revisionHref(revision: AgentRevisionSummary & { href?: string }, token?: string, project?: string): string {
-  if (revision.href) return revision.href;
-  const params = new URLSearchParams();
-  if (token) params.set('token', token);
-  if (project) params.set('project', project);
-  const query = params.toString();
-  return `/sessions/${encodeURIComponent(revision.revisionSessionId)}${query ? `?${query}` : ''}`;
+  return agentRevisionHref(project ?? revision.projectId, revision.revisionSessionId, token);
 }
 
 export function AgentRevisionLauncher(props: {
@@ -206,9 +200,7 @@ export function AgentRevisionLauncher(props: {
       try {
         if (job.sessionToken) localStorage.setItem(`agentuse:revision-token:${job.sessionId}`, job.sessionToken);
       } catch { /* persistence only improves return navigation */ }
-      const params = new URLSearchParams({ project: job.projectId, pending: '1' });
-      if (job.sessionToken) params.set('token', job.sessionToken);
-      window.location.assign(`/sessions/${encodeURIComponent(job.sessionId)}?${params.toString()}`);
+      window.location.assign(agentRevisionHref(job.projectId, job.sessionId, job.sessionToken));
     } catch (caught) {
       setError((caught as Error).message || 'Could not start the revision session.');
       const href = caught instanceof ApiRequestError && typeof caught.details.href === 'string'
@@ -334,8 +326,6 @@ export function AgentRevisionSessionPanel(props: {
   const [revision, setRevision] = useState<(Omit<AgentRevisionRecord, 'previousSource'> & { baseSource?: string; originHref?: string }) | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'apply' | 'discard' | 'restore' | 'cancel' | null>(null);
-  const [requestingChanges, setRequestingChanges] = useState(false);
-  const [changePrompt, setChangePrompt] = useState('');
   const isRevision = revision !== null;
 
   const refresh = async () => {
@@ -384,23 +374,6 @@ export function AgentRevisionSessionPanel(props: {
     }
   };
 
-  const requestChanges = async () => {
-    if (!changePrompt.trim()) return;
-    setError(null);
-    try {
-      await requestAgentRevisionChanges(props.sessionId, changePrompt.trim(), props.project);
-      setRequestingChanges(false);
-      setChangePrompt('');
-      await refresh();
-    } catch (caught) {
-      setError((caught as Error).message || 'Could not continue the revision session.');
-    }
-  };
-
-  const diff = useMemo(() => revision?.proposedSource && (revision.baseSource ?? props.currentSource)
-    ? revisionLineDiff((revision.baseSource ?? props.currentSource)!, revision.proposedSource)
-    : [], [revision?.proposedSource, revision?.baseSource, props.currentSource]);
-
   if (!isRevision) return null;
   const originHref = revision.originHref
     ?? revisionFallbackOriginHref(revision.originSessionId, props.project);
@@ -421,26 +394,16 @@ export function AgentRevisionSessionPanel(props: {
       )}
       {revision.diagnosis && <div class="agent-revision-diagnosis"><strong>Diagnosis</strong><p>{revision.diagnosis}</p></div>}
       {revision.status === 'no-change' && revision.recommendedAction && <div class="agent-revision-diagnosis"><strong>Recommended next action</strong><p>{revision.recommendedAction}</p></div>}
-      {revision.status === 'no-change' && (
-        <>
-          <p class="agent-revision-resolution-hint">Accepting finishes this revision. You can start another from the original session afterward.</p>
-          <div class="agent-revision-review-actions"><button type="button" class="agent-revision-primary" disabled={busy !== null} onClick={() => void act('discard')}>{busy === 'discard' ? 'Accepting…' : 'Accept diagnosis'}</button><button type="button" disabled={busy !== null} onClick={() => setRequestingChanges((value) => !value)}>Ask reviser to reconsider</button></div>
-          {requestingChanges && <div class="agent-revision-change-request"><textarea value={changePrompt} placeholder="Explain why the agent itself should change…" onInput={(event) => setChangePrompt((event.target as HTMLTextAreaElement).value)} /><button type="button" class="agent-revision-primary" disabled={!changePrompt.trim()} onClick={() => void requestChanges()}>Continue revision session</button></div>}
-        </>
-      )}
-      {revision.status === 'proposed' && revision.proposedSource && (
-        <>
-          <div class="agent-revision-proposal-title"><strong>{revision.summary}</strong><span>No changes applied yet.</span></div>
-          <div class="agent-revision-capabilities">
-            <strong>Capability review</strong>
-            {revision.capabilityChanges && revision.capabilityChanges.length > 0
-              ? <ul>{revision.capabilityChanges.map((change) => <li>{change}</li>)}</ul>
-              : <span>No model, schedule, tool, skill, integration, sub-agent, or channel changes.</span>}
-          </div>
-          <pre class="agent-revision-diff" aria-label="Proposed agent source changes">{diff.length > 0 ? diff.map((line) => <span class={`is-${line.kind}`}>{line.kind === 'add' ? '+ ' : line.kind === 'remove' ? '- ' : line.kind === 'same' ? '  ' : ''}{line.text}{'\n'}</span>) : revision.proposedSource}</pre>
-          <div class="agent-revision-review-actions"><button type="button" class="agent-revision-primary" disabled={busy !== null} onClick={() => void act('apply')}>{busy === 'apply' ? 'Applying…' : 'Apply revision'}</button><button type="button" disabled={busy !== null} onClick={() => setRequestingChanges((value) => !value)}>Request changes</button><button type="button" class="is-quiet" disabled={busy !== null} onClick={() => void act('discard')}>Discard</button></div>
-          {requestingChanges && <div class="agent-revision-change-request"><textarea value={changePrompt} placeholder="Keep the existing schedule, but make the output shorter…" onInput={(event) => setChangePrompt((event.target as HTMLTextAreaElement).value)} /><button type="button" class="agent-revision-primary" disabled={!changePrompt.trim()} onClick={() => void requestChanges()}>Continue revision session</button></div>}
-        </>
+      {/* The review itself lives on the revision page, which renders the same
+          panel the creator's drafts use. Keeping a second copy of the diff and
+          the apply actions here is what made them drift apart. */}
+      {(revision.status === 'proposed' || revision.status === 'no-change') && (
+        <div class="agent-revision-review-actions">
+          {revision.summary && <span class="agent-revision-proposal-title"><strong>{revision.summary}</strong></span>}
+          <a class="agent-revision-primary" href={agentRevisionHref(revision.projectId, revision.revisionSessionId, props.token)}>
+            {revision.status === 'proposed' ? 'Review the proposal' : 'Review the diagnosis'}
+          </a>
+        </div>
       )}
       {revision.status === 'applied' && <div class="agent-revision-review-actions">{revision.targetAgentRunPath && <a class="agent-revision-primary" href={`/agents/${encodeURIComponent(revision.projectId)}/${revision.targetAgentRunPath.split('/').map(encodeURIComponent).join('/')}`}>Open agent</a>}<button type="button" disabled={busy !== null} onClick={() => void act('restore')}>{busy === 'restore' ? 'Restoring…' : 'Restore previous source'}</button></div>}
       {error && <p class="agent-revision-error" role="alert">{error}</p>}

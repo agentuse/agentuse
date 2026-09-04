@@ -284,6 +284,9 @@ Read references/checklist.md before authoring a release workflow.`);
         name: 'Docs drift',
         fileName: 'docs-drift-monitor.agentuse',
         model: 'openai:gpt-5.6-luna',
+        // The accepted submission records which skills the creator had loaded,
+        // so the draft page can show what it drew on. None were loaded here.
+        loadedSkills: [],
       },
     }]);
 

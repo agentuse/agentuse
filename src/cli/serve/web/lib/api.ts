@@ -831,6 +831,14 @@ export function postAgentRevisionAction(
   return postJson(`/agent-revisions/${encodeURIComponent(revisionSessionId)}/${action}${query}`, {});
 }
 
+export function startAgentRevisionTestRun(
+  revisionSessionId: string,
+  project?: string,
+): Promise<{ success: true; testRun: { sessionId: string; draftIndex: number; sessionToken?: string } }> {
+  const query = project ? `?project=${encodeURIComponent(project)}` : '';
+  return postJson(`/agent-revisions/${encodeURIComponent(revisionSessionId)}/test-run${query}`, {});
+}
+
 export function requestAgentRevisionChanges(
   revisionSessionId: string,
   prompt: string,

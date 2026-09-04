@@ -142,7 +142,6 @@ import {
   reopenAgentDraft,
   settleAgentDraftTestRun,
   writeInternalAgentDraftSource,
-  type AgentDraftEntry,
   type AgentDraftRecord,
 } from "../agents/draft";
 import {
@@ -515,6 +514,16 @@ interface WorkerExecuteError {
   };
   /** Final output remains useful when report_incomplete ends the run. */
   result?: WorkerExecuteResult['result'];
+}
+
+/** Tag helpers for the reviser's follow-up prompt, kept out of the route body
+ *  so the literal tag text is written once. */
+function revisionProposalTag(source: string): string {
+  return `<standing_proposal>\n${source}\n</standing_proposal>`;
+}
+
+function revisionRequestTag(request: string): string {
+  return `<operator_request>\n${request}\n</operator_request>`;
 }
 
 /** A mock run needs more headroom than the same agent would need for real:
@@ -4074,11 +4083,15 @@ export function createServeCommand(): Command {
        *  dedicated worker carries the mock env, so the shared project worker
        *  keeps executing real runs untouched. The session it produces is marked
        *  mock by the runtime and stays out of Sessions and Home by default. */
-      const startAgentDraftTestRun = async (
+      const startMockTestRun = async (
         project: Project,
-        record: AgentDraftRecord,
-        draft: AgentDraftEntry,
+        candidate: { source: string; name: string; fileName: string; model: string; index: number },
+        onSettled?: (
+          sessionId: string,
+          outcome: { status: 'completed' | 'error'; error?: { code: string; message: string } },
+        ) => Promise<void>,
       ): Promise<{ sessionId: string; draftIndex: number; sessionToken?: string }> => {
+        const draft = candidate;
         const sessionId = ulid();
         // Mock mode fabricates every tool result through this model, so the
         // configured cheap model wins over the creator's own: a test run should
@@ -4087,7 +4100,7 @@ export function createServeCommand(): Command {
           AGENTUSE_PROJECT_ID: project.id,
           AGENTUSE_RESUME_PUBLIC_URL: effectivePublicUrl,
           AGENTUSE_MOCK_MODE: '1',
-          AGENTUSE_MOCK_MODEL: process.env.AGENTUSE_MOCK_MODEL || record.authoringModel,
+          AGENTUSE_MOCK_MODEL: process.env.AGENTUSE_MOCK_MODEL || draft.model,
           AGENTUSE_MOCK_APPROVAL: 'approve',
         });
         await worker.spawn();
@@ -4107,12 +4120,6 @@ export function createServeCommand(): Command {
           worker.shutdown();
           throw new Error(prepared.error.message);
         }
-        await recordAgentDraftTestRun(project.root, record.jobId, {
-          sessionId,
-          draftIndex: draft.index,
-          startedAt: Date.now(),
-          status: 'running',
-        });
         wakeListHubs();
         void worker.execute({
           agentContent: draft.source,
@@ -4125,11 +4132,11 @@ export function createServeCommand(): Command {
           maxSteps: TEST_RUN_MAX_STEPS,
           debug: options.debug,
         }).then(async (result) => {
-          await settleAgentDraftTestRun(project.root, record.jobId, sessionId, result.success
+          await onSettled?.(sessionId, result.success
             ? { status: 'completed' }
             : { status: 'error', error: result.error });
         }).catch(async (error: unknown) => {
-          await settleAgentDraftTestRun(project.root, record.jobId, sessionId, {
+          await onSettled?.(sessionId, {
             status: 'error',
             error: { code: 'TEST_RUN_FAILED', message: (error as Error).message },
           }).catch(() => undefined);
@@ -9099,7 +9106,14 @@ export function createServeCommand(): Command {
                 sendError(res, 409, 'DRAFT_NOT_READY', 'There is no draft to test yet');
                 return;
               }
-              const started = await startAgentDraftTestRun(project, record, latest);
+              const started = await startMockTestRun(project, latest, (testSessionId, outcome) =>
+                settleAgentDraftTestRun(project.root, record.jobId, testSessionId, outcome).then(() => undefined));
+              await recordAgentDraftTestRun(project.root, record.jobId, {
+                sessionId: started.sessionId,
+                draftIndex: latest.index,
+                startedAt: Date.now(),
+                status: 'running',
+              });
               sendJSON(res, 202, { success: true, testRun: started });
               return;
             }
@@ -9144,7 +9158,7 @@ export function createServeCommand(): Command {
         }
 
         const revisionActionMatch = !isApi
-          ? routePath.match(/^\/agent-revisions\/([^/?#]+)(?:\/(apply|discard|restore|request-changes|cancel))?$/)
+          ? routePath.match(/^\/agent-revisions\/([^/?#]+)(?:\/(apply|discard|restore|request-changes|cancel|test-run))?$/)
           : null;
         if (revisionActionMatch) {
           let mutationKey: string | undefined;
@@ -9222,8 +9236,41 @@ export function createServeCommand(): Command {
                 sendError(res, 409, 'SESSION_ACTIVE', 'This revision session is already continuing');
                 return;
               }
-              await reopenAgentRevision(project.root, revisionSessionId);
-              startSessionContinue(res, { project, sessionId: revisionSessionId, prompt });
+              // The reopened turn is answering a change to a specific proposal.
+              // Restating the source it is editing keeps the reviser from
+              // hunting for a file the sanitized project view does not contain.
+              const standing = await readAgentRevisionRecord(project.root, revisionSessionId);
+              const continuePrompt = standing?.proposedSource
+                ? [
+                    '[runtime] The operator reviewed your previous proposal and asked for a change to it.',
+                    'The text below is that proposal exactly as it stands. Derive your exact edits against the current agent source you were given at the start of this session, not against a file on disk.',
+                    '',
+                    revisionProposalTag(standing.proposedSource.trim()),
+                    '',
+                    revisionRequestTag(prompt),
+                    '',
+                    'Call submit_agent_revision again with the full ordered edit set.',
+                  ].join('\n')
+                : prompt;
+              await reopenAgentRevision(project.root, revisionSessionId, prompt);
+              startSessionContinue(res, { project, sessionId: revisionSessionId, prompt: continuePrompt });
+              return;
+            }
+            if (action === 'test-run') {
+              const record = await readAgentRevisionRecord(project.root, revisionSessionId);
+              if (!record?.proposedSource) {
+                sendError(res, 409, 'REVISION_NOT_PROPOSED', 'There is no proposed source to test yet');
+                return;
+              }
+              const fileName = (record.targetAgentRunPath ?? record.targetAgentPath).split('/').pop() ?? 'agent.agentuse';
+              const started = await startMockTestRun(project, {
+                source: record.proposedSource,
+                name: record.targetAgentName,
+                fileName,
+                model: record.authoringModel,
+                index: record.proposalCount ?? 1,
+              });
+              sendJSON(res, 202, { success: true, testRun: started });
               return;
             }
             if (action === 'cancel') {

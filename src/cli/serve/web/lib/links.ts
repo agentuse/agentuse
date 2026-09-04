@@ -80,3 +80,17 @@ export function learningsTidyHref(
 export function agentDraftHref(projectId: string, jobId: string): string {
   return `/agents/draft?${new URLSearchParams({ project: projectId, job: jobId }).toString()}`;
 }
+
+/**
+ * The revision review page. Query-addressed for the same reason as the draft
+ * page: it belongs to a session, not to an agent path.
+ */
+export function agentRevisionHref(
+  projectId: string,
+  revisionSessionId: string,
+  token?: string,
+): string {
+  const params = new URLSearchParams({ project: projectId, session: revisionSessionId });
+  if (token) params.set('token', token);
+  return `/agents/revision?${params.toString()}`;
+}

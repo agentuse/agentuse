@@ -49,6 +49,13 @@ export interface AgentRevisionRecord {
   capabilityChanges?: string[];
   recommendedAction?: string;
   previousSource?: string;
+  /** How many proposals this revision session has produced, so the review can
+   *  number them the way a draft numbers its versions. */
+  proposalCount?: number;
+  /** The short back-and-forth shown under the file: what the operator asked
+   *  for, and what the reviser says it did. Survives a reopen, unlike the
+   *  diagnosis, which always describes the current proposal only. */
+  exchange?: Array<{ request?: string; reply?: string }>;
   appliedAt?: number;
   restoredAt?: number;
   error?: { code: string; message: string };
@@ -319,19 +326,28 @@ const revisionEditSchema = z.object({
     .describe('Replacement text. Use an empty string to delete oldText.'),
 }).strict();
 
-const revisionProposalSchema = z.object({
-  outcome: z.literal('revision-proposed'),
-  diagnosis: z.string().min(1).max(REVISION_TEXT_MAX),
-  summary: z.string().min(1).max(1000),
-  edits: z.array(revisionEditSchema).min(1).max(32)
-    .describe('Ordered exact replacements against the current source. Unmentioned source is preserved byte-for-byte.'),
+/**
+ * One object, not a discriminated union of two. A union converts to a JSON
+ * schema with no top-level `type`, which the Anthropic tool API rejects
+ * outright ("input_schema.type: Field required"), so the revision session could
+ * never start. The outcome-specific fields are therefore optional here and
+ * required in `execute`, where a miss returns a readable error to the model
+ * instead of failing the whole request.
+ */
+const revisionSubmissionSchema = z.object({
+  outcome: z.enum(['revision-proposed', 'no-agent-change'])
+    .describe('revision-proposed when the source should change, no-agent-change when it should not.'),
+  diagnosis: z.string().min(1).max(REVISION_TEXT_MAX)
+    .describe('Why the run behaved as it did, and which layer the cause belongs to.'),
+  summary: z.string().max(1000).optional()
+    .describe('Required for revision-proposed: one line on what the edits change.'),
+  edits: z.array(revisionEditSchema).max(32).optional()
+    .describe('Required for revision-proposed: ordered exact replacements against the current source. Unmentioned source is preserved byte-for-byte.'),
+  recommendedAction: z.string().max(2000).optional()
+    .describe('Required for no-agent-change: what the operator should do instead.'),
 }).strict();
 
-const noChangeSchema = z.object({
-  outcome: z.literal('no-agent-change'),
-  diagnosis: z.string().min(1).max(REVISION_TEXT_MAX),
-  recommendedAction: z.string().min(1).max(2000),
-}).strict();
+type RevisionSubmissionInput = z.infer<typeof revisionSubmissionSchema>;
 
 function applyRevisionEdits(
   currentSource: string,
@@ -360,6 +376,20 @@ function applyRevisionEdits(
   return proposedSource;
 }
 
+/** Attach the reviser's reply to the turn the operator opened, or start the
+ *  first turn when the revision has not been reopened yet. */
+function withRevisionReply(
+  exchange: AgentRevisionRecord['exchange'],
+  reply: string,
+): NonNullable<AgentRevisionRecord['exchange']> {
+  const turns = exchange ?? [];
+  const last = turns[turns.length - 1];
+  if (last && last.reply === undefined) {
+    return [...turns.slice(0, -1), { ...last, reply }];
+  }
+  return [...turns, { reply }];
+}
+
 export function createSubmitAgentRevisionTool(
   submission: AgentRevisionSubmission,
   contract: AgentRevisionSubmissionContract,
@@ -367,8 +397,8 @@ export function createSubmitAgentRevisionTool(
 ): Tool {
   return {
     description: 'Submit exact source edits for one validated revision of the existing AgentUse agent, or diagnose why the source should not change. Exact edits preserve all unmentioned source byte-for-byte. This is the only accepted final handoff for an internal revision session.',
-    inputSchema: z.discriminatedUnion('outcome', [revisionProposalSchema, noChangeSchema]),
-    execute: async (input: z.infer<typeof revisionProposalSchema> | z.infer<typeof noChangeSchema>) => {
+    inputSchema: revisionSubmissionSchema,
+    execute: async (input: RevisionSubmissionInput) => {
       const record = await readAgentRevisionRecord(contract.projectRoot, contract.revisionSessionId);
       if (!record || record.status !== 'running') throw new Error('This revision request is no longer active');
       if (
@@ -384,6 +414,9 @@ export function createSubmitAgentRevisionTool(
         throw new Error('The agent changed after this revision session started. Stop and ask the operator to start a new revision from the current source.');
       }
       if (input.outcome === 'revision-proposed') {
+        if (!input.edits || input.edits.length === 0 || !input.summary?.trim()) {
+          throw new Error('A revision-proposed outcome requires a summary and at least one exact edit. Add them and call submit_agent_revision again.');
+        }
         const proposedSource = applyRevisionEdits(currentSource, input.edits);
         const proposed = validateRevisionSource({
           currentSource,
@@ -395,6 +428,8 @@ export function createSubmitAgentRevisionTool(
         await writeRecord({
           ...record,
           status: 'proposed',
+          proposalCount: (record.proposalCount ?? 0) + 1,
+          exchange: withRevisionReply(record.exchange, input.summary.trim()),
           diagnosis: input.diagnosis.trim(),
           summary: input.summary.trim(),
           proposedSource: proposed.source,
@@ -405,9 +440,14 @@ export function createSubmitAgentRevisionTool(
         submission.outcome = 'revision-proposed';
         return 'Accepted: the revision is valid and ready for operator review. Call report_complete with a short headline and no source in the report.';
       }
+      if (!input.recommendedAction?.trim()) {
+        throw new Error('A no-agent-change outcome requires a recommendedAction. Add it and call submit_agent_revision again.');
+      }
       await writeRecord({
         ...record,
         status: 'no-change',
+        proposalCount: (record.proposalCount ?? 0) + 1,
+        exchange: withRevisionReply(record.exchange, input.recommendedAction.trim()),
         diagnosis: input.diagnosis.trim(),
         recommendedAction: input.recommendedAction.trim(),
         updatedAt: Date.now(),
@@ -567,6 +607,7 @@ export async function discardAgentRevision(projectRoot: string, revisionSessionI
 export async function reopenAgentRevision(
   projectRoot: string,
   revisionSessionId: string,
+  request?: string,
 ): Promise<AgentRevisionRecord> {
   const record = await readAgentRevisionRecord(projectRoot, revisionSessionId);
   if (!record || (record.status !== 'proposed' && record.status !== 'no-change')) {
@@ -584,6 +625,7 @@ export async function reopenAgentRevision(
   const reopened: AgentRevisionRecord = {
     ...retained,
     status: 'running',
+    ...(request ? { exchange: [...(retained.exchange ?? []), { request }] } : {}),
     updatedAt: Date.now(),
   };
   await writeRecord(reopened);

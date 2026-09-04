@@ -23,6 +23,7 @@ const StoreItemDetail = lazy(reloadOnChunkError(() => import('./routes/store-ite
 const Settings = lazy(reloadOnChunkError(() => import('./routes/settings')));
 const LearningsTidy = lazy(reloadOnChunkError(() => import('./routes/learnings-tidy')));
 const AgentDraft = lazy(reloadOnChunkError(() => import('./routes/agent-draft')));
+const AgentRevision = lazy(reloadOnChunkError(() => import('./routes/agent-revision')));
 
 // The shell's #boot spinner (static.ts) covers bundle download AND the first
 // lazy route chunk: it lives outside #app so mounting the (route-less) app
@@ -76,6 +77,7 @@ function AppRoutes() {
       {/* Query-addressed (?project=&job=): a draft has no agent path yet, and
           /agents/:project/:agent* would swallow the segment. */}
       <Route path="/agents/draft" component={AgentDraft} />
+      <Route path="/agents/revision" component={AgentRevision} />
       <Route path="/agents/:project" component={Agents} />
       <Route path="/agents/:project/:agent*" component={AgentDetail} />
       <Route path="/schedules" component={Schedules} />

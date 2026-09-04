@@ -9841,3 +9841,30 @@ main[tabindex="-1"]:focus,
   letter-spacing: var(--tracking-caps);
   text-transform: uppercase;
 }
+
+/* The revision review reuses the draft aside cards; capability review is the
+   one list that appears there. */
+.draft-capability-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
+  color: var(--muted-3);
+  font-size: var(--font-size-caption);
+  line-height: var(--lh-snug);
+}
+.draft-brief-facts dd a { color: var(--cyan); }
+
+/* An internal session paused on a question is not stuck; say so and point at
+   the page that can answer it. */
+.draft-waiting {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--amber-border);
+  border-radius: 8px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: var(--font-size-caption);
+  line-height: var(--lh-snug);
+}
+.draft-waiting a { color: inherit; }
