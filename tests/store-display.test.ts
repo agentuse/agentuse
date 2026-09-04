@@ -34,19 +34,27 @@ function moved(partial: Partial<StoreItem> & { id: string }): StoreItem {
 
 describe('storeStatusBucket', () => {
   it('reads failures as blocked, whatever the wording', () => {
-    for (const status of ['blocked', 'auth blocked', 'failed', 'error', 'expired', 'rejected']) {
+    for (const status of ['blocked', 'auth_blocked', 'auth blocked', 'failed', 'error']) {
       expect(storeStatusBucket(status)).toBe('blocked');
     }
   });
 
   it('reads waiting-on-a-human statuses as attention', () => {
-    for (const status of ['awaiting approval', 'pending', 'in_review', 'measuring', 'draft']) {
+    for (const status of ['awaiting approval', 'pending', 'in_review', 'measuring', 'draft', 'ready']) {
       expect(storeStatusBucket(status)).toBe('attention');
     }
   });
 
   it('reads finished statuses as done', () => {
-    for (const status of ['done', 'completed', 'published', 'posted', 'consumed', 'skipped', 'success', 'ok']) {
+    for (const status of ['done', 'completed', 'published', 'posted', 'sent', 'consumed', 'skipped', 'success', 'ok']) {
+      expect(storeStatusBucket(status)).toBe('done');
+    }
+  });
+
+  // An item that was considered and dropped is finished, not a problem. When
+  // these counted as failures every pipeline claimed to need attention.
+  it('reads dropped outcomes as done, not as failures', () => {
+    for (const status of ['rejected', 'expired', 'abandoned', 'cleared', 'skipped']) {
       expect(storeStatusBucket(status)).toBe('done');
     }
   });
@@ -72,6 +80,7 @@ describe('storeStatusBucket', () => {
     expect(storeNeedsAttention({ done: 10, measuring: 1 })).toBe(true);
     expect(storeNeedsAttention({ done: 10, blocked: 2 })).toBe(true);
     expect(storeNeedsAttention({ blocked: 0 })).toBe(false);
+    expect(storeNeedsAttention({ done: 10, rejected: 3, expired: 1 })).toBe(false);
   });
 });
 
@@ -143,6 +152,30 @@ describe('storeItemPreview', () => {
 
   it('does not repeat the title it sits under', () => {
     expect(storeItemPreview(item({ id: 'x', title: 'Deploy', data: { title: 'Deploy' } }))).toBe('');
+  });
+
+  it('drops what the row already shows: the title, the writer, timestamps', () => {
+    const preview = storeItemPreview(item({
+      id: 'x',
+      createdBy: 'agents/substack/substack-note',
+      title: 'substack_original_notes_published · 1',
+      data: {
+        metric: 'substack_original_notes_published',
+        count: 1,
+        source: 'agents/substack/substack-note',
+        recorded_at: '2026-09-03T18:20:00Z',
+      },
+    }));
+    expect(preview).toBe('count 1');
+  });
+
+  it('falls back to a timestamp when nothing else survives', () => {
+    const preview = storeItemPreview(item({
+      id: 'x',
+      title: 'run',
+      data: { name: 'run', started_at: '2026-09-03T18:20:00Z' },
+    }));
+    expect(preview).toBe('2026-09-03T18:20:00Z');
   });
 
   it('truncates to the requested width', () => {

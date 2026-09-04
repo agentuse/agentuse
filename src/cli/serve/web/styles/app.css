@@ -4150,7 +4150,9 @@ html[data-route-loading] body::after {
   font-size: var(--font-size-micro); font-weight: var(--weight-bold); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--muted-2);
 }
 .page-stores-index .group { margin: 0; }
-.page-stores-index .group-title { margin: 0; padding: 9px 18px 8px; border-bottom: 1px solid var(--line); background: var(--panel); }
+/* Specific enough to beat the shared .group-title rule further down, whose
+   26px top margin otherwise opened an empty row above the first band. */
+.page-stores-index .stores-table .group-title { margin: 0; padding: 9px 18px 8px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .page-stores-index .store-row {
   display: grid; grid-template-columns: var(--store-columns); gap: 16px; align-items: center;
   padding: 12px 18px; border-bottom: 1px solid var(--line);

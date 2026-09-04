@@ -16,6 +16,11 @@ export function looksLikeUlid(value: string): boolean {
   return /^[0-9A-HJKMNP-TV-Z]{26}$/.test(value);
 }
 
+/** An ISO-8601 date or datetime. Real content, but never what identifies a row. */
+export function looksLikeTimestamp(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}|$)/.test(value);
+}
+
 export function storeItemTitle(item: StoreItem): string {
   if (item.title) return item.title;
   const data = asRecord(item.data);
@@ -33,46 +38,52 @@ export function storeItemTitle(item: StoreItem): string {
  * Earlier this fell back to a shape summary ("object · 39 keys: a, b, …"),
  * which described the payload without saying anything about the item. Instead
  * take the first few top-level scalar fields and print their values: those are
- * what an operator recognizes a row by. Ids and long prose are skipped — the
- * id has its own column and prose belongs on the detail page.
+ * what an operator recognizes a row by.
+ *
+ * Anything the row already shows is dropped, or the preview just restates the
+ * line above it: text the title contains, the writing agent's name, and item
+ * ids. Timestamps are held back and used only when nothing else survives.
  */
 export function storeItemPreview(item: StoreItem, max = 110): string {
   const data = asRecord(item.data);
-  const title = storeItemTitle(item);
+  const title = storeItemTitle(item).toLowerCase();
   const parts: string[] = [];
+  const timestamps: string[] = [];
   for (const [key, value] of Object.entries(data)) {
     if (parts.length >= 4) break;
-    let text: string;
     if (typeof value === 'string') {
       const compact = value.trim().replace(/\s+/g, ' ');
       if (!compact || compact.length > 60 || looksLikeUlid(compact)) continue;
-      if (compact === title) continue;
-      text = compact;
+      if (compact === item.createdBy || compact.startsWith('agents/')) continue;
+      if (title.includes(compact.toLowerCase())) continue;
+      if (looksLikeTimestamp(compact)) { timestamps.push(compact); continue; }
+      parts.push(compact);
     } else if (typeof value === 'number' || typeof value === 'boolean') {
-      text = `${key.replace(/_/g, ' ')} ${value}`;
-    } else {
-      continue;
+      parts.push(`${key.replace(/_/g, ' ')} ${value}`);
     }
-    parts.push(text);
   }
-  const line = parts.join(' · ');
+  const line = (parts.length > 0 ? parts : timestamps.slice(0, 1)).join(' · ');
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
 /**
  * Tone bucket for a free-form store status. Statuses are agent-authored, so
- * this matches on substrings rather than an enum: anything that reads as a
- * failure is red, anything that reads as waiting on a human is amber, anything
- * that reads as finished is grey, and everything else is in-flight cyan.
+ * this matches on substrings rather than an enum: only an actual failure is
+ * red, anything that reads as waiting on a human is amber, anything that
+ * reads as finished is grey, and everything else is in-flight cyan.
  * Checked failure-first so "review failed" reads as a failure, not a review.
+ *
+ * "rejected", "expired", "skipped" and friends are terminal outcomes, not
+ * failures: an item that was considered and dropped is finished, and counting
+ * it as red made every pipeline look like it needed attention.
  */
 export type StoreStatusBucket = 'blocked' | 'attention' | 'done' | 'active';
 
 export function storeStatusBucket(status: string): StoreStatusBucket {
   const value = status.toLowerCase();
-  if (/block|fail|error|expired|rejected/.test(value)) return 'blocked';
-  if (/await|pending|review|measur|draft/.test(value)) return 'attention';
-  if (/done|complete|publish|posted|consumed|skipped|success|^ok$/.test(value)) return 'done';
+  if (/block|fail|error/.test(value)) return 'blocked';
+  if (/await|pending|review|measur|draft|ready/.test(value)) return 'attention';
+  if (/done|complete|publish|posted|sent|consumed|skipped|rejected|expired|abandoned|cleared|success|^ok$/.test(value)) return 'done';
   return 'active';
 }
 
