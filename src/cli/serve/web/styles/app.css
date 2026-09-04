@@ -101,6 +101,18 @@
 }
 
 * { box-sizing: border-box; }
+
+/* Focus rings. The browser's blue ring appears whenever focus moves, including
+   when the app moves it (a dialog's close button on open, <main> after a route
+   change), and on a touch screen that is pure noise. Nothing gets the UA ring.
+   With a mouse or keyboard, Tab focus draws the app's own hairline instead, so
+   keyboard users still see where they are; per-component :focus-visible rules
+   below refine it. On touch devices every outline is suppressed. */
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 2px; }
+@media (pointer: coarse) {
+  :focus, :focus-visible { outline: none !important; }
+}
 html, body { background: var(--bg); }
 
 /* Raised card: the one container shape of the calm console. Rows inside
