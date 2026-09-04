@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { __testing } from '../src/cli/serve';
-import { buildDescendantActivity, buildImportantDescendantEvents, buildImportantDescendants, type ImportantDescendantSummary } from '../src/session/important-descendants';
+import { buildDescendantActivity, buildDescendantReport, buildImportantDescendantEvents, buildImportantDescendants, type ImportantDescendantSummary } from '../src/session/important-descendants';
 import type { SessionInfo, VerifyPart } from '../src/session/types';
 
 function session(options: {
@@ -110,6 +110,63 @@ function approvalPart(options: {
     },
   } as any;
 }
+
+function reportPart(
+  tool: 'report_complete' | 'report_incomplete',
+  input: Record<string, unknown>,
+  time: number
+) {
+  return {
+    id: `${tool}-${time}`,
+    messageID: 'message',
+    sessionID: 'child',
+    type: 'tool',
+    tool,
+    callID: `call-${time}`,
+    state: { status: 'completed', input, output: 'recorded', time: { start: time, end: time + 10 } },
+  } as any;
+}
+
+describe('descendant terminal reports', () => {
+  it('reads report_complete as the generic card report', () => {
+    expect(buildDescendantReport([
+      reportPart('report_complete', {
+        headline: 'Approved and promoted 1 article',
+        details: '## Quality\n\n7/7 PASS',
+        artifacts: ['content/pieces/article/', 'https://example.com/article.md'],
+      }, 1_000),
+    ])).toEqual({
+      status: 'complete',
+      headline: 'Approved and promoted 1 article',
+      body: '## Quality\n\n7/7 PASS',
+      artifacts: ['content/pieces/article/', 'https://example.com/article.md'],
+    });
+  });
+
+  it('lets report_incomplete outrank report_complete like the runtime outcome', () => {
+    expect(buildDescendantReport([
+      reportPart('report_complete', { headline: 'Looked complete' }, 1_000),
+      reportPart('report_incomplete', { reason: 'Publishing login expired' }, 2_000),
+    ])).toEqual({ status: 'incomplete', headline: 'Publishing login expired' });
+  });
+
+  it('keeps a completed nested agent visible when it owns a report', () => {
+    const manager = session({ id: 'manager', name: 'Manager', createdAt: 1_000 });
+    const parent = session({ id: 'parent', parent: manager.id, name: 'Parent', createdAt: 2_000 });
+    const writer = session({ id: 'writer', parent: parent.id, name: 'Writer', createdAt: 3_000 });
+    const rows = buildImportantDescendants(manager, [
+      { session: parent, parts: [] },
+      { session: writer, parts: [reportPart('report_complete', { headline: 'Draft approved' }, 4_000)] },
+    ]);
+
+    expect(rows.map((row) => row.sessionId)).toEqual(['parent', 'writer']);
+    expect(rows.find((row) => row.sessionId === 'writer')).toMatchObject({
+      kinds: ['report'],
+      important: true,
+      report: { status: 'complete', headline: 'Draft approved' },
+    });
+  });
+});
 
 describe('important descendant classification', () => {
   it('surfaces Manager → Pipeline → Judge under the real parent with breadcrumb context', () => {
@@ -351,6 +408,32 @@ describe('important descendant log tree', () => {
       breadcrumb: [{ sessionId: 'manager', agentName: 'Manager' }],
     });
     expect(logs[0]?.subagentSession?.children).toBeUndefined();
+  });
+
+  it('adapts a legacy parent-side subagent result into the same card report', () => {
+    const logs = __testing.logsWithChildSessions(
+      [{
+        id: 'call', type: 'tool', tool: 'subagent__pipeline', title: 'Pipeline', status: 'completed', time: 2_000,
+        details: {
+          subagentResult: {
+            headline: 'Published 3 updates',
+            body: '- One\n- Two\n- Three',
+            artifacts: ['https://example.com/report'],
+          },
+        },
+      }],
+      [childSummary(pipeline)],
+      (id: string) => `/sessions/${id}`,
+      [],
+      { sessionId: manager.id, agentName: manager.agent.name },
+    );
+
+    expect(logs[0]?.subagentSession?.report).toEqual({
+      status: 'complete',
+      headline: 'Published 3 updates',
+      body: '- One\n- Two\n- Three',
+      artifacts: ['https://example.com/report'],
+    });
   });
 
   it('attaches inline verification to its real owner without adding a session row', () => {

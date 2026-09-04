@@ -12,7 +12,7 @@ import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionP
 import { currentProcessRef } from './utils/process-info';
 import { withOwnershipLock } from './utils/ownership-lock';
 import { contextUsageFromSnapshot } from './session/usage';
-import { buildDescendantActivity, buildImportantDescendantEvents, buildImportantDescendants } from './session/important-descendants';
+import { buildDescendantActivity, buildDescendantReport, buildImportantDescendantEvents, buildImportantDescendants } from './session/important-descendants';
 import { summarizeSessionTiming } from './session/timing';
 import { repairEscapedText } from './utils/display-text';
 import { Command } from 'commander';
@@ -2196,6 +2196,10 @@ async function runInternalWorker() {
       ...(() => {
         const activity = buildDescendantActivity(session, parts ?? []);
         return activity ? { activity } : {};
+      })(),
+      ...(() => {
+        const report = buildDescendantReport(parts ?? []);
+        return report ? { report } : {};
       })(),
     });
     const evidence = await Promise.all(descendants.map(async ({ session, agentId }) => {

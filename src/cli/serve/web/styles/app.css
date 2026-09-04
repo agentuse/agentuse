@@ -7908,6 +7908,19 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-approval-detail .meta .token-cell[hidden] { display: none; }
 
 /* child-session card shown inside a log entry */
+.page-approval-detail .subagent-card {
+  margin: 6px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.page-approval-detail .subagent-card > .subagent-event {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
 .page-approval-detail .subagent-event {
   display: grid;
   grid-template-columns: auto minmax(120px, 1fr) minmax(180px, auto) auto;
@@ -8029,16 +8042,17 @@ a.lastrun.waiting { color: var(--cyan); }
   margin-top: 8px;
   background: color-mix(in srgb, var(--panel) 82%, transparent);
 }
+.page-approval-detail .subagent-tree-node.is-important > .subagent-card,
 .page-approval-detail .subagent-tree-node.is-important > .subagent-event {
   border-color: var(--line-strong);
 }
 .page-approval-detail .subagent-tree-node > .verify-event { border-left: 3px solid var(--cyan-border); }
 .page-approval-detail .subagent-tree-node > .verify-event.is-failure { border-left-color: var(--red); }
-/* A real Judge child carries the same verdict rail as an inline verify event:
-   the two are the same fact, and only differ in whether the judge got its own
-   session. */
-.page-approval-detail .subagent-tree-node > .subagent-event.is-judge-pass { border-left: 3px solid var(--cyan-border); }
-.page-approval-detail .subagent-tree-node > .subagent-event.is-judge-fail { border-left: 3px solid var(--red); }
+/* All descendant roles use the same report rail. The runtime maps both ordinary
+   report_complete outcomes and typed Judge verdicts onto these tones. */
+.page-approval-detail .subagent-card.is-success { border-left: 3px solid var(--cyan-border); }
+.page-approval-detail .subagent-card.is-warning { border-left: 3px solid var(--amber-border); }
+.page-approval-detail .subagent-card.is-failure { border-left: 3px solid var(--red); }
 .page-approval-detail .verify-event-critique {
   grid-column: 1 / -1;
   color: var(--fg);
@@ -8143,16 +8157,14 @@ a.lastrun.waiting { color: var(--cyan); }
   .page-approval-detail .subagent-children { margin-left: 8px; padding-left: 10px; }
 }
 
-/* What the sub-agent delivered, under its card in the parent's log. Sits outside
-   .log-content so the verdict and the artifact list read whether or not the row
-   is expanded; only the report body below collapses with the row. */
-.page-approval-detail .subagent-outcome {
-  /* Pulled up against the card above so the two read as one unit rather than as
-     a card and an unrelated paragraph. */
-  margin: -6px 0 10px;
-  padding: 0 12px;
+/* Terminal report owned by the subagent card. Its headline stays visible while
+   the parent tool row is collapsed; body, items, and artifacts expand together. */
+.page-approval-detail .subagent-card-report {
+  margin: 0 12px 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
 }
-.page-approval-detail .subagent-verdict {
+.page-approval-detail .subagent-report-headline {
   display: flex;
   gap: 8px;
   align-items: baseline;
@@ -8162,8 +8174,20 @@ a.lastrun.waiting { color: var(--cyan); }
   line-height: var(--lh-snug);
   overflow-wrap: anywhere;
 }
-.page-approval-detail .subagent-verdict-mark { color: var(--green); flex: none; }
-.page-approval-detail .subagent-outcome.is-incomplete .subagent-verdict-mark { color: var(--amber); }
+.page-approval-detail .subagent-report-mark { color: var(--green); flex: none; }
+.page-approval-detail .subagent-card-report.is-warning .subagent-report-mark { color: var(--amber); }
+.page-approval-detail .subagent-card-report.is-failure .subagent-report-mark { color: var(--red); }
+.page-approval-detail .subagent-report-body {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  color: var(--fg);
+  font-size: var(--font-size-supporting);
+  line-height: var(--lh-loose);
+  overflow-wrap: anywhere;
+}
+.page-approval-detail .subagent-report-body .content-markdown { padding: 0; color: inherit; }
+.page-approval-detail .subagent-report-items { margin-top: 10px; }
 .page-approval-detail .subagent-artifacts {
   margin: 6px 0 0;
   padding: 0;
@@ -8177,9 +8201,6 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-approval-detail .subagent-artifacts li { overflow-wrap: anywhere; }
 .page-approval-detail .subagent-artifacts code { color: var(--muted-3); }
 .page-approval-detail .subagent-artifacts a { color: var(--cyan); }
-/* The child's report body, revealed with the row. */
-.page-approval-detail .subagent-report { margin-bottom: 8px; }
-
 /* The run's own report on its report_complete row. Sits outside .log-content,
    so it stays readable while the row's raw input/output stay collapsed. */
 .page-approval-detail .run-outcome {

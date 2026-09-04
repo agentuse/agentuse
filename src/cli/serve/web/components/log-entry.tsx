@@ -947,26 +947,92 @@ function isExecutingCardStatus(status: string | undefined): boolean {
     || status === 'continuing' || status === 'run' || status === 'revising';
 }
 
-function SubagentCard(props: { session: LogSubagentSession; projectId?: string }) {
+function reportPresentation(report: NonNullable<LogSubagentSession['report']>): {
+  label: string;
+  chipClass: string;
+  toneClass: string;
+  mark: string;
+} {
+  switch (report.status) {
+    case 'complete': return { label: 'completed', chipClass: 'completed', toneClass: 'is-success', mark: '✓' };
+    case 'pass': return { label: 'passed', chipClass: 'completed', toneClass: 'is-success', mark: '✓' };
+    case 'incomplete': return { label: 'incomplete', chipClass: 'error', toneClass: 'is-warning', mark: '⚠' };
+    case 'skipped': return { label: 'not judged', chipClass: 'skipped', toneClass: 'is-warning', mark: '⚠' };
+    case 'fail': return { label: 'failed', chipClass: 'error', toneClass: 'is-failure', mark: '✗' };
+    case 'error': return { label: 'error', chipClass: 'error', toneClass: 'is-failure', mark: '✗' };
+  }
+}
+
+/** One report renderer for every descendant role. The runtime adapts ordinary
+ * outcomes and Judge verdicts into this shape before they reach the browser. */
+function DescendantReportBlock(props: {
+  report: NonNullable<LogSubagentSession['report']>;
+  expanded: boolean;
+}) {
+  const { report, expanded } = props;
+  const presentation = reportPresentation(report);
+  return (
+    <div class={`subagent-card-report ${presentation.toneClass}`}>
+      <p class="subagent-report-headline">
+        <span class="subagent-report-mark" aria-hidden="true">{presentation.mark}</span>
+        <InlineMarkdown value={report.headline} />
+      </p>
+      {expanded && report.body && (
+        <div class="subagent-report-body"><LogContent value={report.body} forceMarkdown /></div>
+      )}
+      {expanded && report.items && report.items.length > 0 && (
+        <ul class="verify-candidates subagent-report-items" aria-label="Report items">
+          {report.items.map((item) => (
+            <li key={item.id} class={`verify-candidate ${item.pass ? 'is-pass' : 'is-fail'}${item.carriedForward ? ' is-settled' : ''}`}>
+              <span class="verify-candidate-mark" aria-label={item.pass ? 'pass' : 'fail'}>{item.pass ? '✓' : '✗'}</span>
+              <span class="verify-candidate-id">{item.id}</span>
+              {item.carriedForward
+                ? <span class="verify-candidate-note">unchanged · carried forward</span>
+                : item.detail && <span class="verify-candidate-note">{item.detail}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {expanded && report.artifacts && report.artifacts.length > 0 && (
+        <ul class="subagent-artifacts" aria-label="Artifacts produced by this sub-agent">
+          {report.artifacts.map((artifact) => (
+            <li key={artifact}>
+              {/^https?:\/\//i.test(artifact)
+                ? <a href={artifact} target="_blank" rel="noopener noreferrer">{artifact}</a>
+                : <code>{artifact}</code>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function SubagentCard(props: { session: LogSubagentSession; projectId?: string; expanded: boolean }) {
   const s = props.session;
   const name = s.agent.name || s.agent.id;
   const judge = s.kinds?.includes('judge') === true;
-  // A judge child that COMPLETED says only that the judge ran. What it decided
-  // lives on its parent's verify marker, carried here so the row leads with the
-  // verdict instead of the process.
-  const verdict = judge ? s.verdict : undefined;
-  const verdictStatus = verdict === 'pass' ? 'passed' : verdict === 'fail' ? 'failed' : 'error';
+  const report = s.report;
+  const presentation = report ? reportPresentation(report) : undefined;
   const breadcrumb = s.breadcrumb?.map((entry) => entry.agentName).join(' › ');
   const duration = formatSessionDuration(s.durationMs);
-  const contextLabel = verdict && s.attemptLabel ? s.attemptLabel : s.label;
+  const contextLabel = judge && report ? undefined : s.label;
+  // A Judge's evidence is the reason the parent was allowed to proceed, so it
+  // remains fully readable even when the owning delegated call is collapsed.
+  const showFullCard = props.expanded || judge;
+  const showExpandedContent = showFullCard || isExecutingCardStatus(s.status);
   const nested = [
     ...(s.children ?? []).map((session) => ({ type: 'session' as const, time: session.createdAt, session })),
     ...(s.events ?? []).map((event) => ({ type: 'event' as const, time: event.time, event })),
   ].sort((a, b) => a.time - b.time);
+  // Session cards are structural context, so keep them visible when the owning
+  // tool row is collapsed. Inline event detail remains part of the expanded
+  // history unless this branch is still executing.
+  const visibleNested = nested.filter((item) => item.type === 'session' || showExpandedContent);
   const inner = (
     <>
-      <span class={`chip status ${verdict ? (verdict === 'pass' ? 'completed' : 'error') : s.displayStatus}`}>
-        {verdict ? verdictStatus : s.displayStatus}
+      <span class={`chip status ${presentation?.chipClass ?? s.displayStatus}`}>
+        {presentation?.label ?? s.displayStatus}
       </span>
       <span class="subagent-identity">
         <span class="subagent-name">{name}</span>
@@ -981,66 +1047,28 @@ function SubagentCard(props: { session: LogSubagentSession; projectId?: string }
           {duration && <span>{duration}</span>}
         </span>
       )}
-      {verdict && (s.candidates && s.candidates.length > 0
-        ? <span class="verify-event-critique"><CandidateVerdictList candidates={s.candidates} /></span>
-        : s.critique && <span class="verify-event-critique">{s.critique}</span>)}
       <SubagentActivity session={s} {...(props.projectId && { projectId: props.projectId })} />
       {s.errorMessage && <span class="subagent-error">{s.errorMessage}</span>}
-      {s.command && <span class="subagent-command">{s.command}</span>}
+      {showExpandedContent && s.command && <span class="subagent-command">{s.command}</span>}
     </>
   );
-  const verdictClass = verdict ? (verdict === 'pass' ? ' is-judge-pass' : ' is-judge-fail') : '';
   const row = s.href
-    ? <a class={`subagent-event${verdictClass}`} href={s.href} aria-label={`Open subagent session ${name || s.sessionId}`}>{inner}<span class="subagent-open-cue" aria-hidden="true">open ›</span></a>
-    : <div class={`subagent-event${verdictClass}`}>{inner}</div>;
+    ? <a class="subagent-event" href={s.href} aria-label={`Open subagent session ${name || s.sessionId}`}>{inner}<span class="subagent-open-cue" aria-hidden="true">open ›</span></a>
+    : <div class="subagent-event">{inner}</div>;
   return (
     <div class={`subagent-tree-node${s.important ? ' is-important' : ''}`} data-session-id={s.sessionId}>
-      {row}
-      {nested.length > 0 && (
+      <div class={`subagent-card${presentation ? ` ${presentation.toneClass}` : ''}`}>
+        {row}
+        {report && <DescendantReportBlock report={report} expanded={showFullCard} />}
+      </div>
+      {visibleNested.length > 0 && (
         <div class="subagent-children" aria-label={`Important descendants and events of ${name}`}>
-          {nested.map((item) => item.type === 'session'
-            ? <SubagentCard key={item.session.sessionId} session={item.session} {...(props.projectId && { projectId: props.projectId })} />
+          {visibleNested.map((item) => item.type === 'session'
+            ? <SubagentCard key={item.session.sessionId} session={item.session} expanded={props.expanded} {...(props.projectId && { projectId: props.projectId })} />
             : item.event.type === 'reviewer-feedback'
               ? <ReviewerFeedbackEventCard key={item.event.id} event={item.event} />
               : <VerifyEventCard key={item.event.id} event={item.event} />)}
         </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * What the sub-agent actually delivered, shown on the parent's own row: the
- * child's one-line verdict and the artifacts it produced stay visible whether or
- * not the row is expanded, since they are the reason a reader scans a manager's
- * log at all. The report body expands with the row.
- *
- * Before this the row carried a status chip and a link and nothing else, so
- * reading a manager's run meant opening every child session in turn.
- */
-function SubagentOutcome(props: { result: NonNullable<ApprovalLogDetails['subagentResult']> }) {
-  const result = props.result;
-  const verdict = result.incomplete ?? result.headline;
-  const artifacts = result.artifacts ?? [];
-  if (!verdict && artifacts.length === 0) return null;
-  return (
-    <div class={`subagent-outcome${result.incomplete ? ' is-incomplete' : ''}`}>
-      {verdict && (
-        <p class="subagent-verdict">
-          <span class="subagent-verdict-mark" aria-hidden="true">{result.incomplete ? '⚠' : '✓'}</span>
-          <InlineMarkdown value={verdict} />
-        </p>
-      )}
-      {artifacts.length > 0 && (
-        <ul class="subagent-artifacts" aria-label="Artifacts produced by this sub-agent">
-          {artifacts.map((artifact) => (
-            <li key={artifact}>
-              {/^https?:\/\//i.test(artifact)
-                ? <a href={artifact} target="_blank" rel="noopener noreferrer">{artifact}</a>
-                : <code>{artifact}</code>}
-            </li>
-          ))}
-        </ul>
       )}
     </div>
   );
@@ -1327,7 +1355,6 @@ function LogEntryImpl(props: LogEntryProps) {
   const warnings = props.warnings ?? [];
   const isApprovalEntry = isApprovalDetails(entry);
   const savedArtifact = entry.details?.savedArtifact;
-  const subagentResult = entry.details?.subagentResult;
   const runOutcome = entry.details?.runOutcome;
   // A saved-artifact row shows its tile inline; there's nothing to expand into.
   const expandable = entry.type === 'tool' && !isApprovalEntry && !savedArtifact;
@@ -1438,15 +1465,11 @@ function LogEntryImpl(props: LogEntryProps) {
         {/* The sub-agent card carries status + a link to the child run, so keep
             it visible even when the row is collapsed; only the tool input/output
             below stays behind the expand toggle. */}
-        {entry.subagentSession && <SubagentCard session={entry.subagentSession} {...(props.projectId && { projectId: props.projectId })} />}
-        {subagentResult && <SubagentOutcome result={subagentResult} />}
+        {entry.subagentSession && <SubagentCard session={entry.subagentSession} expanded={expanded} {...(props.projectId && { projectId: props.projectId })} />}
         {runOutcome && <RunOutcomeCard outcome={runOutcome} />}
         {savedArtifact && <SavedArtifactCard artifact={savedArtifact} sessionId={props.sessionId} token={props.token} />}
         <div class="log-content">
           {storeEvent && <StoreEventBlock event={storeEvent} />}
-          {subagentResult?.body && (
-            <div class="subagent-report"><LogContent value={subagentResult.body} forceMarkdown /></div>
-          )}
           {entry.details && (isApprovalEntry
             ? <ApprovalDetailCard
                 details={entry.details}

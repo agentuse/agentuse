@@ -1,7 +1,25 @@
 import type { Part, SessionInfo, SessionTrigger } from './types';
 import { isExecutingSessionStatus, isTerminalSessionStatus } from './status';
 
-export type ImportantDescendantKind = 'judge' | 'verification' | 'approval' | 'failure' | 'mutation' | 'active' | 'context';
+export type ImportantDescendantKind = 'judge' | 'verification' | 'approval' | 'failure' | 'mutation' | 'report' | 'active' | 'context';
+
+export interface DescendantReportItem {
+  id: string;
+  pass: boolean;
+  detail?: string;
+  carriedForward?: boolean;
+}
+
+/** One presentation contract for the terminal report owned by any descendant
+ * session. Ordinary agents populate it from report_complete/report_incomplete;
+ * Judge sessions adapt their typed verify marker into the same shape. */
+export interface DescendantReport {
+  status: 'complete' | 'incomplete' | 'pass' | 'fail' | 'error' | 'skipped';
+  headline: string;
+  body?: string;
+  artifacts?: string[];
+  items?: DescendantReportItem[];
+}
 
 export interface DescendantBreadcrumb {
   sessionId: string;
@@ -50,6 +68,7 @@ export interface ImportantDescendantSummary {
   candidates?: VerifyCandidateSummary[];
   maxAttempts?: number;
   activity?: DescendantActivity;
+  report?: DescendantReport;
 }
 
 /** What a still-running descendant is doing right now. A RUNNING card otherwise
@@ -130,6 +149,55 @@ function toolStateInput(part: Part): Record<string, unknown> | undefined {
   const state = part.state;
   if (!('input' in state) || !state.input || typeof state.input !== 'object' || Array.isArray(state.input)) return undefined;
   return state.input as Record<string, unknown>;
+}
+
+function reportArtifacts(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+}
+
+function reportHeadline(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const oneLine = value.trim().replace(/\s+/g, ' ');
+  return oneLine.length > 160 ? `${oneLine.slice(0, 159).trimEnd()}…` : oneLine;
+}
+
+/** Read the durable terminal report from a session's own tool parts. This is
+ * intentionally independent of the parent subagent__* result, so the same
+ * report reaches every ancestor and works at arbitrary nesting depth. */
+export function buildDescendantReport(parts: Part[]): DescendantReport | undefined {
+  type CompletedToolPart = Extract<Part, { type: 'tool' }> & {
+    state: Extract<Extract<Part, { type: 'tool' }>['state'], { status: 'completed' }>;
+  };
+  const outcomeParts = parts
+    .filter((part): part is CompletedToolPart =>
+      part.type === 'tool'
+      && part.state.status === 'completed'
+      && (part.tool === 'report_complete' || part.tool === 'report_incomplete'))
+    .sort((a, b) => a.state.time.start - b.state.time.start || a.id.localeCompare(b.id));
+
+  // Match runtime outcome precedence: any declared blocker wins over success.
+  const incomplete = [...outcomeParts].reverse().find((part) => part.tool === 'report_incomplete');
+  if (incomplete) {
+    const input = toolStateInput(incomplete);
+    const headline = reportHeadline(input?.reason);
+    if (headline) return { status: 'incomplete', headline };
+  }
+
+  const complete = [...outcomeParts].reverse().find((part) => part.tool === 'report_complete');
+  if (!complete) return undefined;
+  const input = toolStateInput(complete);
+  const headline = reportHeadline(input?.headline);
+  if (!headline) return undefined;
+  const body = typeof input?.details === 'string' && input.details.trim() ? input.details.trim() : undefined;
+  const artifacts = reportArtifacts(input?.artifacts);
+  return {
+    status: 'complete',
+    headline,
+    ...(body && { body }),
+    ...(artifacts.length > 0 && { artifacts }),
+  };
 }
 
 function approvalParts(parts: Part[]): Array<Extract<Part, { type: 'tool' }>> {
@@ -281,6 +349,7 @@ export function buildImportantDescendants(
     item: DescendantEvidence;
     kinds: ImportantDescendantKind[];
     gateLabel?: string;
+    report?: DescendantReport;
   }>();
 
   for (const item of evidence) {
@@ -293,12 +362,14 @@ export function buildImportantDescendants(
     if (verifyParts(parts).length > 0) kinds.push('verification');
     if (item.session.status === 'error' || item.session.error?.code === 'INCOMPLETE') kinds.push('failure');
     if (!judge && hasMutationEvidence(item.session, parts)) kinds.push('mutation');
+    const report = buildDescendantReport(parts);
+    if (report) kinds.push('report');
     // A descendant that is still executing earns a row purely so the reader can
     // watch it. It is live context rather than an event, so it does not count
     // toward `important`, and its row drops out once it finishes without having
     // produced anything an operator needs to see.
     if (isExecutingSessionStatus(item.session.status)) kinds.push('active');
-    raw.set(item.session.id, { item, kinds, ...(gate && { gateLabel: gate }) });
+    raw.set(item.session.id, { item, kinds, ...(gate && { gateLabel: gate }), ...(report && { report }) });
   }
 
   const included = new Set<string>();
@@ -427,6 +498,21 @@ export function buildImportantDescendants(
     const activity = buildDescendantActivity(session, item.parts ?? []);
     const judgeMarkers = kinds.includes('judge') ? markersForJudge(session) : [];
     const marker = judgeMarkers.at(-1);
+    const report: DescendantReport | undefined = marker
+      ? {
+          status: marker.verdict,
+          headline: attemptLabel ?? 'Verification result',
+          ...(marker.candidates && marker.candidates.length > 0 && {
+            items: marker.candidates.map((candidate) => ({
+              id: candidate.id,
+              pass: candidate.pass,
+              ...(candidate.critique && { detail: candidate.critique }),
+              ...(candidate.settled && { carriedForward: true }),
+            })),
+          }),
+          ...((!marker.candidates || marker.candidates.length === 0) && marker.critique && { body: marker.critique }),
+        }
+      : classified.report;
     result.push({
       sessionId: session.id,
       parentSessionId: session.parentSessionID,
@@ -458,6 +544,7 @@ export function buildImportantDescendants(
         ...(marker.candidates && marker.candidates.length > 0 && { candidates: marker.candidates }),
       }),
       ...(activity && { activity }),
+      ...(report && { report }),
     });
   }
   return result;

@@ -50,7 +50,7 @@ import { saveManualLearning, LearningStore, effectiveCap, partitionLearnings, co
 import { homedir } from "os";
 import type { StoreItem } from "../store/types";
 import type { ActiveContextUsage, SessionTrigger } from "../session/types";
-import type { DescendantActivity, DescendantBreadcrumb, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary, VerifyCandidateSummary } from "../session/important-descendants";
+import type { DescendantActivity, DescendantBreadcrumb, DescendantReport, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary, VerifyCandidateSummary } from "../session/important-descendants";
 import { ulid } from "ulid";
 import { sessionViewToken, validateSessionToken } from "../utils/session-token";
 import { readArtifactManifest, getManifestPath } from "../tools/artifact-manifest";
@@ -744,8 +744,11 @@ interface ChildSessionSummary {
   createdAt: number;
   updatedAt: number;
   errorCode?: string;
-  errorMessage?: string;  /** Newest tool step, present only while the child is still executing. */
+  errorMessage?: string;
+  /** Newest tool step, present only while the child is still executing. */
   activity?: DescendantActivity;
+  /** Terminal report declared by this child, independent of its agent role. */
+  report?: DescendantReport;
 }
 
 interface WorkerListSessionsResult {
@@ -913,6 +916,7 @@ interface LogSubagentSession extends ChildSessionSummary {
   critique?: string;
   candidates?: VerifyCandidateSummary[];
   maxAttempts?: number;
+  report?: DescendantReport;
   events?: LogSubagentEvent[];
   children?: LogSubagentSession[];
 }
@@ -946,6 +950,15 @@ interface ApprovalLogDetails {
   artifactUrl?: string;
   /** Project-root-relative paths to local file artifacts, viewable via /sessions/:id/artifacts/*. */
   artifactPaths?: string[];
+  /** Completed child report returned on the parent subagent__* call. Retained as
+   * a compatibility source for sessions written before child summaries carried
+   * their own report. */
+  subagentResult?: {
+    headline?: string;
+    incomplete?: string;
+    artifacts?: string[];
+    body?: string;
+  };
   /** The pre-review verdict that immediately preceded this gate. `sessionId`
    *  names the judge child; this layer resolves it to `sessionHref`. */
   judge?: {
@@ -2836,6 +2849,7 @@ function importantDescendantTree(
       ...(descendant.candidates && { candidates: descendant.candidates }),
       ...(descendant.maxAttempts !== undefined && { maxAttempts: descendant.maxAttempts }),
       ...(descendant.activity && { activity: descendant.activity }),
+      ...(descendant.report && { report: descendant.report }),
     }));
   }
 
@@ -2907,6 +2921,28 @@ function fallbackSubagentSession(entry: ApprovalLogEntry): LogSubagentSession | 
     synthetic: true,
     command: '',
     displayStatus: status,
+    ...(() => {
+      const report = reportFromSubagentResult(entry.details?.subagentResult);
+      return report ? { report } : {};
+    })(),
+  };
+}
+
+/** Compatibility adapter for sessions written before child summaries carried
+ * their own durable report. New sessions derive this from the child's
+ * report_complete/report_incomplete part; old ones can still use the result
+ * returned on the parent subagent__* call. */
+function reportFromSubagentResult(
+  result: ApprovalLogDetails['subagentResult'] | undefined
+): DescendantReport | undefined {
+  if (!result) return undefined;
+  const headline = result.incomplete ?? result.headline;
+  if (!headline) return undefined;
+  return {
+    status: result.incomplete ? 'incomplete' : 'complete',
+    headline,
+    ...(result.body && { body: result.body }),
+    ...(result.artifacts?.length && { artifacts: result.artifacts }),
   };
 }
 
@@ -2978,7 +3014,13 @@ function logsWithChildSessions(
 
   const enrichedLogs = logs.map((entry) => {
     const child = assignedChildren.get(entry.id);
-    if (child) return withJudgeHref({ ...entry, subagentSession: child });
+    if (child) {
+      const report = child.report ?? reportFromSubagentResult(entry.details?.subagentResult);
+      return withJudgeHref({
+        ...entry,
+        subagentSession: report && report !== child.report ? { ...child, report } : child,
+      });
+    }
     const fallback = fallbackSubagentSession(entry);
     return withJudgeHref(fallback ? { ...entry, subagentSession: fallback } : entry);
   });

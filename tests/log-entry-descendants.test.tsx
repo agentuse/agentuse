@@ -19,6 +19,22 @@ function row(options: {
   events?: LogSubagentEvent[];
   children?: LogSubagentSession[];
 }): LogSubagentSession {
+  const report = options.verdict
+    ? {
+        status: options.verdict,
+        headline: options.attemptLabel ?? 'Verification result',
+        ...(options.candidates && options.candidates.length > 0
+          ? {
+              items: options.candidates.map((candidate) => ({
+                id: candidate.id,
+                pass: candidate.pass,
+                ...(candidate.critique && { detail: candidate.critique }),
+                ...(candidate.settled && { carriedForward: true }),
+              })),
+            }
+          : options.critique ? { body: options.critique } : {}),
+      } as const
+    : undefined;
   return {
     sessionId: options.id,
     parentSessionId: options.parentSessionId,
@@ -38,6 +54,7 @@ function row(options: {
     ...(options.verdict && { verdict: options.verdict }),
     ...(options.critique && { critique: options.critique }),
     ...(options.candidates && { candidates: options.candidates }),
+    ...(report && { report }),
     ...(options.events && { events: options.events }),
     ...(options.children && { children: options.children }),
   };
@@ -268,10 +285,10 @@ describe('delegated call expansion', () => {
     };
   }
 
-  function renderTool(entry: ApprovalLogEntry): string {
+  function renderTool(entry: ApprovalLogEntry, expanded?: boolean): string {
     return render(<LogEntry
       entry={entry}
-      expanded={undefined}
+      expanded={expanded}
       showActions={false}
       actionsDisabled={false}
       projectId="project"
@@ -288,6 +305,49 @@ describe('delegated call expansion', () => {
 
   it('keeps a running subagent call closed, since the card above carries the live view', () => {
     expect(renderTool(toolEntry({ tool: 'subagent__research' }))).toContain('aria-expanded="false"');
+  });
+
+  it('keeps completed descendant cards and report headlines visible while collapsing verbose details', () => {
+    const child = row({
+      id: 'writer', name: 'LifeHack Blog Writer', href: '/sessions/writer', createdAt: 2_000,
+      parentSessionId: 'manager', breadcrumb: [{ sessionId: 'manager', agentName: 'Manager' }],
+    });
+    child.report = {
+      status: 'complete',
+      headline: 'Approved and promoted 1 LifeHack article',
+      body: '- **Quality:** 7/7 PASS\n- **Words:** 2,399',
+      artifacts: ['content/pieces/article/', 'https://example.com/article.md'],
+    };
+    child.children = [row({
+      id: 'judge', name: 'LifeHack Blog Gate', href: '/sessions/judge', createdAt: 3_000,
+      parentSessionId: 'writer', breadcrumb: [{ sessionId: 'manager', agentName: 'Manager' }],
+      judge: true, attemptLabel: 'Judge attempts 1–2 of 3', verdict: 'pass',
+      candidates: [{ id: 'change-1', pass: true, critique: 'The saved article is publishable.' }],
+    })];
+    child.events = [{
+      id: 'feedback-1', sourceLogId: 'gate-1', type: 'reviewer-feedback', ownerSessionId: 'writer', depth: 1,
+      breadcrumb: [{ sessionId: 'manager', agentName: 'Manager' }], time: 4_000,
+      displayStatus: 'commented', comment: 'Expand to read this historical feedback.', round: 1,
+      roundLabel: 'Revision request 1',
+    }];
+    const entry = toolEntry({ tool: 'subagent__write', status: 'completed', subagentSession: child });
+
+    const collapsed = renderTool(entry);
+    expect(collapsed).toContain('Approved and promoted 1 LifeHack article');
+    expect(collapsed).not.toContain('7/7 PASS');
+    expect(collapsed).not.toContain('example.com/article.md');
+    expect(collapsed).toContain('data-session-id="judge"');
+    expect(collapsed).toContain('LifeHack Blog Gate');
+    expect(collapsed).toContain('Judge attempts 1–2 of 3');
+    expect(collapsed).toContain('The saved article is publishable.');
+    expect(collapsed).toContain('agentuse sessions show judge --all-search');
+    expect(collapsed).not.toContain('Expand to read this historical feedback.');
+
+    const expanded = renderTool(entry, true);
+    expect(expanded).toContain('7/7 PASS');
+    expect(expanded).toContain('href="https://example.com/article.md"');
+    expect(expanded).toContain('data-session-id="judge"');
+    expect(expanded).toContain('Expand to read this historical feedback.');
   });
 });
 
@@ -343,7 +403,7 @@ describe('judge child verdicts on the descendant card', () => {
     }));
     expect(html).toContain('chip status error');
     expect(html).toContain('>failed<');
-    expect(html).toContain('subagent-event is-judge-fail');
+    expect(html).toContain('subagent-card is-failure');
     expect(html).toContain('Judge attempt 1 of 3');
     expect(html).toContain('X Growth Manager › X Engage Reply');
     expect(html).toContain('verify-candidate is-fail');
@@ -361,13 +421,13 @@ describe('judge child verdicts on the descendant card', () => {
     }));
     expect(html).toContain('chip status completed');
     expect(html).toContain('>passed<');
-    expect(html).toContain('subagent-event is-judge-pass');
+    expect(html).toContain('subagent-card is-success');
     expect(html).toContain('unchanged · carried forward');
   });
 
   it('falls back to the one-line critique when the run recorded no candidates', () => {
     const html = renderEntry(judgeRow({ id: 'judge-3', verdict: 'fail', critique: 'Reply overclaims the handoff.' }));
-    expect(html).toContain('verify-event-critique');
+    expect(html).toContain('subagent-report-body');
     expect(html).toContain('Reply overclaims the handoff.');
   });
 

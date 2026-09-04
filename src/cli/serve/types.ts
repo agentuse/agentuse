@@ -1,5 +1,5 @@
 import type { ActiveContextUsage, SessionTrigger } from "../../session/types";
-import type { DescendantActivity, DescendantBreadcrumb, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary, VerifyCandidateSummary } from '../../session/important-descendants';
+import type { DescendantActivity, DescendantBreadcrumb, DescendantReport, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary, VerifyCandidateSummary } from '../../session/important-descendants';
 
 export type { SessionTrigger };
 
@@ -328,6 +328,8 @@ export interface ChildSessionSummary {
   errorMessage?: string;
   /** Newest tool step, present only while the child is still executing. */
   activity?: DescendantActivity;
+  /** Terminal report declared by this child, independent of its agent role. */
+  report?: DescendantReport;
 }
 
 export interface SessionTokenUsage {
@@ -507,6 +509,7 @@ export interface LogSubagentSession extends ChildSessionSummary {
   critique?: string;
   candidates?: VerifyCandidateSummary[];
   maxAttempts?: number;
+  report?: DescendantReport;
   events?: LogSubagentEvent[];
   children?: LogSubagentSession[];
 }
