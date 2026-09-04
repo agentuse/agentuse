@@ -138,8 +138,10 @@ import {
   markAgentDraftSaved,
   readAgentDraftRecord,
   recordAgentDraftTestRun,
+  internalAgentDraftPath,
   reopenAgentDraft,
   settleAgentDraftTestRun,
+  writeInternalAgentDraftSource,
   type AgentDraftEntry,
   type AgentDraftRecord,
 } from "../agents/draft";
@@ -514,6 +516,12 @@ interface WorkerExecuteError {
   /** Final output remains useful when report_incomplete ends the run. */
   result?: WorkerExecuteResult['result'];
 }
+
+/** A mock run needs more headroom than the same agent would need for real:
+ *  fabricated tool results are noisier, so the model spends extra steps
+ *  reconciling them. Cutting the run short would make the draft look broken. */
+const TEST_RUN_TIMEOUT_SECONDS = 600;
+const TEST_RUN_MAX_STEPS = 40;
 
 interface OnboardingModelJob {
   id: string;
@@ -3545,14 +3553,17 @@ export function createServeCommand(): Command {
       const onboardingJobs = new Map<string, OnboardingModelJob>();
       const agentCreationRecoveryInputs = new Map<string, AgentCreationRecoveryInput>();
       const activeInternalJobRecoveries = new Map<string, Promise<void>>();
-      const revisionViewCleanups = new Map<string, () => Promise<void>>();
+      /** Sanitized project views for internal sessions that can be continued.
+       *  The view has to outlive the first turn, so cleanup is deferred until
+       *  the draft or revision it belongs to is resolved. */
+      const internalViewCleanups = new Map<string, () => Promise<void>>();
       const revisionMutations = new Set<string>();
       const draftMutations = new Set<string>();
       const activeSessionContinuations = new Map<string, Promise<unknown>>();
-      const cleanupRevisionView = async (revisionSessionId: string): Promise<void> => {
-        const cleanup = revisionViewCleanups.get(revisionSessionId);
+      const cleanupInternalView = async (sessionId: string): Promise<void> => {
+        const cleanup = internalViewCleanups.get(sessionId);
         if (!cleanup) return;
-        revisionViewCleanups.delete(revisionSessionId);
+        internalViewCleanups.delete(sessionId);
         await cleanup().catch(() => undefined);
       };
       const pruneOnboardingJobs = (): void => {
@@ -4069,11 +4080,14 @@ export function createServeCommand(): Command {
         draft: AgentDraftEntry,
       ): Promise<{ sessionId: string; draftIndex: number; sessionToken?: string }> => {
         const sessionId = ulid();
+        // Mock mode fabricates every tool result through this model, so the
+        // configured cheap model wins over the creator's own: a test run should
+        // cost a fraction of the design session, not the same again.
         const worker = new AgentWorker({
           AGENTUSE_PROJECT_ID: project.id,
           AGENTUSE_RESUME_PUBLIC_URL: effectivePublicUrl,
           AGENTUSE_MOCK_MODE: '1',
-          AGENTUSE_MOCK_MODEL: record.authoringModel,
+          AGENTUSE_MOCK_MODEL: process.env.AGENTUSE_MOCK_MODEL || record.authoringModel,
           AGENTUSE_MOCK_APPROVAL: 'approve',
         });
         await worker.spawn();
@@ -4085,8 +4099,8 @@ export function createServeCommand(): Command {
           agentDescription: `Mock test run of draft ${draft.index}`,
           model: draft.model,
           trigger: 'manual',
-          timeout: 300,
-          maxSteps: 20,
+          timeout: TEST_RUN_TIMEOUT_SECONDS,
+          maxSteps: TEST_RUN_MAX_STEPS,
           owner: currentProcessRef(),
         });
         if (!prepared.success) {
@@ -4107,8 +4121,8 @@ export function createServeCommand(): Command {
           newSessionId: sessionId,
           preparedSession: true,
           trigger: 'manual',
-          timeout: 300,
-          maxSteps: 20,
+          timeout: TEST_RUN_TIMEOUT_SECONDS,
+          maxSteps: TEST_RUN_MAX_STEPS,
           debug: options.debug,
         }).then(async (result) => {
           await settleAgentDraftTestRun(project.root, record.jobId, sessionId, result.success
@@ -8402,7 +8416,7 @@ export function createServeCommand(): Command {
               job,
               worker,
               project,
-              agentId: 'internal-agent-creator',
+              agentId: relative(project.root, internalAgentDraftPath(project.root, sessionId)).replace(/\.agentuse$/u, ''),
               agentName: 'internal-agent-creator',
               agentDescription: 'Turn a user brief into a production AgentUse agent',
               timeout: 300,
@@ -8431,7 +8445,7 @@ export function createServeCommand(): Command {
                   loadBuiltinSkillSource('creator'),
                 ]);
                 const availableSkills = skillCatalog;
-                return buildAgentCreatorSessionAgent({
+                const agentContent = buildAgentCreatorSessionAgent({
                   model: request.model,
                   ...(reasoning && { reasoning }),
                   safeViewRoot: view.root,
@@ -8443,10 +8457,18 @@ export function createServeCommand(): Command {
                   availableModels,
                   availableSkills,
                 });
+                // Persist the generated agent the way the reviser does: a
+                // continued session reloads its agent from disk, so a purely
+                // in-memory creator could never answer a change request.
+                const finishDraftView = cleanupView;
+                if (finishDraftView) {
+                  internalViewCleanups.set(sessionId, finishDraftView);
+                  cleanupView = undefined;
+                }
+                return writeInternalAgentDraftSource(project.root, sessionId, agentContent);
               },
-              execute: (agentContent) => worker.execute({
-                  agentContent,
-                  agentName: 'internal-agent-creator',
+              execute: (internalAgentPath) => worker.execute({
+                  agentPath: internalAgentPath,
                   projectRoot: project.root,
                   newSessionId: sessionId,
                   preparedSession: true,
@@ -8503,7 +8525,13 @@ export function createServeCommand(): Command {
                 code: error.code,
                 message: error.message,
               }).then(() => undefined),
-              cleanup: async () => { await cleanupView?.(); },
+              cleanup: async () => {
+                await cleanupView?.();
+                const latest = await readAgentDraftRecord(project.root, job.id).catch(() => undefined);
+                if (!latest || latest.status === 'saved' || latest.status === 'discarded') {
+                  await cleanupInternalView(job.id);
+                }
+              },
               onPersistenceError: (error) => logger.warn(`Failed to persist internal agent job ${job.id}: ${(error as Error).message}`),
             });
           } catch (err) {
@@ -8912,7 +8940,7 @@ export function createServeCommand(): Command {
                 );
                 const finishRevisionView = cleanupView;
                 if (finishRevisionView) {
-                  revisionViewCleanups.set(revisionSessionId, finishRevisionView);
+                  internalViewCleanups.set(revisionSessionId, finishRevisionView);
                   cleanupView = undefined;
                 }
                 return internalAgentPath;
@@ -8962,7 +8990,7 @@ export function createServeCommand(): Command {
                 await cleanupView?.().catch(() => undefined);
                 const latest = await readAgentRevisionRecord(found.project.root, revisionSessionId).catch(() => undefined);
                 if (latest && (latest.status === 'accepted' || latest.status === 'applied' || latest.status === 'discarded' || latest.status === 'restored' || latest.status === 'error')) {
-                  await cleanupRevisionView(revisionSessionId);
+                  await cleanupInternalView(revisionSessionId);
                 }
               },
               onPersistenceError: (error) => logger.warn(`Failed to persist internal agent job ${job.id}: ${(error as Error).message}`),
@@ -9059,6 +9087,7 @@ export function createServeCommand(): Command {
                 }
               }
               const discarded = await markAgentDraftDiscarded(project.root, jobId);
+              await cleanupInternalView(jobId);
               wakeListHubs();
               sendJSON(res, 200, { success: true, draft: draftViewPayload(project, discarded) });
               return;
@@ -9092,6 +9121,7 @@ export function createServeCommand(): Command {
               fileName: latest.fileName,
             });
             await markAgentDraftSaved(project.root, jobId, created.agent.runPath);
+            await cleanupInternalView(jobId);
             const job = onboardingJobs.get(jobId);
             if (job?.kind === 'agent-creation') {
               job.result = created;
@@ -9154,7 +9184,7 @@ export function createServeCommand(): Command {
               const originToken = sessionViewToken(record.originSessionId, apiKey);
               if (originToken) originParams.set('token', originToken);
               if (record.status === 'accepted' || record.status === 'applied' || record.status === 'discarded' || record.status === 'restored' || record.status === 'error') {
-                await cleanupRevisionView(revisionSessionId);
+                await cleanupInternalView(revisionSessionId);
               }
               sendJSON(res, 200, {
                 success: true,
@@ -9223,7 +9253,7 @@ export function createServeCommand(): Command {
                 };
                 await persistOnboardingJob(job);
               }
-              await cleanupRevisionView(revisionSessionId);
+              await cleanupInternalView(revisionSessionId);
               wakeListHubs();
               const { previousSource: _previous, ...visibleRecord } = cancelled ?? record;
               sendJSON(res, 200, { success: true, revision: visibleRecord });
@@ -9367,12 +9397,12 @@ export function createServeCommand(): Command {
               job.status = 'completed';
               job.result = record;
               if (record.status === 'accepted' || record.status === 'applied' || record.status === 'restored' || record.status === 'discarded') {
-                await cleanupRevisionView(job.sessionId);
+                await cleanupInternalView(job.sessionId);
               }
             } else if (record?.status === 'error') {
               job.status = 'error';
               if (record.error) job.error = record.error;
-              await cleanupRevisionView(job.sessionId);
+              await cleanupInternalView(job.sessionId);
             }
             await persistOnboardingJob(job);
           }

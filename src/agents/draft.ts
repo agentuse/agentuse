@@ -2,6 +2,7 @@ import { mkdir, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getProjectDirSync } from '../storage/paths.js';
 import { atomicWriteFile } from '../utils/atomic-write.js';
+import { internalAgentSourcePath, writeInternalAgentSource } from './internal-agent-file.js';
 
 /**
  * An agent draft is the durable record behind the draft-and-refine page: the
@@ -67,6 +68,20 @@ export interface AgentDraftRecord {
   pendingRequest?: string;
   savedAgentRunPath?: string;
   error?: { code: string; message: string };
+}
+
+/** Where the creator agent's generated source lives, so its session records a
+ *  real file path and can be continued for the next change request. */
+export function internalAgentDraftPath(projectRoot: string, jobId: string): string {
+  return internalAgentSourcePath(projectRoot, 'draft', jobId);
+}
+
+export async function writeInternalAgentDraftSource(
+  projectRoot: string,
+  jobId: string,
+  source: string,
+): Promise<string> {
+  return writeInternalAgentSource(projectRoot, 'draft', jobId, source);
 }
 
 function draftDir(projectRoot: string): string {

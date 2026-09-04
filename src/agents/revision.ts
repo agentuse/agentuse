@@ -11,6 +11,7 @@ import { escapeSafeVariables } from '../tools/path-validator.js';
 import { match as wildcardMatch } from '../tools/wildcard.js';
 import type { ReasoningLevel } from '../model-compatibility.js';
 import type { ProjectSkillSummary } from './discover.js';
+import { internalAgentSourcePath, writeInternalAgentSource } from './internal-agent-file.js';
 import { isPathInside } from '../utils/path-policy.js';
 import { atomicWriteFile } from '../utils/atomic-write.js';
 
@@ -85,8 +86,7 @@ function revisionPath(projectRoot: string, revisionSessionId: string): string {
 }
 
 export function internalAgentRevisionPath(projectRoot: string, revisionSessionId: string): string {
-  revisionPath(projectRoot, revisionSessionId); // validates the id
-  return join(revisionDir(projectRoot), `${revisionSessionId}.agentuse`);
+  return internalAgentSourcePath(projectRoot, 'revision', revisionSessionId);
 }
 
 export async function writeInternalAgentRevisionSource(
@@ -94,11 +94,7 @@ export async function writeInternalAgentRevisionSource(
   revisionSessionId: string,
   source: string,
 ): Promise<string> {
-  const directory = revisionDir(projectRoot);
-  await mkdir(directory, { recursive: true });
-  const target = internalAgentRevisionPath(projectRoot, revisionSessionId);
-  await atomicWriteFile(target, source, { mode: 0o600 });
-  return target;
+  return writeInternalAgentSource(projectRoot, 'revision', revisionSessionId, source);
 }
 
 async function writeRecord(record: AgentRevisionRecord): Promise<void> {

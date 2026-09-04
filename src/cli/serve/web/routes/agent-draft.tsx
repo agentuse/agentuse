@@ -55,6 +55,14 @@ export default function AgentDraft() {
   const [busy, setBusy] = useState<'save' | 'discard' | 'request' | 'test' | null>(null);
   const [tab, setTab] = useState<DraftFileTab>('diff');
   const [testSession, setTestSession] = useState<{ sessionId: string; sessionToken?: string; draftIndex: number } | null>(null);
+  // The models.dev pricing registry is large generated data, so it loads on
+  // demand exactly as the session page does.
+  const [pricing, setPricing] = useState<typeof import('../lib/pricing') | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void import('../lib/pricing').then((mod) => { if (!cancelled) setPricing(mod); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   useTitle(pageTitle('Agents', 'New agent', 'Draft'));
 
@@ -196,6 +204,10 @@ export default function AgentDraft() {
         )}
         <TokenUsageStrip
           tokenUsage={creatorSession.approval?.tokenUsage}
+          estimatedCost={pricing && creatorSession.approval
+            ? pricing.estimateSessionCostUsd(creatorSession.approval.model, creatorSession.approval.tokenUsage)
+            : undefined}
+          formatUsd={pricing?.formatUsd}
           compact
           ariaLabel="Creator session usage"
         />
@@ -241,6 +253,7 @@ export default function AgentDraft() {
         runs={draft.testRuns}
         busy={busy === 'test'}
         onRun={() => void runTest()}
+        onFinished={() => void refresh()}
       />}
       exchange={<DraftExchange turns={draft.drafts.map((entry) => ({ request: entry.request, reply: entry.reply }))} />}
       composer={!closed && (

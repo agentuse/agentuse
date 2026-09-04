@@ -82,7 +82,11 @@ describe('internal AgentUse architecture', () => {
     ]);
 
     expect(serve).not.toContain("routePath === '/onboarding/creation'");
-    expect(serve.match(/agentName: 'internal-agent-creator'/gu)).toHaveLength(2);
+    // Once, on the durable preparing shell. The run itself goes through the
+    // creator source written to disk, which is what makes the session
+    // continuable for a change request.
+    expect(serve.match(/agentName: 'internal-agent-creator'/gu)).toHaveLength(1);
+    expect(serve).toContain('writeInternalAgentDraftSource(project.root, sessionId, agentContent)');
     expect(webApi).toContain("postJson('/api/agents', { ...input, guided: true })");
     expect(webApi).not.toContain('fetchAgentCreationJob');
     expect(webApi).not.toContain('fetchOnboardingJob');

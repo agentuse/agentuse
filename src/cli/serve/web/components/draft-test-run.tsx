@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import type { ApprovalLogEntry, ApprovalPageInfo } from '../../types';
 import type { AgentDraftTestRun as AgentDraftTestRunRecord } from '../../../../agents/draft';
 import { useApprovalStream } from '../hooks/use-approval-stream';
@@ -18,6 +18,9 @@ export function DraftTestRun(props: {
   runs: AgentDraftTestRunRecord[];
   busy: boolean;
   onRun: () => void;
+  /** Called once when the streamed run reaches a terminal status, so the page
+   *  can re-read the record it stopped polling for. */
+  onFinished?: () => void;
 }) {
   const [status, setStatus] = useState('idle');
   const [approval, setApproval] = useState<Omit<ApprovalPageInfo, 'logs'> | null>(null);
@@ -49,6 +52,9 @@ export function DraftTestRun(props: {
 
   const record = props.runs.find((run) => run.sessionId === sessionId);
   const finished = Boolean(sessionId) && isTerminalInternalAgentSessionStatus(status);
+  useEffect(() => {
+    if (finished) props.onFinished?.();
+  }, [sessionId, finished]);
   const durationMs = record?.finishedAt && record.startedAt ? record.finishedAt - record.startedAt : undefined;
   const toolCalls = entries.filter((entry) => entry.type === 'tool');
   const failedCalls = toolCalls.filter((entry) => entry.status === 'error' || entry.status === 'failed');
@@ -102,7 +108,7 @@ export function DraftTestRun(props: {
       <div class="draft-testrun-result">
         <div class="cell"><span class="label">tool calls</span><span class="value">{toolCalls.length} · {failedCalls.length} failed</span></div>
         <div class="cell"><span class="label">gates hit</span><span class="value">{gates.length}{gates.length > 0 ? ' · auto-resolved' : ''}</span></div>
-        <div class="cell"><span class="label">status</span><span class="value">{record?.status ?? status}</span></div>
+        <div class="cell"><span class="label">status</span><span class="value">{finished ? status : record?.status ?? status}</span></div>
       </div>
       {record?.error && <p class="draft-error" role="alert">{record.error.message}</p>}
     </div>
