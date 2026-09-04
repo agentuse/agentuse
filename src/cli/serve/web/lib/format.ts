@@ -1,5 +1,14 @@
 import type { ApprovalLogEntry, ApprovalLogDetails, ApprovalPageInfo } from "../../types";
-import type { StoreItem } from "../../../../store/types";
+export {
+  looksLikeUlid,
+  shortAgentName,
+  storeItemPreview,
+  storeItemTitle,
+  storeNeedsAttention,
+  storeStatusBucket,
+  STORE_STATUS_BUCKETS,
+} from "../../../../store/display";
+export type { StoreDisplay, StoreStatusBucket } from "../../../../store/display";
 import {
   isExecutingSessionStatus,
   isLiveSessionStatus,
@@ -98,17 +107,6 @@ export function valueAsRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-export function storeItemTitle(item: StoreItem): string {
-  if (item.title) return item.title;
-  const data = valueAsRecord(item.data);
-  const candidates = ['title', 'name', 'headline', 'subject', 'url'];
-  for (const key of candidates) {
-    const value = data[key];
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return item.id;
-}
-
 /**
  * One-line, human-readable summary of an arbitrary store value for a lede.
  * Strings pass through (whitespace-collapsed and truncated); objects and arrays
@@ -140,19 +138,6 @@ export function humanizeStoreValue(value: unknown, max = 180): string {
   return String(value);
 }
 
-export function storeItemPreview(item: StoreItem, max = 180): string {
-  const data = valueAsRecord(item.data);
-  const candidates = ['summary', 'description', 'note_excerpt', 'excerpt', 'draft', 'body', 'content', 'why_engage'];
-  for (const key of candidates) {
-    const value = data[key];
-    if (typeof value === 'string' && value.trim()) {
-      const compact = value.trim().replace(/\s+/g, ' ');
-      return compact.length > max ? `${compact.slice(0, max)}…` : compact;
-    }
-  }
-  if (Object.keys(data).length === 0) return '';
-  return humanizeStoreValue(item.data, max);
-}
 
 /**
  * Serializing an entry is pure, and both entries and their details are replaced

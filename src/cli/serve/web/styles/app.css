@@ -4094,16 +4094,105 @@ html[data-route-loading] body::after {
 }
 
 /* ---------------- stores ----------------
-   Page shell (root font, links, main, header, eyebrow/h1/lede, panel, empty,
-   code) comes from the shared page-shell groups below. */
+   Three pages share this block: the index (a grouped table of stores with a
+   pipeline mix bar), the store table (the sortable item list, in either a
+   pipeline or a plain-table shape), and the item detail (meta surface plus a
+   collapsible field tree). Page shell (root font, links, main, header,
+   eyebrow/h1/lede, panel, empty, code) comes from the shared page-shell groups
+   below; segments, the project select and group titles are shared with the
+   schedules and agents pages. */
+
+/* Breadcrumbs replace the eyebrow once you are inside a store. */
+.page-stores .crumbs { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-size: var(--font-size-caption); color: var(--muted); }
+.page-stores .crumbs a { color: var(--muted-3); border-bottom: 0; }
+.page-stores .crumbs a:hover { color: var(--cyan); text-decoration: underline; text-underline-offset: 2px; }
+.page-stores .crumbs .sep { color: var(--muted-2); }
+.page-stores header:not(.topbar) { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+.page-stores .header-text { flex: 1; min-width: 0; }
+.page-stores .header-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+.page-stores .lede .attention { color: var(--amber); }
+.page-stores .lede .proj-tag,
+.page-stores .item-chips .proj-tag { margin-left: 10px; font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted-2); }
+.page-stores .muted { color: var(--muted); }
+.page-stores .dim { color: var(--muted-2); }
+
+/* Toolbar: text filter, segments, and the dropdowns, wrapping on narrow views. */
+.page-stores .stores-toolbar { display: flex; align-items: center; gap: 12px; margin: 22px 0 14px; flex-wrap: wrap; }
+.page-stores .stores-toolbar .segments { margin: 0; }
+.page-stores .stores-toolbar .project-filter { margin-bottom: 0; }
+.page-stores .stores-toolbar .view-filter { margin-left: auto; }
+
+/* Copy actions: an icon inside a table cell, or a labelled toolbar button. */
+.copy-btn {
+  appearance: none; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  border: 0; background: transparent; color: var(--muted-2);
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+.copy-btn svg { width: 13px; height: 13px; flex: 0 0 auto; }
+.copy-btn.icon { width: 22px; height: 22px; padding: 0; border-radius: 6px; }
+.copy-btn.icon:hover { background: var(--panel-hover); color: var(--fg); }
+.copy-btn.button {
+  min-height: 32px; padding: 0 12px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
+  color: var(--muted-3); font-family: var(--sans); font-size: var(--font-size-caption);
+  box-shadow: var(--surface-shadow);
+}
+.copy-btn.button svg { width: 14px; height: 14px; }
+.copy-btn.button:hover { color: var(--fg); border-color: var(--line-strong); }
+.copy-btn.copied { color: var(--green); }
+
+/* --- stores index --- */
+.page-stores-index .stores-table { display: flex; flex-direction: column; --store-columns: minmax(0, 1fr) 72px 340px 110px 16px; }
+.page-stores-index .stores-head {
+  display: grid; grid-template-columns: var(--store-columns); gap: 16px;
+  padding: 9px 18px; border-bottom: 1px solid var(--line-strong);
+  font-size: var(--font-size-micro); font-weight: var(--weight-bold); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--muted-2);
+}
+.page-stores-index .group { margin: 0; }
+.page-stores-index .group-title { margin: 0; padding: 9px 18px 8px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.page-stores-index .store-row {
+  display: grid; grid-template-columns: var(--store-columns); gap: 16px; align-items: center;
+  padding: 12px 18px; border-bottom: 1px solid var(--line);
+  cursor: pointer; transition: background 120ms ease;
+}
+.page-stores-index .group:last-child .store-row:last-child { border-bottom: 0; }
+.page-stores-index .store-row:hover { background: var(--panel-hover); }
+.page-stores-index .store-row-name { min-width: 0; }
+.page-stores-index .store-row-name a { color: var(--fg); font-weight: var(--weight-medium); border-bottom: 0; }
+.page-stores-index .store-row-name a:hover { color: var(--cyan); text-decoration: underline; text-underline-offset: 2px; }
+.page-stores-index .store-row-types { margin-top: 2px; color: var(--muted); font-size: var(--font-size-caption); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.page-stores-index .when { font-family: var(--mono); font-size: var(--font-size-caption); color: var(--muted-3); white-space: nowrap; }
+.page-stores-index .chev { width: 14px; height: 14px; color: var(--muted-2); }
+/* The status mix: a 6px stacked bar over the same counts in words, so the
+   shape reads at a glance and the numbers stay available. */
+.page-stores .mix { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.page-stores .mix-none { color: var(--muted-2); font-size: var(--font-size-caption); }
+.page-stores .mix-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--panel-hover); }
+.page-stores .mix-bar .seg { display: block; height: 100%; }
+.page-stores .mix-bar .seg.done { background: var(--muted-2); }
+.page-stores .mix-bar .seg.active { background: var(--cyan); }
+.page-stores .mix-bar .seg.attention { background: var(--amber); }
+.page-stores .mix-bar .seg.blocked { background: var(--red); }
+.page-stores .mix-text { font-size: var(--font-size-caption); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.page-stores .mix-text .attention { color: var(--amber); font-weight: var(--weight-medium); }
+.page-stores .mix-text .blocked { color: var(--red); font-weight: var(--weight-medium); }
+.page-stores .mix-text .sep { color: var(--muted-2); }
+/* Shelved stores fold into one footer row rather than padding the table. */
+.page-stores-index .quiet-row { display: flex; align-items: center; gap: 10px; padding: 10px 18px; background: var(--panel); font-size: var(--font-size-caption); color: var(--muted); }
+.page-stores-index .quiet-label { font-weight: var(--weight-bold); letter-spacing: var(--tracking-caps); text-transform: uppercase; font-size: var(--font-size-micro); color: var(--muted-2); }
+.page-stores-index .quiet-names { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted-2); }
+.page-stores-index .quiet-show { appearance: none; border: 0; background: transparent; padding: 0; cursor: pointer; color: var(--cyan); font: inherit; border-bottom: 1px dotted var(--cyan-border); }
+
+/* --- store table (item list) --- */
 .store-table-scroll { overflow-x: auto; }
 .store-table { width: 100%; min-width: 760px; border-collapse: collapse; }
-.store-table th, .store-table td { padding: 13px 18px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
+.store-table th, .store-table td { padding: 12px 18px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; white-space: nowrap; }
 .store-table td { font-size: var(--font-size-supporting); }
-.store-table .title-cell, .store-table .store-cell, .store-table .preview { white-space: normal; }
+.store-table .title-cell, .store-table .preview { white-space: normal; }
 /* The header sits flush on the surface card; only the heavier hairline under
    it separates labels from data. */
-.store-table th { color: var(--muted-2); font-family: var(--mono); font-size: var(--font-size-micro); letter-spacing: var(--tracking-caps); text-transform: uppercase; font-weight: var(--weight-medium); border-bottom-color: var(--line-strong); }
+.store-table th { color: var(--muted-2); font-family: var(--sans); font-size: var(--font-size-micro); letter-spacing: var(--tracking-caps); text-transform: uppercase; font-weight: var(--weight-bold); border-bottom-color: var(--line-strong); vertical-align: bottom; }
 .store-table th[aria-sort] { color: var(--muted-3); }
 .sort-header {
   display: inline-flex;
@@ -4121,26 +4210,24 @@ html[data-route-loading] body::after {
 .sort-header:hover { color: var(--fg); }
 .sort-indicator { width: 10px; color: var(--cyan); text-transform: none; letter-spacing: 0; }
 .sort-indicator::before { content: ""; }
-th[aria-sort="ascending"] .sort-indicator::before { content: "^"; }
-th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
+th[aria-sort="ascending"] .sort-indicator::before { content: "↑"; }
+th[aria-sort="descending"] .sort-indicator::before { content: "↓"; }
 .store-table tr:last-child td { border-bottom: 0; }
 .store-table tbody tr { transition: background 160ms ease, box-shadow 160ms ease; }
 .store-table tbody tr:hover { background: var(--panel-hover); }
 .store-table tbody tr.clickable { cursor: pointer; }
 .store-table tbody tr.clickable:focus-within { outline: 2px solid var(--cyan-border); outline-offset: -2px; }
 .store-table tbody tr.highlighted { background: var(--amber-soft); box-shadow: inset 3px 0 0 var(--amber); }
-.page-stores .title-cell { display: grid; gap: 4px; min-width: 260px; }
-.page-stores .title-cell a { width: fit-content; font-weight: var(--weight-medium); color: var(--fg); border-color: var(--line-strong); }
-/* Store index rows: name and its project read as one line, not a stack. */
-.page-stores .store-cell { min-width: 220px; }
-.page-stores .store-cell a { font-weight: var(--weight-medium); color: var(--cyan); border-bottom: 0; }
-.page-stores .store-cell a:hover { text-decoration: underline; text-underline-offset: 2px; }
-.page-stores .store-cell .proj-tag { margin-left: 8px; font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted-2); }
-.page-stores .preview { color: var(--muted); font-size: var(--font-size-caption); max-width: 520px; }
-.page-stores .muted { color: var(--muted); }
-/* Data cells stay mono so counts and timestamps line up column to column. */
-.page-stores .num { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--fg); }
+.page-stores .title-cell { display: grid; gap: 3px; min-width: 260px; }
+.page-stores .title-cell a { width: fit-content; font-weight: var(--weight-medium); color: var(--fg); border-bottom: 0; }
+.page-stores .title-cell a:hover { color: var(--cyan); text-decoration: underline; text-underline-offset: 2px; }
+.page-stores .preview { color: var(--muted); font-size: var(--font-size-caption); max-width: 560px; overflow: hidden; text-overflow: ellipsis; }
+.page-stores .type-cell { font-family: var(--mono); font-size: var(--font-size-caption); color: var(--muted-3); }
+.page-stores .agent-cell { display: block; max-width: 140px; font-size: var(--font-size-caption); color: var(--muted-3); overflow: hidden; text-overflow: ellipsis; }
+.page-stores .id-cell { display: inline-flex; align-items: center; gap: 4px; font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted-2); }
 .page-stores .updated { font-family: var(--mono); font-size: var(--font-size-caption); color: var(--muted-3); }
+.page-stores .num { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--fg); }
+.page-stores .table-footnote { display: flex; align-items: center; justify-content: space-between; padding: 10px 18px; border-top: 1px solid var(--line); background: var(--panel); font-size: var(--font-size-caption); color: var(--muted); }
 .page-stores .chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .page-stores .chip {
   display: inline-flex; align-items: center;
@@ -4153,16 +4240,53 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   white-space: nowrap;
 }
 .page-stores .chip.status { color: var(--cyan); border-color: var(--cyan-border); }
+.page-stores .chip.warn { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
+.page-stores .chip.bad { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
 .page-stores .errors { margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--red-border); border-radius: 8px; color: var(--red); background: var(--red-soft); }
-.page-stores .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 16px; }
-.page-stores .detail-cell { background: var(--bg); padding: 12px 14px; }
-.page-stores .detail-label { display: block; color: var(--muted); font-size: var(--font-size-micro); letter-spacing: var(--tracking-caps); text-transform: uppercase; margin-bottom: 5px; }
-.page-stores .data-grid { display: grid; gap: 10px; }
-.page-stores .data-field { display: grid; gap: 5px; }
-.page-stores .data-key { color: var(--cyan); font-size: var(--font-size-micro); letter-spacing: var(--tracking-caps); }
-.page-stores .data-value { border: 1px solid var(--line); border-radius: 8px; background: var(--bg); padding: 10px 12px; color: var(--muted-3); white-space: pre-wrap; overflow-wrap: anywhere; }
-.page-stores .data-value pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: var(--font-size-caption); }
-/* Shared pill tab bar (stores item view, agent detail). */
+
+/* --- item detail --- */
+.page-store-item .item-chips { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.page-store-item .item-meta {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px;
+  margin-top: 22px; background: var(--line);
+}
+.page-store-item .item-meta-cell { background: var(--surface); padding: 12px 16px; min-width: 0; }
+.page-store-item .item-meta-cell.wide { grid-column: 1 / -1; }
+.page-store-item .item-meta-cell .caps { margin-bottom: 5px; font-size: var(--font-size-micro); letter-spacing: var(--tracking-caps); text-transform: uppercase; font-weight: var(--weight-bold); color: var(--muted-2); }
+.page-store-item .item-meta-cell > code { font-family: var(--mono); font-size: var(--font-size-caption); color: var(--muted-3); overflow-wrap: anywhere; }
+.page-store-item .item-meta-count { font-size: var(--font-size-supporting); color: var(--muted-3); }
+.page-store-item .item-meta-sub { display: block; margin-top: 2px; font-size: var(--font-size-micro); color: var(--muted); overflow-wrap: anywhere; }
+.page-store-item .item-tabs { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 22px 0 12px; }
+.page-store-item .item-tabs .segments { margin: 0; }
+/* The field tree: one row per key, groups collapsed until opened. */
+.page-store-item .field-tree { display: flex; flex-direction: column; }
+.page-store-item .field-row {
+  display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px;
+  width: 100%; box-sizing: border-box;
+  padding: 9px 18px; border-bottom: 1px solid var(--line);
+  align-items: baseline; text-align: left;
+  font-family: var(--sans); font-size: var(--font-size-supporting); color: var(--fg);
+}
+.page-store-item .field-row:last-child { border-bottom: 0; }
+.page-store-item .field-key { font-family: var(--mono); font-size: var(--font-size-caption); color: var(--cyan); display: inline-flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
+.page-store-item .field-value { overflow-wrap: anywhere; }
+.page-store-item .field-value code { font-family: var(--mono); }
+.page-store-item .field-num { font-variant-numeric: tabular-nums; }
+.page-store-item .field-null, .page-store-item .field-id { color: var(--muted-3); font-size: var(--font-size-caption); }
+.page-store-item a.field-id { color: var(--cyan); }
+.page-store-item .field-id-title { font-size: var(--font-size-micro); color: var(--muted); }
+.page-store-item .field-group {
+  appearance: none; background: transparent; border-left: 0; border-right: 0; border-top: 0; cursor: pointer;
+  align-items: center;
+}
+.page-store-item .field-group:hover { background: var(--panel-hover); }
+.page-store-item .field-group.open { background: var(--panel); }
+.page-store-item .field-chev { width: 12px; height: 12px; margin-left: -18px; margin-right: -2px; color: var(--muted-2); flex: 0 0 auto; }
+.page-store-item .field-summary { font-size: var(--font-size-caption); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-stores .raw-json { margin: 0; padding: 14px 16px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: var(--font-size-caption); color: var(--muted-3); }
+.tab-panel[hidden] { display: none; }
+
+/* Shared pill tab bar (agent detail; the stores item view uses .segments). */
 .tabs { display: inline-flex; gap: 4px; margin: 0 0 12px; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .tabs button {
   min-height: 0;
@@ -4177,14 +4301,23 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .tabs button:hover { background: var(--panel-hover); color: var(--muted-3); border: 0; }
 .tabs button[aria-selected="true"] { background: var(--bg); color: var(--fg); border: 1px solid var(--line); }
-.tab-panel[hidden] { display: none; }
-.page-stores .raw-json { margin: 0; padding: 14px 16px; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: var(--font-size-caption); color: var(--muted-3); }
-.page-stores .back-link { display: inline-flex; margin-bottom: 18px; color: var(--muted-3); border-color: var(--line-strong); }
+
+@media (max-width: 900px) {
+  .page-stores-index .stores-table { --store-columns: minmax(0, 1fr) 64px 110px 16px; }
+  .page-stores-index .stores-head span:nth-child(3) { display: none; }
+  .page-stores-index .store-row .mix, .page-stores-index .store-row .mix-none { display: none; }
+  .page-store-item .item-meta { grid-template-columns: minmax(0, 1fr); }
+}
 /* On phones the wide min-width table forced a horizontal scroll and left rows
    inflated to the height of off-screen wrapped chips. Re-flow each row into a
    self-contained card with label:value stacks so every column is visible without
    scrolling and rows size to their own content. */
 @media (max-width: 640px) {
+  .page-stores header:not(.topbar) { flex-direction: column; align-items: stretch; gap: 12px; }
+  .page-stores .stores-toolbar { gap: 10px; }
+  .page-stores .stores-toolbar .segments { display: flex; overflow-x: auto; max-width: 100%; }
+  .page-stores .stores-toolbar .view-filter { margin-left: 0; }
+  .page-stores-index .store-row { padding: 12px 14px; }
   .page-stores .store-table-scroll { overflow-x: visible; }
   .page-stores .store-table { min-width: 0; width: 100%; display: block; }
   .page-stores .store-table thead { display: none; }
@@ -4210,9 +4343,13 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
     letter-spacing: var(--tracking-caps);
     text-transform: uppercase;
   }
-  /* The store name leads the card, no redundant "STORE" label above it. */
+  /* The item title leads the card, no redundant "ITEM" label above it. */
   .page-stores .store-table td:first-child::before { display: none; }
-  .page-stores .title-cell, .page-stores .store-cell { min-width: 0; }
+  .page-stores .title-cell { min-width: 0; }
+  .page-stores .agent-cell { max-width: none; }
+  .page-store-item .field-row { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .page-store-item .field-chev { margin-left: 0; }
+  .page-store-item .item-tabs { flex-direction: column; align-items: stretch; }
 }
 
 /* --- shared page shell (home / agents / schedules / stores) --- */
@@ -4292,7 +4429,8 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
 }
 .page-agents .project-about-more > summary:hover { color: var(--cyan); }
 .page-agents .project-about-more .content-render { margin-top: 8px; font-size: var(--font-size-supporting); color: var(--muted-3); }
-.page-agents .agents-filter {
+.page-agents .agents-filter,
+.page-stores .list-filter {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -4305,9 +4443,12 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   box-shadow: var(--surface-shadow);
   transition: border-color 120ms ease;
 }
-.page-agents .agents-filter:focus-within { border-color: var(--cyan-border); }
-.page-agents .agents-filter > svg { width: 14px; height: 14px; color: var(--muted-2); flex-shrink: 0; }
-.page-agents .agents-filter input {
+.page-agents .agents-filter:focus-within,
+.page-stores .list-filter:focus-within { border-color: var(--cyan-border); }
+.page-agents .agents-filter > svg,
+.page-stores .list-filter > svg { width: 14px; height: 14px; color: var(--muted-2); flex-shrink: 0; }
+.page-agents .agents-filter input,
+.page-stores .list-filter input {
   flex: 1;
   min-width: 0;
   border: 0;
@@ -4318,9 +4459,12 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   font-size: var(--field-font-size);
   padding: 9px 0;
 }
-.page-agents .agents-filter input::placeholder { color: var(--muted); }
-.page-agents .agents-filter input::-webkit-search-cancel-button { display: none; }
-.page-agents .agents-filter-clear {
+.page-agents .agents-filter input::placeholder,
+.page-stores .list-filter input::placeholder { color: var(--muted); }
+.page-agents .agents-filter input::-webkit-search-cancel-button,
+.page-stores .list-filter input::-webkit-search-cancel-button { display: none; }
+.page-agents .agents-filter-clear,
+.page-stores .list-filter-clear {
   flex-shrink: 0;
   border: 0;
   background: transparent;
@@ -4331,7 +4475,11 @@ th[aria-sort="descending"] .sort-indicator::before { content: "v"; }
   padding: 0 2px;
   transition: color 120ms ease;
 }
-.page-agents .agents-filter-clear:hover { color: var(--fg); }
+.page-agents .agents-filter-clear:hover,
+.page-stores .list-filter-clear:hover { color: var(--fg); }
+/* The stores toolbar sits in a flex row, so the filter drops the agents
+   page's top margin and takes a fixed width beside the segments. */
+.page-stores .list-filter { margin-top: 0; width: 320px; max-width: 100%; }
 .page-agents .agents-cols { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
 .page-agents .agents-cols-label { font-size: var(--font-size-micro); font-weight: var(--weight-bold); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--muted); }
 .page-agents .agents-cols-empty { font-size: var(--font-size-caption); color: var(--muted); }
@@ -5254,6 +5402,7 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 .page-agents .group:target .group-title span:first-child { color: var(--cyan); }
 .page-home .group-title,
 .page-agents .group-title,
+.page-stores-index .group-title,
 .page-schedules .day-title {
   display: flex; align-items: baseline; gap: 10px;
   margin: 26px 0 12px;
@@ -5266,6 +5415,7 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 }
 .page-home .group-title .count,
 .page-agents .group-title .count,
+.page-stores-index .group-title .count,
 .page-schedules .day-title .count { color: var(--muted-3); font-size: var(--font-size-caption); font-weight: var(--weight-medium); font-family: var(--mono); }
 /* Invisible flex spacer: pushes trailing links/controls to the right edge. */
 .page-home .group-title .rule,
@@ -6673,7 +6823,8 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-schedules .header-text { flex: 1; min-width: 0; }
 .page-schedules .lede code { font-family: var(--mono); font-size: var(--font-size-supporting); color: var(--muted-3); }
 .page-schedules .lede .failing { color: var(--red); }
-.page-schedules .project-filter {
+.page-schedules .project-filter,
+.page-stores .project-filter {
   appearance: none; cursor: pointer;
   min-height: 30px; padding: 0 30px 0 12px; margin-bottom: 4px;
   border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
@@ -6708,19 +6859,28 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-schedules .load-strip-label { position: absolute; top: 46px; transform: translateX(-50%); font-size: var(--font-size-micro); color: var(--muted-3); white-space: nowrap; max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
 
 /* Filter segments. */
-.page-schedules .segments { display: inline-flex; align-items: center; gap: 4px; margin: 0 0 12px; padding: 2px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
-.page-schedules .segment {
+.page-schedules .segments,
+.page-stores .segments { display: inline-flex; align-items: center; gap: 4px; margin: 0 0 12px; padding: 2px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
+.page-schedules .segment,
+.page-stores .segment {
   appearance: none; border: 0; cursor: pointer;
   display: inline-flex; align-items: center; gap: 7px; min-height: 28px; padding: 0 11px; border-radius: 999px;
   background: transparent; color: var(--muted); font-family: var(--sans); font-size: var(--font-size-caption);
   transition: color 120ms ease, background 120ms ease;
 }
-.page-schedules .segment:hover { color: var(--muted-3); }
-.page-schedules .segment.active { background: var(--panel-hover); color: var(--fg); font-weight: var(--weight-medium); }
-.page-schedules .segment .count { font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted-2); }
+.page-schedules .segment:hover,
+.page-stores .segment:hover { color: var(--muted-3); }
+.page-schedules .segment.active,
+.page-stores .segment.active { background: var(--panel-hover); color: var(--fg); font-weight: var(--weight-medium); }
+.page-schedules .segment .count,
+.page-stores .segment .count { font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted-2); }
 .page-schedules .segment .count.failed { color: var(--red); }
 .page-schedules .segment .count.running { color: var(--green); }
-.page-schedules .segment.active .count { color: var(--muted-3); }
+.page-stores .segment .count.warn,
+.page-stores .segment .count.attention { color: var(--amber); }
+.page-stores .segment .count.blocked { color: var(--red); }
+.page-schedules .segment.active .count,
+.page-stores .segment.active .count { color: var(--muted-3); }
 
 /* The table. Column template is shared by the header row and every slot. */
 .page-schedules .timetable { display: flex; flex-direction: column; --slot-columns: 104px minmax(0, 1fr) 236px 60px 190px 66px; }
