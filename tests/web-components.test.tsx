@@ -413,6 +413,37 @@ describe('PendingApprovalRow', () => {
     ]);
     expect(rows.map((row) => row.sessionId)).toEqual(['old', 'unknown', 'new', 'fallback']);
   });
+
+  it('leaves Home untouched: no anchors, no expiry pill, no group aside', () => {
+    const now = Date.now();
+    const html = renderToString(<PendingApprovalGroups now={now} rows={[
+      { ...base, sessionId: 'one', summary: 'Send it.', suspendedAt: now - 60_000, expiresAt: now + 60 * 60_000 },
+    ]} />);
+
+    expect(html).not.toContain('id="gate-');
+    expect(html).not.toContain('pending-row-expires');
+    expect(html).not.toContain('has-expiry');
+  });
+
+  it('anchors each group and shows a deadline pill when the approvals page asks', () => {
+    const now = Date.now();
+    const html = renderToString(<PendingApprovalGroups
+      now={now}
+      order="stalest"
+      anchored
+      showExpiry
+      groupAside={(group) => <span class="pending-group-record">asked {group.rows.length}</span>}
+      rows={[
+        { ...base, sessionId: 'soon', summary: 'Send it.', suspendedAt: now - 60_000, expiresAt: now + 40 * 60_000 },
+      ]}
+    />);
+
+    expect(html).toContain('id="gate-demo-x-engage-reply"');
+    expect(html).toContain('has-expiry');
+    expect(html).toContain('pending-row-expires urgent');
+    expect(html).toContain('expires 40m');
+    expect(html).toContain('asked 1');
+  });
 });
 
 describe('SchedulePill', () => {
