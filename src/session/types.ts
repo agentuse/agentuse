@@ -127,6 +127,9 @@ export interface SessionInfo {
     role?: 'verify-judge';
     /** Zero-based verify attempt (0 = first candidate output). */
     attempt?: number;
+    /** When one judge session served several attempts: the last one. Absent
+     * means the session judged only `attempt`. */
+    lastAttempt?: number;
     /** Total candidate outputs allowed, including the first attempt. */
     maxAttempts?: number;
   };

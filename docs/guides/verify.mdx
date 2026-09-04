@@ -54,7 +54,11 @@ For agents with an [approval gate](/guides/approval-gates), verify defaults to `
 - **Fail** → the run does not suspend. The critique returns as a rejection-with-comment tool result, the same protocol as a human rejection, so the agent revises its draft and requests approval again. The human never sees the failed draft.
 - **Pass** → the gate suspends to the human as normal.
 - **After a human Comment** → the next gate skips pre-review and goes directly back to that reviewer. Their requested revision is authoritative for that review cycle; an automated judge cannot reinterpret or override it. Machine pre-review feedback does not trigger this bypass.
-- **Fail-open** → after `maxRedos` pre-review rejections, or on any judge error, the request goes to the human regardless, with the unresolved critique in the session log. The judge protects your attention; it can never deadlock a run or replace your decision.
+- **Fail-open** → after `maxRedos` pre-review rejections, or on any judge error, the request goes to the human regardless, with the unresolved critique in the session log. The judge protects your attention; it can never deadlock a run or replace your decision. A gate that reaches the human this way records a `skipped` verify marker, so the approval card and `sessions show` say "not judged" and why.
+
+When a gate offers several drafts (a slate keyed by `options` / `changes[].optionId`), the judge returns one verdict per candidate and lists every failing candidate in one pass. A candidate that passed keeps its pass on the next attempt as long as its text is byte-identical: the gate carries it forward, tells the judge not to re-judge it, and skips the judge call entirely when nothing changed. The bounce sent back to the agent names the passing candidates so it leaves them alone.
+
+With a [judge agent](#using-a-judge-agent), the attempts on one gate share **one judge session**: the second attempt resumes the first attempt's child session and sends only the revised request plus which candidates changed. The judge keeps its own reasoning about what it already read, and the provider serves the long prefix from cache, so extra redos cost a fraction of the first. The session is dropped whenever the gate suspends, so a human decision always gets a fresh judge, and a resume is declined when the judge history grows past a fixed size or the `judge` file changed.
 
 Otherwise, the judge receives the full approval payload (draft, exact on-approval content, target reference/excerpt, context) plus bounded prior human decisions from the session, so write criteria against what the reviewer would see. Because the check runs before anything posts, this placement is the quality gate; `at: output` is a post-run audit. Gate placement also works for delegated sub-agents: a leaf's gate is judged in the leaf, before the request cascades to the root.
 
@@ -100,6 +104,7 @@ A judge that itself errors (model/auth/parse failure) never blocks the run: the 
 ## Cost and Behavior Notes
 
 - Each verification is one extra LLM call; each redo is a continuation of the existing session (prompt caching keeps it near generation-only cost). Redo steps count against `maxSteps`.
+- On a gate with a judge agent, the judge's own session is resumed across attempts, so raising `maxRedos` on a slate agent is cheaper than the count suggests: later attempts re-read a cached prefix and re-judge only the candidates that changed.
 - The built-in judge defaults to the agent's own model so authentication always works; set `model` to use a cheaper judge.
 - Verify requires session storage (the default), it is skipped when no session substrate is available, and skipped for runs that declared themselves incomplete via `report_incomplete`.
 - If a redo hits an approval gate, the run suspends normally; verification resolves at the end of the resumed run.

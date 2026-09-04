@@ -525,3 +525,49 @@ describe('fingerprintText', () => {
     expect(fingerprintText('hello')).toMatch(/^[0-9a-f]{8}:5$/);
   });
 });
+
+describe('judge session reuse across attempts', () => {
+  const slate = {
+    prompt: 'Which post?',
+    options: [{ id: 'A', label: 'A' }, { id: 'B', label: 'B' }],
+    changes: [{ optionId: 'A', content: 'post A' }, { optionId: 'B', content: 'post B' }],
+  };
+  const handle = { sessionID: 'judge-1', agentId: 'judge', messageID: 'm', judgePath: '/j.agentuse', firstAttempt: 0, lastAttempt: 0, historyChars: 100 };
+
+  it('passes the previous judge session and the changed candidates on the next attempt, and drops it on suspend', async () => {
+    const { tool } = makeGateTool();
+    const gated = withGateVerify(tool, { ...baseOptions, config: { judge: './j.agentuse', maxRedos: 3 } });
+
+    judgeOutputMock.mockResolvedValueOnce({ status: 'verdict', verdict: { pass: false, critique: 'B weak', candidates: [{ id: 'A', pass: true }, { id: 'B', pass: false, critique: 'B weak' }] }, session: handle });
+    await gated.execute(slate, {});
+    const firstCall = judgeOutputMock.mock.calls[0]![0] as { input: Record<string, unknown> };
+    expect(firstCall.input.resume).toBeUndefined();
+
+    const revised = { ...slate, changes: [{ optionId: 'A', content: 'post A' }, { optionId: 'B', content: 'post B v2' }] };
+    judgeOutputMock.mockResolvedValueOnce({ status: 'verdict', verdict: { pass: true, candidates: [{ id: 'A', pass: true }, { id: 'B', pass: true }] }, session: { ...handle, lastAttempt: 1 } });
+    await expect(gated.execute(revised, {})).rejects.toThrow('SUSPENDED');
+    const secondCall = judgeOutputMock.mock.calls[1]![0] as { input: Record<string, unknown> };
+    expect(secondCall.input.resume).toEqual(handle);
+    expect(secondCall.input.changedCandidateIds).toEqual(['B']);
+    expect(secondCall.input.settledCandidateIds).toEqual(['A']);
+
+    // The gate suspended to the human: a later gate in the same segment starts a fresh judge.
+    judgeOutputMock.mockResolvedValueOnce({ status: 'verdict', verdict: { pass: false, critique: 'x' } });
+    await gated.execute({ ...slate, prompt: 'Confirm the exact command?' }, {});
+    const thirdCall = judgeOutputMock.mock.calls[2]![0] as { input: Record<string, unknown> };
+    expect(thirdCall.input.resume).toBeUndefined();
+  });
+
+  it('drops the judge session after a judge error', async () => {
+    const { tool } = makeGateTool();
+    const gated = withGateVerify(tool, { ...baseOptions, config: { judge: './j.agentuse', maxRedos: 3 } });
+    judgeOutputMock.mockResolvedValueOnce({ status: 'verdict', verdict: { pass: false, critique: 'no' }, session: handle });
+    await gated.execute(gateInput, {});
+    judgeOutputMock.mockResolvedValueOnce({ status: 'error', detail: 'boom' });
+    await expect(gated.execute({ ...gateInput, changes: [{ label: 'Reply', content: 'v2' }] }, {})).rejects.toThrow('SUSPENDED');
+    judgeOutputMock.mockResolvedValueOnce({ status: 'verdict', verdict: { pass: true } });
+    await expect(gated.execute({ ...gateInput, changes: [{ label: 'Reply', content: 'v3' }] }, {})).rejects.toThrow('SUSPENDED');
+    const thirdCall = judgeOutputMock.mock.calls[2]![0] as { input: Record<string, unknown> };
+    expect(thirdCall.input.resume).toBeUndefined();
+  });
+});

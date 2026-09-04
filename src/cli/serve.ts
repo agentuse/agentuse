@@ -908,6 +908,7 @@ interface LogSubagentSession extends ChildSessionSummary {
   /** Judge children: 0-based attempt, and the verdict its parent's verify
    *  marker recorded for it. */
   attempt?: number;
+  lastAttempt?: number;
   verdict?: 'pass' | 'fail' | 'error' | 'skipped';
   critique?: string;
   candidates?: VerifyCandidateSummary[];
@@ -2829,6 +2830,7 @@ function importantDescendantTree(
       ...(descendant.gateLabel && { gateLabel: descendant.gateLabel }),
       ...(descendant.attemptLabel && { attemptLabel: descendant.attemptLabel }),
       ...(descendant.attempt !== undefined && { attempt: descendant.attempt }),
+      ...(descendant.lastAttempt !== undefined && { lastAttempt: descendant.lastAttempt }),
       ...(descendant.verdict && { verdict: descendant.verdict }),
       ...(descendant.critique && { critique: descendant.critique }),
       ...(descendant.candidates && { candidates: descendant.candidates }),

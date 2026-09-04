@@ -1557,6 +1557,13 @@ async function runInternalWorker() {
     return withPreviousVerdict(latest, lastJudged);
   }
 
+  /** Whether a judge child (possibly resumed across several attempts) produced
+   *  the verdict for `attempt`. */
+  function judgedAttempt(descendant: { attempt?: number; lastAttempt?: number }, attempt: number): boolean {
+    if (descendant.attempt === undefined) return false;
+    return attempt >= descendant.attempt && attempt <= (descendant.lastAttempt ?? descendant.attempt);
+  }
+
   /** A skipped marker says "no judge looked at this"; the last real verdict
    *  rides along so the card can still show what the judge said about the
    *  earlier text, labelled as such. */
@@ -2765,7 +2772,7 @@ async function runInternalWorker() {
         const match = importantDescendants.find((descendant) =>
           descendant.parentSessionId === req.sessionId
           && descendant.kinds.includes('judge')
-          && descendant.attempt === judge.attempt
+          && judgedAttempt(descendant, judge.attempt)
         );
         return match
           ? { ...entry, details: { ...entry.details, judge: { ...judge, sessionId: match.sessionId } } }
@@ -2992,7 +2999,7 @@ async function runInternalWorker() {
             const leafJudgeSession = leafJudge && importantDescendants.find((descendant) =>
               descendant.parentSessionId === cascadeLeaf!.session.id
               && descendant.kinds.includes('judge')
-              && descendant.attempt === leafJudge.attempt
+              && judgedAttempt(descendant, leafJudge.attempt)
             );
             logs = logs.map((entry) => entry.id === bookmarkId
               ? { ...entry, details: {

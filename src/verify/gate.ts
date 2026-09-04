@@ -9,7 +9,7 @@
  */
 
 import type { Tool } from 'ai';
-import { judgeOutput } from './judge.js';
+import { judgeOutput, type JudgeSessionHandle } from './judge.js';
 import type { CandidateVerdict, CanonicalVerifyConfig, GateCandidate, VerifyPlacement, VerifyVerdict } from './types.js';
 import { extractGateCandidates, fingerprintText } from './candidates.js';
 
@@ -289,6 +289,12 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
   // Spans the same stream segment as the rejection counter; a resume starts
   // both fresh, so a human decision always gets a full judge look.
   const settledText = new Map<string, string>();
+  // Text of every candidate as of the last judge look, to name what changed.
+  const lastText = new Map<string, string>();
+  // The judge agent's session from the previous attempt on this gate cycle.
+  // Resumed on the next attempt; dropped whenever the gate suspends, so a
+  // human decision always gets a fresh judge.
+  let judgeSession: JudgeSessionHandle | undefined;
 
   const judgeName = config.judge ?? config.model ?? agentModel;
   // Persist the gate verdict as a VerifyPart so a PASS (and error) is inspectable
@@ -306,7 +312,10 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
   return {
     ...tool,
     execute: async (input: Record<string, unknown>, callOptions: unknown) => {
-      const suspend = () => innerExecute(input as never, callOptions as never);
+      const suspend = () => {
+        judgeSession = undefined;
+        return innerExecute(input as never, callOptions as never);
+      };
       const humanDecisions = sessionManager && sessionID && agentId
         ? await gatherHumanApprovalHistory(sessionManager, sessionID, agentId)
         : [];
@@ -354,6 +363,9 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
       }
       const renderedPayload = await renderGatePayload(input, projectContext?.projectRoot);
       const reviewHistory = renderHumanReviewHistory(humanDecisions);
+      const changedIds = candidates
+        .filter((candidate) => lastText.has(candidate.id) && lastText.get(candidate.id) !== candidate.text)
+        .map((candidate) => candidate.id);
       const outcome = await judgeOutput({
         input: {
           kind: 'gate',
@@ -363,6 +375,8 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
           ...(reviewHistory && { reviewHistory }),
           ...(candidates.length > 0 && { candidates }),
           ...(settledIds.size > 0 && { settledCandidateIds: [...settledIds] }),
+          ...(judgeSession && { resume: judgeSession }),
+          ...(judgeSession && changedIds.length > 0 && { changedCandidateIds: changedIds }),
         },
         config,
         agentModel,
@@ -374,7 +388,9 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
           : {}),
       });
 
+      for (const candidate of candidates) lastText.set(candidate.id, candidate.text);
       if (outcome.status === 'error') {
+        judgeSession = undefined;
         logger.warn(`[Verify] Gate pre-review judge failed (${outcome.detail}); escalating to the human reviewer unjudged`);
         await recordVerifyPart({
           type: 'verify', verdict: 'error', attempt, maxRedos: config.maxRedos,
@@ -383,6 +399,7 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
         return suspend();
       }
 
+      judgeSession = outcome.session;
       const verdict = reconcileCandidateVerdicts(outcome.verdict, candidates, settledIds);
       const candidateVerdicts = verdict.candidates;
       // Remember every pass so an unchanged candidate is never re-litigated.

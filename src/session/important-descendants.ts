@@ -39,6 +39,8 @@ export interface ImportantDescendantSummary {
   /** Judge children: 0-based attempt this session judged, matched to the
    * parent's verify marker. */
   attempt?: number;
+  /** Judge children that served several attempts by resuming: the last one. */
+  lastAttempt?: number;
   /** Judge children: the verdict the parent's matching verify marker recorded.
    * The marker lives on the parent (the session that ran the gate), so without
    * this a manager's tree showed a judge child that completed and nothing
@@ -345,15 +347,21 @@ export function buildImportantDescendants(
   // that ran the gate). Explicit attempt metadata matches exactly; historical
   // judges without it fall back to their chronological ordinal among siblings,
   // the same numbering `attemptLabel` uses.
-  const markerForJudge = (session: SessionInfo): Extract<Part, { type: 'verify' }> | undefined => {
+  // A judge session that served several attempts (resumed) owns every marker
+  // in its attempt range; the newest one is what the row shows.
+  const markersForJudge = (session: SessionInfo): Array<Extract<Part, { type: 'verify' }>> => {
     const parentId = session.parentSessionID;
-    if (!parentId) return undefined;
+    if (!parentId) return [];
     const markers = verifyParts(partsOf(parentId));
-    if (markers.length === 0) return undefined;
-    const explicit = session.observability?.attempt;
-    if (explicit !== undefined) return markers.find((marker) => marker.attempt === explicit);
+    if (markers.length === 0) return [];
+    const first = session.observability?.attempt;
+    if (first !== undefined) {
+      const last = session.observability?.lastAttempt ?? first;
+      return markers.filter((marker) => marker.attempt >= first && marker.attempt <= last && marker.verdict !== 'skipped');
+    }
     const ordinal = judgeOrdinals.get(session.id);
-    return ordinal === undefined ? undefined : markers[ordinal];
+    const marker = ordinal === undefined ? undefined : markers[ordinal];
+    return marker ? [marker] : [];
   };
 
   const contextFor = (session: SessionInfo): { depth: number; breadcrumb: DescendantBreadcrumb[] } => {
@@ -385,8 +393,11 @@ export function buildImportantDescendants(
     const explicitAttempt = session.observability?.attempt;
     const ordinal = explicitAttempt ?? judgeOrdinals.get(session.id);
     const maxAttempts = session.observability?.maxAttempts;
+    const lastAttempt = session.observability?.lastAttempt;
     const attemptLabel = kinds.includes('judge') && ordinal !== undefined
-      ? `Judge attempt ${ordinal + 1}${maxAttempts ? ` of ${maxAttempts}` : ''}`
+      ? lastAttempt !== undefined && lastAttempt > ordinal
+        ? `Judge attempts ${ordinal + 1}–${lastAttempt + 1}${maxAttempts ? ` of ${maxAttempts}` : ''}`
+        : `Judge attempt ${ordinal + 1}${maxAttempts ? ` of ${maxAttempts}` : ''}`
       : undefined;
     const failedBeforeJudge = kinds.includes('failure')
       && MUTATION_IDENTITY_RE.test(identityText(session))
@@ -414,7 +425,8 @@ export function buildImportantDescendants(
             : fallbackLabel;
     const terminal = isTerminalSessionStatus(session.status);
     const activity = buildDescendantActivity(session, item.parts ?? []);
-    const marker = kinds.includes('judge') ? markerForJudge(session) : undefined;
+    const judgeMarkers = kinds.includes('judge') ? markersForJudge(session) : [];
+    const marker = judgeMarkers.at(-1);
     result.push({
       sessionId: session.id,
       parentSessionId: session.parentSessionID,
@@ -438,6 +450,7 @@ export function buildImportantDescendants(
       ...(classified.gateLabel && { gateLabel: classified.gateLabel }),
       ...(attemptLabel && { attemptLabel }),
       ...(kinds.includes('judge') && ordinal !== undefined && { attempt: ordinal }),
+      ...(kinds.includes('judge') && lastAttempt !== undefined && { lastAttempt }),
       ...(marker && {
         verdict: marker.verdict,
         maxAttempts: maxAttempts ?? marker.maxRedos + 1,
@@ -508,9 +521,13 @@ export function buildImportantDescendantEvents(
     const markers = verifyParts(item.parts ?? []);
     if (markers.length === 0) continue;
     const realJudges = judgeChildren.get(item.session.id) ?? [];
-    const explicitAttempts = new Set(realJudges
-      .map((session) => session.observability?.attempt)
-      .filter((attempt): attempt is number => attempt !== undefined));
+    const explicitAttempts = new Set<number>();
+    for (const judgeSession of realJudges) {
+      const first = judgeSession.observability?.attempt;
+      if (first === undefined) continue;
+      const last = judgeSession.observability?.lastAttempt ?? first;
+      for (let attempt = first; attempt <= last; attempt++) explicitAttempts.add(attempt);
+    }
     let historicalJudgesRemaining = realJudges.filter((session) => session.observability?.attempt === undefined).length;
 
     for (const marker of markers) {

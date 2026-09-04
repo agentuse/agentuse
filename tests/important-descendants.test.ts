@@ -520,3 +520,28 @@ describe('judge child verdicts', () => {
     });
   });
 });
+
+describe('a judge session resumed across attempts', () => {
+  it('owns every marker in its attempt range, shows the newest verdict, and suppresses those events', () => {
+    const manager = session({ id: 'manager', name: 'Manager', createdAt: 1_000 });
+    const leaf = session({ id: 'leaf', parent: manager.id, name: 'X Engage Reply', createdAt: 2_000 });
+    const judge = session({
+      id: 'judge-1', parent: leaf.id, name: 'Reply Judge', createdAt: 3_000,
+      observability: { role: 'verify-judge', attempt: 0, lastAttempt: 2, maxAttempts: 4 },
+    });
+    const parts = [
+      verifyPart({ id: 'v0', sessionId: leaf.id, attempt: 0, verdict: 'fail', time: 3_100, critique: 'A: weak' }),
+      verifyPart({ id: 'v1', sessionId: leaf.id, attempt: 1, verdict: 'fail', time: 3_200, critique: 'B: long' }),
+      verifyPart({ id: 'v2', sessionId: leaf.id, attempt: 2, verdict: 'pass', time: 3_300, candidates: [{ id: 'A', pass: true, settled: true }, { id: 'B', pass: true }] }),
+      verifyPart({ id: 'v3', sessionId: leaf.id, attempt: 3, verdict: 'fail', time: 3_400, critique: 'later, another judge' }),
+    ];
+    const evidence = [{ session: leaf, parts }, { session: judge }];
+    const rows = buildImportantDescendants(manager, evidence);
+    const row = rows.find((r) => r.sessionId === 'judge-1')!;
+    expect(row).toMatchObject({ attempt: 0, lastAttempt: 2, verdict: 'pass', attemptLabel: 'Judge attempts 1–3 of 4' });
+    expect(row.candidates).toEqual([{ id: 'A', pass: true, settled: true }, { id: 'B', pass: true }]);
+
+    const events = buildImportantDescendantEvents(manager, evidence);
+    expect(events.filter((e) => e.type === 'verify').map((e) => (e as any).attempt)).toEqual([3]);
+  });
+});

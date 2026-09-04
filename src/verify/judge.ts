@@ -25,6 +25,9 @@ import { resolveMaxSteps } from '../utils/config.js';
 import { logger, runWithLogSink } from '../utils/logger.js';
 import { SessionManager } from '../session/manager.js';
 import { createSessionAndMessage, createSessionLogSink, type SessionLogSink } from '../runner/session-helper.js';
+import { rehydrateMessages } from '../session/rehydrate.js';
+import type { ModelMessage } from 'ai';
+import type { Part } from '../session/types.js';
 import { computeAgentId } from '../utils/agent-id.js';
 import { usageToAssistantTokens } from '../session/usage.js';
 import type { CandidateVerdict, CanonicalVerifyConfig, GateCandidate, VerifyVerdict } from './types.js';
@@ -39,11 +42,34 @@ export interface JudgeParentSession {
   agentId: string;
 }
 
+/** A judge agent's child session, handed back so the next attempt on the same
+ * gate can resume it instead of starting a fresh context. The judge then keeps
+ * its own reasoning about the candidates it already read, re-checks only what
+ * changed, and the provider serves the long prefix from cache. */
+export interface JudgeSessionHandle {
+  sessionID: string;
+  agentId: string;
+  messageID: string;
+  /** Judge file the session was opened for; a different judge never resumes it. */
+  judgePath: string;
+  /** Zero-based attempt the session was opened on. */
+  firstAttempt: number;
+  /** Zero-based attempt of the most recent verdict in this session. */
+  lastAttempt: number;
+  /** Rough size of the model-facing history after the last verdict, so a
+   * resume can decline before the judge runs out of context. */
+  historyChars: number;
+}
+
 /** Outcome of a judge invocation. `error` never blocks the output — the runner
  * ships it and surfaces the failure as a session marker instead. */
 export type JudgeOutcome =
-  | { status: 'verdict'; verdict: VerifyVerdict }
+  | { status: 'verdict'; verdict: VerifyVerdict; session?: JudgeSessionHandle }
   | { status: 'error'; detail: string };
+
+/** Above this the judge history is treated as full: the next attempt opens a
+ * fresh session rather than risk a truncated or refused request. */
+export const JUDGE_RESUME_MAX_HISTORY_CHARS = 400_000;
 
 export interface JudgeInput {
   /** What is being reviewed. Omitted by legacy callers and treated as output. */
@@ -63,6 +89,12 @@ export interface JudgeInput {
    * unchanged. The gate keeps their pass regardless; the judge is told so it
    * spends its attention on the rest. */
   settledCandidateIds?: string[];
+  /** Resume this judge session instead of opening a new one (agent judges
+   * only). The prompt then carries only what changed since its last verdict. */
+  resume?: JudgeSessionHandle;
+  /** Candidate ids whose text changed since the resumed session's last
+   * verdict. Unchanged candidates are named, not re-sent. */
+  changedCandidateIds?: string[];
 }
 
 const GENERIC_CRITERIA =
@@ -116,6 +148,37 @@ function renderCandidateSection(input: JudgeInput): string {
     return `- ${candidate.id}: ${candidate.label}${note}`;
   });
   return `\n\n## Candidates under review\nReturn one verdict per candidate id below. Report every failing candidate in this single verdict.\n${lines.join('\n')}`;
+}
+
+/**
+ * The follow-up turn for a resumed judge session. The judge already holds the
+ * task, the criteria and its own reasoning about every candidate, so this
+ * sends the revised request once more and says which candidates moved. It
+ * asks for a complete verdict again so the gate never has to merge two.
+ */
+function buildRevisionPrompt(input: JudgeInput, outputInstructions: string): string {
+  const candidates = input.candidates ?? [];
+  const changed = new Set(input.changedCandidateIds ?? []);
+  const settled = new Set(input.settledCandidateIds ?? []);
+  const roster = candidates.length > 0
+    ? `\n\n## What changed\n${candidates.map((candidate) => {
+        const state = settled.has(candidate.id)
+          ? 'unchanged and already passed; report pass without re-judging'
+          : changed.has(candidate.id)
+            ? 'REVISED, judge it fresh against every criterion'
+            : 'unchanged since your previous verdict; keep that verdict unless it contradicts a revised candidate';
+        return `- ${candidate.id}: ${candidate.label} — ${state}`;
+      }).join('\n')}`
+    : '';
+  return `## Revised approval request (attempt ${input.attempt + 1})
+The agent revised its request after your previous verdict. The complete revised request follows; judge it against the same task and criteria as before.
+
+${input.output.trim() ? truncateMiddle(input.output, MAX_OUTPUT_CHARS) : '(the agent produced no approval request)'}${roster}
+
+## Instructions
+Give a complete verdict for this revised request: every candidate, every failure, in one answer. Do not repeat reasoning you already gave for unchanged text.
+
+${outputInstructions}`;
 }
 
 function buildJudgePrompt(input: JudgeInput, criteria: string, outputInstructions: string): string {
@@ -280,8 +343,18 @@ async function judgeViaAgent(
       stateRoot: projectContext?.stateRoot,
     });
 
-    const judgeTask = `${buildJudgePrompt(input, 'Apply the evaluation standard defined in your own instructions.', SUBMIT_VERDICT_INSTRUCTIONS)}`;
-    const userMessage = `${judgeAgent.instructions}\n\n${judgeTask}`;
+    // A handle only resumes when it was opened for this same judge file and
+    // its history is still comfortably small; otherwise fall through to a
+    // fresh session exactly as before.
+    const resume = input.resume && input.resume.judgePath === resolvedPath
+      && input.resume.historyChars <= JUDGE_RESUME_MAX_HISTORY_CHARS
+      && parentSession && projectContext
+      ? input.resume
+      : undefined;
+    const judgeTask = resume
+      ? buildRevisionPrompt(input, SUBMIT_VERDICT_INSTRUCTIONS)
+      : `${buildJudgePrompt(input, 'Apply the evaluation standard defined in your own instructions.', SUBMIT_VERDICT_INSTRUCTIONS)}`;
+    const userMessage = resume ? judgeTask : `${judgeAgent.instructions}\n\n${judgeTask}`;
 
     // The verdict is a structured tool call, not scraped prose: the judge
     // reasons in text (persisted in its session) then calls submit_verdict.
@@ -317,7 +390,42 @@ async function judgeViaAgent(
     let judgeAgentId: string | undefined;
     let judgeMsgID: string | undefined;
     let logSink: SessionLogSink | undefined;
-    if (parentSession && projectContext) {
+    // Resumed history: the judge's own prior turns plus this revision as the
+    // new user message. Undefined on a fresh session.
+    let resumedMessages: ModelMessage[] | undefined;
+    if (resume && parentSession) {
+      try {
+        // Same construction as a fresh judge session: a manager rooted under the
+        // parent so the nested judge directory resolves; the rehydrate read
+        // below also caches the exact path for the writes that follow.
+        judgeSessionManager = new SessionManager();
+        const parentFullPath = parentSession.sessionManager.getFullPath();
+        if (parentFullPath) judgeSessionManager.setParentPath(parentFullPath);
+        judgeSessionID = resume.sessionID;
+        judgeAgentId = resume.agentId;
+        judgeMsgID = resume.messageID;
+        const history = await rehydrateMessages(judgeSessionManager, judgeSessionID, judgeAgentId);
+        history.push({ role: 'user', content: userMessage } as ModelMessage);
+        resumedMessages = history;
+        // The revision turn is visible in the judge's own session log, like
+        // the output redo prompt is on the parent.
+        await judgeSessionManager.addPart(judgeSessionID, judgeAgentId, judgeMsgID, {
+          type: 'text', role: 'user', synthetic: true, text: userMessage,
+          time: { start: Date.now(), end: Date.now() },
+        } as Omit<Part, 'id' | 'sessionID' | 'messageID'>);
+        await judgeSessionManager.setSessionRunning(judgeSessionID, judgeAgentId);
+        await judgeSessionManager.updateSession(judgeSessionID, judgeAgentId, {
+          observability: { role: 'verify-judge', attempt: resume.firstAttempt, lastAttempt: input.attempt, maxAttempts },
+        });
+        logSink = createSessionLogSink(judgeSessionManager, judgeSessionID, judgeAgentId, judgeMsgID);
+        logger.info(`[Verify] Resuming judge session ${judgeSessionID} for attempt ${input.attempt + 1}`);
+      } catch (error) {
+        logger.debug(`[Verify] Judge session resume failed; opening a fresh session: ${(error as Error).message}`);
+        judgeSessionManager = undefined; judgeSessionID = undefined; judgeAgentId = undefined; judgeMsgID = undefined; logSink = undefined;
+        resumedMessages = undefined;
+      }
+    }
+    if (!resumedMessages && parentSession && projectContext) {
       try {
         judgeSessionManager = new SessionManager();
         const parentFullPath = parentSession.sessionManager.getFullPath();
@@ -357,6 +465,7 @@ async function judgeViaAgent(
       executeAgentCore(judgeAgent, judgeTools, {
         userMessage,
         cacheableUserMessage: judgeAgent.instructions,
+        ...(resumedMessages && { messages: resumedMessages }),
         systemMessages: systemMessagesResult.messages,
         maxSteps: resolveMaxSteps(undefined, judgeAgent.config.maxSteps),
         subAgentNames: new Set<string>(),
@@ -425,7 +534,18 @@ async function judgeViaAgent(
         return { status: 'error', detail: `judge agent ${judgeAgent.name} failed the output without a critique` };
       }
       terminalOutcome = 'completed';
-      return { status: 'verdict', verdict };
+      const session: JudgeSessionHandle | undefined = judgeSessionID && judgeAgentId && judgeMsgID
+        ? {
+            sessionID: judgeSessionID,
+            agentId: judgeAgentId,
+            messageID: judgeMsgID,
+            judgePath: resolvedPath,
+            firstAttempt: resume?.firstAttempt ?? input.attempt,
+            lastAttempt: input.attempt,
+            historyChars: (resume?.historyChars ?? 0) + userMessage.length + (result.text?.length ?? 0) + 2_000,
+          }
+        : undefined;
+      return { status: 'verdict', verdict, ...(session && { session }) };
     } catch (error) {
       const cancelled = abortSignal?.aborted || (error instanceof Error && error.name === 'AbortError');
       terminalOutcome = {

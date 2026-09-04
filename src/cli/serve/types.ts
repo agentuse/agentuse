@@ -502,6 +502,7 @@ export interface LogSubagentSession extends ChildSessionSummary {
   /** Judge children: 0-based attempt, and the verdict its parent's verify
    *  marker recorded for it. */
   attempt?: number;
+  lastAttempt?: number;
   verdict?: 'pass' | 'fail' | 'error' | 'skipped';
   critique?: string;
   candidates?: VerifyCandidateSummary[];
