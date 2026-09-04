@@ -4,9 +4,13 @@ import { dirname, join } from "path";
 import { glob } from "glob";
 import { StoreFileSchema, isSafeStoreName } from "../../store/schema";
 import type { StoreItem } from "../../store/types";
+import { storeItemPreview, storeItemTitle, summarizeStoreItems } from "../../store/display";
+import type { StoreDisplay } from "../../store/display";
 import { escapeHtml, formatApprovalTime, isJsonLikeContent, valueAsRecord } from "./ui";
 
 export { isSafeStoreName };
+export { storeItemPreview, storeItemTitle };
+export type { StoreDisplay };
 
 interface StoreLogEntry {
   tool?: string;
@@ -20,12 +24,45 @@ export interface StoreBrowserSummary {
   updatedAt?: number;
   types: string[];
   statuses: string[];
+  /** Per-status item counts, so the index can draw the pipeline mix. */
+  statusCounts: Record<string, number>;
+  /** Distinct `createdBy` values. */
+  agents: string[];
+  /** Which table shape this store reads as; the client may override it. */
+  display: StoreDisplay;
 }
 
 export interface StoreBrowserRows {
   projectId: string;
   storeName: string;
   items: StoreItem[];
+  statusCounts: Record<string, number>;
+  typeCounts: Record<string, number>;
+  agents: string[];
+  display: StoreDisplay;
+}
+
+/** A parent or child item, resolved to what a link needs to render. */
+export interface StoreItemRef {
+  id: string;
+  title: string;
+  type?: string;
+  status?: string;
+}
+
+export interface StoreItemRelations {
+  item: StoreItem;
+  parent: StoreItemRef | null;
+  children: StoreItemRef[];
+}
+
+function toItemRef(item: StoreItem): StoreItemRef {
+  return {
+    id: item.id,
+    title: storeItemTitle(item),
+    ...(item.type ? { type: item.type } : {}),
+    ...(item.status ? { status: item.status } : {})
+  };
 }
 
 export interface StoreProjectRef {
@@ -33,31 +70,6 @@ export interface StoreProjectRef {
   root: string;
 }
 
-export function storeItemTitle(item: StoreItem): string {
-  if (item.title) return item.title;
-  const data = valueAsRecord(item.data);
-  const candidates = ['title', 'name', 'headline', 'subject', 'url'];
-  for (const key of candidates) {
-    const value = data[key];
-    if (typeof value === 'string' && value.trim()) return value.trim();
-  }
-  return item.id;
-}
-
-export function storeItemPreview(item: StoreItem, max = 180): string {
-  const data = valueAsRecord(item.data);
-  const candidates = ['summary', 'description', 'note_excerpt', 'excerpt', 'draft', 'body', 'content', 'why_engage'];
-  for (const key of candidates) {
-    const value = data[key];
-    if (typeof value === 'string' && value.trim()) {
-      const compact = value.trim().replace(/\s+/g, ' ');
-      return compact.length > max ? `${compact.slice(0, max)}…` : compact;
-    }
-  }
-  if (Object.keys(data).length === 0) return '';
-  const json = JSON.stringify(data);
-  return json.length > max ? `${json.slice(0, max)}…` : json;
-}
 
 function parseStoreToolPayload(message?: string): Record<string, unknown> | undefined {
   if (!message || !isJsonLikeContent(message)) return undefined;
@@ -146,13 +158,17 @@ export async function listProjectStores(project: StoreProjectRef): Promise<{ sto
         .filter((value) => Number.isFinite(value));
       const types = [...new Set(items.map((item) => item.type).filter((value): value is string => Boolean(value)))].sort();
       const statuses = [...new Set(items.map((item) => item.status).filter((value): value is string => Boolean(value)))].sort();
+      const summary = summarizeStoreItems(items);
       stores.push({
         projectId: project.id,
         name: storeName,
         itemCount: items.length,
         ...(timestamps.length > 0 && { updatedAt: Math.max(...timestamps) }),
         types,
-        statuses
+        statuses,
+        statusCounts: summary.statusCounts,
+        agents: summary.agents,
+        display: summary.display
       });
     } catch (err) {
       errors.push({ storeName, message: (err as Error).message });
@@ -166,12 +182,21 @@ export async function listProjectStores(project: StoreProjectRef): Promise<{ sto
 export async function listStoreRows(project: StoreProjectRef, storeName: string): Promise<StoreBrowserRows> {
   const items = await readStoreItems(project.root, storeName);
   items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  return { projectId: project.id, storeName, items };
+  return { projectId: project.id, storeName, items, ...summarizeStoreItems(items) };
 }
 
-export async function findStoreItem(project: StoreProjectRef, storeName: string, itemId: string): Promise<StoreItem | null> {
+/**
+ * The item plus the two links a reader needs to move through a pipeline: the
+ * item it came from, and the items that came from it. Resolved inside the same
+ * store, which is where `parentId` is meaningful.
+ */
+export async function findStoreItemRelations(project: StoreProjectRef, storeName: string, itemId: string): Promise<StoreItemRelations | null> {
   const items = await readStoreItems(project.root, storeName);
-  return items.find((item) => item.id === itemId) ?? null;
+  const item = items.find((entry) => entry.id === itemId);
+  if (!item) return null;
+  const parentItem = item.parentId ? items.find((entry) => entry.id === item.parentId) : undefined;
+  const children = items.filter((entry) => entry.parentId === item.id).map(toItemRef);
+  return { item, parent: parentItem ? toItemRef(parentItem) : null, children };
 }
 
 export function storeItemUpdatedTime(item: StoreItem): string {

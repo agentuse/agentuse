@@ -72,12 +72,13 @@ import { readAbout, type AboutInfo } from "./serve/about";
 import { PushService, SERVICE_WORKER_JS, type PushCategory, type PushPayload } from "./serve/push";
 import { ApprovalEventHub, ApprovalListEventHub, NotificationEventHub } from "./serve/sse";
 import {
-  findStoreItem,
+  findStoreItemRelations,
   isSafeStoreName,
   listProjectStores,
   listStoreRows,
   type StoreBrowserRows,
-  type StoreBrowserSummary
+  type StoreBrowserSummary,
+  type StoreItemRef
 } from "./serve/stores";
 // Type-only, so this stays erased at compile and adds nothing to the bundle.
 // The context payload is elaborate enough that a hand-kept local copy (as the
@@ -6006,7 +6007,7 @@ export function createServeCommand(): Command {
           stores.sort(compareStoreBrowserSummaries);
 
           if (isApi) {
-            sendJSON(res, 200, { success: true, stores, errors });
+            sendJSON(res, 200, { success: true, multiProject: projects.length > 1, stores, errors });
             return;
           }
         }
@@ -6048,7 +6049,7 @@ export function createServeCommand(): Command {
           }
 
           if (isApi) {
-            sendJSON(res, 200, { success: true, store: storeName, rows, errors });
+            sendJSON(res, 200, { success: true, multiProject: projects.length > 1, store: storeName, rows, errors });
             return;
           }
         }
@@ -6072,12 +6073,12 @@ export function createServeCommand(): Command {
           }
 
           const errors: Array<{ projectId: string; message: string }> = [];
-          let found: { projectId: string; item: StoreItem } | undefined;
+          let found: { projectId: string; item: StoreItem; parent: StoreItemRef | null; children: StoreItemRef[] } | undefined;
           for (const project of selectedProjects) {
             try {
-              const item = await findStoreItem(project, storeName, itemId);
-              if (item) {
-                found = { projectId: project.id, item };
+              const resolved = await findStoreItemRelations(project, storeName, itemId);
+              if (resolved) {
+                found = { projectId: project.id, ...resolved };
                 break;
               }
             } catch (err) {
@@ -6098,7 +6099,7 @@ export function createServeCommand(): Command {
           }
 
           if (isApi) {
-            sendJSON(res, 200, { success: true, store: storeName, project: found.projectId, item: found.item });
+            sendJSON(res, 200, { success: true, multiProject: projects.length > 1, store: storeName, project: found.projectId, item: found.item, parent: found.parent, children: found.children });
             return;
           }
         }

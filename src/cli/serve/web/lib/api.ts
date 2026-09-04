@@ -1,5 +1,5 @@
 import type { AgentSummary, ApprovalLogEntry, ApprovalPageInfo, ApprovalSummary, SessionContextPayload, SessionSummary } from "../../types";
-import type { StoreBrowserRows, StoreBrowserSummary } from "../../stores";
+import type { StoreBrowserRows, StoreBrowserSummary, StoreItemRef } from "../../stores";
 import type { StoreItem } from "../../../../store/types";
 import type { SerializedSchedule } from "../../../../scheduler";
 import type { InstalledProviderPluginEntry, ProviderCatalogEntry } from "../../../../auth/provider-setup";
@@ -534,9 +534,14 @@ export function fetchStoreRows(storeName: string, project?: string): Promise<Sto
 
 export interface StoreItemPayload {
   success: true;
+  multiProject: boolean;
   store: string;
   project: string;
   item: StoreItem;
+  /** The item this one was derived from, resolved inside the same store. */
+  parent: StoreItemRef | null;
+  /** Items in the same store whose `parentId` is this item. */
+  children: StoreItemRef[];
 }
 
 export function fetchStoreItem(storeName: string, itemId: string, project?: string): Promise<StoreItemPayload> {
