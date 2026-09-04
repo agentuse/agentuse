@@ -5490,7 +5490,15 @@ a.lastrun.waiting { color: var(--cyan); }
 
 /* --- cards view: the gallery the tree becomes when presenting ------------ */
 .page-agents .agents-controls { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
-.page-agents .agents-controls .agents-filter { margin-top: 0; flex: 1; }
+.page-agents .agents-controls .agents-filter { margin-top: 0; flex: 1 1 220px; min-width: 0; }
+/* Phones: the filter and the Tree/Cards/Graph switch cannot share one row
+   without the switch running off the right edge, so stack them full width. */
+@media (max-width: 700px) {
+  .page-agents .agents-controls { flex-wrap: wrap; gap: 10px; }
+  .page-agents .agents-controls .agents-filter { flex-basis: 100%; }
+  .page-agents .agents-controls .view-toggle { display: flex; width: 100%; }
+  .page-agents .agents-controls .view-toggle button { flex: 1; justify-content: center; min-height: 44px; }
+}
 .page-agents .view-toggle {
   display: inline-flex; flex-shrink: 0; gap: 2px; padding: 2px;
   border: 1px solid var(--line); border-radius: 999px; background: var(--surface);
