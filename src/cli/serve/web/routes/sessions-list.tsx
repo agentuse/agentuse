@@ -646,7 +646,15 @@ export default function SessionsList() {
                     query={searchParam}
                     selected={!narrow && selected !== undefined && rowKey(selected) === rowKey(row)}
                     href={narrow ? withParam({ open: row.sessionId }) : sessionHref(row)}
-                    onSelect={narrow ? undefined : (event) => { event.preventDefault(); select(row); }}
+                    onSelect={narrow ? undefined : (event) => {
+                      // Let modifier/middle clicks open the full session in a new tab.
+                      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+                      event.preventDefault();
+                      // The router routes every same-origin anchor click at the window
+                      // level without checking defaultPrevented, so stop it here.
+                      event.stopPropagation();
+                      select(row);
+                    }}
                   />
                 ))}
               </Fragment>
