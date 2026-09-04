@@ -93,6 +93,7 @@ import {
   installProviderPluginFromRegistry,
   cancelProviderOAuth,
   type ProviderPluginOAuthStart,
+  providerReadinessSnapshot,
   providerSetupSnapshot,
   removeCustomProvider,
   removeInstalledProviderPlugin,
@@ -7847,7 +7848,20 @@ export function createServeCommand(): Command {
 
         if (isApi && routePath === "/providers" && req.method === "GET") {
           try {
-            sendJSON(res, 200, { success: true, ...await providerSetupSnapshot() });
+            // `?readiness=defer` skips plugin check() hooks (which can spawn a
+            // CLI) so the list renders first; the client then settles rows via
+            // /providers/readiness.
+            const readiness = requestUrl.searchParams.get('readiness') === 'defer' ? 'defer' : 'run';
+            sendJSON(res, 200, { success: true, ...await providerSetupSnapshot({ readiness }) });
+          } catch (err) {
+            sendError(res, 500, "PROVIDER_STATUS_FAILED", (err as Error).message);
+          }
+          return;
+        }
+
+        if (isApi && routePath === "/providers/readiness" && req.method === "GET") {
+          try {
+            sendJSON(res, 200, { success: true, ...await providerReadinessSnapshot() });
           } catch (err) {
             sendError(res, 500, "PROVIDER_STATUS_FAILED", (err as Error).message);
           }

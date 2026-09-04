@@ -18,7 +18,7 @@ import type { AgentCompleteEvent, ProviderDefinition, ProviderRequest } from '..
 import type { AgentUseExtension } from 'agentuse/plugin-api';
 import { resolveModelInfo } from '../src/utils/model-utils';
 import { AuthStorage } from '../src/auth/storage';
-import { getProviderStatus } from '../src/auth/provider-status';
+import { getProviderReadiness, getProviderStatus } from '../src/auth/provider-status';
 import { createModel } from '../src/models';
 
 const event: AgentCompleteEvent = {
@@ -358,11 +358,25 @@ describe('project-local activation scope', () => {
     }
     expect((failure as Error).message).toBe('Bridge CLI not found. Fix: npm install -g bridge');
 
+    // Deferred: the check() hook does not run, the row is flagged pending, and
+    // the readiness pass settles it on its own.
+    const deferred = (await getProviderStatus({ readiness: 'defer' })).providers.find((provider) => provider.id === 'bridge');
+    expect(deferred).toMatchObject({ configured: true, checkPending: true });
+    expect(deferred?.readiness).toBeUndefined();
+    expect(deferred?.actionRequired).toBeUndefined();
+    expect(await getProviderReadiness()).toEqual([{
+      id: 'bridge',
+      configured: false,
+      readiness: { ok: false, message: 'Bridge CLI not found.', fix: 'npm install -g bridge' },
+      actionRequired: 'Bridge CLI not found. Fix: npm install -g bridge',
+    }]);
+
     process.env.BRIDGE_READY = '1';
     try {
       const ready = (await getProviderStatus()).providers.find((provider) => provider.id === 'bridge');
       expect(ready).toMatchObject({ configured: true, readiness: { ok: true, detail: 'bridge 1.0' } });
       expect(ready?.actionRequired).toBeUndefined();
+      expect(await getProviderReadiness()).toEqual([{ id: 'bridge', configured: true, readiness: { ok: true, detail: 'bridge 1.0' } }]);
     } finally {
       delete process.env.BRIDGE_READY;
     }

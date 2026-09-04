@@ -6523,6 +6523,9 @@ a.lastrun.waiting { color: var(--cyan); }
 }
 .provider-status.is-ready { border-color: var(--green-border); background: var(--green-soft); color: var(--green); }
 .provider-status.is-warning { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
+.provider-status.is-pending { color: var(--muted); animation: provider-status-pulse 1.2s ease-in-out infinite; }
+@keyframes provider-status-pulse { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .provider-status.is-pending { animation: none; } }
 @media (max-width: 560px) {
   .provider-settings-row { flex-direction: column; align-items: stretch; }
   .provider-settings-control { justify-content: flex-start; }

@@ -34,6 +34,29 @@ export interface ProviderAuthStatus {
   actionRequired?: string;
   /** Result of the plugin's `check()` hook; absent for providers without one. */
   readiness?: ProviderReadiness;
+  /**
+   * The plugin has a `check()` hook that was not run for this snapshot (see
+   * `getProviderStatus({ readiness: 'defer' })`). `configured` then reflects
+   * credentials only; fetch `getProviderReadiness()` to settle it.
+   */
+  checkPending?: true;
+}
+
+/** Outcome of one deferred readiness check, merged into a provider row by id. */
+export interface ProviderReadinessResult {
+  id: string;
+  configured: boolean;
+  readiness: ProviderReadiness;
+  actionRequired?: string;
+}
+
+export interface ProviderStatusOptions {
+  /**
+   * `run` (default) executes every plugin `check()` hook inline, which can
+   * spawn a bridged CLI. `defer` skips them so the credential-only snapshot
+   * returns fast; rows that skipped a check carry `checkPending`.
+   */
+  readiness?: 'run' | 'defer';
 }
 
 export interface CustomProviderStatus {
@@ -78,8 +101,9 @@ const PROVIDERS = [
  * credential values. CLI text, JSON output, and server APIs can share this
  * model so they agree about which source is active.
  */
-export async function getProviderStatus(): Promise<ProviderStatus> {
+export async function getProviderStatus(options: ProviderStatusOptions = {}): Promise<ProviderStatus> {
   const providers: ProviderAuthStatus[] = [];
+  const runChecks = options.readiness !== 'defer';
 
   for (const provider of PROVIDERS) {
     const providerAuth = await AuthStorage.getProviderAuth(provider.id);
@@ -156,11 +180,16 @@ export async function getProviderStatus(): Promise<ProviderStatus> {
     // A plugin without auth methods (e.g. one wrapping a local CLI) needs no
     // credential, so it is usable as soon as it is installed.
     const sources = plugin.auth ? await providerPluginAuthStatus(plugin) : [];
+    const credentialed = !plugin.auth || sources.length > 0;
+    if (plugin.check && !runChecks) {
+      providers.push({ id: plugin.id, name: plugin.name, configured: credentialed, sources, checkPending: true });
+      continue;
+    }
     const readiness = plugin.check ? await checkProviderReadiness(plugin) : undefined;
     providers.push({
       id: plugin.id,
       name: plugin.name,
-      configured: (!plugin.auth || sources.length > 0) && (readiness?.ok ?? true),
+      configured: credentialed && (readiness?.ok ?? true),
       sources,
       ...(readiness && { readiness }),
       ...(readiness && !readiness.ok && { actionRequired: describeReadinessFailure(plugin, readiness) }),
@@ -182,4 +211,24 @@ export async function getProviderStatus(): Promise<ProviderStatus> {
     providers,
     customProviders,
   };
+}
+
+/**
+ * Run every plugin `check()` hook, in parallel, and return the fields a
+ * deferred snapshot left unsettled. Pairs with `getProviderStatus({ readiness: 'defer' })`.
+ */
+export async function getProviderReadiness(): Promise<ProviderReadinessResult[]> {
+  const plugins = (await loadProviderPlugins()).filter((plugin) => plugin.check);
+  return Promise.all(plugins.map(async (plugin) => {
+    const [sources, readiness] = await Promise.all([
+      plugin.auth ? providerPluginAuthStatus(plugin) : Promise.resolve([]),
+      checkProviderReadiness(plugin),
+    ]);
+    return {
+      id: plugin.id,
+      configured: (!plugin.auth || sources.length > 0) && readiness.ok,
+      readiness,
+      ...(!readiness.ok && { actionRequired: describeReadinessFailure(plugin, readiness) }),
+    };
+  }));
 }

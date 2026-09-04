@@ -3,7 +3,7 @@ import type { StoreBrowserRows, StoreBrowserSummary, StoreItemRef } from "../../
 import type { StoreItem } from "../../../../store/types";
 import type { SerializedSchedule } from "../../../../scheduler";
 import type { InstalledProviderPluginEntry, ProviderCatalogEntry } from "../../../../auth/provider-setup";
-import type { ProviderStatus } from "../../../../auth/provider-status";
+import type { ProviderReadinessResult, ProviderStatus } from "../../../../auth/provider-status";
 import type { ProviderPluginRegistryEntry } from "../../../../plugin/provider-registry";
 import type { PluginSourceInspection } from "../../../../plugin/provider-installer";
 import type { AgentCreationProvider } from "../../../../agents/create";
@@ -860,8 +860,34 @@ export interface ProviderSetupPayload {
   status: ProviderStatus;
 }
 
-export function fetchProviderSetup(): Promise<ProviderSetupPayload> {
-  return getJson('/api/providers');
+/**
+ * `deferReadiness` skips plugin check() hooks server-side so the list arrives
+ * fast; rows that skipped a check carry `checkPending` until
+ * `fetchProviderReadiness()` settles them.
+ */
+export function fetchProviderSetup(options: { deferReadiness?: boolean } = {}): Promise<ProviderSetupPayload> {
+  return getJson(options.deferReadiness ? '/api/providers?readiness=defer' : '/api/providers');
+}
+
+export function fetchProviderReadiness(): Promise<{ success: true; providers: ProviderReadinessResult[] }> {
+  return getJson('/api/providers/readiness');
+}
+
+/** Fold deferred readiness results into a snapshot's provider rows. */
+export function applyProviderReadiness(payload: ProviderSetupPayload, results: ProviderReadinessResult[]): ProviderSetupPayload {
+  const byId = new Map(results.map((result) => [result.id, result]));
+  return {
+    ...payload,
+    status: {
+      ...payload.status,
+      providers: payload.status.providers.map((provider) => {
+        const result = byId.get(provider.id);
+        if (!result) return provider;
+        const { checkPending: _pending, actionRequired: _action, ...rest } = provider;
+        return { ...rest, configured: result.configured, readiness: result.readiness, ...(result.actionRequired && { actionRequired: result.actionRequired }) };
+      }),
+    },
+  };
 }
 
 export function saveProviderApiKey(provider: string, key: string): Promise<ProviderSetupPayload> {

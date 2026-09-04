@@ -4,6 +4,8 @@ import {
   checkCustomProvider,
   completeProviderPluginOAuth,
   completeProviderOAuth,
+  applyProviderReadiness,
+  fetchProviderReadiness,
   fetchProviderSetup,
   inspectProviderPlugin,
   installProviderPlugin,
@@ -408,6 +410,7 @@ export function ProviderSetupDialog(props: {
  * command, so the row never reads "Connected" for something that cannot run.
  */
 function pluginProviderHint(status: ProviderAuthStatus) {
+  if (status.checkPending) return 'Checking the CLI…';
   if (status.readiness && !status.readiness.ok) {
     return <>{status.readiness.message}{status.readiness.fix && <> Fix: <code>{status.readiness.fix}</code></>}</>;
   }
@@ -430,7 +433,24 @@ export function ProviderSettingsGroup() {
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [confirmingPlugin, setConfirmingPlugin] = useState<string | null>(null);
 
-  useEffect(() => { void fetchProviderSetup().then(setPayload, (caught) => setError((caught as Error).message || 'Could not load providers.')); }, []);
+  // Two round trips: the credential-only list first (fast), then the plugin
+  // check() hooks, which can spawn a CLI and are the only slow part. Rows
+  // show "Checking…" in between instead of holding the whole list back.
+  useEffect(() => {
+    let cancelled = false;
+    void fetchProviderSetup({ deferReadiness: true }).then(async (initial) => {
+      if (cancelled) return;
+      setPayload(initial);
+      if (!initial.status.providers.some((provider) => provider.checkPending)) return;
+      try {
+        const { providers } = await fetchProviderReadiness();
+        if (!cancelled) setPayload((current) => current ? applyProviderReadiness(current, providers) : current);
+      } catch (caught) {
+        if (!cancelled) setError((caught as Error).message || 'Could not check providers.');
+      }
+    }, (caught) => { if (!cancelled) setError((caught as Error).message || 'Could not load providers.'); });
+    return () => { cancelled = true; };
+  }, []);
   const catalog = payload?.catalog ?? [];
   const providers = useMemo(() => catalog.map((entry) => ({ entry, status: payload?.status.providers.find((item) => item.id === entry.id) })), [catalog, payload]);
   // Providers that exist only because an installed plugin registered them.
@@ -539,8 +559,8 @@ export function ProviderSettingsGroup() {
               <div class="settings-row-hint">{plugin ? `via ${plugin.name} · ` : ''}{pluginProviderHint(status)}</div>
             </div>
             <div class="settings-row-control provider-settings-control">
-              <span class={`provider-status${status.configured ? ' is-ready' : status.readiness && !status.readiness.ok ? ' is-warning' : ''}`}>{status.configured ? 'Connected' : status.readiness && !status.readiness.ok ? 'Needs setup' : 'Not connected'}</span>
-              {status.readiness && <button type="button" class="settings-item" disabled={busyKey === 'recheck'} onClick={() => void recheck()}>{busyKey === 'recheck' ? 'Checking…' : 'Recheck'}</button>}
+              <span class={`provider-status${status.checkPending ? ' is-pending' : status.configured ? ' is-ready' : status.readiness && !status.readiness.ok ? ' is-warning' : ''}`} aria-live="polite">{status.checkPending ? 'Checking…' : status.configured ? 'Connected' : status.readiness && !status.readiness.ok ? 'Needs setup' : 'Not connected'}</span>
+              {(status.readiness || status.checkPending) && <button type="button" class="settings-item" disabled={busyKey === 'recheck' || Boolean(status.checkPending)} onClick={() => void recheck()}>{busyKey === 'recheck' ? 'Checking…' : 'Recheck'}</button>}
               {status.sources.filter((source) => source.stored).map((source) => {
                 const removeKey = credentialKey(status.id, source);
                 return <button key={removeKey} type="button" class="settings-item" disabled={busyKey === removeKey} onClick={() => void remove(status.id, source)}>Remove {source.kind === 'oauth' ? 'OAuth' : 'key'}</button>;

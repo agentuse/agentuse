@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { CodexAuth } from './codex.js';
-import { getProviderStatus, type ProviderStatus } from './provider-status.js';
+import { getProviderReadiness, getProviderStatus, type ProviderReadinessResult, type ProviderStatus, type ProviderStatusOptions } from './provider-status.js';
 import { AuthStorage } from './storage.js';
 import { BUILTIN_PROVIDERS } from '../providers/registry-sources.js';
 import {
@@ -94,8 +94,8 @@ function catalogProvider(provider: unknown): ProviderCatalogEntry {
   return entry;
 }
 
-export async function providerSetupSnapshot(): Promise<ProviderSetupSnapshot> {
-  const status = await getProviderStatus();
+export async function providerSetupSnapshot(options: ProviderStatusOptions = {}): Promise<ProviderSetupSnapshot> {
+  const status = await getProviderStatus(options);
   const records = await readInstalledPluginRecords();
   const host = await getInstalledPluginHost();
   const contributions = host.listProviderContributions();
@@ -131,6 +131,11 @@ export async function providerSetupSnapshot(): Promise<ProviderSetupSnapshot> {
     }),
     status,
   };
+}
+
+/** The deferred half of `providerSetupSnapshot({ readiness: 'defer' })`. */
+export async function providerReadinessSnapshot(): Promise<{ providers: ProviderReadinessResult[] }> {
+  return { providers: await getProviderReadiness() };
 }
 
 export async function saveProviderApiKey(provider: unknown, rawKey: unknown): Promise<ProviderSetupSnapshot> {
