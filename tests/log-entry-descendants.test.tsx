@@ -282,3 +282,29 @@ describe('delegated call expansion', () => {
     expect(renderTool(toolEntry({ tool: 'subagent__research' }))).toContain('aria-expanded="false"');
   });
 });
+
+describe('per-candidate verdict rendering', () => {
+  it('renders one line per candidate on a verify event, marking carried-forward passes', () => {
+    const html = renderEntry(row({
+      id: 'leaf', name: 'LinkedIn AI News', href: '/s/leaf', createdAt: 2_000, parentSessionId: 'manager',
+      breadcrumb: [{ sessionId: 'manager', agentName: 'Manager' }],
+      events: [{
+        id: 'verify-event-leaf-v1', sourceLogId: 'v1', type: 'verify', ownerSessionId: 'leaf', depth: 1,
+        breadcrumb: [{ sessionId: 'manager', agentName: 'Manager' }, { sessionId: 'leaf', agentName: 'LinkedIn AI News' }],
+        time: 3_000, verdict: 'fail', mode: 'inline', attempt: 1, maxAttempts: 3, attemptLabel: 'Attempt 2 of 3',
+        critique: 'C: C overclaims', displayStatus: 'failed',
+        candidates: [
+          { id: 'A', pass: true, settled: true },
+          { id: 'B', pass: true, critique: 'bounded claim' },
+          { id: 'C', pass: false, critique: 'C overclaims' },
+        ],
+      }],
+    }));
+    expect(html).toContain('verify-candidate is-pass is-settled');
+    expect(html).toContain('unchanged · carried forward');
+    expect(html).toContain('verify-candidate is-fail');
+    expect(html).toContain('C overclaims');
+    // The list replaces the joined critique string, so the reason is not shown twice.
+    expect(html.split('C overclaims').length - 1).toBe(1);
+  });
+});

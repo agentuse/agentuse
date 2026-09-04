@@ -146,3 +146,20 @@ describe('judgeOutput (built-in judge)', () => {
     })).rejects.toMatchObject({ name: 'AbortError' });
   });
 });
+
+describe('per-candidate verdicts', () => {
+  it('parses a candidates array out of the trailing verdict object', async () => {
+    const { extractVerdict } = await import('../src/verify/judge');
+    const text = 'Checked all three.\n{"pass": false, "critique": "C overclaims", "candidates": [{"id": "A", "pass": true}, {"id": "C", "pass": false, "critique": "C overclaims"}]}';
+    expect(extractVerdict(text)).toEqual({
+      pass: false, critique: 'C overclaims',
+      candidates: [{ id: 'A', pass: true }, { id: 'C', pass: false, critique: 'C overclaims' }],
+    });
+  });
+
+  it('drops malformed candidate entries and an empty list', async () => {
+    const { normalizeCandidateVerdicts } = await import('../src/verify/judge');
+    expect(normalizeCandidateVerdicts([{ id: 'A', pass: 'yes' }, { pass: true }, 'x'])).toBeUndefined();
+    expect(normalizeCandidateVerdicts([{ id: ' A ', pass: true, critique: ' ok ' }])).toEqual([{ id: 'A', pass: true, critique: 'ok' }]);
+  });
+});

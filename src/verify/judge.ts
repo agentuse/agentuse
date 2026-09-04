@@ -27,7 +27,7 @@ import { SessionManager } from '../session/manager.js';
 import { createSessionAndMessage, createSessionLogSink, type SessionLogSink } from '../runner/session-helper.js';
 import { computeAgentId } from '../utils/agent-id.js';
 import { usageToAssistantTokens } from '../session/usage.js';
-import type { CanonicalVerifyConfig, VerifyVerdict } from './types.js';
+import type { CandidateVerdict, CanonicalVerifyConfig, GateCandidate, VerifyVerdict } from './types.js';
 
 /** Parent-session handles so a judge agent can run as an inspectable child
  * session (appears under the parent's childSessions) instead of a discarded
@@ -56,6 +56,13 @@ export interface JudgeInput {
   attempt: number;
   /** Bounded, rendered decisions from real human reviewers in this session. */
   reviewHistory?: string;
+  /** Gate candidates under review (slate gates carry several). When present
+   * the judge returns one verdict per candidate id. */
+  candidates?: GateCandidate[];
+  /** Candidate ids that already passed on an earlier attempt and whose text is
+   * unchanged. The gate keeps their pass regardless; the judge is told so it
+   * spends its attention on the rest. */
+  settledCandidateIds?: string[];
 }
 
 const GENERIC_CRITERIA =
@@ -82,6 +89,7 @@ End your response with a single JSON object on its own line:
 {"pass": true, "critique": "<one line: the sharpest objection you tested and why it held, so a reader sees what was actually checked>"}
 or
 {"pass": false, "critique": "<what fails and what a passing output looks like>"}
+When the request lists candidates, add "candidates": [{"id": "<candidate id>", "pass": true|false, "critique": "<one line>"}, ...] with one entry per candidate id, and set the top-level "pass" to true only when every candidate passes.
 The critique is required in BOTH cases (it is the record of what the judge did, shown on the pass/fail marker). On a pass, give the single thing that made it clear the bar (the strongest risk you checked and why it's fine), not empty praise. On a fail, it must be concrete enough to act on in ONE revision: name what is wrong AND what passing looks like. Do not include any text after the JSON object.`;
 
 // Agent judge (runs a tool-capable loop): the verdict is a structured
@@ -91,7 +99,24 @@ The critique is required in BOTH cases (it is the record of what the judge did, 
 const SUBMIT_VERDICT_INSTRUCTIONS = `## Verdict (required)
 Reason briefly first (name which criteria or attacks the output survived or failed), then record your decision by calling the \`submit_verdict\` tool exactly once. That tool call IS your verdict — do not also write a JSON object in your text.
 - \`pass\`: true if a demanding reviewer would accept the output as-is; false if they would send it back.
-- \`critique\`: one line, required either way. On a pass, the single sharpest risk you checked and why it's fine (not empty praise). On a fail, what is wrong AND what a passing output looks like, concrete enough to act on in one revision.`;
+- \`critique\`: one line, required either way. On a pass, the single sharpest risk you checked and why it's fine (not empty praise). On a fail, what is wrong AND what a passing output looks like, concrete enough to act on in one revision.
+- \`candidates\`: when the request lists candidates, one entry per candidate id with its own pass and one-line critique. Judge every candidate and report every failure in this one verdict, so one revision can fix them all; \`pass\` is true only when every candidate passes.`;
+
+/** Candidate roster for slate gates: fixed ids the verdict must key on, plus
+ * which ones the gate has already settled so the judge does not re-litigate an
+ * unchanged draft it accepted last time. */
+function renderCandidateSection(input: JudgeInput): string {
+  const candidates = input.candidates ?? [];
+  if (candidates.length === 0) return '';
+  const settled = new Set(input.settledCandidateIds ?? []);
+  const lines = candidates.map((candidate) => {
+    const note = settled.has(candidate.id)
+      ? ' — unchanged since your previous attempt and already passed; do not re-judge it, report pass'
+      : '';
+    return `- ${candidate.id}: ${candidate.label}${note}`;
+  });
+  return `\n\n## Candidates under review\nReturn one verdict per candidate id below. Report every failing candidate in this single verdict.\n${lines.join('\n')}`;
+}
 
 function buildJudgePrompt(input: JudgeInput, criteria: string, outputInstructions: string): string {
   const gate = input.kind === 'gate';
@@ -109,7 +134,7 @@ function buildJudgePrompt(input: JudgeInput, criteria: string, outputInstruction
 ${truncateMiddle(input.task, MAX_TASK_CHARS)}${history}
 
 ## Agent's ${subject} (attempt ${input.attempt + 1})
-${input.output.trim() ? truncateMiddle(input.output, MAX_OUTPUT_CHARS) : `(the agent produced no ${subject})`}
+${input.output.trim() ? truncateMiddle(input.output, MAX_OUTPUT_CHARS) : `(the agent produced no ${subject})`}${renderCandidateSection(input)}
 
 ## Verification criteria
 ${criteria}
@@ -120,6 +145,21 @@ Judge whether the ${subject} satisfies ALL the criteria in the context of the ta
 ${outputInstructions}`;
 }
 
+/** Keep only well-formed per-candidate entries; an empty or malformed list is
+ * treated as "no per-candidate verdict" so the slate-level verdict governs. */
+export function normalizeCandidateVerdicts(value: unknown): CandidateVerdict[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: CandidateVerdict[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+    const { id, pass, critique } = entry as { id?: unknown; pass?: unknown; critique?: unknown };
+    if (typeof id !== 'string' || !id.trim() || typeof pass !== 'boolean') continue;
+    const note = typeof critique === 'string' && critique.trim() ? critique.trim() : undefined;
+    out.push({ id: id.trim(), pass, ...(note && { critique: note }) });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 /**
  * Extract the JSON verdict from judge response text. Prefers the last
  * parseable object carrying a boolean `pass` (the judge is instructed to end
@@ -127,6 +167,10 @@ ${outputInstructions}`;
  */
 export function extractVerdict(text: string): VerifyVerdict | null {
   const candidates: string[] = [];
+  // A verdict carrying a candidates array nests one level of braces; try the
+  // last balanced object that mentions "pass" first, then the flat forms.
+  const nested = text.match(/\{[^{}]*"pass"[^{}]*"candidates"\s*:\s*\[(?:[^\[\]]|\{[^{}]*\})*\][^{}]*\}/g);
+  if (nested) candidates.push(...nested.reverse());
   const flat = text.match(/\{[^{}]*"pass"[^{}]*\}/g);
   if (flat) candidates.push(...flat.reverse());
   const greedy = text.match(/\{[\s\S]*\}/);
@@ -134,12 +178,13 @@ export function extractVerdict(text: string): VerifyVerdict | null {
 
   for (const candidate of candidates) {
     try {
-      const parsed = JSON.parse(candidate) as { pass?: unknown; critique?: unknown };
+      const parsed = JSON.parse(candidate) as { pass?: unknown; critique?: unknown; candidates?: unknown };
       if (typeof parsed.pass === 'boolean') {
         const critique = typeof parsed.critique === 'string' && parsed.critique.trim()
           ? parsed.critique.trim()
           : undefined;
-        return { pass: parsed.pass, ...(critique && { critique }) };
+        const candidates = normalizeCandidateVerdicts(parsed.candidates);
+        return { pass: parsed.pass, ...(critique && { critique }), ...(candidates && { candidates }) };
       }
     } catch {
       // try the next candidate
@@ -247,10 +292,16 @@ async function judgeViaAgent(
       inputSchema: z.object({
         pass: z.boolean().describe('true if a demanding reviewer would accept the output as-is; false if they would send it back'),
         critique: z.string().describe('One line, required either way. On a pass: the single sharpest risk you checked and why it held (not empty praise). On a fail: what is wrong AND what a passing output looks like, concrete enough to act on in one revision.'),
+        candidates: z.array(z.object({
+          id: z.string().describe('Candidate id exactly as listed under "Candidates under review"'),
+          pass: z.boolean(),
+          critique: z.string().optional().describe('One line for this candidate: what fails and what passing looks like, or the sharpest risk checked on a pass'),
+        })).optional().describe('One entry per listed candidate. Omit when the request lists no candidates.'),
       }),
-      execute: async ({ pass, critique }: { pass: boolean; critique: string }) => {
+      execute: async ({ pass, critique, candidates }: { pass: boolean; critique: string; candidates?: unknown }) => {
         const trimmed = typeof critique === 'string' && critique.trim() ? critique.trim() : undefined;
-        submittedVerdict = { pass, ...(trimmed && { critique: trimmed }) };
+        const perCandidate = normalizeCandidateVerdicts(candidates);
+        submittedVerdict = { pass, ...(trimmed && { critique: trimmed }), ...(perCandidate && { candidates: perCandidate }) };
         return { recorded: true, pass };
       },
     });

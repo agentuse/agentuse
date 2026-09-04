@@ -1620,12 +1620,23 @@ async function runInternalWorker() {
         const message = part.verdict === 'error'
           ? critique ?? 'Judge failed; output shipped unverified'
           : critique ?? (judge ? `Judged by ${judge}` : undefined);
+        const candidates = Array.isArray(part.candidates)
+          ? (part.candidates as Array<{ id: string; pass: boolean; critique?: string; settled?: boolean }>)
+          : undefined;
         return {
           id: String(part.id),
           type: 'verify',
           status: part.verdict === 'pass' ? 'completed' : 'error',
           title,
           ...(message !== undefined && { message }),
+          verify: {
+            verdict: part.verdict as 'pass' | 'fail' | 'error',
+            attempt,
+            maxAttempts: maxRedos + 1,
+            ...(judge && { judge }),
+            ...(critique && { critique }),
+            ...(candidates && candidates.length > 0 && { candidates }),
+          },
           ...(typeof part.time?.start === 'number' && { time: part.time.start })
         };
       }

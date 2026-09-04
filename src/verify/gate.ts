@@ -10,7 +10,7 @@
 
 import type { Tool } from 'ai';
 import { judgeOutput } from './judge.js';
-import type { CanonicalVerifyConfig, VerifyPlacement } from './types.js';
+import type { CandidateVerdict, CanonicalVerifyConfig, GateCandidate, VerifyPlacement, VerifyVerdict } from './types.js';
 import { logger } from '../utils/logger.js';
 import type { SessionManager } from '../session/manager.js';
 import type { Part, VerifyPart } from '../session/types.js';
@@ -216,6 +216,82 @@ export async function renderGatePayload(
   return sections.join('\n\n');
 }
 
+/** The reviewable candidates on a gate. Slate gates key each `changes[]`
+ * entry by its `optionId`; single-draft gates key by position. A gate with no
+ * changes but a `draft` is one candidate. Empty when nothing is reviewable. */
+export function extractGateCandidates(input: Record<string, unknown>): GateCandidate[] {
+  const str = (v: unknown): string | undefined =>
+    typeof v === 'string' && v.trim() ? v.trim() : undefined;
+  const options = Array.isArray(input.options) ? input.options as Array<Record<string, unknown>> : [];
+  const optionLabels = new Map<string, string>();
+  for (const option of options) {
+    const id = str(option?.id);
+    if (id) optionLabels.set(id, str(option?.label) ?? id);
+  }
+  const changes = Array.isArray(input.changes)
+    ? input.changes as Array<{ label?: unknown; content?: unknown; displayContent?: unknown; optionId?: unknown }>
+    : [];
+  const candidates: GateCandidate[] = [];
+  const seen = new Set<string>();
+  changes.forEach((change, index) => {
+    const text = str(change?.displayContent) ?? str(change?.content);
+    if (!text) return;
+    const optionId = str(change?.optionId);
+    let id = optionId ?? `change-${index + 1}`;
+    // Two changes under one option (post + first comment) are one candidate:
+    // the reviewer picks the option, not the individual action.
+    if (seen.has(id)) {
+      const existing = candidates.find((candidate) => candidate.id === id)!;
+      existing.text = `${existing.text}\n\n${text}`;
+      return;
+    }
+    seen.add(id);
+    const label = optionId
+      ? optionLabels.get(optionId) ?? str(change?.label) ?? optionId
+      : str(change?.label) ?? `Action ${index + 1}`;
+    candidates.push({ id, label, text });
+  });
+  if (candidates.length === 0) {
+    const draft = str(input.draft);
+    if (draft) candidates.push({ id: 'draft', label: 'Draft', text: draft });
+  }
+  return candidates;
+}
+
+/**
+ * Fold the gate's memory into the judge's answer. A candidate that passed on an
+ * earlier attempt and whose text is byte-identical keeps its pass no matter
+ * what the judge says now: the lock is what stops a fresh-context judge from
+ * failing A on attempt 2 after passing it on attempt 1. The whole-request
+ * verdict is then "every candidate passes".
+ *
+ * Without per-candidate verdicts (single draft, or a judge that answered only
+ * at slate level) the verdict is returned as-is.
+ */
+export function reconcileCandidateVerdicts(
+  verdict: VerifyVerdict,
+  candidates: GateCandidate[],
+  settledIds: Set<string>
+): VerifyVerdict {
+  if (candidates.length === 0) return verdict;
+  const judged = new Map((verdict.candidates ?? []).map((entry) => [entry.id, entry]));
+  if (judged.size === 0 && settledIds.size === 0) return verdict;
+  const merged: CandidateVerdict[] = candidates.map((candidate) => {
+    if (settledIds.has(candidate.id)) return { id: candidate.id, pass: true, settled: true };
+    const entry = judged.get(candidate.id);
+    if (entry) return { id: candidate.id, pass: entry.pass, ...(entry.critique && { critique: entry.critique }) };
+    // The judge skipped this candidate: inherit the slate-level verdict so an
+    // omitted failure cannot slip through as a pass.
+    return { id: candidate.id, pass: verdict.pass, ...(!verdict.pass && verdict.critique && { critique: verdict.critique }) };
+  });
+  const failing = merged.filter((entry) => !entry.pass);
+  const pass = failing.length === 0;
+  const critique = pass
+    ? verdict.critique
+    : failing.map((entry) => `${entry.id}: ${entry.critique ?? verdict.critique ?? 'did not pass pre-review'}`).join('\n');
+  return { pass, ...(critique && { critique }), candidates: merged };
+}
+
 export interface GateVerifyOptions {
   config: CanonicalVerifyConfig;
   agentModel: string;
@@ -247,6 +323,10 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
   const innerExecute = tool.execute;
   if (!innerExecute) return tool;
   let gateRejections = 0;
+  // Candidates that passed on an earlier attempt, keyed by id → exact text.
+  // Spans the same stream segment as the rejection counter; a resume starts
+  // both fresh, so a human decision always gets a full judge look.
+  const settledText = new Map<string, string>();
 
   const judgeName = config.judge ?? config.model ?? agentModel;
   // Persist the gate verdict as a VerifyPart so a PASS (and error) is inspectable
@@ -282,6 +362,21 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
       }
 
       const attempt = gateRejections;
+      const candidates = extractGateCandidates(input);
+      const settledIds = new Set(
+        candidates.filter((candidate) => settledText.get(candidate.id) === candidate.text).map((candidate) => candidate.id)
+      );
+      if (candidates.length > 0 && settledIds.size === candidates.length) {
+        // Every candidate already passed and none changed: nothing to judge.
+        logger.info('[Verify] Gate draft unchanged since it passed pre-review; requesting human approval');
+        await recordVerifyPart({
+          type: 'verify', verdict: 'pass', attempt, maxRedos: config.maxRedos,
+          critique: 'Unchanged since the previous pass; carried forward without a new judge call.',
+          candidates: candidates.map((candidate) => ({ id: candidate.id, pass: true, settled: true })),
+          judge: judgeName, time: { start: Date.now() },
+        });
+        return suspend();
+      }
       const renderedPayload = await renderGatePayload(input, projectContext?.projectRoot);
       const reviewHistory = renderHumanReviewHistory(humanDecisions);
       const outcome = await judgeOutput({
@@ -291,6 +386,8 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
           output: renderedPayload,
           attempt,
           ...(reviewHistory && { reviewHistory }),
+          ...(candidates.length > 0 && { candidates }),
+          ...(settledIds.size > 0 && { settledCandidateIds: [...settledIds] }),
         },
         config,
         agentModel,
@@ -311,21 +408,35 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
         return suspend();
       }
 
-      if (outcome.verdict.pass) {
+      const verdict = reconcileCandidateVerdicts(outcome.verdict, candidates, settledIds);
+      const candidateVerdicts = verdict.candidates;
+      // Remember every pass so an unchanged candidate is never re-litigated.
+      if (candidateVerdicts) {
+        for (const entry of candidateVerdicts) {
+          const candidate = candidates.find((item) => item.id === entry.id);
+          if (candidate && entry.pass) settledText.set(candidate.id, candidate.text);
+        }
+      } else if (verdict.pass) {
+        for (const candidate of candidates) settledText.set(candidate.id, candidate.text);
+      }
+
+      if (verdict.pass) {
         logger.info('[Verify] Gate draft passed pre-review; requesting human approval');
         await recordVerifyPart({
           type: 'verify', verdict: 'pass', attempt, maxRedos: config.maxRedos,
-          ...(outcome.verdict.critique && { critique: outcome.verdict.critique }),
+          ...(verdict.critique && { critique: verdict.critique }),
+          ...(candidateVerdicts && { candidates: candidateVerdicts }),
           judge: judgeName, time: { start: Date.now() },
         });
         return suspend();
       }
 
       gateRejections++;
-      const critique = outcome.verdict.critique ?? 'The draft did not pass pre-review.';
+      const critique = verdict.critique ?? 'The draft did not pass pre-review.';
       await recordVerifyPart({
         type: 'verify', verdict: 'fail', attempt, maxRedos: config.maxRedos,
-        critique, judge: judgeName, time: { start: Date.now() },
+        critique, ...(candidateVerdicts && { candidates: candidateVerdicts }),
+        judge: judgeName, time: { start: Date.now() },
       });
       // Zero redos still judges the initial candidate. A failure has no
       // automated revision budget, so send that judged candidate to the human.
@@ -334,10 +445,14 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
       // Keep the rejection-with-comment shape for compatibility, but mark the
       // source explicitly so agents and history readers never confuse this
       // machine bounce with a human decision.
+      const passed = (candidateVerdicts ?? []).filter((entry) => entry.pass).map((entry) => entry.id);
+      const keep = passed.length > 0
+        ? ` ${passed.join(', ')} passed: keep ${passed.length === 1 ? 'it' : 'them'} byte-identical and ${passed.length === 1 ? 'it' : 'they'} will not be judged again.`
+        : '';
       return {
         status: 'rejected',
         source: 'pre-review',
-        comment: `[Automated pre-review — not the human reviewer] ${critique}\n\nRevise the draft to address this critique, then request approval again. Pre-review rejection ${gateRejections} of ${config.maxRedos}; after that the request goes to the human reviewer regardless. Do not perform any side-effectful action in the meantime.`,
+        comment: `[Automated pre-review — not the human reviewer] ${critique}\n\nRevise every failing candidate above in one pass, then request approval again.${keep} Pre-review rejection ${gateRejections} of ${config.maxRedos}; after that the request goes to the human reviewer regardless. Do not perform any side-effectful action in the meantime.`,
         reviewer: { username: 'verify-judge' },
       };
     },

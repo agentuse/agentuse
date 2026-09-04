@@ -79,4 +79,26 @@ export type VerifyConfig = z.infer<typeof VerifyConfigSchema>;
 export interface VerifyVerdict {
   pass: boolean;
   critique?: string;
+  /** Per-candidate verdicts for a gate that offers several drafts (a slate).
+   * `pass` is the whole-request verdict: true only when every candidate
+   * passes. Absent on single-draft gates and final-output verification. */
+  candidates?: CandidateVerdict[];
+}
+
+/** One reviewable candidate on an approval gate: a `changes[]` entry keyed by
+ * its `optionId` (slate gates) or its position (single-draft gates). */
+export interface GateCandidate {
+  id: string;
+  label: string;
+  /** The exact text under review; the lock compares this byte-for-byte. */
+  text: string;
+}
+
+export interface CandidateVerdict {
+  id: string;
+  pass: boolean;
+  critique?: string;
+  /** True when the gate carried this verdict forward from an earlier attempt
+   * because the candidate's text did not change, instead of re-judging it. */
+  settled?: boolean;
 }

@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useSmoothText } from '../hooks/use-smooth-text';
 import { useSessionTail } from '../hooks/use-session-tail';
 import { useTailSlot } from '../hooks/use-tail-slot';
-import type { ApprovalChange, ApprovalLogDetails, ApprovalLogEntry, ApprovalOption, ApprovalReference, LogSubagentEvent, LogSubagentSession } from '../../types';
+import type { ApprovalChange, ApprovalLogDetails, ApprovalLogEntry, ApprovalOption, ApprovalReference, LogSubagentEvent, LogSubagentSession, LogVerifySummary } from '../../types';
 import { formatLogTime, isJsonLikeContent, logEntrySignature, storeItemPreview, storeItemTitle, valueAsRecord } from '../lib/format';
 import type { StoreItem } from '../../../../store/types';
 import { LogContent, InlineMarkdown } from './content';
@@ -742,6 +742,28 @@ function SubagentActivity(props: { session: LogSubagentSession; projectId?: stri
   );
 }
 
+/**
+ * Per-candidate verdicts of a slate gate, one line each: mark, candidate id,
+ * and the judge's one-line reason. A settled entry was carried forward from an
+ * earlier attempt because its text did not change, so the reader can tell "the
+ * judge re-checked A" from "A kept its earlier pass" at a glance.
+ */
+export function CandidateVerdictList(props: { candidates: NonNullable<LogVerifySummary['candidates']> }) {
+  return (
+    <ul class="verify-candidates" aria-label="Verdict per candidate">
+      {props.candidates.map((candidate) => (
+        <li key={candidate.id} class={`verify-candidate ${candidate.pass ? 'is-pass' : 'is-fail'}${candidate.settled ? ' is-settled' : ''}`}>
+          <span class="verify-candidate-mark" aria-label={candidate.pass ? 'pass' : 'fail'}>{candidate.pass ? '✓' : '✗'}</span>
+          <span class="verify-candidate-id">{candidate.id}</span>
+          {candidate.settled
+            ? <span class="verify-candidate-note">unchanged · carried forward</span>
+            : candidate.critique && <span class="verify-candidate-note">{candidate.critique}</span>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function VerifyEventCard(props: { event: Extract<LogSubagentEvent, { type: 'verify' }> }) {
   const event = props.event;
   const name = event.mode === 'inline' ? 'Inline criteria' : 'Judge setup';
@@ -762,7 +784,9 @@ function VerifyEventCard(props: { event: Extract<LogSubagentEvent, { type: 'veri
         {breadcrumb && <span>{breadcrumb}</span>}
         <time dateTime={new Date(event.time).toISOString()}>{formatLogTime(event.time)}</time>
       </span>
-      {event.critique && <span class="verify-event-critique">{event.critique}</span>}
+      {event.candidates && event.candidates.length > 0
+        ? <span class="verify-event-critique"><CandidateVerdictList candidates={event.candidates} /></span>
+        : event.critique && <span class="verify-event-critique">{event.critique}</span>}
     </>
   );
   const row = event.href
@@ -1304,7 +1328,9 @@ function LogEntryImpl(props: LogEntryProps) {
             : <ToolDetails details={entry.details} sessionId={props.sessionId} token={props.token} />)}
           {/* The counts are the whole corrections row; anything the session log
               also wrote about them would restate the line above. */}
-          {message && !corrections && !storeEvent && !entry.subagentSession && <LogContent value={message} forceMarkdown={prose} streaming={typing} />}
+          {entry.verify?.candidates && entry.verify.candidates.length > 0
+            ? <CandidateVerdictList candidates={entry.verify.candidates} />
+            : message && !corrections && !storeEvent && !entry.subagentSession && <LogContent value={message} forceMarkdown={prose} streaming={typing} />}
           {warnings.length > 0 && <LogWarnings warnings={warnings} />}
         </div>
         {props.showActions && (

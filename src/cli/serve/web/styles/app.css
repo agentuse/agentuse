@@ -3710,6 +3710,70 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
   gap: 12px;
 }
 .continue-panel[hidden] { display: none; }
+/* Judge panel: the pre-review verdicts hoisted above the folded session log.
+   Same shell as the learnings panel below it, one row per judge attempt, with
+   the per-candidate list when the gate was a slate. */
+.judge-panel { display: grid; gap: 12px; }
+.judge-panel-head { display: flex; align-items: center; gap: 10px; }
+.judge-label {
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.judge-label::before { content: "⚖ "; color: var(--cyan); opacity: 0.7; }
+.judge-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.judge-row {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--cyan-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+}
+.judge-row.is-fail { border-left-color: var(--red); }
+.judge-row.is-error { border-left-color: var(--amber-border); }
+.judge-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  color: var(--fg);
+  text-decoration: none;
+  font-size: var(--font-size-caption);
+}
+.judge-row-head:hover .judge-row-attempt { text-decoration: underline; }
+.judge-row-mark { font-weight: 600; }
+.judge-row.is-pass .judge-row-mark { color: var(--cyan); }
+.judge-row.is-fail .judge-row-mark { color: var(--red); }
+.judge-row-attempt { font-weight: 600; }
+.judge-row-owner, .judge-row-head time { color: var(--muted); }
+.judge-row-judge { color: var(--muted); font-size: var(--font-size-micro); }
+.judge-row-critique {
+  margin: 0;
+  color: var(--fg);
+  font-size: var(--font-size-caption);
+  line-height: var(--lh-snug);
+  overflow-wrap: anywhere;
+}
+/* Per-candidate verdict list, shared by the judge panel, the verify log row,
+   and the descendant verify event card. */
+.verify-candidates { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.verify-candidate {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--font-size-caption);
+  line-height: var(--lh-snug);
+}
+.verify-candidate-mark { font-weight: 600; }
+.verify-candidate.is-pass .verify-candidate-mark { color: var(--cyan); }
+.verify-candidate.is-fail .verify-candidate-mark { color: var(--red); }
+.verify-candidate-id { font-weight: 600; font-family: var(--mono, ui-monospace, monospace); }
+.verify-candidate-note { color: var(--fg); overflow-wrap: anywhere; }
+.verify-candidate.is-settled .verify-candidate-note { color: var(--muted); font-style: italic; }
+
 .learnings-panel {
   margin-top: 20px;
   padding: 16px 18px;

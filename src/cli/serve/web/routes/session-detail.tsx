@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation, useRoute } from 'preact-iso';
-import type { ApprovalLogEntry, ApprovalPageInfo } from '../../types';
-import { LogEntry, toolChipLabel } from '../components/log-entry';
+import type { ApprovalLogEntry, ApprovalPageInfo, LogSubagentEvent, LogSubagentSession, LogVerifySummary } from '../../types';
+import { CandidateVerdictList, LogEntry, toolChipLabel } from '../components/log-entry';
 import { InlineMarkdown, LogContent } from '../components/content';
 import { DecisionDialog, type DecisionDialogMode } from '../components/comment-dialog';
 import { ContinuePanel } from '../components/continue-panel';
@@ -20,6 +20,7 @@ import { useTitle } from '../hooks/use-title';
 import { useSmartBack } from '../hooks/use-smart-back';
 import {
   formatApprovalTime,
+  formatLogTime,
   humanizeMetric,
   isDebugLog,
   isEndedStatus,
@@ -278,6 +279,98 @@ function recordedMetricAmount(m: RecordedMetric): string {
     return m.unit === 'usd' ? `$${num}` : m.unit ? `${num} ${m.unit}` : num;
   }
   return typeof m.count === 'number' ? `+${m.count.toLocaleString()}` : '';
+}
+
+/** One judge verdict for the hoisted panel: the session's own verify markers
+ * plus every verify event under its important descendants, oldest first. */
+export interface JudgeRow {
+  id: string;
+  time: number;
+  verdict: LogVerifySummary['verdict'];
+  attemptLabel: string;
+  judge?: string;
+  critique?: string;
+  candidates?: LogVerifySummary['candidates'];
+  owner?: string;
+  href: string;
+}
+
+export function collectJudgeRows(logs: ApprovalLogEntry[]): JudgeRow[] {
+  const rows: JudgeRow[] = [];
+  const walk = (session: LogSubagentSession) => {
+    for (const event of session.events ?? []) {
+      if (event.type !== 'verify') continue;
+      const verify = event as Extract<LogSubagentEvent, { type: 'verify' }>;
+      rows.push({
+        id: verify.id,
+        time: verify.time,
+        verdict: verify.verdict,
+        attemptLabel: verify.attemptLabel,
+        ...(verify.judge && { judge: verify.judge }),
+        ...(verify.critique && { critique: verify.critique }),
+        ...(verify.candidates && { candidates: verify.candidates }),
+        owner: session.agent.name || session.agent.id,
+        href: verify.href ?? `#log-${encodeURIComponent(session.sessionId)}`,
+      });
+    }
+    for (const child of session.children ?? []) walk(child);
+  };
+  for (const entry of logs) {
+    if (entry.type === 'verify' && entry.verify) {
+      rows.push({
+        id: entry.id,
+        time: entry.time ?? 0,
+        verdict: entry.verify.verdict,
+        attemptLabel: `Attempt ${entry.verify.attempt + 1} of ${entry.verify.maxAttempts}`,
+        ...(entry.verify.judge && { judge: entry.verify.judge }),
+        ...(entry.verify.critique && { critique: entry.verify.critique }),
+        ...(entry.verify.candidates && { candidates: entry.verify.candidates }),
+        href: `#log-${encodeURIComponent(entry.id)}`,
+      });
+    }
+    if (entry.subagentSession) walk(entry.subagentSession);
+  }
+  return rows.sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
+}
+
+/**
+ * The judge's verdicts, above the fold. The verify markers live inside the
+ * session log, which a finished session folds shut by default, so the one
+ * thing a reviewer needs to know about a draft that bounced ("which candidate
+ * failed, and why") was the thing they never saw. Same placement reasoning as
+ * the learnings panel below it.
+ */
+export function JudgePanel(props: { rows: JudgeRow[] }) {
+  if (props.rows.length === 0) return null;
+  const last = props.rows[props.rows.length - 1]!;
+  const failed = props.rows.filter((row) => row.verdict === 'fail').length;
+  const lede = last.verdict === 'pass'
+    ? failed > 0 ? `passed after ${failed} bounce${failed === 1 ? '' : 's'}` : 'passed first time'
+    : last.verdict === 'fail' ? 'still failing · escalated to you' : 'not reviewed · judge error';
+  return (
+    <section class="panel judge-panel" aria-label="Judge verdicts">
+      <div class="judge-panel-head">
+        <span class="judge-label">judge</span>
+        <span class={`chip status ${last.verdict === 'pass' ? 'completed' : 'error'}`}>{lede}</span>
+      </div>
+      <ol class="judge-rows">
+        {props.rows.map((row) => (
+          <li key={row.id} class={`judge-row is-${row.verdict}`}>
+            <a class="judge-row-head" href={row.href}>
+              <span class="judge-row-mark" aria-hidden="true">{row.verdict === 'pass' ? '✓' : row.verdict === 'fail' ? '✗' : '⚠'}</span>
+              <span class="judge-row-attempt">{row.attemptLabel}</span>
+              {row.owner && <span class="judge-row-owner">{row.owner}</span>}
+              {row.judge && <code class="judge-row-judge">{row.judge}</code>}
+              <time dateTime={new Date(row.time).toISOString()}>{formatLogTime(row.time)}</time>
+            </a>
+            {row.candidates && row.candidates.length > 0
+              ? <CandidateVerdictList candidates={row.candidates} />
+              : row.critique && <p class="judge-row-critique">{row.critique}</p>}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
 }
 
 /** Coarse human duration for the result verdict line ("42s", "12 min", "1h 05m"). */
@@ -675,6 +768,7 @@ export default function SessionDetail() {
     () => [...logsRef.current.values()].sort((a, b) => (a.time ?? 0) - (b.time ?? 0)),
     [logsVersion]
   );
+  const judgeRows = useMemo(() => collectJudgeRows(orderedLogs), [orderedLogs]);
   // Entries present in the first snapshot render without motion; anything that
   // arrives later over SSE gets the fade-in-up arrival animation. The set is
   // captured after the first non-empty render so the initial history never
@@ -1844,6 +1938,8 @@ export default function SessionDetail() {
             this page: anything under it is read only by someone who scrolled
             past every tool call to get there, which is not where a warning that
             the agent's learnings have stopped being read belongs. */}
+        <JudgePanel rows={judgeRows} />
+
         <LearningsPanel
           hidden={!learningsVisible}
           sessionId={sessionId}

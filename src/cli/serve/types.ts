@@ -1,5 +1,5 @@
 import type { ActiveContextUsage, SessionTrigger } from "../../session/types";
-import type { DescendantActivity, DescendantBreadcrumb, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary } from "../../session/important-descendants";
+import type { DescendantActivity, DescendantBreadcrumb, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary, VerifyCandidateSummary } from '../../session/important-descendants';
 
 export type { SessionTrigger };
 
@@ -467,6 +467,19 @@ export interface ApprovalLogEntry {
   cap?: number;
   subagentSession?: LogSubagentSession;
   details?: ApprovalLogDetails;
+  /** On a `type: 'verify'` entry: the structured verdict, so the judge row and
+   *  the hoisted judge panel can show per-candidate results instead of the
+   *  one-line title/message the marker was reduced to. */
+  verify?: LogVerifySummary;
+}
+
+export interface LogVerifySummary {
+  verdict: 'pass' | 'fail' | 'error';
+  attempt: number;
+  maxAttempts: number;
+  judge?: string;
+  critique?: string;
+  candidates?: VerifyCandidateSummary[];
 }
 
 export interface LogSubagentSession extends ChildSessionSummary {

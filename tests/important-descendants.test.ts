@@ -59,6 +59,7 @@ function verifyPart(options: {
   time: number;
   judge?: string;
   critique?: string;
+  candidates?: VerifyPart['candidates'];
 }): VerifyPart {
   return {
     id: options.id,
@@ -71,6 +72,7 @@ function verifyPart(options: {
     time: { start: options.time },
     ...(options.judge && { judge: options.judge }),
     ...(options.critique && { critique: options.critique }),
+    ...(options.candidates && { candidates: options.candidates }),
   };
 }
 
@@ -429,5 +431,22 @@ describe('running descendants in the tree', () => {
       { session: middle, parts: [] },
       { session: worker, parts: [] },
     ])).toEqual([]);
+  });
+});
+
+describe('per-candidate verdicts on verify events', () => {
+  it('carries the slate verdicts through to the projected event', () => {
+    const manager = session({ id: 'manager', name: 'Manager', createdAt: 1_000 });
+    const leaf = session({ id: 'leaf', parent: manager.id, name: 'LinkedIn AI News', createdAt: 2_000 });
+    const candidates = [
+      { id: 'A', pass: true, settled: true },
+      { id: 'B', pass: true },
+      { id: 'C', pass: false, critique: 'C overclaims' },
+    ];
+    const events = buildImportantDescendantEvents(manager, [
+      { session: leaf, parts: [verifyPart({ id: 'v1', sessionId: leaf.id, attempt: 1, verdict: 'fail', time: 3_000, critique: 'C: C overclaims', candidates })] },
+    ]);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: 'verify', verdict: 'fail', candidates });
   });
 });

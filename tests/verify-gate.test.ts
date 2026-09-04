@@ -343,3 +343,113 @@ describe('withGateVerify', () => {
     expect(capturedInput.reviewHistory).toContain('choice: Candidate B [b]');
   });
 });
+
+describe('slate candidates', () => {
+  let extractGateCandidates: typeof import('../src/verify/gate').extractGateCandidates;
+  let reconcileCandidateVerdicts: typeof import('../src/verify/gate').reconcileCandidateVerdicts;
+  beforeAll(async () => {
+    ({ extractGateCandidates, reconcileCandidateVerdicts } = await import('../src/verify/gate'));
+  });
+
+  const slate = {
+    prompt: 'Which post should be scheduled?',
+    options: [{ id: 'A', label: 'Option A' }, { id: 'B', label: 'Option B' }, { id: 'C', label: 'Option C' }],
+    changes: [
+      { label: 'Post', optionId: 'A', content: 'post A' },
+      { label: 'Post', optionId: 'B', content: 'post B' },
+      { label: 'Post', optionId: 'C', content: 'post C' },
+    ],
+  };
+
+  it('keys slate candidates by optionId and single drafts by position', () => {
+    expect(extractGateCandidates(slate).map((c) => [c.id, c.label, c.text])).toEqual([
+      ['A', 'Option A', 'post A'], ['B', 'Option B', 'post B'], ['C', 'Option C', 'post C'],
+    ]);
+    expect(extractGateCandidates(gateInput).map((c) => c.id)).toEqual(['change-1']);
+    expect(extractGateCandidates({ draft: 'only a draft' }).map((c) => c.id)).toEqual(['draft']);
+    expect(extractGateCandidates({ prompt: 'nothing reviewable' })).toEqual([]);
+  });
+
+  it('merges two changes under one option into one candidate', () => {
+    const candidates = extractGateCandidates({
+      options: [{ id: 'A', label: 'A' }],
+      changes: [{ optionId: 'A', content: 'post' }, { optionId: 'A', content: 'first comment' }],
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]!.text).toContain('first comment');
+  });
+
+  it('keeps a settled candidate passing even when the judge fails it again', () => {
+    const candidates = extractGateCandidates(slate);
+    const verdict = reconcileCandidateVerdicts(
+      { pass: false, critique: 'A overclaims', candidates: [
+        { id: 'A', pass: false, critique: 'A overclaims' }, { id: 'B', pass: true }, { id: 'C', pass: true },
+      ] },
+      candidates,
+      new Set(['A'])
+    );
+    expect(verdict.pass).toBe(true);
+    expect(verdict.candidates).toEqual([
+      { id: 'A', pass: true, settled: true }, { id: 'B', pass: true }, { id: 'C', pass: true },
+    ]);
+  });
+
+  it('lists every failing candidate in one critique and inherits the slate verdict for skipped ones', () => {
+    const candidates = extractGateCandidates(slate);
+    const verdict = reconcileCandidateVerdicts(
+      { pass: false, critique: 'slate fails', candidates: [
+        { id: 'A', pass: false, critique: 'A too long' }, { id: 'C', pass: false, critique: 'C unsupported claim' },
+      ] },
+      candidates,
+      new Set()
+    );
+    expect(verdict.pass).toBe(false);
+    expect(verdict.critique).toBe('A: A too long\nB: slate fails\nC: C unsupported claim');
+  });
+
+  it('carries a passed candidate forward across bounces and skips the judge when nothing changed', async () => {
+    const { tool, suspend } = makeGateTool();
+    const parts: unknown[] = [];
+    const sessionManager = { addPart: mock(async (_s: string, _a: string, _m: string, part: unknown) => { parts.push(part); }) } as any;
+    const gated = withGateVerify(tool, {
+      ...baseOptions,
+      config: { criteria: 'high quality', maxRedos: 2 },
+      sessionManager, sessionID: 'sess', agentId: 'agent', messageID: 'msg',
+    });
+
+    // Attempt 1: A and B pass, C fails.
+    judgeOutputMock.mockResolvedValueOnce({ status: 'verdict', verdict: { pass: false, critique: 'C fails', candidates: [
+      { id: 'A', pass: true }, { id: 'B', pass: true }, { id: 'C', pass: false, critique: 'C overclaims' },
+    ] } });
+    const first = await gated.execute(slate, {}) as { status: string; comment: string };
+    expect(first.status).toBe('rejected');
+    expect(first.comment).toContain('C: C overclaims');
+    expect(first.comment).toContain('A, B passed');
+
+    // Attempt 2: the agent revises C; the judge now fails A (which is unchanged).
+    judgeOutputMock.mockResolvedValueOnce({ status: 'verdict', verdict: { pass: false, critique: 'A fails now', candidates: [
+      { id: 'A', pass: false, critique: 'A changed my mind' }, { id: 'B', pass: true }, { id: 'C', pass: true },
+    ] } });
+    const revised = { ...slate, changes: slate.changes.map((c) => c.optionId === 'C' ? { ...c, content: 'post C v2' } : c) };
+    await expect(gated.execute(revised, {})).rejects.toThrow('SUSPENDED');
+    expect(suspend).toHaveBeenCalledTimes(1);
+
+    const secondCall = judgeOutputMock.mock.calls[1]![0] as { input: { settledCandidateIds?: string[] } };
+    expect(secondCall.input.settledCandidateIds?.sort()).toEqual(['A', 'B']);
+    const passPart = parts[1] as { verdict: string; candidates: Array<{ id: string; pass: boolean; settled?: boolean }> };
+    expect(passPart.verdict).toBe('pass');
+    expect(passPart.candidates.find((c) => c.id === 'A')).toEqual({ id: 'A', pass: true, settled: true });
+  });
+
+  it('does not call the judge at all when every candidate already passed unchanged', async () => {
+    const { tool, suspend } = makeGateTool();
+    const gated = withGateVerify(tool, { ...baseOptions, config: { criteria: 'q', maxRedos: 2 } });
+    judgeOutputMock.mockResolvedValueOnce({ status: 'verdict', verdict: { pass: true, candidates: [
+      { id: 'A', pass: true }, { id: 'B', pass: true }, { id: 'C', pass: true },
+    ] } });
+    await expect(gated.execute(slate, {})).rejects.toThrow('SUSPENDED');
+    await expect(gated.execute(slate, {})).rejects.toThrow('SUSPENDED');
+    expect(judgeOutputMock).toHaveBeenCalledTimes(1);
+    expect(suspend).toHaveBeenCalledTimes(2);
+  });
+});

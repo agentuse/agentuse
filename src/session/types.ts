@@ -468,6 +468,9 @@ export interface VerifyPart extends PartBase {
   critique?: string;
   /** Judge identity: model string (built-in) or judge agent name. */
   judge?: string;
+  /** Slate gates: one verdict per candidate. A `settled` entry was carried
+   * forward unchanged from an earlier attempt rather than judged again. */
+  candidates?: Array<{ id: string; pass: boolean; critique?: string; settled?: boolean }>;
   time: {
     start: number;
   };

@@ -1343,6 +1343,7 @@ async function showSession(
               judge?: string;
               attempt: number;
               maxRedos: number;
+              candidates?: Array<{ id: string; pass: boolean; critique?: string; settled?: boolean }>;
             };
             const mark = v.verdict === "pass" ? "✓" : v.verdict === "fail" ? "✗" : "⚠";
             const label = v.verdict === "pass"
@@ -1352,7 +1353,12 @@ async function showSession(
                 : "Verification judge error";
             const by = v.judge ? ` (judged by ${v.judge})` : "";
             process.stdout.write(`\n${mark} ${label}${by}\n`);
-            if (v.critique) {
+            if (v.candidates && v.candidates.length > 0) {
+              for (const c of v.candidates) {
+                const note = c.settled ? "unchanged, carried forward" : c.critique ? truncate(c.critique, 300) : "";
+                process.stdout.write(`  ${c.pass ? "✓" : "✗"} ${c.id}${note ? ` · ${note}` : ""}\n`);
+              }
+            } else if (v.critique) {
               process.stdout.write(`  ${truncate(v.critique, 400)}\n`);
             }
           }

@@ -78,6 +78,16 @@ export interface VerifyDescendantEvent extends ImportantDescendantEventBase {
   maxAttempts: number;
   attemptLabel: string;
   critique?: string;
+  /** Slate gates: one verdict per candidate, in gate order. */
+  candidates?: VerifyCandidateSummary[];
+}
+
+export interface VerifyCandidateSummary {
+  id: string;
+  pass: boolean;
+  critique?: string;
+  /** Carried forward unchanged from an earlier attempt, not judged again. */
+  settled?: boolean;
 }
 
 export interface ReviewerFeedbackDescendantEvent extends ImportantDescendantEventBase {
@@ -485,6 +495,7 @@ export function buildImportantDescendantEvents(
         attemptLabel: `Attempt ${marker.attempt + 1} of ${maxAttempts}`,
         time: marker.time.start,
         ...(marker.critique && { critique: marker.critique }),
+        ...(marker.candidates && marker.candidates.length > 0 && { candidates: marker.candidates }),
       });
     }
 
