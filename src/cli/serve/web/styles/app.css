@@ -5180,24 +5180,24 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 }
 /* "Last run" health cell: status dot + relative time, linking to the session. */
 .page-agents .tree-lastrun { justify-content: flex-start; }
-.page-agents a.lastrun {
+a.lastrun {
   display: inline-flex; align-items: center; gap: 6px;
   font-family: var(--mono); font-size: var(--font-size-micro); font-variant-numeric: tabular-nums; color: var(--muted-3);
   text-decoration: none; border-bottom: 0; white-space: nowrap;
 }
-.page-agents a.lastrun:hover .lastrun-text { text-decoration: underline; }
-.page-agents .lastrun-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.page-agents .lastrun-dot.ok { background: var(--green); opacity: 0.75; }
+a.lastrun:hover .lastrun-text { text-decoration: underline; }
+.lastrun-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.lastrun-dot.ok { background: var(--green); opacity: 0.75; }
 /* Failure is an ✕ mark (matching the session log's error marker), not another
    colored dot: the shape still says "failed" when the text is hidden on
    narrow screens or the red/green split is hard to see. */
-.page-agents .lastrun-dot.failed { background: none; border-radius: 0; width: auto; height: auto; }
-.page-agents .lastrun-dot.failed::before { content: "✕"; color: var(--red); font-size: var(--font-size-micro); font-weight: var(--weight-bold); line-height: 1; }
-.page-agents .lastrun-dot.waiting { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); animation: pulse 1.4s ease-in-out infinite; }
-.page-agents .lastrun-dot.running { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 1.4s ease-in-out infinite; }
-.page-agents a.lastrun.running { color: var(--green); }
-.page-agents a.lastrun.failed { color: var(--red); }
-.page-agents a.lastrun.waiting { color: var(--cyan); }
+.lastrun-dot.failed { background: none; border-radius: 0; width: auto; height: auto; }
+.lastrun-dot.failed::before { content: "✕"; color: var(--red); font-size: var(--font-size-micro); font-weight: var(--weight-bold); line-height: 1; }
+.lastrun-dot.waiting { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); animation: pulse 1.4s ease-in-out infinite; }
+.lastrun-dot.running { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 1.4s ease-in-out infinite; }
+a.lastrun.running { color: var(--green); }
+a.lastrun.failed { color: var(--red); }
+a.lastrun.waiting { color: var(--cyan); }
 /* Live activity beside a project's name in the tree/graph section headings —
    the same signal the card view's project header carries. */
 .page-agents .group-title .group-live {
@@ -5358,11 +5358,11 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 }
 .page-agents .agent-card-nodesc { font-family: var(--sans); font-size: var(--font-size-micro); color: var(--muted); }
 .page-agents .agent-card-runs { display: flex; align-items: center; gap: 10px; min-height: 18px; }
-.page-agents .runspark { display: inline-flex; align-items: flex-end; gap: 2px; height: 16px; flex-shrink: 0; }
-.page-agents .runspark-bar { width: 6px; border-radius: 1.5px; }
-.page-agents .runspark-bar.ok { background: var(--green); opacity: 0.8; }
-.page-agents .runspark-bar.failed { background: var(--red); }
-.page-agents .runspark-bar.running, .page-agents .runspark-bar.waiting { background: var(--cyan); }
+.runspark { display: inline-flex; align-items: flex-end; gap: 2px; height: 16px; flex-shrink: 0; }
+.runspark-bar { width: 6px; border-radius: 1.5px; }
+.runspark-bar.ok { background: var(--green); opacity: 0.8; }
+.runspark-bar.failed { background: var(--red); }
+.runspark-bar.running, .runspark-bar.waiting { background: var(--cyan); }
 .page-agents .agent-card-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: auto; }
 .page-agents .agent-card-foot .chip { max-width: 170px; overflow: hidden; text-overflow: ellipsis; display: inline-block; line-height: var(--lh-loose); }
 .page-agents .agent-card-runbtn { margin-left: auto; }
@@ -6512,56 +6512,132 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 .page-agents .issues-popover code { color: var(--fg); font-family: var(--mono); font-size: var(--font-size-caption); overflow-wrap: anywhere; }
 .page-agents .issues-popover .msg { display: block; margin-top: 3px; color: var(--muted-3); }
 
-/* --- schedules timetable --- */
-/* One raised card (.surface) per day; slots separate with a hairline rather
-   than the old 1px-gap grid, so a day reads as a single block of time. */
-.page-schedules .timetable { display: flex; flex-direction: column; }
+/* --- schedules page --- */
+/* One card holds every group; rows separate with a hairline and group
+   headers are quiet bands inside the card, so the page scans as one table
+   of time rather than a stack of day cards. */
+.page-schedules header:not(.topbar) { display: flex; align-items: flex-end; gap: 24px; }
+.page-schedules .header-text { flex: 1; min-width: 0; }
+.page-schedules .lede code { font-family: var(--mono); font-size: var(--font-size-supporting); color: var(--muted-3); }
+.page-schedules .lede .failing { color: var(--red); }
+.page-schedules .project-filter {
+  appearance: none; cursor: pointer;
+  min-height: 30px; padding: 0 30px 0 12px; margin-bottom: 4px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
+  color: var(--muted-3); font-family: var(--sans); font-size: var(--font-size-caption);
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 12px, calc(100% - 10px) 12px; background-size: 5px 5px; background-repeat: no-repeat;
+}
+.page-schedules .footnote { margin: 14px 0 0; font-size: var(--font-size-micro); color: var(--muted-2); }
+.page-schedules .muted { color: var(--muted); }
+
+/* Next-24h load strip. */
+.page-schedules .load-strip { padding: 14px 18px 12px; margin-bottom: 18px; }
+.page-schedules .load-strip-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; font-size: var(--font-size-micro); }
+.page-schedules .load-strip-head .rule { flex: 1; }
+.page-schedules .load-strip-title { font-weight: var(--weight-bold); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--muted); }
+.page-schedules .load-strip-note { color: var(--muted); }
+.page-schedules .load-strip-legend { display: inline-flex; gap: 14px; color: var(--muted); }
+.page-schedules .load-strip-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.page-schedules .load-strip-legend .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); opacity: 0.9; }
+.page-schedules .load-strip-legend .dot.failed { background: var(--red); opacity: 1; }
+.page-schedules .load-strip-legend .dot.dense { width: 4px; height: 4px; opacity: 0.5; }
+.page-schedules .load-strip-track { position: relative; height: 58px; }
+.page-schedules .load-strip-axis { position: absolute; left: 0; right: 0; top: 22px; height: 1px; background: var(--line-strong); }
+.page-schedules .load-strip-tick { position: absolute; top: 18px; }
+.page-schedules .load-strip-tick b { display: block; width: 1px; height: 9px; background: var(--line-strong); }
+.page-schedules .load-strip-tick span { position: absolute; top: 16px; left: 0; transform: translateX(-50%); font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted-2); font-variant-numeric: tabular-nums; }
+.page-schedules .load-strip-now { position: absolute; top: 10px; width: 2px; height: 24px; border-radius: 2px; background: var(--cyan); }
+.page-schedules .load-strip-now span { position: absolute; left: 8px; top: -10px; font-family: var(--mono); font-size: var(--font-size-micro); color: var(--cyan); white-space: nowrap; }
+.page-schedules .load-strip-dot { position: absolute; top: 18px; width: 8px; height: 8px; margin-left: -4px; border-radius: 50%; background: var(--green); opacity: 0.9; }
+.page-schedules .load-strip-dot.failed { background: var(--red); opacity: 1; }
+.page-schedules .load-strip-dot.dense { top: 20px; width: 4px; height: 4px; margin-left: -2px; opacity: 0.35; }
+.page-schedules .load-strip-label { position: absolute; top: 46px; transform: translateX(-50%); font-size: var(--font-size-micro); color: var(--muted-3); white-space: nowrap; max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+
+/* Filter segments. */
+.page-schedules .segments { display: inline-flex; align-items: center; gap: 4px; margin: 0 0 12px; padding: 2px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
+.page-schedules .segment {
+  appearance: none; border: 0; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 7px; min-height: 28px; padding: 0 11px; border-radius: 999px;
+  background: transparent; color: var(--muted); font-family: var(--sans); font-size: var(--font-size-caption);
+  transition: color 120ms ease, background 120ms ease;
+}
+.page-schedules .segment:hover { color: var(--muted-3); }
+.page-schedules .segment.active { background: var(--panel-hover); color: var(--fg); font-weight: var(--weight-medium); }
+.page-schedules .segment .count { font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted-2); }
+.page-schedules .segment .count.failed { color: var(--red); }
+.page-schedules .segment .count.running { color: var(--green); }
+.page-schedules .segment.active .count { color: var(--muted-3); }
+
+/* The table. Column template is shared by the header row and every slot. */
+.page-schedules .timetable { display: flex; flex-direction: column; --slot-columns: 104px minmax(0, 1fr) 236px 60px 190px 66px; }
+.page-schedules .timetable-head {
+  display: grid; grid-template-columns: var(--slot-columns); gap: 16px;
+  padding: 9px 18px; border-bottom: 1px solid var(--line);
+  font-size: var(--font-size-micro); font-weight: var(--weight-bold); letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--muted-2);
+}
+.page-schedules .day { margin: 0; }
+.page-schedules .day-title { margin: 0; padding: 10px 18px 8px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.page-schedules .day-title.day-paused { color: var(--muted-2); font-style: normal; }
 .page-schedules .slot {
-  position: relative;
-  display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) auto;
-  gap: 16px;
-  /* Baseline, not center: the mono time reads as a label on the agent name. */
-  align-items: baseline;
-  padding: 13px 18px;
-  border-bottom: 1px solid var(--line);
+  display: grid; grid-template-columns: var(--slot-columns); gap: 16px; align-items: center;
+  padding: 13px 18px; border-bottom: 1px solid var(--line);
   transition: background 120ms ease;
 }
-.page-schedules .slot:last-child { border-bottom: 0; }
+.page-schedules .day:last-child .slot:last-child { border-bottom: 0; }
 .page-schedules .slot:hover { background: var(--panel-hover); }
-/* Whole row links to the agent detail view via a stretched ::after overlay,
-   while the last-run session link (slot-side) stays clickable above it. */
-.page-schedules a.slot-agent { display: inline-block; text-decoration: none; border-bottom: 0; color: inherit; }
-.page-schedules a.slot-agent::after { content: ''; position: absolute; inset: 0; }
-.page-schedules .slot:hover .slot-agent, .page-schedules .slot:hover .slot-agent code { color: var(--cyan); }
-.page-schedules .slot-side a { position: relative; z-index: 1; }
-.page-schedules .slot-time {
-  font-family: var(--mono);
-  font-size: var(--font-size-supporting);
-  font-weight: var(--weight-medium);
-  color: var(--fg);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
+.page-schedules .slot.attention, .page-schedules .slot-error { background: color-mix(in srgb, var(--red) 4%, transparent); }
+.page-schedules .slot-time { font-family: var(--mono); font-size: var(--font-size-supporting); font-weight: var(--weight-medium); color: var(--fg); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.page-schedules .slot-until { font-size: var(--font-size-micro); color: var(--muted); margin-top: 2px; white-space: nowrap; }
+.page-schedules .slot-until.soon { color: var(--cyan); }
+.page-schedules .slot-time.dim, .page-schedules .slot-until.dim { color: var(--muted-2); }
 .page-schedules .slot-main { min-width: 0; }
-.page-schedules .slot-agent { color: var(--fg); font-family: var(--sans); font-weight: var(--weight-medium); font-size: var(--font-size-supporting); overflow-wrap: anywhere; }
-.page-schedules .slot-agent code { color: var(--fg); font-family: var(--mono); font-size: var(--font-size-supporting); font-weight: var(--weight-normal); }
-.page-schedules .slot-proj { color: var(--cyan); font-size: var(--font-size-micro); letter-spacing: var(--tracking-caps); }
-.page-schedules .slot-cadence { color: var(--muted); font-size: var(--font-size-caption); margin-top: 1px; }
-.page-schedules .slot-cadence code { font-family: var(--mono); color: var(--muted-2); font-size: var(--font-size-micro); }
-.page-schedules .slot-side { text-align: right; font-family: var(--mono); color: var(--muted); font-size: var(--font-size-micro); white-space: nowrap; }
-.page-schedules .slot-side .ok { color: var(--green); border-bottom-color: var(--green-border); }
-.page-schedules .slot-side .failed { color: var(--red); border-bottom-color: var(--red-border); }
-/* Paused schedules stay legible but recede: the whole day card dims and the
-   row's own text drops a step, so an off schedule never reads as a live one. */
-.page-schedules .day-title.day-paused { color: var(--muted-2); }
-.page-schedules .day-title.day-paused + .timetable { opacity: 0.7; }
-.page-schedules .slot.paused .slot-time { color: var(--muted-2); }
-.page-schedules .slot.paused .slot-agent { color: var(--muted-3); }
-.page-schedules .slot.paused .slot-side, .page-schedules .slot.paused .slot-side .ok { color: var(--muted-2); }
+.page-schedules a.slot-agent { display: inline-block; color: var(--fg); font-family: var(--sans); font-weight: var(--weight-medium); font-size: var(--font-size-supporting); text-decoration: none; border-bottom: 0; overflow-wrap: anywhere; }
+.page-schedules a.slot-agent:hover { color: var(--cyan); }
+.page-schedules .slot-where { display: flex; gap: 6px; align-items: center; margin-top: 2px; font-size: var(--font-size-micro); color: var(--muted); white-space: nowrap; overflow: hidden; }
+.page-schedules .slot-where code { font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted-2); overflow: hidden; text-overflow: ellipsis; }
+.page-schedules .slot-where .sep { color: var(--muted-2); }
+.page-schedules .slot-proj { color: var(--cyan); letter-spacing: var(--tracking-caps); }
+.page-schedules .slot-cadence { min-width: 0; }
+.page-schedules .slot-cadence .chip { cursor: default; }
+.page-schedules .slot-cadence .chip.is-paused { color: var(--muted-2); }
+.page-schedules .slot-human { margin-top: 4px; font-size: var(--font-size-micro); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.page-schedules .slot-stagger { color: var(--muted-2); }
+.page-schedules .slot-result .never { font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted-2); }
+.page-schedules .slot-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
+.page-schedules .run-btn {
+  appearance: none; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0;
+  border: 1px solid var(--line-strong); border-radius: 999px; background: transparent; color: var(--muted-3);
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.page-schedules .run-btn svg { width: 12px; height: 12px; }
+.page-schedules .run-btn:not(.pause-btn) svg { margin-left: 1px; }
+.page-schedules .run-btn:hover:not(:disabled) { background: var(--cyan-soft); color: var(--cyan); border-color: var(--cyan-border); }
+.page-schedules .run-btn:disabled { cursor: default; opacity: 0.6; }
+/* Paused: the pause button stays in place, pressed and grayed, so the state
+   is visible where the control is; clicking it again resumes. */
+.page-schedules .pause-btn.is-paused { background: var(--panel-hover); border-color: var(--line); color: var(--muted-2); }
+.page-schedules .slot.paused { opacity: 0.7; }
+.page-schedules .slot.paused a.slot-agent { color: var(--muted-3); }
+/* Failure detail rides under its row: the error line plus the two things
+   worth doing about it. */
+.page-schedules .slot-error { display: flex; align-items: center; gap: 12px; padding: 9px 18px 11px 138px; border-bottom: 1px solid var(--line); }
+.page-schedules .slot-error-text { flex: 1; min-width: 0; font-family: var(--mono); font-size: var(--font-size-micro); color: var(--red); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.page-schedules .slot-error-link { font-family: var(--sans); font-size: var(--font-size-micro); color: var(--cyan); text-decoration: none; border-bottom: 1px dotted var(--cyan-border); white-space: nowrap; }
+.page-schedules .slot-error-link.as-link { appearance: none; background: none; border: 0; border-bottom: 1px dotted var(--line-strong); padding: 0; cursor: pointer; color: var(--muted-3); font: inherit; font-size: var(--font-size-micro); }
+.page-schedules .slot-error-link.as-link:disabled { cursor: default; opacity: 0.6; }
+@media (max-width: 900px) {
+  .page-schedules .timetable { --slot-columns: 84px minmax(0, 1fr) 60px 66px; }
+  .page-schedules .timetable-head, .page-schedules .slot-cadence, .page-schedules .slot-result { display: none; }
+  .page-schedules .slot-error { padding-left: 14px; }
+  .page-schedules .load-strip-legend, .page-schedules .load-strip-label { display: none; }
+}
 @media (max-width: 640px) {
-  .page-schedules .slot { grid-template-columns: 44px minmax(0, 1fr); padding: 12px 14px; }
-  .page-schedules .slot-side { grid-column: 2; text-align: left; margin-top: 2px; }
+  .page-schedules header:not(.topbar) { flex-direction: column; align-items: stretch; gap: 12px; }
+  .page-schedules .segments { display: flex; overflow-x: auto; }
+  .page-schedules .slot { padding: 12px 14px; }
 }
 
 /* --- sessions list --- */
@@ -8211,11 +8287,6 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   .page-sessions .filter-grid { grid-template-columns: 1fr; }
   .page-sessions .filter-field-agent { grid-column: auto; }
 }
-
-/* Paused schedules group header: reads as a status, not a date. Text stays at
-   the readable --muted; only the decorative ⋮ ornament drops to --muted-2. */
-.page-schedules .day-title.day-paused { color: var(--muted); font-style: italic; }
-.page-schedules .day-title.day-paused::before { color: var(--muted-2); }
 
 /* Trailing "open" affordance inside a subagent card link: quiet until the card
    is hovered, then it brightens and nudges to signal it navigates. */

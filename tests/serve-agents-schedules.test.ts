@@ -161,6 +161,30 @@ describe('Scheduler.listSerialized', () => {
     scheduler.shutdown();
   });
 
+  it('lists every firing in the next 24 hours as upcoming, and none when paused', () => {
+    const scheduler = new Scheduler({
+      onExecute: async () => ({ success: true, duration: 1 }),
+    });
+    scheduler.add('demo', 'hourly.agentuse', '0 * * * *');
+    scheduler.add('demo', 'off.agentuse', '0 9 * * *', undefined, false);
+
+    const byPath = new Map(scheduler.listSerialized().map((s) => [s.agentPath, s]));
+    const hourly = byPath.get('hourly.agentuse')!;
+    const horizon = Date.now() + 24 * 60 * 60 * 1000;
+    // Exactly one hourly firing per hour: 24 (or 23 across a DST fall-back), all inside the window and ascending.
+    expect(hourly.upcoming.length).toBeGreaterThanOrEqual(23);
+    expect(hourly.upcoming.length).toBeLessThanOrEqual(24);
+    expect(hourly.upcoming[0]).toBe(hourly.nextRun as string);
+    for (let i = 0; i < hourly.upcoming.length; i++) {
+      const at = Date.parse(hourly.upcoming[i]);
+      expect(at).toBeLessThanOrEqual(horizon);
+      if (i > 0) expect(at).toBeGreaterThan(Date.parse(hourly.upcoming[i - 1]));
+    }
+    expect(byPath.get('off.agentuse')!.upcoming).toEqual([]);
+
+    scheduler.shutdown();
+  });
+
   it('sorts schedules with soonest next run first and disabled last', () => {
     const scheduler = new Scheduler({
       onExecute: async () => ({ success: true, duration: 1 }),

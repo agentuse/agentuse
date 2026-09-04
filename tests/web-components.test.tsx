@@ -23,6 +23,8 @@ import { displayAgentName, isDebugLog, latestReviewerComment, logEntrySignature 
 import { aggregateToolStats, hasActionableApproval, headerTokenUsage, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, shouldShowResultNotice, tokenUsageMetaItems, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
 import { FeedResponse, NewSinceLastVisit, SessionRowView } from '../src/cli/serve/web/routes/sessions-list';
 import { labelFor, suspendedGateKinds } from '../src/cli/serve/web/hooks/use-live-home';
+import { formatUntil, scheduleRunFinder } from '../src/cli/serve/web/routes/schedules';
+import type { SerializedSchedule } from '../src/scheduler';
 import {
   isAttentionSessionDismissed,
   withDismissedAttentionSession,
@@ -2009,5 +2011,39 @@ describe('session context fetch identity', () => {
   it('refetches the same session when its capability token changes', () => {
     expect(sessionContextFetchKey('session-1', 'project', 'expired'))
       .not.toBe(sessionContextFetchKey('session-1', 'project', 'valid'));
+  });
+});
+
+describe('schedules page helpers', () => {
+  it('formatUntil counts down in the unit that fits', () => {
+    const now = Date.parse('2026-09-03T14:18:00Z');
+    const at = (min: number) => now + min * 60_000;
+    expect(formatUntil(at(0), now)).toBe('now');
+    expect(formatUntil(at(12), now)).toBe('in 12m');
+    expect(formatUntil(at(65), now)).toBe('in 1h 05m');
+    expect(formatUntil(at(180), now)).toBe('in 3h');
+    expect(formatUntil(at(3 * 24 * 60 + 18 * 60), now)).toBe('in 3d 18h');
+    expect(formatUntil(now - 5000, now)).toBe('now');
+  });
+
+  it('scheduleRunFinder matches sessions to schedules by project and path suffix, longest path wins', () => {
+    const schedule = (projectId: string, agentPath: string): SerializedSchedule => ({
+      id: `${projectId}:${agentPath}`, projectId, agentPath, expression: '0 9 * * *', human: 'daily', timezone: 'UTC',
+      enabled: true, jitterMs: 0, nextRun: null, upcoming: [], lastRun: null, createdAt: new Date(0).toISOString(),
+    });
+    const session = (id: string, project: string, filePath: string, createdAt: number) => ({
+      sessionId: id, project, agent: { id, name: id, filePath }, status: 'completed', trigger: 'schedule' as const, createdAt, updatedAt: createdAt,
+    });
+    const schedules = [schedule('lab', 'a.agentuse'), schedule('lab', 'nested/a.agentuse'), schedule('ops', 'a.agentuse')];
+    const runsFor = scheduleRunFinder(schedules, [
+      session('s1', 'lab', '/repo/lab/a.agentuse', 10),
+      session('s2', 'lab', '/repo/lab/nested/a.agentuse', 20),
+      session('s3', 'lab', '/repo/lab/a.agentuse', 30),
+      session('s4', 'ops', '/repo/ops/a.agentuse', 40),
+      session('s5', 'lab', '/repo/lab/other.agentuse', 50),
+    ] as never[]);
+    expect(runsFor(schedules[0]!).map((s) => s.sessionId)).toEqual(['s3', 's1']);
+    expect(runsFor(schedules[1]!).map((s) => s.sessionId)).toEqual(['s2']);
+    expect(runsFor(schedules[2]!).map((s) => s.sessionId)).toEqual(['s4']);
   });
 });

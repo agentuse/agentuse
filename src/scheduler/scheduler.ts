@@ -24,6 +24,8 @@ export interface SerializedSchedule {
   jitterMs: number;
   /** ISO timestamp of the next scheduled run, or null when disabled/unknown. */
   nextRun: string | null;
+  /** ISO timestamps of every firing in the next 24 hours (capped), soonest first; empty when disabled. */
+  upcoming: string[];
   /** ISO timestamp of the last run, or null if it has never run. */
   lastRun: string | null;
   lastResult?: { success: boolean; duration: number; error?: string; sessionId?: string };
@@ -38,6 +40,10 @@ function compareByNextRun(a: Schedule, b: Schedule): number {
 }
 
 export const DEFAULT_SCHEDULE_JITTER_MS = 120_000;
+
+/** How far ahead `SerializedSchedule.upcoming` looks, and how many firings it carries at most. */
+const UPCOMING_WINDOW_MS = 24 * 60 * 60 * 1000;
+const UPCOMING_LIMIT = 96;
 
 function stableHash(value: string): number {
   let hash = 2166136261;
@@ -297,10 +303,21 @@ export class Scheduler {
         enabled: s.enabled,
         jitterMs: s.jitterMs,
         nextRun: s.nextRun ? s.nextRun.toISOString() : null,
+        upcoming: this.upcomingRuns(s),
         lastRun: s.lastRun ? s.lastRun.toISOString() : null,
         ...(s.lastResult && { lastResult: s.lastResult }),
         createdAt: s.createdAt.toISOString(),
       }));
+  }
+
+  /** Firings inside the next 24h, for the schedules page's load strip. */
+  private upcomingRuns(schedule: Schedule): string[] {
+    const job = schedule.enabled ? this.jobs.get(schedule.id) : undefined;
+    if (!job) return [];
+    const horizon = Date.now() + UPCOMING_WINDOW_MS;
+    return job.nextRuns(UPCOMING_LIMIT)
+      .filter((d) => d.getTime() <= horizon)
+      .map((d) => d.toISOString());
   }
 
   /**
