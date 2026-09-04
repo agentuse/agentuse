@@ -21,7 +21,8 @@ import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/c
 import { parseChartSpec } from '../src/cli/serve/web/lib/chart-svg';
 import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { displayAgentName, isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
-import { aggregateToolStats, hasActionableApproval, headerTokenUsage, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, shouldShowResultNotice, tokenUsageMetaItems, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
+import { aggregateToolStats, hasActionableApproval, headerTokenUsage, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, shouldShowResultNotice, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
+import { tokenUsageMetaItems } from '../src/cli/serve/web/components/token-usage-strip';
 import { dayLabel, formatElapsed, Highlight, outputPreview, SessionListItem, statusDot } from '../src/cli/serve/web/routes/sessions-list';
 import { labelFor, suspendedGateKinds } from '../src/cli/serve/web/hooks/use-live-home';
 import { formatUntil, scheduleRunFinder } from '../src/cli/serve/web/routes/schedules';

@@ -8259,6 +8259,16 @@ export function createServeCommand(): Command {
         if (isApi && routePath === "/agents/create" && req.method === "GET") {
           try {
             const snapshot = await providerSetupSnapshot();
+            // The dialog shows the skill pool the creator can draw on before
+            // the brief is written, because a thin catalog usually means a thin
+            // agent and that is worth knowing while the brief is still editable.
+            const skillProjectId = requestUrl.searchParams.get('project')
+              ?? effectiveDefault
+              ?? (projects.length === 1 ? projects[0]!.id : null);
+            const skillProject = skillProjectId ? projectsById.get(skillProjectId) : undefined;
+            const skillCatalog = skillProject
+              ? await discoverProjectSkillCatalog(skillProject.root).catch(() => [])
+              : [];
             sendJSON(res, 200, {
               success: true,
               providers: await agentCreationProviders(
@@ -8271,6 +8281,19 @@ export function createServeCommand(): Command {
                 ...(project.scopeRoot !== project.root && { scope: project.scopeRoot }),
               })),
               default: effectiveDefault ?? (projects.length === 1 ? projects[0]!.id : null),
+              skills: {
+                ...(skillProject && { project: skillProject.id }),
+                counts: {
+                  project: skillCatalog.filter((skill) => skill.source === 'project').length,
+                  global: skillCatalog.filter((skill) => skill.source === 'global').length,
+                  ambiguous: skillCatalog.filter((skill) => skill.ambiguous).length,
+                },
+                items: skillCatalog.map((skill) => ({
+                  name: skill.name,
+                  source: skill.source,
+                  ...(skill.ambiguous && { ambiguous: true }),
+                })),
+              },
             });
           } catch (err) {
             sendError(res, 500, "AGENT_CREATE_OPTIONS_FAILED", (err as Error).message);

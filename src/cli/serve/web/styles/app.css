@@ -1300,13 +1300,13 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 /* Run facts as a plain label-over-value row rather than a boxed table: quiet
    sans labels, the identifiers themselves in mono, and nothing framed strongly
    enough to compete with the gate further down the page. */
-.page-approval-detail .meta {
+:is(.page-approval-detail, .page-draft) .meta {
   display: flex;
   flex-wrap: wrap;
   gap: 14px 28px;
   margin: 20px 0 0;
 }
-.page-approval-detail .meta .cell {
+:is(.page-approval-detail, .page-draft) .meta .cell {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1314,8 +1314,8 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 }
 /* A meta field with no value renders an empty .cell. Collapse it so an empty
    column doesn't open a gap in the row. */
-.page-approval-detail .meta .cell:empty { display: none; }
-.page-approval-detail .meta .label {
+:is(.page-approval-detail, .page-draft) .meta .cell:empty { display: none; }
+:is(.page-approval-detail, .page-draft) .meta .label {
   display: block;
   color: var(--muted-2);
   font-size: var(--font-size-micro);
@@ -1323,7 +1323,7 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   letter-spacing: var(--tracking-caps);
   text-transform: uppercase;
 }
-.page-approval-detail .meta .value {
+:is(.page-approval-detail, .page-draft) .meta .value {
   color: var(--muted-3);
   font-size: var(--font-size-supporting);
   font-variant-numeric: tabular-nums;
@@ -1364,7 +1364,7 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 }
 /* Context and cost read as one raised strip — what this run consumed — with the
    diagnostic page that breaks it down hanging off its right edge. */
-.page-approval-detail .meta.meta-context {
+:is(.page-approval-detail, .page-draft) .meta.meta-context {
   align-items: flex-end;
   gap: 12px 28px;
   margin-top: 16px;
@@ -1374,13 +1374,13 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   background: var(--surface);
   box-shadow: var(--surface-shadow);
 }
-.page-approval-detail .meta-context .token-cell .value {
+:is(.page-approval-detail, .page-draft) .meta-context .token-cell .value {
   color: var(--fg);
   font-family: var(--mono);
   font-size: var(--font-size-supporting);
 }
 /* Wide enough that the headroom gauge under the percentage still reads as a bar. */
-.page-approval-detail .meta-context .token-cell:first-child { min-width: 140px; }
+:is(.page-approval-detail, .page-draft) .meta-context .token-cell:first-child { min-width: 140px; }
 .page-approval-detail .meta-band-link {
   display: inline-flex;
   align-items: center;
@@ -7905,7 +7905,7 @@ a.lastrun.waiting { color: var(--cyan); }
 }
 /* token-usage meta cells share the .meta .cell styling; just give them an
    identifiable hook and keep the hidden attribute working. */
-.page-approval-detail .meta .token-cell[hidden] { display: none; }
+:is(.page-approval-detail, .page-draft) .meta .token-cell[hidden] { display: none; }
 
 /* child-session card shown inside a log entry */
 .page-approval-detail .subagent-card {
@@ -9446,4 +9446,373 @@ main[tabindex="-1"]:focus,
   .app-route,
   .app-sidebar,
   .sidebar-scrim { transition: none; }
+}
+
+
+/* ── Draft and refine ─────────────────────────────────────────────────────────
+   One shared surface for creating an agent, drafting an idea, and revising an
+   existing file. The file is the centre of the page; the composer under it is a
+   way to request a change to that file, and every accepted turn produces a new
+   numbered version with a diff. */
+.page-draft {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+.draft-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 56px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--line);
+}
+.draft-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  color: var(--muted);
+}
+.draft-breadcrumb a { color: var(--muted); border-bottom: 0; text-decoration: none; }
+.draft-breadcrumb a:hover { color: var(--cyan); }
+.draft-breadcrumb strong { color: var(--fg); font-weight: var(--weight-medium); }
+.draft-breadcrumb span[aria-hidden] { color: var(--muted-2); }
+.draft-topbar-actions { display: flex; gap: 8px; flex-shrink: 0; }
+
+.draft-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.draft-pill.is-draft { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
+.draft-pill.is-running { border-color: var(--cyan-border); background: var(--cyan-soft); color: var(--cyan); }
+.draft-pill.is-done { border-color: var(--green-border); background: var(--green-soft); color: var(--green); }
+.draft-pill.is-error { border-color: var(--red-border); background: var(--red-soft); color: var(--red); }
+.draft-pill.is-mock { border-color: var(--line-strong); background: var(--panel); color: var(--muted-3); }
+
+.draft-primary,
+.draft-secondary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 7px 13px;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: var(--font-size-caption);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+.draft-primary { border: 1px solid transparent; background: var(--primary-bg); color: var(--primary-fg); }
+.draft-primary:hover:not(:disabled) { background: var(--primary-bg-hover); }
+.draft-secondary { border: 1px solid var(--line-strong); background: transparent; color: var(--fg); }
+.draft-secondary:hover:not(:disabled) { background: var(--panel-hover); }
+.draft-primary:disabled,
+.draft-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.draft-columns {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+.draft-aside {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+  border-right: 1px solid var(--line);
+  overflow: auto;
+}
+.draft-main {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  padding: 20px 24px;
+}
+
+.draft-card-label {
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.draft-brief {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--surface-shadow);
+}
+.draft-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.draft-brief-objective { margin: 0; line-height: var(--lh-snug); }
+.draft-brief-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 10px;
+  margin: 0;
+  font-size: var(--font-size-caption);
+}
+.draft-brief-facts dt { color: var(--muted); }
+.draft-brief-facts dd { margin: 0; color: var(--fg); overflow-wrap: anywhere; }
+.draft-brief-skills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.draft-brief-skills code {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--panel-hover);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+}
+.draft-brief-skill-pool { color: var(--muted); }
+
+.draft-session { display: flex; flex-direction: column; gap: 8px; }
+.draft-session-link { font-size: var(--font-size-caption); }
+.draft-session-note {
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  line-height: var(--lh-snug);
+}
+/* The side column is narrow, so the strip wraps into a denser two-line grid
+   instead of the header's single wide row. */
+.page-draft .meta.meta-context.is-compact {
+  margin-top: 0;
+  gap: 10px 18px;
+  padding: 11px 12px;
+  border-radius: 10px;
+}
+.page-draft .meta-context.is-compact .token-cell .value { font-size: var(--font-size-caption); }
+.page-draft .meta-context.is-compact .token-cell:first-child { min-width: 118px; }
+
+.draft-file {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--surface-shadow);
+  overflow: hidden;
+}
+.draft-file-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.draft-file-id { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.draft-file-id code {
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+  word-break: break-all;
+}
+.draft-file-version { color: var(--muted); font-size: var(--font-size-caption); }
+.draft-file-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: var(--font-size-caption);
+}
+.draft-file-changes { color: var(--muted); }
+.draft-added { color: var(--green); }
+.draft-removed { color: var(--red); }
+.draft-tabs {
+  display: flex;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.draft-tabs button {
+  padding: 3px 9px;
+  border: 0;
+  border-left: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+.draft-tabs button:first-child { border-left: 0; }
+.draft-tabs button.is-active { background: var(--panel-hover); color: var(--fg); }
+.draft-file-scroll { flex: 1; min-height: 0; overflow: auto; }
+.draft-file-body {
+  margin: 0;
+  padding: 14px 16px;
+  color: var(--muted-3);
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.draft-file-body.is-diff span { display: block; }
+.draft-file-body.is-diff .is-add { background: rgba(74, 222, 128, 0.12); color: var(--green); }
+.draft-file-body.is-diff .is-remove { background: var(--red-soft); color: var(--red); }
+.draft-file-body.is-diff .is-meta { color: var(--muted-2); }
+
+.draft-exchange { display: flex; flex-direction: column; gap: 10px; max-height: 180px; overflow: auto; }
+.draft-exchange-turn { display: flex; flex-direction: column; gap: 6px; }
+.draft-exchange-request {
+  align-self: flex-end;
+  max-width: 520px;
+  padding: 10px 14px;
+  border: 1px solid var(--cyan-border);
+  border-radius: 10px;
+  background: var(--cyan-soft);
+}
+.draft-exchange-reply {
+  max-width: 620px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.draft-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.draft-composer-label {
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.draft-composer textarea {
+  min-height: 40px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: var(--font-size-body);
+  resize: vertical;
+}
+.draft-composer textarea:focus { outline: none; }
+.draft-composer-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.draft-composer-hint { color: var(--muted); font-size: var(--font-size-caption); }
+.draft-composer-hint kbd {
+  padding: 1px 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+}
+.draft-error { margin: 0; color: var(--red); font-size: var(--font-size-caption); }
+
+.draft-testrun { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; }
+.draft-testrun.is-empty { align-items: flex-start; gap: 10px; color: var(--muted-3); }
+.draft-testrun.is-empty p { margin: 0; max-width: 60ch; line-height: var(--lh-snug); }
+.draft-testrun-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.draft-testrun-summary { flex: 1; color: var(--muted); font-size: var(--font-size-caption); }
+.draft-testrun-gate {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--amber-border);
+  border-radius: 8px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: var(--font-size-caption);
+}
+.draft-testrun-result {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.draft-testrun-result .cell { display: flex; flex-direction: column; gap: 2px; }
+.draft-testrun-result .label {
+  color: var(--muted-2);
+  font-size: var(--font-size-micro);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.draft-testrun-result .value { color: var(--fg); font-family: var(--mono); font-size: var(--font-size-caption); }
+
+@media (max-width: 900px) {
+  .draft-columns { grid-template-columns: minmax(0, 1fr); }
+  .draft-aside { border-right: 0; border-bottom: 1px solid var(--line); }
+}
+
+/* Skill pool on the New agent form: shown before the brief is written, because
+   a thin catalog usually means a thin agent. */
+.agent-create-skills {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.agent-create-skills-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.agent-create-skills-head span {
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.agent-create-skills-toggle {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--cyan);
+  font-family: inherit;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+.agent-create-skills-counts { display: flex; gap: 8px; flex-wrap: wrap; font-size: var(--font-size-caption); }
+.agent-create-skills-counts span {
+  padding: 3px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--muted-3);
+}
+.agent-create-skills-counts .is-project { border-color: var(--green-border); background: var(--green-soft); color: var(--fg); }
+.agent-create-skills-counts .is-ambiguous { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
+.agent-create-skills-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 14px;
+  color: var(--muted-3);
+  font-size: var(--font-size-caption);
+}
+.agent-create-skills-list code { color: var(--fg); font-family: var(--mono); font-size: var(--font-size-micro); }
+.agent-create-skills-list .is-ambiguous { color: var(--amber); }
+.agent-create-skills-list .is-more { color: var(--muted); }
+.agent-create-skills-note {
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  line-height: var(--lh-snug);
 }

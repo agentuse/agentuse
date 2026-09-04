@@ -73,10 +73,10 @@ describe('internal AgentUse architecture', () => {
   });
 
   it('uses one creator endpoint, worker path, and SSE job controller', async () => {
-    const [serve, webApi, createDialog, onboarding, controller] = await Promise.all([
+    const [serve, webApi, draftPage, onboarding, controller] = await Promise.all([
       source('cli/serve.ts'),
       source('cli/serve/web/lib/api.ts'),
-      source('cli/serve/web/components/agent-create-dialog.tsx'),
+      source('cli/serve/web/routes/agent-draft.tsx'),
       source('cli/serve/web/components/project-agent-discovery.tsx'),
       source('cli/serve/web/hooks/use-internal-agent-job.ts'),
     ]);
@@ -86,7 +86,9 @@ describe('internal AgentUse architecture', () => {
     expect(webApi).toContain("postJson('/api/agents', { ...input, guided: true })");
     expect(webApi).not.toContain('fetchAgentCreationJob');
     expect(webApi).not.toContain('fetchOnboardingJob');
-    expect(createDialog).toContain('useInternalAgentJob(activeJob)');
+    // The create dialog hands off the moment the session exists; the draft
+    // page owns the wait and follows the job through the one SSE controller.
+    expect(draftPage).toContain('useInternalAgentJob(jobHandle)');
     expect(onboarding).toContain('useInternalAgentJob(activeJob)');
     expect(controller).toContain('useApprovalStream({');
   });

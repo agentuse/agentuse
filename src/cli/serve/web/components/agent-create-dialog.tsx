@@ -1,23 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ProviderStatus } from '../../../../auth/provider-status';
 import type { ReasoningLevel } from '../../../../model-compatibility';
-import type { ApprovalLogEntry } from '../../types';
-import { useInternalAgentJob } from '../hooks/use-internal-agent-job';
 import {
   fetchAgentCreationOptions,
   fetchProviderSetup,
-  postSessionStop,
   startAgentCreationSession,
   type AgentCreationOptionsPayload,
-  type AgentRow,
+  type AgentCreationSkillPool,
   type OnboardingJobHandle,
 } from '../lib/api';
 import { noAutofill } from '../lib/form';
-import { agentDetailHref } from '../lib/links';
+import { agentDraftHref } from '../lib/links';
 import { DashboardSelect } from './dashboard-select';
 import { hasConfiguredProvider, ProviderSetupDialog } from './provider-setup';
 import { SendToCodingAgentDialog } from './send-to-coding-agent-dialog';
-import { OnboardingSessionLog } from './onboarding-session-log';
 
 export interface AgentCreationDraft {
   projectId: string;
@@ -62,51 +58,6 @@ function creationModelOptions(payload: AgentCreationOptionsPayload): Array<{ val
     value: model,
     label: `${provider.name} · ${creationModelLabel(model, provider.id)}`,
   })));
-}
-
-export type AgentCreationProgressPhase = 'creating' | 'success' | 'error';
-
-export function AgentCreationProgressPanel(props: {
-  phase: AgentCreationProgressPhase;
-  modelLabel: string;
-  job: OnboardingJobHandle | null;
-  sessionStatus?: string;
-  entries?: ApprovalLogEntry[];
-  streamError?: string | null;
-  error?: string | null;
-  onBack?: () => void;
-}) {
-  const sessionHref = props.job && props.job.phase !== 'preparing' ? (() => {
-    const params = new URLSearchParams({ project: props.job.projectId });
-    if (props.job.sessionToken) params.set('token', props.job.sessionToken);
-    return `/sessions/${encodeURIComponent(props.job.sessionId)}?${params.toString()}`;
-  })() : null;
-  return (
-    <div class={`agent-create-progress is-${props.phase}`}>
-      <div class="agent-create-progress-heading" role="status" aria-live="polite">
-        {props.phase === 'creating'
-          ? <span class="btn-spinner" aria-hidden="true" />
-          : <span class="agent-create-progress-mark" aria-hidden="true">{props.phase === 'success' ? '✓' : '!'}</span>}
-        <span>{props.phase === 'creating' ? `Working with ${props.modelLabel}` : props.phase === 'success' ? 'Agent saved' : 'Could not create the agent'}</span>
-      </div>
-      {props.job
-        ? <OnboardingSessionLog
-            job={props.job}
-            title={`Creator session · ${props.modelLabel}`}
-            status={props.sessionStatus ?? props.job.status}
-            entries={props.entries ?? []}
-            streamError={props.streamError}
-          />
-        : <p class="agent-create-loading">Starting the internal AgentUse creator session…</p>}
-      {sessionHref && <a class="agent-create-session-link" href={sessionHref}>Open full session log</a>}
-      {props.phase === 'error' && props.error && <p class="agent-create-error" role="alert">{props.error}</p>}
-      {props.phase === 'creating' && <span class="agent-create-progress-hint">Keep this window open while the model finishes the draft.</span>}
-      {props.phase === 'success' && <span class="agent-create-progress-hint">Opening your agent…</span>}
-      {props.phase === 'error' && props.onBack && (
-        <div class="agent-create-progress-actions"><button type="button" class="agent-create-escape" onClick={props.onBack}>Back to edit</button></div>
-      )}
-    </div>
-  );
 }
 
 export function buildAgentCreationPrompt(draft: AgentCreationDraft, providerStatus?: ProviderStatus): string {
@@ -155,6 +106,49 @@ export function buildAgentCreationPrompt(draft: AgentCreationDraft, providerStat
   return lines.join('\n');
 }
 
+/**
+ * The skill pool the creator can draw on, shown while the brief is still
+ * editable: a thin catalog usually means a thin agent, and that is worth
+ * knowing before the session starts rather than after the draft lands.
+ */
+export function AgentCreationSkills(props: { pool: AgentCreationSkillPool }) {
+  const [expanded, setExpanded] = useState(false);
+  const { counts, items } = props.pool;
+  const shown = expanded ? items : items.slice(0, 6);
+  const hidden = items.length - shown.length;
+  return (
+    <div class="agent-create-skills">
+      <div class="agent-create-skills-head">
+        <span>Skills the creator can use</span>
+        <button type="button" class="agent-create-skills-toggle" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+          {expanded ? 'Hide' : 'Show'}
+        </button>
+      </div>
+      <div class="agent-create-skills-counts">
+        <span class="is-project">{counts.project} project</span>
+        <span class="is-global">{counts.global} global</span>
+        {counts.ambiguous > 0 && <span class="is-ambiguous">{counts.ambiguous} ambiguous</span>}
+      </div>
+      {expanded && (
+        <div class="agent-create-skills-list">
+          {shown.map((skill) => (
+            <span class={skill.ambiguous ? 'is-ambiguous' : ''} key={`${skill.source}:${skill.name}`}>
+              <code>{skill.name}</code> · {skill.ambiguous ? 'ambiguous, more than one copy' : skill.source}
+            </span>
+          ))}
+          {hidden > 0 && <span class="is-more">+ {hidden} more</span>}
+        </div>
+      )}
+      <span class="agent-create-skills-note">
+        A skill is a folder of instructions the agent can load for a tool or a task.
+        {items.length === 0
+          ? ' None were found, so this agent will be thin unless you add one.'
+          : ' Few skills here usually means a thin agent.'}
+      </span>
+    </div>
+  );
+}
+
 export function AgentCreateDialog(props: {
   open: boolean;
   title?: string;
@@ -162,7 +156,8 @@ export function AgentCreateDialog(props: {
   initialModel?: string;
   initialDraft?: AgentCreationDraft | null;
   lockProject?: boolean;
-  onCreated: (agent: AgentRow) => void;
+  /** The creator session started; the draft page takes it from here. */
+  onDrafted: (job: OnboardingJobHandle) => void;
   onCodingAgent?: (draft: AgentCreationDraft) => void;
   onClose: () => void;
 }) {
@@ -174,10 +169,6 @@ export function AgentCreateDialog(props: {
   const [objective, setObjective] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [phase, setPhase] = useState<'form' | 'creating' | 'success' | 'error'>('form');
-  const [activeJob, setActiveJob] = useState<OnboardingJobHandle | null>(null);
-  const [createdAgent, setCreatedAgent] = useState<AgentRow | null>(null);
-  const creatorSession = useInternalAgentJob(activeJob);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -196,14 +187,11 @@ export function AgentCreateDialog(props: {
     setPayload(null);
     setError(null);
     setBusy(false);
-    setPhase('form');
-    setActiveJob(null);
-    setCreatedAgent(null);
     setProjectId('');
     setModel('');
     setReasoning(props.initialDraft?.reasoning ?? 'medium');
     setObjective(props.initialDraft?.objective ?? '');
-    void fetchAgentCreationOptions().then((next) => {
+    void fetchAgentCreationOptions(props.initialDraft?.projectId ?? props.initialProjectId).then((next) => {
       const initialSelection = initialModelSelection(next, props.initialDraft?.model ?? props.initialModel);
       setPayload(next);
       const requestedProjectId = props.initialDraft?.projectId ?? props.initialProjectId;
@@ -214,34 +202,18 @@ export function AgentCreateDialog(props: {
     }, (caught) => setError((caught as Error).message || 'Could not load agent creation options.'));
   }, [props.open, props.initialProjectId, props.initialModel, props.initialDraft]);
 
+  // The skill pool belongs to the selected project, so switching project on a
+  // multi-project daemon has to re-read it rather than keep showing the first
+  // project's counts.
   useEffect(() => {
-    if (!props.open || phase !== 'creating') return;
-    if (creatorSession.controllerError) {
-      setError(creatorSession.controllerError);
-      setPhase('error');
-      setBusy(false);
-      return;
-    }
-    const job = creatorSession.finalJob;
-    if (!job) return;
-    if (job.status === 'error') {
-      setError(job.error?.message || 'The creator agent did not finish successfully.');
-      setPhase('error');
-      setBusy(false);
-      return;
-    }
-    const agent = (job.result as { success: true; agent: AgentRow } | undefined)?.agent;
-    if (!agent) {
-      setError('The creator session ended before the agent was saved.');
-      setPhase('error');
-      setBusy(false);
-      return;
-    }
-    setCreatedAgent(agent);
-    setPhase('success');
-    setBusy(false);
-    props.onCreated(agent);
-  }, [props.open, phase, creatorSession.finalJob, creatorSession.controllerError]);
+    if (!props.open || !payload || !projectId || payload.skills?.project === projectId) return;
+    let cancelled = false;
+    void fetchAgentCreationOptions(projectId).then((next) => {
+      const pool = next.skills;
+      if (!cancelled && pool) setPayload((current) => (current ? { ...current, skills: pool } : current));
+    }, () => undefined);
+    return () => { cancelled = true; };
+  }, [props.open, projectId, payload?.skills?.project]);
 
   const modelOptions = payload ? creationModelOptions(payload) : [];
   const provider = payload?.providers.find((item) => item.models.includes(model)
@@ -258,12 +230,13 @@ export function AgentCreateDialog(props: {
     reasoning,
   }), [projectId, project?.path, objective, model, reasoning]);
 
+  // The dialog's job ends the moment the creator session exists: the draft page
+  // owns the wait, the log, and the review, so the operator is never held in a
+  // modal while a model works.
   const submit = async () => {
     if (!canSubmit) return;
     setBusy(true);
     setError(null);
-    setCreatedAgent(null);
-    setPhase('creating');
     try {
       const { job } = await startAgentCreationSession({
         project: projectId,
@@ -271,56 +244,35 @@ export function AgentCreateDialog(props: {
         model: model.trim(),
         reasoning,
       });
-      setActiveJob(job);
+      props.onDrafted(job);
     } catch (caught) {
-      const message = (caught as Error).message || 'Could not create the agent.';
-      setError(message);
-      setPhase('error');
+      setError((caught as Error).message || 'Could not start the creator session.');
       setBusy(false);
     }
   };
 
   const close = () => {
-    const currentJob = creatorSession.job ?? activeJob;
-    if (busy && currentJob) {
-      void postSessionStop(currentJob.sessionId, currentJob.sessionToken, {
-        project: currentJob.projectId,
-        reason: 'Agent creation cancelled from the New Agent dialog',
-      });
-    }
     props.onClose();
-  };
-
-  const backToEdit = () => {
-    setPhase('form');
-    setError(null);
-    setActiveJob(null);
   };
 
   return (
     <dialog class="agent-create-dialog" ref={dialogRef} aria-labelledby="agent-create-title" onClose={close} onClick={(event) => { if (event.target === dialogRef.current) close(); }}>
-      <div class="dialog-head"><span id="agent-create-title" class="title">{props.title ?? 'new agent'}</span><button type="button" class="dialog-close" aria-label={busy ? 'Cancel agent creation' : 'Close'} onClick={close}>×</button></div>
+      <div class="dialog-head"><span id="agent-create-title" class="title">{props.title ?? 'new agent'}</span><button type="button" class="dialog-close" aria-label="Close" onClick={close}>×</button></div>
       <div class="agent-create-body">
         <div class="agent-create-intro">
-          <strong>{phase === 'form' ? 'Create an agent' : phase === 'success' ? 'Agent saved' : phase === 'error' ? 'Creation stopped' : 'Creating your agent'}</strong>
-          <span>{phase === 'form'
-            ? 'Describe the job. Choose a model to design the agent.'
-            : phase === 'success'
-              ? `${createdAgent?.name ?? 'Your agent'} is saved. Review its model, tools, and instructions before running it.`
-              : phase === 'error'
-                ? 'Review what happened below, then return to the form and try again.'
-                : `${modelLabel} is designing the agent from your brief.`}</span>
+          <strong>New agent</strong>
+          <span>Describe the job. The creator drafts the file, then you refine it before saving.</span>
         </div>
         {!payload && !error && <p class="agent-create-loading">Loading your projects and models…</p>}
-        {payload && phase === 'form' && (
+        {payload && (
           <div class="agent-create-form">
             {payload.projects.length > 1 && !props.lockProject ? (
               <div class="agent-create-field"><span>Project</span><DashboardSelect value={projectId} options={payload.projects.map((item) => ({ value: item.id, label: item.id }))} disabled={busy} onChange={setProjectId} ariaLabel="Project" /></div>
             ) : project ? (
               <div class="agent-create-project"><span>Project</span><strong>{project.id}</strong><code>{project.path}</code></div>
             ) : null}
-            <span class="agent-create-model-hint">AgentUse checks this project and its available project and global skills. Only relevant skills are included; review the agent&apos;s tools before running.</span>
-            <label class="agent-create-field"><span>What should this agent do?</span><textarea value={objective} placeholder="Summarize new support tickets and highlight urgent replies." disabled={busy} {...noAutofill} onInput={(event) => setObjective((event.target as HTMLTextAreaElement).value)} /></label>
+            {payload.skills && <AgentCreationSkills pool={payload.skills} />}
+            <label class="agent-create-field"><span>What should this agent do?</span><textarea value={objective} placeholder="Summarize new support tickets and highlight urgent replies." disabled={busy} {...noAutofill} onInput={(event) => setObjective((event.target as HTMLTextAreaElement).value)} /><small>One or two sentences is enough. You can ask for changes after the first draft.</small></label>
             <div class="agent-create-creator-row">
               <div class="agent-create-field"><span>Creator provider model</span><DashboardSelect value={model} options={modelOptions} disabled={busy || modelOptions.length === 0} onChange={setModel} ariaLabel="Creator provider model" placeholder="Choose a provider and model…" /></div>
               <div class="agent-create-field"><span>Thinking effort</span><DashboardSelect value={reasoning} options={CREATOR_THINKING_OPTIONS} disabled={busy} onChange={(value) => setReasoning(value as ReasoningLevel)} ariaLabel="Thinking effort" /></div>
@@ -328,7 +280,7 @@ export function AgentCreateDialog(props: {
             <span class="agent-create-model-hint">Used to design the agent; its runtime model is chosen separately.</span>
             {error && <p class="agent-create-error" role="alert">{error}</p>}
             <div class="agent-create-actions">
-              <button type="button" class="agent-create-primary" disabled={!canSubmit} aria-busy={busy} onClick={() => void submit()}>{busy ? `Designing with ${modelLabel}…` : 'Create agent'}</button>
+              <button type="button" class="agent-create-primary" disabled={!canSubmit} aria-busy={busy} onClick={() => void submit()}>{busy ? `Starting ${modelLabel}…` : 'Draft agent'}</button>
             </div>
             {props.onCodingAgent && (
               <div class="agent-create-handoff">
@@ -337,18 +289,6 @@ export function AgentCreateDialog(props: {
               </div>
             )}
           </div>
-        )}
-        {payload && phase !== 'form' && (
-          <AgentCreationProgressPanel
-            phase={phase}
-            modelLabel={modelLabel}
-            job={creatorSession.job ?? activeJob}
-            sessionStatus={creatorSession.sessionStatus}
-            entries={creatorSession.entries}
-            streamError={creatorSession.streamError}
-            error={error}
-            onBack={backToEdit}
-          />
         )}
         {!payload && error && <p class="agent-create-error" role="alert">{error}</p>}
       </div>
@@ -399,8 +339,8 @@ export function NewAgentButton(props: { initialProjectId?: string; autoOpen?: bo
         initialDraft={draft}
         {...(props.initialProjectId ? { initialProjectId: props.initialProjectId } : {})}
         {...(props.initialProjectId ? { lockProject: true } : {})}
-        onCreated={(agent) => {
-          window.location.href = agentDetailHref(agent.projectId, agent.runPath, { tab: 'source' });
+        onDrafted={(job) => {
+          window.location.href = agentDraftHref(job.projectId, job.id);
         }}
         onCodingAgent={(nextDraft) => { setDraft(nextDraft); setCreateOpen(false); setCodingOpen(true); }}
         onClose={() => setCreateOpen(false)}

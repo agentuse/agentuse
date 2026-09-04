@@ -9,6 +9,7 @@ import type { PluginSourceInspection } from "../../../../plugin/provider-install
 import type { AgentCreationProvider } from "../../../../agents/create";
 import type { ReasoningLevel } from "../../../../model-compatibility";
 import type { AgentRevisionRecord } from "../../../../agents/revision";
+import type { AgentDraftRecord } from "../../../../agents/draft";
 
 export type { SerializedSchedule };
 
@@ -635,15 +636,30 @@ export function fetchAgents(): Promise<AgentsPayload> {
   return getJson('/api/agents');
 }
 
+export interface AgentCreationSkillEntry {
+  name: string;
+  source: 'project' | 'global';
+  ambiguous?: boolean;
+}
+
+export interface AgentCreationSkillPool {
+  /** The project the counts were read from; absent when none is selected. */
+  project?: string;
+  counts: { project: number; global: number; ambiguous: number };
+  items: AgentCreationSkillEntry[];
+}
+
 export interface AgentCreationOptionsPayload {
   success: true;
   providers: AgentCreationProvider[];
   projects: Array<{ id: string; path: string; scope?: string }>;
   default: string | null;
+  /** Absent on daemons older than the draft-and-refine flow. */
+  skills?: AgentCreationSkillPool;
 }
 
-export function fetchAgentCreationOptions(): Promise<AgentCreationOptionsPayload> {
-  return getJson('/api/agents/create');
+export function fetchAgentCreationOptions(project?: string): Promise<AgentCreationOptionsPayload> {
+  return getJson('/api/agents/create', { project });
 }
 
 export function startAgentCreationSession(input: {
@@ -655,8 +671,46 @@ export function startAgentCreationSession(input: {
   reasoning?: ReasoningLevel;
   schedule?: string;
   guided?: boolean;
+  /** Short evidence line carried from the discovery idea onto the brief card. */
+  evidence?: string;
 }): Promise<{ success: true; job: OnboardingJobHandle }> {
   return postJson('/api/agents', input);
+}
+
+export interface AgentDraftPayload extends AgentDraftRecord {
+  sessionToken?: string;
+  sessionHref: string;
+}
+
+export function fetchAgentDraft(jobId: string, project: string): Promise<{ success: true; draft: AgentDraftPayload }> {
+  return getJson(`/api/agents/drafts/${encodeURIComponent(jobId)}`, { project });
+}
+
+function draftActionPath(jobId: string, action: string, project: string): string {
+  return `/api/agents/drafts/${encodeURIComponent(jobId)}/${action}?project=${encodeURIComponent(project)}`;
+}
+
+export function requestAgentDraftChanges(
+  jobId: string,
+  project: string,
+  prompt: string,
+): Promise<{ sessionId: string; status: string }> {
+  return postJson(draftActionPath(jobId, 'request-changes', project), { prompt });
+}
+
+export function saveAgentDraft(jobId: string, project: string): Promise<{ success: true; agent: AgentRow }> {
+  return postJson(draftActionPath(jobId, 'save', project), {});
+}
+
+export function discardAgentDraft(jobId: string, project: string): Promise<{ success: true; draft: AgentDraftPayload }> {
+  return postJson(draftActionPath(jobId, 'discard', project), {});
+}
+
+export function startAgentDraftTestRun(
+  jobId: string,
+  project: string,
+): Promise<{ success: true; testRun: { sessionId: string; draftIndex: number; sessionToken?: string } }> {
+  return postJson(draftActionPath(jobId, 'test-run', project), {});
 }
 
 export interface ProjectAgentSuggestion {
@@ -691,8 +745,15 @@ export interface OnboardingJobHandle {
   sessionToken?: string;
 }
 
+/** A creator session that finished with a draft waiting for review. */
+export interface AgentDraftJobResult {
+  kind: 'draft';
+  jobId: string;
+  projectId: string;
+}
+
 export type OnboardingJob = OnboardingJobHandle & {
-  result?: ProjectDiscoveryPayload | { success: true; agent: AgentRow };
+  result?: ProjectDiscoveryPayload | { success: true; agent: AgentRow } | AgentDraftJobResult;
   error?: { code: string; message: string };
 };
 

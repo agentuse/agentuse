@@ -70,3 +70,13 @@ export function learningsTidyHref(
   if (opts.start) params.set('start', '1');
   return `/learnings/tidy?${params.toString()}`;
 }
+
+/**
+ * The draft-and-refine page for one creator session.
+ *
+ * Query-addressed for the same reason as the tidy page: `/agents/:project/...`
+ * already swallows arbitrary agent paths, and a draft has no file path yet.
+ */
+export function agentDraftHref(projectId: string, jobId: string): string {
+  return `/agents/draft?${new URLSearchParams({ project: projectId, job: jobId }).toString()}`;
+}

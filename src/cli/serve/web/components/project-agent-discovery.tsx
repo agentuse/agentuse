@@ -1,5 +1,5 @@
 import { useEffect, useReducer, useState } from 'preact/hooks';
-import { agentDetailHref, projectDiscoveryHref } from '../lib/links';
+import { agentDetailHref, agentDraftHref, projectDiscoveryHref } from '../lib/links';
 import {
   fetchAgentCreationOptions,
   fetchProviderSetup,
@@ -410,9 +410,9 @@ export function ProjectAgentDiscovery(props: {
         initialProjectId={props.projectId}
         {...(model ? { initialModel: model } : {})}
         lockProject
-        onCreated={(agent) => {
+        onDrafted={(job) => {
           clearResume();
-          window.location.href = agentDetailHref(agent.projectId, agent.runPath, { tab: 'source', spotlightRun: !props.existingAgents });
+          window.location.href = agentDraftHref(job.projectId, job.id);
         }}
         onClose={() => setModal(null)}
       />

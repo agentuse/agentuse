@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { SendToCodingAgentDialog } from './send-to-coding-agent-dialog';
 import { fetchAgents, fetchProviderSetup, reportOnboardingTelemetry, type AgentRow } from '../lib/api';
-import { agentDetailHref } from '../lib/links';
+import { agentDetailHref, agentDraftHref } from '../lib/links';
 import type { ProviderStatus } from '../../../../auth/provider-status';
 import { hasConfiguredProvider, ProviderSetupDialog } from './provider-setup';
 import { AgentCreateDialog, type AgentCreationDraft } from './agent-create-dialog';
@@ -538,9 +538,8 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
           initialDraft={nativeCreationDraft}
           {...(props.context.projectId ? { initialProjectId: props.context.projectId } : {})}
           lockProject
-          onCreated={(agent) => {
+          onDrafted={(job) => {
             setAgentCreateOpen(false);
-            setDetectedAgents([agent]);
             setWaitingStartedAt(null);
             writeWaitingStartedAt(storageKey, null);
             reportOnboardingTelemetry({
@@ -549,9 +548,10 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
               agent_count: 1,
               detection_method: 'native_create',
             });
-            reportOnboardingTelemetry({ event: 'onboarding_completed', agent_count: 1, detection_method: 'native_create' });
-            reportOnboardingTelemetry({ event: 'onboarding_step_completed', step: 'agent_opened' });
-            window.location.href = agentDetailHref(agent.projectId, agent.runPath, { tab: 'source', spotlightRun: true });
+            // The agent is not saved yet; the draft page carries the operator
+            // through review and saving, and completion is reported there when
+            // the agent detection loop sees the written file.
+            window.location.href = agentDraftHref(job.projectId, job.id);
           }}
           onCodingAgent={(draft: AgentCreationDraft) => {
             setNativeCreationDraft(draft);

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { ApprovalLogEntry } from '../../types';
+import type { ApprovalLogEntry, ApprovalPageInfo } from '../../types';
 import {
   fetchInternalAgentJob,
   type OnboardingJob,
@@ -36,6 +36,8 @@ export function mergeInternalAgentJob<T extends OnboardingJobHandle>(
 export interface InternalAgentJobController {
   job: OnboardingJobHandle | null;
   sessionStatus: string;
+  /** Latest session snapshot, so a view can show the run's token usage and cost. */
+  approval: Omit<ApprovalPageInfo, 'logs'> | null;
   entries: ApprovalLogEntry[];
   streamError: string | null;
   finalJob: OnboardingJob | null;
@@ -48,6 +50,7 @@ export interface InternalAgentJobController {
 export function useInternalAgentJob(initialJob: OnboardingJobHandle | null): InternalAgentJobController {
   const [job, setJob] = useState<OnboardingJobHandle | null>(initialJob);
   const [sessionStatus, setSessionStatus] = useState(initialJob?.status ?? 'idle');
+  const [approval, setApproval] = useState<Omit<ApprovalPageInfo, 'logs'> | null>(null);
   const [entries, setEntries] = useState<ApprovalLogEntry[]>([]);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [terminalSignal, setTerminalSignal] = useState<string | null>(null);
@@ -57,6 +60,7 @@ export function useInternalAgentJob(initialJob: OnboardingJobHandle | null): Int
   useEffect(() => {
     setJob(initialJob);
     setSessionStatus(initialJob?.status ?? 'idle');
+    setApproval(null);
     setEntries([]);
     setStreamError(null);
     setTerminalSignal(null);
@@ -103,8 +107,9 @@ export function useInternalAgentJob(initialJob: OnboardingJobHandle | null): Int
     logsLimit: 160,
     nudge: 0,
     handlers: {
-      onStatus: (status) => {
+      onStatus: (status, next) => {
         setSessionStatus(status);
+        setApproval(next);
         if (isTerminalInternalAgentSessionStatus(status)) {
           setTerminalSignal((current) => current ?? `${job?.id ?? ''}:${status}`);
         }
@@ -164,5 +169,5 @@ export function useInternalAgentJob(initialJob: OnboardingJobHandle | null): Int
     };
   }, [job?.id, terminalSignal, finalJob?.id]);
 
-  return { job, sessionStatus, entries, streamError, finalJob, controllerError };
+  return { job, sessionStatus, approval, entries, streamError, finalJob, controllerError };
 }
