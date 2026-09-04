@@ -39,6 +39,8 @@ export interface RecoveredAgentSourceSubmission {
   name: string;
   fileName: string;
   model: string;
+  /** Skills the creator had loaded when this source was accepted. */
+  loadedSkills?: string[];
 }
 
 export type InternalCreatorRecovery =
@@ -59,11 +61,16 @@ function parseSubmission(value: unknown): RecoveredAgentSourceSubmission | null 
     || typeof record.name !== 'string'
     || typeof record.fileName !== 'string'
     || typeof record.model !== 'string') return null;
+  const loadedSkills = Array.isArray(record.loadedSkills)
+    && record.loadedSkills.every((skill) => typeof skill === 'string')
+    ? record.loadedSkills as string[]
+    : undefined;
   return {
     source: record.source,
     name: record.name,
     fileName: record.fileName,
     model: record.model,
+    ...(loadedSkills && { loadedSkills }),
   };
 }
 

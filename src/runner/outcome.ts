@@ -111,6 +111,7 @@ export function runResultJson(result: RunAgentResult, duration: number) {
       ...(result.agentSource && { agentSource: result.agentSource }),
       ...(result.authoredAgentName && { authoredAgentName: result.authoredAgentName }),
       ...(result.authoredAgentFileName && { authoredAgentFileName: result.authoredAgentFileName }),
+      ...(result.authoredAgentLoadedSkills?.length && { authoredAgentLoadedSkills: result.authoredAgentLoadedSkills }),
       ...(result.projectDiscovery && { projectDiscovery: result.projectDiscovery }),
       ...(result.finishReason && { finishReason: result.finishReason }),
       duration,

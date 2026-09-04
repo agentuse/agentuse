@@ -580,6 +580,9 @@ export async function runAgent(
       ...(preparation.agentSourceSubmission?.source && { agentSource: preparation.agentSourceSubmission.source }),
       ...(preparation.agentSourceSubmission?.name && { authoredAgentName: preparation.agentSourceSubmission.name }),
       ...(preparation.agentSourceSubmission?.fileName && { authoredAgentFileName: preparation.agentSourceSubmission.fileName }),
+      ...(preparation.agentSourceSubmission?.loadedSkills?.length && {
+        authoredAgentLoadedSkills: preparation.agentSourceSubmission.loadedSkills,
+      }),
       ...(preparation.projectSuggestionsSubmission?.result && {
         projectDiscovery: preparation.projectSuggestionsSubmission.result,
       }),

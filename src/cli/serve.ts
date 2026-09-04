@@ -130,6 +130,20 @@ import {
   type AgentRevisionRecord,
 } from "../agents/revision";
 import {
+  appendAgentDraft,
+  createAgentDraftRecord,
+  failAgentDraft,
+  latestAgentDraft,
+  markAgentDraftDiscarded,
+  markAgentDraftSaved,
+  readAgentDraftRecord,
+  recordAgentDraftTestRun,
+  reopenAgentDraft,
+  settleAgentDraftTestRun,
+  type AgentDraftEntry,
+  type AgentDraftRecord,
+} from "../agents/draft";
+import {
   discoverProjectSkillCatalog,
   prepareProjectDiscoveryView,
   type ProjectDiscoveryResult,
@@ -473,12 +487,16 @@ interface WorkerExecuteResult {
     toolCalls: number;
     sessionId?: string;
     approvalUrl?: string;
+    /** One-line outcome from report_complete, when the run called it. */
+    headline?: string;
     /** Validated source returned by the creator-only submission tool. */
     agentSource?: string;
     /** Human-facing name returned with creator-only source. */
     authoredAgentName?: string;
     /** Project-local filename returned with creator-only source. */
     authoredAgentFileName?: string;
+    /** Skills the creator loaded before the accepted source was submitted. */
+    authoredAgentLoadedSkills?: string[];
     /** Validated suggestions returned by the discovery-only submission tool. */
     projectDiscovery?: ProjectDiscoveryResult;
   };
@@ -3529,6 +3547,7 @@ export function createServeCommand(): Command {
       const activeInternalJobRecoveries = new Map<string, Promise<void>>();
       const revisionViewCleanups = new Map<string, () => Promise<void>>();
       const revisionMutations = new Set<string>();
+      const draftMutations = new Set<string>();
       const activeSessionContinuations = new Map<string, Promise<unknown>>();
       const cleanupRevisionView = async (revisionSessionId: string): Promise<void> => {
         const cleanup = revisionViewCleanups.get(revisionSessionId);
@@ -4000,6 +4019,114 @@ export function createServeCommand(): Command {
         return { success: true as const, agent };
       };
 
+      /** The draft page's payload: the record plus the capability token it needs
+       *  to stream the creator session it belongs to. */
+      const draftViewPayload = (project: Project, record: AgentDraftRecord) => {
+        const token = sessionViewToken(record.jobId, apiKey);
+        const params = new URLSearchParams({ project: project.id });
+        if (token) params.set('token', token);
+        return {
+          ...record,
+          ...(token && { sessionToken: token }),
+          sessionHref: `/sessions/${encodeURIComponent(record.jobId)}?${params.toString()}`,
+        };
+      };
+
+      /** Saving may happen long after the daemon that started the draft died, so
+       *  the creation request is read back from the persisted job envelope when
+       *  it is no longer in memory. */
+      const resolveAgentCreationRecovery = async (
+        jobId: string,
+        record: AgentDraftRecord,
+      ): Promise<AgentCreationRecoveryInput> => {
+        const inMemory = agentCreationRecoveryInputs.get(jobId);
+        if (inMemory) return inMemory;
+        const persisted = await loadPersistedOnboardingJob(jobId);
+        if (persisted?.agentCreation) {
+          agentCreationRecoveryInputs.set(jobId, persisted.agentCreation);
+          return persisted.agentCreation;
+        }
+        // Last resort: rebuild the minimum the save path validates against from
+        // the record itself, so a draft is never unsaveable because its envelope
+        // was pruned.
+        const snapshot = await providerSetupSnapshot();
+        const providers = await agentCreationProviders(snapshot.status, preferredAgentCreationModel);
+        return {
+          request: { objective: record.objective, model: record.authoringModel },
+          guided: record.guided,
+          configuredProviders: providers.map((provider) => provider.id),
+          availableModels: [...new Set(providers.flatMap((provider) => provider.models))],
+        };
+      };
+
+      /** Run the current draft for real shape but with no real effects: a
+       *  dedicated worker carries the mock env, so the shared project worker
+       *  keeps executing real runs untouched. The session it produces is marked
+       *  mock by the runtime and stays out of Sessions and Home by default. */
+      const startAgentDraftTestRun = async (
+        project: Project,
+        record: AgentDraftRecord,
+        draft: AgentDraftEntry,
+      ): Promise<{ sessionId: string; draftIndex: number; sessionToken?: string }> => {
+        const sessionId = ulid();
+        const worker = new AgentWorker({
+          AGENTUSE_PROJECT_ID: project.id,
+          AGENTUSE_RESUME_PUBLIC_URL: effectivePublicUrl,
+          AGENTUSE_MOCK_MODE: '1',
+          AGENTUSE_MOCK_MODEL: record.authoringModel,
+          AGENTUSE_MOCK_APPROVAL: 'approve',
+        });
+        await worker.spawn();
+        const prepared = await worker.createPreparingSession({
+          projectRoot: project.root,
+          sessionId,
+          agentId: draft.fileName.replace(/\.agentuse$/u, ''),
+          agentName: draft.name,
+          agentDescription: `Mock test run of draft ${draft.index}`,
+          model: draft.model,
+          trigger: 'manual',
+          timeout: 300,
+          maxSteps: 20,
+          owner: currentProcessRef(),
+        });
+        if (!prepared.success) {
+          worker.shutdown();
+          throw new Error(prepared.error.message);
+        }
+        await recordAgentDraftTestRun(project.root, record.jobId, {
+          sessionId,
+          draftIndex: draft.index,
+          startedAt: Date.now(),
+          status: 'running',
+        });
+        wakeListHubs();
+        void worker.execute({
+          agentContent: draft.source,
+          agentName: draft.name,
+          projectRoot: project.root,
+          newSessionId: sessionId,
+          preparedSession: true,
+          trigger: 'manual',
+          timeout: 300,
+          maxSteps: 20,
+          debug: options.debug,
+        }).then(async (result) => {
+          await settleAgentDraftTestRun(project.root, record.jobId, sessionId, result.success
+            ? { status: 'completed' }
+            : { status: 'error', error: result.error });
+        }).catch(async (error: unknown) => {
+          await settleAgentDraftTestRun(project.root, record.jobId, sessionId, {
+            status: 'error',
+            error: { code: 'TEST_RUN_FAILED', message: (error as Error).message },
+          }).catch(() => undefined);
+        }).finally(() => {
+          worker.shutdown();
+          wakeListHubs();
+        });
+        const token = sessionViewToken(sessionId, apiKey);
+        return { sessionId, draftIndex: draft.index, ...(token && { sessionToken: token }) };
+      };
+
       const recoverAgentCreationJob = (job: OnboardingModelJob, missingIsInterrupted = false): Promise<void> => {
         const existing = activeInternalJobRecoveries.get(job.id);
         if (existing) return existing;
@@ -4020,9 +4147,17 @@ export function createServeCommand(): Command {
           } else if (session.status === 'error') {
             job.status = 'error';
             job.error = session.error;
+            await failAgentDraft(project.root, job.id, session.error).catch(() => undefined);
           } else {
             try {
-              job.result = await finishAgentCreation(project, recovery, session.submission);
+              await appendAgentDraft(project.root, job.id, {
+                source: session.submission.source,
+                name: session.submission.name,
+                fileName: session.submission.fileName,
+                model: session.submission.model,
+                ...(session.submission.loadedSkills?.length && { loadedSkills: session.submission.loadedSkills }),
+              });
+              job.result = { kind: 'draft', jobId: job.id, projectId: project.id };
               job.status = 'completed';
             } catch (error) {
               job.status = 'error';
@@ -4684,6 +4819,67 @@ export function createServeCommand(): Command {
         }
       };
 
+      /** Record the outcome of a continued creator session as the next numbered
+       *  draft. Mirrors settleAgentRevisionExecution: the continue itself is
+       *  generic, and each internal feature settles its own durable record. */
+      const settleAgentDraftExecution = async (
+        project: Project,
+        sessionId: string,
+        result: WorkerExecuteResult | WorkerExecuteError,
+      ): Promise<void> => {
+        const record = await readAgentDraftRecord(project.root, sessionId);
+        if (!record || record.status !== 'running' || record.drafts.length === 0) return;
+
+        const job = onboardingJobs.get(sessionId);
+        if (!result.success) {
+          await failAgentDraft(project.root, sessionId, result.error);
+          if (job?.kind === 'agent-creation') {
+            job.status = 'error';
+            job.error = result.error;
+            await persistOnboardingJob(job);
+          }
+          return;
+        }
+        if (result.result.finishReason === 'suspended' || result.result.approvalUrl) return;
+
+        if (
+          result.result.agentSource
+          && result.result.authoredAgentName
+          && result.result.authoredAgentFileName
+        ) {
+          await appendAgentDraft(project.root, sessionId, {
+            source: result.result.agentSource,
+            name: result.result.authoredAgentName,
+            fileName: result.result.authoredAgentFileName,
+            model: record.authoringModel,
+            ...(result.result.headline && { reply: result.result.headline }),
+            ...(result.result.authoredAgentLoadedSkills?.length && {
+              loadedSkills: result.result.authoredAgentLoadedSkills,
+            }),
+          });
+          if (job?.kind === 'agent-creation') {
+            job.status = 'completed';
+            job.result = { kind: 'draft', jobId: sessionId, projectId: project.id };
+            await persistOnboardingJob(job);
+          }
+          return;
+        }
+
+        // A creator turn that ends without resubmitting leaves the operator with
+        // no new draft to review, so it is recorded as a failed turn rather than
+        // silently leaving the panel spinning.
+        const error = {
+          code: 'DRAFT_NOT_SUBMITTED',
+          message: 'The creator finished the change request without submitting a new draft',
+        };
+        await failAgentDraft(project.root, sessionId, error);
+        if (job?.kind === 'agent-creation') {
+          job.status = 'error';
+          job.error = error;
+          await persistOnboardingJob(job);
+        }
+      };
+
       // Shared resume kickoff for both /approvals/:id/decision and the unified
       // /sessions/:id/decision. The caller validates auth + state, then hands us
       // the resolved gate resumeToken; we run the worker resume, update any
@@ -4855,6 +5051,9 @@ export function createServeCommand(): Command {
           .then(async result => {
             await settleAgentRevisionExecution(project, sessionId, result).catch((err) => {
               logger.warn(`Failed to settle revision session ${sessionId}: ${(err as Error).message}`);
+            });
+            await settleAgentDraftExecution(project, sessionId, result).catch((err) => {
+              logger.warn(`Failed to settle draft session ${sessionId}: ${(err as Error).message}`);
             });
             if (!result.success) {
               backgroundSessionFailures.set(activeKey, {
@@ -8130,6 +8329,14 @@ export function createServeCommand(): Command {
             if (guided && !schedule) {
               throw new AgentCreationError('INVALID_AGENT', 'Choose a valid schedule for this agent');
             }
+            const idea = guided
+              ? {
+                  title: request.name!,
+                  ...(typeof body.evidence === 'string' && body.evidence.trim()
+                    ? { evidence: body.evidence.trim().slice(0, 240) }
+                    : {}),
+                }
+              : undefined;
             const sessionId = ulid();
             const job: OnboardingModelJob = {
               id: sessionId,
@@ -8149,6 +8356,25 @@ export function createServeCommand(): Command {
               availableModels,
             };
             agentCreationRecoveryInputs.set(job.id, recoveryInput);
+            // The catalog is read once and shared: the draft record shows the
+            // pool the operator can reason about, and the creator agent is
+            // built from the same list rather than a second, possibly
+            // divergent, scan.
+            const skillCatalog = await discoverProjectSkillCatalog(project.root);
+            await createAgentDraftRecord({
+              jobId: job.id,
+              projectId: project.id,
+              projectRoot: project.root,
+              objective: request.objective,
+              guided,
+              ...(idea && { idea }),
+              authoringModel: request.model,
+              skillCounts: {
+                project: skillCatalog.filter((skill) => skill.source === 'project').length,
+                global: skillCatalog.filter((skill) => skill.source === 'global').length,
+                ambiguous: skillCatalog.filter((skill) => skill.ambiguous).length,
+              },
+            });
             const prepared = await beginInternalAgentJob({
               job,
               worker,
@@ -8177,11 +8403,11 @@ export function createServeCommand(): Command {
                   cleanupView = view.cleanup;
                   return view;
                 });
-                const [view, creatorSkill, availableSkills] = await Promise.all([
+                const [view, creatorSkill] = await Promise.all([
                   viewPromise,
                   loadBuiltinSkillSource('creator'),
-                  discoverProjectSkillCatalog(project.root),
                 ]);
+                const availableSkills = skillCatalog;
                 return buildAgentCreatorSessionAgent({
                   model: request.model,
                   ...(reasoning && { reasoning }),
@@ -8210,6 +8436,7 @@ export function createServeCommand(): Command {
                 if (!execution.success) {
                   job.status = 'error';
                   job.error = execution.error;
+                  await failAgentDraft(project.root, job.id, execution.error).catch(() => undefined);
                   return;
                 }
                 if (
@@ -8222,17 +8449,29 @@ export function createServeCommand(): Command {
                     'The creator finished without submitting an agent name, filename, and source through submit_agent_source',
                   );
                 }
-                job.result = await finishAgentCreation(project, recoveryInput, {
+                // The session ends "drafted", not saved: nothing is written to
+                // the project until the operator presses Save on the draft page.
+                await appendAgentDraft(project.root, job.id, {
                   source: execution.result.agentSource,
                   name: execution.result.authoredAgentName,
                   fileName: execution.result.authoredAgentFileName,
+                  model: request.model,
+                  ...(execution.result.headline && { reply: execution.result.headline }),
+                  ...(execution.result.authoredAgentLoadedSkills?.length && {
+                    loadedSkills: execution.result.authoredAgentLoadedSkills,
+                  }),
                 });
+                job.result = { kind: 'draft', jobId: job.id, projectId: project.id };
                 job.status = 'completed';
               },
-              mapError: (error) => ({
+              mapError: (error) => {
+                const mapped = {
                   code: error instanceof AgentCreationError ? error.code : 'AGENT_CREATE_FAILED',
                   message: (error as Error).message,
-                }),
+                };
+                void failAgentDraft(project.root, job.id, mapped).catch(() => undefined);
+                return mapped;
+              },
               persist: () => persistOnboardingJob(job),
               wake: wakeListHubs,
               failPreparing: (error) => worker.failPreparingSession({
@@ -8710,6 +8949,143 @@ export function createServeCommand(): Command {
             sendError(res, 400, 'REVISION_START_FAILED', (err as Error).message);
           } finally {
             if (mutationKey) revisionMutations.delete(mutationKey);
+          }
+          return;
+        }
+
+        const draftActionMatch = isApi
+          ? routePath.match(/^\/agents\/drafts\/([^/?#]+)(?:\/(save|discard|request-changes|test-run))?$/)
+          : null;
+        if (draftActionMatch) {
+          let mutationKey: string | undefined;
+          try {
+            const jobId = decodeURIComponent(draftActionMatch[1]!);
+            const action = draftActionMatch[2];
+            const projectId = requestUrl.searchParams.get('project') ?? undefined;
+            const project = projectId ? projectsById.get(projectId) : projects.length === 1 ? projects[0] : undefined;
+            if (!project) {
+              sendError(res, 400, 'PROJECT_REQUIRED', 'Choose the project that owns this draft');
+              return;
+            }
+            if (effectiveHideAgentSource) {
+              sendError(res, 403, 'AGENT_SOURCE_HIDDEN', 'Agent drafts are unavailable while serve.hideAgentSource is enabled');
+              return;
+            }
+            const record = await readAgentDraftRecord(project.root, jobId);
+            if (!record) {
+              sendError(res, 404, 'DRAFT_NOT_FOUND', 'Draft not found');
+              return;
+            }
+
+            if (req.method === 'GET' && !action) {
+              sendJSON(res, 200, { success: true, draft: draftViewPayload(project, record) });
+              return;
+            }
+            if (req.method !== 'POST' || !action) {
+              sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Unsupported draft action');
+              return;
+            }
+            if (!sessionAgentRevisionAllowed(req.headers.authorization, apiKey)) {
+              sendError(res, 403, 'OPERATOR_REQUIRED', 'Only an authenticated operator can change agent source');
+              return;
+            }
+            mutationKey = `draft:${project.id}:${jobId}`;
+            if (draftMutations.has(mutationKey)) {
+              sendError(res, 409, 'DRAFT_ACTION_IN_PROGRESS', 'Another action is already changing this draft');
+              return;
+            }
+            draftMutations.add(mutationKey);
+
+            if (action === 'request-changes') {
+              const body = await parseJSONBody(req);
+              const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+              if (!prompt || prompt.length > 12_000) {
+                sendError(res, 400, 'DRAFT_FEEDBACK_REQUIRED', 'Describe the change you want to this draft');
+                return;
+              }
+              if (record.status === 'saved' || record.status === 'discarded') {
+                sendError(res, 409, 'DRAFT_CLOSED', 'This draft is no longer open for changes');
+                return;
+              }
+              const activeKey = `${project.id}:${jobId}`;
+              if (activeApprovalResumes.has(activeKey) || activeSessionContinuations.has(activeKey)) {
+                sendError(res, 409, 'SESSION_ACTIVE', 'This creator session is already continuing');
+                return;
+              }
+              await reopenAgentDraft(project.root, jobId, prompt);
+              const job = onboardingJobs.get(jobId);
+              if (job?.kind === 'agent-creation') {
+                job.status = 'running';
+                delete job.error;
+                delete job.result;
+                await persistOnboardingJob(job);
+              }
+              startSessionContinue(res, { project, sessionId: jobId, prompt });
+              return;
+            }
+
+            if (action === 'discard') {
+              if (record.status === 'running') {
+                const worker = workers.get(project.id);
+                if (worker) {
+                  await worker.stopSession({
+                    projectRoot: project.root,
+                    sessionId: jobId,
+                    reason: 'Agent draft discarded by operator',
+                  }).catch(() => undefined);
+                }
+              }
+              const discarded = await markAgentDraftDiscarded(project.root, jobId);
+              wakeListHubs();
+              sendJSON(res, 200, { success: true, draft: draftViewPayload(project, discarded) });
+              return;
+            }
+
+            if (action === 'test-run') {
+              const latest = latestAgentDraft(record);
+              if (!latest) {
+                sendError(res, 409, 'DRAFT_NOT_READY', 'There is no draft to test yet');
+                return;
+              }
+              const started = await startAgentDraftTestRun(project, record, latest);
+              sendJSON(res, 202, { success: true, testRun: started });
+              return;
+            }
+
+            // save
+            const latest = latestAgentDraft(record);
+            if (!latest) {
+              sendError(res, 409, 'DRAFT_NOT_READY', 'There is no draft to save yet');
+              return;
+            }
+            if (record.status === 'saved') {
+              sendError(res, 409, 'DRAFT_ALREADY_SAVED', 'This draft was already saved');
+              return;
+            }
+            const recovery = await resolveAgentCreationRecovery(jobId, record);
+            const created = await finishAgentCreation(project, recovery, {
+              source: latest.source,
+              name: latest.name,
+              fileName: latest.fileName,
+            });
+            await markAgentDraftSaved(project.root, jobId, created.agent.runPath);
+            const job = onboardingJobs.get(jobId);
+            if (job?.kind === 'agent-creation') {
+              job.result = created;
+              job.status = 'completed';
+              await persistOnboardingJob(job);
+            }
+            wakeListHubs();
+            sendJSON(res, 200, { success: true, agent: created.agent });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            if (err instanceof AgentCreationError) {
+              sendError(res, 400, err.code, err.message);
+            } else {
+              sendError(res, 400, 'DRAFT_ACTION_FAILED', (err as Error).message);
+            }
+          } finally {
+            if (mutationKey) draftMutations.delete(mutationKey);
           }
           return;
         }

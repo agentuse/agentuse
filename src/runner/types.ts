@@ -207,6 +207,8 @@ export interface RunAgentResult {
   authoredAgentName?: string;
   /** Project-local filename delivered with creator-only source. */
   authoredAgentFileName?: string;
+  /** Skills the creator loaded before submitting the accepted source. */
+  authoredAgentLoadedSkills?: string[];
   /** Validated suggestions delivered through the discovery-only submit tool. */
   projectDiscovery?: ProjectDiscoveryResult;
 }

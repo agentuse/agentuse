@@ -17,6 +17,8 @@ export interface AgentSourceSubmission {
   name?: string;
   fileName?: string;
   model?: string;
+  /** Skills the creator had loaded when the accepted source was submitted. */
+  loadedSkills?: string[];
 }
 
 export interface AgentSourceSubmissionContract {
@@ -96,16 +98,19 @@ export function createSubmitAgentSourceTool(
           );
         }
         const fileName = validateAgentFileName(filename);
+        const loadedSkills = [...(loadedSkillNames?.() ?? [])];
         submission.source = authored.source;
         submission.name = authored.name;
         submission.fileName = fileName;
         submission.model = authored.model;
+        submission.loadedSkills = loadedSkills;
         recoverySink?.checkpoint?.(STRUCTURED_DELIVERY_CHECKPOINT, {
           kind: 'agent-source',
           source: authored.source,
           name: authored.name,
           fileName,
           model: authored.model,
+          loadedSkills,
         });
         return `Accepted: ${authored.name} is valid and will be saved as ${fileName}. Call report_complete now with a short confirmation headline and omit details.`;
       } catch (error) {

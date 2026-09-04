@@ -36,6 +36,21 @@ describe('internal AgentUse architecture', () => {
     expect(webApi).not.toMatch(/export function discoverProjectAgents\b/u);
   });
 
+  it('leaves a finished creator session drafted, writing the agent only on save', async () => {
+    const serve = await source('cli/serve.ts');
+    // The creator's consume path records a numbered draft; the project file is
+    // written by the save route alone, so a draft the operator never accepts
+    // never lands in the project.
+    const consume = serve.slice(serve.indexOf("kind: 'agent-creation'"));
+    const consumeBody = consume.slice(consume.indexOf('consume: async (execution)'), consume.indexOf('mapError:'));
+    expect(consumeBody).toContain('appendAgentDraft');
+    expect(consumeBody).not.toContain('finishAgentCreation');
+
+    const saveRoute = serve.slice(serve.indexOf('draftActionMatch'));
+    expect(saveRoute).toContain('markAgentDraftSaved');
+    expect(saveRoute).toContain('finishAgentCreation');
+  });
+
   it('routes New Agent and project ideas through persisted workers', async () => {
     const serve = await source('cli/serve.ts');
     const newAgentStart = serve.indexOf('routePath === "/agents" && req.method === "POST"');
