@@ -299,6 +299,30 @@ export function AgentRevisionLauncher(props: {
   );
 }
 
+/** Internal revision sessions use a revision-aware stop endpoint so their
+ * durable revision record and temporary project view are cleaned up together. */
+export function AgentRevisionStopButton(props: { busy: boolean; onStop: () => void }) {
+  return (
+    <button
+      type="button"
+      class="agent-revision-stop"
+      disabled={props.busy}
+      aria-busy={props.busy}
+      title="Stop this revision session"
+      onClick={props.onStop}
+    >
+      {props.busy ? (
+        <span class="btn-spinner" aria-hidden="true" />
+      ) : (
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="6" y="6" width="12" height="12" rx="2" />
+        </svg>
+      )}
+      <span>{props.busy ? 'Stopping…' : 'Stop revision'}</span>
+    </button>
+  );
+}
+
 export function AgentRevisionSessionPanel(props: {
   sessionId: string;
   token?: string | undefined;
@@ -352,7 +376,9 @@ export function AgentRevisionSessionPanel(props: {
         window.location.assign(revision.originHref ?? revisionFallbackOriginHref(revision.originSessionId, props.project));
       }
     } catch (caught) {
-      setError((caught as Error).message || `Could not ${action} this revision.`);
+      setError((caught as Error).message || (action === 'cancel'
+        ? 'Could not stop this revision.'
+        : `Could not ${action} this revision.`));
     } finally {
       setBusy(null);
     }
@@ -388,7 +414,11 @@ export function AgentRevisionSessionPanel(props: {
       {revision.status === 'running' && props.sessionStatus === 'preparing' && <p>AgentUse is preparing a safe project view. The reviser will start automatically when its context is ready.</p>}
       {revision.status === 'running' && props.sessionStatus !== 'preparing' && props.sessionStatus !== 'waiting' && <p>AgentUse is diagnosing the originating run. You can leave; this revision remains available from that run and Sessions.</p>}
       {revision.status === 'running' && props.sessionStatus === 'waiting' && <p>The reviser needs your decision below. Answering resumes this same internal session.</p>}
-      {revision.status === 'running' && <div class="agent-revision-review-actions"><button type="button" class="is-quiet" disabled={busy !== null} onClick={() => void act('cancel')}>{busy === 'cancel' ? 'Cancelling…' : 'Cancel revision'}</button></div>}
+      {revision.status === 'running' && (
+        <div class="agent-revision-review-actions">
+          <AgentRevisionStopButton busy={busy !== null} onStop={() => void act('cancel')} />
+        </div>
+      )}
       {revision.diagnosis && <div class="agent-revision-diagnosis"><strong>Diagnosis</strong><p>{revision.diagnosis}</p></div>}
       {revision.status === 'no-change' && revision.recommendedAction && <div class="agent-revision-diagnosis"><strong>Recommended next action</strong><p>{revision.recommendedAction}</p></div>}
       {revision.status === 'no-change' && (

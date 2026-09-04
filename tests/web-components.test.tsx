@@ -48,7 +48,7 @@ import { AgentCreationProgressPanel } from '../src/cli/serve/web/components/agen
 import { firstUsefulAgentSetupSteps } from '../src/cli/serve/web/components/onboarding-shell';
 import { ProjectFolderField } from '../src/cli/serve/web/components/project-folder-field';
 import { ProjectsSettingsGroup, RestartOnboardingGroup } from '../src/cli/serve/web/components/project-settings';
-import { AgentRevisionLauncher, revisionLabel, revisionOriginAction, revisionOriginDescription } from '../src/cli/serve/web/components/agent-revision';
+import { AgentRevisionLauncher, AgentRevisionStopButton, revisionLabel, revisionOriginAction, revisionOriginDescription } from '../src/cli/serve/web/components/agent-revision';
 
 const noop = () => {};
 
@@ -122,6 +122,19 @@ describe('agent revision entry', () => {
     expect(formRules).toContain('overflow: hidden;');
     expect(fieldRules).toContain('font-weight: var(--weight-normal);');
     expect(css).not.toContain('.agent-revision-dialog');
+  });
+
+  it('gives a running internal revision an explicit stop control', () => {
+    const ready = renderToString(<AgentRevisionStopButton busy={false} onStop={noop} />);
+    const stopping = renderToString(<AgentRevisionStopButton busy onStop={noop} />);
+
+    expect(ready).toContain('class="agent-revision-stop"');
+    expect(ready).toContain('title="Stop this revision session"');
+    expect(ready).toContain('<rect x="6" y="6" width="12" height="12" rx="2"></rect>');
+    expect(ready).toContain('Stop revision');
+    expect(stopping).toContain('disabled');
+    expect(stopping).toContain('aria-busy="true"');
+    expect(stopping).toContain('Stopping…');
   });
 });
 
