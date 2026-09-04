@@ -9457,7 +9457,12 @@ main[tabindex="-1"]:focus,
 .page-draft {
   display: flex;
   flex-direction: column;
-  min-height: 100%;
+  /* The panel is a workspace, not a document: it fills the window and each
+     region scrolls itself, so the composer never falls below the fold. */
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
 }
 .draft-topbar {
   display: flex;
@@ -9521,6 +9526,7 @@ main[tabindex="-1"]:focus,
   grid-template-columns: 340px minmax(0, 1fr);
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 .draft-aside {
   display: flex;
@@ -9533,9 +9539,9 @@ main[tabindex="-1"]:focus,
 .draft-main {
   display: flex;
   flex-direction: column;
-  gap: 14px;
   min-height: 0;
   padding: 20px 24px;
+  overflow: hidden;
 }
 
 .draft-card-label {
@@ -9578,6 +9584,12 @@ main[tabindex="-1"]:focus,
 .draft-brief-skill-pool { color: var(--muted); }
 
 .draft-session { display: flex; flex-direction: column; gap: 8px; }
+/* A glance at what the author is doing, not a transcript: the full log has its
+   own page, linked below. */
+.draft-session .onboarding-session-lines {
+  max-height: 220px;
+  overflow: auto;
+}
 .draft-session-link { font-size: var(--font-size-caption); }
 .draft-session-note {
   color: var(--muted);
@@ -9650,7 +9662,12 @@ main[tabindex="-1"]:focus,
 }
 .draft-tabs button:first-child { border-left: 0; }
 .draft-tabs button.is-active { background: var(--panel-hover); color: var(--fg); }
-.draft-file-scroll { flex: 1; min-height: 0; overflow: auto; }
+.draft-file-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.draft-file-scroll.is-changes { display: flex; flex-direction: column; }
 .draft-file-body {
   margin: 0;
   padding: 14px 16px;
@@ -9666,7 +9683,22 @@ main[tabindex="-1"]:focus,
 .draft-file-body.is-diff .is-remove { background: var(--red-soft); color: var(--red); }
 .draft-file-body.is-diff .is-meta { color: var(--muted-2); }
 
-.draft-exchange { display: flex; flex-direction: column; gap: 10px; max-height: 180px; overflow: auto; }
+.draft-exchange {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  padding: 14px 16px;
+  overflow: auto;
+}
+.draft-exchange.is-empty { align-items: stretch; justify-content: center; }
+.draft-exchange.is-empty p {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+  text-align: center;
+}
 .draft-exchange-turn { display: flex; flex-direction: column; gap: 6px; }
 .draft-exchange-request {
   align-self: flex-end;
@@ -9682,15 +9714,19 @@ main[tabindex="-1"]:focus,
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface);
+  /* A reply can carry a headline and the diagnosis behind it, separated by a
+     blank line. Collapsing that runs the two into one sentence. */
+  white-space: pre-wrap;
 }
+.draft-exchange-request { white-space: pre-wrap; }
 
 .draft-composer {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  flex-shrink: 0;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
   background: var(--panel);
 }
 .draft-composer-label {
@@ -9720,7 +9756,15 @@ main[tabindex="-1"]:focus,
   font-family: var(--mono);
   font-size: var(--font-size-micro);
 }
-.draft-error { margin: 0; color: var(--red); font-size: var(--font-size-caption); }
+.draft-error {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 8px 16px;
+  border-top: 1px solid var(--line);
+  color: var(--red);
+  font-size: var(--font-size-caption);
+}
+.draft-file-note { color: var(--muted); }
 
 .draft-testrun { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; }
 .draft-testrun.is-empty { align-items: flex-start; gap: 10px; color: var(--muted-3); }
@@ -9755,10 +9799,6 @@ main[tabindex="-1"]:focus,
 }
 .draft-testrun-result .value { color: var(--fg); font-family: var(--mono); font-size: var(--font-size-caption); }
 
-@media (max-width: 900px) {
-  .draft-columns { grid-template-columns: minmax(0, 1fr); }
-  .draft-aside { border-right: 0; border-bottom: 1px solid var(--line); }
-}
 
 /* Skill pool on the New agent form: shown before the brief is written, because
    a thin catalog usually means a thin agent. */
@@ -9868,3 +9908,12 @@ main[tabindex="-1"]:focus,
   line-height: var(--lh-snug);
 }
 .draft-waiting a { color: inherit; }
+
+@media (max-width: 720px) {
+  /* The mobile shell puts a toolbar above the route, so the workspace is the
+     window minus that bar. */
+  .page-draft { height: calc(100dvh - 52px); }
+  .draft-columns { grid-template-columns: minmax(0, 1fr); overflow: auto; }
+  .draft-aside { border-right: 0; border-bottom: 1px solid var(--line); overflow: visible; }
+  .draft-main { overflow: visible; }
+}

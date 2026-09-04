@@ -59,7 +59,9 @@ export default function AgentRevision() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'apply' | 'discard' | 'restore' | 'cancel' | 'request' | 'test' | null>(null);
-  const [tab, setTab] = useState<DraftFileTab>('diff');
+  const [tab, setTab] = useState<DraftFileTab>('changes');
+  // The operator picked a tab; stop steering it for them.
+  const [tabPinned, setTabPinned] = useState(false);
   const [testSession, setTestSession] = useState<{ sessionId: string; sessionToken?: string; draftIndex: number } | null>(null);
   const [pricing, setPricing] = useState<typeof import('../lib/pricing') | null>(null);
 
@@ -101,6 +103,16 @@ export default function AgentRevision() {
   );
   const reviserSession = useInternalAgentJob(jobHandle);
 
+  // Changes leads while the reviser works and once it has answered. A settled
+  // proposal nobody has questioned yet opens on the diff, which is the thing
+  // the operator is being asked to accept.
+  const hasRequest = Boolean(revision?.exchange?.some((turn) => turn.request));
+  useEffect(() => {
+    if (tabPinned || !revision) return;
+    if (revision.status === 'running' || hasRequest) setTab('changes');
+    else if (revision.proposedSource) setTab('diff');
+  }, [tabPinned, revision?.status, hasRequest, revision?.proposedSource]);
+
   const proposed = revision?.proposedSource;
   const changeCounts = useMemo(
     () => (proposed && revision?.baseSource ? diffChangeCounts(revisionLineDiff(revision.baseSource, proposed)) : null),
@@ -136,7 +148,7 @@ export default function AgentRevision() {
     setActionError(null);
     try {
       await requestAgentRevisionChanges(sessionId, prompt, project);
-      setTab('diff');
+      setTab('changes');
       await refresh();
     } catch (caught) {
       setActionError((caught as Error).message || 'Could not send that change request.');
@@ -151,6 +163,7 @@ export default function AgentRevision() {
     try {
       const payload = await startAgentRevisionTestRun(sessionId, project);
       setTestSession(payload.testRun);
+      setTabPinned(true);
       setTab('test');
     } catch (caught) {
       setActionError((caught as Error).message || 'Could not start a test run.');
@@ -160,6 +173,20 @@ export default function AgentRevision() {
   };
 
   const proposalNumber = revision.proposalCount ?? 1;
+  const capabilityChanges = revision.capabilityChanges ?? [];
+  // The reviser's diagnosis explains the proposal on screen, so it rides its
+  // latest reply in the thread rather than sitting in a card off to the side.
+  const exchangeTurns = (() => {
+    const turns = [...(revision.exchange ?? [])];
+    const detail = revision.status === 'no-change' ? revision.recommendedAction : revision.diagnosis;
+    if (!detail) return turns;
+    const last = turns[turns.length - 1];
+    if (last && last.reply !== undefined) {
+      const merged = last.reply && last.reply !== detail ? `${last.reply}\n\n${detail}` : detail;
+      return [...turns.slice(0, -1), { ...last, reply: merged }];
+    }
+    return [...turns, { reply: detail }];
+  })();
   const reviserSessionHref = (() => {
     const params = new URLSearchParams({ project });
     if (token) params.set('token', token);
@@ -209,26 +236,23 @@ export default function AgentRevision() {
           ariaLabel="Revision session usage"
         />
       </div>
-      {revision.diagnosis && (
-        <div class="draft-brief">
-          <div class="draft-card-head"><span class="draft-card-label">Diagnosis</span></div>
-          <p class="draft-brief-objective">{revision.diagnosis}</p>
-        </div>
-      )}
-      {revision.status === 'no-change' && revision.recommendedAction && (
-        <div class="draft-brief">
-          <div class="draft-card-head"><span class="draft-card-label">Recommended next action</span></div>
-          <p class="draft-brief-objective">{revision.recommendedAction}</p>
-        </div>
-      )}
-      {revision.capabilityChanges && (
+      {/* A capability change is the one thing here that can widen what the agent
+          may do, so it keeps a card. "Nothing changed" is a one-line
+          reassurance and rides in the file header instead. */}
+      {capabilityChanges.length > 0 && (
         <div class="draft-brief">
           <div class="draft-card-head"><span class="draft-card-label">Capability review</span></div>
-          {revision.capabilityChanges.length > 0
-            ? <ul class="draft-capability-list">{revision.capabilityChanges.map((change) => <li key={change}>{change}</li>)}</ul>
-            : <p class="draft-brief-objective">No model, schedule, tool, skill, integration, sub-agent, or channel changes.</p>}
+          <ul class="draft-capability-list">{capabilityChanges.map((change) => <li key={change}>{change}</li>)}</ul>
         </div>
       )}
+      <div class="draft-brief">
+        <div class="draft-card-head"><span class="draft-card-label">Earlier revisions</span></div>
+        <p class="draft-brief-objective">
+          <a href={agentDetailHref(revision.projectId, revision.targetAgentRunPath ?? revision.targetAgentName, { tab: 'revisions' })}>
+            See every revision of this agent
+          </a>
+        </p>
+      </div>
     </>
   );
 
@@ -279,8 +303,9 @@ export default function AgentRevision() {
       baseSource={revision.baseSource}
       source={proposed ?? revision.baseSource ?? ''}
       tab={tab}
-      onTab={setTab}
+      onTab={(next) => { setTabPinned(true); setTab(next); }}
       showTestTab={Boolean(proposed)}
+      headerNote={revision.capabilityChanges && capabilityChanges.length === 0 ? 'no capability changes' : undefined}
       testRun={<DraftTestRun
         project={project}
         session={testSession}
@@ -288,7 +313,10 @@ export default function AgentRevision() {
         busy={busy === 'test'}
         onRun={() => void runTest()}
       />}
-      exchange={<DraftExchange turns={revision.exchange ?? []} />}
+      exchange={<DraftExchange
+        turns={exchangeTurns}
+        emptyHint="The reviser is diagnosing the run. Its findings appear here."
+      />}
       composer={open && (
         <DraftComposer
           placeholder="Tell the reviser what to change in this proposal…"

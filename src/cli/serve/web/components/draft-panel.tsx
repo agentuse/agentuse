@@ -11,7 +11,7 @@ import { revisionLineDiff } from '../lib/revision-diff';
  * numbered version with a diff, and nothing reaches the project until the
  * operator presses the primary action in the top bar.
  */
-export type DraftFileTab = 'diff' | 'source' | 'test';
+export type DraftFileTab = 'changes' | 'diff' | 'source' | 'test';
 
 export interface DraftExchangeTurn {
   /** What the operator asked for. Absent on the first version. */
@@ -100,11 +100,29 @@ export function DraftComposer(props: {
   );
 }
 
-export function DraftExchange(props: { turns: DraftExchangeTurn[] }) {
+/**
+ * The Changes tab: what was asked for and what the author says it did, oldest
+ * first so the newest turn sits at the bottom the way the composer below it
+ * expects. It is a record of requests against the file, not a chat.
+ */
+export function DraftExchange(props: { turns: DraftExchangeTurn[]; emptyHint?: string }) {
   const turns = props.turns.filter((turn) => turn.request || turn.reply);
-  if (turns.length === 0) return null;
+  const ref = useRef<HTMLDivElement>(null);
+  const lastTurn = turns[turns.length - 1];
+  useEffect(() => {
+    const element = ref.current;
+    if (element) element.scrollTop = element.scrollHeight;
+  }, [turns.length, lastTurn?.reply, lastTurn?.request]);
+
+  if (turns.length === 0) {
+    return (
+      <div class="draft-exchange is-empty" ref={ref}>
+        <p>{props.emptyHint ?? 'No changes requested yet. Ask for one below and it becomes the next version.'}</p>
+      </div>
+    );
+  }
   return (
-    <div class="draft-exchange">
+    <div class="draft-exchange" ref={ref}>
       {turns.map((turn, index) => (
         <div class="draft-exchange-turn" key={index}>
           {turn.request && <div class="draft-exchange-request">{turn.request}</div>}
@@ -134,14 +152,30 @@ export function DraftPanel(props: {
   testRun?: ComponentChildren;
   /** Hidden when the surface has no mock-run support. */
   showTestTab?: boolean;
+  /** Short note beside the change counts, e.g. "no capability changes". */
+  headerNote?: ComponentChildren;
   exchange: ComponentChildren;
   composer: ComponentChildren;
   error?: string | null | undefined;
 }) {
   const bodyRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (bodyRef.current) bodyRef.current.scrollTop = 0;
+    // The Changes tab manages its own scroll: it pins to the newest turn, and
+    // resetting to the top here would fight it.
+    if (props.tab !== 'changes' && bodyRef.current) bodyRef.current.scrollTop = 0;
   }, [props.source, props.tab]);
+
+  const tabButton = (id: DraftFileTab, label: string) => (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={props.tab === id}
+      class={props.tab === id ? 'is-active' : ''}
+      onClick={() => props.onTab(id)}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <div class="page-draft">
@@ -160,26 +194,27 @@ export function DraftPanel(props: {
               </div>
               <div class="draft-file-meta">
                 <span class="draft-file-changes">{props.changeLabel}</span>
+                {props.headerNote && <span class="draft-file-note">{props.headerNote}</span>}
                 <div class="draft-tabs" role="tablist" aria-label="Draft view">
-                  <button type="button" role="tab" aria-selected={props.tab === 'diff'} class={props.tab === 'diff' ? 'is-active' : ''} onClick={() => props.onTab('diff')}>Diff</button>
-                  <button type="button" role="tab" aria-selected={props.tab === 'source'} class={props.tab === 'source' ? 'is-active' : ''} onClick={() => props.onTab('source')}>Source</button>
-                  {props.showTestTab && (
-                    <button type="button" role="tab" aria-selected={props.tab === 'test'} class={props.tab === 'test' ? 'is-active' : ''} onClick={() => props.onTab('test')}>Test run</button>
-                  )}
+                  {tabButton('changes', 'Changes')}
+                  {tabButton('diff', 'Diff')}
+                  {tabButton('source', 'Source')}
+                  {props.showTestTab && tabButton('test', 'Test run')}
                 </div>
               </div>
             </div>
-            <div class="draft-file-scroll" ref={bodyRef}>
+            <div class={`draft-file-scroll${props.tab === 'changes' ? ' is-changes' : ''}`} ref={bodyRef}>
               {props.tab === 'test'
                 ? props.testRun
                 : props.tab === 'source'
                   ? <pre class="draft-file-body" aria-label="Agent source">{props.source}</pre>
-                  : <DraftDiff baseSource={props.baseSource} source={props.source} />}
+                  : props.tab === 'changes'
+                    ? props.exchange
+                    : <DraftDiff baseSource={props.baseSource} source={props.source} />}
             </div>
+            {props.error && <p class="draft-error" role="alert">{props.error}</p>}
+            {props.composer}
           </div>
-          {props.error && <p class="draft-error" role="alert">{props.error}</p>}
-          {props.exchange}
-          {props.composer}
         </section>
       </div>
     </div>

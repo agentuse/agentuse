@@ -53,7 +53,9 @@ export default function AgentDraft() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'save' | 'discard' | 'request' | 'test' | null>(null);
-  const [tab, setTab] = useState<DraftFileTab>('diff');
+  const [tab, setTab] = useState<DraftFileTab>('changes');
+  // The operator picked a tab; stop steering it for them.
+  const [tabPinned, setTabPinned] = useState(false);
   const [testSession, setTestSession] = useState<{ sessionId: string; sessionToken?: string; draftIndex: number } | null>(null);
   // The models.dev pricing registry is large generated data, so it loads on
   // demand exactly as the session page does.
@@ -100,10 +102,18 @@ export default function AgentDraft() {
   const latest = draft?.drafts[draft.drafts.length - 1];
   const previous = draft && draft.drafts.length > 1 ? draft.drafts[draft.drafts.length - 2] : undefined;
 
-  // Nothing to diff against on the first draft, so the whole file is the view.
+  // Changes is the default while the creator is working or once a request has
+  // been answered. A first draft with nothing asked of it yet opens on the file,
+  // and with nothing to diff against that means Source.
+  const hasConversation = Boolean(draft?.drafts.some((entry) => entry.request));
   useEffect(() => {
-    if (latest && !previous && tab === 'diff') setTab('source');
-  }, [latest?.index, previous?.index]);
+    if (tabPinned || !draft) return;
+    if (draft.status === 'running' || hasConversation) {
+      setTab('changes');
+      return;
+    }
+    if (latest) setTab(previous ? 'diff' : 'source');
+  }, [tabPinned, draft?.status, hasConversation, latest?.index, previous?.index]);
 
   const changeCounts = useMemo(
     () => (latest && previous ? diffChangeCounts(revisionLineDiff(previous.source, latest.source)) : null),
@@ -145,7 +155,7 @@ export default function AgentDraft() {
     setActionError(null);
     try {
       await requestAgentDraftChanges(jobId, project, prompt);
-      setTab('diff');
+      setTab('changes');
       await refresh();
     } catch (caught) {
       setActionError((caught as Error).message || 'Could not send that change request.');
@@ -160,6 +170,7 @@ export default function AgentDraft() {
     try {
       const payload = await startAgentDraftTestRun(jobId, project);
       setTestSession(payload.testRun);
+      setTabPinned(true);
       setTab('test');
       await refresh();
     } catch (caught) {
@@ -245,7 +256,7 @@ export default function AgentDraft() {
       baseSource={previous?.source}
       source={latest?.source ?? ''}
       tab={tab}
-      onTab={setTab}
+      onTab={(next) => { setTabPinned(true); setTab(next); }}
       showTestTab={Boolean(latest)}
       testRun={<DraftTestRun
         project={project}
