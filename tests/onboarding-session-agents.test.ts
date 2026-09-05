@@ -313,6 +313,30 @@ Read references/checklist.md before authoring a release workflow.`);
     })).resolves.toContain('Accepted');
   });
 
+  it('lists taken filenames for the creator and rejects a colliding submission before Save', async () => {
+    const creator = parseAgentContent(buildAgentCreatorSessionAgent({
+      model: 'openai:gpt-5.6-terra',
+      safeViewRoot: '/tmp/safe-view',
+      creatorSkill: 'Creator rules',
+      objective: 'Say hello world',
+      availableModels: ['openai:gpt-5.6-luna'],
+      existingAgentFileNames: ['hello-world.agentuse', 'hello-world.agentuse'],
+    }), '');
+    expect(creator.instructions).toContain('<taken_agent_filenames>\n- hello-world.agentuse\n</taken_agent_filenames>');
+    expect(creator.instructions).toContain('Never reuse a filename listed in taken_agent_filenames');
+    const contract = agentSourceSubmissionContract(creator.config.metadata);
+    expect(contract?.takenFileNames).toEqual(['hello-world.agentuse']);
+
+    const tool = createSubmitAgentSourceTool({}, contract!);
+    const source = '---\nname: Hello World\nmodel: openai:gpt-5.6-luna\ndescription: Say hello\n---\n\nSay hello world.\n';
+    await expect((tool.execute as any)({
+      name: 'Hello World', filename: 'hello-world.agentuse', source,
+    })).rejects.toThrow('An agent file named hello-world.agentuse already exists in this project. Choose a different filename for Hello World');
+    await expect((tool.execute as any)({
+      name: 'Hello World', filename: 'hello-world-greeter.agentuse', source,
+    })).resolves.toContain('Accepted');
+  });
+
   it('rejects a creator submission that invents an unavailable skill', async () => {
     const contract = agentSourceSubmissionContract({
       internal: true,

@@ -26,6 +26,8 @@ export interface AgentSourceSubmissionContract {
   requestedSchedule?: string;
   availableModels: string[];
   availableSkills?: string[];
+  /** Agent filenames already present in the project, rejected on submit. */
+  takenFileNames?: string[];
 }
 
 /**
@@ -45,11 +47,14 @@ export function agentSourceSubmissionContract(metadata: Record<string, unknown> 
   if (!Array.isArray(availableModels) || !availableModels.every((model) => typeof model === 'string')) return undefined;
   const availableSkills = metadata.availableSkills;
   if (availableSkills !== undefined && (!Array.isArray(availableSkills) || !availableSkills.every((skill) => typeof skill === 'string'))) return undefined;
+  const takenFileNames = metadata.takenFileNames;
+  if (takenFileNames !== undefined && (!Array.isArray(takenFileNames) || !takenFileNames.every((name) => typeof name === 'string'))) return undefined;
   return {
     ...(requestedName && { requestedName }),
     ...(requestedSchedule && { requestedSchedule }),
     availableModels,
     ...(availableSkills && { availableSkills }),
+    ...(takenFileNames && { takenFileNames }),
   };
 }
 
@@ -98,6 +103,12 @@ export function createSubmitAgentSourceTool(
           );
         }
         const fileName = validateAgentFileName(filename);
+        if (contract.takenFileNames?.some((taken) => taken.toLowerCase() === fileName)) {
+          throw new AgentCreationError(
+            'AGENT_EXISTS',
+            `An agent file named ${fileName} already exists in this project. Choose a different filename for ${authored.name}`,
+          );
+        }
         const loadedSkills = [...(loadedSkillNames?.() ?? [])];
         submission.source = authored.source;
         submission.name = authored.name;

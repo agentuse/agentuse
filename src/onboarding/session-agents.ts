@@ -139,9 +139,12 @@ export function buildAgentCreatorSessionAgent(input: {
   schedule?: string;
   availableModels: readonly string[];
   availableSkills?: readonly ProjectSkillSummary[];
+  /** Filenames already in the project's agent directory; the creator must pick another. */
+  existingAgentFileNames?: readonly string[];
 }): string {
   const availableModels = [...new Set(input.availableModels)];
   const availableSkills = input.availableSkills ?? [];
+  const takenFileNames = [...new Set(input.existingAgentFileNames ?? [])];
   const requestedName = input.requestedName
     ? `<name>${xmlText(input.requestedName)}</name>`
     : '<name>(Choose a concise ASCII name that describes the job.)</name>';
@@ -167,6 +170,7 @@ export function buildAgentCreatorSessionAgent(input: {
       ...(input.schedule && { requestedSchedule: input.schedule }),
       availableModels,
       availableSkills: availableSkills.filter((skill) => !skill.ambiguous).map((skill) => skill.name),
+      takenFileNames,
     },
   }, `Apply the complete, version-matched AgentUse Creator skill below. Produce one parser-valid production .agentuse file for the user brief. You may inspect the sanitized project view at ${input.safeViewRoot} when that improves the instructions.
 
@@ -189,6 +193,10 @@ ${availableModels.map((model) => `- ${xmlText(model)}`).join('\n')}
 ${renderSkillCatalog(availableSkills)}
 </installed_skill_catalog>
 
+<taken_agent_filenames>
+${takenFileNames.length === 0 ? '  (No agent files exist in the project yet.)' : takenFileNames.map((name) => `- ${xmlText(name)}`).join('\n')}
+</taken_agent_filenames>
+
 Skill authoring workflow:
 
 - Use the installed catalog to identify relevant capabilities. Before referencing any skill in the finished agent, call tools__skill_load for it, read the complete returned SKILL.md, and use tools__skill_read for every supporting file the skill says is required for this workflow.
@@ -206,6 +214,7 @@ Source constraints:
 
 - ${input.requestedName ? 'Preserve the requested human-facing name exactly.' : 'Choose a concise human-facing ASCII name that describes the job. Use readable title-style words with spaces, not a filename slug.'}
 - Choose a separate concise filename in lowercase kebab-case ending in .agentuse. The filename identifies the file; the frontmatter name is the human-facing label and must exactly match the name submitted to submit_agent_source.
+- Never reuse a filename listed in taken_agent_filenames; the host rejects it. Pick a more specific filename instead, without renaming the existing agent.
 - ${input.schedule ? 'Preserve the requested schedule exactly.' : 'Do not add a schedule; the user reviews and enables automation separately.'}
 - Choose the runtime model independently from the model authoring this file, copying one value byte-for-byte from available_runtime_models.
 - Declare only capabilities required by the reviewed suggestion and grounded in the inspected project or an installed skill you loaded. Do not invent commands, integrations, credentials, destinations, trusted skills, or speculative capabilities.

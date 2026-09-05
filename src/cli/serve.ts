@@ -111,6 +111,7 @@ import {
   AgentCreationError,
   agentCreationProviders,
   createAgentFile,
+  listAgentFileNames,
   validateAgentCreationRequest,
 } from "../agents/create";
 import { validateAuthoredAgentSource } from "../agents/author";
@@ -8468,9 +8469,10 @@ export function createServeCommand(): Command {
                   cleanupView = view.cleanup;
                   return view;
                 });
-                const [view, creatorSkill] = await Promise.all([
+                const [view, creatorSkill, existingAgentFileNames] = await Promise.all([
                   viewPromise,
                   loadBuiltinSkillSource('creator'),
+                  listAgentFileNames(project),
                 ]);
                 const availableSkills = skillCatalog;
                 const agentContent = buildAgentCreatorSessionAgent({
@@ -8484,6 +8486,7 @@ export function createServeCommand(): Command {
                   ...(schedule && { schedule }),
                   availableModels,
                   availableSkills,
+                  existingAgentFileNames,
                 });
                 // Persist the generated agent the way the reviser does: a
                 // continued session reloads its agent from disk, so a purely

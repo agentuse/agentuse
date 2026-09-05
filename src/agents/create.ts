@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { link, lstat, mkdir, open, realpath, unlink } from 'node:fs/promises';
+import { link, lstat, mkdir, open, readdir, realpath, unlink } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import * as YAML from 'yaml';
@@ -239,6 +239,29 @@ export async function agentCreationProviders(
  * from a fully-synced sibling temporary file so readers never observe partial
  * source and two concurrent creators cannot both claim the same name.
  */
+/** Directory a new agent file lands in: `agents/` at the project root, or the narrower scope itself. */
+export function agentDirectory(project: Pick<AgentCreationProject, 'root' | 'scopeRoot'>): string {
+  return project.scopeRoot === project.root ? join(project.scopeRoot, 'agents') : project.scopeRoot;
+}
+
+/**
+ * Filenames already occupied in the agent directory, so the creator can avoid
+ * a collision before the operator reaches Save. Missing directory → none.
+ */
+export async function listAgentFileNames(project: Pick<AgentCreationProject, 'root' | 'scopeRoot'>): Promise<string[]> {
+  let entries;
+  try {
+    entries = await readdir(agentDirectory(project), { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+  return entries
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.agentuse'))
+    .map((entry) => entry.name)
+    .sort();
+}
+
 export async function createAgentFile(
   project: AgentCreationProject,
   input: AgentCreationInput,
@@ -281,7 +304,7 @@ export async function createAgentFile(
   const persistedName = validateAgentName(parsed.name);
   const slug = agentSlug(persistedName);
 
-  const agentDir = project.scopeRoot === project.root ? join(project.scopeRoot, 'agents') : project.scopeRoot;
+  const agentDir = agentDirectory(project);
   await mkdir(agentDir, { recursive: true });
   const [directoryStat, realRoot, realScope, realDirectory] = await Promise.all([
     lstat(agentDir),

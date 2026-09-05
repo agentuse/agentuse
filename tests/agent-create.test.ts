@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, spyOn } from 'bun:test';
-import { lstat, mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   agentCreationProviders,
   createAgentFile,
   deriveAgentName,
+  listAgentFileNames,
   validateAgentCreationRequest,
 } from '../src/agents/create';
 import { parseAgent } from '../src/parser';
@@ -25,6 +26,20 @@ describe('persistent dashboard agent creation', () => {
     if (scope) await mkdir(scopeRoot);
     return { id: 'test-project', root, scopeRoot };
   }
+
+  it('lists taken agent filenames from the agent directory, or none when it is missing', async () => {
+    const target = await project();
+    expect(await listAgentFileNames(target)).toEqual([]);
+    await mkdir(join(target.root, 'agents', 'nested'), { recursive: true });
+    await writeFile(join(target.root, 'agents', 'zeta.agentuse'), '---\nname: Zeta\n---\nbody\n');
+    await writeFile(join(target.root, 'agents', 'alpha.agentuse'), '---\nname: Alpha\n---\nbody\n');
+    await writeFile(join(target.root, 'agents', 'notes.md'), 'ignored');
+    expect(await listAgentFileNames(target)).toEqual(['alpha.agentuse', 'zeta.agentuse']);
+
+    const scoped = await project(true);
+    await writeFile(join(scoped.scopeRoot, 'scoped.agentuse'), '---\nname: Scoped\n---\nbody\n');
+    expect(await listAgentFileNames(scoped)).toEqual(['scoped.agentuse']);
+  });
 
   it('creates a minimal parser-valid agent in the project agents directory', async () => {
     const target = await project();
