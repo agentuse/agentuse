@@ -45,6 +45,7 @@ describe('Dashboard provider setup service', () => {
       delete process.env[key];
     }
     clearProviderOAuthAttempts();
+    fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json({ data: [] }));
   });
 
   afterEach(async () => {
@@ -115,7 +116,7 @@ describe('Dashboard provider setup service', () => {
     const openai = payload.status.providers.find((provider) => provider.id === 'openai');
 
     expect(openai?.configured).toBe(true);
-    expect(openai?.sources).toEqual([{ priority: 3, kind: 'api_key', name: 'Stored API key', stored: true, active: true }]);
+    expect(openai?.sources).toMatchObject([{ priority: 3, kind: 'api_key', name: 'Stored API key', stored: true, active: true, health: { state: 'verified' } }]);
     expect(JSON.stringify(payload)).not.toContain('super-secret-key');
     expect((await AuthStorage.getApiKey('openai'))?.key).toBe('super-secret-key');
 
@@ -128,7 +129,7 @@ describe('Dashboard provider setup service', () => {
       ? new Response(JSON.stringify({ data: [] }), { status: 200 })
       : new Response(JSON.stringify({ choices: [] }), { status: 200 }));
     const payload = await saveCustomProvider({ name: 'Local_Models', baseURL: 'http://localhost:11434/v1/', key: 'local-secret', models: ['qwen3'] });
-    expect(payload.status.customProviders).toEqual([{ id: 'local_models', baseURL: 'http://localhost:11434/v1', hasApiKey: true, api: 'openai-completions', models: ['qwen3'] }]);
+    expect(payload.status.customProviders).toMatchObject([{ id: 'local_models', baseURL: 'http://localhost:11434/v1', hasApiKey: true, api: 'openai-completions', models: ['qwen3'] }]);
     expect(JSON.stringify(payload)).not.toContain('local-secret');
 
     await expect(saveCustomProvider({ name: 'openai', baseURL: 'http://localhost:11434/v1', models: ['qwen3'] })).rejects.toThrow('reserved');

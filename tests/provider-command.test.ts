@@ -203,7 +203,7 @@ describe('createProviderCommand', () => {
     const text = output.join('');
     const result = JSON.parse(text);
     expect(result.credentialStore).toBe(path.join(tempDir, 'auth.json'));
-    expect(result.providers.find((provider: any) => provider.id === 'openai')).toEqual({
+    expect(result.providers.find((provider: any) => provider.id === 'openai')).toMatchObject({
       id: 'openai',
       name: 'OpenAI',
       configured: true,
@@ -224,7 +224,7 @@ describe('createProviderCommand', () => {
         },
       ],
     });
-    expect(result.providers.find((provider: any) => provider.id === 'anthropic')).toEqual({
+    expect(result.providers.find((provider: any) => provider.id === 'anthropic')).toMatchObject({
       id: 'anthropic',
       name: 'Anthropic',
       configured: true,
@@ -246,14 +246,14 @@ describe('createProviderCommand', () => {
         },
       ],
     });
-    expect(result.providers.find((provider: any) => provider.id === 'openrouter').sources).toEqual([{
+    expect(result.providers.find((provider: any) => provider.id === 'openrouter').sources).toMatchObject([{
       priority: 2,
       kind: 'environment',
       name: 'OPENROUTER_API_KEY',
       stored: false,
       active: true,
     }]);
-    expect(result.customProviders).toEqual([{
+    expect(result.customProviders).toMatchObject([{
       id: 'local',
       baseURL: 'http://localhost:11434/v1',
       hasApiKey: true,

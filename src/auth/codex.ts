@@ -1,3 +1,5 @@
+import { assertProviderRefreshAllowed, fetchWithProviderHealth, recordProviderHealth } from './provider-health';
+import { oauthHealthSubject } from './provider-health-identity';
 import { AuthStorage } from "./storage.js";
 import type { CodexOAuthTokens, OAuthTokens } from "./types.js";
 
@@ -88,16 +90,18 @@ function usable(info: OAuthTokens | CodexOAuthTokens | undefined): info is Codex
   );
 }
 
-async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> {
-  const response = await fetch(`${ISSUER}/oauth/token`, {
+async function refreshAccessToken(credential: OAuthTokens | CodexOAuthTokens): Promise<TokenResponse> {
+  const subject = oauthHealthSubject("openai", credential);
+  await assertProviderRefreshAllowed(subject);
+  const response = await fetchWithProviderHealth(subject, `${ISSUER}/oauth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "refresh_token",
-      refresh_token: refreshToken,
+      refresh_token: credential.refresh,
       client_id: CLIENT_ID,
     }).toString(),
-  });
+  }, { oauth: true });
   if (!response.ok) {
     throw new Error(`Token refresh failed: ${response.status}`);
   }
@@ -187,7 +191,7 @@ export namespace CodexAuth {
         }
 
         // Refresh is locked across processes because OAuth refresh tokens can rotate.
-        const tokens = await refreshAccessToken(info.refresh);
+        const tokens = await refreshAccessToken(info);
         const accountId = extractAccountId(tokens) || info.accountId;
         const next = {
           type: "codex-oauth" as const,
@@ -199,6 +203,7 @@ export namespace CodexAuth {
           expires: Date.now() + (tokens.expires_in ?? 3600) * 1000,
           accountId,
         };
+        await recordProviderHealth(oauthHealthSubject("openai", next), "verified");
         return { value: { token: next.access, accountId }, next };
       });
     } catch {

@@ -15,6 +15,7 @@ import type {
 import type { LanguageModel } from 'ai';
 import { minimatch } from 'minimatch';
 import { AuthStorage } from '../auth/storage';
+import { assertProviderRefreshAllowed, fetchWithProviderHealth, providerHealthSubject, recordProviderHealth, type ProviderHealthSubject } from '../auth/provider-health';
 import { MODELS, SUGGESTED_MODEL_IDS, type ModelInfo, type Provider as RegistryProvider } from '../generated/models';
 import type { ProviderAuthSourceStatus } from '../auth/provider-status';
 import { logger } from '../utils/logger';
@@ -384,23 +385,30 @@ const READINESS_CHECK_TIMEOUT_MS = 10_000;
  * that throws or hangs is reported as not ready so a broken bridge never
  * reads as "Connected".
  */
+export function providerReadinessHealthSubject(provider: ProviderDefinition): ProviderHealthSubject {
+  return providerHealthSubject(provider.id, 'readiness', { name: provider.name, transport: provider.transport });
+}
+
 export async function checkProviderReadiness(provider: ProviderDefinition): Promise<ProviderReadiness> {
   if (!provider.check) return { ok: true };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), READINESS_CHECK_TIMEOUT_MS);
+  let readiness: ProviderReadiness;
   try {
     const result: ProviderCheckResult = await Promise.race([
       provider.check({ env: process.env, signal: controller.signal, log: hostLogger(provider.id) }),
       new Promise<never>((_, reject) => controller.signal.addEventListener('abort', () => reject(new Error('readiness check timed out')), { once: true })),
     ]);
-    return result.ok
+    readiness = result.ok
       ? { ok: true, ...(result.detail && { detail: result.detail }) }
       : { ok: false, message: result.message, ...(result.fix && { fix: result.fix }) };
   } catch (error) {
-    return { ok: false, message: `${provider.name} readiness check failed: ${error instanceof Error ? error.message : String(error)}` };
+    readiness = { ok: false, message: `${provider.name} readiness check failed: ${error instanceof Error ? error.message : String(error)}` };
   } finally {
     clearTimeout(timer);
   }
+  await recordProviderHealth(providerReadinessHealthSubject(provider), readiness.ok ? 'verified' : 'temporarily_unavailable', Date.now(), { readiness, force: true });
+  return readiness;
 }
 
 /** One-line form of a failed readiness result for CLI output and errors. */
@@ -424,6 +432,23 @@ function needsRefresh(credential: PluginCredential): boolean {
   return typeof credential.expires === 'number' && credential.expires <= Date.now() + REFRESH_BUFFER_MS;
 }
 
+const resolvedAuthHealth = new WeakMap<ResolvedProviderAuth, ProviderHealthSubject>();
+
+function pluginCredentialSubject(provider: ProviderDefinition, method: ProviderAuthMethod, credential: unknown): ProviderHealthSubject {
+  return providerHealthSubject(provider.id, `plugin:${method.id}`, { credential, baseURL: provider.transport.kind === 'custom' ? undefined : provider.transport.baseURL });
+}
+
+export async function providerAuthHealthSubject(provider: ProviderDefinition, methodId?: string, storedOnly = false): Promise<ProviderHealthSubject | undefined> {
+  for (const method of provider.auth?.methods ?? []) {
+    if (methodId && method.id !== methodId) continue;
+    const environment = Object.fromEntries((method.environment ?? []).filter((name) => Boolean(process.env[name])).map((name) => [name, process.env[name]]));
+    if (!storedOnly && Object.keys(environment).length) return pluginCredentialSubject(provider, method, environment);
+    const credential = await readCredential(provider.id, method);
+    if (credential) return pluginCredentialSubject(provider, method, credential);
+  }
+  return undefined;
+}
+
 export async function resolveProviderAuth(
   provider: ProviderDefinition,
   methodId?: string,
@@ -437,34 +462,48 @@ export async function resolveProviderAuth(
     }
     return undefined;
   }
-  const method = methodId ? methods.find((item) => item.id === methodId) : methods[0];
+  const method = methods.find((item) => item.id === methodId);
   if (!method) return undefined;
   const context = authContext(provider.id, signal);
 
-  // Explicit environment credentials must win without touching or refreshing
-  // stale stored state.
+  // Explicit environment credentials win without refreshing stale stored state.
   if (method.environment?.some((name) => Boolean(context.env[name]))) {
     const environmentAuth = await method.resolve({}, context);
-    if (environmentAuth) return environmentAuth;
+    if (environmentAuth) {
+      const subject = await providerAuthHealthSubject(provider, method.id);
+      if (subject) resolvedAuthHealth.set(environmentAuth, subject);
+      return environmentAuth;
+    }
   }
 
   let credential = await readCredential(provider.id, method);
-
+  const refresh = async (latest: PluginCredential): Promise<PluginCredential> => {
+    const subject = pluginCredentialSubject(provider, method, latest);
+    await assertProviderRefreshAllowed(subject);
+    const next = await method.refresh!(latest, {
+      ...context,
+      fetch: ((input: RequestInfo | URL, init?: RequestInit) => fetchWithProviderHealth(subject, input, init, { fetch: context.fetch, oauth: true })) as typeof fetch,
+    });
+    await recordProviderHealth(pluginCredentialSubject(provider, method, next), 'verified');
+    return next;
+  };
   if (credential && method.refresh && needsRefresh(credential)) {
     const storedHere = await AuthStorage.getPluginCredential(provider.id, method.id);
     if (storedHere) {
       credential = await AuthStorage.updatePluginCredential(provider.id, method.id, async (latest) => {
         if (!latest || !needsRefresh(latest)) return { value: latest };
-        const next = await method.refresh!(latest, context);
+        const next = await refresh(latest);
         return { value: next, next };
       });
     } else {
-      credential = await method.refresh(credential, context);
+      credential = await refresh(credential);
       await AuthStorage.setPluginCredential(provider.id, method.id, credential);
       await AuthStorage.removeOAuth(provider.id);
     }
   }
-  return method.resolve(credential ? { credential } : {}, context);
+  const resolved = await method.resolve(credential ? { credential } : {}, context);
+  if (resolved && credential) resolvedAuthHealth.set(resolved, pluginCredentialSubject(provider, method, credential));
+  return resolved;
 }
 
 export async function loginProviderPlugin(
@@ -485,6 +524,7 @@ export async function loginProviderPlugin(
   if (!method) throw new Error(`Provider '${provider.id}' does not support login`);
   const credential = await method.login(interaction, authContext(provider.id, signal));
   await AuthStorage.setPluginCredential(provider.id, method.id, credential);
+  if (method.type === 'oauth') await recordProviderHealth(pluginCredentialSubject(provider, method, credential), 'verified');
 }
 
 export async function logoutProviderPlugin(
@@ -511,7 +551,7 @@ export async function providerPluginAuthStatus(
   for (const method of provider.auth?.methods ?? []) {
     for (const envName of method.environment ?? []) {
       if (!process.env[envName]) continue;
-      sources.push({ priority: 1, kind: 'environment', name: envName, stored: false, active: sources.length === 0 });
+      sources.push({ priority: 1, kind: 'environment', name: envName, stored: false, active: sources.length === 0, authMethodId: method.id });
     }
     if (await readCredential(provider.id, method)) {
       sources.push({
@@ -520,6 +560,7 @@ export async function providerPluginAuthStatus(
         name: method.name,
         stored: true,
         active: sources.length === 0,
+        authMethodId: method.id,
         ...(owner && { plugin: { name: owner.name, authMethodId: method.id } }),
       });
     }
@@ -620,7 +661,30 @@ async function customEvents(
 ): Promise<AsyncIterable<ProviderStreamEvent>> {
   if (provider.transport.kind !== 'custom') throw new Error(`Provider '${provider.id}' is not a custom transport`);
   const request = customRequest(options);
-  return provider.transport.stream(request, createProviderPluginContext(provider, modelId, request.signal, sessionId));
+  const events = await provider.transport.stream(request, createProviderPluginContext(provider, modelId, request.signal, sessionId));
+  return (async function* () {
+    let failed = false;
+    const report = async (ok: boolean) => {
+      try {
+        const subject = await providerAuthHealthSubject(provider) ?? providerReadinessHealthSubject(provider);
+        await recordProviderHealth(subject, ok ? 'verified' : 'temporarily_unavailable');
+      } catch { /* Observability must not change the custom provider's result. */ }
+    };
+    try {
+      for await (const event of events) {
+        if (event.type === 'error') {
+          failed = true;
+          await report(false);
+        } else if (event.type === 'finish' && !failed) {
+          await report(event.reason !== 'error');
+        }
+        yield event;
+      }
+    } catch (error) {
+      if (!request.signal.aborted) await report(false);
+      throw error;
+    }
+  })();
 }
 
 /** Internal bridge from the stable plugin stream contract to the AI SDK. */
@@ -793,13 +857,13 @@ export async function createProviderPluginModel(provider: ProviderDefinition, mo
         throw new Error(`Refusing to send ${provider.name} bearer credentials to ${actual.origin}`);
       }
     }
-    return context.fetch(input, {
+    return fetchWithProviderHealth(auth ? resolvedAuthHealth.get(auth) : undefined, input, {
       ...init,
       headers,
       signal: init?.signal ?? context.signal,
       // Never follow a redirect while carrying a credential of any kind.
       ...(hasCredential && { redirect: 'error' as const }),
-    });
+    }, { fetch: context.fetch });
   };
 
   if (transport.kind === 'anthropic-messages') {

@@ -1,3 +1,8 @@
+import { apiHealthSubject } from './provider-health-identity';
+import { readProviderHealth } from './provider-health';
+import { applyConnectionHealth } from './provider-verification';
+import type { ProviderHealth } from './provider-health';
+import type { ProviderDefinition } from '../plugin/types';
 import { AuthStorage } from './storage.js';
 import {
   OPENCODE_GO_API_KEY_ENV,
@@ -5,8 +10,6 @@ import {
   OPENCODE_GO_PROVIDER_ID,
 } from '../providers/opencode-go.js';
 import {
-  checkProviderReadiness,
-  describeReadinessFailure,
   getProviderAdapters,
   loadProviderPlugins,
   providerPluginAuthStatus,
@@ -23,21 +26,23 @@ export interface ProviderAuthSourceStatus {
   stored: boolean;
   active: boolean;
   plugin?: { name: string; authMethodId: string };
+  authMethodId?: string;
+  health?: ProviderHealth;
 }
 
 export interface ProviderAuthStatus {
   id: string;
   name: string;
-  /** Usable now: credentials present (when required) and the readiness check passed. */
+  /** Configured credentials (when required), with no known permanent rejection. */
   configured: boolean;
   sources: ProviderAuthSourceStatus[];
   actionRequired?: string;
+  health?: ProviderHealth;
   /** Result of the plugin's `check()` hook; absent for providers without one. */
   readiness?: ProviderReadiness;
   /**
-   * The plugin has a `check()` hook that was not run for this snapshot (see
-   * `getProviderStatus({ readiness: 'defer' })`). `configured` then reflects
-   * credentials only; fetch `getProviderReadiness()` to settle it.
+   * Cached health is stale or absent. Fetch `getProviderReadiness()` in the
+   * background; definitive credential rejections never schedule another check.
    */
   checkPending?: true;
 }
@@ -46,20 +51,24 @@ export interface ProviderAuthStatus {
 export interface ProviderReadinessResult {
   id: string;
   configured: boolean;
-  readiness: ProviderReadiness;
+  readiness?: ProviderReadiness;
+  health?: ProviderHealth;
+  sources?: ProviderAuthSourceStatus[];
   actionRequired?: string;
 }
 
 export interface ProviderStatusOptions {
   /**
-   * `run` (default) executes every plugin `check()` hook inline, which can
-   * spawn a bridged CLI. `defer` skips them so the credential-only snapshot
-   * returns fast; rows that skipped a check carry `checkPending`.
+   * `run` (default) verifies stale connections. `defer` returns cached health
+   * immediately and marks stale rows `checkPending` for background verification.
    */
   readiness?: 'run' | 'defer';
+  force?: boolean;
+  provider?: string;
 }
 
 export interface CustomProviderStatus {
+  health?: ProviderHealth;
   id: string;
   baseURL: string;
   hasApiKey: boolean;
@@ -103,12 +112,13 @@ const PROVIDERS = [
  */
 export async function getProviderStatus(options: ProviderStatusOptions = {}): Promise<ProviderStatus> {
   const providers: ProviderAuthStatus[] = [];
-  const runChecks = options.readiness !== 'defer';
+  const definitions = new Map<string, ProviderDefinition[]>();
 
   for (const provider of PROVIDERS) {
     const providerAuth = await AuthStorage.getProviderAuth(provider.id);
     const sources: ProviderAuthSourceStatus[] = [];
     const adapters = await getProviderAdapters(provider.id);
+    definitions.set(provider.id, adapters.map((adapter) => adapter.provider));
 
     // Conditional adapters are part of the built-in namespace. Their auth
     // sources lead the list because a selected OAuth transport wins over API.
@@ -181,54 +191,44 @@ export async function getProviderStatus(options: ProviderStatusOptions = {}): Pr
     // credential, so it is usable as soon as it is installed.
     const sources = plugin.auth ? await providerPluginAuthStatus(plugin) : [];
     const credentialed = !plugin.auth || sources.length > 0;
-    if (plugin.check && !runChecks) {
-      providers.push({ id: plugin.id, name: plugin.name, configured: credentialed, sources, checkPending: true });
-      continue;
-    }
-    const readiness = plugin.check ? await checkProviderReadiness(plugin) : undefined;
-    providers.push({
-      id: plugin.id,
-      name: plugin.name,
-      configured: credentialed && (readiness?.ok ?? true),
-      sources,
-      ...(readiness && { readiness }),
-      ...(readiness && !readiness.ok && { actionRequired: describeReadinessFailure(plugin, readiness) }),
-    });
+    definitions.set(plugin.id, [plugin]);
+    providers.push({ id: plugin.id, name: plugin.name, configured: credentialed, sources });
   }
 
-  const customProviders = Object.entries(await AuthStorage.getCustomProviders()).map(
-    ([id, config]) => ({
-      id,
-      baseURL: config.baseURL,
-      hasApiKey: Boolean(config.key),
-      api: config.api ?? 'openai-completions',
-      models: config.models ?? [],
-    }),
-  );
+  const customProviders = await Promise.all(Object.entries(await AuthStorage.getCustomProviders()).map(
+    async ([id, config]) => {
+      const envPrefix = id.toUpperCase().replace(/-/g, '_');
+      const baseURL = process.env[`${envPrefix}_BASE_URL`] || config.baseURL;
+      const key = process.env[`${envPrefix}_API_KEY`] || config.key || 'not-needed';
+      return {
+        id,
+        baseURL: config.baseURL,
+        hasApiKey: Boolean(config.key),
+        api: config.api ?? 'openai-completions',
+        models: config.models ?? [],
+        health: await readProviderHealth(apiHealthSubject(id, key, baseURL)),
+      };
+    },
+  ));
 
   return {
     credentialStore: AuthStorage.getFilePath(),
-    providers,
+    providers: await Promise.all(providers.map((provider) => applyConnectionHealth(provider, definitions.get(provider.id) ?? [], options))),
     customProviders,
   };
 }
 
 /**
- * Run every plugin `check()` hook, in parallel, and return the fields a
- * deferred snapshot left unsettled. Pairs with `getProviderStatus({ readiness: 'defer' })`.
+ * Settle stale connection checks in parallel and return updated status fields. Pairs with `getProviderStatus({ readiness: 'defer' })`.
  */
-export async function getProviderReadiness(): Promise<ProviderReadinessResult[]> {
-  const plugins = (await loadProviderPlugins()).filter((plugin) => plugin.check);
-  return Promise.all(plugins.map(async (plugin) => {
-    const [sources, readiness] = await Promise.all([
-      plugin.auth ? providerPluginAuthStatus(plugin) : Promise.resolve([]),
-      checkProviderReadiness(plugin),
-    ]);
-    return {
-      id: plugin.id,
-      configured: (!plugin.auth || sources.length > 0) && readiness.ok,
-      readiness,
-      ...(!readiness.ok && { actionRequired: describeReadinessFailure(plugin, readiness) }),
-    };
+export async function getProviderReadiness(options: Pick<ProviderStatusOptions, 'force' | 'provider'> = {}): Promise<ProviderReadinessResult[]> {
+  const status = await getProviderStatus({ ...options, readiness: 'run' });
+  return status.providers.filter((provider) => !options.provider || provider.id === options.provider).map((provider) => ({
+    id: provider.id,
+    configured: provider.configured,
+    ...(provider.readiness && { readiness: provider.readiness }),
+    ...(provider.health && { health: provider.health }),
+    sources: provider.sources,
+    ...(provider.actionRequired && { actionRequired: provider.actionRequired }),
   }));
 }

@@ -342,7 +342,7 @@ describe('project-local activation scope', () => {
     const manager = new PluginManager();
     await manager.loadPlugins([plugins]);
 
-    const missing = (await getProviderStatus()).providers.find((provider) => provider.id === 'bridge');
+    const missing = (await getProviderStatus({ provider: 'bridge' })).providers.find((provider) => provider.id === 'bridge');
     expect(missing).toMatchObject({
       configured: false,
       readiness: { ok: false, message: 'Bridge CLI not found.', fix: 'npm install -g bridge' },
@@ -358,13 +358,12 @@ describe('project-local activation scope', () => {
     }
     expect((failure as Error).message).toBe('Bridge CLI not found. Fix: npm install -g bridge');
 
-    // Deferred: the check() hook does not run, the row is flagged pending, and
-    // the readiness pass settles it on its own.
+    // Deferred snapshots use cached health and do not repeat a fresh check.
     const deferred = (await getProviderStatus({ readiness: 'defer' })).providers.find((provider) => provider.id === 'bridge');
-    expect(deferred).toMatchObject({ configured: true, checkPending: true });
-    expect(deferred?.readiness).toBeUndefined();
-    expect(deferred?.actionRequired).toBeUndefined();
-    expect(await getProviderReadiness()).toEqual([{
+    expect(deferred).toMatchObject({ configured: false, health: { state: 'temporarily_unavailable' } });
+    expect(deferred?.checkPending).toBeUndefined();
+    expect(deferred?.readiness?.ok).toBe(false);
+    expect(await getProviderReadiness({ provider: 'bridge' })).toMatchObject([{
       id: 'bridge',
       configured: false,
       readiness: { ok: false, message: 'Bridge CLI not found.', fix: 'npm install -g bridge' },
@@ -373,10 +372,10 @@ describe('project-local activation scope', () => {
 
     process.env.BRIDGE_READY = '1';
     try {
-      const ready = (await getProviderStatus()).providers.find((provider) => provider.id === 'bridge');
+      const ready = (await getProviderStatus({ provider: 'bridge', force: true })).providers.find((provider) => provider.id === 'bridge');
       expect(ready).toMatchObject({ configured: true, readiness: { ok: true, detail: 'bridge 1.0' } });
       expect(ready?.actionRequired).toBeUndefined();
-      expect(await getProviderReadiness()).toEqual([{ id: 'bridge', configured: true, readiness: { ok: true, detail: 'bridge 1.0' } }]);
+      expect(await getProviderReadiness({ provider: 'bridge' })).toMatchObject([{ id: 'bridge', configured: true, readiness: { ok: true, detail: 'bridge 1.0' } }]);
     } finally {
       delete process.env.BRIDGE_READY;
     }
@@ -433,7 +432,7 @@ describe('project-local activation scope', () => {
         transport: { headers: { 'anthropic-beta': 'oauth' } },
       });
       expect(resolveModelInfo('anthropic:claude-sonnet-4-5')?.cost).toMatchObject({ input: 0, output: 0 });
-      expect((await getProviderStatus()).providers.find((provider) => provider.id === 'anthropic')?.sources).toEqual([
+      expect((await getProviderStatus()).providers.find((provider) => provider.id === 'anthropic')?.sources).toMatchObject([
         {
           priority: 1,
           kind: 'environment',

@@ -12,16 +12,21 @@ describe('CodexAuth.access refresh buffer', () => {
   let fetchSpy: ReturnType<typeof spyOn> | undefined;
   let originalAuthFile: string;
   let tempDir: string;
+  let originalDataDir: string | undefined;
 
   beforeEach(async () => {
     originalAuthFile = (AuthStorage as any).AUTH_FILE;
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-codex-auth-test-'));
     (AuthStorage as any).AUTH_FILE = path.join(tempDir, 'auth.json');
+    originalDataDir = process.env.AGENTUSE_DATA_DIR;
+    process.env.AGENTUSE_DATA_DIR = tempDir;
   });
 
   afterEach(async () => {
     fetchSpy?.mockRestore();
     (AuthStorage as any).AUTH_FILE = originalAuthFile;
+    if (originalDataDir === undefined) delete process.env.AGENTUSE_DATA_DIR;
+    else process.env.AGENTUSE_DATA_DIR = originalDataDir;
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 

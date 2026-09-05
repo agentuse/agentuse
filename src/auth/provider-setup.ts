@@ -1,3 +1,5 @@
+import { recordProviderHealth } from './provider-health';
+import { oauthHealthSubject } from './provider-health-identity';
 import { randomUUID } from 'crypto';
 import { CodexAuth } from './codex.js';
 import { getProviderReadiness, getProviderStatus, type ProviderReadinessResult, type ProviderStatus, type ProviderStatusOptions } from './provider-status.js';
@@ -134,8 +136,8 @@ export async function providerSetupSnapshot(options: ProviderStatusOptions = {})
 }
 
 /** The deferred half of `providerSetupSnapshot({ readiness: 'defer' })`. */
-export async function providerReadinessSnapshot(): Promise<{ providers: ProviderReadinessResult[] }> {
-  return { providers: await getProviderReadiness() };
+export async function providerReadinessSnapshot(options: Pick<ProviderStatusOptions, 'force' | 'provider'> = {}): Promise<{ providers: ProviderReadinessResult[] }> {
+  return { providers: await getProviderReadiness(options) };
 }
 
 export async function saveProviderApiKey(provider: unknown, rawKey: unknown): Promise<ProviderSetupSnapshot> {
@@ -182,7 +184,9 @@ export async function completeProviderOAuth(flowId: unknown, rawCode: unknown): 
   const code = oauthCode(rawCode);
 
   const credentials = await CodexAuth.exchange(code, attempt.pkce);
-  await AuthStorage.setOAuth('openai', { type: 'codex-oauth', ...credentials });
+  const credential = { type: 'codex-oauth' as const, ...credentials };
+  await AuthStorage.setOAuth('openai', credential);
+  await recordProviderHealth(oauthHealthSubject('openai', credential), 'verified');
   return providerSetupSnapshot();
 }
 
