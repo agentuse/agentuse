@@ -1005,8 +1005,8 @@ export type ProviderPluginOAuthStart = {
   expiresAt: number;
 };
 
-export function startProviderPluginOAuth(plugin: string): Promise<ProviderPluginOAuthStart> {
-  return postJson('/api/providers/plugins/oauth/start', { plugin });
+export function startProviderPluginOAuth(plugin: string, reconnect = false): Promise<ProviderPluginOAuthStart> {
+  return postJson('/api/providers/plugins/oauth/start', { plugin, reconnect });
 }
 
 export function startUnreviewedProviderPluginOAuth(source: string, commit: string): Promise<ProviderPluginOAuthStart> {

@@ -120,6 +120,10 @@
    way native controls do, instead of the app's cyan. */
 .app-shell[data-desktop="true"] :focus-visible { outline-color: AccentColor; }
 html, body { background: var(--bg); }
+/* Default link color. Components that style their own links override this;
+   anything unstyled used to fall through to the browser's blue. */
+a { color: var(--cyan); }
+a:hover { color: var(--fg); }
 
 /* Raised card: the one container shape of the calm console. Rows inside
    separate with a bottom hairline (.surface > * pattern is per-view). */
@@ -6701,9 +6705,9 @@ a.lastrun.waiting { color: var(--cyan); }
 .provider-method { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 6px 8px 6px 12px; }
 .provider-method + .provider-method { border-top: 1px solid var(--line); }
 .provider-method-copy { display: grid; min-width: 0; }
-.provider-method-name { font-size: var(--font-size-supporting); line-height: var(--lh-snug); color: var(--fg); }
+.provider-method-name { display: flex; align-items: center; gap: 8px; font-size: var(--font-size-supporting); line-height: var(--lh-snug); color: var(--fg); }
 .provider-method-sub { font-size: var(--font-size-caption); line-height: var(--lh-snug); color: var(--muted-3); }
-.provider-in-use { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px; color: var(--green); font-size: var(--font-size-micro); }
+.provider-in-use { display: inline-flex; align-items: center; gap: 5px; color: var(--green); font-size: var(--font-size-micro); line-height: 1; }
 .provider-in-use i { width: 5px; height: 5px; border-radius: 999px; background: currentColor; }
 .provider-quiet-btn {
   flex: none; min-height: 30px; padding: 6px 10px;

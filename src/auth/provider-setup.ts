@@ -256,11 +256,13 @@ async function beginProviderPluginOAuth(
   authMethodId: string,
   provider: ProviderDefinition,
   installed: ProviderSetupSnapshot,
+  reconnect = false,
 ): Promise<ProviderPluginOAuthStart> {
   // Only this method's own credential counts. The provider-level `configured`
   // flag also covers API keys and env vars, which would report a login that
-  // never happened.
-  if (await AuthStorage.getPluginCredential(providerId, authMethodId)) {
+  // never happened. A reconnect replaces a rejected credential, so it always
+  // runs the flow.
+  if (!reconnect && await AuthStorage.getPluginCredential(providerId, authMethodId)) {
     return { connected: true, snapshot: installed };
   }
 
@@ -330,14 +332,14 @@ async function beginProviderPluginOAuth(
  * start/complete HTTP requests. The authorization verifier and pending prompt
  * remain server-side.
  */
-export async function startProviderPluginOAuth(id: unknown): Promise<ProviderPluginOAuthStart> {
+export async function startProviderPluginOAuth(id: unknown, reconnect = false): Promise<ProviderPluginOAuthStart> {
   const entry = registryPlugin(id);
   const installed = await installProviderPluginFromRegistry(entry.id);
   const candidate = (await getProviderAdapters(entry.provider)).find(({ provider }) =>
     provider.auth?.methods.some((method) => method.id === entry.authMethodId),
   );
   if (!candidate) throw new Error(`${entry.name} did not register its expected authentication method`);
-  return beginProviderPluginOAuth(entry.name, entry.provider, entry.authMethodId, candidate.provider, installed);
+  return beginProviderPluginOAuth(entry.name, entry.provider, entry.authMethodId, candidate.provider, installed, reconnect);
 }
 
 /**

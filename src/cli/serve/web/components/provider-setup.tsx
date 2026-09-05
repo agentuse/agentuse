@@ -146,6 +146,8 @@ function ProviderSetupForm(props: {
   onUpdated: (payload: ProviderSetupPayload) => void;
   onComplete: (payload: ProviderSetupPayload, connectedName: string) => void;
   onStep?: (step: 1 | 2 | 3) => void;
+  /** Replace a rejected credential: always run the sign-in flow. */
+  reconnect?: boolean;
 }) {
   const scope = props.scope ?? 'all';
   const setupOptions = providerSetupOptions(props.payload, props.allowCustom, scope, props.initialProvider);
@@ -248,7 +250,7 @@ function ProviderSetupForm(props: {
           customCheck.models,
         );
       } else if (pluginEntry && !flow) {
-        const started = await startProviderPluginOAuth(pluginEntry.id);
+        const started = await startProviderPluginOAuth(pluginEntry.id, props.reconnect === true);
         if (started.connected) {
           next = started;
         } else {
@@ -452,6 +454,7 @@ export function ProviderSetupDialog(props: {
   onComplete: (payload: ProviderSetupPayload) => void;
   onClose: () => void;
   missingOnly?: boolean;
+  reconnect?: boolean;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [payload, setPayload] = useState<ProviderSetupPayload | null>(null);
@@ -519,6 +522,7 @@ export function ProviderSetupDialog(props: {
               {...(props.initialProvider ? { initialProvider: props.initialProvider } : {})}
               {...(props.allowCustom !== undefined ? { allowCustom: props.allowCustom } : {})}
               {...(props.scope ? { scope: props.scope } : {})}
+              reconnect={props.reconnect === true}
               onUpdated={setPayload}
               onStep={setStep}
               onComplete={(next, name) => { props.onComplete(next); setDone(name); }}
@@ -646,6 +650,7 @@ export function ProviderSettingsGroup({ section = 'providers', initialExpanded }
     initialProvider?: string;
     allowCustom?: boolean;
     missingOnly?: boolean;
+    reconnect?: boolean;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -855,6 +860,7 @@ export function ProviderSettingsGroup({ section = 'providers', initialExpanded }
                       : setDialog({
                           scope: 'provider',
                           title: `reconnect ${displayName}`,
+                          reconnect: true,
                           initialProvider: authPlugin ? pluginSelection(authPlugin.id) : entry.id,
                         })}
                   >{migrationKey !== null && busyKey === migrationKey ? 'Upgrading…' : migrationPlugin ? 'Continue upgrade' : 'Reconnect'}</button>
@@ -961,7 +967,7 @@ export function ProviderSettingsGroup({ section = 'providers', initialExpanded }
                 onToggle={() => togglePlugin(plugin.packageName)}
                 mono={monogram(displayName)}
                 name={<span class="provider-installed-plugin-name">{displayName}<span class={`provider-plugin-badge${plugin.provenance === 'unreviewed' ? ' is-unreviewed' : ''}`}>{plugin.provenance === 'community' ? 'Community' : 'Unreviewed'}</span></span>}
-                sub={plugin.publisher.trim() && plugin.publisher !== 'unknown' ? `v${plugin.version} · ${plugin.publisher}` : `v${plugin.version}`}
+                sub={/[A-Za-z0-9]/.test(plugin.publisher) && plugin.publisher !== 'unknown' ? `v${plugin.version} · ${plugin.publisher}` : `v${plugin.version}`}
               >
                 <dl class="provider-kv">
                   <dt>Package</dt><dd><code>{plugin.packageName}@{plugin.version}</code></dd>
@@ -1000,6 +1006,7 @@ export function ProviderSettingsGroup({ section = 'providers', initialExpanded }
         {...(dialog?.allowCustom !== undefined ? { allowCustom: dialog.allowCustom } : {})}
         {...(dialog?.scope ? { scope: dialog.scope } : {})}
         missingOnly={dialog?.missingOnly ?? false}
+        reconnect={dialog?.reconnect ?? false}
         title={dialog?.title ?? 'connect a provider'}
         onComplete={setPayload}
         onClose={() => setDialog(null)}
