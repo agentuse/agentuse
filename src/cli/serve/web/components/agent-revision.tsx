@@ -8,6 +8,7 @@ import {
   fetchAgentRevisions,
   fetchSessionRevisions,
   postAgentRevisionAction,
+  startAgentFileRevision,
   startAgentRevision,
   ApiRequestError,
   type AgentRevisionSummary,
@@ -55,10 +56,12 @@ export function revisionLabel(revision: Pick<AgentRevisionSummary, 'status'>): s
   return 'Revision stopped';
 }
 
-export function revisionOriginDescription(revision: Pick<AgentRevisionSummary, 'status' | 'targetAgentName'>): string {
+export function revisionOriginDescription(revision: Pick<AgentRevisionSummary, 'status' | 'targetAgentName' | 'originSessionId'>): string {
   if (revision.status === 'no-change') return 'Review this diagnosis before starting another revision.';
   if (revision.status === 'accepted') return 'No agent source change was made. You can start another revision.';
-  return `Revising ${revision.targetAgentName} from this run.`;
+  return revision.originSessionId
+    ? `Revising ${revision.targetAgentName} from this run.`
+    : `Revising ${revision.targetAgentName} from its current source.`;
 }
 
 export function revisionOriginAction(revision: Pick<AgentRevisionSummary, 'status'>, active: boolean): string {
@@ -70,11 +73,19 @@ function revisionHref(revision: AgentRevisionSummary & { href?: string }, token?
   return agentRevisionHref(project ?? revision.projectId, revision.revisionSessionId, token);
 }
 
+/** Where a revision starts from. A run supplies its transcript as evidence;
+ *  an agent with no finished run is revised from its current source. */
+export type AgentRevisionTarget =
+  | { kind: 'run' }
+  | { kind: 'agent'; project: string; path: string; handoffPrompt: (instruction: string) => string };
+
 export function AgentRevisionLauncher(props: {
   context: DebugPromptContext;
   ended: boolean;
   /** A run paused at an approval gate is the clearest evidence of a bad step, so it can be revised too. */
   atGate?: boolean;
+  /** Defaults to the run in `context`. */
+  target?: AgentRevisionTarget | undefined;
   token?: string | undefined;
   /** Agent pages use the same safe revision flow with a context-specific action label and visual weight. */
   buttonLabel?: string | undefined;
@@ -101,22 +112,27 @@ export function AgentRevisionLauncher(props: {
   const [error, setError] = useState<string | null>(null);
   const [errorHref, setErrorHref] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
-  const currentSessionId = useRef(props.context.sessionId);
-  currentSessionId.current = props.context.sessionId;
-  const historyLoaded = historySessionId === props.context.sessionId;
+  const agentTarget = props.target?.kind === 'agent' ? props.target : undefined;
+  // One identity for "whose history is this": the run, or the agent file.
+  const historyKey = agentTarget ? `agent:${agentTarget.project}:${agentTarget.path}` : props.context.sessionId;
+  const currentSessionId = useRef(historyKey);
+  currentSessionId.current = historyKey;
+  const historyLoaded = historySessionId === historyKey;
   const currentRevisions = historyLoaded ? revisions : [];
   const activeRevision = currentRevisions.find((revision) => ACTIVE_REVISION_STATUSES.has(revision.status));
   const latest = activeRevision ?? currentRevisions[0];
   const earlier = currentRevisions.filter((revision) => revision !== latest);
 
   const refresh = async (): Promise<Array<AgentRevisionSummary & { href?: string }>> => {
-    const requestedSessionId = props.context.sessionId;
+    const requestedSessionId = historyKey;
     try {
-      const payload = await fetchSessionRevisions(
-        requestedSessionId,
-        props.token,
-        props.context.projectId,
-      );
+      const payload = agentTarget
+        ? await fetchAgentRevisions(agentTarget.project, agentTarget.path)
+        : await fetchSessionRevisions(
+          props.context.sessionId,
+          props.token,
+          props.context.projectId,
+        );
       if (currentSessionId.current !== requestedSessionId) return [];
       const next = payload.revisions as Array<AgentRevisionSummary & { href?: string }>;
       setRevisions(next);
@@ -133,7 +149,7 @@ export function AgentRevisionLauncher(props: {
 
   useEffect(() => {
     void refresh();
-  }, [props.context.sessionId, props.context.projectId]);
+  }, [historyKey, props.context.projectId]);
 
   useEffect(() => {
     setInstruction('');
@@ -142,7 +158,7 @@ export function AgentRevisionLauncher(props: {
     setError(null);
     setErrorHref(null);
     setShowHistory(false);
-  }, [props.context.sessionId]);
+  }, [historyKey]);
 
   useEffect(() => {
     if (!latest || latest.status !== 'running') return;
@@ -158,7 +174,7 @@ export function AgentRevisionLauncher(props: {
     const fresh = await refresh();
     const blocking = fresh.find((revision) => ACTIVE_REVISION_STATUSES.has(revision.status));
     if (blocking) {
-      setError('This run already has a revision open. Finish or discard it before starting another.');
+      setError(`This ${agentTarget ? 'agent' : 'run'} already has a revision open. Finish or discard it before starting another.`);
       setErrorHref(revisionHref(blocking, undefined, props.context.projectId));
       return;
     }
@@ -189,14 +205,22 @@ export function AgentRevisionLauncher(props: {
     setBusy(true);
     setError(null);
     try {
-      const { job } = await startAgentRevision({
-        sessionId: props.context.sessionId,
-        ...(props.token && { token: props.token }),
-        ...(props.context.projectId && { project: props.context.projectId }),
-        instruction: instruction.trim(),
-        model,
-        reasoning,
-      });
+      const { job } = agentTarget
+        ? await startAgentFileRevision({
+          project: agentTarget.project,
+          path: agentTarget.path,
+          instruction: instruction.trim(),
+          model,
+          reasoning,
+        })
+        : await startAgentRevision({
+          sessionId: props.context.sessionId,
+          ...(props.token && { token: props.token }),
+          ...(props.context.projectId && { project: props.context.projectId }),
+          instruction: instruction.trim(),
+          model,
+          reasoning,
+        });
       try {
         if (job.sessionToken) localStorage.setItem(`agentuse:revision-token:${job.sessionId}`, job.sessionToken);
       } catch { /* persistence only improves return navigation */ }
@@ -216,7 +240,7 @@ export function AgentRevisionLauncher(props: {
   // A finished revision is history, not a task: it collapses to a quiet line so
   // the agent header keeps reading as a row of actions.
   const showCard = Boolean(latest) && (active || latest!.status === 'no-change');
-  if ((!props.ended && !props.atGate) || !props.context.agentFilePath) return null;
+  if (!agentTarget && ((!props.ended && !props.atGate) || !props.context.agentFilePath)) return null;
 
   return (
     <>
@@ -259,7 +283,7 @@ export function AgentRevisionLauncher(props: {
         <button
           type="button"
           class={`${props.buttonClassName ?? `debug-prompt-button${props.atGate ? '' : ' is-primary'}`}${open ? ' is-open' : ''}`}
-          title={props.buttonTitle ?? "Diagnose this run and propose a change to this agent's source"}
+          title={props.buttonTitle ?? (agentTarget ? "Propose a change to this agent's source" : "Diagnose this run and propose a change to this agent's source")}
           aria-expanded={open}
           onClick={() => { if (open) { if (!busy) setOpen(false); return; } void begin(); }}
         >
@@ -272,8 +296,10 @@ export function AgentRevisionLauncher(props: {
       {open && <section class="agent-revision-form" aria-labelledby="agent-revision-title">
         <div class="agent-revision-form-head"><span id="agent-revision-title">Revise {props.context.agentName ?? 'this agent'}</span><button type="button" aria-label="Close revision form" disabled={busy} onClick={() => setOpen(false)}>×</button></div>
         <div class="agent-revision-form-body">
-          <div class="agent-revision-intro"><span>Start one internal session to diagnose this run and propose a safe source change. Nothing changes until you review and apply it.</span></div>
-          <p class="agent-revision-gate-note">This changes the agent file for future runs, not this run.{props.atGate ? ' Approve or reject the pending step to continue this one.' : ''}</p>
+          <div class="agent-revision-intro"><span>{agentTarget
+            ? 'Start one internal session to review this agent\'s source and propose a safe change. Nothing changes until you review and apply it.'
+            : 'Start one internal session to diagnose this run and propose a safe source change. Nothing changes until you review and apply it.'}</span></div>
+          {!agentTarget && <p class="agent-revision-gate-note">This changes the agent file for future runs, not this run.{props.atGate ? ' Approve or reject the pending step to continue this one.' : ''}</p>}
           <label class="agent-revision-field"><span>What should change?</span><textarea value={instruction} disabled={busy} placeholder="e.g. exclude refunded orders, or make results shorter without missing urgent tickets" onInput={(event) => setInstruction((event.target as HTMLTextAreaElement).value)} /></label>
           <div class="agent-revision-models">
             <label class="agent-revision-field"><span>Authoring model</span><select value={model} disabled={busy || loadingOptions} onChange={(event) => { const value = (event.target as HTMLSelectElement).value; setModel(value); storeAuthoring({ model: value }); }}>{models.map((option) => <option value={option.value}>{option.label}</option>)}</select></label>
@@ -283,7 +309,7 @@ export function AgentRevisionLauncher(props: {
           <div class="agent-revision-actions"><button type="button" class="agent-revision-cancel" disabled={busy} onClick={() => setOpen(false)}>Cancel</button><button type="button" class="agent-revision-primary" disabled={busy || loadingOptions || !instruction.trim() || !model} onClick={() => void submit()}>{busy ? 'Starting revision…' : 'Start revision session'}</button></div>
           <div class="agent-revision-handoff">
             <span><strong>Need project code or a custom integration?</strong><small>Use your coding agent when the change is larger than this AgentUse file.</small></span>
-            <button type="button" disabled={busy} onClick={() => { void copyText(buildDebugPrompt(props.context, instruction)).then((ok) => { if (!ok) return; setHandoffCopied(true); setTimeout(() => setHandoffCopied(false), 2000); }); }}>{handoffCopied ? 'Prompt copied — paste it into your coding agent' : 'Copy prompt for Coding Agent'}</button>
+            <button type="button" disabled={busy} onClick={() => { void copyText(agentTarget ? agentTarget.handoffPrompt(instruction) : buildDebugPrompt(props.context, instruction)).then((ok) => { if (!ok) return; setHandoffCopied(true); setTimeout(() => setHandoffCopied(false), 2000); }); }}>{handoffCopied ? 'Prompt copied — paste it into your coding agent' : 'Copy prompt for Coding Agent'}</button>
           </div>
         </div>
       </section>}
@@ -363,7 +389,7 @@ export function AgentRevisionSessionPanel(props: {
       const payload = await postAgentRevisionAction(props.sessionId, action, props.project);
       setRevision(payload.revision);
       if (acceptedDiagnosis && revision) {
-        window.location.assign(revision.originHref ?? revisionFallbackOriginHref(revision.originSessionId, props.project));
+        window.location.assign(revisionReturnHref(revision, props.project));
       }
     } catch (caught) {
       setError((caught as Error).message || (action === 'cancel'
@@ -375,17 +401,22 @@ export function AgentRevisionSessionPanel(props: {
   };
 
   if (!isRevision) return null;
-  const originHref = revision.originHref
-    ?? revisionFallbackOriginHref(revision.originSessionId, props.project);
+  const originHref = revision.originSessionId
+    ? revision.originHref ?? revisionFallbackOriginHref(revision.originSessionId, props.project)
+    : undefined;
 
   return (
     <section class={`agent-revision-session-panel is-${revision.status}`}>
       <div class="agent-revision-session-head">
-        <span><strong>{revision.status === 'running' ? 'Revision session' : revision.status === 'proposed' ? 'Review proposed revision' : revision.status === 'no-change' ? 'No agent change recommended' : revisionLabel(revision)}</strong><small>Started from <a href={originHref}>session {revision.originSessionId.slice(0, 8)}…</a></small></span>
+        <span><strong>{revision.status === 'running' ? 'Revision session' : revision.status === 'proposed' ? 'Review proposed revision' : revision.status === 'no-change' ? 'No agent change recommended' : revisionLabel(revision)}</strong><small>{originHref && revision.originSessionId
+          ? <>Started from <a href={originHref}>session {revision.originSessionId.slice(0, 8)}…</a></>
+          : <>Started from the agent page, without a run</>}</small></span>
         <span class="agent-revision-state">{revision.status}</span>
       </div>
       {revision.status === 'running' && props.sessionStatus === 'preparing' && <p>AgentUse is preparing a safe project view. The reviser will start automatically when its context is ready.</p>}
-      {revision.status === 'running' && props.sessionStatus !== 'preparing' && props.sessionStatus !== 'waiting' && <p>AgentUse is diagnosing the originating run. You can leave; this revision remains available from that run and Sessions.</p>}
+      {revision.status === 'running' && props.sessionStatus !== 'preparing' && props.sessionStatus !== 'waiting' && <p>{originHref
+        ? 'AgentUse is diagnosing the originating run. You can leave; this revision remains available from that run and Sessions.'
+        : 'AgentUse is reviewing the agent source. You can leave; this revision remains available from the agent page and Sessions.'}</p>}
       {revision.status === 'running' && props.sessionStatus === 'waiting' && <p>The reviser needs your decision below. Answering resumes this same internal session.</p>}
       {revision.status === 'running' && (
         <div class="agent-revision-review-actions">
@@ -422,6 +453,19 @@ function revisionFallbackOriginHref(originSessionId: string, project?: string): 
   return `/sessions/${encodeURIComponent(originSessionId)}${params.size ? `?${params.toString()}` : ''}`;
 }
 
+/** Where to send the operator back after a revision is closed out: the run
+ *  it came from, or the agent page when there was no run. */
+export function revisionReturnHref(
+  revision: Pick<AgentRevisionRecord, 'originSessionId' | 'projectId' | 'targetAgentRunPath'> & { originHref?: string },
+  project?: string,
+): string {
+  if (revision.originSessionId) return revision.originHref ?? revisionFallbackOriginHref(revision.originSessionId, project);
+  if (revision.targetAgentRunPath) {
+    return `/agents/${encodeURIComponent(revision.projectId)}/${revision.targetAgentRunPath.split('/').map(encodeURIComponent).join('/')}`;
+  }
+  return '/agents';
+}
+
 
 /**
  * Revision history for one agent. The agent header only carries the action and
@@ -448,7 +492,7 @@ export function AgentRevisionsPanel(props: { project: string; path: string }) {
   if (error) return <p class="empty err">{error}</p>;
   if (revisions === null) return <p class="empty">Loading revisions…</p>;
   if (revisions.length === 0) {
-    return <p class="empty">No revisions yet. Use <strong>Revise Agent</strong> to diagnose a run and propose a change to this agent.</p>;
+    return <p class="empty">No revisions yet. Use <strong>Revise Agent</strong> to propose a change to this agent.</p>;
   }
 
   return (

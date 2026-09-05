@@ -325,6 +325,13 @@ describe('session list helpers', () => {
     });
   });
 
+  it('omits the origin from the purpose of a source-only revision', () => {
+    expect(__testing.agentRevisionSessionPurpose({ targetAgentName: 'Support triage' })).toEqual({
+      kind: 'agent-revision',
+      targetAgentName: 'Support triage',
+    });
+  });
+
   it('partitions SSE snapshots by the mock filter', () => {
     const realOnly = __testing.sessionListStreamKey(new URL('http://localhost/sessions/events'));
     const include = __testing.sessionListStreamKey(new URL('http://localhost/sessions/events?mock=include'));

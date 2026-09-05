@@ -165,12 +165,14 @@ export default function AgentRevision() {
   const meta = (
     <>
       <span><span class="draft-meta-key">Project</span> {revision.projectId}</span>
-      <span>
-        <span class="draft-meta-key">From run</span>{' '}
-        {revision.originHref
-          ? <a class="draft-link" href={revision.originHref}>{`${revision.originSessionId.slice(0, 8)}…`}</a>
-          : `${revision.originSessionId.slice(0, 8)}…`}
-      </span>
+      {revision.originSessionId && (
+        <span>
+          <span class="draft-meta-key">From run</span>{' '}
+          {revision.originHref
+            ? <a class="draft-link" href={revision.originHref}>{`${revision.originSessionId.slice(0, 8)}…`}</a>
+            : `${revision.originSessionId.slice(0, 8)}…`}
+        </span>
+      )}
       <span><span class="draft-meta-key">Agent</span> {revision.targetAgentName}</span>
       <span><span class="draft-meta-key">Reviser</span> {revision.authoringModel}</span>
     </>
@@ -246,12 +248,14 @@ export default function AgentRevision() {
         projectId={project}
         token={token}
         leadRequest={revision.instruction}
-        leadExtra={revision.originHref
+        leadExtra={revision.originHref && revision.originSessionId
           ? <a class="draft-evidence-row" href={revision.originHref}>
               Evidence · run {revision.originSessionId.slice(0, 8)}…
             </a>
           : undefined}
-        emptyHint="The reviser is diagnosing the run. Its steps and findings appear here."
+        emptyHint={revision.originSessionId
+          ? 'The reviser is diagnosing the run. Its steps and findings appear here.'
+          : 'The reviser is reading the agent source. Its steps and findings appear here.'}
       />}
       composer={open && (
         <DraftComposer

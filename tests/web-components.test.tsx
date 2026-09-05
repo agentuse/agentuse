@@ -52,7 +52,7 @@ import { DraftThread, groupDraftTurns } from '../src/cli/serve/web/components/dr
 import { firstUsefulAgentSetupSteps } from '../src/cli/serve/web/components/onboarding-shell';
 import { ProjectFolderField } from '../src/cli/serve/web/components/project-folder-field';
 import { ProjectsSettingsGroup, RestartOnboardingGroup } from '../src/cli/serve/web/components/project-settings';
-import { AgentRevisionLauncher, AgentRevisionStopButton, revisionLabel, revisionOriginAction, revisionOriginDescription } from '../src/cli/serve/web/components/agent-revision';
+import { AgentRevisionLauncher, AgentRevisionStopButton, revisionLabel, revisionOriginAction, revisionOriginDescription, revisionReturnHref } from '../src/cli/serve/web/components/agent-revision';
 
 const noop = () => {};
 
@@ -88,6 +88,21 @@ describe('agent revision entry', () => {
     expect(revisionLabel(accepted)).toBe('Diagnosis accepted');
     expect(revisionOriginDescription(accepted)).toBe('No agent source change was made. You can start another revision.');
     expect(revisionOriginAction(accepted, false)).toBe('View revision');
+  });
+
+  it('names the evidence a running revision works from', () => {
+    const fromRun = { status: 'running' as const, targetAgentName: 'Support triage', originSessionId: '01ORIGIN' };
+    expect(revisionOriginDescription(fromRun)).toBe('Revising Support triage from this run.');
+    const fromSource = { status: 'running' as const, targetAgentName: 'Support triage' };
+    expect(revisionOriginDescription(fromSource)).toBe('Revising Support triage from its current source.');
+  });
+
+  it('sends a closed-out revision back to the agent page when it had no run', () => {
+    expect(revisionReturnHref({ originSessionId: '01ORIGIN', projectId: 'support', targetAgentRunPath: 'agents/a.agentuse' }, 'support'))
+      .toBe('/sessions/01ORIGIN?project=support');
+    expect(revisionReturnHref({ projectId: 'support', targetAgentRunPath: 'agents/a.agentuse' }))
+      .toBe('/agents/support/agents/a.agentuse');
+    expect(revisionReturnHref({ projectId: 'support' })).toBe('/agents');
   });
 
   it('does not expose a revision action until existing revision history is known', () => {

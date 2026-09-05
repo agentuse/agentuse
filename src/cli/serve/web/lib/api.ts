@@ -814,6 +814,24 @@ export function startAgentRevision(input: {
   });
 }
 
+/** Revise an agent from its current source, with no run as evidence. The
+ *  agent page uses this when the agent has not finished a run yet. */
+export function startAgentFileRevision(input: {
+  project: string;
+  path: string;
+  instruction: string;
+  model: string;
+  reasoning?: ReasoningLevel;
+}): Promise<{ success: true; job: OnboardingJobHandle }> {
+  return postJson('/api/agents/revisions', {
+    project: input.project,
+    path: input.path,
+    instruction: input.instruction,
+    model: input.model,
+    ...(input.reasoning && { reasoning: input.reasoning }),
+  });
+}
+
 export function fetchAgentRevision(
   revisionSessionId: string,
   token?: string,

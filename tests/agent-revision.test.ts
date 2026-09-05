@@ -129,6 +129,59 @@ describe('internal agent revision', () => {
     expect(embeddedSource).not.toContain(`    - path: ${f.projectRoot}`);
   });
 
+  it('revises from the current source alone when the agent has no run to diagnose', async () => {
+    const f = await fixture();
+    const source = buildAgentRevisionSessionAgent({
+      revisionSessionId: f.revisionSessionId,
+      projectId: 'support',
+      projectRoot: f.projectRoot,
+      targetAgentPath: f.targetAgentPath,
+      targetAgentName: 'Support triage',
+      instruction: 'Exclude refunded orders.',
+      model: 'openai:gpt-5.6-luna',
+      expectedSourceHash: sourceHash(f.currentSource),
+      currentSource: f.currentSource,
+      safeViewRoot: f.projectRoot,
+      creatorSkill: '# Creator',
+      availableModels: ['openai:gpt-5.6-luna'],
+      availableSkills: [],
+    });
+    const parsed = parseAgentContent(source, 'revision');
+    expect(parsed.description).toBe('Revise Support triage from its current source');
+    expect(parsed.config.metadata?.originSessionId).toBeUndefined();
+    expect(source).toContain('has no run to diagnose');
+    expect(source).toContain('Do not invent a failure');
+    expect(source).not.toContain('treat that as the primary incident');
+
+    // The private contract round-trips without an origin, and the submit tool
+    // accepts a record that has none.
+    const contract = agentRevisionSubmissionContract(parsed.config.metadata)!;
+    expect(contract).toBeDefined();
+    expect(contract.originSessionId).toBeUndefined();
+    const { projectRoot, targetAgentPath } = f;
+    const revisionSessionId = '01K5ABCDEFGHJKMNPQRSTVWXYZ';
+    await createAgentRevisionRecord({
+      revisionSessionId,
+      projectId: 'support',
+      projectRoot,
+      targetAgentPath,
+      targetAgentRunPath: 'support-triage.agentuse',
+      targetAgentName: 'Support triage',
+      instruction: 'Exclude refunded orders.',
+      authoringModel: 'openai:gpt-5.6-luna',
+      expectedSourceHash: sourceHash(f.currentSource),
+    });
+    const tool = createSubmitAgentRevisionTool({}, { ...contract, revisionSessionId, projectRoot, targetAgentPath });
+    await expect((tool.execute as any)({
+      outcome: 'no-agent-change',
+      diagnosis: 'The source already excludes refunded orders.',
+      recommendedAction: 'Run the agent once and revise from that run if needed.',
+    })).resolves.toBeDefined();
+    const record = await readAgentRevisionRecord(projectRoot, revisionSessionId);
+    expect(record?.status).toBe('no-change');
+    expect(record?.originSessionId).toBeUndefined();
+  });
+
   it('validates a proposal, applies it atomically, and restores the prior source', async () => {
     const f = await fixture();
     const submission: { outcome?: 'revision-proposed' | 'no-agent-change' } = {};

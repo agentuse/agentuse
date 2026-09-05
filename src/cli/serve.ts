@@ -116,6 +116,7 @@ import {
 } from "../agents/create";
 import { validateAuthoredAgentSource } from "../agents/author";
 import {
+  agentRevisionDescription,
   applyAgentRevision,
   buildAgentRevisionSessionAgent,
   createAgentRevisionRecord,
@@ -2171,7 +2172,7 @@ function agentRevisionSessionPurpose(
 ): SessionPurpose {
   return {
     kind: 'agent-revision',
-    originSessionId: record.originSessionId,
+    ...(record.originSessionId && { originSessionId: record.originSessionId }),
     targetAgentName: record.targetAgentName,
   };
 }
@@ -8784,49 +8785,48 @@ export function createServeCommand(): Command {
           return;
         }
 
-        const startRevisionMatch = !isApi && req.method === 'POST'
-          ? routePath.match(/^\/sessions\/([^/?#]+)\/revisions$/)
-          : null;
-        if (startRevisionMatch) {
-          let mutationKey: string | undefined;
+        // Shared by the two start routes below. A run-anchored revision
+        // carries the origin session and its transcript as evidence; an
+        // agent-anchored one (the agent page, for an agent with no finished
+        // run) works from the current source alone. Everything after the
+        // target is resolved lives here so the two routes cannot drift.
+        const startAgentRevisionSession = async (input: {
+          project: Project;
+          body: Record<string, unknown>;
+          targetAgentPath: string;
+          targetAgentName: string;
+          targetAgentRunPath?: string | undefined;
+          origin?: { sessionId: string; info: WorkerApprovalInfoResult } | undefined;
+          mutationKey: string;
+          // Which existing records block a new start: the same run, or the same agent file.
+          conflictsWith: (record: AgentRevisionRecord) => boolean;
+        }): Promise<void> => {
+          const { project, body, targetAgentPath, targetAgentName, origin } = input;
+          const originSessionId = origin?.sessionId;
+          if (revisionMutations.has(input.mutationKey)) {
+            sendError(res, 409, 'REVISION_STARTING', 'A revision is already being started for this target');
+            return;
+          }
+          revisionMutations.add(input.mutationKey);
           try {
-            if (!sessionAgentRevisionAllowed(req.headers.authorization, apiKey)) {
-              sendError(res, 403, 'OPERATOR_REQUIRED', 'Only an authenticated operator can start an agent revision');
-              return;
-            }
-            if (effectiveHideAgentSource) {
-              sendError(res, 403, 'AGENT_SOURCE_HIDDEN', 'Agent revision is unavailable while serve.hideAgentSource is enabled');
-              return;
-            }
-            const originSessionId = decodeURIComponent(startRevisionMatch[1]!);
-            const body = await parseJSONBody(req);
-            const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
-            const found = await findSessionInfo(originSessionId, projectId);
-            if (!found.success) {
-              sendError(res, found.status, found.code, found.message);
-              return;
-            }
-            mutationKey = `origin:${found.project.id}:${originSessionId}`;
-            if (revisionMutations.has(mutationKey)) {
-              sendError(res, 409, 'REVISION_STARTING', 'A revision is already being started for this session');
-              return;
-            }
-            revisionMutations.add(mutationKey);
             const existingRevisions = await Promise.all(
-              (await listAgentRevisionRecords(found.project.root, originSessionId))
-                .map((revision) => reconcileAgentRevisionRecord(found.project, revision))
+              (await listAgentRevisionRecords(project.root, originSessionId))
+                .filter(input.conflictsWith)
+                .map((revision) => reconcileAgentRevisionRecord(project, revision))
             );
             const activeRevision = existingRevisions.find((revision) =>
               revision.status === 'running' || revision.status === 'proposed' || revision.status === 'no-change');
             if (activeRevision) {
-              const params = new URLSearchParams({ project: found.project.id });
+              const params = new URLSearchParams({ project: project.id });
               const activeToken = sessionViewToken(activeRevision.revisionSessionId, apiKey);
               if (activeToken) params.set('token', activeToken);
               sendJSON(res, 409, {
                 success: false,
                 error: {
                   code: 'REVISION_ALREADY_ACTIVE',
-                  message: 'This session already has a revision waiting for completion or review',
+                  message: originSessionId
+                    ? 'This session already has a revision waiting for completion or review'
+                    : 'This agent already has a revision waiting for completion or review',
                   revisionSessionId: activeRevision.revisionSessionId,
                   href: `/sessions/${encodeURIComponent(activeRevision.revisionSessionId)}?${params.toString()}`,
                 },
@@ -8838,28 +8838,22 @@ export function createServeCommand(): Command {
               sendError(res, 400, 'REVISION_INSTRUCTION_REQUIRED', 'Describe what the revision should focus on');
               return;
             }
-            const targetAgent = found.info.approval.originAgent ?? found.info.approval.agent;
-            if (!targetAgent.filePath) {
-              sendError(res, 400, 'NO_AGENT_FILE', 'This session does not record an editable agent file');
-              return;
-            }
-            const targetAgentPath = targetAgent.filePath;
-            if (!isPathInside(found.project.scopeRoot, targetAgentPath) || !existsSync(targetAgentPath)) {
-              sendError(res, 400, 'INVALID_AGENT_PATH', 'The session agent is outside the served project scope');
+            if (!isPathInside(project.scopeRoot, targetAgentPath) || !existsSync(targetAgentPath)) {
+              sendError(res, 400, 'INVALID_AGENT_PATH', 'The agent is outside the served project scope');
               return;
             }
             const [targetStat, realScope, realTarget] = await Promise.all([
               lstat(targetAgentPath),
-              realpath(found.project.scopeRoot),
+              realpath(project.scopeRoot),
               realpath(targetAgentPath),
             ]);
             if (!targetStat.isFile() || targetStat.isSymbolicLink() || !isPathInside(realScope, realTarget)) {
-              sendError(res, 400, 'INVALID_AGENT_PATH', 'The session agent must be a regular file inside the served project scope');
+              sendError(res, 400, 'INVALID_AGENT_PATH', 'The agent must be a regular file inside the served project scope');
               return;
             }
-            const worker = workers.get(found.project.id);
+            const worker = workers.get(project.id);
             if (!worker) {
-              sendError(res, 500, 'WORKER_UNAVAILABLE', `No worker for project ${found.project.id}`);
+              sendError(res, 500, 'WORKER_UNAVAILABLE', `No worker for project ${project.id}`);
               return;
             }
             const snapshot = await providerSetupSnapshot();
@@ -8881,16 +8875,13 @@ export function createServeCommand(): Command {
             const revisionSessionId = ulid();
             const currentSource = await readFile(targetAgentPath, 'utf8');
             const expectedSourceHash = sourceHash(currentSource);
-            const targetAgentName = targetAgent.name || found.info.approval.agent.name;
             const record = await createAgentRevisionRecord({
               revisionSessionId,
-              originSessionId,
-              projectId: found.project.id,
-              projectRoot: found.project.root,
+              ...(originSessionId && { originSessionId }),
+              projectId: project.id,
+              projectRoot: project.root,
               targetAgentPath,
-              ...(found.info.approval.agent.runPath && targetAgentPath === found.info.approval.agent.filePath
-                ? { targetAgentRunPath: found.info.approval.agent.runPath }
-                : {}),
+              ...(input.targetAgentRunPath && { targetAgentRunPath: input.targetAgentRunPath }),
               targetAgentName,
               instruction,
               authoringModel: model,
@@ -8900,7 +8891,7 @@ export function createServeCommand(): Command {
             const job: OnboardingModelJob = {
               id: revisionSessionId,
               sessionId: revisionSessionId,
-              projectId: found.project.id,
+              projectId: project.id,
               kind: 'agent-revision',
               status: 'running',
               phase: 'preparing',
@@ -8910,16 +8901,16 @@ export function createServeCommand(): Command {
             const prepared = await beginInternalAgentJob({
               job,
               worker,
-              project: found.project,
-              agentId: relative(found.project.root, internalAgentRevisionPath(found.project.root, revisionSessionId)).replace(/\.agentuse$/u, ''),
+              project,
+              agentId: relative(project.root, internalAgentRevisionPath(project.root, revisionSessionId)).replace(/\.agentuse$/u, ''),
               agentName: `Revise ${targetAgentName}`,
-              agentDescription: `Revise ${targetAgentName} using evidence from session ${originSessionId}`,
+              agentDescription: agentRevisionDescription(targetAgentName, originSessionId),
               trigger: 'manual',
               timeout: 480,
               maxSteps: 20,
             });
             if (!prepared.success) {
-              await failAgentRevision(found.project.root, revisionSessionId, prepared.error).catch(() => undefined);
+              await failAgentRevision(project.root, revisionSessionId, prepared.error).catch(() => undefined);
               throw new Error(prepared.error.message);
             }
             const sessionToken = apiKey ? sessionViewToken(revisionSessionId, apiKey) : undefined;
@@ -8930,20 +8921,20 @@ export function createServeCommand(): Command {
             void runInternalJobLifecycle({
               job,
               prepare: async () => {
-                const viewPromise = prepareProjectDiscoveryView(found.project.scopeRoot).then((view) => {
+                const viewPromise = prepareProjectDiscoveryView(project.scopeRoot).then((view) => {
                   cleanupView = view.cleanup;
                   return view;
                 });
                 const [creatorSkill, availableSkills, view] = await Promise.all([
                   loadBuiltinSkillSource('creator'),
-                  discoverProjectSkillCatalog(found.project.root),
+                  discoverProjectSkillCatalog(project.root),
                   viewPromise,
                 ]);
                 const agentContent = buildAgentRevisionSessionAgent({
                   revisionSessionId,
-                  originSessionId,
-                  projectId: found.project.id,
-                  projectRoot: found.project.root,
+                  ...(originSessionId && { originSessionId }),
+                  projectId: project.id,
+                  projectRoot: project.root,
                   targetAgentPath,
                   targetAgentName,
                   instruction,
@@ -8951,13 +8942,15 @@ export function createServeCommand(): Command {
                   ...(reasoning && { reasoning }),
                   expectedSourceHash,
                   currentSource,
-                  originTranscript: buildRunTranscript(found.info.approval.logs, 80_000, {
-                    focus: 'latest-attempt',
-                    terminal: {
-                      status: found.info.approval.sessionStatus,
-                      ...(found.info.approval.errorCode && { errorCode: found.info.approval.errorCode }),
-                      ...(found.info.approval.errorMessage && { errorMessage: found.info.approval.errorMessage }),
-                    },
+                  ...(origin && {
+                    originTranscript: buildRunTranscript(origin.info.approval.logs, 80_000, {
+                      focus: 'latest-attempt',
+                      terminal: {
+                        status: origin.info.approval.sessionStatus,
+                        ...(origin.info.approval.errorCode && { errorCode: origin.info.approval.errorCode }),
+                        ...(origin.info.approval.errorMessage && { errorMessage: origin.info.approval.errorMessage }),
+                      },
+                    }),
                   }),
                   safeViewRoot: view.root,
                   creatorSkill,
@@ -8965,7 +8958,7 @@ export function createServeCommand(): Command {
                   availableSkills,
                 });
                 const internalAgentPath = await writeInternalAgentRevisionSource(
-                  found.project.root,
+                  project.root,
                   revisionSessionId,
                   agentContent,
                 );
@@ -8978,7 +8971,7 @@ export function createServeCommand(): Command {
               },
               execute: (internalAgentPath) => worker.execute({
                   agentPath: internalAgentPath,
-                  projectRoot: found.project.root,
+                  projectRoot: project.root,
                   newSessionId: revisionSessionId,
                   preparedSession: true,
                   trigger: 'manual',
@@ -8990,10 +8983,10 @@ export function createServeCommand(): Command {
                 if (!execution.success) {
                   job.status = 'error';
                   job.error = execution.error;
-                  await failAgentRevision(found.project.root, revisionSessionId, execution.error);
+                  await failAgentRevision(project.root, revisionSessionId, execution.error);
                   return;
                 }
-                const latest = await readAgentRevisionRecord(found.project.root, revisionSessionId);
+                const latest = await readAgentRevisionRecord(project.root, revisionSessionId);
                 if (latest?.status === 'proposed' || latest?.status === 'no-change') {
                   job.status = 'completed';
                   job.result = latest;
@@ -9005,21 +8998,21 @@ export function createServeCommand(): Command {
                 const error = { code: 'REVISION_NOT_SUBMITTED', message: 'The revision session ended without submitting a validated outcome' };
                 job.status = 'error';
                 job.error = error;
-                await failAgentRevision(found.project.root, revisionSessionId, error);
+                await failAgentRevision(project.root, revisionSessionId, error);
               },
               mapError: (error) => ({ code: 'REVISION_FAILED', message: (error as Error).message }),
               persist: () => persistOnboardingJob(job),
               wake: wakeListHubs,
               failPreparing: (failure) => worker.failPreparingSession({
-                projectRoot: found.project.root,
+                projectRoot: project.root,
                 sessionId: revisionSessionId,
                 code: failure.code,
                 message: failure.message,
               }).then(() => undefined),
-              onError: (failure) => failAgentRevision(found.project.root, revisionSessionId, failure).then(() => undefined),
+              onError: (failure) => failAgentRevision(project.root, revisionSessionId, failure).then(() => undefined),
               cleanup: async () => {
                 await cleanupView?.().catch(() => undefined);
-                const latest = await readAgentRevisionRecord(found.project.root, revisionSessionId).catch(() => undefined);
+                const latest = await readAgentRevisionRecord(project.root, revisionSessionId).catch(() => undefined);
                 if (latest && (latest.status === 'accepted' || latest.status === 'applied' || latest.status === 'discarded' || latest.status === 'restored' || latest.status === 'error')) {
                   await cleanupInternalView(revisionSessionId);
                 }
@@ -9030,7 +9023,99 @@ export function createServeCommand(): Command {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, 'REVISION_START_FAILED', (err as Error).message);
           } finally {
-            if (mutationKey) revisionMutations.delete(mutationKey);
+            revisionMutations.delete(input.mutationKey);
+          }
+        };
+
+        // POST /sessions/:id/revisions: revise the agent behind a finished (or
+        // gated) run, with that run's transcript as evidence.
+        const startRevisionMatch = !isApi && req.method === 'POST'
+          ? routePath.match(/^\/sessions\/([^/?#]+)\/revisions$/)
+          : null;
+        if (startRevisionMatch) {
+          try {
+            if (!sessionAgentRevisionAllowed(req.headers.authorization, apiKey)) {
+              sendError(res, 403, 'OPERATOR_REQUIRED', 'Only an authenticated operator can start an agent revision');
+              return;
+            }
+            if (effectiveHideAgentSource) {
+              sendError(res, 403, 'AGENT_SOURCE_HIDDEN', 'Agent revision is unavailable while serve.hideAgentSource is enabled');
+              return;
+            }
+            const originSessionId = decodeURIComponent(startRevisionMatch[1]!);
+            const body = await parseJSONBody(req);
+            const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
+            const found = await findSessionInfo(originSessionId, projectId);
+            if (!found.success) {
+              sendError(res, found.status, found.code, found.message);
+              return;
+            }
+            const targetAgent = found.info.approval.originAgent ?? found.info.approval.agent;
+            if (!targetAgent.filePath) {
+              sendError(res, 400, 'NO_AGENT_FILE', 'This session does not record an editable agent file');
+              return;
+            }
+            const targetAgentPath = targetAgent.filePath;
+            await startAgentRevisionSession({
+              project: found.project,
+              body,
+              targetAgentPath,
+              targetAgentName: targetAgent.name || found.info.approval.agent.name,
+              targetAgentRunPath: found.info.approval.agent.runPath && targetAgentPath === found.info.approval.agent.filePath
+                ? found.info.approval.agent.runPath
+                : undefined,
+              origin: { sessionId: originSessionId, info: found.info },
+              mutationKey: `origin:${found.project.id}:${originSessionId}`,
+              conflictsWith: (record) => record.originSessionId === originSessionId,
+            });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, 'REVISION_START_FAILED', (err as Error).message);
+          }
+          return;
+        }
+
+        // POST /api/agents/revisions {project, path, instruction, model,
+        // reasoning?}: revise an agent from its current source. The agent page
+        // uses this when the agent has no finished run to anchor a revision on,
+        // so "Revise Agent" always reaches the reviser instead of falling back
+        // to a copied prompt.
+        if (isApi && req.method === 'POST' && routePath === '/agents/revisions') {
+          try {
+            if (!sessionAgentRevisionAllowed(req.headers.authorization, apiKey)) {
+              sendError(res, 403, 'OPERATOR_REQUIRED', 'Only an authenticated operator can start an agent revision');
+              return;
+            }
+            if (effectiveHideAgentSource) {
+              sendError(res, 403, 'AGENT_SOURCE_HIDDEN', 'Agent revision is unavailable while serve.hideAgentSource is enabled');
+              return;
+            }
+            const body = await parseJSONBody(req);
+            const requestedProject = typeof body.project === 'string' ? body.project : undefined;
+            const requestedPath = typeof body.path === 'string' ? body.path : undefined;
+            if (!requestedProject || !requestedPath) {
+              sendError(res, 400, 'MISSING_PARAMS', 'Both project and path are required');
+              return;
+            }
+            const project = projects.find((p) => p.id === requestedProject);
+            if (!project || !project.agentFiles.includes(requestedPath)) {
+              sendError(res, 404, 'AGENT_NOT_FOUND', `Agent not loaded: ${requestedPath}`);
+              return;
+            }
+            const targetAgentPath = resolveScopedAgentPath(project, requestedPath);
+            const detail = await collectAgentDetail(project, requestedPath);
+            await startAgentRevisionSession({
+              project,
+              body,
+              targetAgentPath,
+              targetAgentName: detail.name,
+              targetAgentRunPath: requestedPath,
+              mutationKey: `agent:${project.id}:${requestedPath}`,
+              conflictsWith: (record) => record.targetAgentRunPath === requestedPath || record.targetAgentPath === targetAgentPath,
+            });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, 'REVISION_START_FAILED', (err as Error).message);
           }
           return;
         }
@@ -9222,9 +9307,13 @@ export function createServeCommand(): Command {
                 ?? (record.status === 'proposed' || record.status === 'no-change' || record.status === 'running'
                   ? await readFile(record.targetAgentPath, 'utf8').catch(() => undefined)
                   : undefined);
-              const originParams = new URLSearchParams({ project: project.id });
-              const originToken = sessionViewToken(record.originSessionId, apiKey);
-              if (originToken) originParams.set('token', originToken);
+              const originHref = (() => {
+                if (!record.originSessionId) return undefined;
+                const originParams = new URLSearchParams({ project: project.id });
+                const originToken = sessionViewToken(record.originSessionId, apiKey);
+                if (originToken) originParams.set('token', originToken);
+                return `/sessions/${encodeURIComponent(record.originSessionId)}?${originParams.toString()}`;
+              })();
               if (record.status === 'accepted' || record.status === 'applied' || record.status === 'discarded' || record.status === 'restored' || record.status === 'error') {
                 await cleanupInternalView(revisionSessionId);
               }
@@ -9233,7 +9322,7 @@ export function createServeCommand(): Command {
                 revision: {
                   ...visibleRecord,
                   ...(baseSource && { baseSource }),
-                  originHref: `/sessions/${encodeURIComponent(record.originSessionId)}?${originParams.toString()}`,
+                  ...(originHref && { originHref }),
                 },
               });
               return;

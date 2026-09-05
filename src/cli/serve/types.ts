@@ -99,7 +99,8 @@ export interface SessionSummary {
 
 export type SessionPurpose = {
   kind: 'agent-revision';
-  originSessionId: string;
+  /** Absent when the revision was started from the agent page without a run. */
+  originSessionId?: string;
   targetAgentName: string;
 };
 

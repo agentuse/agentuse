@@ -10,7 +10,6 @@ import { useSmartBack } from '../hooks/use-smart-back';
 import { Loading } from '../components/loading';
 import { SchedulePill } from '../components/schedule-pill';
 import { AgentLearningsPanel, StrandedLearningsBanner } from '../components/learnings-panel';
-import { SendToCodingAgentDialog } from '../components/send-to-coding-agent-dialog';
 import { AgentRevisionLauncher, AgentRevisionsPanel } from '../components/agent-revision';
 import { RunCustomDialog } from '../components/run-custom-dialog';
 import { LogContent } from '../components/content';
@@ -281,9 +280,12 @@ function RecentJobs(props: { agentId: string; project: string; onRevisionSession
   const rows = projectRows.slice(0, 8);
   const seeAll = `/sessions?agent=${encodeURIComponent(props.agentId)}`;
 
+  // Reported only once the answer is known, so the header does not offer a
+  // source-only revision for a moment before the run history arrives.
   useEffect(() => {
+    if (!data && !error) return;
     props.onRevisionSession?.(revisionContextSession(data?.sessions ?? [], props.project));
-  }, [data, props.project]);
+  }, [data, error, props.project]);
 
   return (
     <section class="group">
@@ -405,8 +407,8 @@ export default function AgentDetail() {
   const [tab, setTab] = useState<AgentDetailTab>(entryState.tab);
   const [tutorialStep, setTutorialStep] = useState(entryState.tutorialStep);
   const [runOpen, setRunOpen] = useState(false);
-  const [revisionFallbackOpen, setRevisionFallbackOpen] = useState(false);
-  const [revisionSession, setRevisionSession] = useState<SessionRow | null>(null);
+  // undefined until the job list has answered; null when there is no finished run.
+  const [revisionSession, setRevisionSession] = useState<SessionRow | null | undefined>(undefined);
   const [scheduleBusy, setScheduleBusy] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const runButtonRef = useRef<HTMLButtonElement>(null);
@@ -500,6 +502,7 @@ export default function AgentDetail() {
     && revisionSession.agent.id === agentIdFromPath(data.path)
     ? revisionSession
     : null;
+  const revisionSessionKnown = revisionSession !== undefined;
 
   return (
     <div class="page-agent-detail">
@@ -554,20 +557,31 @@ export default function AgentDetail() {
                   >
                     Run with custom…
                   </button>
-                  {data.source !== undefined && (
+                  {data.source !== undefined && revisionSessionKnown && (
                     <div class="agent-revise-row">
+                      {/* Both branches reach the same reviser. A finished run is the
+                          best evidence, so it is used when there is one; a never-run
+                          agent is revised from its current source instead. */}
                       {!currentRevisionSession ? (
-                        <button
-                          type="button"
-                          class="run-cta-alt agent-revise-cta"
-                          title="Revise this agent with a coding agent"
-                          onClick={() => setRevisionFallbackOpen(true)}
-                        >
-                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                            <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
-                          </svg>
-                          <span>Revise Agent</span>
-                        </button>
+                        <AgentRevisionLauncher
+                          ended
+                          buttonLabel="Revise Agent"
+                          buttonClassName="run-cta-alt agent-revise-cta"
+                          buttonTitle="Revise this agent from its current source"
+                          target={{
+                            kind: 'agent',
+                            project: data.projectId,
+                            path: data.runPath,
+                            handoffPrompt: (detail) => buildCodingAgentPrompt({ project: data.projectId, path: data.path, source: data.source!, detail }),
+                          }}
+                          context={{
+                            sessionId: '',
+                            projectId: data.projectId,
+                            agentName: data.name,
+                            agentFilePath: data.path,
+                            model: data.model,
+                          }}
+                        />
                       ) : (
                         <AgentRevisionLauncher
                           ended={isEndedStatus(currentRevisionSession.status)}
@@ -668,16 +682,6 @@ export default function AgentDetail() {
               onSubmit={(custom) => { void run(custom); }}
               onClose={() => { if (!busy) setRunOpen(false); }}
             />
-            {data.source !== undefined && (
-              <SendToCodingAgentDialog
-                open={revisionFallbackOpen}
-                title="revise agent"
-                buildPrompt={(detail) => buildCodingAgentPrompt({ project: data.projectId, path: data.path, source: data.source!, detail })}
-                detailLabel="What should change?"
-                placeholder="Describe the revision you want"
-                onClose={() => setRevisionFallbackOpen(false)}
-              />
-            )}
           </>
         )}
       </main>
