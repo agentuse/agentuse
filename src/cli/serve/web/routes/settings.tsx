@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
+import { useLocation } from 'preact-iso';
 import { ThemeToggle } from '../components/theme-toggle';
 import { useTitle } from '../hooks/use-title';
 import { pageTitle, brandName } from '../lib/brand';
@@ -81,12 +82,21 @@ export default function Settings() {
   const homeSections = useHomeSections();
   const [clearing, setClearing] = useState(false);
   const [activeTab, setActiveTab] = useState<SettingsTab>(() => settingsTabFromSearch(location.search));
+  // A `?provider=` link (from the Plugins tab) opens Providers with that row expanded.
+  const [providerParam, setProviderParam] = useState(() => new URLSearchParams(location.search).get('provider') ?? '');
+  const routed = useLocation();
 
+  // Back/forward, and in-app links routed by preact-iso, both change the query
+  // without remounting this route, so the tab follows the URL either way.
   useEffect(() => {
-    const syncTab = () => setActiveTab(settingsTabFromSearch(location.search));
-    addEventListener('popstate', syncTab);
-    return () => removeEventListener('popstate', syncTab);
-  }, []);
+    const sync = () => {
+      setActiveTab(settingsTabFromSearch(location.search));
+      setProviderParam(new URLSearchParams(location.search).get('provider') ?? '');
+    };
+    sync();
+    addEventListener('popstate', sync);
+    return () => removeEventListener('popstate', sync);
+  }, [routed.url]);
 
   const selectTab = (tab: SettingsTab) => {
     setActiveTab(tab);
@@ -143,6 +153,11 @@ export default function Settings() {
         </header>
 
         <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+          <span
+            class="settings-tab-thumb"
+            aria-hidden="true"
+            style={{ transform: `translateX(calc(${SETTINGS_TABS.findIndex((tab) => tab.id === activeTab)} * (100% + 4px)))` }}
+          />
           {SETTINGS_TABS.map((tab, index) => (
             <button
               key={tab.id}
@@ -158,8 +173,12 @@ export default function Settings() {
           ))}
         </div>
 
-        <div class="settings-tab-panel" id={`settings-panel-${activeTab}`} role="tabpanel" aria-labelledby={`settings-tab-${activeTab}`}>
-          {(activeTab === 'providers' || activeTab === 'plugins') && <ProviderSettingsGroup key={activeTab} section={activeTab} />}
+        <div class="settings-tab-panel" key={activeTab} id={`settings-panel-${activeTab}`} role="tabpanel" aria-labelledby={`settings-tab-${activeTab}`}>
+          {(activeTab === 'providers' || activeTab === 'plugins') && <ProviderSettingsGroup
+            key={activeTab}
+            section={activeTab}
+            {...(activeTab === 'providers' && providerParam ? { initialExpanded: providerParam } : {})}
+          />}
           {activeTab === 'projects' && <ProjectsSettingsGroup />}
           {activeTab === 'general' && (
             <>
