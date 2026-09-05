@@ -61,7 +61,7 @@ describe('provider status verification', () => {
     expect(status.configured).toBe(false);
     expect(status.health?.state).toBe('reconnect_required');
     expect(status.checkPending).toBeUndefined();
-    expect(providerHealthLabel(status)).toBe('Reconnect required');
+    expect(providerHealthLabel(status)).toBe('Sign-in required');
     await applyConnectionHealth(row(), [provider], { force: true });
     await expect(resolveProviderAuth(provider)).rejects.toThrow('Reconnect');
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -95,7 +95,7 @@ describe('provider status verification', () => {
     await AuthStorage.setPluginCredential(provider.id, 'subscription', { ...expired, expires: Date.now() + 3600_000 });
     const status = await applyConnectionHealth(row(), [provider], {});
     expect(status.health?.state).toBe('configured');
-    expect(providerHealthLabel(status)).toBe('Configured');
+    expect(providerHealthLabel(status)).toBe('Not checked');
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

@@ -21,7 +21,7 @@ import {
   startProviderOAuth,
 } from '../src/auth/provider-setup';
 import { AuthStorage } from '../src/auth/storage';
-import { defaultProviderSetupSelection, hasConfiguredProvider, providerSetupOptions } from '../src/cli/serve/web/components/provider-setup';
+import { defaultProviderSetupSelection, hasConfiguredProvider, missingProviderMethods, providerSetupOptions } from '../src/cli/serve/web/components/provider-setup';
 import { resetProviderPluginCache } from '../src/plugin/provider-runtime';
 
 const ENV_KEYS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'OPENCODE_GO_API_KEY'];
@@ -247,6 +247,7 @@ describe('Dashboard provider setup service', () => {
         ['opencode-go', 'Built in'],
         ['custom', 'Built in'],
         ['plugin:claude-code-subscription', 'Community plugins'],
+        ['plugin:advanced', 'Advanced'],
       ]);
 
     const withInstalledPlugin = {
@@ -266,6 +267,30 @@ describe('Dashboard provider setup service', () => {
       .toEqual(['anthropic', 'plugin:claude-code-subscription']);
     expect(providerSetupOptions(withInstalledPlugin, false, 'plugins').map((item) => item.value))
       .toEqual(['plugin:advanced']);
+  });
+
+  it('offers only missing supported connection methods without blocking plugin installation', async () => {
+    const payload = { success: true as const, ...await providerSetupSnapshot() };
+    payload.status.providers = [
+      { id: 'openrouter', name: 'OpenRouter', configured: true, sources: [{ kind: 'api_key', name: 'Stored API key', stored: true, active: true, priority: 3 }] },
+      { id: 'opencode-go', name: 'OpenCode Go', configured: true, sources: [{ kind: 'environment', name: 'OPENCODE_GO_API_KEY', stored: false, active: true, priority: 2 }] },
+      { id: 'openai', name: 'OpenAI', configured: true, sources: [{ kind: 'oauth', name: 'ChatGPT', stored: true, active: true, priority: 1 }] },
+    ];
+    let missing = missingProviderMethods(payload);
+    expect(providerSetupOptions(missing, false, 'provider', 'openrouter')).toEqual([]);
+    expect(providerSetupOptions(missing, false, 'provider', 'opencode-go')).toEqual([]);
+    expect(missing.catalog.find((p) => p.id === 'openai')?.authMethods).toEqual(['api_key']);
+    payload.status.providers.find((p) => p.id === 'openai')!.sources.push({ kind: 'api_key', name: 'Stored API key', stored: true, active: false, priority: 3 });
+    missing = missingProviderMethods(payload);
+    expect(providerSetupOptions(missing, false, 'provider', 'openai')).toEqual([]);
+    expect(providerSetupOptions(missing, false, 'provider', 'anthropic').map((p) => p.value)).toContain('plugin:claude-code-subscription');
+    const plugin = payload.pluginRegistry[0]!;
+    payload.status.providers.push({ id: plugin.provider, name: plugin.name, configured: true, sources: [{ kind: 'oauth', name: 'Subscription', stored: true, active: true, priority: 1, plugin: { name: plugin.packageName, authMethodId: plugin.authMethodId } }] });
+    expect(providerSetupOptions(missingProviderMethods(payload), false, 'provider', plugin.provider).map((p) => p.value)).not.toContain(`plugin:${plugin.id}`);
+    // Add connection still exposes installation independently of method maintenance.
+    expect(providerSetupOptions(payload, true).map((p) => p.value)).toContain(`plugin:${plugin.id}`);
+    payload.status.providers.find((p) => p.id === 'openrouter')!.sources = [];
+    expect(missingProviderMethods(payload).catalog.find((p) => p.id === 'openrouter')?.authMethods).toEqual(['api_key']);
   });
 
   it('keeps built-in OpenAI OAuth verifier state server-side', async () => {

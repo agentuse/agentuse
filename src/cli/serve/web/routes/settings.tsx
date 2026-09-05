@@ -60,17 +60,18 @@ function BrowserNotificationsGroup() {
   );
 }
 
-type SettingsTab = 'general' | 'projects' | 'providers';
+type SettingsTab = 'general' | 'projects' | 'providers' | 'plugins';
 
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: 'general', label: 'General' },
   { id: 'projects', label: 'Projects' },
   { id: 'providers', label: 'Providers' },
+  { id: 'plugins', label: 'Plugins' },
 ];
 
 function settingsTabFromSearch(search: string): SettingsTab {
   const candidate = new URLSearchParams(search).get('tab');
-  return candidate === 'projects' || candidate === 'providers' ? candidate : 'general';
+  return candidate === 'projects' || candidate === 'providers' || candidate === 'plugins' ? candidate : 'general';
 }
 
 export default function Settings() {
@@ -158,7 +159,7 @@ export default function Settings() {
         </div>
 
         <div class="settings-tab-panel" id={`settings-panel-${activeTab}`} role="tabpanel" aria-labelledby={`settings-tab-${activeTab}`}>
-          {activeTab === 'providers' && <ProviderSettingsGroup />}
+          {(activeTab === 'providers' || activeTab === 'plugins') && <ProviderSettingsGroup key={activeTab} section={activeTab} />}
           {activeTab === 'projects' && <ProjectsSettingsGroup />}
           {activeTab === 'general' && (
             <>
