@@ -9469,9 +9469,9 @@ main[tabindex="-1"]:focus,
 .draft-header {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   flex-shrink: 0;
-  padding: 14px 24px 12px;
+  padding: 12px 24px;
   border-bottom: 1px solid var(--line);
 }
 .draft-header-row {
@@ -9481,7 +9481,13 @@ main[tabindex="-1"]:focus,
   gap: 16px;
   flex-wrap: wrap;
 }
-.draft-header-row.is-meta { align-items: flex-end; gap: 10px 20px; }
+.draft-header-row.is-meta {
+  align-items: baseline;
+  gap: 6px 20px;
+  justify-content: space-between;
+}
+.draft-header-row.is-meta .draft-meta { flex: 1 1 auto; }
+.draft-header-row.is-meta .draft-usage { margin-left: auto; }
 .draft-identity {
   display: flex;
   align-items: center;
@@ -9515,11 +9521,11 @@ main[tabindex="-1"]:focus,
 .draft-meta {
   display: flex;
   align-items: baseline;
-  gap: 6px 18px;
+  gap: 4px 16px;
   flex-wrap: wrap;
   min-width: 0;
   color: var(--muted-3);
-  font-size: var(--font-size-caption);
+  font-size: var(--font-size-micro);
 }
 .draft-meta-key {
   color: var(--muted-2);
@@ -9556,21 +9562,6 @@ main[tabindex="-1"]:focus,
   line-height: var(--lh-snug);
 }
 .draft-waiting a { color: inherit; }
-
-/* The token strip is a row-2 citizen here, so it drops the raised card and sits
-   inline at the right of the facts. */
-.page-draft .meta.meta-context.is-compact {
-  margin: 0;
-  gap: 10px 20px;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: none;
-  box-shadow: none;
-  flex-shrink: 0;
-}
-.page-draft .meta-context.is-compact .token-cell .value { font-size: var(--font-size-caption); }
-.page-draft .meta-context.is-compact .token-cell:first-child { min-width: 112px; }
 
 /* The one place tabs should look like tabs. */
 .draft-tabs {
@@ -9826,6 +9817,44 @@ main[tabindex="-1"]:focus,
   .draft-testrun,
   .draft-composer { padding-inline: 16px; }
   .draft-error { padding-inline: 16px; }
+}
+
+/* Links on this page follow the app's inline-link rule, the same one the
+   session page uses. Stated page-wide so no anchor here can ever fall back to
+   the browser's default blue. */
+.page-draft a { color: var(--cyan); text-decoration: none; border-bottom: 1px dotted var(--cyan-border); }
+.page-draft a:hover { opacity: 0.8; }
+.page-draft .draft-quiet-link,
+.page-draft .draft-evidence-row,
+.page-draft .draft-waiting a { border-bottom: 0; }
+.page-draft .draft-quiet-link { color: var(--muted); }
+.page-draft .draft-quiet-link:hover { color: var(--cyan); opacity: 1; }
+.page-draft .draft-waiting a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+
+/* Usage as one inline line: a gauge, then abbreviated figures. The exact
+   numbers are on the line's tooltip, so nothing is lost by shortening them. */
+.draft-usage {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  color: var(--muted-3);
+  font-family: var(--mono);
+  font-size: var(--font-size-caption);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.draft-usage-sep { color: var(--muted-2); }
+.draft-usage-gauge {
+  width: 48px;
+  margin: 0;
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  /* Cost and context are a desk concern; a phone header should be the file,
+     its state, and the facts. */
+  .draft-usage { display: none; }
 }
 
 /* ── Draft panel: the height chain ────────────────────────────────────────────

@@ -10,7 +10,7 @@ import {
 import { useSessionLog } from '../hooks/use-session-log';
 import { useTitle } from '../hooks/use-title';
 import { Loading } from '../components/loading';
-import { TokenUsageStrip } from '../components/token-usage-strip';
+import { DraftUsageLine } from '../components/token-usage-strip';
 import {
   DraftComposer,
   DraftPanel,
@@ -185,7 +185,7 @@ export default function AgentRevision() {
       <span>
         <span class="draft-meta-key">From run</span>{' '}
         {revision.originHref
-          ? <a href={revision.originHref}>{`${revision.originSessionId.slice(0, 8)}…`}</a>
+          ? <a class="draft-link" href={revision.originHref}>{`${revision.originSessionId.slice(0, 8)}…`}</a>
           : `${revision.originSessionId.slice(0, 8)}…`}
       </span>
       <span><span class="draft-meta-key">Agent</span> {revision.targetAgentName}</span>
@@ -233,14 +233,12 @@ export default function AgentRevision() {
       </>}
       actions={actions}
       meta={meta}
-      tokens={<TokenUsageStrip
+      tokens={<DraftUsageLine
         tokenUsage={reviserSession.approval?.tokenUsage}
         estimatedCost={pricing && reviserSession.approval
           ? pricing.estimateSessionCostUsd(reviserSession.approval.model, reviserSession.approval.tokenUsage)
           : undefined}
         formatUsd={pricing?.formatUsd}
-        compact
-        ariaLabel="Revision session usage"
       />}
       notice={reviserSession.status === 'waiting'
         ? <>The reviser needs your answer before it can propose a change. <a href={reviserSessionHref}>Answer it in the session</a></>

@@ -1,4 +1,5 @@
 import type { ApprovalPageInfo } from '../../types';
+import { formatTokens } from '../lib/format';
 import { useCountUp } from '../hooks/use-count-up';
 
 const tokenFmt = new Intl.NumberFormat('en-US');
@@ -87,12 +88,66 @@ export function CountUpValue(props: { num: number; format: (n: number) => string
   return <>{props.format(display)}</>;
 }
 
+/**
+ * The same usage numbers as one inline line, for a header that has a row to
+ * spare rather than a column. Stacked label/value cells cost far more vertical
+ * space than the numbers are worth when they sit beside a line of facts.
+ */
+export function DraftUsageLine(props: {
+  tokenUsage: ApprovalPageInfo['tokenUsage'] | undefined;
+  estimatedCost?: number | undefined;
+  /** Presence means the pricing registry has loaded. The line prints two
+   *  decimals rather than the session page's finer scale, because a header
+   *  reads as a glance and $0.2503 is not a glanceable number. */
+  formatUsd?: ((value: number) => string) | undefined;
+}) {
+  const usage = props.tokenUsage;
+  if (!usage) return null;
+
+  const context = usage.context;
+  const hasLimit = typeof context?.contextLimit === 'number' && context.contextLimit > 0;
+  const pctLeft = context && hasLimit ? Math.max(0, 100 - context.usagePercentage) : undefined;
+  const cached = Math.max(0, usage.cachedInput);
+  const input = Math.max(0, usage.input - cached);
+  const output = Math.max(0, usage.output);
+  if (pctLeft === undefined && input === 0 && output === 0 && cached === 0) return null;
+
+  // The abbreviations are the point of the line; the exact figures live on hover
+  // so precision is never lost, only moved.
+  const title = [
+    context ? `context used ${formatTokenCount(context.activeTokens)}${hasLimit ? ` / ${formatTokenCount(context.contextLimit)}` : ''}` : undefined,
+    `input ${formatTokenCount(input)}`,
+    `output ${formatTokenCount(output)}`,
+    cached > 0 ? `cached ${formatTokenCount(cached)}` : undefined,
+  ].filter(Boolean).join(' · ');
+
+  const sep = <span class="draft-usage-sep" aria-hidden="true">·</span>;
+  return (
+    <span class="draft-usage" title={title} aria-label={title}>
+      {pctLeft !== undefined && (
+        <>
+          <span class="token-gauge draft-usage-gauge" role="img" aria-label={`${pctLeft.toFixed(1)}% of the context window left`}>
+            <span class={`token-gauge-fill${gaugeTone(pctLeft)}`} style={{ width: `${pctLeft}%` }} />
+          </span>
+          <span><CountUpValue num={pctLeft} format={(n) => `${Math.round(n)}%`} /> ctx</span>
+        </>
+      )}
+      {pctLeft !== undefined && sep}
+      <span>in <CountUpValue num={input} format={formatTokens} /></span>
+      {sep}
+      <span>out <CountUpValue num={output} format={formatTokens} /></span>
+      {cached > 0 && <>{sep}<span>cached <CountUpValue num={cached} format={(n) => `+${formatTokens(Math.round(n))}`} /></span></>}
+      {props.estimatedCost !== undefined && props.formatUsd && (
+        <>{sep}<span><CountUpValue num={props.estimatedCost} format={(n) => `$${n.toFixed(2)}`} /></span></>
+      )}
+    </span>
+  );
+}
+
 export function TokenUsageStrip(props: {
   tokenUsage: ApprovalPageInfo['tokenUsage'] | undefined;
   estimatedCost?: number | undefined;
   formatUsd?: ((value: number) => string) | undefined;
-  /** Denser variant for a side column; the session header uses the default. */
-  compact?: boolean;
   ariaLabel?: string;
   children?: preact.ComponentChildren;
 }) {
@@ -100,7 +155,7 @@ export function TokenUsageStrip(props: {
   if (items.length === 0 && props.estimatedCost === undefined) return null;
   return (
     <div
-      class={`meta meta-context${props.compact ? ' is-compact' : ''}`}
+      class="meta meta-context"
       {...(props.ariaLabel ? { 'aria-label': props.ariaLabel } : {})}
     >
       {items.map((item) => (

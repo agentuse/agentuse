@@ -11,7 +11,7 @@ import {
 import { useSessionLog } from '../hooks/use-session-log';
 import { useTitle } from '../hooks/use-title';
 import { Loading } from '../components/loading';
-import { TokenUsageStrip } from '../components/token-usage-strip';
+import { DraftUsageLine } from '../components/token-usage-strip';
 import {
   DraftComposer,
   DraftPanel,
@@ -209,14 +209,12 @@ export default function AgentDraft() {
         </>
       )}
       meta={meta}
-      tokens={<TokenUsageStrip
+      tokens={<DraftUsageLine
         tokenUsage={creatorSession.approval?.tokenUsage}
         estimatedCost={pricing && creatorSession.approval
           ? pricing.estimateSessionCostUsd(creatorSession.approval.model, creatorSession.approval.tokenUsage)
           : undefined}
         formatUsd={pricing?.formatUsd}
-        compact
-        ariaLabel="Creator session usage"
       />}
       diffBadge={changeCounts
         ? <><span class="draft-added">+{changeCounts.added}</span> <span class="draft-removed">−{changeCounts.removed}</span></>
