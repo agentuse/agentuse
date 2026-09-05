@@ -187,7 +187,17 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
           )
         : undefined;
       const candidateTransportSupport = await Promise.all(
-        modelCandidates.map((model) => resolveMediaToolResultSupport(model))
+        modelCandidates.map(async (model) => {
+          try {
+            return await resolveMediaToolResultSupport(model);
+          } catch (error) {
+            // An unavailable fallback provider must not remove unrelated tools.
+            // Unknown transport support disables binary media for the shared
+            // toolset, preserving the intersection across fallback candidates.
+            logger.warn(`${logPrefix}Could not determine media tool support for ${model}; disabling binary media: ${error instanceof Error ? error.message : String(error)}`);
+            return { image: false, pdf: false };
+          }
+        })
       );
       const mediaToolResultSupport = {
         image: candidateTransportSupport.every((support) => support.image),
