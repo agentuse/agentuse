@@ -10011,6 +10011,88 @@ main[tabindex="-1"]:focus,
   .draft-usage { display: none; }
 }
 
+/* Skill pool on the New agent form: shown before the brief is written, because
+   a thin catalog usually means a thin agent. */
+.agent-create-skills {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.agent-create-skills-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.agent-create-skills-head span {
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.agent-create-skills-toggle {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--cyan);
+  font-family: inherit;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+.agent-create-skills-counts { display: flex; gap: 8px; flex-wrap: wrap; font-size: var(--font-size-caption); }
+.agent-create-skills-counts span {
+  padding: 3px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--muted-3);
+}
+.agent-create-skills-counts .is-project { border-color: var(--green-border); background: var(--green-soft); color: var(--fg); }
+.agent-create-skills-counts .is-ambiguous { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
+.agent-create-skills-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 14px;
+  color: var(--muted-3);
+  font-size: var(--font-size-caption);
+}
+.agent-create-skills-list code { color: var(--fg); font-family: var(--mono); font-size: var(--font-size-micro); }
+.agent-create-skills-list .is-ambiguous { color: var(--amber); }
+.agent-create-skills-list .is-more { color: var(--muted); }
+.agent-create-skills-note {
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  line-height: var(--lh-snug);
+}
+
+/* Idea cards cite the files they came from, and the pre-scan screen states the
+   skill pool the scan will weigh. */
+.agent-suggestion-evidence {
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  line-height: var(--lh-snug);
+}
+.discovery-skills {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.discovery-skills > span {
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
 /* ── Draft panel: the height chain ────────────────────────────────────────────
    Set by DraftPanel while it is mounted, and only then. Every box between the
    document root and the page becomes a height-constrained flex column, so the
