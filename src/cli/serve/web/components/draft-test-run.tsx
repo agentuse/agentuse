@@ -17,6 +17,8 @@ export function DraftTestRun(props: {
   session: { sessionId: string; sessionToken?: string; draftIndex: number } | null;
   runs: AgentDraftTestRunRecord[];
   busy: boolean;
+  /** Why the last attempt to start a run failed, e.g. no mock model configured. */
+  startError?: string | null | undefined;
   onRun: () => void;
   /** Called once when the streamed run reaches a terminal status, so the page
    *  can re-read the record it stopped polling for. */
@@ -63,7 +65,13 @@ export function DraftTestRun(props: {
   if (!sessionId) {
     return (
       <div class="draft-testrun is-empty">
-        <p>Run this draft once with every tool mocked and approvals auto-resolved. Nothing is sent and no store is written.</p>
+        <p>
+          Runs this draft the way <code>agentuse test</code> does. An agent that fences commands
+          behind <code>tools.bash.gated</code> has only those faked, so reads and stores run for real
+          against this project; an agent with no fence has every tool faked. Stores stay isolated
+          either way, approval gates resolve themselves, and the session is marked mock.
+        </p>
+        {props.startError && <p class="draft-testrun-notice" role="alert">{props.startError}</p>}
         <button type="button" class="draft-primary" disabled={props.busy} aria-busy={props.busy} onClick={props.onRun}>
           {props.busy ? 'Starting…' : 'Run once as a test'}
         </button>

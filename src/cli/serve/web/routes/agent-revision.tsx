@@ -47,6 +47,9 @@ export default function AgentRevision() {
   // The operator picked a tab; stop steering it for them.
   const [tabPinned, setTabPinned] = useState(false);
   const [testSession, setTestSession] = useState<{ sessionId: string; sessionToken?: string; draftIndex: number } | null>(null);
+  // A failed start belongs beside the Run button, not in the page-level error
+  // strip: it is about this tab's action and its fix is usually a setting.
+  const [testError, setTestError] = useState<string | null>(null);
   const [pricing, setPricing] = useState<typeof import('../lib/pricing') | null>(null);
 
   useTitle(pageTitle('Agents', revision?.targetAgentName ?? 'Agent', 'Revision'));
@@ -147,13 +150,14 @@ export default function AgentRevision() {
   const runTest = async () => {
     setBusy('test');
     setActionError(null);
+    setTestError(null);
     try {
       const payload = await startAgentRevisionTestRun(sessionId, project);
       setTestSession(payload.testRun);
       setTabPinned(true);
       setTab('test');
     } catch (caught) {
-      setActionError((caught as Error).message || 'Could not start a test run.');
+      setTestError((caught as Error).message || 'Could not start a test run.');
     } finally {
       setBusy(null);
     }
@@ -262,6 +266,7 @@ export default function AgentRevision() {
         session={testSession}
         runs={[]}
         busy={busy === 'test'}
+        startError={testError}
         onRun={() => void runTest()}
       />}
       exchange={<DraftThread

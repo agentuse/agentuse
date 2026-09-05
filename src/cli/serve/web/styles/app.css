@@ -9987,3 +9987,21 @@ html[data-page="draft-panel"] .app-route {
   margin-top: 4px;
   font-size: var(--font-size-caption);
 }
+
+/* A test run that could not start says why beside the button that starts it. */
+.draft-testrun-notice {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--amber-border);
+  border-radius: 8px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: var(--font-size-caption);
+  line-height: var(--lh-snug);
+  max-width: 70ch;
+}
+.draft-testrun.is-empty code {
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+  color: var(--fg);
+}

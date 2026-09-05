@@ -150,6 +150,8 @@ import {
   type ProjectDiscoveryResult,
 } from "../agents/discover";
 import { loadBuiltinSkillSource } from "../skill/builtin";
+import { configuredMockModel, mockRunEnv, resolveMockScope } from "../runner/mock-tools";
+import { parseAgentContent } from "../parser";
 import {
   buildAgentCreatorSessionAgent,
   buildProjectDiscoverySessionAgent,
@@ -4093,15 +4095,31 @@ export function createServeCommand(): Command {
       ): Promise<{ sessionId: string; draftIndex: number; sessionToken?: string }> => {
         const draft = candidate;
         const sessionId = ulid();
-        // Mock mode fabricates every tool result through this model, so the
-        // configured cheap model wins over the creator's own: a test run should
-        // cost a fraction of the design session, not the same again.
+        // Mock fires an LLM call per fabricated tool result, so it needs a cheap
+        // model the operator has named. Falling back to the agent's own premium
+        // model is exactly what `agentuse test` refuses to do, and a test run
+        // must not be the one path that quietly does it.
+        const mockModel = configuredMockModel();
+        if (!mockModel) {
+          throw new Error(
+            'Test runs need a mock model. Set AGENTUSE_MOCK_MODEL to a cheap, reachable model '
+            + 'such as anthropic:claude-haiku-4-5, in the shell or in the env block of the AgentUse config.',
+          );
+        }
+        // The same adaptive scope `agentuse test` uses: an agent that fences
+        // commands behind tools.bash.gated gets those faked and everything else
+        // real, so the run is grounded in the operator's actual project.
+        let scope: 'all' | 'gated' = 'all';
+        try {
+          scope = resolveMockScope(parseAgentContent(draft.source, draft.fileName).config);
+        } catch {
+          // An unparseable draft cannot reach here through submit_agent_source,
+          // but if it ever did the run pipeline reports it better than we can.
+        }
         const worker = new AgentWorker({
           AGENTUSE_PROJECT_ID: project.id,
           AGENTUSE_RESUME_PUBLIC_URL: effectivePublicUrl,
-          AGENTUSE_MOCK_MODE: '1',
-          AGENTUSE_MOCK_MODEL: process.env.AGENTUSE_MOCK_MODEL || draft.model,
-          AGENTUSE_MOCK_APPROVAL: 'approve',
+          ...mockRunEnv({ scope, model: mockModel }),
         });
         await worker.spawn();
         const prepared = await worker.createPreparingSession({

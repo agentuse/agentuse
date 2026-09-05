@@ -40,6 +40,9 @@ export default function AgentDraft() {
   // The operator picked a tab; stop steering it for them.
   const [tabPinned, setTabPinned] = useState(false);
   const [testSession, setTestSession] = useState<{ sessionId: string; sessionToken?: string; draftIndex: number } | null>(null);
+  // A failed start belongs beside the Run button, not in the page-level error
+  // strip: it is about this tab's action and its fix is usually a setting.
+  const [testError, setTestError] = useState<string | null>(null);
   // The models.dev pricing registry is large generated data, so it loads on
   // demand exactly as the session page does.
   const [pricing, setPricing] = useState<typeof import('../lib/pricing') | null>(null);
@@ -155,6 +158,7 @@ export default function AgentDraft() {
   const runTest = async () => {
     setBusy('test');
     setActionError(null);
+    setTestError(null);
     try {
       const payload = await startAgentDraftTestRun(jobId, project);
       setTestSession(payload.testRun);
@@ -162,7 +166,7 @@ export default function AgentDraft() {
       setTab('test');
       await refresh();
     } catch (caught) {
-      setActionError((caught as Error).message || 'Could not start a test run.');
+      setTestError((caught as Error).message || 'Could not start a test run.');
     } finally {
       setBusy(null);
     }
@@ -232,6 +236,7 @@ export default function AgentDraft() {
         session={testSession}
         runs={draft.testRuns}
         busy={busy === 'test'}
+        startError={testError}
         onRun={() => void runTest()}
         onFinished={() => void refresh()}
       />}

@@ -40,6 +40,46 @@ export function mockScope(): 'all' | 'gated' {
 }
 
 /**
+ * The scope `agentuse test` picks when the operator does not name one, and the
+ * only place that rule lives.
+ *
+ * An agent that fences commands behind `tools.bash.gated` has already told us
+ * which calls are the irreversible ones. Faking only those leaves reads, stores,
+ * and everything else running for real, so the run grounds itself in the actual
+ * project instead of a model's guess at it. An agent with no fence has nothing
+ * to isolate, so everything is faked.
+ */
+export function resolveMockScope(config: {
+  tools?: { bash?: { gated?: readonly unknown[] | undefined } | undefined } | undefined;
+}): 'all' | 'gated' {
+  return (config.tools?.bash?.gated?.length ?? 0) > 0 ? 'gated' : 'all';
+}
+
+/**
+ * The environment a mock run needs, so every caller starts one the same way.
+ * `agentuse test` sets these on its own process; serve layers them onto the
+ * worker it spawns for a draft's test run.
+ */
+export function mockRunEnv(options: {
+  scope: 'all' | 'gated';
+  model: string;
+  /** Defaults to approve: a test run is unattended by definition. */
+  approval?: string;
+}): Record<string, string> {
+  return {
+    AGENTUSE_MOCK_MODE: '1',
+    AGENTUSE_MOCK_SCOPE: options.scope,
+    AGENTUSE_MOCK_MODEL: options.model,
+    AGENTUSE_MOCK_APPROVAL: options.approval ?? 'approve',
+  };
+}
+
+/** The configured mock model, or undefined when the operator has not named one. */
+export function configuredMockModel(): string | undefined {
+  return process.env.AGENTUSE_MOCK_MODEL || undefined;
+}
+
+/**
  * Model used to generate mock outputs, from the required `--mock-model` /
  * `AGENTUSE_MOCK_MODEL`. The CLI validates this up front; this runtime guard
  * covers any env-only path (e.g. a subprocess that set `AGENTUSE_MOCK_MODE`

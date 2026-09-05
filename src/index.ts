@@ -4,7 +4,7 @@ import { connectMCP } from './mcp';
 import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, reopenSuspendedGate, reconcileOrphanedSessions, describeErrorPart, describeLogPart, classifyRunResult, executionOutcomeFields, runResultJson, workerRunResponse, type PreparedAgentExecution } from './runner';
 import { describeLearningOutcome } from './learning';
 import { isApprovalEnabled } from './runner/approval';
-import { isMockMode, resolveMockApprovalDecision } from './runner/mock-tools';
+import { isMockMode, resolveMockApprovalDecision, resolveMockScope } from './runner/mock-tools';
 import { extractToolIntent, withoutToolIntent } from './runner/tool-intent';
 import { LIVE_OUTPUT_METADATA_KEY } from './tools/types';
 import { composeSubagentResult, formatOutcomeLine, normalizeHeadline, stripLeadingOutcomeLine, REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL } from './tools/report-outcome';
@@ -297,14 +297,13 @@ program
       process.exit(1);
     }
     if (!scope) {
-      // Adaptive default: gated scope when the agent fences off commands, so
-      // the run grounds itself in real state; full mock otherwise. Parse
-      // failures fall back to "all" and surface properly inside the run.
+      // Adaptive default, decided by the one shared rule. Parse failures fall
+      // back to "all" and surface properly inside the run.
       scope = 'all';
       try {
         const probePath = options.directory ? resolve(options.directory, file) : file;
         const probe = await parseAgent(probePath);
-        if ((probe.config.tools?.bash?.gated?.length ?? 0) > 0) scope = 'gated';
+        scope = resolveMockScope(probe.config);
       } catch { /* remote URL or invalid file: let the run pipeline report it */ }
     }
     const { scope: _scope, approval, ...passthrough } = options;

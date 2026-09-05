@@ -51,6 +51,34 @@ describe('internal AgentUse architecture', () => {
     expect(saveRoute).toContain('finishAgentCreation');
   });
 
+  it('runs a draft test the way `agentuse test` does, from one shared rule', async () => {
+    const [serve, cli, mockTools] = await Promise.all([
+      source('cli/serve.ts'),
+      source('index.ts'),
+      source('runner/mock-tools.ts'),
+    ]);
+
+    // The scope rule lives once. A second copy in serve is what silently ran
+    // every draft test at scope "all", faking the reads that were supposed to
+    // ground it.
+    expect(mockTools).toContain('export function resolveMockScope(');
+    expect(serve).toContain('resolveMockScope(');
+    expect(cli).toContain('resolveMockScope(');
+    // Scoped to the test-run helper: an unrelated metadata builder elsewhere in
+    // serve legitimately reads the same field.
+    const mockRunner = serve.slice(serve.indexOf('const startMockTestRun'), serve.indexOf('const recoverAgentCreationJob'));
+    expect(mockRunner).not.toContain('bash?.gated');
+
+    // The env is assembled by the shared helper, never by hand: a hand-rolled
+    // copy omitted AGENTUSE_MOCK_SCOPE entirely.
+    expect(serve).toContain('mockRunEnv({ scope, model: mockModel })');
+    expect(serve).not.toContain("AGENTUSE_MOCK_MODE: '1'");
+
+    // No silent fallback onto the agent's own premium model.
+    expect(serve).toContain('configuredMockModel()');
+    expect(serve).not.toContain('AGENTUSE_MOCK_MODEL: process.env.AGENTUSE_MOCK_MODEL || draft.model');
+  });
+
   it('routes New Agent and project ideas through persisted workers', async () => {
     const serve = await source('cli/serve.ts');
     const newAgentStart = serve.indexOf('routePath === "/agents" && req.method === "POST"');

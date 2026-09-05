@@ -366,3 +366,46 @@ describe("maybeMockAwaitHuman", () => {
     expect(real).toHaveBeenCalledTimes(0);
   });
 });
+
+describe("shared mock run setup", () => {
+  const priorScope = process.env.AGENTUSE_MOCK_SCOPE;
+  const priorModel = process.env.AGENTUSE_MOCK_MODEL;
+  afterEach(() => {
+    if (priorScope === undefined) delete process.env.AGENTUSE_MOCK_SCOPE;
+    else process.env.AGENTUSE_MOCK_SCOPE = priorScope;
+    if (priorModel === undefined) delete process.env.AGENTUSE_MOCK_MODEL;
+    else process.env.AGENTUSE_MOCK_MODEL = priorModel;
+  });
+
+  it("picks gated scope when the agent fences commands", () => {
+    // The fence is the author saying which calls are irreversible, so those are
+    // the only ones worth faking; everything else grounds the run in real state.
+    expect(mod.resolveMockScope({ tools: { bash: { gated: ["gh pr create *"] } } })).toBe("gated");
+  });
+
+  it("picks all scope when there is nothing fenced", () => {
+    expect(mod.resolveMockScope({ tools: { bash: { gated: [] } } })).toBe("all");
+    expect(mod.resolveMockScope({ tools: { bash: {} } })).toBe("all");
+    expect(mod.resolveMockScope({ tools: {} })).toBe("all");
+    expect(mod.resolveMockScope({})).toBe("all");
+  });
+
+  it("builds the env a mock run needs, defaulting the gate to approve", () => {
+    // A missing AGENTUSE_MOCK_SCOPE is what silently turned a grounded run into
+    // a fully fabricated one, so the scope is always written out.
+    expect(mod.mockRunEnv({ scope: "gated", model: "anthropic:claude-haiku-4-5" })).toEqual({
+      AGENTUSE_MOCK_MODE: "1",
+      AGENTUSE_MOCK_SCOPE: "gated",
+      AGENTUSE_MOCK_MODEL: "anthropic:claude-haiku-4-5",
+      AGENTUSE_MOCK_APPROVAL: "approve",
+    });
+    expect(mod.mockRunEnv({ scope: "all", model: "m", approval: "reject" }).AGENTUSE_MOCK_APPROVAL).toBe("reject");
+  });
+
+  it("reports the configured mock model, or nothing when none is set", () => {
+    delete process.env.AGENTUSE_MOCK_MODEL;
+    expect(mod.configuredMockModel()).toBeUndefined();
+    process.env.AGENTUSE_MOCK_MODEL = "openai:gpt-5.4-nano";
+    expect(mod.configuredMockModel()).toBe("openai:gpt-5.4-nano");
+  });
+});
