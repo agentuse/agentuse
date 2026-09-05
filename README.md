@@ -4,13 +4,13 @@
   <img alt="AgentUse" src="./static/agentuse-logo.png" width="100%">
 </picture>
 
-<p align="center"><strong>OPEN-SOURCE AGENT RUNTIME</strong></p>
+<p align="center"><strong>OPEN-SOURCE AI AGENT RUNTIME</strong></p>
 
-<h1 align="center">Own the agents doing your company’s work.</h1>
+<h1 align="center">AI agents for work your team does on repeat.</h1>
 
 <p align="center">
-  Define agents in Markdown. Run them with Claude, OpenAI, or open models on infrastructure you control.<br>
-  Let them work autonomously. Put consequential actions behind human approval.
+  Build agents around your tools and processes.<br>
+  Run them in the background, review their results, and approve important actions.
 </p>
 
 <p align="center">
@@ -21,30 +21,106 @@
 </p>
 
 <p align="center">
+  <strong><a href="https://github.com/agentuse/agentuse/releases/latest">Download for Mac</a></strong> ·
   <a href="#quick-start">Quick start</a> ·
-  <a href="#define-the-agent-in-markdown">Define an agent</a> ·
-  <a href="#operate-agents-not-prompts">Operations</a> ·
+  <a href="#why-agentuse">Why AgentUse</a> ·
+  <a href="https://github.com/agentuse/agentuse/releases/latest">Release notes</a> ·
+  <a href="https://agentuse.io">Website</a> ·
   <a href="https://docs.agentuse.io">Documentation</a>
 </p>
 
-AgentUse provides the agent loop, tools, durable sessions, schedules, approvals,
-and operations dashboard. Your agents remain plain files in your repo: readable,
-reviewable, versionable, and easy to take elsewhere.
+AgentUse helps you build, run, and improve AI agents for recurring business
+work. Agents follow instructions saved in Markdown, use your tools, and pause
+at the approval points you define. Create an agent with Codex, Claude Code, or
+guided setup, then review its deliverables, schedules, and decisions from the
+dashboard.
 
-Managed platforms own the runtime. Frameworks make you build it. AgentUse gives
-you the runtime while keeping the agent under your control.
+Choose your model provider and how you run your agents: start with the Mac app,
+use the CLI and web dashboard on Windows or Linux, or deploy on your own
+infrastructure. The same readable agent files work across these environments.
+
+Use it for recurring research, reports, content preparation, and operational
+follow-ups. Start with one well-defined job, then add specialist agents and
+shared state as the process grows.
+
+## Why AgentUse?
+
+- **Hand off the whole process.** Save the instructions, tools, model, and
+  schedule together so you don't have to brief an assistant from scratch each
+  time. Guided setup can suggest recurring work from an existing project.
+- **Decide where human judgment belongs.** Let agents prepare the work, then
+  review the proposed action, approve it, reject it, or request changes. Use
+  gated shell commands when an action needs runtime-enforced approval.
+- **See what actually happened.** Open the output, artifacts, tool calls,
+  usage, and approval history in a durable session. Follow delegated work and
+  identify incomplete runs from the same dashboard.
+- **Improve from real runs.** Turn a session into a proposed agent revision,
+  inspect the source and capability changes, and apply it when you're ready.
+  Reviewer feedback can also become reusable guidance through learning.
+- **Keep your process adaptable.** Agent files live in your repository, ready
+  to review and change as your business evolves. Choose your model provider;
+  AgentUse supplies the execution loop, scheduling, and review tools.
+
+<p align="center">
+  <img
+    src="./static/readme/dashboard.webp"
+    alt="AgentUse dashboard showing agent health, pending approvals, recent failures, and result metrics"
+    width="900"
+  >
+</p>
 
 ## Quick start
 
-On macOS, download AgentUse from the
-[latest GitHub release](https://github.com/agentuse/agentuse/releases/latest),
-move it to Applications, and open it. The app includes the AgentUse runtime and
-guides you through Desktop setup before joining the same sample and first-agent
-flow as the Web UI. A separate Node.js or global CLI installation is not
-required.
+Use the Mac app, run the CLI with its web dashboard on Windows, Linux, or
+macOS, or host AgentUse on a server. Every option provides session history,
+artifacts, approvals, and agent revisions.
 
-For Terminal, Linux, WSL, or a server, set up your first project without
-installing AgentUse globally:
+### Choose how to run AgentUse
+
+**Mac app.**
+
+Get started with the bundled runtime, guided setup, and a dashboard available
+from the menu bar. Launch at login, keep agents running with the window closed,
+and receive native notifications for completed runs and pending approvals.
+Assign a global shortcut for quick access and choose when to install updates.
+No separate Node.js installation is required.
+
+**CLI + web dashboard (Windows, Linux, macOS).**
+
+Run AgentUse locally from the CLI and manage your agents in a browser. Guided
+browser setup, schedules, results, approvals, and agent revisions are available
+without the Mac app. Requires Node.js 22+.
+
+**Server hosting.**
+
+Run AgentUse on an always-on server for schedules and workflows that need to
+continue when your laptop is offline. Use the CLI or Docker, serve multiple
+projects from one daemon, and review runs and approvals through the web
+dashboard. The same agent files also run in CI/CD or through HTTP triggers.
+See the [self-hosting guide](https://docs.agentuse.io/guides/self-hosting).
+
+Scheduled work requires the host machine to be awake and the Mac app or
+AgentUse service to stay running.
+
+### Download AgentUse for Mac
+
+**Apple silicon. No separate Node.js or CLI installation required.**
+
+1. Download the DMG from the [latest release](https://github.com/agentuse/agentuse/releases/latest),
+   move **AgentUse** to Applications, and open it.
+2. Follow guided setup to create or connect a project, try the sample, and
+   connect your model provider.
+3. Create your first agent, test it, and enable its schedule when you're ready.
+4. Return to the app to review results and respond to approval requests.
+
+Launch at login and the bundled CLI launcher are optional setup choices. See
+[AgentUse for Mac](https://docs.agentuse.io/guides/macos-desktop) for shortcuts,
+notifications, and app settings.
+
+### Set up the CLI and web dashboard
+
+Requires **Node.js 22+**. On macOS, Windows, Linux, or a server, start guided setup
+without a global installation:
 
 ```bash
 npx -y agentuse@latest setup
@@ -72,10 +148,10 @@ or the complete [Installation guide](https://docs.agentuse.io/installation).
 ## Define the agent in Markdown
 
 An agent is a Markdown file with YAML configuration and plain-English
-instructions. The filename is its default id.
+instructions. Save this example as `morning-repo-brief.agentuse` in your
+repository. The filename is its default id.
 
 ```markdown
-<!-- morning-repo-brief.agentuse -->
 ---
 model: anthropic:claude-sonnet-5
 description: Summarizes repository activity and flags work that needs attention
@@ -108,14 +184,15 @@ Run it directly:
 agentuse run morning-repo-brief.agentuse
 ```
 
-Start `agentuse serve` to activate its schedule:
+Start `agentuse serve` to open the dashboard and run enabled schedules:
 
 ```bash
 agentuse serve -C .
 ```
 
 The same file can run from a developer machine, a server, CI, or a container.
-Configuration changes the trigger and environment, not the agent definition.
+Keep the app or server running on an awake machine for scheduled work. Use an
+always-on server for jobs that need to continue while your Mac is offline.
 
 ## Run it your way
 
@@ -151,23 +228,15 @@ your terminal's current directory. Existing folders stay opt-in via `-C` or
 
 ## Operate agents, not prompts
 
-`agentuse serve` includes an operations dashboard at
-`http://127.0.0.1:12233`. It keeps the outcome and operational state of every
-run in one place:
+The Mac app opens the operations dashboard directly. For CLI and server
+installations, `agentuse serve` makes it available at
+`http://127.0.0.1:12233`. Both give you the same view of each run:
 
 - running agents and recent output
 - sessions waiting for approval
 - failed and incomplete work that needs review
 - completed results and recorded metrics
 - upcoming schedules, agent relationships, and project health
-
-<p align="center">
-  <img
-    src="./static/readme/dashboard.webp"
-    alt="AgentUse operations dashboard showing agent health, pending approvals, recent failures, and result metrics"
-    width="900"
-  >
-</p>
 
 Every run is a durable session. Inspect the result, tool calls, token usage,
 artifacts, verification verdicts, and follow-up context without reconstructing
@@ -186,7 +255,7 @@ never pollutes the picture of what production is doing.
 Agents can prepare work autonomously and pause before sending, publishing,
 deploying, deleting, or changing external state.
 
-Add `approval: true` to give the agent a human review gate:
+Add `approval: true` and describe the review boundary for your workflow:
 
 ```markdown
 ---
@@ -214,12 +283,15 @@ source of truth for the review and session state.
   >
 </p>
 
-See [Approval Gates](https://docs.agentuse.io/guides/approval-gates) for
-complete configuration, reviewer flows, and enforcement details.
+Approval requests are agent-driven. For shell actions that must be blocked
+until approved, configure `tools.bash.gated`; `approval: true` alone is not a
+universal tool-level enforcement rule. See
+[Approval Gates](https://docs.agentuse.io/guides/approval-gates) for configuration
+and enforcement details.
 
-## Runtime primitives
+## Features for building and running AI agents
 
-| Primitive | What AgentUse provides |
+| Feature | What AgentUse provides |
 | --- | --- |
 | [Markdown agent files](https://docs.agentuse.io/guides/creating-agents) | Readable instructions and configuration that work with Git |
 | [Model choice](https://docs.agentuse.io/guides/model-configuration) | Anthropic, OpenAI, OpenRouter, OpenCode Go, Amazon Bedrock, and compatible local endpoints |
@@ -230,7 +302,9 @@ complete configuration, reviewer flows, and enforcement details.
 | [Subagents](https://docs.agentuse.io/guides/subagents) | Delegate bounded work to specialized child agents |
 | [Stores](https://docs.agentuse.io/guides/store) | Persistent, structured state shared across runs and cooperating agents |
 | [Learning](https://docs.agentuse.io/guides/learning) | Capture reviewer feedback as durable instructions and apply the best of them to later runs |
-| [Verify](https://docs.agentuse.io/guides/verify) | Check a run's output against the agent's own success criteria before it counts as done |
+| [Verify (experimental)](https://docs.agentuse.io/guides/verify) | Have a judge assess drafts or outputs against your criteria and request bounded revisions |
+| [Manager agents (experimental)](https://docs.agentuse.io/guides/manager-agents) | Coordinate specialists, track progress, and decide what to delegate next |
+| [Notifications](https://docs.agentuse.io/guides/channels) | Deliver configured run events and approval notifications to Slack |
 
 List the currently recommended models:
 
@@ -272,28 +346,26 @@ agentuse skills get creator
 agentuse skills get tester
 ```
 
-AgentUse also builds self-contained `$automate` integrations for Codex, Claude
-Code, Pi, and generic Agent Skills hosts directly from this repository. Release
-archives are generated from the same canonical builtin skills:
+## Test before enabling a schedule
 
-```bash
-bun run integrations:build
-```
-
-Validate an agent's configuration before running it:
+Check the agent's configuration, then exercise its workflow with all tool
+results mocked:
 
 ```bash
 agentuse doctor my-agent.agentuse
+agentuse test my-agent.agentuse --scope all --mock-model anthropic:claude-haiku-4-5
 ```
 
-Then validate its behaviour without touching anything real:
+Use a mock model available through your configured provider. Testing still
+makes model calls; `--scope all` fabricates tool results, isolates stores, and
+resolves approval gates automatically. You can also exercise rejection and
+request-changes paths. Test runs stay out of production operational views by
+default.
 
-```bash
-agentuse test my-agent.agentuse
-```
-
-Mock mode fabricates side effects, resolves approval gates automatically, and
-isolates stores, so the agent runs end to end without changing external state.
+The explicit scope matters: agents with gated bash commands otherwise default
+to mocking only those commands, while other tools run for real. See
+[Testing Agents](https://docs.agentuse.io/guides/testing-agents) for scope and
+approval options.
 
 ## Documentation
 
@@ -305,12 +377,10 @@ isolates stores, so the agent runs end to end without changing external state.
 - [Approval gates](https://docs.agentuse.io/guides/approval-gates)
 - [Self-hosting](https://docs.agentuse.io/guides/self-hosting)
 
-## Commercial support
+## Need help implementing AgentUse?
 
-AgentUse is free and open source. If your team wants the runtime implemented,
-customized, or operated in production,
-[AgentUse Studio](https://agentuse.io/studio) offers hands-on setup, custom
-agent development, and ongoing support.
+[AgentUse Studio](https://agentuse.io/studio) helps teams design and launch
+workflows around their existing tools and processes.
 
 ## Contributing
 
