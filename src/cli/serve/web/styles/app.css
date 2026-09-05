@@ -6264,7 +6264,7 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-agent-detail .agent-revise-row .agent-revision-history { width: 100%; }
 @media (min-width: 641px) {
   .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) {
-    display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
+    display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto;
     column-gap: 8px; row-gap: 16px;
   }
   .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) .hero-text { grid-column: 1; grid-row: 1; padding-right: 16px; }
@@ -6272,7 +6272,12 @@ a.lastrun.waiting { color: var(--cyan); }
   .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) .run-cta-row { display: contents; }
   .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) .run-spotlight-anchor { grid-column: 2; grid-row: 1; }
   .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) .run-cta-row > .run-cta-alt:not(.agent-revise-cta) { grid-column: 3; grid-row: 1; }
-  .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) .agent-revise-row {
+  /* The trigger keeps its seat in the action row; only the form (or the
+     in-progress card) takes the full-width line beneath. */
+  .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) .agent-revise-row { display: contents; }
+  .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) .agent-revise-cta { grid-column: 4; grid-row: 1; }
+  .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) .agent-revision-form,
+  .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) .agent-revision-history {
     grid-column: 1 / -1; grid-row: 2; width: 100%;
   }
   .page-agent-detail .hero:has(.agent-revision-form, .agent-revision-history) .schedule-spotlight-anchor {
