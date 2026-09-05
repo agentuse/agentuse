@@ -5,7 +5,6 @@ import {
   fetchAgentDraft,
   requestAgentDraftChanges,
   saveAgentDraft,
-  startAgentDraftTestRun,
   type AgentDraftPayload,
 } from '../lib/api';
 import { useSessionLog } from '../hooks/use-session-log';
@@ -19,7 +18,6 @@ import {
   diffChangeCounts,
   type DraftFileTab,
 } from '../components/draft-panel';
-import { DraftTestRun } from '../components/draft-test-run';
 import { DraftThread } from '../components/draft-thread';
 import { revisionLineDiff } from '../lib/revision-diff';
 import { agentDetailHref } from '../lib/links';
@@ -39,10 +37,6 @@ export default function AgentDraft() {
   const [tab, setTab] = useState<DraftFileTab>('changes');
   // The operator picked a tab; stop steering it for them.
   const [tabPinned, setTabPinned] = useState(false);
-  const [testSession, setTestSession] = useState<{ sessionId: string; sessionToken?: string; draftIndex: number } | null>(null);
-  // A failed start belongs beside the Run button, not in the page-level error
-  // strip: it is about this tab's action and its fix is usually a setting.
-  const [testError, setTestError] = useState<string | null>(null);
   // The models.dev pricing registry is large generated data, so it loads on
   // demand exactly as the session page does.
   const [pricing, setPricing] = useState<typeof import('../lib/pricing') | null>(null);
@@ -155,22 +149,6 @@ export default function AgentDraft() {
     }
   };
 
-  const runTest = async () => {
-    setBusy('test');
-    setActionError(null);
-    setTestError(null);
-    try {
-      const payload = await startAgentDraftTestRun(jobId, project);
-      setTestSession(payload.testRun);
-      setTabPinned(true);
-      setTab('test');
-      await refresh();
-    } catch (caught) {
-      setTestError((caught as Error).message || 'Could not start a test run.');
-    } finally {
-      setBusy(null);
-    }
-  };
 
   const skillsUsed = latest?.loadedSkills ?? [];
 
@@ -229,17 +207,6 @@ export default function AgentDraft() {
       tab={tab}
       onTab={(next) => { setTabPinned(true); setTab(next); }}
       running={running}
-      showTestTab={Boolean(latest)}
-      hasTestRun={draft.testRuns.length > 0}
-      testRun={<DraftTestRun
-        project={project}
-        session={testSession}
-        runs={draft.testRuns}
-        busy={busy === 'test'}
-        startError={testError}
-        onRun={() => void runTest()}
-        onFinished={() => void refresh()}
-      />}
       exchange={<DraftThread
         turns={draft.drafts.map((entry) => ({ request: entry.request, reply: entry.reply }))}
         entries={creatorSession.entries}

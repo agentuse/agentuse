@@ -11,7 +11,7 @@ import { revisionLineDiff } from '../lib/revision-diff';
  * numbered version with a diff, and nothing reaches the project until the
  * operator presses the primary action in the top bar.
  */
-export type DraftFileTab = 'changes' | 'diff' | 'source' | 'test';
+export type DraftFileTab = 'changes' | 'diff' | 'source';
 
 export interface DraftExchangeTurn {
   /** What the operator asked for. Absent on the first version. */
@@ -128,12 +128,6 @@ export function DraftPanel(props: {
   onTab: (tab: DraftFileTab) => void;
   /** A turn is producing steps right now; Changes carries a live dot. */
   running?: boolean;
-  /** Rendered in place of the file body when the Test run tab is active. */
-  testRun?: ComponentChildren;
-  /** Hidden when the surface has no mock-run support. */
-  showTestTab?: boolean;
-  /** A mock run exists, so the tab says so. */
-  hasTestRun?: boolean;
   exchange: ComponentChildren;
   composer: ComponentChildren;
   error?: string | null | undefined;
@@ -193,17 +187,18 @@ export function DraftPanel(props: {
         {tabButton('changes', 'Changes', props.running ? <span class="draft-tab-dot" aria-label="running" /> : undefined)}
         {tabButton('diff', 'Diff', props.diffBadge)}
         {tabButton('source', 'Source')}
-        {props.showTestTab && tabButton('test', 'Test run', props.hasTestRun ? 'mock' : undefined)}
+        {/* A Test run tab sat here. Disabled pending an MCP-aware mock scope:
+            today's scopes only ground bash-fenced agents, and an MCP-first
+            agent would either be fully fabricated or fire a real send. The
+            server route and the shared mock helpers are still in place. */}
         {props.headerNote && <span class="draft-tabs-note">{props.headerNote}</span>}
       </div>
       <div class={`draft-file-scroll${props.tab === 'changes' ? ' is-changes' : ''}`} ref={bodyRef}>
-        {props.tab === 'test'
-          ? props.testRun
-          : props.tab === 'source'
-            ? <pre class="draft-file-body" aria-label="Agent source">{props.source}</pre>
-            : props.tab === 'changes'
-              ? props.exchange
-              : <DraftDiff baseSource={props.baseSource} source={props.source} />}
+        {props.tab === 'source'
+          ? <pre class="draft-file-body" aria-label="Agent source">{props.source}</pre>
+          : props.tab === 'changes'
+            ? props.exchange
+            : <DraftDiff baseSource={props.baseSource} source={props.source} />}
       </div>
       {props.error && <p class="draft-error" role="alert">{props.error}</p>}
       {props.composer}

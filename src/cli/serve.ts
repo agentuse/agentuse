@@ -9118,6 +9118,10 @@ export function createServeCommand(): Command {
               return;
             }
 
+            // Dormant: nothing in the UI links here. The mock scopes only ground
+            // a bash-fenced agent, so an MCP-first one would be fully fabricated
+            // or would fire a real send. Kept working for when scope understands
+            // MCP; `agentuse test` shares the same helpers.
             if (action === 'test-run') {
               const latest = latestAgentDraft(record);
               if (!latest) {
@@ -9274,6 +9278,8 @@ export function createServeCommand(): Command {
               startSessionContinue(res, { project, sessionId: revisionSessionId, prompt: continuePrompt });
               return;
             }
+            // Dormant, as on the draft route above: unreachable from the UI
+            // until mock scope understands MCP.
             if (action === 'test-run') {
               const record = await readAgentRevisionRecord(project.root, revisionSessionId);
               if (!record?.proposedSource) {

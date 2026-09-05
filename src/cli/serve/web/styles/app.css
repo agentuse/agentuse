@@ -9749,7 +9749,6 @@ main[tabindex="-1"]:focus,
 .draft-pill.is-running { border-color: var(--cyan-border); background: var(--cyan-soft); color: var(--cyan); }
 .draft-pill.is-done { border-color: var(--green-border); background: var(--green-soft); color: var(--green); }
 .draft-pill.is-error { border-color: var(--red-border); background: var(--red-soft); color: var(--red); }
-.draft-pill.is-mock { border-color: var(--line-strong); background: var(--panel); color: var(--muted-3); }
 
 .draft-primary,
 .draft-secondary {
@@ -9770,39 +9769,6 @@ main[tabindex="-1"]:focus,
 .draft-primary:disabled,
 .draft-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.draft-testrun { display: flex; flex-direction: column; gap: 12px; padding: 16px 24px; }
-.draft-testrun.is-empty { align-items: flex-start; gap: 10px; color: var(--muted-3); }
-.draft-testrun.is-empty p { margin: 0; max-width: 60ch; line-height: var(--lh-snug); }
-.draft-testrun-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.draft-testrun-summary { flex: 1; color: var(--muted); font-size: var(--font-size-caption); }
-.draft-testrun-gate {
-  margin: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--amber-border);
-  border-radius: 8px;
-  background: var(--amber-soft);
-  color: var(--amber);
-  font-size: var(--font-size-caption);
-}
-.draft-testrun-result {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px 24px;
-  padding: 11px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel);
-}
-.draft-testrun-result .cell { display: flex; flex-direction: column; gap: 2px; }
-.draft-testrun-result .label {
-  color: var(--muted-2);
-  font-size: var(--font-size-micro);
-  font-weight: var(--weight-medium);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-}
-.draft-testrun-result .value { color: var(--fg); font-family: var(--mono); font-size: var(--font-size-caption); }
-
 @media (max-width: 720px) {
   /* The header rows stack and the tab bar scrolls sideways rather than wrapping
      into two rows of tabs, which reads as two tab bars. */
@@ -9814,7 +9780,6 @@ main[tabindex="-1"]:focus,
   .draft-tabs-note { display: none; }
   .draft-file-body,
   .draft-exchange,
-  .draft-testrun,
   .draft-composer { padding-inline: 16px; }
   .draft-error { padding-inline: 16px; }
 }
@@ -9988,20 +9953,3 @@ html[data-page="draft-panel"] .app-route {
   font-size: var(--font-size-caption);
 }
 
-/* A test run that could not start says why beside the button that starts it. */
-.draft-testrun-notice {
-  margin: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--amber-border);
-  border-radius: 8px;
-  background: var(--amber-soft);
-  color: var(--amber);
-  font-size: var(--font-size-caption);
-  line-height: var(--lh-snug);
-  max-width: 70ch;
-}
-.draft-testrun.is-empty code {
-  font-family: var(--mono);
-  font-size: var(--font-size-micro);
-  color: var(--fg);
-}

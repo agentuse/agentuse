@@ -5,7 +5,6 @@ import {
   fetchAgentRevision,
   postAgentRevisionAction,
   requestAgentRevisionChanges,
-  startAgentRevisionTestRun,
 } from '../lib/api';
 import { useSessionLog } from '../hooks/use-session-log';
 import { useTitle } from '../hooks/use-title';
@@ -18,7 +17,6 @@ import {
   diffChangeCounts,
   type DraftFileTab,
 } from '../components/draft-panel';
-import { DraftTestRun } from '../components/draft-test-run';
 import { DraftThread } from '../components/draft-thread';
 import { revisionLineDiff } from '../lib/revision-diff';
 import { agentDetailHref } from '../lib/links';
@@ -46,10 +44,6 @@ export default function AgentRevision() {
   const [tab, setTab] = useState<DraftFileTab>('changes');
   // The operator picked a tab; stop steering it for them.
   const [tabPinned, setTabPinned] = useState(false);
-  const [testSession, setTestSession] = useState<{ sessionId: string; sessionToken?: string; draftIndex: number } | null>(null);
-  // A failed start belongs beside the Run button, not in the page-level error
-  // strip: it is about this tab's action and its fix is usually a setting.
-  const [testError, setTestError] = useState<string | null>(null);
   const [pricing, setPricing] = useState<typeof import('../lib/pricing') | null>(null);
 
   useTitle(pageTitle('Agents', revision?.targetAgentName ?? 'Agent', 'Revision'));
@@ -147,21 +141,6 @@ export default function AgentRevision() {
     }
   };
 
-  const runTest = async () => {
-    setBusy('test');
-    setActionError(null);
-    setTestError(null);
-    try {
-      const payload = await startAgentRevisionTestRun(sessionId, project);
-      setTestSession(payload.testRun);
-      setTabPinned(true);
-      setTab('test');
-    } catch (caught) {
-      setTestError((caught as Error).message || 'Could not start a test run.');
-    } finally {
-      setBusy(null);
-    }
-  };
 
   const proposalNumber = revision.proposalCount ?? 1;
   const capabilityChanges = revision.capabilityChanges ?? [];
@@ -259,16 +238,6 @@ export default function AgentRevision() {
       tab={tab}
       onTab={(next) => { setTabPinned(true); setTab(next); }}
       running={running}
-      showTestTab={Boolean(proposed)}
-      hasTestRun={Boolean(testSession)}
-      testRun={<DraftTestRun
-        project={project}
-        session={testSession}
-        runs={[]}
-        busy={busy === 'test'}
-        startError={testError}
-        onRun={() => void runTest()}
-      />}
       exchange={<DraftThread
         turns={exchangeTurns}
         entries={reviserSession.entries}
