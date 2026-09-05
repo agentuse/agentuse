@@ -6254,7 +6254,9 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-agent-detail .agent-revise-row { display: contents; }
 .page-agent-detail .agent-revise-row:has(.agent-revision-form),
 .page-agent-detail .agent-revise-row:has(.agent-revision-history) {
-  display: flex; flex: 1 0 100%; justify-content: flex-end; min-width: 0;
+  /* The trigger stays rendered while its form is open, so the row must wrap:
+     button on its own line, the full-width form beneath it. */
+  display: flex; flex-wrap: wrap; flex: 1 0 100%; justify-content: flex-end; min-width: 0; row-gap: 12px;
 }
 .page-agent-detail .agent-revise-cta { display: inline-flex; align-items: center; gap: 7px; }
 .page-agent-detail .agent-revise-cta svg { flex: none; color: var(--cyan); }
