@@ -506,7 +506,7 @@ Use these only when an endpoint reports a protocol compatibility error.
     .description("List stored credentials")
     .option("--json", "Output provider status as JSON")
     .action(async (options: { json?: boolean }) => {
-      const status = await getProviderStatus();
+      const status = await getProviderStatus({ readiness: 'defer' });
 
       if (options.json) {
         process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);

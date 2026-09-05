@@ -940,8 +940,11 @@ export function fetchProviderSetup(options: { deferReadiness?: boolean } = {}): 
   return getJson(options.deferReadiness ? '/api/providers?readiness=defer' : '/api/providers');
 }
 
-export function fetchProviderReadiness(): Promise<{ success: true; providers: ProviderReadinessResult[] }> {
-  return getJson('/api/providers/readiness');
+export function fetchProviderReadiness(options: { provider?: string; force?: boolean } = {}): Promise<{ success: true; providers: ProviderReadinessResult[] }> {
+  const query = new URLSearchParams();
+  if (options.provider) query.set('provider', options.provider);
+  if (options.force) query.set('force', 'true');
+  return getJson(`/api/providers/readiness${query.size ? `?${query}` : ''}`);
 }
 
 /** Fold deferred readiness results into a snapshot's provider rows. */
@@ -954,8 +957,8 @@ export function applyProviderReadiness(payload: ProviderSetupPayload, results: P
       providers: payload.status.providers.map((provider) => {
         const result = byId.get(provider.id);
         if (!result) return provider;
-        const { checkPending: _pending, actionRequired: _action, ...rest } = provider;
-        return { ...rest, configured: result.configured, readiness: result.readiness, ...(result.actionRequired && { actionRequired: result.actionRequired }) };
+        const { checkPending: _pending, actionRequired: _action, readiness: _readiness, health: _health, ...rest } = provider;
+        return { ...rest, configured: result.configured, ...(result.readiness && { readiness: result.readiness }), ...(result.health && { health: result.health }), ...(result.sources && { sources: result.sources }), ...(result.actionRequired && { actionRequired: result.actionRequired }) };
       }),
     },
   };

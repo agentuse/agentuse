@@ -8276,7 +8276,10 @@ export function createServeCommand(): Command {
 
         if (isApi && routePath === "/providers/readiness" && req.method === "GET") {
           try {
-            sendJSON(res, 200, { success: true, ...await providerReadinessSnapshot() });
+            sendJSON(res, 200, { success: true, ...await providerReadinessSnapshot({
+              force: requestUrl.searchParams.get('force') === 'true',
+              ...(requestUrl.searchParams.get('provider') && { provider: requestUrl.searchParams.get('provider')! }),
+            }) });
           } catch (err) {
             sendError(res, 500, "PROVIDER_STATUS_FAILED", (err as Error).message);
           }

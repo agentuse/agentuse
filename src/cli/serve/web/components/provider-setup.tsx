@@ -409,13 +409,38 @@ export function ProviderSetupDialog(props: {
  * bridged CLI that is not installed) explains itself here, with the fix
  * command, so the row never reads "Connected" for something that cannot run.
  */
+export function providerHealthLabel(status: ProviderAuthStatus | undefined): string {
+  if (status?.health?.state === 'reconnect_required') return 'Reconnect required';
+  if (status?.checkPending && !status.health?.checkedAt) return 'Checking…';
+  if (status?.health?.state === 'temporarily_unavailable') return 'Temporarily unavailable';
+  if (status?.health?.state === 'verified') return 'Verified';
+  if (status?.configured) return 'Configured';
+  return 'Not connected';
+}
+
+function ProviderHealthBadge({ status }: { status: ProviderAuthStatus | undefined }) {
+  const state = status?.health?.state;
+  const tone = state === 'verified' ? ' is-ready'
+    : state === 'reconnect_required' || state === 'temporarily_unavailable' ? ' is-warning'
+      : status?.checkPending ? ' is-pending' : '';
+  return <span class={`provider-status${tone}`} aria-live="polite">{providerHealthLabel(status)}</span>;
+}
+
+function ProviderHealthHint({ status }: { status: ProviderAuthStatus | undefined }) {
+  if (!status?.health) return null;
+  return <div class="settings-row-hint">{status.health.message}
+    {status.health.checkedAt && <> Checked {new Date(status.health.checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.</>}
+    {status.checkPending && <> Checking again…</>}
+  </div>;
+}
+
 function pluginProviderHint(status: ProviderAuthStatus) {
   if (status.checkPending) return 'Checking the CLI…';
   if (status.readiness && !status.readiness.ok) {
     return <>{status.readiness.message}{status.readiness.fix && <> Fix: <code>{status.readiness.fix}</code></>}</>;
   }
   if (status.configured) {
-    const source = status.sources.find((item) => item.active)?.name ?? 'Connected';
+    const source = status.sources.find((item) => item.active)?.name ?? 'Installed';
     return status.readiness?.detail ? `${source} · ${status.readiness.detail}` : source;
   }
   return <>Connect with <code>agentuse provider login {status.id}</code></>;
@@ -433,24 +458,33 @@ export function ProviderSettingsGroup() {
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [confirmingPlugin, setConfirmingPlugin] = useState<string | null>(null);
 
-  // Two round trips: the credential-only list first (fast), then the plugin
-  // check() hooks, which can spawn a CLI and are the only slow part. Rows
-  // show "Checking…" in between instead of holding the whole list back.
+  // Render durable cached health first. Only stale checks touch providers.
+  // Poll the local snapshot while visible so failures from running workers
+  // reach an already-open Settings page without repeated authentication calls.
   useEffect(() => {
+    if (busyKey || dialog) return;
     let cancelled = false;
-    void fetchProviderSetup({ deferReadiness: true }).then(async (initial) => {
-      if (cancelled) return;
-      setPayload(initial);
-      if (!initial.status.providers.some((provider) => provider.checkPending)) return;
+    let loading = false;
+    const refresh = async () => {
+      if (loading || document.visibilityState === 'hidden') return;
+      loading = true;
       try {
-        const { providers } = await fetchProviderReadiness();
-        if (!cancelled) setPayload((current) => current ? applyProviderReadiness(current, providers) : current);
+        const initial = await fetchProviderSetup({ deferReadiness: true });
+        if (cancelled) return;
+        setPayload(initial);
+        setError(null);
+        if (initial.status.providers.some((provider) => provider.checkPending)) {
+          const { providers } = await fetchProviderReadiness();
+          if (!cancelled) setPayload((current) => current ? applyProviderReadiness(current, providers) : current);
+        }
       } catch (caught) {
         if (!cancelled) setError((caught as Error).message || 'Could not check providers.');
-      }
-    }, (caught) => { if (!cancelled) setError((caught as Error).message || 'Could not load providers.'); });
-    return () => { cancelled = true; };
-  }, []);
+      } finally { loading = false; }
+    };
+    void refresh();
+    const timer = setInterval(() => void refresh(), 30_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [busyKey, dialog]);
   const catalog = payload?.catalog ?? [];
   const providers = useMemo(() => catalog.map((entry) => ({ entry, status: payload?.status.providers.find((item) => item.id === entry.id) })), [catalog, payload]);
   // Providers that exist only because an installed plugin registered them.
@@ -491,7 +525,11 @@ export function ProviderSettingsGroup() {
   };
   const removeCustom = (name: string) => run(`custom:${name}`, () => removeCustomProvider(name), 'Could not remove provider.');
   const refreshCustom = (name: string) => run(`refresh:${name}`, () => refreshCustomProviderModels(name), 'Could not refresh models.');
-  const recheck = () => run('recheck', () => fetchProviderSetup(), 'Could not recheck providers.');
+  const recheck = (provider: string) => run(`recheck:${provider}`, async () => {
+    const result = await fetchProviderReadiness({ provider, force: true });
+    const current = payload ?? await fetchProviderSetup({ deferReadiness: true });
+    return applyProviderReadiness(current, result.providers);
+  }, 'Could not recheck provider.');
   const continueUpgrade = (plugin: string, provider: string) => run(`plugin:${plugin}`, () => installProviderPlugin(plugin), 'Could not install provider plugin.', (next) => {
     if (!next.status.providers.find((item) => item.id === provider)?.configured) {
       setDialog({
@@ -524,14 +562,18 @@ export function ProviderSettingsGroup() {
             plugin.providers.some((provided) => provided.id === entry.id),
           );
           const migrationPlugin = payload?.pluginRegistry.find((plugin) =>
-            plugin.provider === entry.id && status?.actionRequired,
+            plugin.provider === entry.id && !servingPlugin && status?.actionRequired,
           );
           const migrationKey = migrationPlugin ? `plugin:${migrationPlugin.id}` : null;
+          const reconnect = status?.health?.state === 'reconnect_required';
+          const authPlugin = payload?.pluginRegistry.find((plugin) => plugin.packageName === active?.plugin?.name);
+          const displayName = active?.plugin && servingPlugin ? servingPlugin.name : entry.name;
           return (
             <div class="settings-row provider-settings-row" key={entry.id}>
-              <div class="settings-row-text"><div class="settings-row-label">{entry.name}</div><div class="settings-row-hint">{status?.configured && servingPlugin ? `${entry.id === 'anthropic' ? 'Claude Pro or Max subscription' : entry.description} · via ${servingPlugin.name}` : active ? active.name : `${entry.description} · ${authMethodLabel(entry.authMethods)}`}</div></div>
+              <div class="settings-row-text"><div class="settings-row-label">{displayName}</div><div class="settings-row-hint">{active ? active.name : `${entry.description} · ${authMethodLabel(entry.authMethods)}`}</div><ProviderHealthHint status={status} /></div>
               <div class="settings-row-control provider-settings-control">
-                <span class={`provider-status${status?.configured ? ' is-ready' : ''}`}>{status?.configured ? 'Connected' : 'Not connected'}</span>
+                <ProviderHealthBadge status={status} />
+                {active && !reconnect && <button type="button" class="settings-item" disabled={busyKey === `recheck:${entry.id}`} onClick={() => void recheck(entry.id)}>{busyKey === `recheck:${entry.id}` ? 'Checking…' : 'Recheck'}</button>}
                 {stored.map((source) => {
                   const removeKey = credentialKey(entry.id, source);
                   return <button key={removeKey} type="button" class="settings-item" disabled={busyKey === removeKey} onClick={() => void remove(entry.id, source)}>Remove {source.kind === 'oauth' ? 'OAuth' : 'key'}</button>;
@@ -544,10 +586,10 @@ export function ProviderSettingsGroup() {
                     ? void continueUpgrade(migrationPlugin.id, migrationPlugin.provider)
                     : setDialog({
                         scope: 'provider',
-                        title: status?.configured ? `add ${entry.name} method` : `connect ${entry.name}`,
-                        initialProvider: entry.id,
+                        title: reconnect ? `reconnect ${displayName}` : status?.configured ? `add ${entry.name} method` : `connect ${entry.name}`,
+                        initialProvider: reconnect && authPlugin ? pluginSelection(authPlugin.id) : entry.id,
                       })}
-                >{migrationKey !== null && busyKey === migrationKey ? 'Upgrading…' : migrationPlugin ? 'Continue upgrade' : status?.configured ? 'Add method' : 'Connect'}</button>
+                >{migrationKey !== null && busyKey === migrationKey ? 'Upgrading…' : migrationPlugin ? 'Continue upgrade' : reconnect ? 'Reconnect' : status?.configured ? 'Add method' : 'Connect'}</button>
               </div>
             </div>
           );
@@ -556,11 +598,11 @@ export function ProviderSettingsGroup() {
           <div class="settings-row provider-settings-row" key={status.id}>
             <div class="settings-row-text">
               <div class="settings-row-label">{status.name}</div>
-              <div class="settings-row-hint">{plugin ? `via ${plugin.name} · ` : ''}{pluginProviderHint(status)}</div>
+              <div class="settings-row-hint">{plugin ? `via ${plugin.name} · ` : ''}{pluginProviderHint(status)}</div><ProviderHealthHint status={status} />
             </div>
             <div class="settings-row-control provider-settings-control">
-              <span class={`provider-status${status.checkPending ? ' is-pending' : status.configured ? ' is-ready' : status.readiness && !status.readiness.ok ? ' is-warning' : ''}`} aria-live="polite">{status.checkPending ? 'Checking…' : status.configured ? 'Connected' : status.readiness && !status.readiness.ok ? 'Needs setup' : 'Not connected'}</span>
-              {(status.readiness || status.checkPending) && <button type="button" class="settings-item" disabled={busyKey === 'recheck' || Boolean(status.checkPending)} onClick={() => void recheck()}>{busyKey === 'recheck' ? 'Checking…' : 'Recheck'}</button>}
+              <ProviderHealthBadge status={status} />
+              <button type="button" class="settings-item" disabled={busyKey === `recheck:${status.id}`} onClick={() => void recheck(status.id)}>{busyKey === `recheck:${status.id}` ? 'Checking…' : 'Recheck'}</button>
               {status.sources.filter((source) => source.stored).map((source) => {
                 const removeKey = credentialKey(status.id, source);
                 return <button key={removeKey} type="button" class="settings-item" disabled={busyKey === removeKey} onClick={() => void remove(status.id, source)}>Remove {source.kind === 'oauth' ? 'OAuth' : 'key'}</button>;
@@ -571,7 +613,7 @@ export function ProviderSettingsGroup() {
         {payload?.status.customProviders.map((provider) => (
           <div class="settings-row provider-settings-row" key={provider.id}>
             <div class="settings-row-text"><div class="settings-row-label">{provider.id}</div><div class="settings-row-hint">{provider.baseURL} · {provider.models?.length ?? 0} {provider.models?.length === 1 ? 'model' : 'models'}</div></div>
-            <div class="settings-row-control provider-settings-control"><span class="provider-status is-ready">{provider.hasApiKey ? 'Connected' : 'Connected · keyless'}</span><button type="button" class="settings-item" disabled={busyKey === `refresh:${provider.id}`} onClick={() => void refreshCustom(provider.id)}>{busyKey === `refresh:${provider.id}` ? 'Refreshing…' : 'Refresh models'}</button><button type="button" class="settings-item" disabled={busyKey === `custom:${provider.id}`} onClick={() => void removeCustom(provider.id)}>Remove</button></div>
+            <div class="settings-row-control provider-settings-control"><span class="provider-status">{providerHealthLabel({ id: provider.id, name: provider.id, configured: true, sources: [], ...(provider.health && { health: provider.health }) })}</span><button type="button" class="settings-item" disabled={busyKey === `refresh:${provider.id}`} onClick={() => void refreshCustom(provider.id)}>{busyKey === `refresh:${provider.id}` ? 'Refreshing…' : 'Refresh models'}</button><button type="button" class="settings-item" disabled={busyKey === `custom:${provider.id}`} onClick={() => void removeCustom(provider.id)}>Remove</button></div>
           </div>
         ))}
         {payload && <div class="settings-row"><div class="settings-row-text"><div class="settings-row-label">Custom provider</div><div class="settings-row-hint">Add a compatible model endpoint.</div></div><div class="settings-row-control"><button type="button" class="settings-item" onClick={() => setDialog({ scope: 'provider', title: 'add custom provider', initialProvider: 'custom', allowCustom: true })}>Add provider</button></div></div>}
