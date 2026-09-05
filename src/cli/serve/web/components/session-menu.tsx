@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { useRunAgent } from '../hooks/use-run-agent';
 import { agentDetailHref } from '../lib/links';
-import { RunInstructionDialog } from './run-instruction-dialog';
+import { RunCustomDialog } from './run-custom-dialog';
 
 /**
  * ⋯ overflow menu in the session bar. Holds actions about the agent behind the
  * session rather than the session itself — "Go to agent" (its detail hub),
  * "Run new session" (a fresh detached run of the same agent, navigating to its
- * live view) and the same run with a one-off instruction appended. Mirrors the
+ * live view) and the same run with a one-off instruction and/or a different
+ * model. Mirrors the
  * agents-page menu pattern: a position:fixed popover that closes on outside
  * click, Escape, scroll, or resize.
  *
@@ -115,23 +116,23 @@ export function SessionMenu(props: {
             class="menu-item"
             role="menuitem"
             disabled={busy}
-            title="Start a fresh run with a one-off instruction appended to the agent's prompt"
+            title="Start a fresh run with a one-off instruction, a different model, or both"
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); setPos(null); setRunOpen(true); }}
           >
             <svg class="menu-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M3 4.5 6.5 8 3 11.5" /><path d="M8.5 11.5H13" />
             </svg>
-            <span>Run new session with custom instruction</span>
+            <span>Run new session with custom…</span>
           </button>
           {error && !runOpen && <p class="menu-error" role="alert">{error}</p>}
         </div>
       )}
-      <RunInstructionDialog
+      <RunCustomDialog
         open={runOpen}
         agentName={props.agentName}
         busy={busy}
         error={error}
-        onSubmit={(instruction) => { void run(instruction); }}
+        onSubmit={(custom) => { void run(custom); }}
         onClose={() => { if (!busy) setRunOpen(false); }}
       />
     </div>

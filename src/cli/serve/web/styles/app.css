@@ -6093,6 +6093,27 @@ a.lastrun.waiting { color: var(--cyan); }
 .run-dialog .dialog-description strong { color: var(--fg); font-weight: var(--weight-bold); }
 .run-dialog .dialog-error { margin: 0; padding: 0 18px 4px; color: var(--red); font-size: var(--font-size-caption); }
 .run-dialog .dialog-foot .actions { display: inline-flex; gap: 8px; }
+/* Two customizations, stacked: the instruction composer keeps the `>` prefix
+   the single-field dialog had; the model picker sits under it as a plain
+   select. The label column is the same micro caps as .dialog-head. */
+.run-dialog .run-custom-body { grid-template-columns: 1fr; gap: 6px; }
+.run-dialog .run-custom-label {
+  font-family: var(--sans); font-size: var(--font-size-micro); font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--muted);
+}
+.run-dialog .run-custom-label + .run-custom-label,
+.run-dialog .run-custom-select + .run-custom-label { margin-top: 10px; }
+.run-dialog .run-custom-field { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; }
+.run-dialog .run-custom-field + .run-custom-label { margin-top: 10px; }
+.run-dialog .run-custom-select {
+  width: 100%; min-height: 38px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--fg);
+  font-family: var(--sans); font-size: var(--field-font-size); font-weight: var(--weight-normal);
+  outline: none; transition: border-color 120ms ease;
+}
+.run-dialog .run-custom-select:focus { border-color: var(--cyan-border); }
+.run-dialog .run-custom-select:disabled { opacity: 0.55; cursor: not-allowed; }
+.run-dialog .run-custom-models-error { grid-column: 1; color: var(--red); }
 .page-agents .run-dialog .dialog-foot button,
 .page-agent-detail .run-dialog .dialog-foot button {
   font-family: var(--sans); font-size: var(--font-size-supporting); font-weight: var(--weight-medium); letter-spacing: normal;

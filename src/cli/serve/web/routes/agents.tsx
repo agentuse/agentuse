@@ -18,7 +18,7 @@ import { useMediaQuery } from '../hooks/use-media-query';
 import { useRunAgent } from '../hooks/use-run-agent';
 import { useSmartBack } from '../hooks/use-smart-back';
 import { Loading } from '../components/loading';
-import { RunInstructionDialog } from '../components/run-instruction-dialog';
+import { RunCustomDialog } from '../components/run-custom-dialog';
 import { AgentGraphView } from '../components/agent-graph-view';
 import { GroupRail } from '../components/group-rail';
 import { SchedulePill } from '../components/schedule-pill';
@@ -169,7 +169,7 @@ function AgentMenu(props: { agent: AgentRow; pinned: boolean; onTogglePin: () =>
             <svg class="menu-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
               <path d="M5 3.5v9a.75.75 0 0 0 1.14.64l7.25-4.5a.75.75 0 0 0 0-1.28l-7.25-4.5A.75.75 0 0 0 5 3.5Z" />
             </svg>
-            <span>Run with instruction…</span>
+            <span>Run with custom…</span>
           </button>
           <a
             class="menu-item"
@@ -193,12 +193,13 @@ function AgentMenu(props: { agent: AgentRow; pinned: boolean; onTogglePin: () =>
           </button>
         </div>
       )}
-      <RunInstructionDialog
+      <RunCustomDialog
         open={runOpen}
         agentName={agent.name}
+        agentModel={agent.model}
         busy={busy}
         error={error}
-        onSubmit={(instruction) => { void run(instruction); }}
+        onSubmit={(custom) => { void run(custom); }}
         onClose={() => { if (!busy) setRunOpen(false); }}
       />
     </div>

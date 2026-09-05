@@ -12,6 +12,7 @@
 
 ### Changed
 
+- **"Run with instruction" is now "Run with custom".** One dialog on the agent page, the agents list, and the session view's menu takes a one-off instruction, a different model, or both. The model list is every configured provider's models; the run keeps the agent's own model unless one is picked.
 - **Provider setup now installs from a release-reviewed plugin shortlist.** The first entry pins the community-maintained Claude Code Subscription provider at v0.1.0. Existing Anthropic OAuth users receive the compatibility plugin and credential migration automatically without a picker, consent screen, or another login. New subscription users explicitly choose and install the community plugin, while Anthropic API keys remain built into core. Missing-package status also recognizes already-migrated credentials so reinstalling preserves the login.
 - **Provider status now distinguishes configured, connected, unverified, unavailable, and broken connections.** Saved providers are rendered immediately while slower plugin checks run, successful verification and recent failures are tracked, and Settings explains the next action instead of treating every stored credential as a working connection.
 - **Installed global plugins now follow `AGENTUSE_DATA_DIR`.** Their unchanged default remains `~/.local/share/agentuse/plugins`, while isolated and custom data profiles keep credentials, plugin packages, and the plugin registry under one durable-data root.

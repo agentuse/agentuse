@@ -12,7 +12,7 @@ import { SchedulePill } from '../components/schedule-pill';
 import { AgentLearningsPanel, StrandedLearningsBanner } from '../components/learnings-panel';
 import { SendToCodingAgentDialog } from '../components/send-to-coding-agent-dialog';
 import { AgentRevisionLauncher, AgentRevisionsPanel } from '../components/agent-revision';
-import { RunInstructionDialog } from '../components/run-instruction-dialog';
+import { RunCustomDialog } from '../components/run-custom-dialog';
 import { LogContent } from '../components/content';
 import { formatApprovalTime, formatRelativeTime, displayStatusLabel, errorText, isEndedStatus } from '../lib/format';
 import { pageTitle } from '../lib/brand';
@@ -549,10 +549,10 @@ export default function AgentDetail() {
                     type="button"
                     class="run-cta-alt"
                     disabled={busy}
-                    title="Start a run with a one-off instruction appended to the agent's prompt"
+                    title="Start a run with a one-off instruction, a different model, or both"
                     onClick={() => setRunOpen(true)}
                   >
-                    Run with instruction…
+                    Run with custom…
                   </button>
                   {data.source !== undefined && (
                     <div class="agent-revise-row">
@@ -659,12 +659,13 @@ export default function AgentDetail() {
               </div>
             )}
 
-            <RunInstructionDialog
+            <RunCustomDialog
               open={runOpen}
               agentName={data.name}
+              agentModel={data.model}
               busy={busy}
               error={runError}
-              onSubmit={(instruction) => { void run(instruction); }}
+              onSubmit={(custom) => { void run(custom); }}
               onClose={() => { if (!busy) setRunOpen(false); }}
             />
             {data.source !== undefined && (

@@ -904,7 +904,11 @@ export interface DetachedRunResponse {
  * An optional `prompt` is appended to the agent's instructions for this run
  * only (powers the "Run with Custom Instruction" action).
  */
-export function runAgentDetached(agent: string, project: string | undefined, prompt?: string): Promise<DetachedRunResponse> {
+export function runAgentDetached(
+  agent: string,
+  project: string | undefined,
+  custom?: { instruction?: string; model?: string },
+): Promise<DetachedRunResponse> {
   // project is omitted on single-project daemons (the server falls back to its
   // only/default project), e.g. when launched from a session view with no
   // ?project= in the URL.
@@ -914,7 +918,8 @@ export function runAgentDetached(agent: string, project: string | undefined, pro
     detach: true,
     reportedSurface: 'web_ui',
   };
-  if (prompt && prompt.trim()) body.prompt = prompt.trim();
+  if (custom?.instruction?.trim()) body.prompt = custom.instruction.trim();
+  if (custom?.model?.trim()) body.model = custom.model.trim();
   return postJson('/api/run', body);
 }
 
