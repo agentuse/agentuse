@@ -816,7 +816,7 @@ export function ProviderSettingsGroup({ section = 'providers', initialExpanded }
       {section === 'providers' && <section class="settings-group provider-settings-group">
         <div class="settings-group-heading">
           <h2 class="settings-group-title">AI connections</h2>
-          <button type="button" class="settings-item" onClick={() => setDialog({ scope: 'all', title: 'add connection', allowCustom: true })}>Add connection</button>
+          <button type="button" class="settings-item" onClick={() => setDialog({ scope: 'all', title: 'add connection', allowCustom: true, missingOnly: true })}>Add connection</button>
         </div>
         <p class="settings-group-hint">Connections are available to every project on this server. Open a row to manage it.</p>
         {!payload && !error && <p class="settings-group-hint">Loading providers…</p>}
