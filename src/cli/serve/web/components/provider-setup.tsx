@@ -1,3 +1,4 @@
+import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ProviderAuthSourceStatus, ProviderAuthStatus, ProviderStatus } from '../../../../auth/provider-status';
 import {
@@ -37,6 +38,26 @@ export type ProviderSetupScope = 'all' | 'provider' | 'plugins';
 
 function authMethodLabel(methods: readonly ('oauth' | 'api_key')[]): string {
   return methods.map((method) => method === 'api_key' ? 'API key' : 'Account sign-in').join(' or ');
+}
+
+/** Two-letter mark so a row is recognisable before its name is read. */
+function monogram(name: string): string {
+  // Split CamelCase too, so OpenAI and OpenRouter do not both read "OP".
+  const words = name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[^A-Za-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '··';
+  if (words.length === 1) return words[0]!.slice(0, 2).toUpperCase();
+  return `${words[0]![0]}${words[1]![0]}`.toUpperCase();
+}
+
+/**
+ * `owner/repo@ref` (or a github URL) becomes a browsable link. A locally
+ * installed plugin's source is a filesystem path, which has nowhere to link to.
+ */
+function pluginSourceLink(source: string): { href: string; label: string } | null {
+  const path = source.replace(/^(?:github:|git:)/, '').replace(/^https:\/\/github\.com\//, '');
+  if (!/^[\w.-]+\/[\w.-]+(?:@.+)?$/.test(path)) return null;
+  const repo = path.split('@')[0] ?? path;
+  return { href: `https://github.com/${repo}`, label: `github.com/${path}` };
 }
 
 /** Existing credentials, including environment keys, occupy their auth method. */
@@ -123,7 +144,8 @@ function ProviderSetupForm(props: {
   allowCustom?: boolean;
   scope?: ProviderSetupScope;
   onUpdated: (payload: ProviderSetupPayload) => void;
-  onComplete: (payload: ProviderSetupPayload) => void;
+  onComplete: (payload: ProviderSetupPayload, connectedName: string) => void;
+  onStep?: (step: 1 | 2 | 3) => void;
 }) {
   const scope = props.scope ?? 'all';
   const setupOptions = providerSetupOptions(props.payload, props.allowCustom, scope, props.initialProvider);
@@ -145,6 +167,7 @@ function ProviderSetupForm(props: {
   const [code, setCode] = useState('');
   const [pluginSource, setPluginSource] = useState('');
   const [pluginInspection, setPluginInspection] = useState<PluginSourceInspection | null>(null);
+  const [pluginTrusted, setPluginTrusted] = useState(false);
   const [customName, setCustomName] = useState('');
   const [customURL, setCustomURL] = useState('');
   const [customKey, setCustomKey] = useState('');
@@ -158,11 +181,25 @@ function ProviderSetupForm(props: {
     setFlow(null);
     setCode('');
     setPluginInspection(null);
+    setPluginTrusted(false);
     setError(null);
     const next = props.payload.catalog.find((item) => item.id === provider);
     const nextPlugin = props.payload.pluginRegistry.find((item) => pluginSelection(item.id) === provider);
     setMethod(nextPlugin || next?.authMethods.includes('oauth') ? 'oauth' : 'api_key');
   }, [provider]);
+
+  // Only the reviewed shortlist offers a pick; an empty shortlist lands
+  // straight on the GitHub source field.
+  const pluginsOnlyAdvanced = scope === 'plugins' && setupOptions.every((option) => option.value === advancedPluginSelection);
+  const isApiKeyStep = provider !== 'custom' && provider !== advancedPluginSelection && method === 'api_key';
+  const step: 1 | 2 | 3 = flow || isApiKeyStep || provider === 'custom' || pluginInspection ? 2 : 1;
+  const reportStep = props.onStep;
+  useEffect(() => { reportStep?.(step); }, [step, reportStep]);
+
+  const connectedName = () => entry?.name
+    ?? pluginEntry?.name
+    ?? pluginInspection?.name
+    ?? (provider === 'custom' ? customName || 'The provider' : provider);
 
   const submit = async () => {
     if (busy) return;
@@ -239,10 +276,11 @@ function ProviderSetupForm(props: {
           ? await completeProviderPluginOAuth(flow.id, code)
           : await completeProviderOAuth(flow.id, code);
       }
+      const name = connectedName();
       setKey('');
       setCustomKey('');
       props.onUpdated(next);
-      props.onComplete(next);
+      props.onComplete(next, name);
     } catch (caught) {
       setError((caught as Error).message || 'Provider setup failed.');
     } finally {
@@ -253,6 +291,8 @@ function ProviderSetupForm(props: {
   const oauthCopy = provider === 'openai'
     ? 'Sign in with ChatGPT, then paste the full callback URL below.'
     : `Authorize ${pluginEntry?.name ?? pluginInspection?.name ?? 'the provider plugin'}, then paste the authorization code below.`;
+
+  const blockedByTrust = provider === advancedPluginSelection && pluginInspection !== null && !flow && !pluginTrusted;
 
   return (
     <div class="provider-setup-form">
@@ -280,12 +320,18 @@ function ProviderSetupForm(props: {
         </div>
       ) : provider === advancedPluginSelection && !flow ? (
         <div class="provider-plugin-source">
+          {pluginsOnlyAdvanced && (
+            <>
+              <div class="provider-all-installed"><i aria-hidden="true" />All reviewed plugins are already installed. Manage them from the list behind this dialog.</div>
+              <div class="provider-source-divider">or from GitHub</div>
+            </>
+          )}
           <label class="provider-field">
             <span>Source</span>
             <input
               value={pluginSource}
               placeholder="owner/repo@v1.0.0"
-              onInput={(event) => { setPluginSource((event.target as HTMLInputElement).value); setPluginInspection(null); }}
+              onInput={(event) => { setPluginSource((event.target as HTMLInputElement).value); setPluginInspection(null); setPluginTrusted(false); }}
               disabled={busy}
             />
             <small>Use owner/repo@tag or a full commit. AgentUse will not track a moving branch.</small>
@@ -305,7 +351,13 @@ function ProviderSetupForm(props: {
                   ? pluginInspection.providers.map((item) => <code key={item.id}>{item.id}{item.auth.length ? ` · ${authMethodLabel(item.auth)}` : ''}</code>)
                   : 'Declared when the plugin is activated'}</dd>
               </dl>
-              <div class="provider-plugin-warning">This plugin is not on the reviewed shortlist that ships with AgentUse. Install it only if you trust <strong>{pluginInspection.publisher}</strong>.</div>
+              <div class="provider-plugin-trust">
+                <span>This plugin is not on the reviewed shortlist that ships with AgentUse. Installing runs code published by <strong>{pluginInspection.publisher}</strong>, and it can read the credentials it creates.</span>
+                <label>
+                  <input type="checkbox" checked={pluginTrusted} onChange={(event) => setPluginTrusted((event.target as HTMLInputElement).checked)} disabled={busy} />
+                  I trust this publisher
+                </label>
+              </div>
             </div>
           )}
         </div>
@@ -357,10 +409,10 @@ function ProviderSetupForm(props: {
       <div class="provider-setup-actions">
         {(flow || (scope === 'all' && pluginEntry) || (provider === advancedPluginSelection && pluginInspection)) && <button type="button" class="provider-setup-secondary" onClick={() => {
           if (flow) { void cancelProviderOAuth(flow.id).catch(() => {}); setFlow(null); setCode(''); }
-          else if (provider === advancedPluginSelection && pluginInspection) setPluginInspection(null);
+          else if (provider === advancedPluginSelection && pluginInspection) { setPluginInspection(null); setPluginTrusted(false); }
           else setProvider(setupOptions[0]?.value ?? props.payload.catalog[0]?.id ?? 'anthropic');
         }} disabled={busy}>Back</button>}
-        <button type="button" class="provider-setup-primary" onClick={() => void submit()} disabled={busy} aria-busy={busy}>
+        <button type="button" class="provider-setup-primary" onClick={() => void submit()} disabled={busy || blockedByTrust} aria-busy={busy}>
           {busy ? flow ? 'Connecting…' : provider === advancedPluginSelection && !pluginInspection ? 'Reading manifest…' : provider === advancedPluginSelection || (pluginEntry && !installedPlugin) ? 'Installing…' : pluginEntry ? 'Connecting…' : 'Working…'
             : flow ? 'Finish connecting'
             : provider === advancedPluginSelection ? pluginInspection ? 'Install and continue' : 'Read manifest'
@@ -372,6 +424,23 @@ function ProviderSetupForm(props: {
       </div>
     </div>
   );
+}
+
+const STEP_LABELS = ['Choose', 'Sign in', 'Done'] as const;
+
+/** Where the flow is: choosing, authenticating, or finished. */
+function ProviderSetupSteps({ step }: { step: 1 | 2 | 3 }) {
+  const items: ComponentChildren[] = [];
+  STEP_LABELS.forEach((label, index) => {
+    if (index > 0) items.push(<span class="provider-step-bar" key={`bar-${label}`} />);
+    const done = index + 1 < step || step === 3;
+    items.push(
+      <span key={label} class={`provider-step${done ? ' is-done' : ''}${index + 1 === step ? ' is-on' : ''}`}>
+        <i>{done ? '✓' : index + 1}</i>{label}
+      </span>,
+    );
+  });
+  return <div class="provider-setup-steps" aria-hidden="true">{items}</div>;
 }
 
 export function ProviderSetupDialog(props: {
@@ -387,6 +456,9 @@ export function ProviderSetupDialog(props: {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [payload, setPayload] = useState<ProviderSetupPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [done, setDone] = useState<string | null>(null);
+  const [formKey, setFormKey] = useState(0);
   const setupPayload = payload && (props.missingOnly ? missingProviderMethods(payload) : payload);
   const hasOptions = setupPayload && providerSetupOptions(setupPayload, props.allowCustom, props.scope, props.initialProvider).length > 0;
 
@@ -406,18 +478,53 @@ export function ProviderSetupDialog(props: {
     if (!props.open) return;
     setPayload(null);
     setError(null);
+    setDone(null);
+    setStep(1);
+    setFormKey((current) => current + 1);
     void fetchProviderSetup().then(setPayload, (caught) => setError((caught as Error).message || 'Could not load providers.'));
   }, [props.open]);
+
+  const installingPlugins = props.scope === 'plugins';
 
   return (
     <dialog class="provider-setup-dialog" ref={dialogRef} aria-labelledby="provider-setup-title" onClose={props.onClose} onClick={(event) => { if (event.target === dialogRef.current) props.onClose(); }}>
       <div class="dialog-head"><span id="provider-setup-title" class="title">{props.title ?? 'connect a provider'}</span><button type="button" class="dialog-close" aria-label="Close" onClick={props.onClose}>×</button></div>
       <div class="provider-setup-body">
-        <div class="provider-setup-intro"><strong>{props.scope === 'plugins' ? 'Install a provider plugin' : 'Connect a model provider'}</strong><span>{props.scope === 'plugins' ? 'Choose a reviewed plugin or inspect an immutable GitHub source before installing it.' : 'Credentials are stored on the AgentUse server host and shared by projects that use its credential store.'}</span></div>
+        {!installingPlugins && <ProviderSetupSteps step={done ? 3 : step} />}
+        <div class="provider-setup-intro"><strong>{installingPlugins ? 'Install a provider plugin' : 'Connect a model provider'}</strong><span>{installingPlugins ? 'Plugins add providers that AgentUse does not ship with. Reviewed ones are one click; anything else is read from a pinned GitHub source first.' : 'Credentials are stored on the AgentUse server host and shared by projects that use its credential store.'}</span></div>
         {!payload && !error && <p class="provider-setup-loading">Loading providers…</p>}
         {error && <p class="provider-setup-error" role="alert">{error}</p>}
-        {setupPayload && !hasOptions && <p class="provider-method-hint">All supported connection methods are already configured.</p>}
-        {setupPayload && hasOptions && <ProviderSetupForm key={`${props.scope ?? 'all'}:${props.initialProvider ?? 'default'}`} payload={setupPayload} {...(props.initialProvider ? { initialProvider: props.initialProvider } : {})} {...(props.allowCustom !== undefined ? { allowCustom: props.allowCustom } : {})} {...(props.scope ? { scope: props.scope } : {})} onUpdated={setPayload} onComplete={props.onComplete} />}
+        {done ? (
+          <>
+            <div class="provider-setup-done" role="status">
+              <span class="provider-setup-check" aria-hidden="true">
+                <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 9.5l3.5 3.5 7.5-8" /></svg>
+              </span>
+              <span>
+                <strong>{done} is connected</strong>
+                <span>Every project on this server can use it.</span>
+              </span>
+            </div>
+            <div class="provider-setup-actions">
+              <button type="button" class="provider-setup-secondary" onClick={() => { setDone(null); setStep(1); setFormKey((current) => current + 1); }}>Add another</button>
+              <button type="button" class="provider-setup-primary" onClick={props.onClose}>Done</button>
+            </div>
+          </>
+        ) : (
+          <>
+            {setupPayload && !hasOptions && <p class="provider-method-hint">All supported connection methods are already configured.</p>}
+            {setupPayload && hasOptions && <ProviderSetupForm
+              key={`${props.scope ?? 'all'}:${props.initialProvider ?? 'default'}:${formKey}`}
+              payload={setupPayload}
+              {...(props.initialProvider ? { initialProvider: props.initialProvider } : {})}
+              {...(props.allowCustom !== undefined ? { allowCustom: props.allowCustom } : {})}
+              {...(props.scope ? { scope: props.scope } : {})}
+              onUpdated={setPayload}
+              onStep={setStep}
+              onComplete={(next, name) => { props.onComplete(next); setDone(name); }}
+            />}
+          </>
+        )}
       </div>
     </dialog>
   );
@@ -437,20 +544,26 @@ export function providerHealthLabel(status: ProviderAuthStatus | undefined): str
   return 'Not connected';
 }
 
-function ProviderHealthBadge({ status }: { status: ProviderAuthStatus | undefined }) {
+function ProviderHealthBadge({ status, popped }: { status: ProviderAuthStatus | undefined; popped?: boolean }) {
   const state = status?.health?.state;
   const tone = state === 'verified' ? ' is-ready'
     : state === 'reconnect_required' || state === 'temporarily_unavailable' ? ' is-warning'
       : status?.checkPending ? ' is-pending' : '';
-  return <span class={`provider-status${tone}`} aria-live="polite">{providerHealthLabel(status)}</span>;
+  return <span class={`provider-status${tone}${popped ? ' is-pop' : ''}`} aria-live="polite"><i aria-hidden="true" />{providerHealthLabel(status)}</span>;
 }
 
-function ProviderHealthHint({ status }: { status: ProviderAuthStatus | undefined }) {
-  if (!status?.health) return null;
-  return <div class="settings-row-hint">{status.health.message}
+/** One sentence about the last check, for the expanded body. The message is
+ *  dropped when a notice strip above the line already states it. */
+function providerHealthMessage(status: ProviderAuthStatus | undefined, omitMessage = false): ComponentChildren {
+  if (!status?.health) {
+    return status?.checkPending
+      ? 'Checking this connection…'
+      : 'No test has run yet. Runs check it on first use.';
+  }
+  return <>{!omitMessage && status.health.message}
     {status.health.checkedAt && <> Checked {new Date(status.health.checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.</>}
     {status.checkPending && <> Checking again…</>}
-  </div>;
+  </>;
 }
 
 function pluginProviderHint(status: ProviderAuthStatus) {
@@ -465,7 +578,67 @@ function pluginProviderHint(status: ProviderAuthStatus) {
   return <>Connect with <code>agentuse provider login {status.id}</code></>;
 }
 
-export function ProviderSettingsGroup({ section = 'providers' }: { section?: 'providers' | 'plugins' }) {
+function Chevron() {
+  return (
+    <span class="provider-chevron" aria-hidden="true">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4" /></svg>
+    </span>
+  );
+}
+
+/** A settings row whose whole header is the disclosure control. */
+function ExpandRow(props: {
+  rowId: string;
+  open: boolean;
+  onToggle: () => void;
+  mono: string;
+  name: ComponentChildren;
+  sub: ComponentChildren;
+  aside?: ComponentChildren;
+  children: ComponentChildren;
+}) {
+  const panelId = `provider-row-${props.rowId.replace(/[^a-zA-Z0-9-]/g, '-')}`;
+  return (
+    <div class={`provider-row${props.open ? ' is-open' : ''}`}>
+      <button type="button" class="provider-row-head" aria-expanded={props.open} aria-controls={panelId} onClick={props.onToggle}>
+        <span class="provider-mono" aria-hidden="true">{props.mono}</span>
+        <span class="provider-row-copy">
+          <span class="provider-row-name">{props.name}</span>
+          <span class="provider-row-sub">{props.sub}</span>
+        </span>
+        {props.aside}
+        <Chevron />
+      </button>
+      <div class="provider-details" id={panelId} role="region">
+        <div class="provider-details-in">
+          <div class="provider-details-body">{props.children}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Destructive actions ask in place rather than opening a dialog. */
+function ConfirmInline(props: {
+  label: string;
+  warning: string;
+  busy: boolean;
+  onKeep: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <span class="provider-confirm" role="group" aria-label={`Confirm ${props.label.toLowerCase()}`}>
+      <span class="provider-confirm-text">{props.warning}</span>
+      <button type="button" class="provider-quiet-btn" disabled={props.busy} onClick={props.onKeep}>Keep</button>
+      <button type="button" class="provider-quiet-btn is-danger" disabled={props.busy} onClick={props.onConfirm}>{props.busy ? 'Working…' : props.label}</button>
+    </span>
+  );
+}
+
+export function ProviderSettingsGroup({ section = 'providers', initialExpanded }: {
+  section?: 'providers' | 'plugins';
+  initialExpanded?: string;
+}) {
   const [payload, setPayload] = useState<ProviderSetupPayload | null>(null);
   const [dialog, setDialog] = useState<{
     scope: ProviderSetupScope;
@@ -476,9 +649,14 @@ export function ProviderSettingsGroup({ section = 'providers' }: { section?: 'pr
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
-  const [managedProvider, setManagedProvider] = useState<string | null>(null);
-  const [managedPlugin, setManagedPlugin] = useState<string | null>(null);
+  const [expandedProvider, setExpandedProvider] = useState<string | null>(initialExpanded ?? null);
+  const [expandedPlugin, setExpandedPlugin] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
   const [confirmingPlugin, setConfirmingPlugin] = useState<string | null>(null);
+  const [popped, setPopped] = useState<string | null>(null);
+  const popTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => { if (popTimer.current) clearTimeout(popTimer.current); }, []);
 
   // Render durable cached health first. Only stale checks touch providers.
   // Poll the local snapshot while visible so failures from running workers
@@ -521,6 +699,15 @@ export function ProviderSettingsGroup({ section = 'providers' }: { section?: 'pr
   const credentialKey = (provider: string, source: ProviderAuthSourceStatus) =>
     `${provider}:${source.kind === 'oauth' ? 'oauth' : 'api_key'}:${source.plugin?.name ?? 'core'}:${source.plugin?.authMethodId ?? ''}`;
 
+  const toggleProvider = (id: string) => {
+    setConfirming(null);
+    setExpandedProvider((current) => current === id ? null : id);
+  };
+  const togglePlugin = (id: string) => {
+    setConfirmingPlugin(null);
+    setExpandedPlugin((current) => current === id ? null : id);
+  };
+
   /** Run one mutating provider action with a busy key and a fallback error message. */
   const run = async (
     key: string,
@@ -542,17 +729,26 @@ export function ProviderSettingsGroup({ section = 'providers' }: { section?: 'pr
     }
   };
 
-  const remove = (provider: string, source: ProviderAuthSourceStatus) => {
+  const remove = async (provider: string, source: ProviderAuthSourceStatus) => {
     const kind = source.kind === 'oauth' ? 'oauth' : 'api_key';
-    return run(credentialKey(provider, source), () => removeProviderCredential(provider, kind, source.plugin), 'Could not remove credential.');
+    await run(credentialKey(provider, source), () => removeProviderCredential(provider, kind, source.plugin), 'Could not remove credential.');
+    setConfirming(null);
   };
-  const removeCustom = (name: string) => run(`custom:${name}`, () => removeCustomProvider(name), 'Could not remove provider.', () => setManagedProvider(null));
+  const removeCustom = async (name: string) => {
+    await run(`custom:${name}`, () => removeCustomProvider(name), 'Could not remove provider.', () => setExpandedProvider(null));
+    setConfirming(null);
+  };
   const refreshCustom = (name: string) => run(`refresh:${name}`, () => refreshCustomProviderModels(name), 'Could not refresh models.');
   const recheck = (provider: string) => run(`recheck:${provider}`, async () => {
     const result = await fetchProviderReadiness({ provider, force: true });
     const current = payload ?? await fetchProviderSetup({ deferReadiness: true });
     return applyProviderReadiness(current, result.providers);
-  }, 'Could not recheck provider.');
+  }, 'Could not recheck provider.', (next) => {
+    if (next.status.providers.find((item) => item.id === provider)?.health?.state !== 'verified') return;
+    if (popTimer.current) clearTimeout(popTimer.current);
+    setPopped(provider);
+    popTimer.current = setTimeout(() => setPopped(null), 400);
+  });
   const continueUpgrade = (plugin: string, provider: string) => run(`plugin:${plugin}`, () => installProviderPlugin(plugin), 'Could not install provider plugin.', (next) => {
     if (!next.status.providers.find((item) => item.id === provider)?.configured) {
       setDialog({
@@ -564,29 +760,69 @@ export function ProviderSettingsGroup({ section = 'providers' }: { section?: 'pr
   });
   const updatePlugin = (name: string) => run(`update-plugin:${name}`, () => updateProviderPlugin(name), 'Could not update plugin.');
   const removePlugin = async (name: string) => {
-    await run(`remove-plugin:${name}`, () => removeProviderPlugin(name), 'Could not remove plugin.', () => setManagedPlugin(null));
+    await run(`remove-plugin:${name}`, () => removeProviderPlugin(name), 'Could not remove plugin.', () => setExpandedPlugin(null));
     setConfirmingPlugin(null);
+  };
+
+  /** What stops working when this stored credential goes away. */
+  const removalWarning = (status: ProviderAuthStatus | undefined, source: ProviderAuthSourceStatus) => {
+    if (!source.active) return 'Fallback goes away.';
+    const others = (status?.sources ?? []).filter((item) => item !== source);
+    return others.length === 0 ? 'Runs on this provider will stop.' : 'Runs fall back to the next method.';
+  };
+
+  const sourceSubText = (source: ProviderAuthSourceStatus) => source.kind === 'environment'
+    ? 'Set on the server'
+    : source.active ? 'Saved on this server' : 'Available as fallback';
+
+  /** Stored connection methods, each with an inline remove confirmation. */
+  const MethodList = ({ providerId, status }: { providerId: string; status: ProviderAuthStatus | undefined }) => {
+    const sources = status?.sources ?? [];
+    if (sources.length === 0) return null;
+    return (
+      <div class="provider-methods">
+        {sources.map((source) => {
+          const key = credentialKey(providerId, source);
+          const label = source.kind === 'oauth' ? 'Disconnect' : 'Remove key';
+          return (
+            <div class="provider-method" key={key + source.name}>
+              <span class="provider-method-copy">
+                <span class="provider-method-name">{source.name}{source.active && <span class="provider-in-use"><i aria-hidden="true" />in use</span>}</span>
+                <span class="provider-method-sub">{sourceSubText(source)}</span>
+              </span>
+              {source.stored && (confirming === key
+                ? <ConfirmInline
+                    label={label}
+                    warning={removalWarning(status, source)}
+                    busy={busyKey === key}
+                    onKeep={() => setConfirming(null)}
+                    onConfirm={() => void remove(providerId, source)}
+                  />
+                : <button type="button" class="provider-quiet-btn" disabled={busyKey !== null} onClick={() => setConfirming(key)}>{label}</button>)}
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   return (
     <>
       {section === 'providers' && <section class="settings-group provider-settings-group">
         <div class="settings-group-heading">
-          <h2 class="settings-group-title">{managedProvider ? 'Connection details' : 'AI connections'}</h2>
+          <h2 class="settings-group-title">AI connections</h2>
           <button type="button" class="settings-item" onClick={() => setDialog({ scope: 'all', title: 'add connection', allowCustom: true })}>Add connection</button>
         </div>
-        {managedProvider
-          ? <button type="button" class="settings-item provider-details-back" onClick={() => setManagedProvider(null)}>← All connections</button>
-          : <p class="settings-group-hint">Connections are available to every project on this server.</p>}
+        <p class="settings-group-hint">Connections are available to every project on this server. Open a row to manage it.</p>
         {!payload && !error && <p class="settings-group-hint">Loading providers…</p>}
         {error && <p class="settings-check-error" role="alert">{error}</p>}
-        {providers.filter(({ entry }) => !managedProvider || managedProvider === entry.id).map(({ entry, status }) => {
-          const active = status?.sources.find((source) => source.active);
-          const isManaged = managedProvider === entry.id;
-          const hasMissingMethod = payload && providerSetupOptions(missingProviderMethods(payload), false, 'provider', entry.id).length > 0;
+        {providers.map(({ entry, status }) => {
+          const open = expandedProvider === entry.id;
+          const hasMissingMethod = Boolean(payload && providerSetupOptions(missingProviderMethods(payload), false, 'provider', entry.id).length > 0);
           const servingPlugin = payload?.installedPlugins.find((plugin) =>
             plugin.providers.some((provided) => provided.id === entry.id),
           );
+          const active = status?.sources.find((source) => source.active);
           const migrationPlugin = payload?.pluginRegistry.find((plugin) =>
             plugin.provider === entry.id && !servingPlugin && status?.actionRequired,
           );
@@ -595,60 +831,110 @@ export function ProviderSettingsGroup({ section = 'providers' }: { section?: 'pr
           const authPlugin = payload?.pluginRegistry.find((plugin) => plugin.packageName === active?.plugin?.name);
           const displayName = active?.plugin && servingPlugin ? servingPlugin.name : entry.name;
           return (
-            <div class="settings-row provider-settings-row" key={entry.id}>
-              <div class="settings-row-text"><div class="settings-row-label">{isManaged ? displayName : <button type="button" class="provider-name-button" onClick={() => setManagedProvider(entry.id)}>{displayName}</button>}</div><div class="settings-row-hint">{status?.sources.length ? status.sources.map((source) => source.name).join(' · ') : `${entry.description} · ${authMethodLabel(entry.authMethods)}`}</div>{isManaged && <ProviderHealthHint status={status} />}</div>
-              <div class="settings-row-control provider-settings-control">
-                <ProviderHealthBadge status={status} />
-                {isManaged && active && <button type="button" class="settings-item" disabled={busyKey === `recheck:${entry.id}`} onClick={() => void recheck(entry.id)}>{busyKey === `recheck:${entry.id}` ? 'Testing…' : 'Test connection'}</button>}
-                {!isManaged && status?.configured && !reconnect && !migrationPlugin && <button type="button" class="settings-item" onClick={() => setManagedProvider(entry.id)}>Manage</button>}
-                {(isManaged ? reconnect || migrationPlugin || hasMissingMethod : !status?.configured || reconnect || migrationPlugin) && (
-                <button
-                  type="button"
-                  class="settings-item"
-                  disabled={migrationKey !== null && busyKey === migrationKey}
-                  onClick={() => migrationPlugin
-                    ? void continueUpgrade(migrationPlugin.id, migrationPlugin.provider)
-                    : setDialog({
-                        scope: 'provider',
-                        title: reconnect ? `reconnect ${displayName}` : `connect ${entry.name}`,
-                        missingOnly: !reconnect,
-                        initialProvider: reconnect && authPlugin ? pluginSelection(authPlugin.id) : entry.id,
-                      })}
-                >{migrationKey !== null && busyKey === migrationKey ? 'Upgrading…' : migrationPlugin ? 'Continue upgrade' : reconnect ? 'Reconnect' : status?.configured ? 'Add connection method' : 'Connect'}</button>)}
+            <ExpandRow
+              key={entry.id}
+              rowId={entry.id}
+              open={open}
+              onToggle={() => toggleProvider(entry.id)}
+              mono={monogram(displayName)}
+              name={displayName}
+              sub={status?.sources.length ? status.sources.map((source) => source.name).join(' · ') : `${entry.description} · ${authMethodLabel(entry.authMethods)}`}
+              aside={<ProviderHealthBadge status={status} popped={popped === entry.id} />}
+            >
+              {(reconnect || migrationPlugin) && (
+                <div class="provider-notice">
+                  <span>{migrationPlugin
+                    ? status?.actionRequired ?? 'This connection moved to a provider plugin. Continue the upgrade to keep using it.'
+                    : status?.health?.message ?? 'The saved sign-in expired. Reconnect to keep runs on this provider going.'}</span>
+                  <button
+                    type="button"
+                    class="settings-item"
+                    disabled={migrationKey !== null && busyKey === migrationKey}
+                    onClick={() => migrationPlugin
+                      ? void continueUpgrade(migrationPlugin.id, migrationPlugin.provider)
+                      : setDialog({
+                          scope: 'provider',
+                          title: `reconnect ${displayName}`,
+                          initialProvider: authPlugin ? pluginSelection(authPlugin.id) : entry.id,
+                        })}
+                  >{migrationKey !== null && busyKey === migrationKey ? 'Upgrading…' : migrationPlugin ? 'Continue upgrade' : 'Reconnect'}</button>
+                </div>
+              )}
+              <div class="provider-health-line">
+                <span>{providerHealthMessage(status, Boolean(reconnect || migrationPlugin))}</span>
+                {active && <button type="button" class="settings-item" disabled={busyKey === `recheck:${entry.id}`} onClick={() => void recheck(entry.id)}>{busyKey === `recheck:${entry.id}` ? 'Testing…' : 'Test connection'}</button>}
               </div>
-              {isManaged && <div class="provider-connection-methods">
-                <h3>Connection methods</h3>
-                {status?.sources.map((source) => <div class="settings-row" key={credentialKey(entry.id, source) + source.name}>
-                  <div class="settings-row-text"><div class="settings-row-label">{source.name}</div><div class="settings-row-hint">{source.active ? 'In use' : 'Available as fallback'}{source.kind === 'environment' ? ' · Set on the server' : ''}</div></div>
-                  {source.stored && <button type="button" class="settings-item" disabled={busyKey !== null} onClick={() => void remove(entry.id, source)}>{source.kind === 'oauth' ? 'Disconnect' : 'Remove key'}</button>}
-                </div>)}
-              </div>}
-            </div>
+              <MethodList providerId={entry.id} status={status} />
+              <div class="provider-row-foot">
+                <span>{servingPlugin ? <>Served by plugin <code>{servingPlugin.packageName}@{servingPlugin.version}</code></> : 'Built in'}</span>
+                {hasMissingMethod && <button
+                  type="button"
+                  class="provider-quiet-btn"
+                  onClick={() => setDialog({
+                    scope: 'provider',
+                    title: status?.sources.length ? `add a method for ${entry.name}` : `connect ${entry.name}`,
+                    missingOnly: true,
+                    initialProvider: entry.id,
+                  })}
+                >{status?.sources.length ? 'Add connection method' : 'Connect'}</button>}
+              </div>
+            </ExpandRow>
           );
         })}
-        {pluginProviders.filter(({ status }) => !managedProvider || managedProvider === status.id).map(({ status }) => (
-          <div class="settings-row provider-settings-row" key={status.id}>
-            <div class="settings-row-text">
-              <div class="settings-row-label">{status.name}</div>
-              <div class="settings-row-hint">{managedProvider === status.id ? pluginProviderHint(status) : 'Local installation'}</div>{managedProvider === status.id && <ProviderHealthHint status={status} />}
-            </div>
-            <div class="settings-row-control provider-settings-control">
-              <ProviderHealthBadge status={status} />
-              {managedProvider !== status.id ? <button type="button" class="settings-item" onClick={() => setManagedProvider(status.id)}>Manage</button> : <>
+        {pluginProviders.map(({ status, plugin }) => (
+          <ExpandRow
+            key={status.id}
+            rowId={status.id}
+            open={expandedProvider === status.id}
+            onToggle={() => toggleProvider(status.id)}
+            mono={monogram(status.name)}
+            name={status.name}
+            sub={expandedProvider === status.id ? pluginProviderHint(status) : 'Local installation'}
+            aside={<ProviderHealthBadge status={status} popped={popped === status.id} />}
+          >
+            <div class="provider-health-line">
+              <span>{providerHealthMessage(status)}</span>
               <button type="button" class="settings-item" disabled={busyKey === `recheck:${status.id}`} onClick={() => void recheck(status.id)}>{busyKey === `recheck:${status.id}` ? 'Testing…' : 'Test connection'}</button>
-              {status.sources.filter((source) => source.stored).map((source) => {
-                const removeKey = credentialKey(status.id, source);
-                return <button key={removeKey} type="button" class="settings-item" disabled={busyKey === removeKey} onClick={() => void remove(status.id, source)}>{source.kind === 'oauth' ? 'Disconnect' : 'Remove key'}</button>;
-              })}</>}
             </div>
-          </div>
+            <MethodList providerId={status.id} status={status} />
+            <div class="provider-row-foot">
+              <span>{plugin ? <>Served by plugin <code>{plugin.packageName}@{plugin.version}</code></> : 'Served by an installed plugin'}</span>
+            </div>
+          </ExpandRow>
         ))}
-        {payload?.status.customProviders.filter((provider) => !managedProvider || managedProvider === `custom:${provider.id}`).map((provider) => (
-          <div class="settings-row provider-settings-row" key={provider.id}>
-            <div class="settings-row-text"><div class="settings-row-label">{provider.id}</div><div class="settings-row-hint">{provider.baseURL} · {provider.models?.length ?? 0} {provider.models?.length === 1 ? 'model' : 'models'}</div></div>
-            <div class="settings-row-control provider-settings-control"><span class="provider-status">{providerHealthLabel({ id: provider.id, name: provider.id, configured: true, sources: [], ...(provider.health && { health: provider.health }) })}</span>{managedProvider !== `custom:${provider.id}` ? <button type="button" class="settings-item" onClick={() => setManagedProvider(`custom:${provider.id}`)}>Manage</button> : <><button type="button" class="settings-item" disabled={busyKey === `refresh:${provider.id}`} onClick={() => void refreshCustom(provider.id)}>{busyKey === `refresh:${provider.id}` ? 'Refreshing…' : 'Refresh models'}</button><button type="button" class="settings-item" disabled={busyKey === `custom:${provider.id}`} onClick={() => void removeCustom(provider.id)}>Remove connection</button></>}</div>
-          </div>
-        ))}
+        {payload?.status.customProviders.map((provider) => {
+          const rowId = `custom:${provider.id}`;
+          const removeKey = `custom:${provider.id}`;
+          return (
+            <ExpandRow
+              key={provider.id}
+              rowId={rowId}
+              open={expandedProvider === rowId}
+              onToggle={() => toggleProvider(rowId)}
+              mono={monogram(provider.id)}
+              name={provider.id}
+              sub={`${provider.baseURL} · ${provider.models?.length ?? 0} ${provider.models?.length === 1 ? 'model' : 'models'}`}
+              aside={<span class="provider-status"><i aria-hidden="true" />{providerHealthLabel({ id: provider.id, name: provider.id, configured: true, sources: [], ...(provider.health && { health: provider.health }) })}</span>}
+            >
+              <div class="provider-health-line">
+                <span>{provider.health?.message ?? 'Custom endpoint saved on this server.'}</span>
+                <button type="button" class="settings-item" disabled={busyKey === `refresh:${provider.id}`} onClick={() => void refreshCustom(provider.id)}>{busyKey === `refresh:${provider.id}` ? 'Refreshing…' : 'Refresh models'}</button>
+              </div>
+              <div class="provider-row-foot">
+                <span><code>{provider.baseURL}</code></span>
+                {confirming === removeKey
+                  ? <ConfirmInline
+                      label="Remove connection"
+                      warning="Runs on this provider will stop."
+                      busy={busyKey === removeKey}
+                      onKeep={() => setConfirming(null)}
+                      onConfirm={() => void removeCustom(provider.id)}
+                    />
+                  : <button type="button" class="provider-quiet-btn is-danger" disabled={busyKey !== null} onClick={() => setConfirming(removeKey)}>Remove connection</button>}
+              </div>
+            </ExpandRow>
+          );
+        })}
       </section>}
       {section === 'plugins' && (
         <section class="settings-group provider-plugin-settings-group">
@@ -656,39 +942,56 @@ export function ProviderSettingsGroup({ section = 'providers' }: { section?: 'pr
             <h2 class="settings-group-title">Installed plugins</h2>
             <button type="button" class="settings-item" onClick={() => setDialog({ scope: 'plugins', title: 'install provider plugin' })}>Install plugin</button>
           </div>
+          <p class="settings-group-hint">Plugins add providers. Their credentials live under Providers.</p>
           {!payload && !error && <p class="settings-group-hint">Loading plugins…</p>}
           {error && <p class="settings-check-error" role="alert">{error}</p>}
-          {managedPlugin && <button type="button" class="settings-item provider-details-back" onClick={() => { setManagedPlugin(null); setConfirmingPlugin(null); }}>← All plugins</button>}
           {payload && (payload.installedPlugins.length === 0) && <p class="settings-group-hint">No provider plugins installed.</p>}
-          {(payload?.installedPlugins ?? []).filter((plugin) => !managedPlugin || managedPlugin === plugin.packageName).map((plugin) => (
-            <div class="settings-row provider-settings-row" key={plugin.packageName}>
-              <div class="settings-row-text">
-                <div class="settings-row-label provider-installed-plugin-name">
-                  {payload?.pluginRegistry.find((entry) => entry.packageName === plugin.packageName)?.name
-                    ?? (plugin.providers.map((provided) => payload?.status.providers.find((p) => p.id === provided.id)?.name).filter(Boolean).join(', ') || plugin.name)}
-                  <span class={`provider-plugin-badge${plugin.provenance === 'unreviewed' ? ' is-unreviewed' : ''}`}>{plugin.provenance === 'community' ? 'Community' : 'Unreviewed'}</span>
-                </div>
-                <div class="settings-row-hint">{managedPlugin ? <><code>{plugin.packageName}@{plugin.version}</code> · {plugin.publisher}</> : `v${plugin.version}`}</div>
-              </div>
-              <div class="settings-row-control provider-settings-control">
-                {managedPlugin !== plugin.packageName ? <button type="button" class="settings-item" onClick={() => setManagedPlugin(plugin.packageName)}>Manage</button> : <>
-                <button type="button" class="settings-item" disabled={busyKey === `update-plugin:${plugin.packageName}`} onClick={() => void updatePlugin(plugin.packageName)}>{busyKey === `update-plugin:${plugin.packageName}` ? 'Updating…' : 'Update'}</button>
+          {(payload?.installedPlugins ?? []).map((plugin) => {
+            const registryEntry = payload?.pluginRegistry.find((item) => item.packageName === plugin.packageName);
+            const displayName = registryEntry?.name
+              ?? (plugin.providers.map((provided) => payload?.status.providers.find((p) => p.id === provided.id)?.name).filter(Boolean).join(', ') || plugin.name);
+            const link = pluginSourceLink(plugin.source);
+            const providedIds = plugin.providers.map((provided) => provided.id);
+            const removeKey = `remove-plugin:${plugin.packageName}`;
+            return (
+              <ExpandRow
+                key={plugin.packageName}
+                rowId={plugin.packageName}
+                open={expandedPlugin === plugin.packageName}
+                onToggle={() => togglePlugin(plugin.packageName)}
+                mono={monogram(displayName)}
+                name={<span class="provider-installed-plugin-name">{displayName}<span class={`provider-plugin-badge${plugin.provenance === 'unreviewed' ? ' is-unreviewed' : ''}`}>{plugin.provenance === 'community' ? 'Community' : 'Unreviewed'}</span></span>}
+                sub={`v${plugin.version} · ${plugin.publisher}`}
+              >
+                <dl class="provider-kv">
+                  <dt>Package</dt><dd><code>{plugin.packageName}@{plugin.version}</code></dd>
+                  <dt>Source</dt><dd>{link
+                    ? <a href={link.href} target="_blank" rel="noreferrer">{link.label}</a>
+                    : <code>{plugin.source}</code>}</dd>
+                  <dt>Publisher</dt><dd><code>{plugin.publisher}</code></dd>
+                  <dt>Provides</dt><dd>{providedIds.length > 0
+                    ? <>{providedIds.map((id) => <code key={id}>{id}</code>)} · <a href={`/settings?tab=providers&provider=${encodeURIComponent(providedIds[0]!)}`}>open in Providers</a></>
+                    : 'Declared when the plugin is activated'}</dd>
+                </dl>
                 {confirmingPlugin === plugin.packageName ? (
-                  <>
-                    <span class="settings-row-hint provider-remove-warning" role="status">
-                      {plugin.providers.length > 0
-                        ? `Logins through ${plugin.providers.map((provided) => provided.id).join(', ')} stop working until it is reinstalled. Saved credentials are kept.`
-                        : 'Saved credentials are kept.'}
+                  <div class="provider-notice">
+                    <span>{providedIds.length > 0
+                      ? `Logins through ${providedIds.join(', ')} stop working until it is reinstalled. Saved credentials are kept.`
+                      : 'Saved credentials are kept.'}</span>
+                    <span class="provider-confirm" role="group" aria-label="Confirm uninstall">
+                      <button type="button" class="provider-quiet-btn" disabled={busyKey === removeKey} onClick={() => setConfirmingPlugin(null)}>Keep</button>
+                      <button type="button" class="provider-quiet-btn is-danger" disabled={busyKey === removeKey} onClick={() => void removePlugin(plugin.packageName)}>{busyKey === removeKey ? 'Uninstalling…' : 'Uninstall'}</button>
                     </span>
-                    <button type="button" class="settings-item" disabled={busyKey === `remove-plugin:${plugin.packageName}`} onClick={() => setConfirmingPlugin(null)}>Cancel</button>
-                    <button type="button" class="settings-item is-danger" disabled={busyKey === `remove-plugin:${plugin.packageName}`} onClick={() => void removePlugin(plugin.packageName)}>{busyKey === `remove-plugin:${plugin.packageName}` ? 'Uninstalling…' : 'Confirm uninstall'}</button>
-                  </>
+                  </div>
                 ) : (
-                  <button type="button" class="settings-item" onClick={() => setConfirmingPlugin(plugin.packageName)}>Uninstall</button>
-                )}</>}
-              </div>
-            </div>
-          ))}
+                  <div class="provider-row-actions">
+                    <button type="button" class="provider-quiet-btn is-danger" disabled={busyKey !== null} onClick={() => setConfirmingPlugin(plugin.packageName)}>Uninstall</button>
+                    <button type="button" class="settings-item" disabled={busyKey === `update-plugin:${plugin.packageName}`} onClick={() => void updatePlugin(plugin.packageName)}>{busyKey === `update-plugin:${plugin.packageName}` ? 'Updating…' : 'Update'}</button>
+                  </div>
+                )}
+              </ExpandRow>
+            );
+          })}
         </section>
       )}
       <ProviderSetupDialog
@@ -698,7 +1001,7 @@ export function ProviderSettingsGroup({ section = 'providers' }: { section?: 'pr
         {...(dialog?.scope ? { scope: dialog.scope } : {})}
         missingOnly={dialog?.missingOnly ?? false}
         title={dialog?.title ?? 'connect a provider'}
-        onComplete={(next) => { setPayload(next); setDialog(null); }}
+        onComplete={setPayload}
         onClose={() => setDialog(null)}
       />
     </>
