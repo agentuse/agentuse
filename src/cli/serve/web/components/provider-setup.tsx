@@ -961,7 +961,7 @@ export function ProviderSettingsGroup({ section = 'providers', initialExpanded }
                 onToggle={() => togglePlugin(plugin.packageName)}
                 mono={monogram(displayName)}
                 name={<span class="provider-installed-plugin-name">{displayName}<span class={`provider-plugin-badge${plugin.provenance === 'unreviewed' ? ' is-unreviewed' : ''}`}>{plugin.provenance === 'community' ? 'Community' : 'Unreviewed'}</span></span>}
-                sub={`v${plugin.version} · ${plugin.publisher}`}
+                sub={plugin.publisher.trim() && plugin.publisher !== 'unknown' ? `v${plugin.version} · ${plugin.publisher}` : `v${plugin.version}`}
               >
                 <dl class="provider-kv">
                   <dt>Package</dt><dd><code>{plugin.packageName}@{plugin.version}</code></dd>
