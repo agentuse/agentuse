@@ -6,7 +6,9 @@ import { PluginHost, PluginManager } from '../src/plugin';
 import {
   checkProviderReadiness,
   createCustomProviderModel,
+  discoverProviderModels,
   getInstalledPluginHost,
+  getProviderAdapters,
   getActiveProviderAdapter,
   getProviderPatch,
   getProviderPlugin,
@@ -828,5 +830,126 @@ describe('project-local activation scope', () => {
     const yieldedAtCancel = yielded;
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(yielded).toBe(yieldedAtCancel);
+  });
+
+  it('reads a custom transport protocol from `protocol`, falling back to the legacy options key', async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-protocol-'));
+    const plugins = path.join(root, 'plugins');
+    const dataDir = path.join(root, 'data');
+    await fs.mkdir(plugins);
+    await fs.mkdir(path.join(dataDir, 'plugins'), { recursive: true });
+    await fs.writeFile(path.join(plugins, 'protocols.js'), `
+      const models = [{ id: 'm', name: 'M', input: ['text'], reasoning: false, contextWindow: 10, maxOutputTokens: 10 }];
+      async function* stream() { yield { type: 'finish', reason: 'stop' }; }
+      export default function (agentuse) {
+        agentuse.registerProvider({ id: 'explicit', name: 'E', models, transport: { kind: 'custom', apiVersion: 1, protocol: 'anthropic', providerOptionsKey: 'bespoke', stream } });
+        agentuse.registerProvider({ id: 'legacy', name: 'L', models, transport: { kind: 'custom', apiVersion: 1, providerOptionsKey: 'openai', stream } });
+        agentuse.registerProvider({ id: 'bespoke', name: 'B', models, transport: { kind: 'custom', apiVersion: 1, providerOptionsKey: 'mine', stream } });
+      }
+    `);
+    oldDataDir = process.env.AGENTUSE_DATA_DIR;
+    process.env.AGENTUSE_DATA_DIR = dataDir;
+    resetProviderPluginCache();
+    const manager = new PluginManager();
+    await manager.loadPlugins([plugins]);
+    expect(loadedPluginProtocol('explicit')).toBe('anthropic');
+    expect(loadedPluginProtocol('legacy')).toBe('openai');
+    expect(loadedPluginProtocol('bespoke')).toBeUndefined();
+  });
+
+  it('lets a project install shadow a global install of the same plugin', async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-shadow-'));
+    const dataDir = path.join(root, 'data');
+    const home = path.join(dataDir, 'plugins');
+    const project = path.join(root, 'project');
+    const write = async (dir: string, label: string) => {
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, 'package.json'), JSON.stringify({
+        name: 'shadowed', version: label === 'global' ? '1.0.0' : '2.0.0', agentuse: { apiVersion: 1, extensions: ['./index.js'] },
+      }));
+      await fs.writeFile(path.join(dir, 'index.js'), `export default function (agentuse) {
+        agentuse.registerProvider({ id: 'shadowed-provider', name: '${label}', models: [], transport: { kind: 'openai-responses', baseURL: 'https://${label}.example' } });
+      }`);
+    };
+    const globalDir = path.join(home, 'shadowed-global');
+    const projectDir = path.join(project, '.agentuse', 'packages', 'shadowed-project');
+    await write(globalDir, 'global');
+    await write(projectDir, 'project');
+    const stamp = { installedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    await fs.writeFile(path.join(home, 'registry.json'), JSON.stringify([{ name: 'shadowed', version: '1.0.0', source: 'g', directory: globalDir, scope: 'global', ...stamp }]));
+    await fs.writeFile(path.join(project, '.agentuse', 'plugins.json'), JSON.stringify([{ name: 'shadowed', version: '2.0.0', source: 'p', directory: projectDir, scope: 'project', ...stamp }]));
+    oldDataDir = process.env.AGENTUSE_DATA_DIR;
+    process.env.AGENTUSE_DATA_DIR = dataDir;
+    resetProviderPluginCache();
+    const manager = new PluginManager();
+    await manager.loadPlugins([path.join(root, 'none')], project);
+    const host = await getInstalledPluginHost();
+    expect(host.listProviders().map((provider) => provider.name)).toEqual(['project']);
+    expect(host.getProviderOwner('shadowed-provider')).toMatchObject({ version: '2.0.0', scope: 'project' });
+  });
+
+  it('re-runs live model discovery after the TTL and retries a failed discovery', async () => {
+    let calls = 0;
+    const provider: ProviderDefinition = {
+      id: 'live-models',
+      name: 'Live Models',
+      transport: { kind: 'openai-chat-completions', baseURL: 'https://live.example' },
+      async models() {
+        calls++;
+        if (calls === 1) throw new Error('server down');
+        return [{ id: `m${calls}`, name: 'M', input: ['text'], reasoning: false, contextWindow: 10, maxOutputTokens: 10 }];
+      },
+    };
+    await expect(discoverProviderModels(provider)).rejects.toThrow('server down');
+    expect((await discoverProviderModels(provider)).map((model) => model.id)).toEqual(['m2']);
+    expect((await discoverProviderModels(provider)).map((model) => model.id)).toEqual(['m2']);
+    expect(calls).toBe(2);
+    const realNow = Date.now;
+    Date.now = () => realNow() + 6 * 60 * 1000;
+    try {
+      expect((await discoverProviderModels(provider)).map((model) => model.id)).toEqual(['m3']);
+    } finally {
+      Date.now = realNow;
+    }
+    const staticProvider: ProviderDefinition = { ...provider, id: 'static-models', models: [] };
+    await discoverProviderModels(staticProvider);
+    Date.now = () => realNow() + 60 * 60 * 1000;
+    try {
+      expect(await discoverProviderModels(staticProvider)).toEqual([]);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  it('materializes one provider definition per adapter registration', async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-adapter-identity-'));
+    const plugins = path.join(root, 'plugins');
+    const dataDir = path.join(root, 'data');
+    await fs.mkdir(plugins);
+    await fs.mkdir(path.join(dataDir, 'plugins'), { recursive: true });
+    await fs.writeFile(path.join(plugins, 'adapter.js'), `
+      globalThis.__agentuseAdapterModelCalls = 0;
+      export default function (agentuse) {
+        agentuse.registerProvider('anthropic', {
+          name: 'Counting Adapter',
+          transport: { kind: 'anthropic-messages', baseURL: 'https://adapter.example' },
+          models: async () => { globalThis.__agentuseAdapterModelCalls++; return [{ id: 'claude-x', name: 'X', input: ['text'], reasoning: false, contextWindow: 10, maxOutputTokens: 10 }]; },
+          when: () => true,
+        });
+      }
+    `);
+    oldDataDir = process.env.AGENTUSE_DATA_DIR;
+    process.env.AGENTUSE_DATA_DIR = dataDir;
+    resetProviderPluginCache();
+    const manager = new PluginManager();
+    await manager.loadPlugins([plugins]);
+    const [first] = await getProviderAdapters('anthropic');
+    const [second] = await getProviderAdapters('anthropic');
+    expect(second?.provider).toBe(first!.provider);
+    await getActiveProviderAdapter('anthropic', 'claude-x');
+    await getActiveProviderAdapter('anthropic', 'claude-x');
+    await getActiveProviderAdapter('anthropic', 'claude-x');
+    expect((globalThis as any).__agentuseAdapterModelCalls).toBe(1);
+    delete (globalThis as any).__agentuseAdapterModelCalls;
   });
 });

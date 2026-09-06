@@ -73,14 +73,19 @@ export async function readInstalledPluginRecords(): Promise<InstalledPluginRecor
   }
 }
 
+/** Global records first, then project records; a project install shadows a global one of the same name. */
 async function readAvailablePluginRecords(root: string): Promise<InstalledPluginRecord[]> {
-  const global = await readInstalledPluginRecords();
+  const byName = new Map<string, InstalledPluginRecord>();
+  for (const record of await readInstalledPluginRecords()) byName.set(record.name, record);
   try {
     const parsed = JSON.parse(await readFile(join(root, '.agentuse', 'plugins.json'), 'utf8')) as unknown;
-    return Array.isArray(parsed) ? [...global, ...parsed as InstalledPluginRecord[]] : global;
+    if (Array.isArray(parsed)) {
+      for (const record of parsed as InstalledPluginRecord[]) byName.set(record.name, { ...record, scope: record.scope ?? 'project' });
+    }
   } catch {
-    return global;
+    // No project registry.
   }
+  return [...byName.values()];
 }
 
 function hostLogger(name: string): PluginLogger {
@@ -218,7 +223,27 @@ export async function getProviderPlugin(id: string): Promise<ProviderDefinition 
   return (await loadProviderPlugins()).find((provider) => provider.id === id);
 }
 
+/**
+ * One materialized definition per (adapter registration, provider id). Model
+ * discovery and metadata caches key on the definition object, so rebuilding
+ * it per call made every lookup a cache miss.
+ */
+const adapterProviders = new WeakMap<ProviderAdapter, Map<string, ProviderDefinition>>();
+
 function adapterProvider(providerId: string, adapter: ProviderAdapter): ProviderDefinition {
+  let byId = adapterProviders.get(adapter);
+  if (!byId) {
+    byId = new Map();
+    adapterProviders.set(adapter, byId);
+  }
+  const existing = byId.get(providerId);
+  if (existing) return existing;
+  const provider = materializeAdapterProvider(providerId, adapter);
+  byId.set(providerId, provider);
+  return provider;
+}
+
+function materializeAdapterProvider(providerId: string, adapter: ProviderAdapter): ProviderDefinition {
   return {
     id: providerId,
     name: adapter.name,
@@ -296,32 +321,45 @@ function registryModelDefinition(
   };
 }
 
+/** How long a live `models()` discovery result is reused before asking again. */
+const LIVE_MODEL_DISCOVERY_TTL_MS = 5 * 60 * 1000;
+
 export async function discoverProviderModels(provider: ProviderDefinition): Promise<ProviderModelDefinition[]> {
-  let pending = discoveredModelsCache.get(provider);
-  if (!pending) {
-    pending = (async () => {
-      if (Array.isArray(provider.models)) return provider.models;
-      if (typeof provider.models === 'function') {
-        return provider.models({
-          signal: new AbortController().signal,
-          fetch,
-          env: process.env,
-          log: hostLogger(provider.id),
-        });
-      }
-      const spec = provider.models;
-      const inherited = MODELS[spec.inherit as RegistryProvider] ?? {};
-      return Object.entries(inherited)
-        .filter(([id]) => !spec.include || spec.include.some((pattern) => minimatch(id, pattern)))
-        .filter(([id]) => !spec.exclude?.some((pattern) => minimatch(id, pattern)))
-        .map(([id, model]) => registryModelDefinition(id, model, spec.patch));
-    })();
-    discoveredModelsCache.set(provider, pending);
+  const cached = discoveredModelsCache.get(provider);
+  // Static catalogs never change for a given definition. A live discovery
+  // function (asking a local server what it serves, for example) is re-run
+  // after the TTL so a long-lived serve daemon sees new models, and a failed
+  // discovery is retried instead of being cached as a rejection forever.
+  const live = typeof provider.models === 'function';
+  if (cached && (!live || Date.now() - cached.at < LIVE_MODEL_DISCOVERY_TTL_MS)) return cached.pending;
+  const pending = (async () => {
+    if (Array.isArray(provider.models)) return provider.models;
+    if (typeof provider.models === 'function') {
+      return provider.models({
+        signal: new AbortController().signal,
+        fetch,
+        env: process.env,
+        log: hostLogger(provider.id),
+      });
+    }
+    const spec = provider.models;
+    const inherited = MODELS[spec.inherit as RegistryProvider] ?? {};
+    return Object.entries(inherited)
+      .filter(([id]) => !spec.include || spec.include.some((pattern) => minimatch(id, pattern)))
+      .filter(([id]) => !spec.exclude?.some((pattern) => minimatch(id, pattern)))
+      .map(([id, model]) => registryModelDefinition(id, model, spec.patch));
+  })();
+  const entry = { at: Date.now(), pending };
+  discoveredModelsCache.set(provider, entry);
+  if (live) {
+    pending.catch(() => {
+      if (discoveredModelsCache.get(provider) === entry) discoveredModelsCache.delete(provider);
+    });
   }
   return pending;
 }
 
-const discoveredModelsCache = new WeakMap<ProviderDefinition, Promise<ProviderModelDefinition[]>>();
+const discoveredModelsCache = new WeakMap<ProviderDefinition, { at: number; pending: Promise<ProviderModelDefinition[]> }>();
 
 /** The plugin's catalog as shown to users: a provider that inherits a registry
  * catalog is trimmed to the registry's suggested models unless `all` is set;
@@ -350,9 +388,9 @@ const resolvedModelsByProvider = new WeakMap<ProviderDefinition, Map<string, Pro
 
 async function cacheProviderMetadata(provider: ProviderDefinition): Promise<void> {
   const discovered = await discoverProviderModels(provider);
-  // Keep metadata attached to the provider definition itself. Conditional
-  // adapters are newly materialized per request, so a WeakMap cannot leak one
-  // project's transport or model patch into another project's selection.
+  // Keep metadata attached to the provider definition itself. A project-local
+  // adapter and an installed adapter are different registrations, so they get
+  // different definitions and cannot leak metadata into each other's selection.
   resolvedModelsByProvider.set(provider, new Map(discovered.map((model) => [model.id, model])));
 }
 
@@ -367,9 +405,10 @@ export function loadedPluginProtocol(id: string): 'anthropic' | 'openai' | undef
   const kind = selectedTransport?.kind;
   if (kind === 'anthropic-messages') return 'anthropic';
   if (kind === 'openai-responses' || kind === 'openai-chat-completions') return 'openai';
-  const transport = selectedTransport;
-  if (transport?.kind === 'custom') return transport.providerOptionsKey as 'anthropic' | 'openai' | undefined;
-  return undefined;
+  if (selectedTransport?.kind !== 'custom') return undefined;
+  if (selectedTransport.protocol) return selectedTransport.protocol;
+  const legacy = selectedTransport.providerOptionsKey;
+  return legacy === 'anthropic' || legacy === 'openai' ? legacy : undefined;
 }
 
 function authContext(name: string, signal?: AbortSignal): ProviderAuthContext {

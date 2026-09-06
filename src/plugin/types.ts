@@ -347,6 +347,13 @@ export type ProviderTransport =
   | {
       kind: 'custom';
       apiVersion: 1;
+      /**
+       * Wire protocol the transport speaks. AgentUse uses it to pick
+       * protocol-specific behavior (Anthropic output-token limits, which
+       * `providerOptions` block reaches the model). Omit for a bespoke API.
+       */
+      protocol?: 'anthropic' | 'openai';
+      /** @deprecated Use `protocol`. Still honored when `protocol` is unset. */
       providerOptionsKey?: string;
       stream(
         request: ProviderRequest,
