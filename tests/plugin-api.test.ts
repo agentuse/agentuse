@@ -8,6 +8,8 @@ import {
   getActiveProviderAdapter,
   getProviderPatch,
   getProviderPlugin,
+  loadProviderPlugins,
+  loadedPluginModel,
   loadedPluginProtocol,
   mergeProviderTransportHeaders,
   resetProviderPluginCache,
@@ -20,6 +22,7 @@ import { resolveModelInfo } from '../src/utils/model-utils';
 import { AuthStorage } from '../src/auth/storage';
 import { getProviderReadiness, getProviderStatus } from '../src/auth/provider-status';
 import { createModel } from '../src/models';
+import { applyProviderSystemMessages } from '../src/plugin/provider-behavior';
 
 const event: AgentCompleteEvent = {
   agent: { name: 'test-agent', model: 'demo:test' },
@@ -655,5 +658,78 @@ describe('project-local activation scope', () => {
     await manager.emitAgentComplete(event);
     expect((globalThis as any).__agentuseInstalledEventCount).toBe(1);
     delete (globalThis as any).__agentuseInstalledEventCount;
+  });
+
+  it('exposes installed package providers to synchronous metadata lookups', async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-installed-scope-'));
+    const dataDir = path.join(root, 'data');
+    const home = path.join(dataDir, 'plugins');
+    const pkg = path.join(root, 'package');
+    await fs.mkdir(home, { recursive: true });
+    await fs.mkdir(pkg);
+    await fs.writeFile(path.join(pkg, 'package.json'), JSON.stringify({
+      name: 'installed-provider', version: '1.0.0', agentuse: { apiVersion: 1, extensions: ['./index.js'] },
+    }));
+    await fs.writeFile(path.join(pkg, 'index.js'), `export default function (agentuse) {
+      agentuse.registerProvider({
+        id: 'installed-scope',
+        name: 'Installed Scope',
+        transport: { kind: 'anthropic-messages', baseURL: 'https://installed.example' },
+        models: [{ id: 'm1', name: 'M1', input: ['text'], reasoning: false, contextWindow: 4096, maxOutputTokens: 512 }],
+      });
+    }`);
+    await fs.writeFile(path.join(home, 'registry.json'), JSON.stringify([{
+      name: 'installed-provider', version: '1.0.0', source: 'test', directory: pkg, scope: 'global',
+      installedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    }]));
+    oldDataDir = process.env.AGENTUSE_DATA_DIR;
+    process.env.AGENTUSE_DATA_DIR = dataDir;
+    resetProviderPluginCache();
+
+    // Library path: no PluginManager, only loadProviderPlugins().
+    const providers = await loadProviderPlugins();
+    expect(providers.map((provider) => provider.id)).toEqual(['installed-scope']);
+    expect(loadedPluginProtocol('installed-scope')).toBe('anthropic');
+    expect(loadedPluginModel('installed-scope', 'm1')?.contextWindow).toBe(4096);
+    expect(resolveModelInfo('installed-scope:m1')?.limit.output).toBe(512);
+
+    // Runner path: PluginManager scope created first, installed host resolved later.
+    const manager = new PluginManager();
+    await manager.loadPlugins([path.join(root, 'no-local-plugins')]);
+    await manager.emit('agent:start', { agent: { name: 'a', model: 'installed-scope:m1' }, trigger: 'manual' });
+    expect(loadedPluginProtocol('installed-scope')).toBe('anthropic');
+    expect(loadedPluginModel('installed-scope', 'm1')?.id).toBe('m1');
+  });
+
+  it('does not duplicate portable prompt contributions when system messages are re-applied', async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-portable-prompt-'));
+    const plugins = path.join(root, 'plugins');
+    const dataDir = path.join(root, 'data');
+    await fs.mkdir(plugins);
+    await fs.mkdir(path.join(dataDir, 'plugins'), { recursive: true });
+    await fs.writeFile(path.join(plugins, 'prompt.js'), `export default function (agentuse) {
+      agentuse.registerProvider({
+        id: 'portable-prompt',
+        name: 'Portable Prompt',
+        transport: { kind: 'openai-chat-completions', baseURL: 'https://portable.example' },
+        models: [{ id: 'm', name: 'M', input: ['text'], reasoning: false, contextWindow: 10, maxOutputTokens: 10 }],
+        prompts: { system: () => [
+          { id: 'hint', content: 'PORTABLE', portable: true },
+          { id: 'local', content: 'NOT PORTABLE' },
+        ] },
+      });
+    }`);
+    oldDataDir = process.env.AGENTUSE_DATA_DIR;
+    process.env.AGENTUSE_DATA_DIR = dataDir;
+    resetProviderPluginCache();
+
+    const manager = new PluginManager();
+    await manager.loadPlugins([plugins]);
+    const once = await applyProviderSystemMessages([{ role: 'system', content: 'base' }], 'portable-prompt:m');
+    const twice = await applyProviderSystemMessages(once, 'portable-prompt:m');
+    expect(twice.map((message) => message.content)).toEqual(['PORTABLE', 'NOT PORTABLE', 'base']);
+    // Crossing to another provider keeps only the portable contribution.
+    const elsewhere = await applyProviderSystemMessages(twice, 'openai:gpt-5');
+    expect(elsewhere.map((message) => message.content)).toEqual(['PORTABLE', 'base']);
   });
 });

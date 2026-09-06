@@ -34,11 +34,13 @@ export async function applyProviderSystemMessages<T extends { role: string; cont
   messages: T[],
   model: string,
 ): Promise<Array<T | ProviderSystemMessage>> {
+  const providerId = resolveModelProvider(model);
+  // Drop contributions the target provider owns too: they are re-added below,
+  // so keeping the portable ones would duplicate them on every re-apply.
   const neutral = messages.filter((message) => {
     const owned = (message as T & ProviderSystemMessage).providerContribution;
-    return !owned || owned.portable;
+    return !owned || (owned.portable && owned.providerId !== providerId);
   });
-  const providerId = resolveModelProvider(model);
   const additions = await systemContributions(model);
   const tagged = additions.map((contribution): ProviderSystemMessage => ({
     role: 'system',

@@ -4,7 +4,12 @@ import type { ProviderDefinition } from './types';
 
 interface PluginScope {
   local?: PluginHost;
-  installed?: PluginHost;
+  /**
+   * Mutable slot, not a value: the installed host is resolved after an await,
+   * and enterWith() after an await never reaches the caller's continuation.
+   * The slot object is created synchronously so the caller shares it.
+   */
+  installed?: { host?: PluginHost };
   projectRoot?: string;
   /** Adapter metadata selected for this execution/request chain. */
   activeProviders?: Map<string, ProviderDefinition>;
@@ -21,6 +26,7 @@ export function enterPluginHost(host: PluginHost, projectRoot?: string): void {
     // selection map so two projects can select different adapters for the same
     // built-in provider without sharing process-global metadata.
     activeProviders: new Map(),
+    installed: {},
     ...(projectRoot && { projectRoot }),
   });
 }
@@ -30,22 +36,31 @@ export function currentPluginHost(): PluginHost | undefined {
 }
 
 export function enterInstalledPluginHost(host: PluginHost): void {
-  pluginScope.enterWith({ ...pluginScope.getStore(), installed: host });
+  ensureProviderSelectionScope();
+  pluginScope.getStore()!.installed!.host = host;
 }
 
 export function currentInstalledPluginHost(): PluginHost | undefined {
-  return pluginScope.getStore()?.installed;
+  return pluginScope.getStore()?.installed?.host;
 }
 
 export function currentPluginProjectRoot(): string | undefined {
   return pluginScope.getStore()?.projectRoot;
 }
 
-/** Ensure direct library consumers also have an execution-local adapter map. */
+/**
+ * Ensure direct library consumers also have an execution-local adapter map and
+ * installed-host slot. Must run before the first await of the calling function
+ * so the caller's continuation shares the same store.
+ */
 export function ensureProviderSelectionScope(): void {
   const current = pluginScope.getStore();
-  if (current?.activeProviders) return;
-  pluginScope.enterWith({ ...current, activeProviders: new Map() });
+  if (current?.activeProviders && current.installed) return;
+  pluginScope.enterWith({
+    ...current,
+    activeProviders: current?.activeProviders ?? new Map(),
+    installed: current?.installed ?? {},
+  });
 }
 
 export function selectActiveProvider(providerId: string, provider: ProviderDefinition | undefined): void {

@@ -143,6 +143,8 @@ export function resetProviderPluginCache(): void {
 }
 
 export async function getInstalledPluginHost(): Promise<PluginHost> {
+  // Synchronous, before the first await: see ensureProviderSelectionScope().
+  ensureProviderSelectionScope();
   await ensureLegacyProviderPlugins();
   const root = resolve(process.env.AGENTUSE_PROJECT_ROOT ?? currentPluginProjectRoot() ?? findProjectRoot(process.cwd()));
   const key = `${providerPluginRegistryPath()}\0${root}`;
