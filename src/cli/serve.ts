@@ -9156,12 +9156,16 @@ export function createServeCommand(): Command {
               sendError(res, 403, 'OPERATOR_REQUIRED', 'Only an authenticated operator can change agent source');
               return;
             }
-            mutationKey = `draft:${project.id}:${jobId}`;
-            if (draftMutations.has(mutationKey)) {
+            // mutationKey is what `finally` releases, so it is only set once
+            // this request owns the lock. Setting it before the check let a
+            // rejected caller free the running action's lock on its way out.
+            const draftKey = `draft:${project.id}:${jobId}`;
+            if (draftMutations.has(draftKey)) {
               sendError(res, 409, 'DRAFT_ACTION_IN_PROGRESS', 'Another action is already changing this draft');
               return;
             }
-            draftMutations.add(mutationKey);
+            draftMutations.add(draftKey);
+            mutationKey = draftKey;
 
             if (action === 'request-changes') {
               const body = await parseJSONBody(req);
@@ -9237,8 +9241,19 @@ export function createServeCommand(): Command {
               sendError(res, 409, 'DRAFT_NOT_READY', 'There is no draft to save yet');
               return;
             }
+            // Save transitions out of an open draft, so the server decides which
+            // states may make that move. A second tab left idle stops polling and
+            // can still offer Save after another tab discarded or reopened this draft.
             if (record.status === 'saved') {
               sendError(res, 409, 'DRAFT_ALREADY_SAVED', 'This draft was already saved');
+              return;
+            }
+            if (record.status === 'discarded') {
+              sendError(res, 409, 'DRAFT_CLOSED', 'This draft is no longer open for changes');
+              return;
+            }
+            if (record.status === 'running') {
+              sendError(res, 409, 'DRAFT_NOT_READY', 'This draft is still being written');
               return;
             }
             const recovery = await resolveAgentCreationRecovery(jobId, record);
@@ -9335,12 +9350,14 @@ export function createServeCommand(): Command {
               sendError(res, 403, 'OPERATOR_REQUIRED', 'Only an authenticated operator can change agent source');
               return;
             }
-            mutationKey = `revision:${project.id}:${revisionSessionId}`;
-            if (revisionMutations.has(mutationKey)) {
+            // Same ownership rule as the draft lock above.
+            const revisionKey = `revision:${project.id}:${revisionSessionId}`;
+            if (revisionMutations.has(revisionKey)) {
               sendError(res, 409, 'REVISION_ACTION_IN_PROGRESS', 'Another action is already changing this revision');
               return;
             }
-            revisionMutations.add(mutationKey);
+            revisionMutations.add(revisionKey);
+            mutationKey = revisionKey;
             if (action === 'request-changes') {
               const body = await parseJSONBody(req);
               const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
