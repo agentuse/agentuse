@@ -111,34 +111,45 @@ export async function loadPluginPackageDirectory(
 }
 
 const installedHosts = new Map<string, Promise<PluginHost>>();
-let legacyProviderPluginMigration: Promise<void> | undefined;
+const LEGACY_MIGRATION_RETRY_MS = 60_000;
+let legacyProviderPluginMigration: Promise<boolean> | undefined;
+let legacyProviderPluginMigrationFailedAt: number | undefined;
 
+/**
+ * Runs the legacy credential upgrade once per process. This sits on the hot
+ * path (every model creation and plugin event reaches it), so a successful
+ * pass is never repeated; a failed pass (offline install, for example) is
+ * retried at most once a minute. resetProviderPluginCache() forces a rerun.
+ */
 async function ensureLegacyProviderPlugins(): Promise<void> {
   if (!legacyProviderPluginMigration) {
+    if (legacyProviderPluginMigrationFailedAt !== undefined
+      && Date.now() - legacyProviderPluginMigrationFailedAt < LEGACY_MIGRATION_RETRY_MS) return;
     legacyProviderPluginMigration = import('./provider-migration.js')
       .then(async ({ installLegacyProviderPlugins }) => {
         const installed = await installLegacyProviderPlugins();
         if (installed.length > 0) {
           logger.info('Installed Claude Code Subscription plugin and migrated existing Anthropic OAuth credentials');
         }
+        legacyProviderPluginMigrationFailedAt = undefined;
+        return true;
       })
       .catch((error) => {
         logger.warn(`Could not automatically upgrade existing provider credentials: ${error instanceof Error ? error.message : String(error)}`);
+        legacyProviderPluginMigrationFailedAt = Date.now();
+        return false;
       });
   }
   const pending = legacyProviderPluginMigration;
-  try {
-    await pending;
-  } finally {
-    // Keep concurrent callers on one upgrade attempt, but recheck on a future
-    // provider load in case a credential was imported or connectivity returned.
-    if (legacyProviderPluginMigration === pending) legacyProviderPluginMigration = undefined;
-  }
+  const ok = await pending;
+  if (!ok && legacyProviderPluginMigration === pending) legacyProviderPluginMigration = undefined;
 }
 
 export function resetProviderPluginCache(): void {
   installedHosts.clear();
   legacyProviderPluginMigration = undefined;
+  legacyProviderPluginMigrationFailedAt = undefined;
+  readinessCache.clear();
   clearActiveProviders();
 }
 
@@ -391,7 +402,29 @@ export function providerReadinessHealthSubject(provider: ProviderDefinition): Pr
   return providerHealthSubject(provider.id, 'readiness', { name: provider.name, transport: provider.transport });
 }
 
-export async function checkProviderReadiness(provider: ProviderDefinition): Promise<ProviderReadiness> {
+const readinessCache = new Map<string, { at: number; pending: Promise<ProviderReadiness> }>();
+/** How long a model creation trusts the last readiness result. */
+const MODEL_READINESS_MAX_AGE_MS = 30_000;
+
+/**
+ * `maxAgeMs` lets hot callers (model creation, once per run and subagent) reuse
+ * a recent result instead of re-running a hook that may spawn a CLI. Status
+ * and verification callers keep the default and always run a fresh check.
+ */
+export async function checkProviderReadiness(
+  provider: ProviderDefinition,
+  options: { maxAgeMs?: number } = {},
+): Promise<ProviderReadiness> {
+  if (!provider.check) return { ok: true };
+  const maxAgeMs = options.maxAgeMs ?? 0;
+  const cached = readinessCache.get(provider.id);
+  if (maxAgeMs > 0 && cached && Date.now() - cached.at <= maxAgeMs) return cached.pending;
+  const pending = runProviderReadinessCheck(provider);
+  readinessCache.set(provider.id, { at: Date.now(), pending });
+  return pending;
+}
+
+async function runProviderReadinessCheck(provider: ProviderDefinition): Promise<ProviderReadiness> {
   if (!provider.check) return { ok: true };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), READINESS_CHECK_TIMEOUT_MS);
@@ -698,78 +731,103 @@ export function createCustomProviderModel(provider: ProviderDefinition, modelId:
     modelId,
     supportedUrls: {},
     async doStream(options) {
+      // Own the request signal so a consumer cancel() reaches the plugin even
+      // when the SDK never aborts its own signal.
+      const controller = new AbortController();
+      const forwardAbort = () => controller.abort(options.abortSignal?.reason);
+      if (options.abortSignal?.aborted) forwardAbort();
+      else options.abortSignal?.addEventListener('abort', forwardAbort, { once: true });
+      const detach = () => options.abortSignal?.removeEventListener('abort', forwardAbort);
+
+      let iterator: AsyncIterator<ProviderStreamEvent>;
+      try {
+        const events = await customEvents(provider, modelId, { ...options, abortSignal: controller.signal }, sessionId);
+        iterator = events[Symbol.asyncIterator]();
+      } catch (error) {
+        detach();
+        throw error;
+      }
+
+      const warnings: SharedV3Warning[] = [];
+      const openText = new Set<string>();
+      const openReasoning = new Set<string>();
+      let started = false;
+      const finishIterator = async () => {
+        detach();
+        await iterator.return?.().catch(() => {});
+      };
       const stream = new ReadableStream<LanguageModelV3StreamPart>({
-        async start(controller) {
-          const warnings: SharedV3Warning[] = [];
-          const openText = new Set<string>();
-          const openReasoning = new Set<string>();
-          let started = false;
-          let finished = false;
-          const ensureStarted = () => {
-            if (started) return;
-            started = true;
-            controller.enqueue({ type: 'stream-start', warnings });
-          };
-          const closeBlocks = () => {
-            for (const id of openText) controller.enqueue({ type: 'text-end', id });
-            for (const id of openReasoning) controller.enqueue({ type: 'reasoning-end', id });
-            openText.clear();
-            openReasoning.clear();
-          };
+        // pull() hands the consumer one event at a time, so a slow consumer
+        // applies backpressure to the plugin instead of buffering the whole
+        // response in memory.
+        async pull(ctrl) {
           try {
-            for await (const event of await customEvents(provider, modelId, options, sessionId)) {
+            while (true) {
+              const next = await iterator.next();
+              if (next.done) throw new Error(`Custom provider '${provider.id}' ended without a finish event`);
+              const event = next.value;
               if (event.type === 'warning') {
                 if (started) throw new Error('Custom provider warnings must be emitted before response output');
                 warnings.push(customWarning(event));
                 continue;
               }
-              ensureStarted();
+              if (!started) {
+                started = true;
+                ctrl.enqueue({ type: 'stream-start', warnings });
+              }
               if (event.type === 'text-delta') {
                 const id = event.id ?? 'text-0';
                 if (!openText.has(id)) {
                   openText.add(id);
-                  controller.enqueue({ type: 'text-start', id });
+                  ctrl.enqueue({ type: 'text-start', id });
                 }
-                controller.enqueue({ type: 'text-delta', id, delta: event.delta });
+                ctrl.enqueue({ type: 'text-delta', id, delta: event.delta });
               } else if (event.type === 'reasoning-delta') {
                 const id = event.id ?? 'reasoning-0';
                 if (!openReasoning.has(id)) {
                   openReasoning.add(id);
-                  controller.enqueue({ type: 'reasoning-start', id });
+                  ctrl.enqueue({ type: 'reasoning-start', id });
                 }
-                controller.enqueue({ type: 'reasoning-delta', id, delta: event.delta });
+                ctrl.enqueue({ type: 'reasoning-delta', id, delta: event.delta });
               } else if (event.type === 'tool-call') {
-                controller.enqueue({
+                ctrl.enqueue({
                   type: 'tool-call',
                   toolCallId: event.id,
                   toolName: event.name,
                   input: JSON.stringify(event.input ?? {}),
                 });
               } else if (event.type === 'response-metadata') {
-                controller.enqueue({
+                ctrl.enqueue({
                   type: 'response-metadata',
                   ...(event.id && { id: event.id }),
                   ...(event.modelId && { modelId: event.modelId }),
                   ...(event.timestamp !== undefined && { timestamp: new Date(event.timestamp) }),
                 });
               } else if (event.type === 'error') {
-                controller.enqueue({ type: 'error', error: event.error });
+                ctrl.enqueue({ type: 'error', error: event.error });
               } else if (event.type === 'finish') {
-                closeBlocks();
-                controller.enqueue({
+                for (const id of openText) ctrl.enqueue({ type: 'text-end', id });
+                for (const id of openReasoning) ctrl.enqueue({ type: 'reasoning-end', id });
+                openText.clear();
+                openReasoning.clear();
+                ctrl.enqueue({
                   type: 'finish',
                   usage: customUsage(event.usage),
                   finishReason: customFinishReason(event.reason, event.rawReason),
                 });
-                finished = true;
-                break;
+                await finishIterator();
+                ctrl.close();
               }
+              return;
             }
-            if (!finished) throw new Error(`Custom provider '${provider.id}' ended without a finish event`);
-            controller.close();
           } catch (error) {
-            controller.error(error);
+            await finishIterator();
+            ctrl.error(error);
           }
+        },
+        async cancel(reason) {
+          controller.abort(reason);
+          await finishIterator();
         },
       });
       return { stream };
@@ -836,7 +894,7 @@ export function createCustomProviderModel(provider: ProviderDefinition, modelId:
 
 export async function createProviderPluginModel(provider: ProviderDefinition, modelId: string, sessionId?: string): Promise<LanguageModel> {
   await loadProviderPlugins();
-  const readiness = await checkProviderReadiness(provider);
+  const readiness = await checkProviderReadiness(provider, { maxAgeMs: MODEL_READINESS_MAX_AGE_MS });
   if (!readiness.ok) throw new Error(describeReadinessFailure(provider, readiness));
   if (provider.transport.kind === 'custom') return createCustomProviderModel(provider, modelId, sessionId);
   const context = createProviderPluginContext(provider, modelId, undefined, sessionId);

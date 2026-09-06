@@ -12,23 +12,42 @@ export interface ResolvedPackageManifest {
   agentuse: AgentUsePackageManifest;
 }
 
+/**
+ * One compiled module per (file, mtime). A serve daemon loads project plugins
+ * on every run; without this each run would rebundle and import a fresh module
+ * URL that the ESM cache never releases.
+ */
+const compiledExtensions = new Map<string, { mtimeMs: number; module: Promise<unknown> }>();
+
 export async function importExtensionModule(entry: string): Promise<unknown> {
   if (entry.endsWith('.ts') || entry.endsWith('.tsx')) {
-    const result = await esbuild.build({
-      entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', target: 'node22',
-      sourcemap: 'inline', write: false, absWorkingDir: dirname(entry), external: ['node:*'],
+    const { mtimeMs } = await stat(entry);
+    const cached = compiledExtensions.get(entry);
+    if (cached && cached.mtimeMs === mtimeMs) return cached.module;
+    const module = bundleExtensionModule(entry);
+    compiledExtensions.set(entry, { mtimeMs, module });
+    module.catch(() => {
+      if (compiledExtensions.get(entry)?.module === module) compiledExtensions.delete(entry);
     });
-    const tempDir = await mkdtemp(join(tmpdir(), 'agentuse-plugin-'));
-    const file = join(tempDir, `${createHash('sha256').update(entry).digest('hex').slice(0, 12)}-${randomBytes(4).toString('hex')}.mjs`);
-    try {
-      await writeFile(file, result.outputFiles[0]!.text, { flag: 'wx' });
-      return (await import(`${pathToFileURL(file).href}?v=${Date.now()}`)).default;
-    } finally {
-      await rm(tempDir, { recursive: true, force: true }).catch(() => {});
-    }
+    return module;
   }
   const info = await stat(entry);
   return (await import(`${pathToFileURL(entry).href}?v=${info.mtimeMs}`)).default;
+}
+
+async function bundleExtensionModule(entry: string): Promise<unknown> {
+  const result = await esbuild.build({
+    entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', target: 'node22',
+    sourcemap: 'inline', write: false, absWorkingDir: dirname(entry), external: ['node:*'],
+  });
+  const tempDir = await mkdtemp(join(tmpdir(), 'agentuse-plugin-'));
+  const file = join(tempDir, `${createHash('sha256').update(entry).digest('hex').slice(0, 12)}-${randomBytes(4).toString('hex')}.mjs`);
+  try {
+    await writeFile(file, result.outputFiles[0]!.text, { flag: 'wx' });
+    return (await import(`${pathToFileURL(file).href}?v=${Date.now()}`)).default;
+  } finally {
+    await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 function validateEntries(root: string, entries: unknown): string[] {

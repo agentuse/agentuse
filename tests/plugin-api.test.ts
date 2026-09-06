@@ -4,7 +4,9 @@ import os from 'os';
 import path from 'path';
 import { PluginHost, PluginManager } from '../src/plugin';
 import {
+  checkProviderReadiness,
   createCustomProviderModel,
+  getInstalledPluginHost,
   getActiveProviderAdapter,
   getProviderPatch,
   getProviderPlugin,
@@ -15,11 +17,12 @@ import {
   resetProviderPluginCache,
   resolveProviderAuth,
 } from '../src/plugin/provider-runtime';
-import { readPackageManifest } from '../src/plugin/loader';
+import { importExtensionModule, readPackageManifest } from '../src/plugin/loader';
 import type { AgentCompleteEvent, ProviderDefinition, ProviderRequest } from '../src/plugin/types';
 import type { AgentUseExtension } from 'agentuse/plugin-api';
 import { resolveModelInfo } from '../src/utils/model-utils';
 import { AuthStorage } from '../src/auth/storage';
+import { spyOn } from 'bun:test';
 import { getProviderReadiness, getProviderStatus } from '../src/auth/provider-status';
 import { createModel } from '../src/models';
 import { applyProviderSystemMessages } from '../src/plugin/provider-behavior';
@@ -731,5 +734,99 @@ describe('project-local activation scope', () => {
     // Crossing to another provider keeps only the portable contribution.
     const elsewhere = await applyProviderSystemMessages(twice, 'openai:gpt-5');
     expect(elsewhere.map((message) => message.content)).toEqual(['PORTABLE', 'base']);
+  });
+
+  it('runs the legacy credential upgrade once per process, not on every host lookup', async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-migration-once-'));
+    const dataDir = path.join(root, 'data');
+    await fs.mkdir(path.join(dataDir, 'plugins'), { recursive: true });
+    oldDataDir = process.env.AGENTUSE_DATA_DIR;
+    process.env.AGENTUSE_DATA_DIR = dataDir;
+    resetProviderPluginCache();
+    const getOAuth = spyOn(AuthStorage, 'getOAuth');
+    try {
+      await getInstalledPluginHost();
+      const afterFirst = getOAuth.mock.calls.length;
+      expect(afterFirst).toBeGreaterThan(0);
+      await getInstalledPluginHost();
+      await loadProviderPlugins();
+      expect(getOAuth.mock.calls.length).toBe(afterFirst);
+      resetProviderPluginCache();
+      await getInstalledPluginHost();
+      expect(getOAuth.mock.calls.length).toBe(afterFirst * 2);
+    } finally {
+      getOAuth.mockRestore();
+    }
+  });
+
+  it('reuses a recent readiness result only when the caller allows it', async () => {
+    let checks = 0;
+    const provider: ProviderDefinition = {
+      id: 'readiness-cache',
+      name: 'Readiness Cache',
+      models: [],
+      transport: { kind: 'openai-responses', baseURL: 'https://readiness.example' },
+      check() { checks++; return { ok: true, detail: `check ${checks}` }; },
+    };
+    resetProviderPluginCache();
+    expect((await checkProviderReadiness(provider, { maxAgeMs: 30_000 })).detail).toBe('check 1');
+    expect((await checkProviderReadiness(provider, { maxAgeMs: 30_000 })).detail).toBe('check 1');
+    // Status and verification callers always run a fresh check.
+    expect((await checkProviderReadiness(provider)).detail).toBe('check 2');
+    resetProviderPluginCache();
+    expect((await checkProviderReadiness(provider, { maxAgeMs: 30_000 })).detail).toBe('check 3');
+  });
+
+  it('compiles a TypeScript extension once per file version', async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-ts-cache-'));
+    const entry = path.join(root, 'plugin.ts');
+    await fs.writeFile(entry, 'export default function activate(): string { return "one"; }\n');
+    const first = await importExtensionModule(entry);
+    const again = await importExtensionModule(entry);
+    expect(again).toBe(first);
+    await fs.writeFile(entry, 'export default function activate(): string { return "two"; }\n');
+    const later = new Date(Date.now() + 5_000);
+    await fs.utimes(entry, later, later);
+    const changed = await importExtensionModule(entry);
+    expect(changed).not.toBe(first);
+    expect((changed as () => string)()).toBe('two');
+  });
+
+  it('cancelling a custom provider stream aborts the plugin request', async () => {
+    let seenSignal: AbortSignal | undefined;
+    let finalized = false;
+    let yielded = 0;
+    const provider: ProviderDefinition = {
+      id: 'cancel-stream',
+      name: 'Cancel Stream',
+      models: [],
+      transport: {
+        kind: 'custom',
+        apiVersion: 1,
+        async *stream(request) {
+          seenSignal = request.signal;
+          try {
+            while (!request.signal.aborted) {
+              yielded++;
+              yield { type: 'text-delta', delta: 'x' };
+              await new Promise((resolve) => setTimeout(resolve, 1));
+            }
+          } finally {
+            finalized = true;
+          }
+        },
+      },
+    };
+    const model = createCustomProviderModel(provider, 'model');
+    const { stream } = await model.doStream({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'Hi' }] }] });
+    const reader = stream.getReader();
+    expect((await reader.read()).value).toEqual({ type: 'stream-start', warnings: [] });
+    expect((await reader.read()).value).toEqual({ type: 'text-start', id: 'text-0' });
+    await reader.cancel('user stopped');
+    expect(seenSignal?.aborted).toBe(true);
+    expect(finalized).toBe(true);
+    const yieldedAtCancel = yielded;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(yielded).toBe(yieldedAtCancel);
   });
 });
