@@ -1141,7 +1141,7 @@ async function runInternalWorker() {
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute' | 'resume' | 'continue-session' | 'finish-cascade' | 'approval-info' | 'session-status' | 'create-preparing-session' | 'fail-preparing-session' | 'session-context' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'session-final-responses' | 'stop-session' | 'reopen-gate' | 'invalidate-lists' | 'release';
+    type: 'execute' | 'resume' | 'continue-session' | 'finish-cascade' | 'approval-info' | 'session-status' | 'create-preparing-session' | 'fail-preparing-session' | 'session-context' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'session-final-responses' | 'stop-session' | 'reopen-gate' | 'invalidate-lists' | 'reset-provider-plugins' | 'release';
     agentPath?: string;
     /** In-memory agent definition. Fresh execute only; never persisted as a file. */
     agentContent?: string;
@@ -4813,6 +4813,16 @@ async function runInternalWorker() {
           externalActivityUntil.set(request.projectRoot, Date.now() + EXTERNAL_ACTIVITY_WINDOW_MS);
         }
         invalidateListCaches(request.projectRoot);
+        reply({ id: request.id, success: true });
+      } else if (request.type === 'reset-provider-plugins') {
+        // Provider setup runs in the daemon, which can only reset its own
+        // caches. Without this poke a warm worker keeps serving the plugin set
+        // and readiness it loaded on first use, so a provider installed,
+        // updated, removed, or re-credentialed in Settings would not reach a
+        // run until the worker was recycled. Clearing only affects the next
+        // getInstalledPluginHost() call, so no in-flight lookup is disturbed.
+        const { resetProviderPluginCache } = await import('./plugin/provider-runtime.js');
+        resetProviderPluginCache();
         reply({ id: request.id, success: true });
       } else if (request.type === 'list-sessions') {
         dispatchOperation(request, () => listSessions(request));

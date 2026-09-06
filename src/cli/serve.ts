@@ -1448,6 +1448,17 @@ class AgentWorker {
     }) as Promise<WorkerExecuteResult | WorkerExecuteError>;
   }
 
+  /** Drop this worker's provider plugin and readiness caches. Provider setup
+   *  happens in the daemon, so only a poke makes a warm worker see a plugin or
+   *  credential that Settings just changed. */
+  resetProviderPlugins(projectRoot: string): Promise<WorkerExecuteResult | WorkerExecuteError> {
+    return this.request({
+      type: "reset-provider-plugins",
+      projectRoot,
+      timeout: 10,
+    }) as Promise<WorkerExecuteResult | WorkerExecuteError>;
+  }
+
   getSessionFinalResponses(
     projectRoot: string,
     sessions: Array<{ sessionId: string; agentId: string }>
@@ -3577,6 +3588,13 @@ export function createServeCommand(): Command {
       // .env / .env.local on each execute request, so per-project env stays
       // isolated from the parent process and from sibling projects.
       const workers = new Map<string, AgentWorker>();
+      /** Tell every worker to drop its provider plugin and readiness caches.
+       *  Best effort: a worker that is down or slow to answer respawns with a
+       *  cold cache anyway, so a failed poke cannot leave one stale. */
+      const resetWorkerProviderPlugins = async (): Promise<void> => {
+        await Promise.allSettled(projects.map((project) =>
+          workers.get(project.id)?.resetProviderPlugins(project.root)));
+      };
       const onboardingJobs = new Map<string, OnboardingModelJob>();
       const agentCreationRecoveryInputs = new Map<string, AgentCreationRecoveryInput>();
       const activeInternalJobRecoveries = new Map<string, Promise<void>>();
@@ -3586,9 +3604,10 @@ export function createServeCommand(): Command {
       const internalViewCleanups = new Map<string, () => Promise<void>>();
       const revisionMutations = new Set<string>();
       const draftMutations = new Set<string>();
-/** How long a draft may sit without a durable creator session before a restart,
- *  rather than the normal write ordering, is the only explanation left. */
-const DRAFT_RECOVERY_GRACE_MS = 30_000;
+      /** How long a draft may sit without a durable creator session before a
+       *  restart, rather than the normal write ordering, is the only
+       *  explanation left. */
+      const DRAFT_RECOVERY_GRACE_MS = 30_000;
       const activeSessionContinuations = new Map<string, Promise<unknown>>();
       const cleanupInternalView = async (sessionId: string): Promise<void> => {
         const cleanup = internalViewCleanups.get(sessionId);
@@ -8378,7 +8397,13 @@ const DRAFT_RECOVERY_GRACE_MS = 30_000;
         if (providerRoute) {
           try {
             const body = await parseJSONBody(req);
-            sendJSON(res, 200, { success: true, ...await providerRoute.handle(body) });
+            const result = await providerRoute.handle(body);
+            // Provider setup mutates plugins and credentials in this process,
+            // whose reset reaches only its own caches. Workers are long-lived
+            // and cache both on first use, so without this every route here
+            // could report a change that runs would not see until a recycle.
+            await resetWorkerProviderPlugins();
+            sendJSON(res, 200, { success: true, ...result });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, providerRoute.code, (err as Error).message);
