@@ -964,7 +964,7 @@ agentuse plugins remove <name>
 agentuse plugins uninstall <name>                  # alias
 ```
 
-Add `-l` to any subcommand to use project-local package settings. `install` accepts `owner/repo`, `github:owner/repo`, `git:github.com/owner/repo@ref`, HTTPS or SSH GitHub URLs, and local directory paths (linked in place rather than cloned). `update` without a name updates every plugin in the selected scope. The shorter `agentuse install|update|list|remove` commands remain as compatibility aliases.
+Add `-l` to any subcommand to use project-local package settings. `install` accepts `owner/repo`, `github:owner/repo`, `git:github.com/owner/repo@ref`, HTTPS or SSH GitHub URLs, and local directory paths (linked in place rather than cloned). `update` without a name updates every plugin in the selected scope, and reports "already up to date" for a pinned source or unchanged linked package. The shorter `agentuse install|update|list|remove` commands remain as compatibility aliases.
 
 ---
 

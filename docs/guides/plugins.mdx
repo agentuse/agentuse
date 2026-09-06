@@ -256,7 +256,18 @@ Custom streams emit these events:
 - Optional `response-metadata` or `error` events.
 - Exactly one terminal `finish` event with a normalized reason and optional token usage.
 
-AgentUse adapts this contract to its internal model runtime. A stream that ends without `finish` is rejected.
+AgentUse adapts this contract to its internal model runtime. A stream that ends without `finish` is rejected. When the consumer cancels a run, the request's abort signal fires and the stream's iterator is closed, so check `request.signal` in long-running loops.
+
+If the custom transport speaks a known wire protocol, say so with `protocol: "anthropic"` or `protocol: "openai"`. AgentUse then applies that protocol's behavior, such as Anthropic output-token limits and which `providerOptions` block reaches the model. Omit it for a bespoke API.
+
+```ts
+transport: {
+  kind: "custom",
+  apiVersion: 1,
+  protocol: "anthropic",
+  async *stream(request, context) { /* ... */ },
+}
+```
 
 ### Authentication
 
@@ -483,7 +494,7 @@ agentuse plugins update -l
 agentuse plugins remove -l @example/agentuse-provider
 ```
 
-`agentuse plugins install ./my-plugin` links the local directory directly, globally by default or into the project with `-l`. AgentUse validates and activates its current working tree without cloning it, so the folder does not need to be a Git repository and uncommitted edits are available on the next process start. Updating a linked plugin revalidates its manifest; removing it only removes the registry record and never deletes the source directory. Append a full commit SHA (`./my-plugin@<sha>`) to clone and pin a local Git checkout instead of linking it.
+`agentuse plugins install ./my-plugin` links the local directory directly, globally by default or into the project with `-l`. AgentUse validates and activates its current working tree without cloning it, so the folder does not need to be a Git repository and uncommitted edits are available on the next process start. Updating a linked plugin revalidates its manifest; removing it only removes the registry record and never deletes the source directory. `plugins update` reports "already up to date" when a linked package's version is unchanged or a source pinned to a tag or commit still resolves to the installed commit. Append a full commit SHA (`./my-plugin@<sha>`) to clone and pin a local Git checkout instead of linking it.
 
 Global packages live under `$AGENTUSE_DATA_DIR/plugins`, which defaults to `~/.local/share/agentuse/plugins`. Managed project packages live under `.agentuse/packages`; linked plugins in either scope remain in their original directories. Both are recorded in `.agentuse/plugins.json`. `agentuse plugins list --all-scopes` displays every scope and marks linked entries.
 
