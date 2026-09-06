@@ -97,6 +97,51 @@ describe('agent revision continuation reconciliation', () => {
   });
 });
 
+describe('agent draft continuation reconciliation', () => {
+  const projectId = 'content';
+  const jobId = '01DRAFTJOB0000000000000000';
+
+  it('defers reconciliation while a draft action holds the mutation lock', () => {
+    expect(__testing.isAgentDraftContinuationInFlight(
+      projectId,
+      jobId,
+      new Set([`draft:${projectId}:${jobId}`]),
+      new Map(),
+      new Map(),
+    )).toBe(true);
+  });
+
+  it('defers reconciliation after the continuation starts but before the session reopens', () => {
+    expect(__testing.isAgentDraftContinuationInFlight(
+      projectId,
+      jobId,
+      new Set(),
+      new Map([[`${projectId}:${jobId}`, Promise.resolve()]]),
+      new Map(),
+    )).toBe(true);
+  });
+
+  it('defers reconciliation while an approval resume is still running', () => {
+    expect(__testing.isAgentDraftContinuationInFlight(
+      projectId,
+      jobId,
+      new Set(),
+      new Map(),
+      new Map([[`${projectId}:${jobId}`, Promise.resolve()]]),
+    )).toBe(true);
+  });
+
+  it('allows reconciliation once nothing is in flight for this draft', () => {
+    expect(__testing.isAgentDraftContinuationInFlight(
+      projectId,
+      jobId,
+      new Set([`draft:${projectId}:other`]),
+      new Map(),
+      new Map(),
+    )).toBe(false);
+  });
+});
+
 describe('agent revision transcript evidence', () => {
   it('keeps the latest continuation and terminal error when a resumed run exceeds the evidence cap', () => {
     const logs = [

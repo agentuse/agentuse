@@ -3160,6 +3160,20 @@ function isAgentRevisionContinuationInFlight(
     || activeSessionContinuations.has(`${projectId}:${revisionSessionId}`);
 }
 
+/** A draft whose creator session is mid-handoff must not be reconciled: the
+ *  durable session still carries the previous turn's terminal status. */
+function isAgentDraftContinuationInFlight(
+  projectId: string,
+  jobId: string,
+  draftMutations: ReadonlySet<string>,
+  activeSessionContinuations: ReadonlyMap<string, unknown>,
+  activeApprovalResumes: ReadonlyMap<string, unknown>,
+): boolean {
+  return draftMutations.has(`draft:${projectId}:${jobId}`)
+    || activeSessionContinuations.has(`${projectId}:${jobId}`)
+    || activeApprovalResumes.has(`${projectId}:${jobId}`);
+}
+
 type BackgroundSessionFailure = { status: string; message: string; at: number };
 
 /** Add an asynchronous resume/continuation failure to the next session payload. */
@@ -3572,6 +3586,9 @@ export function createServeCommand(): Command {
       const internalViewCleanups = new Map<string, () => Promise<void>>();
       const revisionMutations = new Set<string>();
       const draftMutations = new Set<string>();
+/** How long a draft may sit without a durable creator session before a restart,
+ *  rather than the normal write ordering, is the only explanation left. */
+const DRAFT_RECOVERY_GRACE_MS = 30_000;
       const activeSessionContinuations = new Map<string, Promise<unknown>>();
       const cleanupInternalView = async (sessionId: string): Promise<void> => {
         const cleanup = internalViewCleanups.get(sessionId);
@@ -4188,7 +4205,6 @@ export function createServeCommand(): Command {
           } else if (session.status === 'error') {
             job.status = 'error';
             job.error = session.error;
-            await failAgentDraft(project.root, job.id, session.error).catch(() => undefined);
           } else {
             try {
               await appendAgentDraft(project.root, job.id, {
@@ -4208,11 +4224,81 @@ export function createServeCommand(): Command {
               };
             }
           }
+          // Every route out of `running` settles the durable draft, not just the
+          // failed-session one. A job left in error beside a record still saying
+          // running is what kept the draft page polling a dead creation.
+          if (job.status === 'error' && job.error) {
+            await failAgentDraft(project.root, job.id, job.error).catch(() => undefined);
+          }
           await persistOnboardingJob(job);
           wakeListHubs();
         })().finally(() => activeInternalJobRecoveries.delete(job.id));
         activeInternalJobRecoveries.set(job.id, operation);
         return operation;
+      };
+
+      /** Settle a draft that still says `running` against its durable creator
+       *  session. recoverAgentCreationJob only runs on the internal-job route,
+       *  which the draft page never calls, so landing straight on that page
+       *  after a restart used to poll a record nothing would ever move on. */
+      const reconcileAgentDraftRecord = async (
+        project: Project,
+        record: AgentDraftRecord,
+      ): Promise<AgentDraftRecord> => {
+        if (record.status !== 'running') return record;
+        if (isAgentDraftContinuationInFlight(
+          project.id,
+          record.jobId,
+          draftMutations,
+          activeSessionContinuations,
+          activeApprovalResumes,
+        )) return record;
+        let job = onboardingJobs.get(record.jobId);
+        let ownerAlive = true;
+        if (!job) {
+          const persisted = await loadPersistedOnboardingJob(record.jobId);
+          if (persisted) {
+            job = persisted.job;
+            onboardingJobs.set(job.id, job);
+            // A running job cannot be pruned from this process's map, so a legacy
+            // envelope naming our recycled pid belongs to an earlier daemon.
+            ownerAlive = persisted.owner
+              ? await isProcessRefAliveAsync(persisted.owner)
+              : persisted.ownerPid !== process.pid
+                && await isProcessRefAliveAsync({ pid: persisted.ownerPid });
+          } else {
+            // No envelope survives to name an owner, and this process is not
+            // running the job, so nothing is left that could still finish it.
+            ownerAlive = false;
+            job = {
+              id: record.jobId,
+              sessionId: record.jobId,
+              projectId: project.id,
+              kind: 'agent-creation',
+              status: 'running',
+              phase: 'running',
+              model: record.authoringModel,
+              createdAt: record.createdAt,
+            };
+            onboardingJobs.set(job.id, job);
+          }
+        }
+        if (job.kind !== 'agent-creation') return record;
+        // The record is the authority on whether this creation is still open, so
+        // a terminal envelope beside a running record is stale: a draft reopened
+        // for changes, or a daemon that settled one and not the other. Reset it
+        // the way request-changes does and let recovery re-derive both.
+        if (job.status !== 'running') {
+          job.status = 'running';
+          delete job.error;
+          delete job.result;
+        }
+        agentCreationRecoveryInputs.set(job.id, await resolveAgentCreationRecovery(record.jobId, record));
+        // The durable session is written just after the record. Only call a
+        // missing session lost once the draft is past that handoff window.
+        const interrupted = !ownerAlive && Date.now() - record.createdAt >= DRAFT_RECOVERY_GRACE_MS;
+        await recoverAgentCreationJob(job, interrupted);
+        return await readAgentDraftRecord(project.root, record.jobId) ?? record;
       };
 
       const recoverProjectDiscoveryJob = (job: OnboardingModelJob, missingIsInterrupted = false): Promise<void> => {
@@ -9138,11 +9224,12 @@ export function createServeCommand(): Command {
               sendError(res, 403, 'AGENT_SOURCE_HIDDEN', 'Agent drafts are unavailable while serve.hideAgentSource is enabled');
               return;
             }
-            const record = await readAgentDraftRecord(project.root, jobId);
-            if (!record) {
+            const stored = await readAgentDraftRecord(project.root, jobId);
+            if (!stored) {
               sendError(res, 404, 'DRAFT_NOT_FOUND', 'Draft not found');
               return;
             }
+            const record = await reconcileAgentDraftRecord(project, stored);
 
             if (req.method === 'GET' && !action) {
               sendJSON(res, 200, { success: true, draft: draftViewPayload(project, record) });
@@ -10713,6 +10800,7 @@ export const __testing = {
   canContinueApprovalSession,
   applyBackgroundSessionFailure,
   isAgentRevisionContinuationInFlight,
+  isAgentDraftContinuationInFlight,
   isEndedSessionStatus,
   approvalListCreatedAfter,
   isPendingApprovalVisible,
