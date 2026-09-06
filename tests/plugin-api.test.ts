@@ -6,6 +6,7 @@ import { PluginHost, PluginManager } from '../src/plugin';
 import {
   checkProviderReadiness,
   createCustomProviderModel,
+  createProviderPluginModel,
   discoverProviderModels,
   getInstalledPluginHost,
   getProviderAdapters,
@@ -25,6 +26,7 @@ import type { AgentUseExtension } from 'agentuse/plugin-api';
 import { resolveModelInfo } from '../src/utils/model-utils';
 import { AuthStorage } from '../src/auth/storage';
 import { spyOn } from 'bun:test';
+import { logger } from '../src/utils/logger';
 import { getProviderReadiness, getProviderStatus } from '../src/auth/provider-status';
 import { createModel } from '../src/models';
 import { applyProviderSystemMessages } from '../src/plugin/provider-behavior';
@@ -951,5 +953,80 @@ describe('project-local activation scope', () => {
     await getActiveProviderAdapter('anthropic', 'claude-x');
     expect((globalThis as any).__agentuseAdapterModelCalls).toBe(1);
     delete (globalThis as any).__agentuseAdapterModelCalls;
+  });
+
+  it('sends the api key resolved for each request, not the one the client was built with', async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-rotating-key-'));
+    const dataDir = path.join(root, 'data');
+    await fs.mkdir(path.join(dataDir, 'plugins'), { recursive: true });
+    oldDataDir = process.env.AGENTUSE_DATA_DIR;
+    process.env.AGENTUSE_DATA_DIR = dataDir;
+    resetProviderPluginCache();
+    let issued = 0;
+    const makeProvider = (kind: 'anthropic-messages' | 'openai-chat-completions'): ProviderDefinition => ({
+      id: `rotating-${kind}`,
+      name: 'Rotating',
+      models: [],
+      transport: { kind, baseURL: 'https://rotating.example/v1' },
+      auth: { methods: [{
+        id: 'key', type: 'api-key', name: 'Key',
+        async login() { return {}; },
+        resolve() { issued++; return { apiKey: `key-${issued}`, source: 'test' }; },
+      }] },
+    });
+    const seen: Array<Record<string, string | null>> = [];
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+      seen.push({ apiKey: headers.get('x-api-key'), authorization: headers.get('authorization') });
+      return new Response('{"error":"nope"}', { status: 500, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+    try {
+      const anthropic = await createProviderPluginModel(makeProvider('anthropic-messages'), 'm');
+      const builtWith = issued;
+      await anthropic.doGenerate({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }).catch(() => {});
+      await anthropic.doGenerate({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }).catch(() => {});
+      expect(seen.map((item) => item.apiKey)).toEqual([`key-${builtWith + 1}`, `key-${builtWith + 2}`]);
+
+      seen.length = 0;
+      const openai = await createProviderPluginModel(makeProvider('openai-chat-completions'), 'm');
+      const openaiBuiltWith = issued;
+      await openai.doGenerate({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] }).catch(() => {});
+      expect(seen.map((item) => item.authorization)).toEqual([`Bearer key-${openaiBuiltWith + 1}`]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it('logs one warning per failed handler and counts activation-function plugins', async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-plugin-logs-'));
+    const plugins = path.join(root, 'plugins');
+    const dataDir = path.join(root, 'data');
+    await fs.mkdir(plugins);
+    await fs.mkdir(path.join(dataDir, 'plugins'), { recursive: true });
+    await fs.writeFile(path.join(plugins, 'boom.js'), `export default function (agentuse) {
+      agentuse.on('agent:start', () => { throw new Error('boom'); });
+    }`);
+    await fs.writeFile(path.join(plugins, 'quiet.js'), `export default function () {}`);
+    oldDataDir = process.env.AGENTUSE_DATA_DIR;
+    process.env.AGENTUSE_DATA_DIR = dataDir;
+    resetProviderPluginCache();
+    const warn = spyOn(logger, 'warn');
+    const info = spyOn(logger, 'info');
+    try {
+      const manager = new PluginManager();
+      await manager.loadPlugins([plugins]);
+      expect(info.mock.calls.map(([message]) => message)).toContain('Loaded 2 plugin(s)');
+      warn.mockClear();
+      info.mockClear();
+      await manager.emit('agent:start', { agent: { name: 'a', model: 'openai:gpt-5' }, trigger: 'manual' });
+      const warnings = warn.mock.calls.map(([message]) => String(message)).filter((message) => message.includes('boom'));
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toContain('boom.js');
+      expect(info.mock.calls.map(([message]) => String(message)).filter((message) => message.includes('boom'))).toEqual([]);
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
   });
 });

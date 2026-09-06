@@ -34,6 +34,7 @@ export class PluginManager {
           join(getGlobalConfigDir(), 'plugins/*.{ts,js}')
         ];
 
+    let loaded = 0;
     for (const pattern of pluginPaths) {
       try {
         const files = await glob(pattern, { absolute: true });
@@ -46,6 +47,7 @@ export class PluginManager {
               scope: file.startsWith(join(getGlobalConfigDir(), 'plugins')) ? 'global' : 'project',
             };
             await this.host.activate(identity, exported);
+            loaded++;
             if (exported && typeof exported === 'object') {
               this.plugins.push({ path: file, handlers: exported as PluginHandlers });
               this.hostManagedPaths.add(file);
@@ -59,7 +61,7 @@ export class PluginManager {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') logger.debug(`Plugin search path ${pattern} not found or inaccessible`);
       }
     }
-    if (this.plugins.length > 0) logger.info(`Loaded ${this.plugins.length} plugin(s)`);
+    if (loaded > 0) logger.info(`Loaded ${loaded} plugin(s)`);
   }
 
   async emit<E extends Exclude<keyof PluginEvents, 'agent:complete' | 'tool:call' | 'tool:result'>>(
@@ -94,8 +96,7 @@ export class PluginManager {
       try {
         await plugin.handlers['agent:complete']?.(legacyEvent);
       } catch (error) {
-        logger.info(`Plugin '${plugin.path}' failed: ${error instanceof Error ? error.message : String(error)}`);
-        logger.warn(`Plugin error in ${plugin.path}: ${error instanceof Error ? error.message : String(error)}`);
+        logger.warn(`Plugin '${plugin.path}' failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     return current;

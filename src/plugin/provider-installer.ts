@@ -359,11 +359,14 @@ export async function installPlugin(source: string, options?: PluginInstallOptio
   return record;
 }
 
-export async function updatePlugins(name?: string, options?: PluginInstallOptions): Promise<InstalledPluginRecord[]> {
+/** An update result: `changed` is false when the source still points at what is installed. */
+export type PluginUpdateResult = InstalledPluginRecord & { changed: boolean };
+
+export async function updatePlugins(name?: string, options?: PluginInstallOptions): Promise<PluginUpdateResult[]> {
   const records = options?.local ? await readProjectPluginRecords(options) : await readInstalledPluginRecords();
   const targets = name ? records.filter((item) => item.name === name) : records;
   if (name && targets.length === 0) throw new Error(`Plugin '${name}' is not installed`);
-  const results: InstalledPluginRecord[] = [];
+  const results: PluginUpdateResult[] = [];
   for (const current of targets) {
     if (current.linked) {
       const { manifest, host } = await loadPluginPackageDirectory(current.directory, current.scope);
@@ -371,13 +374,17 @@ export async function updatePlugins(name?: string, options?: PluginInstallOption
       if (manifest.name !== current.name) {
         throw new Error(`Linked plugin changed name from '${current.name}' to '${manifest.name}'`);
       }
+      if (manifest.version === current.version) {
+        results.push({ ...current, changed: false });
+        continue;
+      }
       const next: InstalledPluginRecord = {
         ...current,
         version: manifest.version,
         updatedAt: new Date().toISOString(),
       };
       await mutateRegistry(options, upsert(next));
-      results.push(next);
+      results.push({ ...next, changed: true });
       continue;
     }
     assertManagedDirectory(current, options);
@@ -385,6 +392,12 @@ export async function updatePlugins(name?: string, options?: PluginInstallOption
     if (candidate.record.name !== current.name) {
       await rm(candidate.staging, { recursive: true, force: true });
       throw new Error(`Update source changed plugin name from '${current.name}' to '${candidate.record.name}'`);
+    }
+    // A source pinned to a tag or commit resolves to the same code every time.
+    if (candidate.record.commit && candidate.record.commit === current.commit) {
+      await rm(candidate.staging, { recursive: true, force: true });
+      results.push({ ...current, changed: false });
+      continue;
     }
     const backup = `${current.directory}.old-${process.pid}-${randomBytes(3).toString('hex')}`;
     await rename(current.directory, backup);
@@ -398,7 +411,7 @@ export async function updatePlugins(name?: string, options?: PluginInstallOption
       };
       await mutateRegistry(options, upsert(next));
       await rm(backup, { recursive: true, force: true });
-      results.push(next);
+      results.push({ ...next, changed: true });
     } catch (error) {
       await rm(current.directory, { recursive: true, force: true }).catch(() => {});
       await rename(backup, current.directory).catch(() => {});

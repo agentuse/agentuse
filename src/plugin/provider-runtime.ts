@@ -671,8 +671,17 @@ export function mergeProviderTransportHeaders(headers: Headers, additions: Recor
   }
 }
 
-function mergeAuthHeaders(headers: Headers, auth: ResolvedProviderAuth | undefined): void {
+/**
+ * Applies the credential resolved for this request. The SDK client was built
+ * with the initial key, so a rotated `apiKey` from resolve() must be written
+ * onto every request too, not only bearer tokens and custom headers.
+ */
+function mergeAuthHeaders(headers: Headers, auth: ResolvedProviderAuth | undefined, kind: 'anthropic-messages' | 'openai-responses' | 'openai-chat-completions'): void {
   for (const [name, value] of Object.entries(auth?.headers ?? {})) headers.set(name, value);
+  if (auth?.apiKey) {
+    if (kind === 'anthropic-messages') headers.set('x-api-key', auth.apiKey);
+    else headers.set('authorization', `Bearer ${auth.apiKey}`);
+  }
   if (auth?.bearerToken) {
     headers.delete('x-api-key');
     headers.set('authorization', `Bearer ${auth.bearerToken}`);
@@ -947,7 +956,7 @@ export async function createProviderPluginModel(provider: ProviderDefinition, mo
     const headers = new Headers(init?.headers);
     mergeProviderTransportHeaders(headers, transport.headers ?? {});
     const auth = await context.auth.resolve();
-    mergeAuthHeaders(headers, auth);
+    mergeAuthHeaders(headers, auth, transport.kind);
     const hasCredential = Boolean(auth?.bearerToken || auth?.apiKey || Object.keys(auth?.headers ?? {}).length > 0);
     if (hasCredential && transport.baseURL) {
       const actual = new URL(input instanceof Request ? input.url : input);

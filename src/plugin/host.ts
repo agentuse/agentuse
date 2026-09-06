@@ -217,8 +217,7 @@ export class PluginHost {
 
   private reportEventError(registration: Registration<PluginEventHandler<any>>, error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
-    logger.info(`Plugin '${registration.owner.name}' failed: ${message}`);
-    logger.warn(`Plugin error in ${registration.owner.source}: ${message}`);
+    logger.warn(`Plugin '${registration.owner.name}' failed (${registration.owner.source}): ${message}`);
   }
 
   async emit<E extends keyof PluginEvents>(event: E, payload: PluginEvents[E], signal?: AbortSignal): Promise<void> {

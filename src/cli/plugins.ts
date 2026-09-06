@@ -68,8 +68,12 @@ export function createUpdateCommand(name = 'update'): Command {
     .action(run(async (packageName: string | undefined, value: { local?: boolean }) => {
       const plugins = await updatePlugins(packageName, options(value));
       if (plugins.length === 0) process.stdout.write('No plugins installed\n');
-      for (const plugin of plugins) process.stdout.write(`Updated ${plugin.name}@${plugin.version}\n`);
-      await reportProviderReadiness(plugins.map((plugin) => plugin.name));
+      for (const plugin of plugins) {
+        process.stdout.write(plugin.changed
+          ? `Updated ${plugin.name}@${plugin.version}\n`
+          : `${plugin.name}@${plugin.version} is already up to date${plugin.ref ? ` (pinned to ${plugin.ref})` : ''}\n`);
+      }
+      await reportProviderReadiness(plugins.filter((plugin) => plugin.changed).map((plugin) => plugin.name));
     }));
 }
 

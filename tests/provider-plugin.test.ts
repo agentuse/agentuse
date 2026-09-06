@@ -98,6 +98,9 @@ describe('plugin lifecycle', () => {
     try {
       const installed = await installPlugin(`${source}@${pinned}`);
       expect(installed).toMatchObject({ version: '1.0.0', commit: pinned, ref: pinned });
+      // A pinned source resolves to the same commit, so update reports no change.
+      const [unchanged] = await updatePlugins('commit-provider');
+      expect(unchanged).toMatchObject({ version: '1.0.0', commit: pinned, changed: false });
     } finally {
       if (oldDataDir === undefined) delete process.env.AGENTUSE_DATA_DIR;
       else process.env.AGENTUSE_DATA_DIR = oldDataDir;
@@ -174,7 +177,9 @@ describe('plugin lifecycle', () => {
         name: 'global-linked', version: '1.1.0', agentuse: { apiVersion: 1, extensions: ['./index.js'] },
       }));
       const [updated] = await updatePlugins('global-linked');
-      expect(updated).toMatchObject({ version: '1.1.0', directory: source, linked: true, scope: 'global' });
+      expect(updated).toMatchObject({ version: '1.1.0', directory: source, linked: true, scope: 'global', changed: true });
+      const [same] = await updatePlugins('global-linked');
+      expect(same).toMatchObject({ version: '1.1.0', changed: false });
 
       await removePlugin('global-linked');
       expect(await fs.stat(source)).toBeTruthy();
