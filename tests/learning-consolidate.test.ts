@@ -9,14 +9,25 @@ import type { Learning } from "../src/learning/types";
 import { hashInstructions } from "../src/learning/contract";
 import { createLearningsCommand } from "../src/cli/learnings";
 
-// Corrections and undo snapshots are generated state under $XDG_DATA_HOME, not
-// files in the user's repo. Every describe block points it at a temp directory,
-// or the suite would write into the developer's real ~/.local/share/agentuse.
+// Corrections and undo snapshots are generated state under the AgentUse data
+// root, not files in the user's repo. Every describe block points that root at
+// a temp directory shaped like $XDG_DATA_HOME/agentuse, or the suite would
+// write into the shared per-process test root. AGENTUSE_DATA_DIR is the
+// override the app honors first (tests/preload.ts sets it), so XDG_DATA_HOME
+// alone would be ignored.
 const priorXdgDataHome = process.env.XDG_DATA_HOME;
+const priorDataDir = process.env.AGENTUSE_DATA_DIR;
+
+function useXdgDataHome(xdgDir: string): void {
+  process.env.XDG_DATA_HOME = xdgDir;
+  process.env.AGENTUSE_DATA_DIR = join(xdgDir, "agentuse");
+}
 
 afterAll(() => {
   if (priorXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
   else process.env.XDG_DATA_HOME = priorXdgDataHome;
+  if (priorDataDir === undefined) delete process.env.AGENTUSE_DATA_DIR;
+  else process.env.AGENTUSE_DATA_DIR = priorDataDir;
 });
 
 // The tidy-up runs in three passes: one call decides what relates to what (ids
@@ -486,7 +497,7 @@ describe("tidying up an over-cap corrections file", () => {
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), "learning-tidy-"));
     xdgDir = mkdtempSync(join(tmpdir(), "learning-tidy-xdg-"));
-    process.env.XDG_DATA_HOME = xdgDir;
+    useXdgDataHome(xdgDir);
     agentFilePath = join(tempDir, "demo.agentuse");
     writeFileSync(agentFilePath, AGENT_FILE);
     // `tempDir` is the state root, so the store resolves to
@@ -1293,7 +1304,7 @@ describe("the record of an agent's last tidy-up", () => {
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), "learning-record-"));
     xdgDir = mkdtempSync(join(tmpdir(), "learning-record-xdg-"));
-    process.env.XDG_DATA_HOME = xdgDir;
+    useXdgDataHome(xdgDir);
     agentFilePath = join(tempDir, "demo.agentuse");
     writeFileSync(agentFilePath, AGENT_FILE);
     store = LearningStore.fromAgentFile(agentFilePath, tempDir);
