@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
+import { DashboardEventSource } from '../lib/dashboard-event-source';
 import type { ApprovalLogEntry } from '../../types';
 
 /** Latest displayable moment of a live session, for one-line tickers. */
@@ -49,7 +50,7 @@ export function useSessionTail(sessionId: string, project: string, enabled: bool
     if (!enabled) return;
     const url = new URL(`/sessions/${encodeURIComponent(sessionId)}/events`, location.origin);
     url.searchParams.set('project', project);
-    const source = new EventSource(url);
+    const source = new DashboardEventSource(url);
     source.addEventListener('log', (event) => {
       try {
         const entry = JSON.parse((event as MessageEvent).data) as ApprovalLogEntry;

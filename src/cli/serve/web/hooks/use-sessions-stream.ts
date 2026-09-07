@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'preact/hooks';
+import { DashboardEventSource } from '../lib/dashboard-event-source';
 import { ApiRequestError, sessionsEventUrl, type SessionsPayload } from '../lib/api';
 
 const SSE_FAILURE_WINDOW_MS = 10_000;
@@ -36,10 +37,10 @@ export function useSessionsStream(options: {
 
     let closed = false;
     let errorTimes: number[] = [];
-    let source: EventSource | null = null;
+    let source: DashboardEventSource | null = null;
 
     const connect = () => {
-      const es = new EventSource(sessionsEventUrl({
+      const es = new DashboardEventSource(sessionsEventUrl({
         agent: options.agent,
         status: options.status,
         triage: options.triage,

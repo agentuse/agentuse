@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'preact/hooks';
+import { DashboardEventSource } from '../lib/dashboard-event-source';
 import type { ApprovalLogEntry, ApprovalPageInfo } from '../../types';
 import { fetchSessionStatus } from '../lib/api';
 import { isLiveStatus } from '../lib/format';
@@ -67,7 +68,7 @@ export function useApprovalStream(options: {
     // routes are open. Only an exposed daemon needs ?token=; there the
     // token-less fetches 401 and surface via onAuthError below.
     let closed = false;
-    let source: EventSource | null = null;
+    let source: DashboardEventSource | null = null;
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
     let sseRetryTimer: ReturnType<typeof setTimeout> | null = null;
     let polling = false;
@@ -135,7 +136,7 @@ export function useApprovalStream(options: {
 
     const connect = () => {
       if (closed) return;
-      source = new EventSource(url);
+      source = new DashboardEventSource(url);
       source.addEventListener('status', (event) => {
         errorTimes = [];
         const payload = JSON.parse((event as MessageEvent).data);

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'preact/hooks';
+import { DashboardEventSource } from '../lib/dashboard-event-source';
 import { ApiRequestError, approvalsEventUrl, type ApprovalsListPayload } from '../lib/api';
 
 const SSE_FAILURE_WINDOW_MS = 10_000;
@@ -28,10 +29,10 @@ export function useApprovalsStream(options: {
 
     let closed = false;
     let errorTimes: number[] = [];
-    let source: EventSource | null = null;
+    let source: DashboardEventSource | null = null;
 
     const connect = () => {
-      const es = new EventSource(approvalsEventUrl({ days: options.days, project: options.project }));
+      const es = new DashboardEventSource(approvalsEventUrl({ days: options.days, project: options.project }));
       source = es;
 
       es.addEventListener('approvals', (event) => {
