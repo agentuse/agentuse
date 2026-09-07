@@ -1,14 +1,14 @@
 {
-  "name": "agentuse-development",
+  "name": "__MARKETPLACE_NAME__",
   "interface": {
-    "displayName": "AgentUse Development"
+    "displayName": "__MARKETPLACE_DISPLAY_NAME__"
   },
   "plugins": [
     {
       "name": "agentuse",
       "source": {
         "source": "local",
-        "path": "./plugins/agentuse"
+        "path": "__PLUGIN_PATH__"
       },
       "policy": {
         "installation": "AVAILABLE",

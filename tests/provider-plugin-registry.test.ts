@@ -6,8 +6,8 @@ import {
 import { resolvePluginSource } from '../src/plugin/provider-installer';
 
 describe('curated provider plugin registry', () => {
-  it('lists the community Claude Code subscription provider first', () => {
-    expect(PROVIDER_PLUGIN_REGISTRY[0]).toMatchObject({
+  it('retains the subscription migration provider independently of shortlist ordering', () => {
+    expect(getProviderPluginRegistryEntry('claude-code-subscription')).toMatchObject({
       id: 'claude-code-subscription',
       packageName: 'agentuse-claude-code-provider',
       version: '0.1.0',
@@ -27,11 +27,20 @@ describe('curated provider plugin registry', () => {
     expect(new Set(PROVIDER_PLUGIN_REGISTRY.map((entry) => entry.packageName)).size)
       .toBe(PROVIDER_PLUGIN_REGISTRY.length);
     for (const entry of PROVIDER_PLUGIN_REGISTRY) {
-      expect(resolvePluginSource(entry.source)).toEqual({
-        url: `${entry.repository}.git`,
-        ref: `v${entry.version}`,
-      });
+      const source = resolvePluginSource(entry.source);
+      expect(source.url).toBe(`${entry.repository}.git`);
+      expect([`v${entry.version}`, entry.commit]).toContain(source.ref);
+      expect(entry.commit).toMatch(/^[a-f0-9]{40}$/);
       expect(getProviderPluginRegistryEntry(entry.id)).toBe(entry);
     }
+  });
+
+  it('supports externally managed credentials without inventing an OAuth slot', () => {
+    expect(getProviderPluginRegistryEntry('pi-cli')).toMatchObject({
+      provider: 'pi',
+      authMethods: [],
+      authMethodId: '',
+    });
+    expect(getProviderPluginRegistryEntry('not-in-the-registry')).toBeUndefined();
   });
 });

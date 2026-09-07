@@ -423,9 +423,12 @@ AgentUse maintains a deliberately small, release-reviewed shortlist for the
 provider setup experience. These plugins remain third-party executable code:
 review their source and project status before installing them.
 
-| Plugin | Provider | Authentication | Install |
-| --- | --- | --- | --- |
-| [Claude Code Subscription](https://github.com/cb7337/agentuse-claude-code-provider) v0.1.0 (community, maintained by `cb7337`) | Anthropic | Claude Pro/Max OAuth | `agentuse plugins install cb7337/agentuse-claude-code-provider@v0.1.0` |
+Browse the current choices in **Settings > Providers**. Each provider card
+shows its publisher, reviewed version, installation source, and authentication
+requirements. Community providers maintain their own setup instructions;
+follow the linked repository for provider-specific credentials and limitations.
+Some providers use credentials managed by an external application rather than
+an AgentUse login.
 
 The shortlist is bundled with AgentUse rather than fetched from a mutable
 remote marketplace. A new or changed listing therefore goes through the normal
@@ -440,7 +443,7 @@ credential.
 
 The v0.21 compatibility migration is narrower than normal installation: when
 AgentUse finds an Anthropic OAuth credential written by the removed core flow,
-it installs the pinned Claude Code Subscription plugin and adopts the credential
+it installs the pinned compatibility plugin and adopts the credential
 without interrupting the user. New users still choose the plugin explicitly.
 
 A Git repository package declares its resources in `package.json`:

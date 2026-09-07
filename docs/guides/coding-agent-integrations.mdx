@@ -1,0 +1,131 @@
+# Coding-agent integrations
+
+Use AgentUse from Codex, Claude Code, or Pi to turn a workflow in your current
+conversation into a reusable `.agentuse` file. The integration helps define the
+agent, prepare its runtime, and validate it before its first real run.
+
+## Choose a release
+
+Starting with v0.21.0, [GitHub Releases](https://github.com/agentuse/agentuse/releases)
+include four downloadable integration packages:
+
+| Host | Release asset | Invocation |
+| --- | --- | --- |
+| Codex | `agentuse-codex-plugin.zip` | `$automate` |
+| Claude Code | `agentuse-claude-plugin.zip` | `/agentuse:automate` |
+| Pi | `agentuse-pi-package.tgz` | `/automate` |
+| Other Agent Skills hosts | `agentuse-skill.zip` | Ask the host to use the `automate` skill |
+
+Choose a published version and keep the extracted files in a persistent
+directory. The commands below use v0.21.0; they work once that release is
+published. They require `curl` and the appropriate archive tool (`unzip` or
+`tar`). Install your coding assistant first.
+
+```bash
+AGENTUSE_VERSION=0.21.0
+AGENTUSE_RELEASE_URL="https://github.com/agentuse/agentuse/releases/download/v${AGENTUSE_VERSION}"
+AGENTUSE_INTEGRATIONS_DIR="$HOME/.local/share/agentuse-integrations/$AGENTUSE_VERSION"
+mkdir -p "$AGENTUSE_INTEGRATIONS_DIR"
+```
+
+Follow one host's instructions below. These are local installations from the
+release archives, so no source checkout or integration build is needed.
+
+## Codex
+
+```bash
+curl -fL "$AGENTUSE_RELEASE_URL/agentuse-codex-plugin.zip" \
+  -o "$AGENTUSE_INTEGRATIONS_DIR/agentuse-codex-plugin.zip"
+unzip -q "$AGENTUSE_INTEGRATIONS_DIR/agentuse-codex-plugin.zip" \
+  -d "$AGENTUSE_INTEGRATIONS_DIR/codex"
+codex plugin marketplace add "$AGENTUSE_INTEGRATIONS_DIR/codex"
+codex plugin add agentuse@agentuse-release
+```
+
+Start a new Codex task, then use:
+
+```text
+Use $automate to make the workflow we just completed repeatable.
+```
+
+## Claude Code
+
+```bash
+curl -fL "$AGENTUSE_RELEASE_URL/agentuse-claude-plugin.zip" \
+  -o "$AGENTUSE_INTEGRATIONS_DIR/agentuse-claude-plugin.zip"
+unzip -q "$AGENTUSE_INTEGRATIONS_DIR/agentuse-claude-plugin.zip" \
+  -d "$AGENTUSE_INTEGRATIONS_DIR/claude"
+claude plugin marketplace add "$AGENTUSE_INTEGRATIONS_DIR/claude"
+claude plugin install agentuse@agentuse-release
+```
+
+Restart Claude Code, then run:
+
+```text
+/agentuse:automate Make the workflow we just completed repeatable.
+```
+
+## Pi
+
+```bash
+curl -fL "$AGENTUSE_RELEASE_URL/agentuse-pi-package.tgz" \
+  -o "$AGENTUSE_INTEGRATIONS_DIR/agentuse-pi-package.tgz"
+mkdir -p "$AGENTUSE_INTEGRATIONS_DIR/pi"
+tar -xzf "$AGENTUSE_INTEGRATIONS_DIR/agentuse-pi-package.tgz" \
+  -C "$AGENTUSE_INTEGRATIONS_DIR/pi"
+pi install "$AGENTUSE_INTEGRATIONS_DIR/pi/package"
+```
+
+Start a new Pi session, then run:
+
+```text
+/automate Make the workflow we just completed repeatable.
+```
+
+The package is installed from the extracted release download. Keep that
+directory available while it is installed.
+
+## Portable Agent Skills archive
+
+Download and extract the portable package:
+
+```bash
+curl -fL "$AGENTUSE_RELEASE_URL/agentuse-skill.zip" \
+  -o "$AGENTUSE_INTEGRATIONS_DIR/agentuse-skill.zip"
+unzip -q "$AGENTUSE_INTEGRATIONS_DIR/agentuse-skill.zip" \
+  -d "$AGENTUSE_INTEGRATIONS_DIR/portable"
+```
+
+Import the resulting `portable/automate` directory through your host's skill
+installer, or copy it into that host's supported skills directory. Keep the
+whole directory, including `references`, together. Restart the host if required
+and ask it to use the `automate` skill.
+
+## Validate and run the resulting agent
+
+The integration first tries to load current AgentUse guidance through `npx`,
+then from an installed `agentuse` command. If neither is available, it can use
+the bundled guidance to draft a file. Running and validating that file requires
+the [AgentUse CLI](/installation) and a configured model provider.
+
+Review the generated source and setup requirements, then validate and test it:
+
+```bash
+agentuse doctor my-agent.agentuse
+agentuse test my-agent.agentuse
+```
+
+See [testing agents](/guides/testing-agents) for test scope and limitations.
+Review the test output before a real run or enabling a schedule.
+
+## Updates and local development
+
+Release downloads stay at the version you installed. To move to another
+release, remove the old integration through your host's plugin or package
+manager, download the new archives into a separate version directory, and
+repeat the installation. For Codex and Claude Code, also remove the old
+`agentuse-release` marketplace registration before adding its replacement.
+
+Contributors can run `bun run integrations:build` in the AgentUse repository.
+The generated local-development marketplaces use `agentuse-development`; their
+installation commands are in the repository's `integrations` READMEs.

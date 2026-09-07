@@ -40,6 +40,7 @@
       "icon": "hammer",
       "pages": [
         "guides/creating-agents",
+        "guides/coding-agent-integrations",
         "guides/model-configuration",
         "guides/subagents",
         "guides/skills",

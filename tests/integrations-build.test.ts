@@ -34,10 +34,28 @@ describe('AgentUse integration artifacts', () => {
     expect(codexEntries).toContain('agentuse/.codex-plugin/plugin.json');
     expect(codexEntries).toContain('agentuse/skills/automate/SKILL.md');
     expect(codexEntries).toContain('agentuse/skills/automate/references/core.md');
+    expect(codexEntries).toContain('.agents/plugins/marketplace.json');
+    const codexRelease = JSON.parse(archiveEntries('unzip', ['-p', artifacts.archives.codex, '.agents/plugins/marketplace.json']).join('\n'));
+    expect(codexRelease.name).toBe('agentuse-release');
+    expect(codexRelease.plugins[0].source).toEqual({ source: 'local', path: './agentuse' });
 
     const claudeEntries = archiveEntries('unzip', ['-Z1', artifacts.archives.claude]);
     expect(claudeEntries).toContain('agentuse/.claude-plugin/plugin.json');
     expect(claudeEntries).toContain('agentuse/skills/automate/references/creator.md');
+    expect(claudeEntries).toContain('.claude-plugin/marketplace.json');
+    const claudeRelease = JSON.parse(archiveEntries('unzip', ['-p', artifacts.archives.claude, '.claude-plugin/marketplace.json']).join('\n'));
+    expect(claudeRelease.name).toBe('agentuse-release');
+    expect(claudeRelease.plugins[0].source).toBe('./agentuse');
+    expect(claudeRelease.plugins[0].version).toBe(sourceVersion);
+
+    // Public install instructions must not depend on a source checkout or a
+    // development marketplace; dev installs keep their separate identity.
+    for (const [marketplace, manifest] of [
+      [artifacts.codexMarketplace, '.agents/plugins/marketplace.json'],
+      [artifacts.claudeMarketplace, '.claude-plugin/marketplace.json'],
+    ]) {
+      expect(JSON.parse(readFileSync(resolve(marketplace!, manifest!), 'utf8')).name).toBe('agentuse-development');
+    }
 
     const piEntries = archiveEntries('tar', ['-tzf', artifacts.archives.pi]);
     expect(piEntries).toContain('package/package.json');

@@ -90,9 +90,9 @@ function writeBundle(destination: string, files: Record<string, string>): void {
   }
 }
 
-function zipDirectory(cwd: string, entry: string, destination: string): void {
+function zipDirectory(cwd: string, entry: string | string[], destination: string): void {
   mkdirSync(dirname(destination), { recursive: true });
-  const result = spawnSync('zip', ['-X', '-q', '-r', destination, entry], {
+  const result = spawnSync('zip', ['-X', '-q', '-r', destination, ...[entry].flat()], {
     cwd,
     encoding: 'utf8',
   });
@@ -134,6 +134,9 @@ export function buildIntegrationArtifacts(outputRoot = defaultOutputRoot): Integ
   const replacements = {
     '__AGENTUSE_VERSION__': sourceVersion,
     '__CODEX_VERSION__': `${sourceVersion}+codex.${contentId}`,
+    '__MARKETPLACE_NAME__': 'agentuse-development',
+    '__MARKETPLACE_DISPLAY_NAME__': 'AgentUse Development',
+    '__PLUGIN_PATH__': './plugins/agentuse',
   };
 
   rmSync(output, { recursive: true, force: true });
@@ -174,8 +177,23 @@ export function buildIntegrationArtifacts(outputRoot = defaultOutputRoot): Integ
     pi: '',
     skill: resolve(artifactRoot, 'agentuse-skill.zip'),
   };
-  zipDirectory(dirname(codexPlugin), basename(codexPlugin), archives.codex);
-  zipDirectory(dirname(claudePlugin), basename(claudePlugin), archives.claude);
+  // Keep the existing agentuse/ plugin entry while making each release ZIP
+  // directly installable as a local marketplace after extraction.
+  const releaseReplacements = {
+    ...replacements,
+    '__MARKETPLACE_NAME__': 'agentuse-release',
+    '__MARKETPLACE_DISPLAY_NAME__': 'AgentUse Release',
+    '__PLUGIN_PATH__': './agentuse',
+  };
+  for (const [host, plugin, metadata, archive] of [
+    ['codex', codexPlugin, '.agents/plugins/marketplace.json', archives.codex],
+    ['claude-code', claudePlugin, '.claude-plugin/marketplace.json', archives.claude],
+  ] as const) {
+    const releaseRoot = resolve(output, 'release-marketplaces', host);
+    cpSync(plugin, resolve(releaseRoot, 'agentuse'), { recursive: true });
+    writeText(resolve(releaseRoot, metadata), renderTemplate(`${host}/marketplace.json`, releaseReplacements));
+    zipDirectory(releaseRoot, ['agentuse', metadata.split('/')[0]!], archive);
+  }
   zipDirectory(dirname(portableSkill), basename(portableSkill), archives.skill);
   archives.pi = packPi(piPackage, artifactRoot);
 
