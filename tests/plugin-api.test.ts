@@ -859,7 +859,7 @@ describe('project-local activation scope', () => {
     expect(loadedPluginProtocol('bespoke')).toBeUndefined();
   });
 
-  it('lets a project install shadow a global install of the same plugin', async () => {
+  it('refreshes warm hosts after external installs, updates, overrides, and removals', async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-shadow-'));
     const dataDir = path.join(root, 'data');
     const home = path.join(dataDir, 'plugins');
@@ -878,16 +878,28 @@ describe('project-local activation scope', () => {
     await write(globalDir, 'global');
     await write(projectDir, 'project');
     const stamp = { installedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-    await fs.writeFile(path.join(home, 'registry.json'), JSON.stringify([{ name: 'shadowed', version: '1.0.0', source: 'g', directory: globalDir, scope: 'global', ...stamp }]));
-    await fs.writeFile(path.join(project, '.agentuse', 'plugins.json'), JSON.stringify([{ name: 'shadowed', version: '2.0.0', source: 'p', directory: projectDir, scope: 'project', ...stamp }]));
     oldDataDir = process.env.AGENTUSE_DATA_DIR;
     process.env.AGENTUSE_DATA_DIR = dataDir;
     resetProviderPluginCache();
     const manager = new PluginManager();
     await manager.loadPlugins([path.join(root, 'none')], project);
+    const empty = await getInstalledPluginHost();
+    expect(empty.listProviders()).toEqual([]);
+    // Simulate an install from a separate CLI process: no explicit cache reset.
+    await fs.writeFile(path.join(home, 'registry.json'), JSON.stringify([{ name: 'shadowed', version: '1.0.0', source: 'g', directory: globalDir, scope: 'global', ...stamp }]));
+    const globalHost = await getInstalledPluginHost();
+    expect(globalHost.listProviders().map((provider) => provider.name)).toEqual(['global']);
+    expect(await getInstalledPluginHost()).toBe(globalHost);
+    await fs.writeFile(path.join(home, 'registry.json'), JSON.stringify([{ name: 'shadowed', version: '1.0.1', source: 'g', directory: globalDir, scope: 'global', ...stamp }]));
+    expect(await getInstalledPluginHost()).not.toBe(globalHost);
+    await fs.writeFile(path.join(project, '.agentuse', 'plugins.json'), JSON.stringify([{ name: 'shadowed', version: '2.0.0', source: 'p', directory: projectDir, scope: 'project', ...stamp }]));
     const host = await getInstalledPluginHost();
     expect(host.listProviders().map((provider) => provider.name)).toEqual(['project']);
     expect(host.getProviderOwner('shadowed-provider')).toMatchObject({ version: '2.0.0', scope: 'project' });
+    await fs.unlink(path.join(project, '.agentuse', 'plugins.json'));
+    expect((await getInstalledPluginHost()).listProviders().map((provider) => provider.name)).toEqual(['global']);
+    await fs.writeFile(path.join(home, 'registry.json'), '[]');
+    expect((await getInstalledPluginHost()).listProviders()).toEqual([]);
   });
 
   it('re-runs live model discovery after the TTL and retries a failed discovery', async () => {

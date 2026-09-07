@@ -27,6 +27,7 @@ export interface PluginInstallOptions {
 interface ResolvedSource { url: string; ref?: string }
 
 const FULL_COMMIT_REF = /^[0-9a-f]{40}$/i;
+const SHORT_COMMIT_REF = /^[0-9a-f]{7,39}$/i;
 
 export interface PluginSourceInspection {
   source: string;
@@ -122,12 +123,59 @@ export function resolvePluginSource(source: string): ResolvedSource {
   }
 }
 
-function assertPinnedRemoteSource(source: string): ResolvedSource & { ref: string } {
+function githubRepositoryPath(url: string): { owner: string; repo: string } | undefined {
+  const match = url.match(/^(?:https:\/\/github\.com\/|ssh:\/\/git@github\.com\/|git@github\.com:)([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/i);
+  if (!match) return undefined;
+  return { owner: match[1]!, repo: match[2]! };
+}
+
+async function resolveShortCommit(url: string, ref: string): Promise<string> {
+  const repository = githubRepositoryPath(url);
+  if (!repository) throw new Error('Short commit refs require a GitHub repository URL. Use the full 40-character commit SHA instead.');
+  try {
+    const response = await fetch(`https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/commits/${encodeURIComponent(ref)}`, {
+      headers: { accept: 'application/vnd.github+json', 'user-agent': 'AgentUse' },
+    });
+    if (!response.ok) throw new Error();
+    const body = await response.json() as { sha?: unknown };
+    if (typeof body.sha !== 'string' || !FULL_COMMIT_REF.test(body.sha)) throw new Error();
+    return body.sha;
+  } catch {
+    // The API is the cheap path for public repositories, but a deployment may
+    // block api.github.com or use credentials that only git can access. Fall
+    // back to a blobless ref fetch before asking the user for a full SHA.
+    const staging = await mkdtemp(join(tmpdir(), 'agentuse-plugin-ref-'));
+    try {
+      await exec('git', ['init', staging], { maxBuffer: 10 * 1024 * 1024 });
+      await exec('git', ['-C', staging, 'remote', 'add', 'origin', url], { maxBuffer: 10 * 1024 * 1024 });
+      await exec('git', [
+        '-C', staging,
+        'fetch',
+        '--filter=blob:none',
+        'origin',
+        '+refs/heads/*:refs/remotes/origin/*',
+        '+refs/tags/*:refs/tags/*',
+      ], { maxBuffer: 10 * 1024 * 1024 });
+      const { stdout } = await exec('git', ['-C', staging, 'rev-parse', `${ref}^{commit}`], { maxBuffer: 10 * 1024 * 1024 });
+      const commit = stdout.trim();
+      if (FULL_COMMIT_REF.test(commit)) return commit;
+    } catch {
+      // Fall through to the actionable error below.
+    } finally {
+      await rm(staging, { recursive: true, force: true }).catch(() => {});
+    }
+    throw new Error(`Could not resolve commit ${ref} on GitHub. Use the full 40-character commit SHA or a published release tag.`);
+  }
+}
+
+async function resolveInspectionSource(source: string): Promise<ResolvedSource> {
   if (isLocalPath(source)) throw new Error('Provider plugin source must be a pinned GitHub repository');
   const resolved = resolvePluginSource(source);
-  if (!resolved.ref) throw new Error('Provider plugin source must include a tag or full commit');
-  if (/^(?:head|main|master)$/i.test(resolved.ref)) throw new Error('Provider plugin source must use a release tag or full commit, not a moving branch');
-  return { ...resolved, ref: resolved.ref };
+  if (resolved.ref && SHORT_COMMIT_REF.test(resolved.ref) && !FULL_COMMIT_REF.test(resolved.ref)) {
+    return { ...resolved, ref: await resolveShortCommit(resolved.url, resolved.ref) };
+  }
+  if (resolved.ref && /^(?:head|main|master)$/i.test(resolved.ref)) throw new Error('Provider plugin source must use a release tag or full commit, not a moving branch');
+  return resolved;
 }
 
 async function cloneResolvedSource(staging: string, resolvedSource: ResolvedSource): Promise<void> {
@@ -157,11 +205,11 @@ async function cloneResolvedSourceRaw(staging: string, resolvedSource: ResolvedS
 
 /** Read static package metadata without importing or executing plugin code. */
 export async function inspectPluginSource(source: string): Promise<PluginSourceInspection> {
-  const resolvedSource = assertPinnedRemoteSource(source);
+  const resolvedSource = await resolveInspectionSource(source);
   const staging = await mkdtemp(join(tmpdir(), 'agentuse-plugin-inspect-'));
   try {
     await cloneResolvedSource(staging, resolvedSource);
-    if (!FULL_COMMIT_REF.test(resolvedSource.ref)) {
+    if (resolvedSource.ref && !FULL_COMMIT_REF.test(resolvedSource.ref)) {
       const { stdout } = await exec('git', ['-C', staging, 'tag', '--points-at', 'HEAD']);
       if (!stdout.split(/\r?\n/).includes(resolvedSource.ref)) {
         throw new Error(`Provider plugin ref must resolve to a Git tag: ${resolvedSource.ref}`);
@@ -169,6 +217,7 @@ export async function inspectPluginSource(source: string): Promise<PluginSourceI
     }
     const manifest = await readPackageManifest(staging);
     const { stdout: commitOutput } = await exec('git', ['-C', staging, 'rev-parse', 'HEAD']);
+    const commit = commitOutput.trim();
     const repository = resolvedSource.url
       .replace(/^git@github\.com:/, 'https://github.com/')
       .replace(/^ssh:\/\/git@github\.com\//, 'https://github.com/')
@@ -185,8 +234,10 @@ export async function inspectPluginSource(source: string): Promise<PluginSourceI
       source,
       repository,
       publisher,
-      ref: resolvedSource.ref,
-      commit: commitOutput.trim(),
+      // An unqualified source is made concrete by the commit currently at the
+      // repository's default branch. The install step uses this exact commit.
+      ref: resolvedSource.ref ?? commit,
+      commit,
       name: manifest.name,
       version: manifest.version,
       apiVersion: 1,
@@ -441,4 +492,3 @@ export async function removePlugin(name: string, options?: PluginInstallOptions)
   await rm(staged, { recursive: true, force: true });
   return record;
 }
-

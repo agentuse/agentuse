@@ -40,8 +40,7 @@ describe('GitHub plugin sources', () => {
     expect(() => normalizeGitHubPluginSource('git://github.com/owner/repo.git')).toThrow('GitHub');
   });
 
-  it('requires a pinned release or commit before inspecting a provider plugin', async () => {
-    await expect(inspectPluginSource('owner/repo')).rejects.toThrow('must include a tag or full commit');
+  it('rejects moving branches and local sources before inspecting a provider plugin', async () => {
     await expect(inspectPluginSource('owner/repo@main')).rejects.toThrow('not a moving branch');
     await expect(inspectPluginSource('./local-plugin@0123456789012345678901234567890123456789')).rejects.toThrow('pinned GitHub');
   });

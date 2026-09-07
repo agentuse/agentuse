@@ -115,7 +115,7 @@ export async function loadPluginPackageDirectory(
   }
 }
 
-const installedHosts = new Map<string, Promise<PluginHost>>();
+const installedHosts = new Map<string, { revision: string; host: Promise<PluginHost> }>();
 const LEGACY_MIGRATION_RETRY_MS = 60_000;
 let legacyProviderPluginMigration: Promise<boolean> | undefined;
 let legacyProviderPluginMigrationFailedAt: number | undefined;
@@ -164,11 +164,20 @@ export async function getInstalledPluginHost(): Promise<PluginHost> {
   await ensureLegacyProviderPlugins();
   const root = resolve(process.env.AGENTUSE_PROJECT_ROOT ?? currentPluginProjectRoot() ?? findProjectRoot(process.cwd()));
   const key = `${providerPluginRegistryPath()}\0${root}`;
-  let pending = installedHosts.get(key);
+  // CLI installs happen in another process. Compare the effective registry on
+  // lookup so warm workers see installs, updates, removals, and project overrides.
+  const records = await readAvailablePluginRecords(root);
+  const revision = JSON.stringify(records);
+  const cached = installedHosts.get(key);
+  let pending = cached?.revision === revision ? cached.host : undefined;
   if (!pending) {
+    if (cached) {
+      readinessCache.clear();
+      clearActiveProviders();
+    }
     pending = (async () => {
       const host = new PluginHost();
-      for (const record of await readAvailablePluginRecords(root)) {
+      for (const record of records) {
         const packageRegistrations: Array<{ dispose(): void | Promise<void> }> = [];
         try {
           const manifest = await readPackageManifest(record.directory);
@@ -188,7 +197,8 @@ export async function getInstalledPluginHost(): Promise<PluginHost> {
       }
       return host;
     })();
-    installedHosts.set(key, pending);
+    // Existing runs may still hold the previous host; do not dispose it here.
+    installedHosts.set(key, { revision, host: pending });
   }
   const host = await pending;
   enterInstalledPluginHost(host);
