@@ -55,7 +55,7 @@ export function buildProjectDiscoverySessionAgent(input: {
   return renderAgentSource({
     name: 'onboarding-project-discovery',
     model: input.model,
-    reasoning: 'minimal',
+    reasoning: 'low',
     description: 'Explore a sanitized project view and propose useful recurring agents',
     timeout: '2m',
     maxSteps: 20,
@@ -157,7 +157,7 @@ export function buildAgentCreatorSessionAgent(input: {
   return renderAgentSource({
     name: 'internal-agent-creator',
     model: input.model,
-    reasoning: input.reasoning ?? 'minimal',
+    reasoning: input.reasoning ?? 'low',
     description: 'Turn a user brief into a production AgentUse agent',
     timeout: '5m',
     maxSteps: 12,

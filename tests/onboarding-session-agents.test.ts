@@ -113,7 +113,7 @@ describe('onboarding session agents', () => {
       }],
     }), '');
     expect(discovery.name).toBe('onboarding-project-discovery');
-    expect(discovery.config.reasoning).toBe('minimal');
+    expect(discovery.config.reasoning).toBe('low');
     expect(discovery.config.tools?.filesystem?.[0]?.path).toBe('/tmp/safe-view');
     expect(discovery.config.tools?.bash).toBeUndefined();
     expect(discovery.config.maxSteps).toBe(20);
@@ -154,7 +154,7 @@ describe('onboarding session agents', () => {
       availableSkills,
     }), '');
     expect(creator.name).toBe('internal-agent-creator');
-    expect(creator.config.reasoning).toBe('minimal');
+    expect(creator.config.reasoning).toBe('low');
     expect(creator.instructions).toContain('<creator_skill>');
     expect(creator.instructions).toContain('openai:gpt-5.6-luna');
     expect(creator.instructions).toContain('Submit the human-facing agent name');
@@ -177,6 +177,18 @@ describe('onboarding session agents', () => {
     expect(creator.config.metadata?.requestedSchedule).toBe('0 9 * * 1');
     expect(creator.config.metadata?.availableSkills).toEqual(['release-helper']);
     expect(creator.config.metadata?.creator).toBe('agent');
+  });
+
+  it('uses a supported default when the creator API omits reasoning for GPT-5.4-mini', () => {
+    const creator = parseAgentContent(buildAgentCreatorSessionAgent({
+      model: 'openai:gpt-5.4-mini',
+      safeViewRoot: '/tmp/safe-view',
+      creatorSkill: 'Creator rules',
+      objective: 'Return a fixed smoke token.',
+      availableModels: ['openai:gpt-5.4-mini'],
+    }), '');
+    expect(creator.config.reasoning).toBe('low');
+    expect(creator.config.model).toBe('openai:gpt-5.4-mini');
   });
 
   it('builds the normal New Agent creator with optional name and no schedule', () => {
