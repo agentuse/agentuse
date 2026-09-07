@@ -30,7 +30,29 @@ async function sourceCheck(id: string, source: ProviderAuthSourceStatus, definit
       subject,
       currentSubject: () => providerAuthHealthSubject(definition, methodId, source.kind !== 'environment'),
       verify: async () => {
-        await resolveProviderAuth(definition, methodId, AbortSignal.timeout(10_000));
+        const auth = await resolveProviderAuth(definition, methodId, AbortSignal.timeout(10_000));
+        // Claude subscription OAuth supports the authenticated, non-generating
+        // model catalog. Never send a custom transport's credential to this host.
+        if (id === 'anthropic' && auth?.bearerToken
+          && definition.transport.kind === 'anthropic-messages'
+          && (!definition.transport.baseURL || definition.transport.baseURL.replace(/\/+$/, '') === 'https://api.anthropic.com/v1')) {
+          const current = await providerAuthHealthSubject(definition, methodId, source.kind !== 'environment');
+          if (!current) throw new Error('OAuth unavailable');
+          const response = await fetchWithProviderHealth(current, 'https://api.anthropic.com/v1/models?limit=1', {
+            headers: {
+              ...definition.transport.headers,
+              ...auth.headers,
+              authorization: `Bearer ${auth.bearerToken}`,
+              'anthropic-version': '2023-06-01',
+              'anthropic-beta': 'oauth-2025-04-20',
+            },
+            signal: AbortSignal.timeout(10_000),
+            redirect: 'error',
+          });
+          await response.body?.cancel();
+          if (!response.ok) throw new Error('Provider check failed');
+          return 'verified';
+        }
         if (definition.check) {
           const readiness = await checkProviderReadiness(definition);
           return readiness.ok ? 'verified' : 'temporarily_unavailable';

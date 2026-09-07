@@ -8,7 +8,7 @@ import { providerAuthHealthSubject, resetProviderPluginCache, resolveProviderAut
 import { readProviderHealth } from '../src/auth/provider-health';
 import type { ProviderDefinition } from '../src/plugin/types';
 import type { ProviderAuthStatus } from '../src/auth/provider-status';
-import { providerHealthLabel } from '../src/cli/serve/web/components/provider-setup';
+import { providerHealthLabel, providerHealthCheckSummary } from '../src/cli/serve/web/components/provider-setup';
 
 let root: string;
 let dataDir: string | undefined;
@@ -95,7 +95,37 @@ describe('provider status verification', () => {
     await AuthStorage.setPluginCredential(provider.id, 'subscription', { ...expired, expires: Date.now() + 3600_000 });
     const status = await applyConnectionHealth(row(), [provider], {});
     expect(status.health?.state).toBe('configured');
-    expect(providerHealthLabel(status)).toBe('Not checked');
+    expect(providerHealthLabel(status)).toBe('Not verified');
+    expect(providerHealthCheckSummary(status)).toContain('Credentials found. This check could not verify');
+    expect(providerHealthLabel({ ...status, health: { state: 'configured' } })).toBe('Not checked');
+    const retried = await applyConnectionHealth(row(), [provider], { force: true });
+    expect(providerHealthLabel(retried)).toBe('Not verified');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('verifies Claude OAuth through the authenticated catalog and preserves rejected credentials', async () => {
+    const claude = { ...provider, id: 'anthropic', transport: { kind: 'anthropic-messages' as const, baseURL: 'https://api.anthropic.com/v1' } };
+    const credential = { ...expired, expires: Date.now() + 3600_000 };
+    await AuthStorage.setPluginCredential('anthropic', 'subscription', credential);
+    fetchSpy.mockImplementation(async (_url, init) => {
+      expect(String(_url)).toBe('https://api.anthropic.com/v1/models?limit=1');
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer expired');
+      expect(init?.redirect).toBe('error');
+      return Response.json({ data: [] });
+    });
+    const input = { ...row(), id: 'anthropic' };
+    const status = await applyConnectionHealth(input, [claude], { force: true });
+    expect(status.health?.state).toBe('verified');
+    expect(providerHealthLabel(status)).toBe('Connected');
+    fetchSpy.mockImplementation(async () => Response.json({ error: 'unauthorized' }, { status: 401 }));
+    expect((await applyConnectionHealth(input, [claude], { force: true })).health?.state).toBe('reconnect_required');
+    expect(await AuthStorage.getPluginCredential('anthropic', 'subscription')).toEqual(credential);
+  });
+
+  it('does not send custom Anthropic transport credentials to the first-party catalog', async () => {
+    await AuthStorage.setPluginCredential('anthropic', 'subscription', { ...expired, expires: Date.now() + 3600_000 });
+    const status = await applyConnectionHealth({ ...row(), id: 'anthropic' }, [{ ...provider, id: 'anthropic' }], { force: true });
+    expect(status.health?.state).toBe('configured');
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
