@@ -3,6 +3,8 @@
  * Generate model registry from models.dev API
  *
  * Run with: pnpm generate:models
+ * Scoped refresh: pnpm generate:models --provider openai --registry-only
+ * Offline source: append --input /path/to/models-dev.json
  *
  * This script:
  * 1. Fetches model data from models.dev API
@@ -13,7 +15,9 @@
  */
 
 import { writeFileSync, readFileSync, readdirSync, statSync } from 'fs';
-import { join, relative } from 'path';
+import { join, relative, resolve } from 'path';
+import { fileURLToPath } from 'url';
+import { MODELS, SUGGESTED_MODEL_IDS } from '../src/generated/models';
 import { REGISTRY_PROVIDER_SOURCES } from '../src/providers/registry-sources';
 import { findCurrentModel, isLiveVersionAlias, rewriteModelReferences } from '../src/utils/model-bump';
 import { deriveModelAlias } from '../src/utils/model-alias';
@@ -31,7 +35,7 @@ function stripDate(id: string): string {
  *  ("deepseek-v4-pro", "kimi-k2.6", "minimax-m3", "glm-5v-turbo", "qwen3.7-max").
  *  NOTE: the loose fallback below assumes the caller has already excluded size/variant junk
  *  (e.g. qwen3-235b-a22b) via a family filter — it is only meant to run on curated IDs. */
-function parseModelVersion(id: string): number {
+export function parseModelVersion(id: string): number {
   const base = stripDate(id);
   // Hyphen format: "claude-sonnet-4-6" -> 4006
   const hyphenMatch = base.match(/^.+?-(\d+)-(\d+)$/);
@@ -87,8 +91,9 @@ const SERIES: SeriesDef[] = [
   // keepMajors: 2 — current major plus one previous, so a staggered rollout (Sonnet/Fable at 5 while
   // Opus/Haiku are still 4) keeps all current flagships without dragging in legacy Claude 3 lines.
   { source: 'anthropic', ourProvider: 'anthropic', series: 'claude', filter: id => id.includes('claude'), keepMajors: 2 },
+  // Keep GPT-5 tiers available while GPT-6 rolls out across the lineup.
   // OpenAI — gpt-N* (excludes non-versioned families like gpt-image / gpt-realtime).
-  { source: 'openai', ourProvider: 'openai', series: 'gpt', filter: id => /^gpt-\d/.test(id) },
+  { source: 'openai', ourProvider: 'openai', series: 'gpt', filter: id => /^gpt-\d/.test(id), keepMajors: 2 },
 
   // --- OpenRouter (open-weight + hosted models, by vendor) ---
   // GLM (z-ai): dotted minors + lettered variants (glm-5, glm-5.1, glm-5v-turbo),
@@ -202,7 +207,7 @@ async function fetchModelsDevData(): Promise<Record<string, { models: Record<str
   return response.json();
 }
 
-function buildRegistry(apiData: Record<string, { models: Record<string, ModelData> }>): Registry {
+export function buildRegistry(apiData: Record<string, { models: Record<string, ModelData> }>): Registry {
   const registry: Registry = {
     anthropic: {},
     openai: {},
@@ -603,7 +608,7 @@ This page lists recommended models for AgentUse, organized by provider.
 
 **Default models:**
 - **Anthropic**: \`anthropic:${defaultAnthropic}\` (balanced performance)
-- **OpenAI**: \`openai:${defaultOpenai}\` (latest GPT)
+- **OpenAI**: \`openai:${defaultOpenai}\` (general-purpose GPT)
 - **OpenRouter**: \`openrouter:${defaultOpenrouter}\` (open source)
 - **OpenCode Go**: \`opencode-go:${defaultOpenCodeGo}\` (open coding models)
 - **Amazon Bedrock**: \`bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0\`
@@ -666,9 +671,13 @@ See the [Amazon Bedrock model catalog](https://docs.aws.amazon.com/bedrock/lates
 
 Authentication uses standard AWS environment variables (\`AWS_ACCESS_KEY_ID\` / \`AWS_SECRET_ACCESS_KEY\` / \`AWS_REGION\`, optional \`AWS_SESSION_TOKEN\`) or \`AWS_BEARER_TOKEN_BEDROCK\`. See the [Model Configuration guide](/guides/model-configuration#amazon-bedrock) for details.
 
-## Custom Providers (Local LLMs)
+## Custom Providers
 
-In addition to the built-in providers above, you can connect any OpenAI-compatible endpoint as a custom provider:
+In addition to the built-in providers above, Dashboard Settings can connect
+custom OpenAI Chat Completions, OpenAI Responses, or Anthropic Messages
+endpoints. It discovers and saves available models and verifies the selected
+protocol with a minimal completion. For OpenAI-compatible local endpoints, you
+can also use the CLI:
 
 \`\`\`bash
 # Add Ollama
@@ -686,7 +695,7 @@ agentuse run agent.agentuse -m ollama:qwen3.5:0.8b
 agentuse run agent.agentuse -m lmstudio:qwen/qwen3.5-9b
 \`\`\`
 
-See [Model Configuration](/guides/model-configuration#custom-providers-local-llms) for full setup details.
+See [Model Configuration](/guides/model-configuration#custom-providers) for full setup details.
 
 ## Usage
 
@@ -796,7 +805,23 @@ async function main(): Promise<void> {
 
   try {
     // Fetch from API
-    const apiData = await fetchModelsDevData();
+    // --provider scopes a refresh without changing other provider lineups.
+    // --registry-only preserves intentional model pins in templates and guides.
+    const args = process.argv.slice(2);
+    const option = (name: string) => {
+      const index = args.indexOf(name);
+      if (index < 0) return undefined;
+      const value = args[index + 1];
+      if (!value || value.startsWith('--')) throw new Error(`Missing value for ${name}`);
+      return value;
+    };
+    const provider = option('--provider');
+    if (provider && !(provider in REGISTRY_PROVIDER_SOURCES)) throw new Error(`Unknown provider: ${provider}`);
+    const input = option('--input');
+    const apiData = input ? JSON.parse(readFileSync(input, 'utf8')) : await fetchModelsDevData();
+    if (provider && !Object.keys(apiData[REGISTRY_PROVIDER_SOURCES[provider as keyof typeof REGISTRY_PROVIDER_SOURCES]]?.models ?? {}).length) {
+      throw new Error(`No source models found for ${provider}`);
+    }
 
     // Full table (all models from source providers) — powers limits + validity.
     const fullRegistry = buildFullRegistry(apiData);
@@ -805,7 +830,24 @@ async function main(): Promise<void> {
     // object must be sorted before generateDocsPage / updateFileReferences /
     // registryToIds consume it (they all rely on latest-first ordering).
     const registry = buildRegistry(apiData);
-    for (const key of Object.keys(registry)) registry[key] = sortModels(registry[key]);
+    if (provider) {
+      for (const [bucket, models] of Object.entries(MODELS)) {
+        if (bucket === provider) continue;
+        const preserved = Object.fromEntries(Object.entries(models).map(([id, model]) => [id, {
+          ...model, tool_call: model.toolCall,
+        }]));
+        fullRegistry[bucket] = preserved;
+        if (bucket in registry) registry[bucket] = Object.fromEntries(
+          SUGGESTED_MODEL_IDS.filter(id => id.startsWith(`${bucket}:`)).map(id => {
+            const modelId = id.slice(bucket.length + 1);
+            return [modelId, preserved[modelId]];
+          })
+        );
+      }
+    }
+    for (const key of Object.keys(registry)) {
+      if (!provider || key === provider) registry[key] = sortModels(registry[key]);
+    }
     const suggestedIds = registryToIds(registry);
 
     console.log('\nFull registry (limits + validity):');
@@ -831,7 +873,7 @@ async function main(): Promise<void> {
     }
 
     // Update references in templates and docs
-    updateFileReferences(projectRoot, registry);
+    if (!args.includes('--registry-only')) updateFileReferences(projectRoot, registry);
 
     console.log('\nDone!');
   } catch (error) {
@@ -840,4 +882,4 @@ async function main(): Promise<void> {
   }
 }
 
-main();
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

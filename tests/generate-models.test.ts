@@ -1,17 +1,6 @@
 import { describe, it, expect } from "bun:test";
 
-// parseModelVersion is a private function in generate-models.ts (a script).
-// Re-implement it here to test the logic since it's a critical sorting function.
-function parseModelVersion(id: string): number {
-  const base = id.replace(/-\d{8}$/, '');
-  const hyphenMatch = base.match(/^.+?-(\d+)-(\d+)$/);
-  if (hyphenMatch) return parseInt(hyphenMatch[1], 10) * 1000 + parseInt(hyphenMatch[2], 10);
-  const dotMatch = id.match(/(\d+)\.(\d+)/);
-  if (dotMatch) return parseInt(dotMatch[1], 10) * 1000 + parseInt(dotMatch[2], 10);
-  const singleMatch = id.match(/-(\d+)(?:-|$)/);
-  if (singleMatch) return parseInt(singleMatch[1], 10) * 1000;
-  return 0;
-}
+import { parseModelVersion, buildRegistry } from '../scripts/generate-models';
 
 describe("parseModelVersion", () => {
   describe("hyphen format (Anthropic-style)", () => {
@@ -84,5 +73,15 @@ describe("parseModelVersion", () => {
       expect(v51).toBeLessThan(v52);
       expect(v52).toBeLessThan(v54);
     });
+  });
+});
+
+
+describe('staggered OpenAI major rollout', () => {
+  it('keeps existing GPT-5 workload tiers alongside Astra', () => {
+    const ids = ['gpt-6-astra', 'gpt-5.6-terra', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-4o'];
+    const registry = buildRegistry({ openai: { models: Object.fromEntries(ids.map(id => [id, { id, name: id }])) } });
+    expect(Object.keys(registry.openai).sort()).toEqual(ids.slice(0, 4).sort());
+    expect(parseModelVersion('gpt-6-astra')).toBe(6000);
   });
 });
