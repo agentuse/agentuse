@@ -19,6 +19,7 @@ export async function installLegacyProviderPlugins(
   const installed: string[] = [];
 
   for (const entry of PROVIDER_PLUGIN_REGISTRY) {
+    if (!entry.authMethods.includes('oauth') || !entry.authMethodId) continue;
     if (!await AuthStorage.getOAuth(entry.provider)) continue;
 
     if (!installedNames.has(entry.packageName)) {

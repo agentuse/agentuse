@@ -24,15 +24,31 @@ export interface ProviderPluginRegistryEntry {
   repository: string;
   publisher: string;
   provenance: 'community';
-  /** Built-in provider namespace adapted by this plugin. */
+  /** Provider namespace registered or adapted by this plugin. */
   provider: string;
   authMethods: readonly ('oauth' | 'api_key')[];
-  /** Credential slot used for migration and missing-package recovery. */
+  /** Credential slot used for migration and recovery; empty for externally managed auth. */
   authMethodId: string;
   apiVersion: 1;
 }
 
 export const PROVIDER_PLUGIN_REGISTRY: readonly ProviderPluginRegistryEntry[] = [
+  {
+    id: 'pi-cli',
+    packageName: 'agentuse-pi-cli-provider',
+    version: '0.3.0',
+    name: 'Pi CLI',
+    description: 'Experimental: use models from an existing Pi CLI installation. Configure Pi and its credentials separately.',
+    source: 'leonho/agentuse-pi-cli-provider@50533d8b3227687346f2887010ea858580e80d22',
+    commit: '50533d8b3227687346f2887010ea858580e80d22',
+    repository: 'https://github.com/leonho/agentuse-pi-cli-provider',
+    publisher: 'leonho',
+    provenance: 'community',
+    provider: 'pi',
+    authMethods: [],
+    authMethodId: '',
+    apiVersion: 1,
+  },
   {
     id: 'claude-code-subscription',
     packageName: 'agentuse-claude-code-provider',
