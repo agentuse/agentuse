@@ -1009,6 +1009,10 @@ export function installProviderPlugin(plugin: string): Promise<ProviderSetupPayl
   return postJson('/api/providers/plugins/install', { plugin });
 }
 
+export function installUnreviewedProviderPlugin(source: string, commit: string): Promise<ProviderSetupPayload> {
+  return postJson('/api/providers/plugins/install-unreviewed', { source, commit });
+}
+
 export function inspectProviderPlugin(source: string): Promise<{ success: true; plugin: PluginSourceInspection }> {
   return postJson('/api/providers/plugins/inspect', { source });
 }

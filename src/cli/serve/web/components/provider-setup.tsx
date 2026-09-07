@@ -10,6 +10,7 @@ import {
   fetchProviderSetup,
   inspectProviderPlugin,
   installProviderPlugin,
+  installUnreviewedProviderPlugin,
   cancelProviderOAuth,
   removeCustomProvider,
   removeProviderCredential,
@@ -58,6 +59,57 @@ function pluginSourceLink(source: string): { href: string; label: string } | nul
   if (!/^[\w.-]+\/[\w.-]+(?:@.+)?$/.test(path)) return null;
   const repo = path.split('@')[0] ?? path;
   return { href: `https://github.com/${repo}`, label: `github.com/${path}` };
+}
+
+const GITHUB_PLUGIN_REPOSITORY = /^(?:github:)?[\w.-]+\/[\w.-]+(?:\.git)?$|^https:\/\/github\.com\/[\w.-]+\/[\w.-]+(?:\.git)?$|^git@github\.com:[\w.-]+\/[\w.-]+(?:\.git)?$|^ssh:\/\/git@github\.com\/[\w.-]+\/[\w.-]+(?:\.git)?$/i;
+const FULL_COMMIT = /^[0-9a-f]{40}$/i;
+const ABBREVIATED_COMMIT = /^[0-9a-f]{7,39}$/i;
+
+/**
+ * Keep the GitHub source field actionable before it makes a network request.
+ * The server resolves the chosen source to an exact commit before installation
+ * so a default branch cannot silently move while plugin code is being run.
+ */
+export function validateProviderPluginSource(source: string): string | null {
+  const value = source.trim();
+  if (!value) return 'Enter a GitHub repository, like owner/repo.';
+  const marker = value.lastIndexOf('@');
+  if (marker <= 0) {
+    return GITHUB_PLUGIN_REPOSITORY.test(value)
+      ? null
+      : 'Use a GitHub source like owner/repo, owner/repo@v1.0.0, or owner/repo@commit-sha.';
+  }
+  if (marker === value.length - 1) {
+    return 'Add a tag or commit SHA after @, or remove @ to use the repository default branch.';
+  }
+
+  const repository = value.slice(0, marker);
+  const ref = value.slice(marker + 1);
+  if (!GITHUB_PLUGIN_REPOSITORY.test(repository) || /\s/.test(ref)) {
+    return 'Use a GitHub source like owner/repo@v1.0.0 or owner/repo@<40-character commit SHA>.';
+  }
+  if (/^(?:head|main|master)$/i.test(ref)) {
+    return `@${ref} is a moving branch. Remove @${ref} to use the default branch, or use a release tag or commit SHA.`;
+  }
+  if (ABBREVIATED_COMMIT.test(ref) || FULL_COMMIT.test(ref)) return null;
+  return null;
+}
+
+/** Replace low-level git output with the next useful action for this field. */
+export function friendlyProviderPluginError(message: string): string {
+  if (/Could not resolve commit [0-9a-f]{7,39} on GitHub/i.test(message)) {
+    return 'We could not find that commit on GitHub. Check the SHA, or use the full 40-character SHA or a release tag.';
+  }
+  if (/Remote branch [0-9a-f]{7,39} not found/i.test(message)) {
+    return 'We could not find that commit on GitHub. Check the SHA, or use a release tag.';
+  }
+  if (/Remote branch .+ not found/i.test(message)) {
+    return 'That ref was not found on GitHub. Check the repository name and use a published release tag or full commit SHA.';
+  }
+  if (/Could not fetch plugin/i.test(message)) {
+    return 'GitHub could not find that plugin source. Check the repository and pinned ref, then try again.';
+  }
+  return message;
 }
 
 /** Existing credentials, including environment keys, occupy their auth method. */
@@ -116,10 +168,10 @@ export function providerSetupOptions(
       ...builtIn.filter((item) => item.value === providerId),
       // Uninstalled shortlist plugins stay visible so a Claude Pro/Max user
       // starting from the Anthropic row can install from here.
-      ...community.filter((_, index) => payload.pluginRegistry[index]?.provider === providerId),
+      ...community.filter((_, index) => payload.pluginRegistry[index]?.provider === providerId && payload.pluginRegistry[index]!.authMethods.length > 0),
     ];
   }
-  return [...builtIn, ...(allowCustom ? [custom] : []), ...community, advancedPlugin];
+  return [...builtIn, ...(allowCustom ? [custom] : []), ...community.filter((_, index) => payload.pluginRegistry[index]!.authMethods.length > 0), advancedPlugin];
 }
 
 export function defaultProviderSetupSelection(
@@ -146,6 +198,7 @@ function ProviderSetupForm(props: {
   onUpdated: (payload: ProviderSetupPayload) => void;
   onComplete: (payload: ProviderSetupPayload, connectedName: string) => void;
   onStep?: (step: 1 | 2 | 3) => void;
+  onClose?: () => void;
   /** Replace a rejected credential: always run the sign-in flow. */
   reconnect?: boolean;
 }) {
@@ -168,6 +221,7 @@ function ProviderSetupForm(props: {
   } | null>(null);
   const [code, setCode] = useState('');
   const [pluginSource, setPluginSource] = useState('');
+  const pluginSourceInputRef = useRef<HTMLInputElement>(null);
   const [pluginInspection, setPluginInspection] = useState<PluginSourceInspection | null>(null);
   const [pluginTrusted, setPluginTrusted] = useState(false);
   const [customName, setCustomName] = useState('');
@@ -190,9 +244,6 @@ function ProviderSetupForm(props: {
     setMethod(nextPlugin || next?.authMethods.includes('oauth') ? 'oauth' : 'api_key');
   }, [provider]);
 
-  // Only the reviewed shortlist offers a pick; an empty shortlist lands
-  // straight on the GitHub source field.
-  const pluginsOnlyAdvanced = scope === 'plugins' && setupOptions.every((option) => option.value === advancedPluginSelection);
   const isApiKeyStep = provider !== 'custom' && provider !== advancedPluginSelection && method === 'api_key';
   const step: 1 | 2 | 3 = flow || isApiKeyStep || provider === 'custom' || pluginInspection ? 2 : 1;
   const reportStep = props.onStep;
@@ -205,6 +256,15 @@ function ProviderSetupForm(props: {
 
   const submit = async () => {
     if (busy) return;
+    if (provider === advancedPluginSelection && pluginInspection && !flow && !pluginTrusted) return;
+    if (provider === advancedPluginSelection && !flow && !pluginInspection) {
+      const validationError = validateProviderPluginSource(pluginSource);
+      if (validationError) {
+        setError(validationError);
+        pluginSourceInputRef.current?.focus();
+        return;
+      }
+    }
     setBusy(true);
     setError(null);
     try {
@@ -215,22 +275,26 @@ function ProviderSetupForm(props: {
           setPluginInspection(inspected.plugin);
           return;
         }
-        const started = await startUnreviewedProviderPluginOAuth(pluginInspection.source, pluginInspection.commit);
-        if (started.connected) {
-          next = started;
+        if (scope === 'plugins') {
+          next = await installUnreviewedProviderPlugin(pluginInspection.source, pluginInspection.commit);
         } else {
-          setFlow({
-            id: started.flowId,
-            url: started.authorizationUrl,
-            kind: 'plugin',
-            plugin: {
-              packageName: pluginInspection.name,
-              version: pluginInspection.version,
-              source: pluginInspection.source,
-              wasInstalled: false,
-            },
-          });
-          return;
+          const started = await startUnreviewedProviderPluginOAuth(pluginInspection.source, pluginInspection.commit);
+          if (started.connected) {
+            next = started;
+          } else {
+            setFlow({
+              id: started.flowId,
+              url: started.authorizationUrl,
+              kind: 'plugin',
+              plugin: {
+                packageName: pluginInspection.name,
+                version: pluginInspection.version,
+                source: pluginInspection.source,
+                wasInstalled: false,
+              },
+            });
+            return;
+          }
         }
       } else if (provider === 'custom') {
         const manualModels = customModels.split(/[\n,]+/).map((model) => model.trim()).filter(Boolean);
@@ -250,22 +314,26 @@ function ProviderSetupForm(props: {
           customCheck.models,
         );
       } else if (pluginEntry && !flow) {
-        const started = await startProviderPluginOAuth(pluginEntry.id, props.reconnect === true);
-        if (started.connected) {
-          next = started;
+        if (scope === 'plugins') {
+          next = await installProviderPlugin(pluginEntry.id);
         } else {
-          setFlow({
-            id: started.flowId,
-            url: started.authorizationUrl,
-            kind: 'plugin',
-            plugin: {
-              packageName: pluginEntry.packageName,
-              version: pluginEntry.version,
-              source: pluginEntry.source,
-              wasInstalled: Boolean(installedPlugin),
-            },
-          });
-          return;
+          const started = await startProviderPluginOAuth(pluginEntry.id, props.reconnect === true);
+          if (started.connected) {
+            next = started;
+          } else {
+            setFlow({
+              id: started.flowId,
+              url: started.authorizationUrl,
+              kind: 'plugin',
+              plugin: {
+                packageName: pluginEntry.packageName,
+                version: pluginEntry.version,
+                source: pluginEntry.source,
+                wasInstalled: Boolean(installedPlugin),
+              },
+            });
+            return;
+          }
         }
       } else if (method === 'api_key' && !flow) {
         next = await saveProviderApiKey(provider, key);
@@ -284,7 +352,9 @@ function ProviderSetupForm(props: {
       props.onUpdated(next);
       props.onComplete(next, name);
     } catch (caught) {
-      setError((caught as Error).message || 'Provider setup failed.');
+      const message = friendlyProviderPluginError((caught as Error).message || 'Provider setup failed.');
+      setError(message);
+      if (provider === advancedPluginSelection && !pluginInspection) pluginSourceInputRef.current?.focus();
     } finally {
       setBusy(false);
     }
@@ -322,21 +392,23 @@ function ProviderSetupForm(props: {
         </div>
       ) : provider === advancedPluginSelection && !flow ? (
         <div class="provider-plugin-source">
-          {pluginsOnlyAdvanced && (
-            <>
-              <div class="provider-all-installed"><i aria-hidden="true" />All reviewed plugins are already installed. Manage them from the list behind this dialog.</div>
-              <div class="provider-source-divider">or from GitHub</div>
-            </>
-          )}
           <label class="provider-field">
-            <span>Source</span>
+            <span>GitHub source</span>
             <input
+              id="provider-plugin-source"
+              ref={pluginSourceInputRef}
               value={pluginSource}
-              placeholder="owner/repo@v1.0.0"
-              onInput={(event) => { setPluginSource((event.target as HTMLInputElement).value); setPluginInspection(null); setPluginTrusted(false); }}
+              placeholder="owner/repo or owner/repo@v1.0.0"
+              aria-describedby={error ? 'provider-plugin-source-help provider-plugin-source-error' : 'provider-plugin-source-help'}
+              aria-invalid={error ? 'true' : undefined}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellcheck={false}
+              onInput={(event) => { setPluginSource((event.target as HTMLInputElement).value); setPluginInspection(null); setPluginTrusted(false); setError(null); }}
               disabled={busy}
             />
-            <small>Use owner/repo@tag or a full commit. AgentUse will not track a moving branch.</small>
+            <small id="provider-plugin-source-help">Use <code>owner/repo</code> for the default branch, or add <code>@tag</code> or <code>@commit-sha</code>. AgentUse pins the exact commit before installing.</small>
+            {error && !pluginInspection && <p id="provider-plugin-source-error" class="provider-field-error" role="alert">{error}</p>}
           </label>
           {pluginInspection && (
             <div class="provider-plugin-card is-unreviewed">
@@ -407,7 +479,7 @@ function ProviderSetupForm(props: {
         </>
       )}
 
-      {error && <p class="provider-setup-error" role="alert">{error}</p>}
+      {error && !(provider === advancedPluginSelection && !pluginInspection) && <p class="provider-setup-error" role="alert">{error}</p>}
       <div class="provider-setup-actions">
         {(flow || (scope === 'all' && pluginEntry) || (provider === advancedPluginSelection && pluginInspection)) && <button type="button" class="provider-setup-secondary" onClick={() => {
           if (flow) { void cancelProviderOAuth(flow.id).catch(() => {}); setFlow(null); setCode(''); }
@@ -415,12 +487,12 @@ function ProviderSetupForm(props: {
           else setProvider(setupOptions[0]?.value ?? props.payload.catalog[0]?.id ?? 'anthropic');
         }} disabled={busy}>Back</button>}
         <button type="button" class="provider-setup-primary" onClick={() => void submit()} disabled={busy || blockedByTrust} aria-busy={busy}>
-          {busy ? flow ? 'Connecting…' : provider === advancedPluginSelection && !pluginInspection ? 'Reading manifest…' : provider === advancedPluginSelection || (pluginEntry && !installedPlugin) ? 'Installing…' : pluginEntry ? 'Connecting…' : 'Working…'
+          {busy ? flow ? 'Connecting…' : provider === advancedPluginSelection && !pluginInspection ? 'Checking source…' : provider === advancedPluginSelection || (pluginEntry && !installedPlugin) ? 'Installing…' : pluginEntry ? 'Connecting…' : 'Working…'
             : flow ? 'Finish connecting'
-            : provider === advancedPluginSelection ? pluginInspection ? 'Install and continue' : 'Read manifest'
+            : provider === advancedPluginSelection ? pluginInspection ? scope === 'plugins' ? 'Confirm installation' : 'Install and continue' : 'Review plugin'
             : provider === 'custom' ? customCheck ? 'Save provider' : 'Check endpoint'
             : method === 'api_key' ? 'Save provider'
-            : pluginEntry ? installedPlugin ? 'Connect' : 'Install and continue'
+            : pluginEntry ? scope === 'plugins' ? 'Confirm installation' : installedPlugin ? 'Connect' : 'Install and continue'
             : `Continue to ${entry?.name ?? 'provider'}`}
         </button>
       </div>
@@ -494,7 +566,7 @@ export function ProviderSetupDialog(props: {
       <div class="dialog-head"><span id="provider-setup-title" class="title">{props.title ?? 'connect a provider'}</span><button type="button" class="dialog-close" aria-label="Close" onClick={props.onClose}>×</button></div>
       <div class="provider-setup-body">
         {!installingPlugins && <ProviderSetupSteps step={done ? 3 : step} />}
-        <div class="provider-setup-intro"><strong>{installingPlugins ? 'Install a provider plugin' : 'Connect a model provider'}</strong><span>{installingPlugins ? 'Plugins add providers that AgentUse does not ship with. Reviewed ones are one click; anything else is read from a pinned GitHub source first.' : 'Credentials are stored on the AgentUse server host and shared by projects that use its credential store.'}</span></div>
+        <div class="provider-setup-intro"><strong>{installingPlugins ? 'Install a provider plugin' : 'Connect a model provider'}</strong><span>{installingPlugins ? 'Plugins add providers that AgentUse does not ship with. Reviewed ones are one click; anything else is checked from GitHub and pinned to the commit you approve.' : 'Credentials are stored on the AgentUse server host and shared by projects that use its credential store.'}</span></div>
         {!payload && !error && <p class="provider-setup-loading">Loading providers…</p>}
         {error && <p class="provider-setup-error" role="alert">{error}</p>}
         {done ? (
@@ -504,8 +576,8 @@ export function ProviderSetupDialog(props: {
                 <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 9.5l3.5 3.5 7.5-8" /></svg>
               </span>
               <span>
-                <strong>{done} is connected</strong>
-                <span>Every project on this server can use it.</span>
+                <strong>{done} is {installingPlugins ? 'installed' : 'connected'}</strong>
+                <span>{installingPlugins ? 'Installation is complete. Connection and credentials are managed separately by the provider or its CLI.' : 'Every project on this server can use it.'}</span>
               </span>
             </div>
             <div class="provider-setup-actions">
@@ -525,6 +597,7 @@ export function ProviderSetupDialog(props: {
               reconnect={props.reconnect === true}
               onUpdated={setPayload}
               onStep={setStep}
+              onClose={props.onClose}
               onComplete={(next, name) => { props.onComplete(next); setDone(name); }}
             />}
           </>
@@ -544,7 +617,7 @@ export function providerHealthLabel(status: ProviderAuthStatus | undefined): str
   if (status?.checkPending && !status.health?.checkedAt) return 'Checking…';
   if (status?.health?.state === 'temporarily_unavailable') return 'Temporarily unavailable';
   if (status?.health?.state === 'verified') return 'Connected';
-  if (status?.configured) return 'Not checked';
+  if (status?.configured) return status.health?.checkedAt !== undefined ? 'Not verified' : 'Not checked';
   return 'Not connected';
 }
 
@@ -558,14 +631,23 @@ function ProviderHealthBadge({ status, popped }: { status: ProviderAuthStatus | 
 
 /** One sentence about the last check, for the expanded body. The message is
  *  dropped when a notice strip above the line already states it. */
+export function providerHealthCheckSummary(status: ProviderAuthStatus): string | undefined {
+  if (status.health?.state === 'configured' && status.health.checkedAt !== undefined) {
+    return status.sources.some((source) => source.active)
+      ? 'Credentials found. This check could not verify a connection with the provider. A successful model request can verify it.'
+      : 'Configuration found. This check could not verify that the provider is ready.';
+  }
+  return status.health?.message;
+}
+
 function providerHealthMessage(status: ProviderAuthStatus | undefined, omitMessage = false): ComponentChildren {
   if (!status?.health) {
     return status?.checkPending
       ? 'Checking this connection…'
       : 'No test has run yet. Runs check it on first use.';
   }
-  return <>{!omitMessage && status.health.message}
-    {status.health.checkedAt && <> Checked {new Date(status.health.checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.</>}
+  return <>{!omitMessage && providerHealthCheckSummary(status)}
+    {status.health.checkedAt && <> {status.health.state === 'configured' ? 'Last attempt' : 'Checked'} {new Date(status.health.checkedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.</>}
     {status.checkPending && <> Checking again…</>}
   </>;
 }

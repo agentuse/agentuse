@@ -11,6 +11,7 @@ import {
   completeProviderOAuth,
   configureCustomProvider,
   installProviderPluginFromRegistry,
+  installUnreviewedProviderPlugin,
   providerSetupSnapshot,
   removeCustomProvider,
   removeProviderCredential,
@@ -21,8 +22,9 @@ import {
   startProviderOAuth,
 } from '../src/auth/provider-setup';
 import { AuthStorage } from '../src/auth/storage';
-import { defaultProviderSetupSelection, hasConfiguredProvider, missingProviderMethods, providerSetupOptions } from '../src/cli/serve/web/components/provider-setup';
+import { defaultProviderSetupSelection, friendlyProviderPluginError, hasConfiguredProvider, missingProviderMethods, providerSetupOptions, validateProviderPluginSource } from '../src/cli/serve/web/components/provider-setup';
 import { resetProviderPluginCache } from '../src/plugin/provider-runtime';
+import * as installer from '../src/plugin/provider-installer';
 
 const ENV_KEYS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'OPENCODE_GO_API_KEY'];
 
@@ -110,6 +112,16 @@ describe('Dashboard provider setup service', () => {
     }]));
     resetProviderPluginCache();
   }
+
+  it('explains flexible GitHub source formats before attempting a fetch', () => {
+    expect(validateProviderPluginSource('leonho/agentuse-pi-cli-provider@50533d8')).toBeNull();
+    expect(validateProviderPluginSource('owner/repo')).toBeNull();
+    expect(validateProviderPluginSource('owner/repo@main')).toContain('moving branch');
+    expect(validateProviderPluginSource('owner/repo@v1.0.0')).toBeNull();
+    expect(validateProviderPluginSource(`owner/repo@${'a'.repeat(40)}`)).toBeNull();
+    expect(friendlyProviderPluginError('Could not fetch plugin https://github.com/owner/repo.git@50533d8 (fatal: Remote branch 50533d8 not found in upstream origin)'))
+      .toContain('find that commit');
+  });
 
   it('stores an API key while returning only redacted provider status', async () => {
     const payload = await saveProviderApiKey('openai', 'super-secret-key');
@@ -210,7 +222,7 @@ describe('Dashboard provider setup service', () => {
     process.env.OPENROUTER_API_KEY = 'environment-secret';
     const payload = await providerSetupSnapshot();
     expect(payload.catalog.map((provider) => provider.id)).toEqual(['anthropic', 'openai', 'openrouter', 'opencode-go']);
-    expect(payload.pluginRegistry).toEqual([{
+    expect(payload.pluginRegistry.filter((entry) => entry.id !== 'pi-cli')).toEqual([{
       id: 'claude-code-subscription',
       packageName: 'agentuse-claude-code-provider',
       version: '0.1.0',
@@ -238,7 +250,7 @@ describe('Dashboard provider setup service', () => {
     expect(providerSetupOptions({ success: true, ...payload }, false, 'provider', 'openai').map((item) => item.value))
       .toEqual(['openai']);
     expect(providerSetupOptions({ success: true, ...payload }, false, 'plugins').map((item) => item.value))
-      .toEqual(['plugin:claude-code-subscription', 'plugin:advanced']);
+      .toEqual(['plugin:pi-cli', 'plugin:claude-code-subscription', 'plugin:advanced']);
     expect(providerSetupOptions({ success: true, ...payload }, true).map((item) => [item.value, item.group]))
       .toEqual([
         ['anthropic', 'Built in'],
@@ -266,7 +278,7 @@ describe('Dashboard provider setup service', () => {
     expect(providerSetupOptions(withInstalledPlugin, false, 'provider', 'anthropic').map((item) => item.value))
       .toEqual(['anthropic', 'plugin:claude-code-subscription']);
     expect(providerSetupOptions(withInstalledPlugin, false, 'plugins').map((item) => item.value))
-      .toEqual(['plugin:advanced']);
+      .toEqual(['plugin:pi-cli', 'plugin:advanced']);
   });
 
   it('offers only missing supported connection methods without blocking plugin installation', async () => {
@@ -284,7 +296,7 @@ describe('Dashboard provider setup service', () => {
     missing = missingProviderMethods(payload);
     expect(providerSetupOptions(missing, false, 'provider', 'openai')).toEqual([]);
     expect(providerSetupOptions(missing, false, 'provider', 'anthropic').map((p) => p.value)).toContain('plugin:claude-code-subscription');
-    const plugin = payload.pluginRegistry[0]!;
+    const plugin = payload.pluginRegistry.find((entry) => entry.id === 'claude-code-subscription')!;
     payload.status.providers.push({ id: plugin.provider, name: plugin.name, configured: true, sources: [{ kind: 'oauth', name: 'Subscription', stored: true, active: true, priority: 1, plugin: { name: plugin.packageName, authMethodId: plugin.authMethodId } }] });
     expect(providerSetupOptions(missingProviderMethods(payload), false, 'provider', plugin.provider).map((p) => p.value)).not.toContain(`plugin:${plugin.id}`);
     // Add connection still exposes installation independently of method maintenance.
@@ -347,10 +359,49 @@ describe('Dashboard provider setup service', () => {
   });
 
   it('refuses an unreviewed plugin install without the inspected commit', async () => {
+    await expect(installUnreviewedProviderPlugin('owner/some-plugin', undefined))
+      .rejects.toThrow('confirm the commit before installing');
     await expect(startUnreviewedProviderPluginOAuth('owner/some-plugin@v1.0.0', undefined))
       .rejects.toThrow('confirm the commit before installing');
     await expect(startUnreviewedProviderPluginOAuth('owner/some-plugin@v1.0.0', 'main'))
       .rejects.toThrow('confirm the commit before installing');
+  });
+
+  it('lists Pi CLI for installation without offering browser OAuth', async () => {
+    const payload = { success: true as const, ...await providerSetupSnapshot() };
+    expect(payload.pluginRegistry.find((entry) => entry.id === 'pi-cli')).toMatchObject({
+      packageName: 'agentuse-pi-cli-provider', version: '0.3.0', provider: 'pi',
+      commit: '50533d8b3227687346f2887010ea858580e80d22', authMethods: [], publisher: 'leonho',
+    });
+    expect(providerSetupOptions(payload, false, 'plugins').map((entry) => entry.value)).toContain('plugin:pi-cli');
+    expect(providerSetupOptions(payload).map((entry) => entry.value)).not.toContain('plugin:pi-cli');
+    await expect(startProviderPluginOAuth('pi-cli')).rejects.toThrow('manages authentication externally');
+  });
+
+  it('completes installation for a CLI provider without OAuth and safely retries an existing installation', async () => {
+    await addClaudePluginFixture();
+    const directory = path.join(tempDir, 'plugins', 'agentuse-claude-code-provider-fixture');
+    await fs.writeFile(path.join(directory, 'index.js'), `export default function (agentuse) {
+      agentuse.registerProvider('anthropic', { name: 'CLI provider', models: { inherit: 'anthropic' }, transport: { kind: 'anthropic-messages' }, async when() { return true; } });
+    }`);
+    resetProviderPluginCache();
+    const commit = 'a'.repeat(40);
+    const inspection = spyOn(installer, 'inspectPluginSource').mockResolvedValue({
+      source: 'cb7337/agentuse-claude-code-provider@v0.1.0', repository: 'https://github.com/cb7337/agentuse-claude-code-provider',
+      publisher: 'cb7337', ref: 'v0.1.0', commit, name: 'agentuse-claude-code-provider', version: '0.1.0', apiVersion: 1, providers: [],
+    });
+    const install = spyOn(installer, 'installPlugin');
+    try {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await installUnreviewedProviderPlugin('cb7337/agentuse-claude-code-provider@v0.1.0', commit);
+        expect(result.installedPlugins[0]?.providers).toEqual([{ id: 'anthropic', authMethods: [] }]);
+      }
+      expect(install).not.toHaveBeenCalled();
+      await expect(installUnreviewedProviderPlugin('cb7337/agentuse-claude-code-provider@v0.1.0', 'b'.repeat(40))).rejects.toThrow('changed since it was inspected');
+    } finally {
+      inspection.mockRestore();
+      install.mockRestore();
+    }
   });
 
   it('rejects new Anthropic OAuth through the removed built-in flow', async () => {

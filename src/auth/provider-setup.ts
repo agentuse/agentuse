@@ -334,6 +334,7 @@ async function beginProviderPluginOAuth(
  */
 export async function startProviderPluginOAuth(id: unknown, reconnect = false): Promise<ProviderPluginOAuthStart> {
   const entry = registryPlugin(id);
+  if (!entry.authMethods.includes('oauth')) throw new Error(`${entry.name} manages authentication externally. Configure its CLI directly.`);
   const installed = await installProviderPluginFromRegistry(entry.id);
   const candidate = (await getProviderAdapters(entry.provider)).find(({ provider }) =>
     provider.auth?.methods.some((method) => method.id === entry.authMethodId),
@@ -346,7 +347,7 @@ export async function startProviderPluginOAuth(id: unknown, reconnect = false): 
  * `commit` is the SHA the user consented to on the inspection card. Refusing
  * any other value means an install can only ever run the code that was shown.
  */
-export async function startUnreviewedProviderPluginOAuth(source: unknown, commit: unknown): Promise<ProviderPluginOAuthStart> {
+async function installInspectedProviderPlugin(source: unknown, commit: unknown): Promise<{ snapshot: ProviderSetupSnapshot; inspected: PluginSourceInspection }> {
   if (typeof source !== 'string' || !source.trim()) throw new Error('Provider plugin source is required');
   if (typeof commit !== 'string' || !/^[0-9a-f]{40}$/i.test(commit)) {
     throw new Error('Read the plugin manifest and confirm the commit before installing');
@@ -362,7 +363,16 @@ export async function startUnreviewedProviderPluginOAuth(source: unknown, commit
     throw new Error(`${inspected.name} is already installed from a different source. Remove it before installing this source.`);
   }
   if (!existing) await installPlugin(immutableSource);
-  const installed = await providerSetupSnapshot();
+  return { snapshot: await providerSetupSnapshot(), inspected };
+}
+
+/** Install with explicit commit consent, without assuming an authentication method. */
+export async function installUnreviewedProviderPlugin(source: unknown, commit: unknown): Promise<ProviderSetupSnapshot> {
+  return (await installInspectedProviderPlugin(source, commit)).snapshot;
+}
+
+export async function startUnreviewedProviderPluginOAuth(source: unknown, commit: unknown): Promise<ProviderPluginOAuthStart> {
+  const { snapshot: installed, inspected } = await installInspectedProviderPlugin(source, commit);
   const host = await getInstalledPluginHost();
   const candidates = host.listProviderContributions()
     .filter((contribution) => contribution.owner.name === inspected.name)

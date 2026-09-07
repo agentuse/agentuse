@@ -6611,6 +6611,9 @@ a.lastrun.waiting { color: var(--cyan); }
 .provider-oauth-complete p { margin: 0; color: var(--muted-3); font-size: var(--font-size-caption); line-height: var(--lh-snug); }
 .provider-oauth-complete > a { width: fit-content; color: var(--cyan); font-size: var(--font-size-caption); }
 .provider-setup-error { margin: 0; color: var(--red); font-size: var(--font-size-caption); line-height: var(--lh-snug); }
+.provider-field-error { margin: 0; color: var(--red); font-size: var(--font-size-caption); line-height: var(--lh-snug); }
+.provider-field input[aria-invalid="true"] { border-color: var(--red-border); }
+.provider-field input[aria-invalid="true"]:focus { outline-color: var(--red-border); }
 .provider-setup-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 2px; }
 .provider-setup-primary,
 .provider-setup-secondary {
@@ -6648,19 +6651,6 @@ a.lastrun.waiting { color: var(--cyan); }
 .provider-setup-check path { stroke-dasharray: 24; stroke-dashoffset: 24; animation: provider-check-draw 320ms var(--ease-out) 120ms forwards; }
 @keyframes provider-check-draw { to { stroke-dashoffset: 0; } }
 @keyframes provider-check-ring { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-.provider-all-installed {
-  display: flex; align-items: center; gap: 9px; padding: 10px 12px;
-  border: 1px dashed var(--line-strong); border-radius: 8px;
-  color: var(--muted-3); font-size: var(--font-size-caption); line-height: var(--lh-snug);
-}
-.provider-all-installed i { flex: none; width: 8px; height: 8px; border-radius: 999px; background: var(--green); }
-.provider-source-divider {
-  display: flex; align-items: center; gap: 10px;
-  color: var(--muted-2); font-size: var(--font-size-micro);
-  letter-spacing: var(--tracking-caps); text-transform: uppercase;
-}
-.provider-source-divider::before,
-.provider-source-divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 .provider-plugin-trust {
   display: grid; gap: 6px; padding: 10px 12px;
   border: 1px solid var(--line-strong); border-radius: 8px;
