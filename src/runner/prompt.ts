@@ -13,6 +13,7 @@ export function buildAutonomousAgentPrompt(todayDate: string, isSubAgent: boolea
 
 Writing:
 - Lead with the result. Be direct and use plain language
+- Report errors in plain language: what failed, why, and what to do next. Translate technical errors instead of quoting them. Omit jargon, codes, and paths unless useful. Never guess the cause or suggest an unsupported fix. Apply this to report_incomplete too.
 - Return the requested result, not a narration of your process. No preamble, task restatement, or recap of steps
 - Follow any output format requested by the task exactly
 - Keep ordinary briefings under ~200 words. This limit does not apply when the requested result is itself a report, digest, document, schema, template, or complete table
