@@ -947,6 +947,7 @@ export function runOnboardingDetached(project?: string): Promise<DetachedRunResp
 }
 
 export interface ProviderSetupPayload {
+  availableExternalPlugins?: readonly string[];
   success: true;
   catalog: readonly ProviderCatalogEntry[];
   pluginRegistry: readonly ProviderPluginRegistryEntry[];

@@ -38,6 +38,7 @@ const advancedPluginSelection = 'plugin:advanced';
 export type ProviderSetupScope = 'all' | 'provider' | 'plugins';
 
 function authMethodLabel(methods: readonly ('oauth' | 'api_key')[]): string {
+  if (!methods.length) return 'Uses CLI credentials';
   return methods.map((method) => method === 'api_key' ? 'API key' : 'Account sign-in').join(' or ');
 }
 
@@ -140,6 +141,12 @@ export function providerSetupOptions(
       meta: authMethodLabel(item.authMethods),
     }));
   const installedNames = new Set(payload.installedPlugins.map((item) => item.packageName));
+  const canConnect = (index: number) => {
+    const plugin = payload.pluginRegistry[index];
+    return Boolean(plugin && (plugin.authMethods.length > 0
+      || payload.availableExternalPlugins?.includes(plugin.id)
+      || installedNames.has(plugin.packageName)));
+  };
   const community = payload.pluginRegistry.map((item) => ({
       value: pluginSelection(item.id),
       label: item.name,
@@ -168,10 +175,10 @@ export function providerSetupOptions(
       ...builtIn.filter((item) => item.value === providerId),
       // Uninstalled shortlist plugins stay visible so a Claude Pro/Max user
       // starting from the Anthropic row can install from here.
-      ...community.filter((_, index) => payload.pluginRegistry[index]?.provider === providerId && payload.pluginRegistry[index]!.authMethods.length > 0),
+      ...community.filter((_, index) => payload.pluginRegistry[index]?.provider === providerId && canConnect(index)),
     ];
   }
-  return [...builtIn, ...(allowCustom ? [custom] : []), ...community.filter((_, index) => payload.pluginRegistry[index]!.authMethods.length > 0), advancedPlugin];
+  return [...builtIn, ...(allowCustom ? [custom] : []), ...community.filter((_, index) => canConnect(index)), advancedPlugin];
 }
 
 export function defaultProviderSetupSelection(
@@ -314,8 +321,15 @@ function ProviderSetupForm(props: {
           customCheck.models,
         );
       } else if (pluginEntry && !flow) {
-        if (scope === 'plugins') {
+        if (scope === 'plugins' || pluginEntry.authMethods.length === 0) {
           next = await installProviderPlugin(pluginEntry.id);
+          if (scope !== 'plugins') {
+            props.onUpdated(next);
+            const status = next.status.providers.find((item) => item.id === pluginEntry.provider);
+            if (!status?.configured || status.readiness?.ok === false) {
+              throw new Error([status?.readiness?.message || `${pluginEntry.name} is not ready. Configure its CLI on the AgentUse server and try again.`, status?.readiness?.fix].filter(Boolean).join(' '));
+            }
+          }
         } else {
           const started = await startProviderPluginOAuth(pluginEntry.id, props.reconnect === true);
           if (started.connected) {
@@ -472,7 +486,7 @@ function ProviderSetupForm(props: {
                 <dt>Provides</dt><dd><code>{pluginEntry.provider} · {authMethodLabel(pluginEntry.authMethods)}</code></dd>
               </dl>
               {installedPlugin
-                ? <div class="provider-method-hint">Installed on this server. Continue to connect its provider account.</div>
+                ? <div class="provider-method-hint">{pluginEntry.authMethods.length === 0 ? 'Installed on this server. Continue to check CLI readiness.' : 'Installed on this server. Continue to connect its provider account.'}</div>
                 : <div class="provider-plugin-warning">Installing runs code published by <strong>{pluginEntry.publisher}</strong>, not by AgentUse. It is reviewed for this release but not maintained by us. It can read the credentials it creates.</div>}
             </div>
           ) : <p class="provider-method-hint">Continue in your browser. AgentUse stores the resulting OAuth credential on the server host in its shared credential store.</p>}
@@ -492,7 +506,7 @@ function ProviderSetupForm(props: {
             : provider === advancedPluginSelection ? pluginInspection ? scope === 'plugins' ? 'Confirm installation' : 'Install and continue' : 'Review plugin'
             : provider === 'custom' ? customCheck ? 'Save provider' : 'Check endpoint'
             : method === 'api_key' ? 'Save provider'
-            : pluginEntry ? scope === 'plugins' ? 'Confirm installation' : installedPlugin ? 'Connect' : 'Install and continue'
+            : pluginEntry ? scope === 'plugins' ? 'Confirm installation' : installedPlugin ? pluginEntry.authMethods.length === 0 ? 'Check and continue' : 'Connect' : 'Install and continue'
             : `Continue to ${entry?.name ?? 'provider'}`}
         </button>
       </div>

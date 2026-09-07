@@ -1,3 +1,4 @@
+import { hasExecutable } from '../plugin/executable-discovery';
 import { recordProviderHealth } from './provider-health';
 import { oauthHealthSubject } from './provider-health-identity';
 import { randomUUID } from 'crypto';
@@ -46,6 +47,8 @@ export const PROVIDER_CATALOG: readonly ProviderCatalogEntry[] = [
 ] as const;
 
 export interface ProviderSetupSnapshot {
+  /** Shortlisted CLI plugins whose executable is present on this server. */
+  availableExternalPlugins: readonly string[];
   catalog: readonly ProviderCatalogEntry[];
   pluginRegistry: readonly ProviderPluginRegistryEntry[];
   installedPlugins: readonly InstalledProviderPluginEntry[];
@@ -104,6 +107,9 @@ export async function providerSetupSnapshot(options: ProviderStatusOptions = {})
   return {
     catalog: PROVIDER_CATALOG,
     pluginRegistry: PROVIDER_PLUGIN_REGISTRY,
+    availableExternalPlugins: (await Promise.all(PROVIDER_PLUGIN_REGISTRY.map(async (entry) =>
+      entry.executable && await hasExecutable(entry.executable) ? entry.id : undefined
+    ))).filter((id): id is string => id !== undefined),
     installedPlugins: records.map((record) => {
       // A record is curated when it matches the reviewed commit, or the
       // pre-pinning tag source recorded by earlier releases.

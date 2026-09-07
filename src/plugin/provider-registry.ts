@@ -29,12 +29,15 @@ export interface ProviderPluginRegistryEntry {
   authMethods: readonly ('oauth' | 'api_key')[];
   /** Credential slot used for migration and recovery; empty for externally managed auth. */
   authMethodId: string;
+  /** Optional host CLI prerequisite, detected without loading an uninstalled plugin. */
+  executable?: string;
   apiVersion: 1;
 }
 
 export const PROVIDER_PLUGIN_REGISTRY: readonly ProviderPluginRegistryEntry[] = [
   {
     id: 'pi-cli',
+    executable: 'pi',
     packageName: 'agentuse-pi-cli-provider',
     version: '0.3.0',
     name: 'Pi CLI',

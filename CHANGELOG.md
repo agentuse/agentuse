@@ -33,6 +33,8 @@
 
 ### Fixed
 
+- **Onboarding includes community CLI providers when their required executable is available on the server.** After installation, provider readiness checks must pass before setup continues, with actionable CLI setup errors shown in place of browser sign-in.
+
 - **Provider changes take effect in running servers.** Installing, removing, or updating a provider package refreshes worker plugin and readiness caches without requiring a server restart.
 - **Interrupted creator drafts recover when reopened.** The draft page reconciles interrupted preparation and continuation so the operator sees a recovered draft or an actionable stopped state.
 - **Overlapping draft and revision actions preserve mutation ownership.** A rejected concurrent request cannot release another request’s lock, and a stale tab cannot save a discarded draft.

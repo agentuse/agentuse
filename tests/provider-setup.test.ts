@@ -25,6 +25,7 @@ import { AuthStorage } from '../src/auth/storage';
 import { defaultProviderSetupSelection, friendlyProviderPluginError, hasConfiguredProvider, missingProviderMethods, providerSetupOptions, validateProviderPluginSource } from '../src/cli/serve/web/components/provider-setup';
 import { resetProviderPluginCache } from '../src/plugin/provider-runtime';
 import * as installer from '../src/plugin/provider-installer';
+import * as discovery from '../src/plugin/executable-discovery';
 
 const ENV_KEYS = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'OPENCODE_GO_API_KEY'];
 
@@ -251,7 +252,7 @@ describe('Dashboard provider setup service', () => {
       .toEqual(['openai']);
     expect(providerSetupOptions({ success: true, ...payload }, false, 'plugins').map((item) => item.value))
       .toEqual(['plugin:pi-cli', 'plugin:claude-code-subscription', 'plugin:advanced']);
-    expect(providerSetupOptions({ success: true, ...payload }, true).map((item) => [item.value, item.group]))
+    expect(providerSetupOptions({ success: true, ...payload, availableExternalPlugins: [] }, true).map((item) => [item.value, item.group]))
       .toEqual([
         ['anthropic', 'Built in'],
         ['openai', 'Built in'],
@@ -282,7 +283,7 @@ describe('Dashboard provider setup service', () => {
   });
 
   it('offers only missing supported connection methods without blocking plugin installation', async () => {
-    const payload = { success: true as const, ...await providerSetupSnapshot() };
+    const payload = { success: true as const, ...await providerSetupSnapshot(), availableExternalPlugins: [] as string[] };
     payload.status.providers = [
       { id: 'openrouter', name: 'OpenRouter', configured: true, sources: [{ kind: 'api_key', name: 'Stored API key', stored: true, active: true, priority: 3 }] },
       { id: 'opencode-go', name: 'OpenCode Go', configured: true, sources: [{ kind: 'environment', name: 'OPENCODE_GO_API_KEY', stored: false, active: true, priority: 2 }] },
@@ -367,14 +368,28 @@ describe('Dashboard provider setup service', () => {
       .rejects.toThrow('confirm the commit before installing');
   });
 
+  it('reports CLI prerequisites from the server without installing a plugin', async () => {
+    const detection = spyOn(discovery, 'hasExecutable').mockResolvedValue(false);
+    const install = spyOn(installer, 'installPlugin');
+    try {
+      expect((await providerSetupSnapshot()).availableExternalPlugins).toEqual([]);
+      detection.mockResolvedValue(true);
+      expect((await providerSetupSnapshot()).availableExternalPlugins).toEqual(['pi-cli']);
+      expect(detection).toHaveBeenCalledWith('pi');
+      expect(install).not.toHaveBeenCalled();
+    } finally { detection.mockRestore(); install.mockRestore(); }
+  });
+
   it('lists Pi CLI for installation without offering browser OAuth', async () => {
-    const payload = { success: true as const, ...await providerSetupSnapshot() };
+    const payload = { success: true as const, ...await providerSetupSnapshot(), availableExternalPlugins: [] as string[] };
     expect(payload.pluginRegistry.find((entry) => entry.id === 'pi-cli')).toMatchObject({
       packageName: 'agentuse-pi-cli-provider', version: '0.3.0', provider: 'pi',
       commit: '50533d8b3227687346f2887010ea858580e80d22', authMethods: [], publisher: 'leonho',
     });
     expect(providerSetupOptions(payload, false, 'plugins').map((entry) => entry.value)).toContain('plugin:pi-cli');
     expect(providerSetupOptions(payload).map((entry) => entry.value)).not.toContain('plugin:pi-cli');
+    expect(providerSetupOptions({ ...payload, availableExternalPlugins: ['pi-cli'] }).map((entry) => entry.value)).toContain('plugin:pi-cli');
+    expect(providerSetupOptions({ ...payload, availableExternalPlugins: ['pi-cli'] }, false, 'provider', 'pi').map((entry) => entry.value)).toEqual(['plugin:pi-cli']);
     await expect(startProviderPluginOAuth('pi-cli')).rejects.toThrow('manages authentication externally');
   });
 

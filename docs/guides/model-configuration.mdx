@@ -144,6 +144,12 @@ flow do not need to run these commands. AgentUse installs the pinned
 compatibility plugin and adopts that credential automatically. The explicit
 community-plugin installation flow is shown only for new configuration.
 
+Community providers that use an external CLI can also appear during onboarding
+when their required executable is on the AgentUse server's PATH. Installing one
+uses that CLI's existing credentials and runs the provider's readiness check
+before continuing. If the check fails, setup shows the provider's error and
+setup instructions. Installed CLI providers remain available for retrying setup.
+
 ### 2. Environment Variables
 
 Set API keys as environment variables:
