@@ -48,6 +48,7 @@ import {
   isTerminalInternalAgentSessionStatus,
   mergeInternalAgentJob,
 } from '../src/cli/serve/web/hooks/use-internal-agent-job';
+import { DraftAnswerComposer, pendingDraftQuestion } from '../src/cli/serve/web/components/draft-answer-composer';
 import { DraftThread, groupDraftTurns } from '../src/cli/serve/web/components/draft-thread';
 import { firstUsefulAgentSetupSteps } from '../src/cli/serve/web/components/onboarding-shell';
 import { ProjectFolderField } from '../src/cli/serve/web/components/project-folder-field';
@@ -285,6 +286,63 @@ describe('draft Changes thread', () => {
     expect(html).toContain('2 steps');
     expect(html).toContain('11s');
     expect(html).toContain('Created it');
+  });
+
+  it('moves current question options out of the thread and into the composer', () => {
+    const gate: ApprovalLogEntry = {
+      id: 'gate', type: 'tool', tool: 'await_human', title: 'Choose a fix', status: 'pending',
+      details: { resumeToken: 'current-gate', options: [
+        { id: 'leave', label: 'Leave unchanged', recommended: true },
+        { id: 'fix', label: 'Fix tooling failures' },
+      ] },
+    };
+    const markup = (status: string, resumeToken: string, viewOnly = false) => renderToString(<DraftThread
+      turns={[{ reply: 'Earlier proposal' }]}
+      entries={[gate]}
+      running={false}
+      sessionId="creator-session"
+      projectId="demo"
+      token="view-token"
+      status={status}
+      approval={{ currentResumeToken: resumeToken, viewOnly } as import('../src/cli/serve/types').ApprovalPageInfo}
+    />);
+    const active = markup('waiting', 'current-gate');
+    expect(active).toContain('Choose a fix');
+    expect(active).not.toContain('Options to pick from');
+    expect(active).not.toContain('data-actions-row');
+    const approval = { currentResumeToken: 'current-gate' } as import('../src/cli/serve/types').ApprovalPageInfo;
+    expect(pendingDraftQuestion([gate], approval, 'waiting')).toBe(gate);
+    expect(pendingDraftQuestion([gate], approval, 'resuming')).toBeUndefined();
+    expect(pendingDraftQuestion([gate], { ...approval, viewOnly: true }, 'waiting')).toBeUndefined();
+    expect(pendingDraftQuestion([gate], { ...approval, currentResumeToken: 'new-gate' }, 'waiting')).toBeUndefined();
+    const composer = renderToString(<DraftAnswerComposer entry={gate} sessionId="creator-session"
+      projectId="demo" token="view-token" onAnswered={() => {}} onShowContext={() => {}} />);
+    expect(composer).toContain('role="radiogroup"');
+    expect(composer).toContain('value="leave" checked');
+    expect(composer).toContain('Write a different answer');
+    expect(composer).toContain('Send answer');
+    expect(markup('waiting', 'old-gate')).not.toContain('data-actions-row');
+    expect(markup('resuming', 'current-gate')).not.toContain('data-actions-row');
+    expect(markup('waiting', 'current-gate', true)).not.toContain('data-actions-row');
+  });
+
+  it('requires an explicit pick when no option is recommended', () => {
+    const entry: ApprovalLogEntry = { id: 'gate', type: 'tool', tool: 'await_human', status: 'pending',
+      details: { resumeToken: 'gate', prompt: 'Choose one', options: [{ id: 'a', label: 'First' }, { id: 'b', label: 'Second' }] } };
+    const html = renderToString(<DraftAnswerComposer entry={entry} sessionId="session" projectId="demo"
+      token={undefined} onAnswered={() => {}} onShowContext={() => {}} />);
+    expect(html).not.toContain(' checked');
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>Send answer<\/button>/);
+  });
+
+  it('supports ordinary approvals without presenting an empty options group', () => {
+    const entry: ApprovalLogEntry = { id: 'gate', type: 'approval', status: 'pending',
+      details: { resumeToken: 'gate', prompt: 'Proceed with this change?' } };
+    const html = renderToString(<DraftAnswerComposer entry={entry} sessionId="session" projectId="demo"
+      token={undefined} onAnswered={() => {}} onShowContext={() => {}} />);
+    expect(html).not.toContain('Options to pick from');
+    expect(html).toContain('Reply with feedback');
+    expect(html).toContain('>Approve</button>');
   });
 
   it('says nothing has been asked for yet when the thread is empty', () => {

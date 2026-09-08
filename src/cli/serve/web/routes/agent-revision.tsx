@@ -17,6 +17,7 @@ import {
   diffChangeCounts,
   type DraftFileTab,
 } from '../components/draft-panel';
+import { DraftAnswerComposer, pendingDraftQuestion } from '../components/draft-answer-composer';
 import { DraftThread } from '../components/draft-thread';
 import { revisionLineDiff } from '../lib/revision-diff';
 import { agentDetailHref } from '../lib/links';
@@ -107,6 +108,8 @@ export default function AgentRevision() {
     return <div class="page-draft"><main><p class="empty" role="alert">{loadError}</p></main></div>;
   }
   if (!revision) return <Loading label="Loading revision" />;
+
+  const question = pendingDraftQuestion(reviserSession.entries, reviserSession.approval, reviserSession.status);
 
   const running = revision.status === 'running';
   const open = OPEN_STATUSES.has(revision.status);
@@ -205,10 +208,10 @@ export default function AgentRevision() {
   return (
     <DraftPanel
       filePath={revision.targetAgentRunPath ?? revision.targetAgentPath}
-      versionLabel={proposed ? `proposal ${proposalNumber}` : running ? 'diagnosing…' : '—'}
+      versionLabel={question ? 'awaiting answer' : proposed ? `proposal ${proposalNumber}` : running ? 'diagnosing…' : '—'}
       pill={<DraftStatusPill
-        label={revision.status}
-        tone={revision.status === 'applied' || revision.status === 'restored' ? 'done'
+        label={question ? 'Needs answer' : revision.status}
+        tone={question ? 'draft' : revision.status === 'applied' || revision.status === 'restored' ? 'done'
           : revision.status === 'error' ? 'error'
           : running ? 'running' : 'draft'}
       />}
@@ -225,8 +228,9 @@ export default function AgentRevision() {
           : undefined}
         formatUsd={pricing?.formatUsd}
       />}
-      notice={reviserSession.status === 'waiting'
-        ? <>The reviser needs your answer before it can propose a change. <a href={reviserSessionHref}>Answer it in the session</a></>
+
+      notice={reviserSession.status === 'waiting' && !question
+        ? <>This session is waiting for an answer. <a href={reviserSessionHref}>Open full session log</a></>
         : undefined}
       capabilityNote={capabilityChanges.length > 0
         ? <>Capability changes: {capabilityChanges.join('; ')}</>
@@ -239,11 +243,13 @@ export default function AgentRevision() {
       source={proposed ?? revision.baseSource ?? ''}
       tab={tab}
       onTab={(next) => { setTabPinned(true); setTab(next); }}
-      running={running}
+      running={running && !question}
       exchange={<DraftThread
         turns={exchangeTurns}
         entries={reviserSession.entries}
-        running={running}
+        approval={reviserSession.approval}
+        status={reviserSession.status}
+        running={running && !question}
         sessionId={sessionId}
         projectId={project}
         token={token}
@@ -257,7 +263,12 @@ export default function AgentRevision() {
           ? 'The reviser is diagnosing the run. Its steps and findings appear here.'
           : 'The reviser is reading the agent source. Its steps and findings appear here.'}
       />}
-      composer={open && (
+      composer={question ? <DraftAnswerComposer
+        key={`${sessionId}:${question.details?.resumeToken}`}
+        entry={question} sessionId={sessionId} projectId={project} token={token}
+        onAnswered={reviserSession.onAnswered}
+        onShowContext={() => { setTabPinned(true); setTab('changes'); } }
+      /> : open && (
         <DraftComposer
           placeholder="Tell the reviser what to change in this proposal…"
           hint="to send · same revision session, keeps context"

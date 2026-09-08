@@ -18,6 +18,7 @@ import {
   diffChangeCounts,
   type DraftFileTab,
 } from '../components/draft-panel';
+import { DraftAnswerComposer, pendingDraftQuestion } from '../components/draft-answer-composer';
 import { DraftThread } from '../components/draft-thread';
 import { revisionLineDiff } from '../lib/revision-diff';
 import { agentDetailHref } from '../lib/links';
@@ -114,6 +115,8 @@ export default function AgentDraft() {
   }
   if (!draft) return <Loading label="Loading draft" />;
 
+  const question = pendingDraftQuestion(creatorSession.entries, creatorSession.approval, creatorSession.status);
+
   const running = draft.status === 'running';
   const closed = draft.status === 'saved' || draft.status === 'discarded';
 
@@ -171,10 +174,10 @@ export default function AgentDraft() {
   return (
     <DraftPanel
       filePath={latest ? `agents/${latest.fileName}` : 'agents/…'}
-      versionLabel={latest ? `draft ${latest.index}` : running ? 'drafting…' : '—'}
+      versionLabel={question ? 'awaiting answer' : latest ? `draft ${latest.index}` : running ? 'drafting…' : '—'}
       pill={<DraftStatusPill
-        label={draft.status === 'saved' ? 'Saved' : draft.status === 'discarded' ? 'Discarded' : draft.status === 'error' ? 'Stopped' : running ? 'Drafting' : 'Draft'}
-        tone={draft.status === 'saved' ? 'done' : draft.status === 'error' ? 'error' : running ? 'running' : 'draft'}
+        label={question ? 'Needs answer' : draft.status === 'saved' ? 'Saved' : draft.status === 'discarded' ? 'Discarded' : draft.status === 'error' ? 'Stopped' : running ? 'Drafting' : 'Draft'}
+        tone={question ? 'draft' : draft.status === 'saved' ? 'done' : draft.status === 'error' ? 'error' : running ? 'running' : 'draft'}
       />}
       links={<>
         <a class="draft-quiet-link" href={`/agents/${encodeURIComponent(project)}`}>All agents</a>
@@ -198,6 +201,10 @@ export default function AgentDraft() {
           : undefined}
         formatUsd={pricing?.formatUsd}
       />}
+
+      notice={creatorSession.status === 'waiting' && !question
+        ? <>This session is waiting for an answer. <a href={draft.sessionHref}>Open full session log</a></>
+        : undefined}
       diffBadge={changeCounts
         ? <><span class="draft-added">+{changeCounts.added}</span> <span class="draft-removed">−{changeCounts.removed}</span></>
         : undefined}
@@ -206,18 +213,25 @@ export default function AgentDraft() {
       source={latest?.source ?? ''}
       tab={tab}
       onTab={(next) => { setTabPinned(true); setTab(next); }}
-      running={running}
+      running={running && !question}
       exchange={<DraftThread
         turns={draft.drafts.map((entry) => ({ request: entry.request, reply: entry.reply }))}
         entries={creatorSession.entries}
-        running={running}
+        approval={creatorSession.approval}
+        status={creatorSession.status}
+        running={running && !question}
         sessionId={draft.jobId}
         projectId={draft.projectId}
         token={draft.sessionToken}
         leadRequest={draft.objective}
         emptyHint="The creator is working. Its steps appear here as it goes."
       />}
-      composer={!closed && (
+      composer={question ? <DraftAnswerComposer
+        key={`${draft.jobId}:${question.details?.resumeToken}`}
+        entry={question} sessionId={draft.jobId} projectId={project} token={draft.sessionToken}
+        onAnswered={creatorSession.onAnswered}
+        onShowContext={() => { setTabPinned(true); setTab('changes'); } }
+      /> : !closed && (
         <DraftComposer
           placeholder="Tell the creator what to change in this draft…"
           hint="to send · same creator session, keeps context"

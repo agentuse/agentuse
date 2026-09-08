@@ -1,7 +1,8 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { ApprovalLogEntry } from '../../types';
+import type { ApprovalLogEntry, ApprovalPageInfo } from '../../types';
 import { LogEntry } from './log-entry';
+import { isDraftApprovalActionable } from './draft-answer-composer';
 import { isDebugLog } from '../lib/format';
 import type { DraftExchangeTurn } from './draft-panel';
 
@@ -66,6 +67,8 @@ function stepDuration(steps: readonly ApprovalLogEntry[]): string | null {
 
 function DraftSteps(props: {
   steps: ApprovalLogEntry[];
+  approval?: Omit<ApprovalPageInfo, 'logs'> | null | undefined;
+  status?: string | undefined;
   /** Open while the turn is still producing steps; closed once its reply lands. */
   defaultOpen: boolean;
   sessionId: string;
@@ -86,16 +89,18 @@ function DraftSteps(props: {
   }, [props.defaultOpen]);
 
   if (props.steps.length === 0) return null;
+  const actionable = props.steps.some((entry) => isDraftApprovalActionable(entry, props.approval, props.status));
+  const visible = open || actionable;
   const duration = stepDuration(props.steps);
   const label = `${props.steps.length} ${props.steps.length === 1 ? 'step' : 'steps'}`;
 
   return (
-    <div class={`draft-steps${open ? ' is-open' : ''}`}>
-      <button type="button" class="draft-steps-summary" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-        <span class="draft-steps-caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
+    <div class={`draft-steps${visible ? ' is-open' : ''}`}>
+      <button type="button" class="draft-steps-summary" aria-expanded={visible} onClick={() => setOpen((value) => !value)}>
+        <span class="draft-steps-caret" aria-hidden="true">{visible ? '▾' : '▸'}</span>
         <span>{label}{duration ? ` · ${duration}` : ''}</span>
       </button>
-      {open && (
+      {visible && (
         <ul class="draft-steps-list">
           {props.steps.map((entry) => (
             <LogEntry
@@ -103,6 +108,7 @@ function DraftSteps(props: {
               entry={entry}
               expanded={expanded[entry.id]}
               showActions={false}
+              hideApprovalOptions={isDraftApprovalActionable(entry, props.approval, props.status)}
               actionsDisabled
               projectId={props.projectId}
               sessionId={props.sessionId}
@@ -119,6 +125,8 @@ function DraftSteps(props: {
 
 export function DraftThread(props: {
   turns: DraftExchangeTurn[];
+  approval?: Omit<ApprovalPageInfo, 'logs'> | null | undefined;
+  status?: string | undefined;
   entries: ApprovalLogEntry[];
   /** The author is working right now, so the newest group stays open. */
   running: boolean;
@@ -169,6 +177,8 @@ export function DraftThread(props: {
             {group.turn?.request && <div class="draft-exchange-request">{group.turn.request}</div>}
             <DraftSteps
               steps={group.steps}
+              approval={props.approval}
+              status={props.status}
               defaultOpen={isLast && (props.running || !group.turn?.reply)}
               sessionId={props.sessionId}
               projectId={props.projectId}
