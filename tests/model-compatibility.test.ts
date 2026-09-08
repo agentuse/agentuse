@@ -77,6 +77,11 @@ describe('model compatibility registry', () => {
         anthropic: { thinking: { type: 'adaptive' }, effort: 'max' },
       },
     });
+    expect(resolveReasoningCompatibility('anthropic:claude-fable-5-1', 'max')).toEqual({
+      providerOptions: {
+        anthropic: { thinking: { type: 'adaptive' }, effort: 'max' },
+      },
+    });
   });
 
   it('clamps unconfirmed max support to the previous strongest common tier', () => {

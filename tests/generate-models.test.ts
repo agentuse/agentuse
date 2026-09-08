@@ -18,6 +18,7 @@ describe("parseModelVersion", () => {
 
     it("strips date suffix before matching", () => {
       expect(parseModelVersion("claude-haiku-4-5-20251001")).toBe(4005);
+      expect(parseModelVersion("qwen/qwen3.8-max-0902")).toBe(3008);
     });
 
     it("ensures 4-6 > 4-5 (correct sorting)", () => {
@@ -83,5 +84,20 @@ describe('staggered OpenAI major rollout', () => {
     const registry = buildRegistry({ openai: { models: Object.fromEntries(ids.map(id => [id, { id, name: id }])) } });
     expect(Object.keys(registry.openai).sort()).toEqual(ids.slice(0, 4).sort());
     expect(parseModelVersion('gpt-6-astra')).toBe(6000);
+  });
+});
+
+describe('dated curated model aliases', () => {
+  it('keeps the newest Qwen Max release when OpenRouter uses an MMDD suffix', () => {
+    const ids = ['qwen/qwen3.7-max', 'qwen/qwen3.8-max-0902'];
+    const registry = buildRegistry({
+      openrouter: {
+        models: {
+          [ids[0]]: { id: ids[0], name: ids[0], release_date: '2026-07-15' },
+          [ids[1]]: { id: ids[1], name: ids[1], release_date: '2026-09-02' },
+        },
+      },
+    });
+    expect(Object.keys(registry.openrouter)).toEqual(['qwen/qwen3.8-max-0902']);
   });
 });

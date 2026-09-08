@@ -24,10 +24,10 @@ import { deriveModelAlias } from '../src/utils/model-alias';
 
 const MODELS_DEV_API = 'https://models.dev/api.json';
 
-/** Strip a trailing release-date suffix in either "-YYYYMMDD" or "-YYYY-MM-DD" form,
- *  so a dashed date never gets misread as a version number (e.g. gpt-4o-2024-11-20). */
+/** Strip a trailing release-date suffix in "-MMDD", "-YYYYMMDD", or "-YYYY-MM-DD" form,
+ *  so a dashed date never gets misread as a version number (e.g. qwen3.8-max-0902). */
 function stripDate(id: string): string {
-  return id.replace(/-\d{8}$/, '').replace(/-\d{4}-\d{2}-\d{2}$/, '');
+  return id.replace(/-\d{4}$/, '').replace(/-\d{8}$/, '').replace(/-\d{4}-\d{2}-\d{2}$/, '');
 }
 
 /** Parse version from model ID as a comparable integer (major * 1000 + minor).
@@ -115,7 +115,7 @@ const SERIES: SeriesDef[] = [
   // Qwen (hosted max/plus lines only — excludes open-weight size builds, vl, coder, distills).
   {
     source: 'openrouter', ourProvider: 'openrouter', series: 'qwen',
-    filter: id => /^qwen\/qwen\d+(\.\d+)?-(max|plus)$/.test(id),
+    filter: id => /^qwen\/qwen\d+(\.\d+)?-(max|plus)(?:-\d{4})?$/.test(id),
   },
   // Moonshot Kimi (K-series flagship): kimi-k2.5, kimi-k2.6, ... (excludes :free / dated / -thinking).
   {
@@ -273,7 +273,7 @@ export function buildRegistry(apiData: Record<string, { models: Record<string, M
       (lines[modelLine(id)] ??= []).push(id);
     }
     for (const ids of Object.values(lines)) {
-      const isDated = (id: string) => (/-\d{8}$/.test(id) || /-\d{4}-\d{2}-\d{2}$/.test(id) ? 1 : 0);
+      const isDated = (id: string) => (/-\d{4}$/.test(id) || /-\d{8}$/.test(id) || /-\d{4}-\d{2}-\d{2}$/.test(id) ? 1 : 0);
       ids.sort((a, b) => {
         const ra = providerModels[a].release_date ?? '';
         const rb = providerModels[b].release_date ?? '';

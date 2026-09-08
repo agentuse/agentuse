@@ -36,8 +36,8 @@ that exists for real always wins, so nothing you pin can be reinterpreted.
 
 | Alias | Currently resolves to |
 |-------|----------------------|
+| `anthropic:claude-fable` | `anthropic:claude-fable-5-1` |
 | `anthropic:claude-opus` | `anthropic:claude-opus-5` |
-| `anthropic:claude-fable` | `anthropic:claude-fable-5` |
 | `anthropic:claude-sonnet` | `anthropic:claude-sonnet-5` |
 | `anthropic:claude-haiku` | `anthropic:claude-haiku-4-5` |
 | `openai:gpt-astra` | `openai:gpt-6-astra` |
@@ -57,8 +57,8 @@ that exists for real always wins, so nothing you pin can be reinterpreted.
 | `openrouter:x-ai/grok` | `openrouter:x-ai/grok-4.6` |
 | `openrouter:deepseek/deepseek-pro` | `openrouter:deepseek/deepseek-v4-pro` |
 | `openrouter:deepseek/deepseek-flash` | `openrouter:deepseek/deepseek-v4-flash` |
-| `openrouter:qwen/qwen-max` | `openrouter:qwen/qwen3.8-max` |
-| `openrouter:google/gemini-flash` | `openrouter:google/gemini-3.7-flash` |
+| `openrouter:qwen/qwen-max` | `openrouter:qwen/qwen3.8-max-0902` |
+| `openrouter:google/gemini-flash` | `openrouter:google/gemini-3.8-flash` |
 | `openrouter:google/gemini-pro-preview` | `openrouter:google/gemini-3.1-pro-preview` |
 | `openrouter:minimax/minimax` | `openrouter:minimax/minimax-m3` |
 | `openrouter:moonshotai/kimi` | `openrouter:moonshotai/kimi-k3` |
@@ -105,8 +105,8 @@ cooldown. See [Model defaults and aliases](/reference/configuration-files#model-
 
 | Model ID | Name | Input Context | Output | Capabilities |
 |----------|------|---------|--------|--------------|
+| `anthropic:claude-fable-5-1` | Claude Fable 5.1 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
 | `anthropic:claude-opus-5` | Claude Opus 5 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
-| `anthropic:claude-fable-5` | Claude Fable 5 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
 | `anthropic:claude-sonnet-5` | Claude Sonnet 5 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
 | `anthropic:claude-haiku-4-5` | Claude Haiku 4.5 (latest) | 200,000 | 64,000 | Reasoning, Vision, Tools |
 
@@ -130,20 +130,18 @@ cooldown. See [Model defaults and aliases](/reference/configuration-files#model-
 
 | Model ID | Name | Input Context | Output | Capabilities |
 |----------|------|---------|--------|--------------|
-| `openrouter:z-ai/glm-5.3` | GLM-5.3 | 1,310,720 | 131,072 | Reasoning, Tools |
+| `openrouter:z-ai/glm-5.3` | GLM-5.3 | 1,310,720 | 943,718 | Reasoning, Tools |
 | `openrouter:z-ai/glm-5.3-flash` | GLM-5.3-Flash | 1,310,720 | 131,072 | Reasoning, Vision, Tools |
-| `openrouter:z-ai/glm-5.2:free` | GLM 5.2 (free) | 256,000 | 230,400 | Reasoning, Tools |
 | `openrouter:z-ai/glm-5v-turbo` | GLM-5V-Turbo | 202,752 | 131,072 | Reasoning, Vision, Tools |
 | `openrouter:x-ai/grok-4.6` | Grok 4.6 | 500,000 | 450,000 | Reasoning, Vision, Tools |
 | `openrouter:deepseek/deepseek-v4-pro` | DeepSeek V4 Pro | 1,048,576 | 384,000 | Reasoning, Tools |
 | `openrouter:deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | 1,048,576 | 384,000 | Reasoning, Tools |
-| `openrouter:qwen/qwen3.8-max` | Qwen3.8 Max | 1,000,000 | 131,072 | Reasoning, Vision, Tools |
+| `openrouter:qwen/qwen3.8-max-0902` | Qwen3.8 Max 0902 | 1,000,000 | 131,072 | Reasoning, Vision, Tools |
+| `openrouter:google/gemini-3.8-flash` | Gemini 3.8 Flash | 1,048,576 | 65,536 | Reasoning, Vision, Tools |
 | `openrouter:qwen/qwen3.7-plus` | Qwen3.7 Plus | 1,000,000 | 131,072 | Reasoning, Vision, Tools |
-| `openrouter:google/gemini-3.7-flash` | Gemini 3.7 Flash | 1,048,576 | 65,536 | Reasoning, Vision, Tools |
 | `openrouter:google/gemini-3.1-pro-preview` | Gemini 3.1 Pro Preview | 1,048,576 | 65,536 | Reasoning, Vision, Tools |
 | `openrouter:minimax/minimax-m3` | MiniMax-M3 | 1,048,576 | 512,000 | Reasoning, Vision, Tools |
 | `openrouter:moonshotai/kimi-k3` | Kimi K3 | 1,048,576 | 943,718 | Reasoning, Vision, Tools |
-| `openrouter:minimax/minimax-m3:free` | MiniMax M3 (free) | 1,048,576 | 943,718 | Reasoning, Vision, Tools |
 | `openrouter:google/gemini-3-flash-preview` | Gemini 3 Flash Preview | 1,048,576 | 65,536 | Reasoning, Vision, Tools |
 
 ### OpenCode Go
