@@ -10,7 +10,7 @@ import { extractLearnings, LearningStore } from '../learning/index.js';
 import { hasAutomaticLearningCapture } from '../learning/types.js';
 import { findProjectRoot } from '../utils/project';
 import { isMockMode } from './mock-tools';
-import { recordCorrectionsMarker, recordLearningMarker, recordErrorMarkerForLatestMessage, createSessionLogSink, gatherApprovalContext, type SessionLogSink } from './session-helper';
+import { recordCorrectionsMarker, recordLearningMarker, recordErrorMarkerForLatestMessage, createSessionLogSink, gatherApprovalContext, dismissIfReviewerRejected, type SessionLogSink } from './session-helper';
 import { usageToAssistantTokens, addAssistantTokens, type AssistantTokens } from '../session/usage';
 import {
   sendRunChannelMessages,
@@ -263,6 +263,12 @@ export async function runAgent(
     // Set outer scope variables for error logging
     sessionID = prepSessionID;
     agentId = prepAgentId;
+
+    // CLI and direct API continuations bypass the worker's status transition.
+    // Publish the new attempt before hooks, announcements, or tools can run.
+    if (existingSessionId && sessionManager && prepSessionID && prepAgentId) {
+      await sessionManager.setSessionRunning(prepSessionID, prepAgentId);
+    }
 
     if (pluginManager) {
       if (existingSessionId) {
@@ -634,6 +640,8 @@ export async function runAgent(
             code: 'INCOMPLETE',
             message: incomplete.reason
           });
+          // "Reviewer rejected" is a review already given; don't ask for it twice.
+          await dismissIfReviewerRejected(sessionManager, prepSessionID, prepAgentId);
         } else {
           await sessionManager.setSessionCompleted(prepSessionID, prepAgentId);
         }

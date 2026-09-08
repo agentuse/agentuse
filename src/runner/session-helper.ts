@@ -533,6 +533,35 @@ export async function gatherHumanApprovalHistory(
   }
 }
 
+/**
+ * A run that ends incomplete because the reviewer said no has already been
+ * reviewed: asking them to dismiss it afterwards is the same decision twice.
+ * Stamp it dismissed at the moment it ends, so it never enters a needs-a-look
+ * surface — the same standing a run the reviewer stopped themselves already
+ * has. Only a human reject counts (machine bounces are filtered upstream), and
+ * a run that went incomplete on its own, with no reject, is left alone: nobody
+ * has looked at that one yet.
+ *
+ * Best-effort: a failure here leaves the run un-dismissed, never un-recorded.
+ */
+export async function dismissIfReviewerRejected(
+  sessionManager: SessionManager,
+  sessionID: string,
+  agentId: string,
+): Promise<boolean> {
+  // Every gate, not the recent-eight window the judge reads: the reject may
+  // have been the first of many.
+  const decisions = await gatherHumanApprovalHistory(sessionManager, sessionID, agentId, { limit: Number.MAX_SAFE_INTEGER });
+  if (!decisions.some((decision) => decision.status === 'rejected')) return false;
+  try {
+    await sessionManager.updateSession(sessionID, agentId, { dismissedAt: Date.now() });
+    return true;
+  } catch (error) {
+    logger.debug(`Failed to dismiss reviewer-rejected session ${sessionID}: ${(error as Error).message}`);
+    return false;
+  }
+}
+
 /** Pull a non-empty reviewer comment out of a resolved gate's decision output. */
 function readGateComment(output: unknown): string | undefined {
   if (!output || typeof output !== 'object') return undefined;

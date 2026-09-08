@@ -4,7 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { initStorage } from '../src/storage';
 import { SessionManager } from '../src/session';
-import { gatherApprovalContext, gatherHumanApprovalHistory } from '../src/runner';
+import { gatherApprovalContext, gatherHumanApprovalHistory, dismissIfReviewerRejected } from '../src/runner';
 
 const AGENT_ID = 'agents/review';
 
@@ -293,6 +293,37 @@ describe('gatherApprovalContext', () => {
       expect(history[1].choice).toBe('b');
       expect(history[1].work).toContain('choice: B [b]');
       expect(JSON.stringify(history)).not.toContain('rewrite this');
+    });
+  });
+});
+
+describe('dismissIfReviewerRejected', () => {
+  const gate = (callID: string, output: Record<string, unknown>) => ({
+    type: 'tool',
+    callID,
+    tool: 'await_human',
+    state: { status: 'completed', input: { prompt: 'Post this?' }, output, time: { start: 1, end: 2 } },
+  } as any);
+
+  it('stamps a run dismissed when a human rejected one of its gates', async () => {
+    await withSession('agentuse-dismiss-reject-', async ({ sessionManager, sessionID, messageID }) => {
+      await sessionManager.addPart(sessionID, AGENT_ID, messageID, gate('g1', { status: 'rejected', reviewer: { username: 'leon' } }));
+
+      expect(await dismissIfReviewerRejected(sessionManager, sessionID, AGENT_ID)).toBe(true);
+      const session = await sessionManager.getSession(sessionID, AGENT_ID);
+      expect(typeof session?.dismissedAt).toBe('number');
+    });
+  });
+
+  it('leaves a run alone when it went incomplete with no human reject', async () => {
+    await withSession('agentuse-dismiss-none-', async ({ sessionManager, sessionID, messageID }) => {
+      // An approval plus a machine bounce: neither is the reviewer saying no.
+      await sessionManager.addPart(sessionID, AGENT_ID, messageID, gate('g1', { status: 'approved', reviewer: { username: 'leon' } }));
+      await sessionManager.addPart(sessionID, AGENT_ID, messageID, gate('g2', { status: 'rejected', source: 'pre-review' }));
+
+      expect(await dismissIfReviewerRejected(sessionManager, sessionID, AGENT_ID)).toBe(false);
+      const session = await sessionManager.getSession(sessionID, AGENT_ID);
+      expect(session?.dismissedAt).toBeUndefined();
     });
   });
 });
