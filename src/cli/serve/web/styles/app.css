@@ -9643,6 +9643,13 @@ main[tabindex="-1"]:focus,
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  /* One reading column, centred. Header, thread, and composer all sit on the
+     same measure so they stay aligned with each other on a wide window instead
+     of stretching to the glass. The gutter grows out of the fixed inset only
+     once the window outruns the measure, and it is padding rather than a
+     wrapper so every strip's rule and background stays full-bleed. */
+  --draft-measure: 1120px;
+  --draft-gutter: max(24px, (100% - var(--draft-measure)) / 2);
 }
 
 .draft-header {
@@ -9650,7 +9657,7 @@ main[tabindex="-1"]:focus,
   flex-direction: column;
   gap: 8px;
   flex-shrink: 0;
-  padding: 12px 24px;
+  padding: 12px var(--draft-gutter);
   border-bottom: 1px solid var(--line);
 }
 .draft-header-row {
@@ -9748,7 +9755,7 @@ main[tabindex="-1"]:focus,
   align-items: stretch;
   gap: 0;
   flex-shrink: 0;
-  padding: 0 24px;
+  padding: 0 var(--draft-gutter);
   border-bottom: 1px solid var(--line);
   overflow-x: auto;
   scrollbar-width: none;
@@ -9803,7 +9810,7 @@ main[tabindex="-1"]:focus,
 .draft-file-scroll.is-changes { display: flex; flex-direction: column; }
 .draft-file-body {
   margin: 0;
-  padding: 16px 24px;
+  padding: 16px var(--draft-gutter);
   color: var(--muted-3);
   font-family: var(--mono);
   font-size: var(--font-size-micro);
@@ -9824,7 +9831,7 @@ main[tabindex="-1"]:focus,
   gap: 10px;
   flex: 1;
   min-height: 0;
-  padding: 16px 24px;
+  padding: 16px var(--draft-gutter);
   overflow: auto;
 }
 .draft-exchange.is-empty { align-items: stretch; justify-content: center; }
@@ -9874,7 +9881,7 @@ main[tabindex="-1"]:focus,
   flex-direction: column;
   gap: 8px;
   flex-shrink: 0;
-  padding: 12px 24px;
+  padding: 12px var(--draft-gutter);
   border-top: 1px solid var(--line);
   background: var(--panel);
 }
@@ -9908,7 +9915,7 @@ main[tabindex="-1"]:focus,
 .draft-error {
   flex-shrink: 0;
   margin: 0;
-  padding: 8px 24px;
+  padding: 8px var(--draft-gutter);
   border-top: 1px solid var(--line);
   color: var(--red);
   font-size: var(--font-size-caption);
@@ -9951,16 +9958,11 @@ main[tabindex="-1"]:focus,
 @media (max-width: 720px) {
   /* The header rows stack and the tab bar scrolls sideways rather than wrapping
      into two rows of tabs, which reads as two tab bars. */
-  .draft-header { padding: 12px 16px; }
+  .page-draft { --draft-gutter: 16px; }
   .draft-header-row { align-items: flex-start; flex-direction: column; gap: 8px; }
   .draft-header-row.is-meta { align-items: flex-start; }
-  .draft-tabs { padding: 0 16px; }
   .draft-tabs button { padding: 0 14px; }
   .draft-tabs-note { display: none; }
-  .draft-file-body,
-  .draft-exchange,
-  .draft-composer { padding-inline: 16px; }
-  .draft-error { padding-inline: 16px; }
 }
 
 /* Links on this page follow the app's inline-link rule, the same one the
@@ -10228,7 +10230,7 @@ html[data-page="draft-panel"] .app-route {
 .draft-answer-body,
 .draft-answer > .draft-composer-foot {
   width: 100%;
-  max-width: 1120px;
+  max-width: var(--draft-measure);
   margin-inline: auto;
 }
 .draft-answer-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-shrink: 0; }
