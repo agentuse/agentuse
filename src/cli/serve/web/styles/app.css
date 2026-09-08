@@ -7361,17 +7361,41 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-sessions .agent-select input:focus-visible { outline: none; border-color: var(--cyan-border); }
 
 .page-sessions .filter-grid { display: grid; gap: 10px; }
-.page-sessions .filter-grid-advanced { grid-template-columns: repeat(3, minmax(0, 1fr)); padding-top: 10px; }
-.page-sessions .filters-advanced { margin-top: 10px; border-top: 1px solid var(--line); }
+.page-sessions .filter-grid-advanced { grid-template-columns: repeat(2, minmax(0, 1fr)); padding-top: 10px; max-width: 420px; }
+/* Reads as one more control in the filter row above, not as a caption under a
+   rule: as grey text on its own line it was mistaken for a section label and
+   went unfound. The dashed edge still separates "there is more" from the solid
+   chips that are filtering right now. */
+.page-sessions .filters-advanced { margin-top: 8px; }
 .page-sessions .filters-advanced > summary {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding-top: 10px;
-  color: var(--muted-2);
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted-3);
   font-size: var(--font-size-caption);
   cursor: pointer;
+  list-style: none;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
 }
+.page-sessions .filters-advanced > summary::-webkit-details-marker { display: none; }
+/* Chevron: points down while there is something folded away, up once it is open. */
+.page-sessions .filters-advanced > summary::after {
+  content: '';
+  width: 6px; height: 6px;
+  margin-left: 1px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 120ms ease;
+}
+.page-sessions .filters-advanced[open] > summary::after { transform: translateY(1px) rotate(225deg); }
+.page-sessions .filters-advanced > summary:hover { color: var(--fg); background: var(--panel-hover); }
+.page-sessions .filters-advanced[open] > summary { color: var(--fg); border-style: solid; }
 .page-sessions .filters-advanced > summary span {
   display: inline-grid;
   place-items: center;
@@ -7403,7 +7427,9 @@ a.lastrun.waiting { color: var(--cyan); }
   font-size: var(--field-font-size);
   letter-spacing: 0;
   text-transform: none;
-  padding: 6px 11px;
+  /* Room on the right for the native chevron: at an even 11px a long value
+     ("undismissed", "only mock") runs underneath it. */
+  padding: 6px 30px 6px 11px;
   cursor: pointer;
 }
 

@@ -21,11 +21,6 @@ import { isExecutingSessionStatus, isIncompleteOutcome, isLiveSessionStatus } fr
 const WINDOWS = ['24h', '7d', '30d', 'all'];
 /** Windows the URL accepts but the segmented control does not show. */
 const EXTRA_WINDOWS = ['1h', '6h', '90d'];
-const TRIAGE_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: '', label: 'any' },
-  { value: 'undismissed', label: 'undismissed' },
-  { value: 'dismissed', label: 'dismissed' },
-];
 const TRIGGERS = ['', 'manual', 'scheduled', 'slack', 'api'];
 const MOCK_OPTIONS: Array<{ value: string; label: string }> = [
   { value: '', label: 'hidden' },
@@ -426,15 +421,12 @@ export default function SessionsList() {
   const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => { setSearchText(searchParam); }, [searchParam]);
 
-  // `undismissed` has its own chip in the top row, so it is not an advanced
-  // filter any more: counting it there would badge "More" and spring the panel
+  // Triage lives in the top row now, not behind More, so it never counts as an
+  // advanced filter: doing so would badge "More filters" and spring the panel
   // open every time the chip is used.
   const hideDismissed = triageFilter === 'undismissed';
-  const advancedFilterCount = [
-    triageFilter !== '' && !hideDismissed,
-    triggerFilter !== '',
-    mockFilter !== '',
-  ].filter(Boolean).length;
+  const onlyDismissed = triageFilter === 'dismissed';
+  const advancedFilterCount = [triggerFilter !== '', mockFilter !== ''].filter(Boolean).length;
   const [advancedOpen, setAdvancedOpen] = useState(advancedFilterCount > 0);
   useEffect(() => { if (advancedFilterCount > 0) setAdvancedOpen(true); }, [advancedFilterCount]);
 
@@ -690,15 +682,18 @@ export default function SessionsList() {
         {/* Triage, not status, so it composes with the chips above: the counts
             themselves drop the waved-off runs while it is on. Only a run that
             ended badly can be dismissed, so the chip stays out of the Running
-            and Done views — and appears regardless while it is on, so the
-            filter is never applied by a control the reader cannot see. */}
-        {(hasDismissals(statusFilter) || hideDismissed) && (
+            and Done views — and appears regardless while any triage filter is
+            on, including the `dismissed` one the URL can still ask for, so no
+            filter is ever applied by a control the reader cannot see. */}
+        {(hasDismissals(statusFilter) || triageFilter !== '') && (
           <a
-            class={`qc qc-toggle${hideDismissed ? ' on' : ''}`}
+            class={`qc qc-toggle${triageFilter !== '' ? ' on' : ''}`}
             href={withParam({ triage: hideDismissed ? '' : 'undismissed' })}
             aria-pressed={hideDismissed}
-            title="Hide runs already reviewed and waved off"
-          >Hide dismissed</a>
+            title={onlyDismissed
+              ? 'Showing only runs already reviewed and waved off'
+              : 'Hide runs already reviewed and waved off'}
+          >{onlyDismissed ? 'Only dismissed' : 'Hide dismissed'}</a>
         )}
         <AgentFilterSelect options={agentOptions} value={agentFilter ?? ''} onChange={commitAgent} />
         <div class="seg" role="group" aria-label="Time window">
@@ -708,13 +703,8 @@ export default function SessionsList() {
         </div>
       </div>
       <details class="filters-advanced" open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
-        <summary>More{advancedFilterCount > 0 && <span>{advancedFilterCount}</span>}</summary>
+        <summary>More filters{advancedFilterCount > 0 && <span>{advancedFilterCount}</span>}</summary>
         <div class="filter-grid filter-grid-advanced">
-          <label class="filter-field">triage
-            <select value={triageFilter} onChange={onSelect('triage')}>
-              {TRIAGE_OPTIONS.map((t) => <option value={t.value} key={t.value || 'any'}>{t.label}</option>)}
-            </select>
-          </label>
           <label class="filter-field">trigger
             <select value={triggerFilter} onChange={onSelect('trigger')}>
               {TRIGGERS.map((t) => <option value={t} key={t || 'any'}>{t || 'any'}</option>)}
