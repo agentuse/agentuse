@@ -43,11 +43,17 @@ addressable routes. A session page is the durable record for one run: its
 activity, approval gate, tool output, result, metrics, verification verdict,
 and follow-up controls stay together.
 
+Press <kbd>Command</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> on macOS or
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> elsewhere to copy a shareable link
+to the current dashboard route. A confirmation appears after the URL is copied.
+
 From a completed, failed, or approval-paused session, **Revise agent file**
 starts a visible internal session that diagnoses the run and proposes a
-validated change for operator review. The agent detail hub keeps the resulting
-history in its **Revisions** tab. See [Agent Revisions](/guides/agent-revisions)
-for apply, request-changes, discard, stale-source, and restore behavior.
+validated change for operator review. An agent that has never run can start the
+same workflow from its detail page, using the agent file as the starting
+evidence. The agent detail hub keeps the resulting history in its **Revisions**
+tab. See [Agent Revisions](/guides/agent-revisions) for apply, request-changes,
+discard, stale-source, and restore behavior.
 
 Settings can add an existing project or create a managed one, and can disconnect
 a project without deleting its files. For an existing project, guided discovery
@@ -58,6 +64,9 @@ session, and any proposed schedule starts paused until you test and enable it.
 The agent and Schedules pages show declared cron expressions and deployment-local
 paused state. Pause or resume a schedule there, or with `agentuse schedules
 pause` and `agentuse schedules resume`, without editing agent frontmatter.
+Choose **Run with custom** from an agent or session action menu to supply a
+one-off instruction, select a different configured model, or do both. Leaving
+the model unchanged preserves the model declared by the agent.
 Provider setup in Settings supports Anthropic and OpenAI login or API keys,
 OpenRouter and OpenCode Go keys, plus custom OpenAI Chat Completions, OpenAI
 Responses, and Anthropic Messages endpoints.

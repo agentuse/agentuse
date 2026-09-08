@@ -242,10 +242,11 @@ Every run is a durable session. Inspect the result, tool calls, token usage,
 artifacts, verification verdicts, and follow-up context without reconstructing
 the run from terminal logs.
 
-Turn the evidence from a completed or approval-paused run into a safe agent
-improvement through a reviewable internal revision session. Apply a validated
-source proposal, restore the previous source, or copy a prompt to a coding agent
-when the fix belongs in project code. See [Agent Revisions](https://docs.agentuse.io/guides/agent-revisions).
+Turn an agent's current source, or the evidence from a completed or
+approval-paused run, into a safe improvement through a reviewable internal
+revision session. This also works before the agent's first run. Apply a
+validated source proposal, restore the previous source, or copy a prompt to a
+coding agent when the fix belongs in project code. See [Agent Revisions](https://docs.agentuse.io/guides/agent-revisions).
 
 Test runs stay out of these operational views by default, so validating an agent
 never pollutes the picture of what production is doing.

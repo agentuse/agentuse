@@ -339,6 +339,14 @@ agentuse.registerProvider({
 and `fix` is a command the user can run. A check that throws or takes longer
 than ten seconds counts as not ready.
 
+The dashboard Providers tab renders saved providers immediately, then updates
+each row as readiness and recent connection checks finish. A row distinguishes
+**Connected**, **Not verified** or **Not checked**, **Reconnect required**,
+**Temporarily unavailable**, and **Not connected**, so a stored credential is
+not presented as proof of a working connection. From the Plugins tab, **open in
+Providers** uses a `?provider=` link that opens Settings with the matching
+provider row expanded.
+
 ### Provider-owned prompts
 
 Prompt contributions have stable IDs and ownership metadata:

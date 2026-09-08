@@ -845,12 +845,15 @@ Show the running `agentuse serve` daemon.
 agentuse serve ps [--json]
 ```
 
-Shows PID, port, project summary, total agent/schedule counts, and uptime. Multi-project daemons show the first project id plus `+N` additional projects.
+Shows PID, port, every served project, total agent/schedule counts, and uptime.
+Multi-project daemons render one project per row under the same daemon.
 
 ```
 PID      PORT     PROJECTS                       AGENTS   SCHEDULES   UPTIME
 ────────────────────────────────────────────────────────────────────────────
-63398    12233    projA +2                       12       3           2h 15m
+63398    12233    projA                          12       3           2h 15m
+                  projB
+                  projC
 ```
 
 Use `--json` for scripting. Stale entries are automatically cleaned up.

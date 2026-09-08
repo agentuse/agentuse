@@ -167,9 +167,11 @@ When `agentuse serve` is running, the same sessions are browsable as web pages:
 
 A completed, failed, or approval-paused run can start a reviewable agent
 revision. The original session remains the launch point and durable history,
-with a link to each revision. The revision session links back to that origin and
-holds the diagnosis, source proposal or no-change result, reviewer feedback,
-apply decision, and restore action.
+with a link to each revision. An agent that has never run can instead start from
+its detail page and use the current agent file as evidence. The revision session
+links back to its origin when one exists and holds the diagnosis, source
+proposal or no-change result, reviewer feedback, apply decision, and restore
+action.
 
 The Sessions list and feed label these AgentUse-owned jobs as `internal
 revision`, group them under **Internal revisions**, and name them **Revising
