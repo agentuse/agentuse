@@ -15,7 +15,7 @@ import { writeClipboardText } from '../lib/clipboard';
 import { formatApprovalTime, errorText, displayStatusLabel } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
-import { isExecutingSessionStatus, isLiveSessionStatus } from '../../../../session/status';
+import { isExecutingSessionStatus, isIncompleteOutcome, isLiveSessionStatus } from '../../../../session/status';
 
 /** Time windows offered as the list's segmented control. */
 const WINDOWS = ['24h', '7d', '30d', 'all'];
@@ -46,11 +46,16 @@ export function isRunningRow(row: Pick<SessionRow, 'status' | 'subagentActive'>)
   return isExecutingSessionStatus(row.status) || row.subagentActive === true;
 }
 
-/** The four dots the list uses. Everything that is not running, waiting on a
- *  human, or failed reads as an ordinary finished run. */
-export function statusDot(row: Pick<SessionRow, 'status' | 'subagentActive'>): 'running' | 'waiting' | 'failed' | 'done' {
+/** The five dots the list uses. A run the agent declared incomplete gets its
+ *  own dot: it did not crash, it stopped short and wants a human — a skim
+ *  should tell the two apart. Everything else reads as an ordinary finished
+ *  run. */
+export function statusDot(
+  row: Pick<SessionRow, 'status' | 'subagentActive' | 'errorCode'>
+): 'running' | 'waiting' | 'failed' | 'incomplete' | 'done' {
   if (isRunningRow(row)) return 'running';
   if (isLiveSessionStatus(row.status)) return 'waiting';
+  if (isIncompleteOutcome(row.status, row.errorCode)) return 'incomplete';
   if (row.status === 'error') return 'failed';
   return 'done';
 }
@@ -156,6 +161,7 @@ export function SessionListItem(props: {
   const running = dot === 'running';
   const name = displayName(row);
   const failed = row.status === 'error';
+  const incomplete = dot === 'incomplete';
   const now = props.now ?? Date.now();
 
   let line: ComponentChildren;
@@ -167,9 +173,12 @@ export function SessionListItem(props: {
     lineClass = 'it-line live';
     line = 'Waiting on you';
   } else if (failed) {
-    lineClass = 'it-line err';
+    // An incomplete run reads in amber and leads with its reason: the code word
+    // is already the dot's colour, and the reason is what a reader acts on.
+    lineClass = incomplete ? 'it-line warn' : 'it-line err';
     const detail = errorText(row.errorMessage);
-    line = [row.errorCode, detail].filter(Boolean).join(' · ') || displayStatusLabel(row.status, row.errorCode);
+    const code = incomplete ? displayStatusLabel(row.status, row.errorCode) : row.errorCode;
+    line = [code, detail].filter(Boolean).join(' · ') || displayStatusLabel(row.status, row.errorCode);
   } else {
     const preview = outputPreview(row.finalResponse);
     line = preview
@@ -586,7 +595,8 @@ export default function SessionsList() {
         {statusChip('', 'All', counts?.all)}
         {statusChip('running', 'Running', counts?.running, 'running')}
         {statusChip('completed', 'Done', counts?.done)}
-        {statusChip('error', 'Failed', counts?.failed)}
+        {statusChip('incomplete', 'Incomplete', counts?.incomplete, 'incomplete')}
+        {statusChip('error', 'Failed', counts?.failed, 'failed')}
         <AgentFilterSelect options={agentOptions} value={agentFilter ?? ''} onChange={commitAgent} />
         <div class="seg" role="group" aria-label="Time window">
           {[...WINDOWS, ...(EXTRA_WINDOWS.includes(win) ? [win] : [])].map((w) => (

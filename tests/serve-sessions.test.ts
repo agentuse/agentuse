@@ -430,7 +430,11 @@ describe('session list helpers', () => {
 
     expect(__testing.sessionMatchesStatusFilter(incomplete, 'incomplete')).toBe(true);
     expect(__testing.sessionMatchesStatusFilter(ordinaryError, 'incomplete')).toBe(false);
-    expect(__testing.sessionMatchesStatusFilter(incomplete, 'error')).toBe(true);
+    // The two filters partition the errors: `error` means a crash, so the
+    // Failed chip never re-lists what the Incomplete chip already holds.
+    expect(__testing.sessionMatchesStatusFilter(incomplete, 'error')).toBe(false);
+    expect(__testing.sessionMatchesStatusFilter(ordinaryError, 'error')).toBe(true);
+    expect(__testing.sessionMatchesStatusFilter(incomplete, undefined)).toBe(true);
   });
 
   it('matches durable preparing sessions without folding them into running', () => {
@@ -492,9 +496,11 @@ describe('session list helpers', () => {
       { status: 'completed' },
       { status: 'completed' },
       { status: 'error' },
+      // Declared incomplete by the agent: its own chip, never counted as a crash.
+      { status: 'error', errorCode: 'INCOMPLETE' },
     ]);
 
-    expect(counts).toEqual({ all: 7, running: 3, done: 2, failed: 1 });
+    expect(counts).toEqual({ all: 8, running: 3, done: 2, failed: 1, incomplete: 1 });
   });
 
   it('keeps the sessions SSE list refresh at the old page polling cadence', () => {

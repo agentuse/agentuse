@@ -752,11 +752,14 @@ describe('Session list item', () => {
 });
 
 describe('Session list helpers', () => {
-  it('maps every run state onto one of four dots', () => {
+  it('maps every run state onto one of five dots', () => {
     expect(statusDot({ status: 'running' })).toBe('running');
     expect(statusDot({ status: 'suspended', subagentActive: true })).toBe('running');
     expect(statusDot({ status: 'suspended' })).toBe('waiting');
     expect(statusDot({ status: 'error' })).toBe('failed');
+    expect(statusDot({ status: 'error', errorCode: 'TIMEOUT' })).toBe('failed');
+    // Declared by the agent, not a crash: its own dot, and its own colour.
+    expect(statusDot({ status: 'error', errorCode: 'INCOMPLETE' })).toBe('incomplete');
     expect(statusDot({ status: 'completed' })).toBe('done');
   });
 

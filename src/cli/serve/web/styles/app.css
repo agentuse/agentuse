@@ -5453,6 +5453,8 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 .page-home .feed-dot.waiting { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); animation: pulse 1.4s ease-in-out infinite; }
 .page-home .feed-dot.done { background: var(--green); opacity: 0.55; }
 .page-home .feed-dot.failed { background: var(--red); }
+/* Agent-declared non-delivery: amber, matching the sessions list. */
+.page-home .feed-dot.incomplete { background: var(--amber); }
 .page-home .feed-agent { font-family: var(--sans); font-size: var(--font-size-supporting); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .page-home .feed-label { font-size: var(--font-size-caption); white-space: nowrap; }
 .page-home .feed-label.running { color: var(--green); }
@@ -7388,6 +7390,7 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-sessions .dot.running { background: var(--green); box-shadow: 0 0 6px var(--green); animation: sessions-dot-pulse 1.4s ease-in-out infinite; }
 .page-sessions .dot.waiting { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
 .page-sessions .dot.failed { background: var(--red); }
+.page-sessions .dot.incomplete { background: var(--amber); }
 .page-sessions .dot.done { background: var(--muted-2); }
 @keyframes sessions-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) {
@@ -7444,6 +7447,8 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-sessions .it-agent mark { background: var(--cyan-soft); color: var(--fg); border-radius: 3px; padding: 0 2px; }
 .page-sessions .it-line.live { color: var(--green); }
 .page-sessions .it-line.err { color: var(--red); font-family: var(--mono); font-size: var(--font-size-micro); }
+/* Agent-declared non-delivery: amber, so a column of red is only crashes. */
+.page-sessions .it-line.warn { color: var(--amber); font-family: var(--mono); font-size: var(--font-size-micro); }
 .page-sessions .it-line.is-empty { color: var(--muted-2); font-style: italic; }
 .page-sessions .it-time {
   color: var(--muted-2);

@@ -16,6 +16,7 @@ import { displayAgentName, formatApprovalTime, formatRelativeTime, displayStatus
 import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
 import { normalizeMetricValues } from '../../../../shared/metric-values';
+import { isIncompleteOutcome } from '../../../../session/status';
 import { consumeUpdatePreview, previewUpdate } from '../lib/update-preview';
 
 function plural(n: number, word: string): string {
@@ -128,7 +129,7 @@ function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => voi
   const agentName = displayAgentName(row.agent.name, row.agent.filePath, row.agent.id);
   return (
     <a class="attn-run" href={`/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`}>
-      <span class="feed-dot failed" aria-hidden="true"></span>
+      <span class={`feed-dot ${isIncompleteOutcome(row.status, row.errorCode) ? 'incomplete' : 'failed'}`} aria-hidden="true"></span>
       <span class="attn-agent">{agentName}</span>
       <span class="attn-fail">
         {props.label ?? displayStatusLabel(row.status, row.errorCode)}
@@ -837,7 +838,10 @@ export default function Home() {
   // the same name lists: pending gates, recent failures, stranded runs.
   const waitingOnYou = liveHome.pendingRows.length + failedRecent.length + strandedRecent.length;
   const runs24h = operationalSessions.length;
-  const failed24h = operationalSessions.filter((s) => runTone(s.status) === 'failed').length;
+  // Crashes only, matching the /sessions?status=error filter this stat links to.
+  // A run the agent declared incomplete is listed under its own filter there.
+  const failed24h = operationalSessions.filter((s) =>
+    runTone(s.status) === 'failed' && !isIncompleteOutcome(s.status, s.errorCode)).length;
   const ended24h = operationalSessions.filter((s) => { const t = runTone(s.status); return t === 'ok' || t === 'failed'; }).length;
   const successPct = ended24h > 0 ? Math.round(((ended24h - failed24h) / ended24h) * 100) : null;
 

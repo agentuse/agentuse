@@ -15,7 +15,7 @@ import { type AgentChunk } from "../runner";
 import { findProjectRoot, resolveProjectContext } from "../utils/project";
 import { logger, LogLevel, executionLog, approvalLog } from "../utils/logger";
 import { isPathInside } from "../utils/path-policy";
-import { isExecutingSessionStatus, isTerminalSessionStatus } from "../session/status";
+import { isExecutingSessionStatus, isIncompleteOutcome, isTerminalSessionStatus } from "../session/status";
 import { runInternalJobLifecycle } from "../onboarding/internal-job-runner";
 import { printLogo } from "../utils/branding";
 import { getSessionStorageDir, initStorage } from "../storage/index.js";
@@ -731,7 +731,9 @@ interface SessionStatusCounts {
   all: number;
   running: number;
   done: number;
+  /** Crashes only. An agent-declared incomplete run is counted separately. */
   failed: number;
+  incomplete: number;
 }
 
 interface SessionsPayload {
@@ -2013,14 +2015,18 @@ function parseSessionTriageFilter(value: string | undefined): SessionTriageFilte
 /**
  * `incomplete` is a user-facing outcome label, persisted as an error with the
  * INCOMPLETE code. Keep the API filter aligned with the label shown in the Web
- * UI instead of treating it as a separate on-disk session status.
+ * UI instead of treating it as a separate on-disk session status: the two
+ * filters partition the errors, so `error` means a crash and never swallows a
+ * run the agent itself declared incomplete.
  */
 function sessionMatchesStatusFilter(
   session: Pick<SessionSummary, 'status' | 'errorCode'>,
   filter: SessionStatusFilter | undefined
 ): boolean {
   if (!filter) return true;
-  if (filter === 'incomplete') return session.status === 'error' && session.errorCode === 'INCOMPLETE';
+  const incomplete = isIncompleteOutcome(session.status, session.errorCode);
+  if (filter === 'incomplete') return incomplete;
+  if (filter === 'error') return session.status === 'error' && !incomplete;
   return session.status === filter;
 }
 
@@ -2061,12 +2067,13 @@ function sessionMatchesSearchIdentity(
  * matching the dot the list draws.
  */
 function sessionStatusCounts(
-  sessions: ReadonlyArray<Pick<SessionSummary, 'status' | 'subagentActive'>>
+  sessions: ReadonlyArray<Pick<SessionSummary, 'status' | 'subagentActive' | 'errorCode'>>
 ): SessionStatusCounts {
-  const counts: SessionStatusCounts = { all: sessions.length, running: 0, done: 0, failed: 0 };
+  const counts: SessionStatusCounts = { all: sessions.length, running: 0, done: 0, failed: 0, incomplete: 0 };
   for (const session of sessions) {
     if (isExecutingSessionStatus(session.status) || session.subagentActive === true) counts.running += 1;
     else if (session.status === 'completed') counts.done += 1;
+    else if (isIncompleteOutcome(session.status, session.errorCode)) counts.incomplete += 1;
     else if (session.status === 'error') counts.failed += 1;
   }
   return counts;

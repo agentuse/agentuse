@@ -40,6 +40,16 @@ export function isLiveSessionStatus(status: string | undefined): boolean {
   return isExecutingSessionStatus(status) || status === 'suspended' || status === 'waiting';
 }
 
+/**
+ * An agent-declared non-delivery: the run finished cleanly and said it could
+ * not deliver (report_incomplete), persisted as an error carrying the
+ * INCOMPLETE code. Operator surfaces separate this from a crash, so the
+ * definition lives here instead of being re-spelled per surface.
+ */
+export function isIncompleteOutcome(status: string | undefined, errorCode: string | undefined): boolean {
+  return status === 'error' && errorCode === 'INCOMPLETE';
+}
+
 export type SessionOutcome = 'completed' | 'error' | 'stopped' | 'timeout' | 'incomplete';
 
 /** Normalize durable status plus error code before each transport chooses its wording. */
