@@ -285,6 +285,16 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
   const innerExecute = tool.execute;
   if (!innerExecute) return tool;
   let gateRejections = 0;
+  const freshReview = config.gateReview === 'fresh';
+  const rejectFreshReview = (critique: string) => ({
+    status: 'rejected',
+    source: 'pre-review',
+    exhausted: gateRejections >= Math.max(1, config.maxRedos),
+    comment: `[Automated pre-review — not the human reviewer] ${critique}\n\n${gateRejections >= Math.max(1, config.maxRedos)
+      ? 'Review budget exhausted. Stop without publishing or requesting another gate.'
+      : 'Revise the draft and request review again. Every candidate will receive a fresh review.'} Do not perform side-effectful actions.`,
+    reviewer: { username: 'verify-judge' },
+  });
   // Candidates that passed on an earlier attempt, keyed by id → exact text.
   // Spans the same stream segment as the rejection counter; a resume starts
   // both fresh, so a human decision always gets a full judge look.
@@ -323,7 +333,7 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
       // A gate that reaches the human without a judge look gets a marker
       // saying so. Without it the card shows the previous verdict as if it
       // were about the text now on screen, which it is not.
-      if (shouldDeferGateReviewToHuman(humanDecisions)) {
+      if (!freshReview && shouldDeferGateReviewToHuman(humanDecisions)) {
         logger.info('[Verify] Gate pre-review skipped after a human reviewer comment; returning the revision directly to the reviewer');
         await recordVerifyPart({
           type: 'verify', verdict: 'skipped', attempt: gateRejections, maxRedos: config.maxRedos,
@@ -333,7 +343,16 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
         return suspend();
       }
 
-      if (config.maxRedos > 0 && gateRejections >= config.maxRedos) {
+      if (freshReview && gateRejections >= Math.max(1, config.maxRedos)) {
+        await recordVerifyPart({
+          type: 'verify', verdict: 'skipped', attempt: gateRejections, maxRedos: config.maxRedos,
+          critique: 'Not judged: review budget exhausted; request blocked without human approval.',
+          judge: judgeName, time: { start: Date.now() },
+        });
+        return rejectFreshReview('This request has no remaining automated review budget.');
+      }
+
+      if (!freshReview && config.maxRedos > 0 && gateRejections >= config.maxRedos) {
         logger.warn(
           `[Verify] Gate pre-review budget exhausted (${gateRejections} rejection${gateRejections === 1 ? '' : 's'}); escalating to the human reviewer with the critique unresolved`
         );
@@ -348,7 +367,7 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
       const attempt = gateRejections;
       const candidates = extractGateCandidates(input);
       const settledIds = new Set(
-        candidates.filter((candidate) => settledText.get(candidate.id) === candidate.text).map((candidate) => candidate.id)
+        candidates.filter((candidate) => !freshReview && settledText.get(candidate.id) === candidate.text).map((candidate) => candidate.id)
       );
       if (candidates.length > 0 && settledIds.size === candidates.length) {
         // Every candidate already passed and none changed: nothing to judge.
@@ -375,8 +394,8 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
           ...(reviewHistory && { reviewHistory }),
           ...(candidates.length > 0 && { candidates }),
           ...(settledIds.size > 0 && { settledCandidateIds: [...settledIds] }),
-          ...(judgeSession && { resume: judgeSession }),
-          ...(judgeSession && changedIds.length > 0 && { changedCandidateIds: changedIds }),
+          ...(!freshReview && judgeSession && { resume: judgeSession }),
+          ...(!freshReview && judgeSession && changedIds.length > 0 && { changedCandidateIds: changedIds }),
         },
         config,
         agentModel,
@@ -391,15 +410,19 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
       for (const candidate of candidates) lastText.set(candidate.id, candidate.text);
       if (outcome.status === 'error') {
         judgeSession = undefined;
-        logger.warn(`[Verify] Gate pre-review judge failed (${outcome.detail}); escalating to the human reviewer unjudged`);
+        logger.warn(`[Verify] Gate pre-review judge failed (${outcome.detail}); ${freshReview ? 'blocking the unreviewed request' : 'escalating to the human reviewer unjudged'}`);
         await recordVerifyPart({
           type: 'verify', verdict: 'error', attempt, maxRedos: config.maxRedos,
           critique: outcome.detail, judge: judgeName, time: { start: Date.now() },
         });
+        if (freshReview) {
+          gateRejections++;
+          return rejectFreshReview(`The reviewer could not complete the check: ${outcome.detail}`);
+        }
         return suspend();
       }
 
-      judgeSession = outcome.session;
+      judgeSession = freshReview ? undefined : outcome.session;
       const verdict = reconcileCandidateVerdicts(outcome.verdict, candidates, settledIds);
       const candidateVerdicts = verdict.candidates;
       // Remember every pass so an unchanged candidate is never re-litigated.
@@ -432,6 +455,7 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
       });
       // Zero redos still judges the initial candidate. A failure has no
       // automated revision budget, so send that judged candidate to the human.
+      if (freshReview) return rejectFreshReview(critique);
       if (config.maxRedos === 0) return suspend();
       logger.info(`[Verify] Gate draft rejected by pre-review (${gateRejections} of ${config.maxRedos}): ${critique.slice(0, 200)}`);
       // Keep the rejection-with-comment shape for compatibility, but mark the

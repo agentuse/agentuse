@@ -97,3 +97,17 @@ verify:
 Task.`, 'test')).toThrow('Invalid agent configuration');
   });
 });
+
+describe('fresh gate review config', () => {
+  it('accepts the opt-in without changing defaults', () => {
+    const agent = parseAgentContent(`---
+model: openai:gpt-5.6-sol
+verify:
+  judge: ./reply-judge.agentuse
+  gateReview: fresh
+  maxRedos: 2
+---
+Reply.`, 'test');
+    expect(agent.config.verify).toEqual({ judge: './reply-judge.agentuse', gateReview: 'fresh', maxRedos: 2 });
+  });
+});

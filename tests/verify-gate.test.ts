@@ -571,3 +571,75 @@ describe('judge session reuse across attempts', () => {
     expect(thirdCall.input.resume).toBeUndefined();
   });
 });
+
+describe('fresh gate review', () => {
+  const freshOptions = { ...baseOptions, config: { ...baseOptions.config, maxRedos: 2, gateReview: 'fresh' as const } };
+
+  it('reviews the revised copy after a human comment', async () => {
+    judgeOutputMock.mockResolvedValue({ status: 'verdict', verdict: { pass: true } });
+    const sessionManager = {
+      getSessionMessages: async () => [{ id: 'm1' }],
+      getMessageParts: async () => [{ type: 'tool', tool: 'await_human', state: {
+        status: 'completed', input: gateInput,
+        output: { status: 'commented', comment: 'Mention my product', reviewer: { username: 'web' } },
+      } }],
+      addPart: async () => 'part',
+    } as any;
+    const { tool, suspend } = makeGateTool();
+    const gate = withGateVerify(tool, { ...freshOptions, sessionManager, sessionID: 's', agentId: 'a', messageID: 'm2' });
+    await expect((gate.execute as any)(gateInput, {})).rejects.toThrow('SUSPENDED');
+    expect(judgeOutputMock).toHaveBeenCalledTimes(1);
+    expect(suspend).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not carry a pass or judge session into a revised slate', async () => {
+    judgeOutputMock.mockResolvedValueOnce({ status: 'verdict', session: { sessionID: 'old' }, verdict: {
+      pass: false, candidates: [{ id: 'A', pass: true }, { id: 'B', pass: false, critique: 'unsupported' }],
+    } });
+    judgeOutputMock.mockResolvedValueOnce({ status: 'verdict', verdict: { pass: true } });
+    const { tool } = makeGateTool();
+    const gate = withGateVerify(tool, freshOptions);
+    const slate = { ...gateInput, changes: [{ optionId: 'A', content: 'alpha' }, { optionId: 'B', content: 'beta' }] };
+    const first = await (gate.execute as any)(slate, {});
+    expect(first.comment).not.toContain('will not be judged again');
+    await expect((gate.execute as any)({ ...slate, changes: [slate.changes[0], { optionId: 'B', content: 'new beta' }] }, {})).rejects.toThrow('SUSPENDED');
+    const call = judgeOutputMock.mock.calls[1]![0] as any;
+    expect(call.input.resume).toBeUndefined();
+    expect(call.input.settledCandidateIds).toBeUndefined();
+  });
+
+  it('rechecks unchanged text when the target changes', async () => {
+    judgeOutputMock.mockResolvedValue({ status: 'verdict', verdict: { pass: true } });
+    const { tool } = makeGateTool();
+    const gate = withGateVerify(tool, freshOptions);
+    await expect((gate.execute as any)(gateInput, {})).rejects.toThrow('SUSPENDED');
+    await expect((gate.execute as any)({ ...gateInput, reference: { excerpt: 'Different target' } }, {})).rejects.toThrow('SUSPENDED');
+    expect(judgeOutputMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('blocks unreviewed replacements after the budget is exhausted', async () => {
+    judgeOutputMock.mockResolvedValue({ status: 'verdict', verdict: { pass: false, critique: 'weak point' } });
+    const { tool, suspend } = makeGateTool();
+    const gate = withGateVerify(tool, freshOptions);
+    await (gate.execute as any)(gateInput, {});
+    const second = await (gate.execute as any)(gateInput, {});
+    expect(second.exhausted).toBe(true);
+    const third = await (gate.execute as any)({ ...gateInput, draft: 'new unreviewed copy' }, {});
+    expect(third.status).toBe('rejected');
+    expect(third.exhausted).toBe(true);
+    expect(judgeOutputMock).toHaveBeenCalledTimes(2);
+    expect(suspend).not.toHaveBeenCalled();
+  });
+
+  it('does not fail open on a reviewer error or with zero redos', async () => {
+    const { tool, suspend } = makeGateTool();
+    judgeOutputMock.mockResolvedValueOnce({ status: 'error', detail: 'offline' });
+    const errorGate = withGateVerify(tool, freshOptions);
+    expect((await (errorGate.execute as any)(gateInput, {})).status).toBe('rejected');
+    judgeOutputMock.mockResolvedValueOnce({ status: 'verdict', verdict: { pass: false } });
+    const zeroGate = withGateVerify(tool, { ...freshOptions, config: { ...freshOptions.config, maxRedos: 0 } });
+    const result = await (zeroGate.execute as any)(gateInput, {});
+    expect(result.exhausted).toBe(true);
+    expect(suspend).not.toHaveBeenCalled();
+  });
+});

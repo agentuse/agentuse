@@ -29,6 +29,8 @@ export interface CanonicalVerifyConfig {
   judge?: string | undefined;
   at?: VerifyPlacement | undefined;
   maxRedos: number;
+  /** Fresh gate reviews never reuse verdicts or bypass review after human comments. */
+  gateReview?: 'fresh' | undefined;
   model?: string | undefined; // built-in judge model override; invalid with `judge`
 }
 
@@ -37,6 +39,7 @@ const CanonicalVerifySchema = z
     criteria: z.string().min(1).optional(),
     judge: z.string().min(1).optional(),
     at: z.enum(['gate', 'output', 'both']).optional(),
+    gateReview: z.literal('fresh').optional(),
     maxRedos: z.number().int().min(0).max(10).default(1),
     model: z.string().min(1).optional(),
   })

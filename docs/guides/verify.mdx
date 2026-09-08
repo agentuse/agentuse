@@ -112,3 +112,28 @@ A judge that itself errors (model/auth/parse failure) never blocks the run: the 
 ## Verify vs. Learning
 
 Verify catches a bad output **now**; [Learning](/guides/learning) makes the agent better **next run**. They compose: a verify critique that fixed the output this run is exactly the kind of rule worth promoting into learnings (automatic promotion is planned).
+
+## Fresh gate review
+
+For editorial workflows that require a new reading of every approval request,
+opt in with `gateReview: fresh`:
+
+```yaml
+verify:
+  judge: ./shared/reply-judge.agentuse
+  gateReview: fresh
+  maxRedos: 2
+```
+
+Each gate gets a fresh judge session and all candidates are checked again,
+including after human comments. Human feedback remains available as review
+context, but no previous candidate verdict is carried forward. This also
+rechecks unchanged wording when the source or evidence changes.
+
+Fresh mode blocks unreviewed requests when the rejection budget is spent or the
+judge fails. It never escalates an unreviewed replacement to human approval.
+With `maxRedos: 0`, the initial request is judged once and a failure stops there.
+Agents should stop on `exhausted: true`; a reviewer error consumes one attempt.
+An approval still requires the human's decision after the automated pass.
+Without this option, existing incremental review and fail-open behavior remain
+unchanged. This setting only affects gate placement, not final-output review.
