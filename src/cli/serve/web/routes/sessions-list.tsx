@@ -687,13 +687,20 @@ export default function SessionsList() {
             filter is ever applied by a control the reader cannot see. */}
         {(hasDismissals(statusFilter) || triageFilter !== '') && (
           <a
-            class={`qc qc-toggle${triageFilter !== '' ? ' on' : ''}`}
+            class={`qc qc-check${triageFilter !== '' ? ' on' : ''}`}
             href={withParam({ triage: hideDismissed ? '' : 'undismissed' })}
-            aria-pressed={hideDismissed}
+            role="switch"
+            aria-checked={hideDismissed}
             title={onlyDismissed
               ? 'Showing only runs already reviewed and waved off'
               : 'Hide runs already reviewed and waved off'}
-          >{onlyDismissed ? 'Only dismissed' : 'Hide dismissed'}</a>
+          >
+            {/* A box, not a pill: the chips to its left are one-of, this is
+                on/off, and two controls that behave differently should not
+                look the same. */}
+            <span class="qc-box" aria-hidden="true" />
+            {onlyDismissed ? 'Only dismissed' : 'Hide dismissed'}
+          </a>
         )}
         <AgentFilterSelect options={agentOptions} value={agentFilter ?? ''} onChange={commitAgent} />
         <div class="seg" role="group" aria-label="Time window">

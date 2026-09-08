@@ -7320,6 +7320,28 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-sessions .qc.on { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
 .page-sessions .qc .n { font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted); font-variant-numeric: tabular-nums; }
 .page-sessions .qc.on .n { color: var(--cyan); }
+/* The status chips are one-of: picking one drops the last. This one is on/off
+   and composes with whichever is picked, so it is squared off and carries a
+   checkbox — same row, visibly a different kind of control. */
+.page-sessions .qc-check { border-radius: 9px; }
+.page-sessions .qc-box {
+  width: 12px; height: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--bg);
+  flex: none;
+}
+.page-sessions .qc-check.on .qc-box { border-color: var(--cyan); background: var(--cyan); }
+/* The tick, drawn as two borders so it inherits no font or icon set. */
+.page-sessions .qc-check.on .qc-box::after {
+  content: '';
+  display: block;
+  width: 3px; height: 6px;
+  margin: 1px auto 0;
+  border-right: 1.5px solid var(--bg);
+  border-bottom: 1.5px solid var(--bg);
+  transform: rotate(45deg);
+}
 .page-sessions .seg {
   display: inline-flex;
   align-items: center;
