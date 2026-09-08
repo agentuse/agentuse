@@ -163,9 +163,66 @@ function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => voi
   );
 }
 
+/**
+ * Clears the whole needs-a-look group in one go. Dismissing stops a run and
+ * stamps it reviewed, which the per-row ✕ does one at a time — fine for two
+ * rows, a chore for fifteen.
+ *
+ * It asks first, in place rather than in a dialog: the count is the whole
+ * warning, and a mis-click costs a stopped run. While it works the button
+ * counts up, so a slow sweep of a long list never looks stuck.
+ */
+function DismissAll(props: {
+  rows: SessionRow[];
+  onDismissAll: (rows: SessionRow[], onProgress: (done: number) => void) => Promise<number>;
+}) {
+  const [armed, setArmed] = useState(false);
+  const [done, setDone] = useState<number | null>(null);
+  const [failedCount, setFailedCount] = useState(0);
+  const total = props.rows.length;
+  const busy = done !== null;
+
+  // A row dismissed elsewhere (its own ✕, another tab) shrinks the group under
+  // a primed confirm, so the count on the button stops matching what it clears.
+  useEffect(() => { if (!busy) setArmed(false); }, [total]);
+
+  if (busy) return <span class="attn-more attn-dismiss-all is-busy">dismissing {done} of {total}…</span>;
+
+  if (!armed) {
+    return (
+      <>
+        {failedCount > 0 && <span class="attn-dismiss-failed">{failedCount} could not be dismissed</span>}
+        <button type="button" class="attn-more attn-dismiss-all" onClick={() => { setArmed(true); setFailedCount(0); }}>
+          dismiss all {total}
+        </button>
+      </>
+    );
+  }
+
+  return (
+    <span class="attn-dismiss-confirm">
+      <button
+        type="button"
+        class="attn-more attn-dismiss-all is-armed"
+        onClick={() => {
+          setArmed(false);
+          setDone(0);
+          void props.onDismissAll(props.rows, (n) => setDone(n))
+            .then((count) => setFailedCount(count))
+            .finally(() => setDone(null));
+        }}
+      >dismiss {total}?</button>
+      <button type="button" class="attn-more" onClick={() => setArmed(false)}>cancel</button>
+    </span>
+  );
+}
+
 /** How many needs-a-look rows show before the tail folds away. Pending gates are
  *  never folded: a waiting human is the whole point of the section. */
 const ATTENTION_ROWS = 3;
+
+/** How many dismissals are in flight at once during a bulk sweep. */
+const DISMISS_ALL_CONCURRENCY = 4;
 
 /** Pending gates shown before the tail folds. Twenty-plus open gates is a
  *  real state; the reviewer needs the latest few on screen, not all of them. */
@@ -185,6 +242,7 @@ function AttentionSection(props: {
   failed: SessionRow[];
   stranded: SessionRow[];
   onDismissFailed: (row: SessionRow) => void;
+  onDismissAll: (rows: SessionRow[], onProgress: (done: number) => void) => Promise<number>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [pendingOpen, setPendingOpen] = useState(false);
@@ -198,6 +256,10 @@ function AttentionSection(props: {
   const shownFailed = expanded ? failed : failed.slice(0, ATTENTION_ROWS);
   const shownStranded = expanded ? stranded : stranded.slice(0, ATTENTION_ROWS);
   const folded = (failed.length - shownFailed.length) + (stranded.length - shownStranded.length);
+  // Everything the ✕ can clear, folded tail included. Bulk dismissal works on
+  // the whole group, not the three rows that happen to be on screen: unfolding
+  // fifteen rows to click fifteen ✕s is the chore it exists to remove.
+  const reviewable = [...failed, ...stranded];
   return (
     <section class="group">
       <h2 class="group-title">
@@ -232,10 +294,15 @@ function AttentionSection(props: {
                 ))}
               </div>
             )}
-            {(folded > 0 || expanded) && (
-              <button type="button" class="attn-more" onClick={() => setExpanded((on) => !on)}>
-                {expanded ? 'show less' : `show all ${failed.length + stranded.length} needing a look →`}
-              </button>
+            {(folded > 0 || expanded || reviewable.length > 1) && (
+              <div class="attn-actions">
+                {(folded > 0 || expanded) && (
+                  <button type="button" class="attn-more" onClick={() => setExpanded((on) => !on)}>
+                    {expanded ? 'show less' : `show all ${reviewable.length} needing a look →`}
+                  </button>
+                )}
+                {reviewable.length > 1 && <DismissAll rows={reviewable} onDismissAll={props.onDismissAll} />}
+              </div>
             )}
           </div>
         )}
@@ -800,15 +867,36 @@ export default function Home() {
   // via the session page's Discard button or the row's hover ✕) are
   // acknowledged, so they stay out. The shared app-root dismissal mask hides a
   // just-dismissed row instantly even when Discard happened on another route.
-  const dismissFailed = useCallback((row: SessionRow) => {
+  const dismissRow = useCallback((row: SessionRow): Promise<boolean> => {
     const identity = { project: row.project, sessionId: row.sessionId };
     attentionState.dismissAttentionSession(identity);
-    postSessionStop(row.sessionId, undefined, { project: row.project, reason: 'Discarded from home' })
+    return postSessionStop(row.sessionId, undefined, { project: row.project, reason: 'Discarded from home' })
+      .then(() => true)
       .catch(() => {
         // Dismissal did not land; put the row back so it isn't silently lost.
         attentionState.restoreAttentionSession(identity);
+        return false;
       });
   }, [attentionState.dismissAttentionSession, attentionState.restoreAttentionSession]);
+  const dismissFailed = useCallback((row: SessionRow) => { void dismissRow(row); }, [dismissRow]);
+  // Bulk dismissal is the same per-row call, a few at a time: each one stops a
+  // session on the daemon, so firing fifty at once would queue behind itself
+  // anyway and lose the running count. Returns how many failed, since a partial
+  // sweep leaves rows on screen and the reviewer deserves to know why.
+  const dismissAll = useCallback(async (rows: SessionRow[], onProgress: (done: number) => void): Promise<number> => {
+    let next = 0;
+    let done = 0;
+    let failures = 0;
+    const worker = async (): Promise<void> => {
+      while (next < rows.length) {
+        const row = rows[next++]!;
+        if (!await dismissRow(row)) failures += 1;
+        onProgress(++done);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(DISMISS_ALL_CONCURRENCY, rows.length) }, worker));
+    return failures;
+  }, [dismissRow]);
   const dismissedAttention = attentionState.dismissedAttentionSessions;
   // Not truncated here: the section itself folds the tail behind "show all", so
   // the header count is the real number of runs waiting on a review.
@@ -894,7 +982,7 @@ export default function Home() {
         {sections.isVisible('running') && running.length > 0 && <WorkingNow running={running} />}
 
         {sections.isVisible('attention') && (
-          <AttentionSection pending={liveHome.pendingRows} failed={failedRecent} stranded={strandedRecent} onDismissFailed={dismissFailed} />
+          <AttentionSection pending={liveHome.pendingRows} failed={failedRecent} stranded={strandedRecent} onDismissFailed={dismissFailed} onDismissAll={dismissAll} />
         )}
 
         {sections.isVisible('results') && hasAnyMetrics && (

@@ -5119,6 +5119,17 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 }
 .page-home .attn-more:hover { color: var(--muted-3); }
 .page-home .attn-more:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 3px; border-radius: 4px; }
+/* Unfold on the left, clear-the-whole-group on the right: the destructive one
+   sits away from the one a reviewer clicks to read more. */
+.page-home .attn-actions { display: flex; align-items: center; gap: 12px; }
+.page-home .attn-dismiss-all { margin-left: auto; }
+.page-home .attn-dismiss-all:hover { color: var(--red); }
+/* Primed: the second click stops every run in the group, so it says so. */
+.page-home .attn-dismiss-all.is-armed { color: var(--red); font-weight: var(--weight-medium); }
+.page-home .attn-dismiss-all.is-busy { margin-left: auto; cursor: default; }
+.page-home .attn-dismiss-confirm { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.page-home .attn-dismiss-failed { font-size: var(--font-size-caption); color: var(--red); margin-left: auto; }
+.page-home .attn-dismiss-failed + .attn-dismiss-all { margin-left: 0; }
 
 /* Runs by agent: one horizontal stacked bar per agent, busiest first, split by
    run outcome. The status hues repeat across the app, so identity never rests
