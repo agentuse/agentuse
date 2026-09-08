@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-09-08
+
 ### Added
 
 - **GPT-6 Astra is available as `openai:gpt-6-astra` or `openai:gpt-astra`.** The registry includes its published context limits and pricing while retaining GPT-5 workload tiers and existing defaults. Reasoning efforts from `low` through `max` reach the OpenAI Responses API; `none` and `minimal` normalize to `low`.
