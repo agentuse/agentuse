@@ -73,6 +73,13 @@ export function isDismissedRow(
   return Boolean(justDismissed && key && justDismissed.has(key));
 }
 
+/** Can a run under this status filter be dismissed at all? Only a run that
+ *  ended badly is ever waved off, so hiding dismissed runs is meaningless in
+ *  the Running and Done views. */
+export function hasDismissals(statusFilter: string): boolean {
+  return statusFilter === '' || statusFilter === 'error' || statusFilter === 'incomplete';
+}
+
 /** A run the reviewer can wave off: it ended badly, nothing has waved it off
  *  yet, and it was not the reviewer who stopped it (those never ask again).
  *  Mirrors the session page's own Discard rule. */
@@ -642,8 +649,16 @@ export default function SessionsList() {
 
   const statusChip = (value: string, label: string, count: number | undefined, dot?: string) => {
     const on = statusFilter === value;
+    const nextStatus = on ? '' : value;
     return (
-      <a class={`qc${on ? ' on' : ''}`} href={withParam({ status: on ? '' : value })} aria-pressed={on}>
+      <a
+        class={`qc${on ? ' on' : ''}`}
+        // Moving to a status nothing can be dismissed under drops the triage
+        // filter with it, rather than leaving it applied behind a control that
+        // is no longer on screen.
+        href={withParam({ status: nextStatus, ...(hasDismissals(nextStatus) ? {} : { triage: '' }) })}
+        aria-pressed={on}
+      >
         {dot && <span class={`dot ${dot}`} aria-hidden="true" />}
         {label}
         {count !== undefined && <span class="n">{count}</span>}
@@ -673,13 +688,18 @@ export default function SessionsList() {
         {statusChip('incomplete', 'Incomplete', counts?.incomplete, 'incomplete')}
         {statusChip('error', 'Failed', counts?.failed, 'failed')}
         {/* Triage, not status, so it composes with the chips above: the counts
-            themselves drop the waved-off runs while it is on. */}
-        <a
-          class={`qc qc-toggle${hideDismissed ? ' on' : ''}`}
-          href={withParam({ triage: hideDismissed ? '' : 'undismissed' })}
-          aria-pressed={hideDismissed}
-          title="Hide runs already reviewed and waved off"
-        >Hide dismissed</a>
+            themselves drop the waved-off runs while it is on. Only a run that
+            ended badly can be dismissed, so the chip stays out of the Running
+            and Done views — and appears regardless while it is on, so the
+            filter is never applied by a control the reader cannot see. */}
+        {(hasDismissals(statusFilter) || hideDismissed) && (
+          <a
+            class={`qc qc-toggle${hideDismissed ? ' on' : ''}`}
+            href={withParam({ triage: hideDismissed ? '' : 'undismissed' })}
+            aria-pressed={hideDismissed}
+            title="Hide runs already reviewed and waved off"
+          >Hide dismissed</a>
+        )}
         <AgentFilterSelect options={agentOptions} value={agentFilter ?? ''} onChange={commitAgent} />
         <div class="seg" role="group" aria-label="Time window">
           {[...WINDOWS, ...(EXTRA_WINDOWS.includes(win) ? [win] : [])].map((w) => (
