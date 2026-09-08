@@ -7473,6 +7473,16 @@ a.lastrun.waiting { color: var(--cyan); }
 /* Agent-declared non-delivery: amber, so a column of red is only crashes. */
 .page-sessions .it-line.warn { color: var(--amber); font-family: var(--mono); font-size: var(--font-size-micro); }
 .page-sessions .it-line.is-empty { color: var(--muted-2); font-style: italic; }
+/* Reviewed and waved off. The row keeps its status colour — it is still a
+   failure — and loses its weight, so a scan lands on what has not been dealt
+   with yet. The selected row is exempt: dimming what you are reading is noise. */
+.page-sessions .it.is-dismissed:not(.sel) { opacity: 0.55; }
+.page-sessions .it.is-dismissed:not(.sel):hover { opacity: 0.85; }
+.page-sessions .it-dismissed {
+  margin-left: 6px;
+  font-family: var(--mono); font-size: var(--font-size-micro); font-weight: var(--weight-normal);
+  color: var(--muted-2); letter-spacing: 0;
+}
 .page-sessions .it-time {
   color: var(--muted-2);
   font-family: var(--mono);

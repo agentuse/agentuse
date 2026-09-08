@@ -2,7 +2,7 @@ import { Fragment, type ComponentChildren } from 'preact';
 import { useLocation } from 'preact-iso';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { SessionRow, SessionsPayload } from '../lib/api';
-import { fetchSessions, fetchAgents, runAgentDetached } from '../lib/api';
+import { fetchSessions, fetchAgents, runAgentDetached, postSessionStop } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useMediaQuery } from '../hooks/use-media-query';
 import { useSessionsStream } from '../hooks/use-sessions-stream';
@@ -58,6 +58,26 @@ export function statusDot(
   if (isIncompleteOutcome(row.status, row.errorCode)) return 'incomplete';
   if (row.status === 'error') return 'failed';
   return 'done';
+}
+
+/** Reviewed and waved off: stamped `dismissedAt` by Home's ✕, the session
+ *  page's Discard, or this list's own. Kept as a helper because the reader and
+ *  the row must agree, and because a just-discarded run is dismissed here
+ *  before the next list snapshot carries the stamp. */
+export function isDismissedRow(
+  row: Pick<SessionRow, 'dismissedAt'>,
+  justDismissed?: ReadonlySet<string> | undefined,
+  key?: string | undefined
+): boolean {
+  if (row.dismissedAt !== undefined) return true;
+  return Boolean(justDismissed && key && justDismissed.has(key));
+}
+
+/** A run the reviewer can wave off: it ended badly, nothing has waved it off
+ *  yet, and it was not the reviewer who stopped it (those never ask again).
+ *  Mirrors the session page's own Discard rule. */
+export function isDiscardableRow(row: Pick<SessionRow, 'status' | 'errorCode' | 'dismissedAt'>): boolean {
+  return row.status === 'error' && row.errorCode !== 'USER_STOPPED' && row.dismissedAt === undefined;
 }
 
 export function displayName(row: SessionRow): string {
@@ -154,9 +174,11 @@ export function SessionListItem(props: {
   query: string;
   href: string;
   now?: number | undefined;
+  dismissed?: boolean | undefined;
   onSelect?: ((event: MouseEvent) => void) | undefined;
 }) {
   const { row, selected, query } = props;
+  const dismissed = props.dismissed ?? isDismissedRow(row);
   const dot = statusDot(row);
   const running = dot === 'running';
   const name = displayName(row);
@@ -189,7 +211,7 @@ export function SessionListItem(props: {
 
   return (
     <a
-      class={`it${selected ? ' sel' : ''}`}
+      class={`it${selected ? ' sel' : ''}${dismissed ? ' is-dismissed' : ''}`}
       href={props.href}
       aria-current={selected ? 'true' : undefined}
       data-session-item={rowKey(row)}
@@ -197,7 +219,12 @@ export function SessionListItem(props: {
     >
       <span class={`dot ${dot}`} aria-hidden="true" />
       <span class="it-body">
-        <span class="it-agent"><Highlight text={name} query={query} /></span>
+        <span class="it-agent">
+          <Highlight text={name} query={query} />
+          {/* Says why the row is dimmed. A failure that has been waved off is
+              still a failure, so it keeps its colour and loses its urgency. */}
+          {dismissed && <span class="it-dismissed">dismissed</span>}
+        </span>
         <span class={lineClass}>{line}</span>
       </span>
       <span class="it-time" title={formatApprovalTime(row.createdAt)}>
@@ -218,12 +245,19 @@ export function SessionReader(props: {
   copySignal?: number | undefined;
   /** Phone reader: the same three actions, in labels that fit one row. */
   compact?: boolean | undefined;
+  dismissed?: boolean | undefined;
+  /** Waves the run off without leaving the list. Absent = no Discard button. */
+  onDiscard?: ((row: SessionRow) => Promise<void>) | undefined;
 }) {
   const { row } = props;
   const location = useLocation();
   const [copied, setCopied] = useState(false);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const [discarding, setDiscarding] = useState(false);
+  const [discardError, setDiscardError] = useState<string | null>(null);
+  const dismissed = props.dismissed ?? isDismissedRow(row);
+  const discardable = Boolean(props.onDiscard) && !dismissed && isDiscardableRow(row);
   const live = isRunningRow(row) || isLiveSessionStatus(row.status);
   const status = displayStatusLabel(row.status, row.errorCode);
   const statusText = row.subagentActive ? 'running · subagent' : status;
@@ -249,7 +283,20 @@ export function SessionReader(props: {
     }
   }, [signal, copy]);
 
-  useEffect(() => { setCopied(false); setRunError(null); }, [rowKey(row)]);
+  useEffect(() => { setCopied(false); setRunError(null); setDiscardError(null); setDiscarding(false); }, [rowKey(row)]);
+
+  const discard = async () => {
+    if (discarding || !props.onDiscard) return;
+    setDiscarding(true);
+    setDiscardError(null);
+    try {
+      await props.onDiscard(row);
+    } catch (err) {
+      setDiscardError((err as Error).message);
+    } finally {
+      setDiscarding(false);
+    }
+  };
 
   const runAgain = async () => {
     const path = row.agent.filePath ?? row.agent.id;
@@ -274,6 +321,7 @@ export function SessionReader(props: {
           <div class="reader-title">{displayName(row)}</div>
           <div class="reader-meta">
             <span class={`chip status ${row.subagentActive ? 'running' : status}`}>{statusText}</span>
+            {dismissed && <span class="chip dismissed" title="Reviewed and waved off: it no longer asks for attention on Home">dismissed</span>}
             <span class="chip trigger">{row.trigger}</span>
             <span>{formatApprovalTime(row.createdAt)}</span>
             <span>{formatElapsed(Math.max(0, row.updatedAt - row.createdAt))}</span>
@@ -294,10 +342,20 @@ export function SessionReader(props: {
             onClick={() => void runAgain()}
             disabled={running}
           >{running ? 'Starting…' : 'Run again'}</button>
+          {discardable && (
+            <button
+              type="button"
+              class={discarding ? 'btn btn-busy' : 'btn'}
+              onClick={() => void discard()}
+              disabled={discarding}
+              title="Discard: mark this run reviewed so it stops asking for attention on Home (its status is kept)"
+            >{discarding ? 'Discarding…' : 'Discard'}</button>
+          )}
           <a class="btn" href={sessionHref(row)}>{props.compact ? 'Session' : 'Full session'}</a>
         </div>
       </div>
       {runError && <div class="errors" role="alert">Could not start a run: {runError}</div>}
+      {discardError && <div class="errors" role="alert">Could not discard this run: {discardError}</div>}
       <div class="out">
         <div class="out-label">
           {live ? 'Latest output' : 'Final output'}
@@ -361,7 +419,15 @@ export default function SessionsList() {
   const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => { setSearchText(searchParam); }, [searchParam]);
 
-  const advancedFilterCount = [triageFilter !== '', triggerFilter !== '', mockFilter !== ''].filter(Boolean).length;
+  // `undismissed` has its own chip in the top row, so it is not an advanced
+  // filter any more: counting it there would badge "More" and spring the panel
+  // open every time the chip is used.
+  const hideDismissed = triageFilter === 'undismissed';
+  const advancedFilterCount = [
+    triageFilter !== '' && !hideDismissed,
+    triggerFilter !== '',
+    mockFilter !== '',
+  ].filter(Boolean).length;
   const [advancedOpen, setAdvancedOpen] = useState(advancedFilterCount > 0);
   useEffect(() => { if (advancedFilterCount > 0) setAdvancedOpen(true); }, [advancedFilterCount]);
 
@@ -468,6 +534,15 @@ export default function SessionsList() {
   }, []);
 
   const [copySignal, setCopySignal] = useState(0);
+
+  // Rows discarded from this page. The list refreshes off SSE snapshots, so the
+  // server's dismissedAt lands a beat later; without this the row a reviewer
+  // just discarded still reads as needing a look.
+  const [justDismissed, setJustDismissed] = useState<ReadonlySet<string>>(() => new Set());
+  const discard = useCallback(async (row: SessionRow): Promise<void> => {
+    await postSessionStop(row.sessionId, undefined, { project: row.project, reason: 'Discarded from the sessions list' });
+    setJustDismissed((current) => new Set(current).add(rowKey(row)));
+  }, []);
 
   const withParam = useCallback((changes: Record<string, string>): string => {
     const params = new URLSearchParams();
@@ -597,6 +672,14 @@ export default function SessionsList() {
         {statusChip('completed', 'Done', counts?.done)}
         {statusChip('incomplete', 'Incomplete', counts?.incomplete, 'incomplete')}
         {statusChip('error', 'Failed', counts?.failed, 'failed')}
+        {/* Triage, not status, so it composes with the chips above: the counts
+            themselves drop the waved-off runs while it is on. */}
+        <a
+          class={`qc qc-toggle${hideDismissed ? ' on' : ''}`}
+          href={withParam({ triage: hideDismissed ? '' : 'undismissed' })}
+          aria-pressed={hideDismissed}
+          title="Hide runs already reviewed and waved off"
+        >Hide dismissed</a>
         <AgentFilterSelect options={agentOptions} value={agentFilter ?? ''} onChange={commitAgent} />
         <div class="seg" role="group" aria-label="Time window">
           {[...WINDOWS, ...(EXTRA_WINDOWS.includes(win) ? [win] : [])].map((w) => (
@@ -654,6 +737,7 @@ export default function SessionsList() {
                     key={rowKey(row)}
                     row={row}
                     query={searchParam}
+                    dismissed={isDismissedRow(row, justDismissed, rowKey(row))}
                     selected={!narrow && selected !== undefined && rowKey(selected) === rowKey(row)}
                     href={narrow ? withParam({ open: row.sessionId }) : sessionHref(row)}
                     onSelect={narrow ? undefined : (event) => {
@@ -692,6 +776,8 @@ export default function SessionsList() {
             newer={index > 0 ? rows[index - 1] : undefined}
             older={index >= 0 && index + 1 < rows.length ? rows[index + 1] : undefined}
             onNavigate={(row) => location.route(withParam({ open: row.sessionId }))}
+            dismissed={isDismissedRow(openRow, justDismissed, rowKey(openRow))}
+            onDiscard={discard}
             compact
           />
         </main>
@@ -724,6 +810,8 @@ export default function SessionsList() {
                     onNavigate={select}
                     showKeyHints
                     copySignal={copySignal}
+                    dismissed={isDismissedRow(selected, justDismissed, rowKey(selected))}
+                    onDiscard={discard}
                   />
                 )
                 : <section class="reader reader-blank"><p class="out-empty">Pick a run to read its output.</p></section>}
