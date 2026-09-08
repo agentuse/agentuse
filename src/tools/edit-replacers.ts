@@ -30,9 +30,44 @@ function levenshtein(a: string, b: string): number {
   return matrix[a.length][b.length];
 }
 
-// Similarity thresholds for block anchor fallback matching
-const SINGLE_CANDIDATE_SIMILARITY_THRESHOLD = 0.0;
-const MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD = 0.3;
+// Block anchors alone are too weak: braces and common headings recur often.
+// Require meaningful agreement in the middle even when only one candidate has
+// matching boundary lines.
+const BLOCK_ANCHOR_SIMILARITY_THRESHOLD = 0.5;
+
+function blockMiddleSimilarity(
+  originalLines: string[],
+  searchLines: string[],
+  startLine: number,
+  endLine: number,
+): number {
+  const originalMiddleCount = endLine - startLine - 1;
+  const searchMiddleCount = searchLines.length - 2;
+  const linesToCheck = Math.max(originalMiddleCount, searchMiddleCount);
+  if (linesToCheck === 0) return 1;
+
+  let similarity = 0;
+  for (let offset = 0; offset < linesToCheck; offset++) {
+    const originalLine = originalLines[startLine + 1 + offset];
+    const searchLine = searchLines[1 + offset];
+    if (originalLine === undefined || searchLine === undefined) continue;
+
+    const originalTrimmed = originalLine.trim();
+    const searchTrimmed = searchLine.trim();
+    const maxLen = Math.max(originalTrimmed.length, searchTrimmed.length);
+    if (maxLen === 0) {
+      similarity += 1;
+      continue;
+    }
+    similarity += 1 - levenshtein(originalTrimmed, searchTrimmed) / maxLen;
+  }
+
+  return similarity / linesToCheck;
+}
+
+function blockText(originalLines: string[], startLine: number, endLine: number): string {
+  return originalLines.slice(startLine, endLine + 1).join('\n');
+}
 
 /**
  * Exact match - tries to find the exact string
@@ -101,8 +136,6 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
 
   const firstLineSearch = searchLines[0].trim();
   const lastLineSearch = searchLines[searchLines.length - 1].trim();
-  const searchBlockSize = searchLines.length;
-
   // Collect all candidate positions where both anchors match
   const candidates: Array<{ startLine: number; endLine: number }> = [];
   for (let i = 0; i < originalLines.length; i++) {
@@ -124,79 +157,14 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
     return;
   }
 
-  // Handle single candidate scenario (using relaxed threshold)
-  if (candidates.length === 1) {
-    const { startLine, endLine } = candidates[0];
-    const actualBlockSize = endLine - startLine + 1;
-
-    let similarity = 0;
-    const linesToCheck = Math.min(searchBlockSize - 2, actualBlockSize - 2); // Middle lines only
-
-    if (linesToCheck > 0) {
-      for (let j = 1; j < searchBlockSize - 1 && j < actualBlockSize - 1; j++) {
-        const originalLine = originalLines[startLine + j].trim();
-        const searchLine = searchLines[j].trim();
-        const maxLen = Math.max(originalLine.length, searchLine.length);
-        if (maxLen === 0) {
-          continue;
-        }
-        const distance = levenshtein(originalLine, searchLine);
-        similarity += (1 - distance / maxLen) / linesToCheck;
-
-        // Exit early when threshold is reached
-        if (similarity >= SINGLE_CANDIDATE_SIMILARITY_THRESHOLD) {
-          break;
-        }
-      }
-    } else {
-      // No middle lines to compare, just accept based on anchors
-      similarity = 1.0;
-    }
-
-    if (similarity >= SINGLE_CANDIDATE_SIMILARITY_THRESHOLD) {
-      let matchStartIndex = 0;
-      for (let k = 0; k < startLine; k++) {
-        matchStartIndex += originalLines[k].length + 1;
-      }
-      let matchEndIndex = matchStartIndex;
-      for (let k = startLine; k <= endLine; k++) {
-        matchEndIndex += originalLines[k].length;
-        if (k < endLine) {
-          matchEndIndex += 1; // Add newline character except for the last line
-        }
-      }
-      yield content.substring(matchStartIndex, matchEndIndex);
-    }
-    return;
-  }
-
-  // Calculate similarity for multiple candidates
+  // Score every candidate using all middle lines. Missing lines contribute
+  // zero, so a short search cannot accidentally authorize a much larger span.
   let bestMatch: { startLine: number; endLine: number } | null = null;
   let maxSimilarity = -1;
 
   for (const candidate of candidates) {
     const { startLine, endLine } = candidate;
-    const actualBlockSize = endLine - startLine + 1;
-
-    let similarity = 0;
-    const linesToCheck = Math.min(searchBlockSize - 2, actualBlockSize - 2); // Middle lines only
-
-    if (linesToCheck > 0) {
-      for (let j = 1; j < searchBlockSize - 1 && j < actualBlockSize - 1; j++) {
-        const originalLine = originalLines[startLine + j].trim();
-        const searchLine = searchLines[j].trim();
-        const maxLen = Math.max(originalLine.length, searchLine.length);
-        if (maxLen === 0) {
-          continue;
-        }
-        const distance = levenshtein(originalLine, searchLine);
-        similarity += 1 - distance / maxLen;
-      }
-      similarity /= linesToCheck; // Average similarity
-    } else {
-      // No middle lines to compare, just accept based on anchors
-      similarity = 1.0;
-    }
+    const similarity = blockMiddleSimilarity(originalLines, searchLines, startLine, endLine);
 
     if (similarity > maxSimilarity) {
       maxSimilarity = similarity;
@@ -204,21 +172,8 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
     }
   }
 
-  // Threshold judgment
-  if (maxSimilarity >= MULTIPLE_CANDIDATES_SIMILARITY_THRESHOLD && bestMatch) {
-    const { startLine, endLine } = bestMatch;
-    let matchStartIndex = 0;
-    for (let k = 0; k < startLine; k++) {
-      matchStartIndex += originalLines[k].length + 1;
-    }
-    let matchEndIndex = matchStartIndex;
-    for (let k = startLine; k <= endLine; k++) {
-      matchEndIndex += originalLines[k].length;
-      if (k < endLine) {
-        matchEndIndex += 1;
-      }
-    }
-    yield content.substring(matchStartIndex, matchEndIndex);
+  if (maxSimilarity >= BLOCK_ANCHOR_SIMILARITY_THRESHOLD && bestMatch) {
+    yield blockText(originalLines, bestMatch.startLine, bestMatch.endLine);
   }
 };
 

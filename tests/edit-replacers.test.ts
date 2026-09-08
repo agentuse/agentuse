@@ -78,8 +78,9 @@ describe('Edit Replacers - Individual Strategies', () => {
   return x + y;
 }`;
       const search = `function foo() {
-  const a = 10;
-  return a;
+  const x = 10;
+  const y = 20;
+  return x + y;
 }`;
       const results = [...BlockAnchorReplacer(content, search)];
       // Should find the block based on matching first and last lines
@@ -104,11 +105,12 @@ end`;
   similar content B
 end`;
       const results = [...BlockAnchorReplacer(content, search)];
-      // Should find at least one match
-      expect(results.length).toBeGreaterThanOrEqual(0);
+      expect(results).toEqual([`start
+  similar content B
+end`]);
     });
 
-    it('should handle blocks with varying middle content', () => {
+    it('should reject a single anchor match with unrelated middle content', () => {
       const content = `if (condition) {
   doSomething();
   doSomethingElse();
@@ -119,8 +121,21 @@ end`;
   // with different lines
 }`;
       const results = [...BlockAnchorReplacer(content, search)];
-      // Should match based on anchors
-      expect(results.length).toBeGreaterThan(0);
+      expect(results).toEqual([]);
+    });
+
+    it('should penalize missing middle lines instead of scoring only the overlap', () => {
+      const content = `section {
+  shared line
+  unrelated one
+  unrelated two
+  unrelated three
+  unrelated four
+}`;
+      const search = `section {
+  shared line
+}`;
+      expect([...BlockAnchorReplacer(content, search)]).toEqual([]);
     });
   });
 
@@ -335,7 +350,7 @@ describe('fuzzyReplace - Integration', () => {
       }
     });
 
-    it('should use block-anchor matching for modified middle content', () => {
+    it('should use block-anchor matching for similar modified middle content', () => {
       const content = `function process() {
   // existing implementation
   doSomething();
@@ -343,18 +358,33 @@ describe('fuzzyReplace - Integration', () => {
   cleanup();
 }`;
       const oldString = `function process() {
-  // different middle
-  otherThing();
+  // existing implementation updated
+  doSomethingNew();
+  doMore();
+  cleanup();
 }`;
       const newString = `function process() {
   // new implementation
   newThing();
 }`;
       const result = fuzzyReplace(content, oldString, newString);
-      // May use block-anchor if anchors match
-      if (result.success) {
-        expect(result.newContent).toContain('new implementation');
-      }
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.replacerUsed).toBe('block-anchor');
+      expect(result.newContent).toContain('new implementation');
+    });
+
+    it('should not replace a block whose only matching lines are generic anchors', () => {
+      const content = `function process() {
+  chargeCustomer();
+  sendReceipt();
+}`;
+      const oldString = `function process() {
+  deleteAccount();
+  revokeCredentials();
+}`;
+      const result = fuzzyReplace(content, oldString, 'replacement');
+      expect(result.success).toBe(false);
     });
   });
 

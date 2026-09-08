@@ -6,8 +6,10 @@ import * as os from 'os';
 import { glob } from 'glob';
 import { PathValidator, type PathResolverContext } from './path-validator.js';
 import { fuzzyReplace } from './edit-replacers.js';
+import { withFileMutationQueue } from './file-mutation-queue.js';
 import { grantsPermission, type FilesystemPathConfig, type ToolOutput, type ToolErrorOutput } from './types.js';
 import { getToolOutputLimits, truncateEnd } from './tool-output-limits.js';
+import { atomicWriteFile } from '../utils/atomic-write.js';
 import {
   sniffMediaType,
   mediaByteCap,
@@ -427,7 +429,7 @@ Use absolute paths within these directories. Other paths will be rejected.`;
     execute: async ({ file_path, content }: {
       file_path: string;
       content: string;
-    }): Promise<ToolOutput> => {
+    }, callOptions?: { abortSignal?: AbortSignal }): Promise<ToolOutput> => {
       // Validate path
       const validation = validator.validate(file_path, 'write');
       if (!validation.allowed) {
@@ -439,29 +441,36 @@ Use absolute paths within these directories. Other paths will be rejected.`;
       }
 
       try {
-        // Ensure parent directory exists
-        const dir = path.dirname(validation.resolvedPath);
-        await fs.mkdir(dir, { recursive: true });
+        return await withFileMutationQueue(validation.resolvedPath, async () => {
+          if (callOptions?.abortSignal?.aborted) {
+            return { output: JSON.stringify({ success: false, error: 'Operation aborted' } satisfies ToolErrorOutput) };
+          }
+          // Keep metadata and the write in one critical section so a queued
+          // writer reports whether this invocation actually created the file.
+          const dir = path.dirname(validation.resolvedPath);
+          await fs.mkdir(dir, { recursive: true });
 
-        // Check if file exists (for metadata)
-        let created = false;
-        try {
-          await fs.access(validation.resolvedPath);
-        } catch {
-          created = true;
-        }
+          let created = false;
+          try {
+            await fs.access(validation.resolvedPath);
+          } catch {
+            created = true;
+          }
 
-        // Write file
-        await fs.writeFile(validation.resolvedPath, content, 'utf-8');
+          if (callOptions?.abortSignal?.aborted) {
+            return { output: JSON.stringify({ success: false, error: 'Operation aborted' } satisfies ToolErrorOutput) };
+          }
+          await atomicWriteFile(validation.resolvedPath, content);
 
-        return {
-          output: JSON.stringify({
-            success: true,
-            path: validation.resolvedPath,
-            bytesWritten: Buffer.byteLength(content, 'utf-8'),
-            created,
-          }),
-        };
+          return {
+            output: JSON.stringify({
+              success: true,
+              path: validation.resolvedPath,
+              bytesWritten: Buffer.byteLength(content, 'utf-8'),
+              created,
+            }),
+          };
+        });
       } catch (err) {
         const error: ToolErrorOutput = {
           success: false,
@@ -485,7 +494,7 @@ export function createEditTool(
   const allowedPaths = formatPathsForDescription(configs, 'edit', context);
   const description = `Edit a file by replacing exact strings with new strings. Uses fuzzy matching to tolerate minor whitespace/indentation/line-ending differences. Prefer this over rewriting a whole file with the write tool: it is faster and far cheaper on large files.
 
-Make a single replacement with \`old_string\`/\`new_string\`, or several in one call with the \`edits\` array (applied in order, each to the result of the previous; all-or-nothing — if any edit fails to match, the file is left unchanged).
+Make a single replacement with \`old_string\`/\`new_string\`, or several independent replacements in one call with the \`edits\` array. Batch edits are matched against one original snapshot and must not overlap. They are all-or-nothing: if any edit fails, the file is left unchanged.
 
 **You can only edit files in these paths:**
 ${allowedPaths}
@@ -503,11 +512,11 @@ Use absolute paths within these directories. Other paths will be rejected.`;
       old_string: z.string().optional().describe('Exact string to find and replace. Use this (with new_string) for a single edit; for multiple edits in one call use `edits` instead.'),
       new_string: z.string().optional().describe('String to replace `old_string` with.'),
       replace_all: z.boolean().optional().describe('Replace all occurrences of `old_string` (default: false, replaces first match only).'),
-      edits: z.array(z.object({
-        old_string: z.string().describe('Exact string to find and replace'),
-        new_string: z.string().describe('String to replace with'),
-        replace_all: z.boolean().optional().describe('Replace all occurrences (default: false)'),
-      })).optional().describe('Batch of edits applied sequentially, each to the result of the previous one. Use this instead of the top-level old_string/new_string to change several spans in one call. All-or-nothing: if any edit fails to match, the file is left unchanged.'),
+    edits: z.array(z.object({
+      old_string: z.string().describe('Exact string to find and replace'),
+      new_string: z.string().describe('String to replace with'),
+      replace_all: z.boolean().optional().describe('Replace all occurrences (default: false)'),
+    })).optional().describe('Batch of independent edits matched against the same original file snapshot. Use this instead of the top-level old_string/new_string to change several non-overlapping spans in one call. All-or-nothing: if any edit fails, is ambiguous, or overlaps another edit, the file is left unchanged.'),
     }),
     execute: async ({ file_path, old_string, new_string, replace_all, edits }: {
       file_path: string;
@@ -515,7 +524,7 @@ Use absolute paths within these directories. Other paths will be rejected.`;
       new_string?: string;
       replace_all?: boolean;
       edits?: { old_string: string; new_string: string; replace_all?: boolean }[];
-    }): Promise<ToolOutput> => {
+    }, callOptions?: { abortSignal?: AbortSignal }): Promise<ToolOutput> => {
       // Validate path
       const validation = validator.validate(file_path, 'edit');
       if (!validation.allowed) {
@@ -537,52 +546,115 @@ Use absolute paths within these directories. Other paths will be rejected.`;
         : [{ old_string: old_string!, new_string: new_string ?? '', replace_all }];
 
       try {
-        // Read current content once, apply all edits in memory, write once.
-        let content = await fs.readFile(validation.resolvedPath, 'utf-8');
-        const applied: { replacements: number; matchStrategy: string }[] = [];
+        return await withFileMutationQueue(validation.resolvedPath, async () => {
+          if (callOptions?.abortSignal?.aborted) {
+            return singleEditError('Operation aborted');
+          }
+          // Read inside the critical section so this edit sees every earlier
+          // successful mutation to the same file.
+          const originalContent = await fs.readFile(validation.resolvedPath, 'utf-8');
+          let content = originalContent;
+          const applied: { replacements: number; matchStrategy: string }[] = [];
 
-        for (let i = 0; i < editList.length; i++) {
-          const e = editList[i];
-          const result = fuzzyReplace(content, e.old_string, e.new_string, e.replace_all);
+          if (usingBatch) {
+            const replacements: Array<{
+              start: number;
+              end: number;
+              newString: string;
+              editIndex: number;
+            }> = [];
 
-          if (!result.success) {
-            // Atomic: nothing has been written yet, so the file is untouched.
-            const where = usingBatch ? `Edit ${i + 1} of ${editList.length} failed: ` : '';
-            return singleEditError(`${where}${result.error}${usingBatch ? ' (file left unchanged)' : ''}`);
+            for (let i = 0; i < editList.length; i++) {
+              const e = editList[i];
+              if (e.old_string.length === 0) {
+                return singleEditError(`Edit ${i + 1} of ${editList.length} failed: old_string must not be empty (file left unchanged)`);
+              }
+              const result = fuzzyReplace(originalContent, e.old_string, e.new_string, e.replace_all);
+              if (!result.success) {
+                return singleEditError(`Edit ${i + 1} of ${editList.length} failed: ${result.error} (file left unchanged)`);
+              }
+
+              let searchFrom = 0;
+              let count = 0;
+              while (searchFrom <= originalContent.length - result.matchedString.length) {
+                const start = originalContent.indexOf(result.matchedString, searchFrom);
+                if (start === -1) break;
+                replacements.push({
+                  start,
+                  end: start + result.matchedString.length,
+                  newString: e.new_string,
+                  editIndex: i,
+                });
+                count++;
+                if (!e.replace_all) break;
+                searchFrom = start + result.matchedString.length;
+              }
+              applied.push({ replacements: count, matchStrategy: result.replacerUsed });
+            }
+
+            replacements.sort((a, b) => a.start - b.start || a.end - b.end);
+            let furthest = replacements[0];
+            for (let i = 1; i < replacements.length; i++) {
+              const current = replacements[i];
+              if (current.start < furthest.end) {
+                return singleEditError(
+                  `Edits ${furthest.editIndex + 1} and ${current.editIndex + 1} overlap (file left unchanged)`,
+                );
+              }
+              if (current.end > furthest.end) furthest = current;
+            }
+
+            // Apply from the end so offsets measured against the original
+            // snapshot remain valid as replacement lengths change.
+            for (let i = replacements.length - 1; i >= 0; i--) {
+              const replacement = replacements[i];
+              content = content.slice(0, replacement.start)
+                + replacement.newString
+                + content.slice(replacement.end);
+            }
+          } else {
+            const e = editList[0];
+            if (e.old_string.length === 0) {
+              return singleEditError('old_string must not be empty');
+            }
+            const result = fuzzyReplace(content, e.old_string, e.new_string, e.replace_all);
+            if (!result.success) return singleEditError(result.error);
+
+            const replacements = e.replace_all
+              ? content.split(result.matchedString).length - 1
+              : 1;
+            content = result.newContent;
+            applied.push({ replacements, matchStrategy: result.replacerUsed });
           }
 
-          // Count replacements against the pre-edit content for this step.
-          const replacements = e.replace_all
-            ? content.split(result.matchedString).length - 1
-            : 1;
-          content = result.newContent;
-          applied.push({ replacements, matchStrategy: result.replacerUsed });
-        }
+          // Replace the destination only after every edit has matched.
+          if (callOptions?.abortSignal?.aborted) {
+            return singleEditError('Operation aborted');
+          }
+          await atomicWriteFile(validation.resolvedPath, content);
 
-        // Write back once, after every edit has matched.
-        await fs.writeFile(validation.resolvedPath, content, 'utf-8');
+          if (usingBatch) {
+            return {
+              output: JSON.stringify({
+                success: true,
+                path: validation.resolvedPath,
+                editsApplied: applied.length,
+                replacements: applied.reduce((n, a) => n + a.replacements, 0),
+                strategies: applied.map(a => a.matchStrategy),
+              }),
+            };
+          }
 
-        if (usingBatch) {
+          // Single-edit form keeps its original output shape for compatibility.
           return {
             output: JSON.stringify({
               success: true,
               path: validation.resolvedPath,
-              editsApplied: applied.length,
-              replacements: applied.reduce((n, a) => n + a.replacements, 0),
-              strategies: applied.map(a => a.matchStrategy),
+              replacements: applied[0].replacements,
+              matchStrategy: applied[0].matchStrategy,
             }),
           };
-        }
-
-        // Single-edit form keeps its original output shape for compatibility.
-        return {
-          output: JSON.stringify({
-            success: true,
-            path: validation.resolvedPath,
-            replacements: applied[0].replacements,
-            matchStrategy: applied[0].matchStrategy,
-          }),
-        };
+        });
       } catch (err) {
         return singleEditError(err instanceof Error ? err.message : String(err));
       }
