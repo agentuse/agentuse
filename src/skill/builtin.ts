@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+export const BUILTIN_SKILL_NAMES = ['core', 'creator', 'tester', 'runner', 'onboarding', 'automate'] as const;
+
 function packageRoot(): string {
   const moduleDir = dirname(fileURLToPath(import.meta.url));
   const sourceRoot = join(moduleDir, '..', '..');

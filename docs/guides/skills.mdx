@@ -62,6 +62,11 @@ npx skills add agentuse/agentuse
 
 The stub redirects to `agentuse skills get core`, keeping instructions aligned with the installed CLI version. `core` is the entry point: it points on to `runner` (running, listing, sessions, serve, schedules), `creator` (authoring and reviewing `.agentuse` files), and `tester` (validating agents with mock runs), each fetched the same way.
 
+Dashboard creator sessions can read these version-matched builtins directly,
+including `core`, `creator`, and `tester`, without shell access. The creator
+guide is already included in the authoring context. Builtin guidance is separate
+from the installed skill catalog, and reading it grants no execution tools.
+
 ## Skill Structure
 
 Each skill lives in its own directory with a `SKILL.md` file:

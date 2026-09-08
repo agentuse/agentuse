@@ -64,8 +64,12 @@ flow.
     name a focused agent using AgentUse authoring guidance; it independently
     chooses a suitable runtime model from the connected providers. AgentUse
     validates the generated source, runtime-model choice, and static safety
-    guardrails before persisting it in the project and showing it immediately.
-    The saved agent still needs your review before its first run. A schedule
+    guardrails, then performs a separate read-only model review of whether the
+    declared tools can support the draft's operations. For example, exact parser
+    diagnostics require a callable parser, not just permission to read files.
+    Review the draft, request changes if needed, then select **Save agent**.
+    This capability review does not execute or test the finished agent, which
+    still needs validation before its first real run. A schedule
     proposed by project discovery starts paused until you test and enable it. If
     you prefer to work hands-on, use **Copy prompt to coding agent** instead;
     the prepared handoff carries your task and keeps the existing validation

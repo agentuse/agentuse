@@ -33,6 +33,8 @@
 
 ### Fixed
 
+- **Creator drafts can read official builtin guidance and are checked for missing capabilities.** Creator sessions can load version-matched core, creator, and tester references without shell access. Before accepting a draft, a separate read-only model review checks its promised operations against declared tools, returning concrete gaps for correction. This catches claims such as exact parser diagnostics with only filesystem access; it does not replace testing the finished agent.
+
 - **Onboarding includes community CLI providers when their required executable is available on the server.** After installation, provider readiness checks must pass before setup continues, with actionable CLI setup errors shown in place of browser sign-in.
 
 - **Provider changes take effect in running servers.** Installing, removing, or updating a provider package refreshes worker plugin and readiness caches without requiring a server restart.

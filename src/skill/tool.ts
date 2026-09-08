@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import type { Tool } from 'ai';
+import { BUILTIN_SKILL_NAMES } from './builtin';
 import { discoverSkills } from './discovery.js';
 import { parseSkillContent } from './parser.js';
 import { validateAllowedTools } from './validate.js';
@@ -285,6 +286,10 @@ export async function createSkillTools(
       // Find the skill
       const skill = availableSkillsMap.get(name);
       if (!skill) {
+        const builtinName = name.replace(/^agentuse-/, '');
+        if (options.purpose === 'authoring' && BUILTIN_SKILL_NAMES.some((builtin) => builtin === builtinName)) {
+          throw new Error(`"${name}" is not an installed skill. Read the version-matched builtin with tools__builtin_skill_read({"name":"${builtinName}"}). The creator guide is already embedded in your instructions.`);
+        }
         const available = skills.map(s => s.name).join(', ') || 'none';
         throw new Error(`Skill "${name}" not found. Available skills: ${available}`);
       }

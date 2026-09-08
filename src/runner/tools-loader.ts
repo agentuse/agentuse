@@ -1,4 +1,6 @@
 import type { Tool } from 'ai';
+import { createBuiltinSkillTool } from '../onboarding/builtin-skill-tool';
+import { reviewAuthoredAgentCapabilities } from '../agents/capability-review';
 import { getMCPTools, type MCPConnection } from '../mcp';
 import { computeAgentId } from '../utils/agent-id';
 import { getTools as getConfiguredTools, type PathResolverContext } from '../tools/index.js';
@@ -348,11 +350,13 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
   };
   const internalSubmissionTools: Record<string, Tool> = {
     ...(agentSourceContract && agentSourceSubmission && {
+      tools__builtin_skill_read: createBuiltinSkillTool(),
       submit_agent_source: createSubmitAgentSourceTool(
         agentSourceSubmission,
         agentSourceContract,
         loadedSkillNames,
         effectAudit,
+        (source, signal) => reviewAuthoredAgentCapabilities(source, agent.config.model, agentSourceContract.objective, signal),
       ),
     }),
     ...(projectSuggestionsContract && projectSuggestionsSubmission && {

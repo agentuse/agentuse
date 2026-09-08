@@ -22,6 +22,7 @@ export interface AgentSourceSubmission {
 }
 
 export interface AgentSourceSubmissionContract {
+  objective?: string;
   requestedName?: string;
   requestedSchedule?: string;
   availableModels: string[];
@@ -39,6 +40,8 @@ export function agentSourceSubmissionContract(metadata: Record<string, unknown> 
   const isCreator = metadata?.internal === true
     && (metadata.creator === 'agent' || metadata.onboarding === 'agent-creator');
   if (!isCreator) return undefined;
+  const objective = metadata.objective;
+  if (objective !== undefined && typeof objective !== 'string') return undefined;
   const requestedName = metadata.requestedName;
   const requestedSchedule = metadata.requestedSchedule;
   const availableModels = metadata.availableModels;
@@ -50,6 +53,7 @@ export function agentSourceSubmissionContract(metadata: Record<string, unknown> 
   const takenFileNames = metadata.takenFileNames;
   if (takenFileNames !== undefined && (!Array.isArray(takenFileNames) || !takenFileNames.every((name) => typeof name === 'string'))) return undefined;
   return {
+    ...(typeof objective === 'string' && { objective }),
     ...(requestedName && { requestedName }),
     ...(requestedSchedule && { requestedSchedule }),
     availableModels,
@@ -68,11 +72,13 @@ export function createSubmitAgentSourceTool(
   contract: AgentSourceSubmissionContract,
   loadedSkillNames?: () => readonly string[],
   recoverySink?: EffectAuditSink,
+  reviewCapabilities?: (source: string, signal?: AbortSignal) => Promise<void>,
 ): Tool {
+  let submissionInProgress = false;
   return {
     description:
       'Submit the friendly agent name, safe filename, and complete AgentUse file you authored. This is the only accepted handoff for the internal creator. ' +
-      'The host validates the file immediately; if the call is rejected, correct the reported problem and call this tool again. ' +
+      'The host validates the file and checks that its declared capabilities can deliver the requested outcome; if the call is rejected, correct the reported problem and call this tool again. ' +
       'After it is accepted, call report_complete with a short headline and no source in details.',
     inputSchema: z.object({
       name: z.string().min(1).max(120).describe(
@@ -85,7 +91,9 @@ export function createSubmitAgentSourceTool(
         'The complete raw .agentuse file as one string. It must begin with --- and contain parser-valid YAML frontmatter followed by the Markdown instruction body. Do not use a code fence or add commentary.'
       ),
     }).strict(),
-    execute: async ({ name, filename, source }: { name: string; filename: string; source: string }) => {
+    execute: async ({ name, filename, source }: { name: string; filename: string; source: string }, options?: { abortSignal?: AbortSignal }) => {
+      if (submissionInProgress) throw new Error('A source submission is already being reviewed. Wait for its result before submitting another draft.');
+      submissionInProgress = true;
       try {
         const authored = validateAuthoredAgentSource(
           source,
@@ -109,6 +117,9 @@ export function createSubmitAgentSourceTool(
             `An agent file named ${fileName} already exists in this project. Choose a different filename for ${authored.name}`,
           );
         }
+        options?.abortSignal?.throwIfAborted();
+        await reviewCapabilities?.(authored.source, options?.abortSignal);
+        options?.abortSignal?.throwIfAborted();
         const loadedSkills = [...(loadedSkillNames?.() ?? [])];
         submission.source = authored.source;
         submission.name = authored.name;
@@ -123,12 +134,14 @@ export function createSubmitAgentSourceTool(
           model: authored.model,
           loadedSkills,
         });
-        return `Accepted: ${authored.name} is valid and will be saved as ${fileName}. Call report_complete now with a short confirmation headline and omit details.`;
+        return `Accepted: ${authored.name} passed source validation${reviewCapabilities ? ' and capability review' : ''} and will be saved as ${fileName}. Call report_complete now with a short confirmation headline and omit details.`;
       } catch (error) {
         if (error instanceof AgentCreationError) {
           throw new Error(`Source rejected: ${error.message}. Correct the source and call submit_agent_source again.`);
         }
         throw error;
+      } finally {
+        submissionInProgress = false;
       }
     },
   };

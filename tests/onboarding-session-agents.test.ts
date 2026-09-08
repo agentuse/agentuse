@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, spyOn } from 'bun:test';
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseAgentContent } from '../src/parser';
 import { resolveSafeVariables } from '../src/tools/path-validator';
+import * as capabilityReview from '../src/agents/capability-review';
 import { loadAgentTools } from '../src/runner/tools-loader';
 import {
   prepareProjectDiscoveryView,
@@ -256,9 +257,17 @@ Read references/checklist.md before authoring a release workflow.`);
     });
     expect(reference.content).toContain('Require a changelog');
     const source = '---\nname: Release helper\nmodel: openai:gpt-5.6-luna\ndescription: Prepare releases\nschedule: 0 9 * * 1\nskills:\n  auto: false\n  release-helper:\n---\n\nPrepare the release.\n';
-    await expect((loaded.all.submit_agent_source!.execute as any)({
-      name: 'Release helper', filename: 'release-helper.agentuse', source,
-    })).resolves.toContain('Accepted');
+    expect(loaded.all.tools__builtin_skill_read).toBeDefined();
+    const guidance = await (loaded.all.tools__builtin_skill_read!.execute as any)({ name: 'tester' });
+    expect(guidance.content).toContain('agentuse doctor');
+    await expect((loaded.all.tools__skill_load!.execute as any)({ name: 'agentuse-creator' })).rejects.toThrow('tools__builtin_skill_read');
+    const review = spyOn(capabilityReview, 'reviewAuthoredAgentCapabilities').mockResolvedValue();
+    try {
+      await expect((loaded.all.submit_agent_source!.execute as any)({
+        name: 'Release helper', filename: 'release-helper.agentuse', source,
+      })).resolves.toContain('Accepted');
+      expect(review).toHaveBeenCalled();
+    } finally { review.mockRestore(); }
   });
 
   it('validates creator source inside the structured submission tool', async () => {
@@ -416,9 +425,19 @@ Create the agent.
       .rejects.toThrow('Call submit_agent_source first');
 
     const source = '---\nname: Docs drift\nmodel: openai:gpt-5.6-luna\ndescription: Find drift\nschedule: 0 9 * * 1\n---\n\n## Goal\nReport drift.\n';
-    await (loaded.all.submit_agent_source!.execute as any)({
-      name: 'Docs drift', filename: 'docs-drift.agentuse', source,
-    });
+    const review = spyOn(capabilityReview, 'reviewAuthoredAgentCapabilities').mockRejectedValueOnce(new Error('Capability review unavailable'));
+    try {
+      await expect((loaded.all.submit_agent_source!.execute as any)({
+        name: 'Docs drift', filename: 'docs-drift.agentuse', source,
+      })).rejects.toThrow('Capability review unavailable');
+      await expect((loaded.all.report_complete!.execute as any)({ headline: 'Created Docs drift' }))
+        .rejects.toThrow('Call submit_agent_source first');
+      expect(loaded.agentSourceSubmission?.source).toBeUndefined();
+      review.mockResolvedValue();
+      await (loaded.all.submit_agent_source!.execute as any)({
+        name: 'Docs drift', filename: 'docs-drift.agentuse', source,
+      });
+    } finally { review.mockRestore(); }
     await expect((loaded.all.report_complete!.execute as any)({ headline: 'Created Docs drift' }))
       .resolves.toContain('Recorded and delivered');
     expect(loaded.agentSourceSubmission?.source).toBe(source);
