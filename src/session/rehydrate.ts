@@ -63,7 +63,8 @@ function assistantTurnTexts(message: ModelMessage): Set<string> {
 // tool-result per toolCallId, and drop any tool-result with no matching
 // tool-call. This is the symmetric counterpart to backfillMissingToolResults
 // (which heals the inverse: a tool-call with no result).
-function normalizeRehydratedMessages(messages: ModelMessage[]): ModelMessage[] {
+function normalizeRehydratedMessages(messages: ModelMessage[], parts: Part[] = []): ModelMessage[] {
+  const pendingIds = new Set(parts.filter((part): part is ToolPart => part.type === 'tool' && part.state.status === 'pending').map(part => part.callID));
   const calledIds = new Set<string>();
   for (const message of messages) {
     const content = (message as { content?: unknown }).content;
@@ -100,7 +101,17 @@ function normalizeRehydratedMessages(messages: ModelMessage[]): ModelMessage[] {
       out.push(message);
     }
   }
-  return out;
+  // A timeout can leave an ordinary (unsigned) tool call running in the
+  // journal too. Resolve missing calls before subsequent user/assistant turns,
+  // without rewriting calls or pretending their external effects succeeded.
+  const repaired: ModelMessage[] = [];
+  for (const message of out) {
+    repaired.push(message);
+    if (message.role === 'assistant') {
+      backfillMissingToolResults(repaired, message, out, pendingIds);
+    }
+  }
+  return repaired;
 }
 
 /**
@@ -215,14 +226,14 @@ export async function rehydrateMessages(
           appendToolMessages(messages, part);
         }
       }
-      return normalizeRehydratedMessages(messages);
+      return normalizeRehydratedMessages(messages, parts);
     }
 
     const messages = stripToolBlocks(snapshotMessages, reappendedToolIds);
     for (const part of fresh) {
       appendPartMessages(messages, part);
     }
-    return normalizeRehydratedMessages(messages);
+    return normalizeRehydratedMessages(messages, parts);
   }
 
   const messages: ModelMessage[] = [];
@@ -241,7 +252,7 @@ export async function rehydrateMessages(
     appendPartMessages(messages, part);
   }
 
-  return normalizeRehydratedMessages(messages);
+  return normalizeRehydratedMessages(messages, parts);
 }
 
 function appendPartMessages(messages: ModelMessage[], part: Part): void {
@@ -327,11 +338,16 @@ function appendToolResult(messages: ModelMessage[], part: ToolPart): void {
  * Anthropic, so this guards against a sibling call the journaling never
  * resolved.
  */
-function backfillMissingToolResults(messages: ModelMessage[], assistantTurn: ModelMessage): void {
+function backfillMissingToolResults(
+  messages: ModelMessage[],
+  assistantTurn: ModelMessage,
+  knownMessages: ModelMessage[] = messages,
+  excludedIds: Set<string> = new Set(),
+): void {
   const content = (assistantTurn as { content?: unknown }).content;
   if (!Array.isArray(content)) return;
   const resolved = new Set<string>();
-  for (const message of messages) {
+  for (const message of knownMessages) {
     const mc = (message as { content?: unknown }).content;
     if (message.role === 'tool' && Array.isArray(mc)) {
       for (const part of mc as any[]) {
@@ -340,7 +356,7 @@ function backfillMissingToolResults(messages: ModelMessage[], assistantTurn: Mod
     }
   }
   for (const part of content as any[]) {
-    if (part?.type !== 'tool-call' || resolved.has(part.toolCallId)) continue;
+    if (part?.type !== 'tool-call' || resolved.has(part.toolCallId) || excludedIds.has(part.toolCallId)) continue;
     messages.push({
       role: 'tool',
       content: [{
@@ -349,7 +365,7 @@ function backfillMissingToolResults(messages: ModelMessage[], assistantTurn: Mod
         toolName: part.toolName,
         output: toToolResultOutput({
           success: false,
-          error: 'Tool call was not resolved before resume.'
+          error: 'Tool call was not resolved before resume. Its outcome is unknown; inspect persisted state before retrying to avoid duplicate side effects.'
         })
       }]
     } as unknown as ModelMessage);

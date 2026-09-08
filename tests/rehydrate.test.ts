@@ -7,6 +7,25 @@ import { initStorage } from '../src/storage';
 import { SessionManager, rehydrateMessages, ensureTrailingUserTurn, RESUME_CONTINUATION_PROMPT } from '../src/session';
 
 describe('rehydrateMessages', () => {
+  for (const snapshotMode of ['none', 'captured', 'fresh'] as const) {
+    it(`repairs interrupted unsigned tool calls before continuation (${snapshotMode})`, async () => {
+      const call = { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'interrupted', toolName: 'subagent__creator', input: { task: 'create' } }] };
+      const continuation = { type: 'text', role: 'user', text: 'resume', time: { start: 30, end: 30 } };
+      const running = { type: 'tool', callID: 'interrupted', tool: 'subagent__creator', state: { status: 'running', input: { task: 'create' }, time: { start: 10 } } };
+      const manager = {
+        getPrimaryMessage: async () => ({ id: 'message', assistant: { system: [] }, user: { prompt: { task: 'create' } } }),
+        readContextSnapshot: async () => snapshotMode === 'none' ? null : ({ version: 1, updatedAt: snapshotMode === 'captured' ? 20 : 5, messages: [call] }),
+        getMessageParts: async () => [running, continuation],
+      };
+      const messages = await rehydrateMessages(manager as any, 'session', 'agent');
+      const index = messages.findIndex((message: any) => message.role === 'assistant' && message.content[0]?.toolCallId === 'interrupted');
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect(messages[index + 1]).toMatchObject({ role: 'tool', content: [{ toolCallId: 'interrupted', output: { type: 'json', value: { success: false, error: expect.stringContaining('outcome is unknown') } } }] });
+      expect(messages[index + 2]).toMatchObject({ role: 'user', content: 'resume' });
+      expect((running.state as any).status).toBe('running');
+    });
+  }
+
   it('rebuilds persisted text and tool parts as model messages', async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-rehydrate-'));
     process.env.XDG_DATA_HOME = projectRoot;
