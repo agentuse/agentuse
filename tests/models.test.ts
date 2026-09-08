@@ -245,6 +245,48 @@ describe('createModel OpenCode Go', () => {
     });
   });
 
+  it.each(['kimi-k2.7-code', 'minimax-m3', 'gpt-5.6-luna'])('sends stable routing headers on %s requests', async (modelId) => {
+    await withTempAuthStorage(async () => {
+      await withEnv({ ...opencodeGoEnvKeys, OPENCODE_GO_API_KEY: 'go-key' }, async () => {
+        const originalFetch = globalThis.fetch;
+        const requests: Headers[] = [];
+        globalThis.fetch = (async (_input: unknown, init?: RequestInit) => {
+          requests.push(new Headers(init?.headers));
+          throw new Error('captured request');
+        }) as typeof fetch;
+        try {
+          const model = await createModel(`opencode-go:${modelId}`, { sessionId: 'session-one' });
+          const standalone = await createModel(`opencode-go:${modelId}`);
+          const another = await createModel(`opencode-go:${modelId}`);
+          for (const target of [model, model, standalone, standalone, another]) {
+            await expect(target.doGenerate({
+              prompt: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+            })).rejects.toThrow('captured request');
+          }
+          expect(requests).toHaveLength(5);
+          expect(requests[0]!.get('x-opencode-session')).toBe('session-one');
+          expect(requests[1]!.get('x-opencode-session')).toBe('session-one');
+          expect(requests[2]!.get('x-opencode-session')).toBeTruthy();
+          expect(requests[3]!.get('x-opencode-session')).toBe(requests[2]!.get('x-opencode-session'));
+          expect(requests[4]!.get('x-opencode-session')).not.toBe(requests[2]!.get('x-opencode-session'));
+          for (const request of requests) expect(request.get('user-agent')).toMatch(/^agentuse\//);
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
+      });
+    });
+  });
+
+  it.each(['openai-completions', 'anthropic-messages', 'openai-responses'] as const)('adds routing headers to custom Go providers using %s', async (api) => {
+    await withTempAuthStorage(async () => {
+      await AuthStorage.setCustomProvider('console-go', { baseURL: 'https://opencode.ai/zen/go/v1', key: 'go-key', api });
+      const model = await createModel('console-go:test-model', { sessionId: 'custom-session' });
+      const headers = new Headers(await model.config.headers());
+      expect(headers.get('x-opencode-session')).toBe('custom-session');
+      expect(headers.get('user-agent')).toMatch(/^agentuse\//);
+    });
+  });
+
   it('creates an OpenAI-compatible model with OPENCODE_GO_API_KEY', async () => {
     await withTempAuthStorage(async () => {
       await withEnv({

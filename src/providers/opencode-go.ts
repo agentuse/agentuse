@@ -1,8 +1,28 @@
+import { randomUUID } from 'node:crypto';
+import { version } from '../../package.json';
+
 export const OPENCODE_GO_PROVIDER_ID = 'opencode-go';
 export const OPENCODE_GO_DISPLAY_NAME = 'OpenCode Go';
 export const OPENCODE_GO_API_KEY_ENV = 'OPENCODE_GO_API_KEY';
 export const OPENCODE_GO_BASE_URL_ENV = 'OPENCODE_GO_BASE_URL';
 export const OPENCODE_GO_BASE_URL = 'https://opencode.ai/zen/go/v1';
+
+export function isOpenCodeGoBaseURL(baseURL: string): boolean {
+  try {
+    const url = new URL(baseURL);
+    return url.hostname === 'opencode.ai' && /^\/zen\/go(?:\/|$)/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+export function createOpenCodeGoHeaders(sessionId?: string): Record<string, string> {
+  return {
+    // Allocate once per model for standalone helper calls; retries reuse it.
+    'x-opencode-session': sessionId || randomUUID(),
+    'user-agent': `agentuse/${version}`,
+  };
+}
 
 export type OpenCodeGoProtocol = 'anthropic' | 'openai-compatible' | 'openai-responses';
 

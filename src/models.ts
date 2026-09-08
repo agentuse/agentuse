@@ -15,6 +15,8 @@ import { resolveModelString } from './utils/model-alias';
 import { createDemoModel } from './providers/demo';
 import {
   getOpenCodeGoProtocol,
+  createOpenCodeGoHeaders,
+  isOpenCodeGoBaseURL,
   OPENCODE_GO_API_KEY_ENV,
   OPENCODE_GO_DISPLAY_NAME,
   OPENCODE_GO_PROVIDER_ID,
@@ -580,17 +582,18 @@ export async function createModel(modelString: string, options: { sessionId?: st
     }
 
     const baseURL = resolveOpenCodeGoBaseURL(config);
+    const headers = createOpenCodeGoHeaders(options.sessionId);
     const healthFetch = ((input: RequestInfo | URL, init?: RequestInit) => fetchWithProviderHealth(apiHealthSubject(OPENCODE_GO_PROVIDER_ID, apiKey!, baseURL), input, init)) as typeof fetch;
     const protocol = getOpenCodeGoProtocol(config.modelName);
     logger.debug(`Using ${OPENCODE_GO_DISPLAY_NAME} ${protocol} endpoint at ${baseURL}`);
 
     if (protocol === 'anthropic') {
-      const anthropic = createAnthropic({ apiKey, baseURL, fetch: healthFetch });
+      const anthropic = createAnthropic({ apiKey, baseURL, headers, fetch: healthFetch });
       return await maybeWrapWithDevTools(anthropic.chat(config.modelName));
     }
 
     if (protocol === 'openai-responses') {
-      const openai = createOpenAI({ apiKey, baseURL, fetch: healthFetch });
+      const openai = createOpenAI({ apiKey, baseURL, headers, fetch: healthFetch });
       return await maybeWrapWithDevTools(openai.responses(config.modelName));
     }
 
@@ -598,6 +601,7 @@ export async function createModel(modelString: string, options: { sessionId?: st
       name: OPENCODE_GO_PROVIDER_ID,
       baseURL,
       apiKey,
+      headers,
       fetch: healthFetch,
     });
     return await maybeWrapWithDevTools(provider(config.modelName));
@@ -678,17 +682,18 @@ export async function createModel(modelString: string, options: { sessionId?: st
         process.env[`${envPrefix}_BASE_URL`] || customProvider.baseURL,
       );
       const apiKey = process.env[`${envPrefix}_API_KEY`] || customProvider.key || 'not-needed';
+      const headers = isOpenCodeGoBaseURL(baseURL) ? createOpenCodeGoHeaders(options.sessionId) : undefined;
 
       logger.debug(`Using custom provider '${config.provider}' at ${baseURL}`);
 
       const healthFetch = ((input: RequestInfo | URL, init?: RequestInit) => fetchWithProviderHealth(apiHealthSubject(config.provider, apiKey, baseURL), input, init)) as typeof fetch;
       const api = customProvider.api ?? 'openai-completions';
       if (api === 'anthropic-messages') {
-        const provider = createAnthropic({ apiKey, baseURL, fetch: healthFetch });
+        const provider = createAnthropic({ apiKey, baseURL, ...(headers && { headers }), fetch: healthFetch });
         return await maybeWrapWithDevTools(provider.chat(config.modelName));
       }
       if (api === 'openai-responses') {
-        const provider = createOpenAI({ apiKey, baseURL, fetch: healthFetch });
+        const provider = createOpenAI({ apiKey, baseURL, ...(headers && { headers }), fetch: healthFetch });
         return await maybeWrapWithDevTools(provider.responses(config.modelName));
       }
 
@@ -698,6 +703,7 @@ export async function createModel(modelString: string, options: { sessionId?: st
         name: config.provider,
         baseURL,
         apiKey,
+        ...(headers && { headers }),
         fetch: healthFetch,
         ...(customProvider.compatibility?.supportsUsageInStreaming === false && {
           includeUsage: false,
