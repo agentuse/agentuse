@@ -7,6 +7,7 @@ export interface SessionLogController {
   approval: Omit<ApprovalPageInfo, 'logs'> | null;
   entries: ApprovalLogEntry[];
   streamError: string | null;
+  onAnswered: () => void;
 }
 
 /**
@@ -24,6 +25,7 @@ export function useSessionLog(options: {
   enabled?: boolean;
   logsLimit?: number;
 }): SessionLogController {
+  const [nudge, setNudge] = useState(0);
   const [status, setStatus] = useState('idle');
   const [approval, setApproval] = useState<Omit<ApprovalPageInfo, 'logs'> | null>(null);
   const [entries, setEntries] = useState<ApprovalLogEntry[]>([]);
@@ -36,7 +38,7 @@ export function useSessionLog(options: {
     pending: true,
     enabled: options.enabled !== false && Boolean(options.sessionId),
     logsLimit: options.logsLimit ?? 400,
-    nudge: 0,
+    nudge,
     handlers: {
       onStatus: (next, info) => {
         setStatus(next);
@@ -55,5 +57,8 @@ export function useSessionLog(options: {
     },
   });
 
-  return { status, approval, entries, streamError };
+  return { status, approval, entries, streamError, onAnswered: () => {
+    setStatus('resuming');
+    setNudge((current) => current + 1);
+  } };
 }

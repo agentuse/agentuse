@@ -484,10 +484,11 @@ function judgeMarksFor(judge: JudgeSummary | undefined, details: ApprovalLogDeta
   return { attempt: source.attempt, marks, href: judge.sessionHref };
 }
 
-function OptionsBlock(props: {
+export function OptionsBlock(props: {
   /** Radio group name, scoped to the owning gate (see ApprovalDetailCard). */
   groupName: string;
   options: ApprovalOption[];
+  disabled?: boolean;
   changes: ApprovalChange[];
   selected?: string | undefined;
   decided?: string | undefined;
@@ -539,6 +540,7 @@ function OptionsBlock(props: {
               <label class="approval-option-choice">
                 <input
                   type="radio"
+                  disabled={props.disabled}
                   name={props.groupName}
                   value={opt.id}
                   checked={isSelected}
@@ -569,6 +571,7 @@ function ApprovalDetailCard(props: {
    *  would silently merge them into one group where picking in one clears
    *  the other. */
   entryId: string;
+  hideOptions?: boolean | undefined;
   sessionId: string;
   token: string | undefined;
   selectedChoice?: string | undefined;
@@ -740,7 +743,7 @@ function ApprovalDetailCard(props: {
           <div class="approval-section-body"><LogContent value={stripEchoedHeading(details.context, 'Source context')} forceMarkdown /></div>
         </details>
       )}
-      {options.length > 0 && (
+      {!props.hideOptions && options.length > 0 && (
         // Last content section by design: the feed auto-scrolls to the end, so
         // the reviewer lands here, and the pick sits directly above the
         // Approve/Reject/Comment row it feeds. Evidence above, decision below.
@@ -1283,6 +1286,8 @@ export interface LogEntryProps {
    *  closed once it finishes. */
   expanded: boolean | undefined;
   showActions: boolean;
+  /** The draft composer owns this pending gate's choices. Evidence stays here. */
+  hideApprovalOptions?: boolean | undefined;
   actionsDisabled: boolean;
   /** The decision currently being submitted; renders a specific pending label
    *  ("approving…") in place of the keyboard hint. */
@@ -1450,6 +1455,7 @@ function LogEntryImpl(props: LogEntryProps) {
           {entry.details && (isApprovalEntry
             ? <ApprovalDetailCard
                 details={entry.details}
+                hideOptions={props.hideApprovalOptions}
                 entryId={entry.id}
                 sessionId={props.sessionId}
                 token={props.token}
@@ -1531,6 +1537,7 @@ export const LogEntry = memo(LogEntryImpl, (prev, next) =>
   prev.repeatCount === next.repeatCount &&
   prev.expanded === next.expanded &&
   prev.showActions === next.showActions &&
+  prev.hideApprovalOptions === next.hideApprovalOptions &&
   prev.actionsDisabled === next.actionsDisabled &&
   prev.pendingAction === next.pendingAction &&
   prev.parentApproveHref === next.parentApproveHref &&
