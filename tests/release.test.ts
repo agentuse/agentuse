@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'bun:test';
-import { assertManifestVersionsCoupled, assertTriggeredCommitBelongsToRemoteMain } from '../scripts/release.ts';
+import {
+  assertManifestVersionsCoupled,
+  assertTriggeredCommitBelongsToRemoteMain,
+  githubReleaseCreateArgs,
+} from '../scripts/release.ts';
 
 describe('release version coupling', () => {
   it('requires npm and Desktop to ship the same version', () => {
@@ -64,5 +68,27 @@ describe('release tag branch gate', () => {
         () => '',
       ),
     ).toThrow('GITHUB_SHA is missing');
+  });
+});
+
+describe('GitHub Release creation', () => {
+  it('creates a stable release from notes without attaching integration archives', () => {
+    expect(githubReleaseCreateArgs('0.22.0', 'agentuse/agentuse', '/tmp/notes.md')).toEqual([
+      'release',
+      'create',
+      'v0.22.0',
+      '-R',
+      'agentuse/agentuse',
+      '--title',
+      'v0.22.0',
+      '--notes-file',
+      '/tmp/notes.md',
+    ]);
+  });
+
+  it('marks prereleases without adding assets', () => {
+    const args = githubReleaseCreateArgs('0.22.0-rc.1', 'agentuse/agentuse', '/tmp/notes.md');
+    expect(args.at(-1)).toBe('--prerelease');
+    expect(args.some((arg) => /\.(?:zip|tgz)$/.test(arg))).toBe(false);
   });
 });

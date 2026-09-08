@@ -3,28 +3,16 @@
 Turn the workflow in the current Pi conversation into a focused, validated
 AgentUse agent with `/automate`.
 
-## Install a release
+## Repository installation
 
-Download `agentuse-pi-package.tgz` from the desired
-[AgentUse release](https://github.com/agentuse/agentuse/releases). Extract it
-into a persistent directory and install the resulting `package` directory:
-
-```sh
-mkdir -p agentuse-pi
-tar -xzf agentuse-pi-package.tgz -C agentuse-pi
-pi install ./agentuse-pi/package
-```
-
-Keep the extracted directory while the integration is installed. Start a new
-Pi session to use `/automate`. See the
-[installation guide](https://docs.agentuse.io/guides/coding-agent-integrations)
-for download commands and updates.
-
-## Local development
-
-Build with `bun run integrations:build` from the repository root, then install
-the generated package:
+AgentUse does not publish a Pi package through new GitHub Releases. Build the
+integration from a source checkout, then install the generated package:
 
 ```sh
+bun run integrations:build
 pi install ./dist/integrations/pi
 ```
+
+Start a new Pi session, then use `/automate`. See the
+[installation guide](https://docs.agentuse.io/guides/coding-agent-integrations)
+for the complete authoring and validation flow.

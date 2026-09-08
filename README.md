@@ -331,12 +331,6 @@ provider's managed-agent platform.
 
 ## Author with AI coding assistants
 
-Codex, Claude Code, and Pi have dedicated AgentUse integrations that turn work
-from the current conversation into a reusable agent. Download the versioned
-packages from [GitHub Releases](https://github.com/agentuse/agentuse/releases)
-and follow the [coding-agent integration guide](https://docs.agentuse.io/guides/coding-agent-integrations).
-The guide also covers the portable `automate` skill archive.
-
 Install the AgentUse skill for Claude Code, Codex, Cursor, Gemini CLI, GitHub
 Copilot, Goose, OpenCode, Windsurf, and other assistants that support Agent
 Skills:
@@ -344,6 +338,11 @@ Skills:
 ```bash
 npx skills add agentuse/agentuse
 ```
+
+Then ask your assistant to use AgentUse to turn the workflow in the current
+conversation into a reusable agent. See the
+[coding-agent integration guide](https://docs.agentuse.io/guides/coding-agent-integrations)
+for the authoring and validation flow.
 
 The installed discovery skill loads version-matched guidance from the CLI:
 

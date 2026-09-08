@@ -1,23 +1,20 @@
 # AgentUse for Codex
 
 Turn a workflow from the current Codex conversation into a focused, validated
-AgentUse agent with `$automate`.
+AgentUse agent.
 
-## Install a release
+## Install
 
-Download `agentuse-codex-plugin.zip` from the desired
-[AgentUse release](https://github.com/agentuse/agentuse/releases) and extract it
-into a persistent directory. The extraction root contains the marketplace
-metadata and an `agentuse` subdirectory.
+For normal use, install the repository skill with the cross-host Agent Skills
+installer:
 
 ```sh
-codex plugin marketplace add /absolute/path/to/extracted-codex
-codex plugin add agentuse@agentuse-release
+npx skills add agentuse/agentuse
 ```
 
-Use the extraction root, not its `agentuse` subdirectory, in the marketplace
-command. See the [installation guide](https://docs.agentuse.io/guides/coding-agent-integrations)
-for download commands, portable skills, and updates.
+Start a new Codex task, then ask Codex to use AgentUse to make the workflow
+repeatable. See the [installation guide](https://docs.agentuse.io/guides/coding-agent-integrations)
+for the complete authoring and validation flow.
 
 ## Local development
 

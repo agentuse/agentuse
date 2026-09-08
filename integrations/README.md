@@ -10,9 +10,9 @@ skills into this directory. Build complete, version-matched packages with:
 bun run integrations:build
 ```
 
-The command writes local marketplaces, an npm-ready Pi package, and stable
-release archives under `dist/integrations/`. Validate all archive contents and
-checksums with:
+The command writes local marketplaces, a Pi package, and portable test archives
+under `dist/integrations/`. These outputs are for local development and are not
+attached to GitHub Releases. Validate their contents and checksums with:
 
 ```sh
 bun run integrations:check

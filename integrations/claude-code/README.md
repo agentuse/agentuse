@@ -1,23 +1,20 @@
 # AgentUse for Claude Code
 
 Turn a workflow from the current Claude Code conversation into a focused,
-validated AgentUse agent with `/agentuse:automate`.
+validated AgentUse agent.
 
-## Install a release
+## Install
 
-Download `agentuse-claude-plugin.zip` from the desired
-[AgentUse release](https://github.com/agentuse/agentuse/releases) and extract it
-into a persistent directory. The extraction root contains the marketplace
-metadata and an `agentuse` subdirectory.
+For normal use, install the repository skill with the cross-host Agent Skills
+installer:
 
 ```sh
-claude plugin marketplace add /absolute/path/to/extracted-claude
-claude plugin install agentuse@agentuse-release
+npx skills add agentuse/agentuse
 ```
 
-Use the extraction root, not its `agentuse` subdirectory, in the marketplace
-command. See the [installation guide](https://docs.agentuse.io/guides/coding-agent-integrations)
-for download commands, portable skills, and updates.
+Restart Claude Code, then ask it to use AgentUse to make the workflow
+repeatable. See the [installation guide](https://docs.agentuse.io/guides/coding-agent-integrations)
+for the complete authoring and validation flow.
 
 ## Local development
 
