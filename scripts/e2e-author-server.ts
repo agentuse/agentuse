@@ -20,6 +20,7 @@ Bun.serve({
     const prompt = (body.messages ?? [])
       .map((message) => typeof message.content === 'string' ? message.content : JSON.stringify(message.content))
       .join('\n');
+    const capabilityReview = prompt.includes('Review whether an authored AgentUse agent can deliver its requested outcome');
     const runtimeBlock = /<available_runtime_models>\s*([\s\S]*?)\s*<\/available_runtime_models>/i.exec(prompt)?.[1] ?? '';
     const runtimeModels = runtimeBlock.split('\n').map((line) => line.replace(/^\s*-\s*/, '').trim()).filter(Boolean);
     // Mechanical summarization/review should not inherit the stronger model
@@ -37,12 +38,12 @@ Bun.serve({
       : 'Summarize new support tickets every morning and highlight urgent replies.';
     const content = `---\nname: ${name}\nmodel: ${model}\ndescription: ${description}\n---\n\n## Task\n\n${task}\n\n## Output\n\nReturn a concise result with the most urgent or important item first.\n`;
     const created = Math.floor(Date.now() / 1000);
-    const responseText = 'Created the agent';
+    const responseText = capabilityReview ? '{"issues":[]}' : 'Created the agent';
     const contentParts = responseText.match(/[\s\S]{1,80}/g) ?? [responseText];
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
-        if (!submittedSource) {
+        if (!submittedSource && !capabilityReview) {
           const toolCall = {
             id: 'author-e2e',
             object: 'chat.completion.chunk',

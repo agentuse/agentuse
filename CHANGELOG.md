@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **The release dashboard smoke test follows the current agent-creation and provider-settings flows.** It now verifies the draft workspace, confirms an agent is not written before Save, handles the creator's capability-review pass, and expands a provider row before opening its connection dialog.
+
 ## [0.21.0] - 2026-09-08
 
 ### Added

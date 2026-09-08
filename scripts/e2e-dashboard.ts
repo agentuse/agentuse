@@ -393,22 +393,35 @@ async function main(): Promise<void> {
   browser(['wait', '--text', 'Describe the job']);
   browser(['screenshot', join(evidenceDir, 'onboarding-create-agent.png')]);
   browser(['click', '.agent-create-primary']);
-  browser(['wait', '--text', 'Creating your agent']);
+  browser(['wait', '--text', 'Save agent']);
   expectBrowser(
     `(() => {
-      const dialog = document.querySelector('.agent-create-dialog[open]');
-      return dialog?.textContent?.includes('Creating your agent') === true
-        && dialog.querySelector('.agent-create-form') === null;
+      return location.pathname === '/agents/draft'
+        && document.querySelector('.agent-create-dialog[open]') === null
+        && document.querySelector('.page-draft') !== null;
     })()`,
-    'agent creation replaces the editable form with progress',
+    'agent creation hands off from the modal to the draft workspace',
   );
-  browser(['screenshot', join(evidenceDir, 'onboarding-create-agent-progress.png')]);
+  browser(['screenshot', join(evidenceDir, 'onboarding-create-agent-draft.png')]);
+  try {
+    browser(['wait', '--text', 'Summarize New Support Tickets Every Morning']);
+  } catch {
+    const onboardingDraftBody = browser(['eval', 'document.body.innerText']);
+    fail(`Creator did not produce the onboarding draft. Page text:\n${onboardingDraftBody}\nDaemon output:\n${daemonOutput}\nAuthor output:\n${authorDaemonOutput}`);
+  }
+  expectBrowser(
+    `document.body.innerText.includes('Summarize New Support Tickets Every Morning') && !document.querySelector('.draft-primary')?.hasAttribute('disabled')`,
+    'creator finishes the first draft without writing it to the project',
+  );
+  const onboardingAgentPath = join(onboardingProjectRoot, 'agents', 'summarize-new-support-tickets-every-morning.agentuse');
+  if (await Bun.file(onboardingAgentPath).exists()) fail('Onboarding agent was written before the operator saved its draft');
+  browser(['click', '.draft-header-actions .draft-primary']);
   browser(['wait', '--text', 'Summarize New Support Tickets Every Morning']);
   expectBrowser(
-    `document.body.innerText.includes('Summarize New Support Tickets Every Morning') && document.querySelector('.agent-create-dialog[open]') === null`,
-    'onboarding persists the first agent and renders its ready state',
+    `location.pathname.includes('/agents/onboarding/') && document.body.innerText.includes('Summarize New Support Tickets Every Morning')`,
+    'saving the onboarding draft opens the persistent agent',
   );
-  const onboardingAgentSource = await readFile(join(onboardingProjectRoot, 'agents', 'summarize-new-support-tickets-every-morning.agentuse'), 'utf8');
+  const onboardingAgentSource = await readFile(onboardingAgentPath, 'utf8');
   if (!onboardingAgentSource.includes('model: openai:gpt-5.4-mini') || !onboardingAgentSource.includes('Summarize new support tickets')) {
     fail(`Onboarding agent source was not persisted correctly:\n${onboardingAgentSource}`);
   }
@@ -425,10 +438,18 @@ async function main(): Promise<void> {
   browser(['click', '.agent-create-primary']);
   browser(['wait', '--text', 'Review Yesterday Work']);
   expectBrowser(
-    `location.pathname.includes('/agents/onboarding/') && document.body.innerText.includes('Review Yesterday Work')`,
-    'normal Agents view creates and opens a persistent agent',
+    `location.pathname === '/agents/draft' && document.body.innerText.includes('Review Yesterday Work')`,
+    'normal Agents view opens the new draft workspace',
   );
-  const normalAgentSource = await readFile(join(onboardingProjectRoot, 'agents', 'review-yesterday-work.agentuse'), 'utf8');
+  const normalAgentPath = join(onboardingProjectRoot, 'agents', 'review-yesterday-work.agentuse');
+  if (await Bun.file(normalAgentPath).exists()) fail('Normal agent was written before the operator saved its draft');
+  browser(['click', '.draft-header-actions .draft-primary']);
+  browser(['wait', '--text', 'Review Yesterday Work']);
+  expectBrowser(
+    `location.pathname.includes('/agents/onboarding/') && document.body.innerText.includes('Review Yesterday Work')`,
+    'saving a normal Agents-view draft opens the persistent agent',
+  );
+  const normalAgentSource = await readFile(normalAgentPath, 'utf8');
   if (!normalAgentSource.includes('Review yesterday’s work')) fail(`Normal agent source was not persisted correctly:\n${normalAgentSource}`);
   const authorRequests = await authorRequestCount();
   if (authorRequests < 2) fail(`Expected both native creations to call the selected model; observed ${authorRequests} author request(s)`);
@@ -449,8 +470,21 @@ async function main(): Promise<void> {
     `fetch('/api/providers').then((response) => response.json()).then((payload) => payload.success === true && payload.catalog.length >= 4 && !JSON.stringify(payload).includes('access_token'))`,
     'provider API returns a redacted catalog and status snapshot',
   );
-  browser(['eval', `(() => { const rows = [...document.querySelectorAll('.provider-settings-row')]; const row = rows.find((item) => item.textContent?.includes('OpenRouter')); const button = row && [...row.querySelectorAll('button')].find((item) => item.textContent?.includes('Connect')); button?.click(); return Boolean(button); })()`]);
-  browser(['wait', '--text', 'Connect a model provider']);
+  expectBrowser(
+    `(() => { const rows = [...document.querySelectorAll('.provider-row')]; const row = rows.find((item) => item.querySelector('.provider-row-name')?.textContent === 'OpenRouter'); const button = row?.querySelector('.provider-row-head'); button?.click(); return Boolean(button); })()`,
+    'OpenRouter provider row expands',
+  );
+  browser(['wait', '300']);
+  expectBrowser(
+    `(() => { const rows = [...document.querySelectorAll('.provider-row')]; const row = rows.find((item) => item.querySelector('.provider-row-name')?.textContent === 'OpenRouter'); const button = row && [...row.querySelectorAll('button')].find((item) => item.textContent?.trim() === 'Connect'); button?.click(); return Boolean(button); })()`,
+    'OpenRouter provider row exposes its connection action',
+  );
+  try {
+    browser(['wait', '--text', 'Connect a model provider']);
+  } catch {
+    const settingsBody = browser(['eval', 'document.body.innerText']);
+    fail(`Provider setup dialog did not open. Page text:\n${settingsBody}`);
+  }
   expectBrowser(
     `document.querySelector('.provider-setup-dialog[open]') !== null && document.querySelector('.provider-setup-dialog input[type="password"]') !== null`,
     'provider setup dialog opens from Preferences without writing credentials',
