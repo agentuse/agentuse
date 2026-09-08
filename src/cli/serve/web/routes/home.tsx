@@ -12,7 +12,7 @@ import { useTitle } from '../hooks/use-title';
 import { UpdateBanner } from '../components/update-banner';
 import { Loading } from '../components/loading';
 import { pendingNewestFirst, PendingApprovalRow } from '../components/pending-approval-card';
-import { displayAgentName, formatApprovalTime, formatRelativeTime, displayStatusLabel, humanizeMetric, runTone, type RunTone } from '../lib/format';
+import { displayAgentName, errorText, formatApprovalTime, formatRelativeTime, displayStatusLabel, humanizeMetric, runTone, type RunTone } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
 import { normalizeMetricValues } from '../../../../shared/metric-values';
@@ -127,13 +127,20 @@ function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => voi
   const { row } = props;
   const at = row.updatedAt || row.createdAt;
   const agentName = displayAgentName(row.agent.name, row.agent.filePath, row.agent.id);
+  // A declared-incomplete run reads in amber and says WHY it stopped: its code
+  // word is already the label, so repeating it as `incomplete · INCOMPLETE`
+  // spends the row's one line of detail on nothing.
+  const incomplete = isIncompleteOutcome(row.status, row.errorCode);
+  const detail = incomplete
+    ? errorText(row.errorMessage)
+    : (row.errorCode && row.errorCode !== 'USER_STOPPED' ? row.errorCode : '');
   return (
     <a class="attn-run" href={`/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`}>
-      <span class={`feed-dot ${isIncompleteOutcome(row.status, row.errorCode) ? 'incomplete' : 'failed'}`} aria-hidden="true"></span>
+      <span class={`feed-dot ${incomplete ? 'incomplete' : 'failed'}`} aria-hidden="true"></span>
       <span class="attn-agent">{agentName}</span>
-      <span class="attn-fail">
+      <span class={`attn-fail${incomplete ? ' warn' : ''}`}>
         {props.label ?? displayStatusLabel(row.status, row.errorCode)}
-        {!props.label && row.errorCode && row.errorCode !== 'USER_STOPPED' && ` · ${row.errorCode}`}
+        {!props.label && detail && ` · ${detail}`}
       </span>
       <span class="feed-time" title={formatApprovalTime(at)}>{formatRelativeTime(at)} · review or dismiss →</span>
       <button

@@ -5067,9 +5067,13 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 }
 .page-home .attn-list { display: flex; flex-direction: column; gap: 10px; }
 .page-home .appr-surface { border-color: rgba(34,211,238,0.30); }
+/* The name holds its line and truncates: the reason beside it is a sentence,
+   and a name that wraps to three lines to make room for it costs more than the
+   tail of either. */
 .page-home .attn-agent {
   min-width: 0; font-family: var(--sans); font-size: var(--font-size-supporting); font-weight: var(--weight-medium); color: var(--fg);
-  white-space: normal; overflow-wrap: anywhere;
+  flex: 0 0 auto; max-width: 40%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .page-home a.attn-run {
   display: flex; align-items: center; gap: 12px;
@@ -5080,8 +5084,16 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 }
 .page-home a.attn-run:last-child { border-bottom: 0; }
 .page-home a.attn-run:hover { background: var(--panel-hover); }
-.page-home .attn-fail { font-family: var(--mono); font-size: var(--font-size-micro); color: var(--red); white-space: nowrap; }
-.page-home .attn-run .feed-time { margin-left: auto; min-width: 0; }
+/* The reason can be a sentence, so it truncates rather than pushing the time
+   and the dismiss ✕ off the row. */
+.page-home .attn-fail {
+  font-family: var(--mono); font-size: var(--font-size-micro); color: var(--red);
+  flex: 1 1 auto; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Agent-declared non-delivery: amber, matching its dot and the sessions list. */
+.page-home .attn-fail.warn { color: var(--amber); }
+.page-home .attn-run .feed-time { margin-left: auto; min-width: 0; flex: none; }
 /* Hover ✕ on a failed row: dismiss (mark reviewed) without leaving Home. */
 .page-home .attn-dismiss {
   flex-shrink: 0;
