@@ -4,7 +4,7 @@ import { timingSafeEqual } from "crypto";
 import { spawn, type ChildProcess } from "child_process";
 import { join, resolve, basename, relative, extname, dirname } from "path";
 import { createReadStream, existsSync, realpathSync } from "fs";
-import { lstat, readFile, realpath, stat } from "fs/promises";
+import { lstat, mkdir, readFile, realpath, rm, stat, writeFile } from "fs/promises";
 import { glob } from "glob";
 import { createInterface, type Interface as ReadlineInterface } from "readline";
 import chalk from "chalk";
@@ -120,6 +120,7 @@ import {
   agentRevisionDescription,
   applyAgentRevision,
   buildAgentRevisionSessionAgent,
+  buildChangesetRevisionSessionAgent,
   createAgentRevisionRecord,
   discardAgentRevision,
   failAgentRevision,
@@ -148,6 +149,37 @@ import {
   type AgentDraftRecord,
 } from "../agents/draft";
 import {
+  createChangesetRecord,
+  discardChangeset,
+  failChangeset,
+  latestChangesetProposal,
+  listChangesetRecords,
+  readChangesetRecord,
+  recordChangesetTestRun,
+  reopenChangeset,
+  settleChangesetTestRun,
+  writeChangesetRecord,
+} from "../agents/changeset";
+import { applyChangeset, restoreChangeset as restoreChangesetFiles, type ChangesetValidate } from "../agents/changeset-apply";
+import { validateChangesetFiles } from "../agents/changeset-validate";
+import { mountChangesetShadow } from "../agents/changeset-mount";
+import {
+  assertChangesetId,
+  changesetBasePath,
+  changesetDir,
+  changesetEditRoot,
+  type ChangesetFile,
+  type ChangesetMode,
+  type ChangesetProposal,
+  type ChangesetRecord,
+  type ChangesetStatus,
+} from "../agents/changeset-types";
+import {
+  listProjectAgents as listChangesetProjectAgents,
+  projectFileReader as changesetProjectFileReader,
+} from "../onboarding/submit-changes";
+import { internalAgentSourcePath, writeInternalAgentSource } from "../agents/internal-agent-file";
+import {
   discoverProjectSkillCatalog,
   prepareProjectDiscoveryView,
   type ProjectDiscoveryResult,
@@ -157,6 +189,7 @@ import { configuredMockModel, mockRunEnv, resolveMockScope } from "../runner/moc
 import { parseAgentContent } from "../parser";
 import {
   buildAgentCreatorSessionAgent,
+  buildChangesetCreatorSessionAgent,
   buildProjectDiscoverySessionAgent,
 } from "../onboarding/session-agents";
 import {
@@ -537,11 +570,19 @@ function revisionRequestTag(request: string): string {
 const TEST_RUN_TIMEOUT_SECONDS = 600;
 const TEST_RUN_MAX_STEPS = 40;
 
+/** Authoring budgets for a change set session. The creator writes several
+ *  files and loads skills; the reviser diagnoses first, so it gets more. Both
+ *  match the frontmatter the session-agent builders render. */
+const CHANGESET_CREATE_TIMEOUT_SECONDS = 480;
+const CHANGESET_CREATE_MAX_STEPS = 24;
+const CHANGESET_REVISE_TIMEOUT_SECONDS = 600;
+const CHANGESET_REVISE_MAX_STEPS = 32;
+
 interface OnboardingModelJob {
   id: string;
   sessionId: string;
   projectId: string;
-  kind: 'project-discovery' | 'agent-creation' | 'agent-revision';
+  kind: 'project-discovery' | 'agent-creation' | 'agent-revision' | 'changeset';
   status: 'running' | 'completed' | 'error';
   phase: 'preparing' | 'running';
   model: string;
@@ -2197,6 +2238,254 @@ function agentRevisionSessionPurpose(
   };
 }
 
+/* ── Changesets ──────────────────────────────────────────────────────────────
+   The multi-file successor to drafts and revisions. Everything here is the
+   part of the route family that does not need the server closure, so it can be
+   exercised directly by the route tests. */
+
+/** ULID, the only shape a change set id can take. Checked before the record
+ *  helpers throw on it, so a junk path is a 404 rather than a 400. */
+const CHANGESET_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
+
+/** Where a changeset review page lives. */
+function changesetReviewHref(projectId: string, sessionId: string): string {
+  return `/projects/${encodeURIComponent(projectId)}/changesets/${encodeURIComponent(sessionId)}`;
+}
+
+function changesetSessionPurpose(
+  projectId: string,
+  record: Pick<ChangesetRecord, 'sessionId' | 'mode' | 'target'>,
+): SessionPurpose {
+  return {
+    kind: 'changeset',
+    mode: record.mode,
+    ...(record.target?.name && { targetAgentName: record.target.name }),
+    href: changesetReviewHref(projectId, record.sessionId),
+  };
+}
+
+/** A change set the operator can still steer: a second one on the same target
+ *  would review two proposals against the same base. */
+const CHANGESET_OPEN_STATUSES: ReadonlySet<ChangesetStatus> = new Set<ChangesetStatus>([
+  'running', 'proposed', 'no-change',
+]);
+
+/** Statuses whose turn has ended, so a change request reopens the session
+ *  instead of racing a running one. `error` is included so a failed authoring
+ *  turn can be steered rather than abandoned. */
+function changesetAcceptsChangeRequest(status: ChangesetStatus): boolean {
+  return status === 'proposed' || status === 'no-change' || status === 'error';
+}
+
+function activeChangesetForTarget(
+  records: readonly ChangesetRecord[],
+  targetPath: string,
+): ChangesetRecord | undefined {
+  return records.find((record) => record.target?.path === targetPath
+    && CHANGESET_OPEN_STATUSES.has(record.status));
+}
+
+/** A revise target that is not a plain agent file inside the served scope. */
+class ChangesetTargetError extends Error {}
+
+/**
+ * Resolve the agent a revise change set is about, to the scope-relative run
+ * path the record, the overlay and `submit_changes` all speak.
+ *
+ * Both forms arrive here: the agent page sends a relative run path, while the
+ * session page only knows `context.agentFilePath` and sends an absolute one.
+ * The realpath pair is what decides scope membership, so an absolute path
+ * reached through a symlinked ancestor still normalizes onto the real tree
+ * instead of naming a file the apply would later refuse.
+ */
+async function resolveChangesetTargetPath(scopeRoot: string, requested: string): Promise<string> {
+  const outsideScope = 'The agent is outside the served project scope';
+  const notAFile = 'The agent must be a regular file inside the served project scope';
+  const realScope = await realpath(scopeRoot);
+  // The session page reads its path back from a run, so it can already be in
+  // realpath form (/private/var/... for a /var/... scope). Accept the target
+  // under either spelling of the scope, then settle both on the real tree.
+  const absolute = [resolve(scopeRoot, requested), resolve(realScope, requested)]
+    .find((candidate) => isPathInside(scopeRoot, candidate) || isPathInside(realScope, candidate));
+  if (!absolute) throw new ChangesetTargetError(outsideScope);
+  let info;
+  try {
+    info = await lstat(absolute);
+  } catch {
+    throw new ChangesetTargetError(outsideScope);
+  }
+  if (!info.isFile() || info.isSymbolicLink()) throw new ChangesetTargetError(notAFile);
+  const realTarget = await realpath(absolute);
+  if (!isPathInside(realScope, realTarget)) throw new ChangesetTargetError(notAFile);
+  return relative(realScope, realTarget).replace(/\\/gu, '/');
+}
+
+/** A start refused because another change set already owns the same target. */
+class ChangesetActiveError extends Error {
+  constructor(public readonly sessionId: string, message: string) {
+    super(message);
+  }
+}
+
+/** A file row without its body, for the cheap list endpoint. */
+type ChangesetFileSummary = Omit<ChangesetFile, 'content' | 'patch'>;
+
+interface ChangesetSummaryRecord extends Omit<ChangesetRecord, 'proposals'> {
+  proposals: Array<Omit<ChangesetProposal, 'files'> & { files: ChangesetFileSummary[] }>;
+}
+
+/** Strip every proposed file body: a list of change sets is a list of paths. */
+function changesetListSummary(record: ChangesetRecord): ChangesetSummaryRecord {
+  return {
+    ...record,
+    proposals: record.proposals.map((proposal) => ({
+      ...proposal,
+      files: proposal.files.map(({ content: _content, patch: _patch, ...file }) => file),
+    })),
+  };
+}
+
+/** The model's staged workspace: `<changesetDir>/<id>/`, edit folder included.
+ *  `rm` unlinks symlinks instead of descending, so the real project is safe
+ *  even though the shadow root under here is mostly links. */
+async function removeChangesetWorkspace(projectRoot: string, sessionId: string): Promise<void> {
+  assertChangesetId(sessionId);
+  await rm(join(changesetDir(projectRoot), sessionId), { recursive: true, force: true });
+}
+
+/**
+ * Create the durable record and the workspace the filesystem overlay writes
+ * into. The empty base map is written up front so a session that only adds new
+ * files still has a well-formed manifest for `submit_changes` to read.
+ */
+async function prepareChangesetStart(input: {
+  sessionId: string;
+  projectId: string;
+  projectRoot: string;
+  scopeRoot: string;
+  mode: ChangesetMode;
+  instruction: string;
+  authoringModel: string;
+  target?: { path: string; name: string };
+  originSessionId?: string;
+}): Promise<ChangesetRecord> {
+  if (input.mode === 'revise') {
+    if (!input.target) throw new Error('A revise change set needs a target agent');
+    const conflict = activeChangesetForTarget(
+      await listChangesetRecords(input.projectRoot, { targetPath: input.target.path }),
+      input.target.path,
+    );
+    if (conflict) {
+      throw new ChangesetActiveError(
+        conflict.sessionId,
+        'This agent already has a change set waiting for completion or review',
+      );
+    }
+  }
+  const record = await createChangesetRecord({
+    sessionId: input.sessionId,
+    projectId: input.projectId,
+    projectRoot: input.projectRoot,
+    scopeRoot: input.scopeRoot,
+    mode: input.mode,
+    ...(input.target && { target: input.target }),
+    ...(input.originSessionId && { originSessionId: input.originSessionId }),
+    instruction: input.instruction,
+    authoringModel: input.authoringModel,
+  });
+  await mkdir(changesetEditRoot(input.projectRoot, input.sessionId), { recursive: true });
+  await writeFile(changesetBasePath(input.projectRoot, input.sessionId), '{}\n', { mode: 0o600 });
+  return record;
+}
+
+/** Apply re-runs the same validator `submit_changes` ran, against the stored
+ *  proposal, so a project that moved under the review is caught before a
+ *  single file is written. */
+function changesetApplyValidator(input: {
+  projectRoot: string;
+  scopeRoot: string;
+  availableModels: readonly string[];
+  availableSkills: readonly string[];
+}): ChangesetValidate {
+  return async (record, proposal) => {
+    if (!proposal.entry) throw new Error('This change set has no entry agent to validate');
+    await validateChangesetFiles({
+      mode: record.mode,
+      scopeRoot: input.scopeRoot,
+      projectRoot: input.projectRoot,
+      ...(record.target && { target: { path: record.target.path } }),
+      entry: proposal.entry,
+      files: proposal.files.map((file) => ({
+        path: file.path,
+        op: file.op,
+        baseHash: file.baseHash,
+        content: file.content,
+      })),
+      availableModels: input.availableModels,
+      availableSkills: input.availableSkills,
+      readProjectFile: changesetProjectFileReader(input.scopeRoot),
+      listProjectAgents: () => listChangesetProjectAgents(input.scopeRoot),
+    });
+  };
+}
+
+/** Apply, then drop the staged workspace: the record carries everything the
+ *  review and Restore still need. */
+async function applyProjectChangeset(input: {
+  projectRoot: string;
+  scopeRoot: string;
+  sessionId: string;
+  availableModels: readonly string[];
+  availableSkills: readonly string[];
+}): Promise<ChangesetRecord> {
+  const record = await applyChangeset({
+    projectRoot: input.projectRoot,
+    scopeRoot: input.scopeRoot,
+    sessionId: input.sessionId,
+    validate: changesetApplyValidator(input),
+  });
+  await removeChangesetWorkspace(input.projectRoot, input.sessionId).catch(() => undefined);
+  return record;
+}
+
+async function discardProjectChangeset(projectRoot: string, sessionId: string): Promise<ChangesetRecord> {
+  const record = await discardChangeset(projectRoot, sessionId);
+  await removeChangesetWorkspace(projectRoot, sessionId).catch(() => undefined);
+  return record;
+}
+
+const CHANGESET_NOT_SUBMITTED = {
+  code: 'CHANGESET_NOT_SUBMITTED',
+  message: 'The change set session ended without submitting a validated outcome',
+} as const;
+
+/**
+ * Settle a change set whose authoring session reached a terminal turn.
+ * Mirrors `settleAgentRevisionExecution`: a successful turn that never called
+ * `submit_changes` is an invalid internal outcome, otherwise the review page
+ * would poll a record nothing will ever move on. `failChangeset` re-reads and
+ * only acts on a still-`running` record, which is what keeps a submission (or
+ * a request-changes reopen) landing between the two reads from being
+ * overwritten. Returns the error it applied, so the caller can mirror it onto
+ * the job envelope.
+ */
+async function settleChangesetSession(
+  projectRoot: string,
+  sessionId: string,
+  result: WorkerExecuteResult | WorkerExecuteError,
+): Promise<{ code: string; message: string } | undefined> {
+  const record = await readChangesetRecord(projectRoot, sessionId);
+  if (!record || record.status !== 'running') return undefined;
+  if (!result.success) {
+    await failChangeset(projectRoot, sessionId, result.error);
+    return result.error;
+  }
+  if (result.result.finishReason === 'suspended' || result.result.approvalUrl) return undefined;
+  const error = { ...CHANGESET_NOT_SUBMITTED };
+  await failChangeset(projectRoot, sessionId, error);
+  return error;
+}
+
 const ARTIFACT_RAW_MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.htm': 'text/html; charset=utf-8',
@@ -3153,6 +3442,7 @@ function isSpaPageRoute(routePath: string): boolean {
   if (/^\/stores\/[^/?#]+(?:\/[^/?#]+)?$/.test(routePath)) return true; // /stores/:s and /stores/:s/:item
   if (/^\/agents\/[^/?#]+$/.test(routePath)) return true; // /agents/:project (single-project view)
   if (/^\/agents\/[^/?#]+\/.+$/.test(routePath)) return true; // /agents/:project/:agent* (detail hub)
+  if (/^\/projects\/[^/?#]+\/changesets\/[^/?#]+$/.test(routePath)) return true; // changeset review
   return false;
 }
 
@@ -3613,6 +3903,8 @@ export function createServeCommand(): Command {
       const internalViewCleanups = new Map<string, () => Promise<void>>();
       const revisionMutations = new Set<string>();
       const draftMutations = new Set<string>();
+      /** One in-flight mutation per change set, like `revisionMutations`. */
+      const changesetMutations = new Set<string>();
       /** How long a draft may sit without a durable creator session before a
        *  restart, rather than the normal write ordering, is the only
        *  explanation left. */
@@ -4213,7 +4505,108 @@ export function createServeCommand(): Command {
         return { sessionId, draftIndex: draft.index, ...(token && { sessionToken: token }) };
       };
 
-      const recoverAgentCreationJob = (job: OnboardingModelJob, missingIsInterrupted = false): Promise<void> => {
+      /**
+       * Test-run a change set from a shadow root instead of from memory.
+       * `mountChangesetShadow` lays the proposed files over a link farm of the
+       * real project, and the entry runs from `shadow/<entry>` so `${agentDir}`,
+       * sibling workers and scripts beside the agent all resolve without a
+       * single write landing in the project.
+       *
+       * `projectRoot` stays the real project: it is what `initStorage` keys the
+       * session store on, so running against the shadow root would file the test
+       * run under a project directory no served project can find. The shadow
+       * therefore backs `${agentDir}` and relative references, not `${root}`.
+       */
+      const startChangesetTestRun = async (
+        project: Project,
+        record: ChangesetRecord,
+        proposal: ChangesetProposal,
+      ): Promise<{ sessionId: string; proposalIndex: number; sessionToken?: string }> => {
+        const entry = proposal.entry;
+        if (!entry) throw new Error('This change set has no entry agent to run');
+        const mockModel = configuredMockModel();
+        if (!mockModel) {
+          throw new Error(
+            'Test runs need a mock model. Set AGENTUSE_MOCK_MODEL to a cheap, reachable model '
+            + 'such as anthropic:claude-haiku-4-5, in the shell or in the env block of the AgentUse config.',
+          );
+        }
+        const mount = await mountChangesetShadow({
+          projectRoot: project.root,
+          scopeRoot: project.scopeRoot,
+          sessionId: record.sessionId,
+          files: proposal.files.map((file) => ({ path: file.path, content: file.content })),
+        });
+        let launched = false;
+        try {
+          const entryPath = mount.entryFor(entry);
+          const fileName = entry.split('/').pop() ?? 'agent.agentuse';
+          const parsed = parseAgentContent(await readFile(entryPath, 'utf8'), fileName);
+          let scope: 'all' | 'gated' = 'all';
+          try {
+            scope = resolveMockScope(parsed.config);
+          } catch {
+            // An unparseable entry cannot reach here through submit_changes; if
+            // it ever did, the run pipeline reports it better than we can.
+          }
+          const testSessionId = ulid();
+          const worker = new AgentWorker({
+            AGENTUSE_PROJECT_ID: project.id,
+            AGENTUSE_RESUME_PUBLIC_URL: effectivePublicUrl,
+            ...mockRunEnv({ scope, model: mockModel }),
+          });
+          await worker.spawn();
+          const prepared = await worker.createPreparingSession({
+            projectRoot: project.root,
+            sessionId: testSessionId,
+            agentId: entry.replace(/\.agentuse$/u, ''),
+            agentName: parsed.name,
+            agentDescription: `Mock test run of change set proposal ${proposal.index}`,
+            model: parsed.config.model,
+            trigger: 'manual',
+            timeout: TEST_RUN_TIMEOUT_SECONDS,
+            maxSteps: TEST_RUN_MAX_STEPS,
+            owner: currentProcessRef(),
+          });
+          if (!prepared.success) {
+            worker.shutdown();
+            throw new Error(prepared.error.message);
+          }
+          wakeListHubs();
+          launched = true;
+          const settle = (outcome: { status: 'completed' | 'error'; error?: { code: string; message: string } }) =>
+            settleChangesetTestRun(project.root, record.sessionId, testSessionId, outcome)
+              .then(() => undefined)
+              .catch(() => undefined);
+          void worker.execute({
+            agentPath: entryPath,
+            projectRoot: project.root,
+            newSessionId: testSessionId,
+            preparedSession: true,
+            trigger: 'manual',
+            timeout: TEST_RUN_TIMEOUT_SECONDS,
+            maxSteps: TEST_RUN_MAX_STEPS,
+            debug: options.debug,
+          }).then((result) => settle(result.success
+            ? { status: 'completed' }
+            : { status: 'error', error: result.error }))
+            .catch((error: unknown) => settle({
+              status: 'error',
+              error: { code: 'TEST_RUN_FAILED', message: (error as Error).message },
+            }))
+            .finally(async () => {
+              worker.shutdown();
+              await mount.cleanup().catch(() => undefined);
+              wakeListHubs();
+            });
+          const token = sessionViewToken(testSessionId, apiKey);
+          return { sessionId: testSessionId, proposalIndex: proposal.index, ...(token && { sessionToken: token }) };
+        } finally {
+          if (!launched) await mount.cleanup().catch(() => undefined);
+        }
+      };
+
+      const recoverAgentCreationJob =(job: OnboardingModelJob, missingIsInterrupted = false): Promise<void> => {
         const existing = activeInternalJobRecoveries.get(job.id);
         if (existing) return existing;
         const operation = (async () => {
@@ -4974,6 +5367,24 @@ export function createServeCommand(): Command {
         }
       };
 
+      /** Same contract for a continued change set session: the proposal is
+       *  appended by `submit_changes`, so a terminal turn without one leaves the
+       *  record in error rather than running forever. */
+      const settleChangesetExecution = async (
+        project: Project,
+        sessionId: string,
+        result: WorkerExecuteResult | WorkerExecuteError,
+      ): Promise<void> => {
+        const failure = await settleChangesetSession(project.root, sessionId, result);
+        if (!failure) return;
+        const job = onboardingJobs.get(sessionId);
+        if (job?.kind === 'changeset') {
+          job.status = 'error';
+          job.error = failure;
+          await persistOnboardingJob(job).catch(() => undefined);
+        }
+      };
+
       /** Record the outcome of a continued creator session as the next numbered
        *  draft. Mirrors settleAgentRevisionExecution: the continue itself is
        *  generic, and each internal feature settles its own durable record. */
@@ -5209,6 +5620,9 @@ export function createServeCommand(): Command {
             });
             await settleAgentDraftExecution(project, sessionId, result).catch((err) => {
               logger.warn(`Failed to settle draft session ${sessionId}: ${(err as Error).message}`);
+            });
+            await settleChangesetExecution(project, sessionId, result).catch((err) => {
+              logger.warn(`Failed to settle change set session ${sessionId}: ${(err as Error).message}`);
             });
             if (!result.success) {
               backgroundSessionFailures.set(activeKey, {
@@ -5943,8 +6357,15 @@ export function createServeCommand(): Command {
             const project = projects.find((candidate) => candidate.id === row.projectId);
             if (project) {
               try {
-                const revision = await readAgentRevisionRecord(project.root, row.session.sessionId);
-                purpose = revision ? agentRevisionSessionPurpose(revision) : null;
+                // Change sets first: they are the successor record, and a
+                // session never carries both.
+                const changeset = await readChangesetRecord(project.root, row.session.sessionId);
+                if (changeset) {
+                  purpose = changesetSessionPurpose(project.id, changeset);
+                } else {
+                  const revision = await readAgentRevisionRecord(project.root, row.session.sessionId);
+                  purpose = revision ? agentRevisionSessionPurpose(revision) : null;
+                }
               } catch (error) {
                 logger.warn(`Could not classify session ${row.session.sessionId}: ${(error as Error).message}`);
                 purpose = null;
@@ -8905,6 +9326,216 @@ export function createServeCommand(): Command {
           return;
         }
 
+        /**
+         * Start a create or revise change set. Mirrors the agent-creation and
+         * revision starts: validate, write the durable record and the staged
+         * workspace, then hand the generated session agent to the same durable
+         * preparing shell. The session agent is persisted like the reviser's so
+         * request-changes can continue it.
+         */
+        const startChangeset = async (
+          res: ServerResponse,
+          project: Project,
+          body: Record<string, unknown>,
+        ): Promise<void> => {
+          const mode = body.mode;
+          if (mode !== 'create' && mode !== 'revise') {
+            sendError(res, 400, 'CHANGESET_MODE_INVALID', 'A change set is either a create or a revise');
+            return;
+          }
+          const instruction = typeof body.instruction === 'string' ? body.instruction.trim() : '';
+          if (!instruction || instruction.length > 12_000) {
+            sendError(res, 400, 'CHANGESET_INSTRUCTION_REQUIRED', 'Describe what this change should do');
+            return;
+          }
+          const worker = workers.get(project.id);
+          if (!worker) {
+            sendError(res, 500, 'WORKER_UNAVAILABLE', `No worker for project ${project.id}`);
+            return;
+          }
+          const snapshot = await providerSetupSnapshot();
+          const providers = await agentCreationProviders(snapshot.status, preferredAgentCreationModel);
+          const availableModels = [...new Set(providers.flatMap((provider) => provider.models))];
+          const model = typeof body.model === 'string' ? body.model.trim() : '';
+          if (!model || !availableModels.includes(model)) {
+            sendError(res, 400, 'CHANGESET_MODEL_INVALID', 'Choose a configured authoring model');
+            return;
+          }
+          let reasoning: ReasoningLevel | undefined;
+          if (body.reasoning !== undefined) {
+            if (typeof body.reasoning !== 'string' || !(REASONING_LEVELS as readonly string[]).includes(body.reasoning)) {
+              sendError(res, 400, 'CHANGESET_REASONING_INVALID', 'Choose a valid thinking effort');
+              return;
+            }
+            reasoning = body.reasoning as ReasoningLevel;
+          }
+          const originSessionId = typeof body.originSessionId === 'string' && body.originSessionId.trim()
+            ? body.originSessionId.trim()
+            : undefined;
+
+          // Revise: resolve the target inside the served scope before anything
+          // durable is written, so a bad path never leaves a record behind.
+          let target: { path: string; name: string } | undefined;
+          let currentSource: string | undefined;
+          if (mode === 'revise') {
+            const requested = typeof body.target === 'string' ? body.target.trim() : '';
+            if (!requested) {
+              sendError(res, 400, 'CHANGESET_TARGET_REQUIRED', 'Choose the agent this change set revises');
+              return;
+            }
+            let requestedPath: string;
+            try {
+              requestedPath = await resolveChangesetTargetPath(project.scopeRoot, requested);
+            } catch (error) {
+              if (!(error instanceof ChangesetTargetError)) throw error;
+              sendError(res, 400, 'INVALID_AGENT_PATH', error.message);
+              return;
+            }
+            currentSource = await readFile(resolveScopedAgentPath(project, requestedPath), 'utf8');
+            target = {
+              path: requestedPath,
+              name: parseAgentContent(currentSource, basename(requestedPath)).name,
+            };
+          }
+
+          const sessionId = ulid();
+          const record = await prepareChangesetStart({
+            sessionId,
+            projectId: project.id,
+            projectRoot: project.root,
+            scopeRoot: project.scopeRoot,
+            mode,
+            instruction,
+            authoringModel: model,
+            ...(target && { target }),
+            ...(originSessionId && { originSessionId }),
+          });
+
+          const timeout = mode === 'create' ? CHANGESET_CREATE_TIMEOUT_SECONDS : CHANGESET_REVISE_TIMEOUT_SECONDS;
+          const maxSteps = mode === 'create' ? CHANGESET_CREATE_MAX_STEPS : CHANGESET_REVISE_MAX_STEPS;
+          const agentName = mode === 'create' ? 'internal-agent-creator' : `Revise ${target!.name}`;
+          const agentDescription = mode === 'create'
+            ? 'Turn a user brief into a production AgentUse agent'
+            : agentRevisionDescription(target!.name, originSessionId);
+          const job: OnboardingModelJob = {
+            id: sessionId,
+            sessionId,
+            projectId: project.id,
+            kind: 'changeset',
+            status: 'running',
+            phase: 'preparing',
+            model,
+            createdAt: record.createdAt,
+          };
+          const prepared = await beginInternalAgentJob({
+            job,
+            worker,
+            project,
+            agentId: relative(project.root, internalAgentSourcePath(project.root, 'changeset', sessionId))
+              .replace(/\.agentuse$/u, ''),
+            agentName,
+            agentDescription,
+            trigger: 'manual',
+            timeout,
+            maxSteps,
+          });
+          if (!prepared.success) {
+            await failChangeset(project.root, sessionId, prepared.error).catch(() => undefined);
+            throw new Error(prepared.error.message);
+          }
+          const sessionToken = apiKey ? sessionViewToken(sessionId, apiKey) : undefined;
+          sendJSON(res, 202, { success: true, changeset: record, ...(sessionToken && { sessionToken }) });
+          wakeListHubs();
+
+          void runInternalJobLifecycle({
+            job,
+            prepare: async () => {
+              const [creatorSkill, availableSkills, collected] = await Promise.all([
+                loadBuiltinSkillSource('creator'),
+                discoverProjectSkillCatalog(project.root),
+                collectAgents([project]),
+              ]);
+              // The dashboard's own agent list, so the model sees exactly the
+              // layout the operator sees and can reference it by path.
+              const existingAgents = collected.agents.map((agent) => ({
+                path: agent.runPath,
+                name: agent.name,
+                description: agent.description ?? '',
+              }));
+              const agentContent = mode === 'create'
+                ? buildChangesetCreatorSessionAgent({
+                    model,
+                    ...(reasoning && { reasoning }),
+                    sessionId,
+                    projectId: project.id,
+                    projectRoot: project.root,
+                    scopeRoot: project.scopeRoot,
+                    editRoot: changesetEditRoot(project.root, sessionId),
+                    basePath: changesetBasePath(project.root, sessionId),
+                    creatorSkill,
+                    objective: instruction,
+                    availableModels,
+                    availableSkills,
+                    existingAgents,
+                  })
+                : buildChangesetRevisionSessionAgent({
+                    sessionId,
+                    ...(originSessionId && { originSessionId }),
+                    projectId: project.id,
+                    projectRoot: project.root,
+                    scopeRoot: project.scopeRoot,
+                    editRoot: changesetEditRoot(project.root, sessionId),
+                    basePath: changesetBasePath(project.root, sessionId),
+                    targetRunPath: target!.path,
+                    targetAgentName: target!.name,
+                    instruction,
+                    model,
+                    ...(reasoning && { reasoning }),
+                    currentSource: currentSource!,
+                    creatorSkill,
+                    availableModels,
+                    availableSkills,
+                    existingAgents,
+                  });
+              return writeInternalAgentSource(project.root, 'changeset', sessionId, agentContent);
+            },
+            execute: (internalAgentPath) => worker.execute({
+              agentPath: internalAgentPath,
+              projectRoot: project.root,
+              newSessionId: sessionId,
+              preparedSession: true,
+              trigger: 'manual',
+              timeout,
+              maxSteps,
+              debug: options.debug,
+            }),
+            consume: async (execution) => {
+              const latest = await readChangesetRecord(project.root, sessionId);
+              if (execution.success && (latest?.status === 'proposed' || latest?.status === 'no-change')) {
+                job.status = 'completed';
+                job.result = { kind: 'changeset', sessionId, projectId: project.id };
+                return;
+              }
+              const failure = await settleChangesetSession(project.root, sessionId, execution);
+              if (failure) {
+                job.status = 'error';
+                job.error = failure;
+              }
+            },
+            mapError: (error) => ({ code: 'CHANGESET_FAILED', message: (error as Error).message }),
+            persist: () => persistOnboardingJob(job),
+            wake: wakeListHubs,
+            failPreparing: (failure) => worker.failPreparingSession({
+              projectRoot: project.root,
+              sessionId,
+              code: failure.code,
+              message: failure.message,
+            }).then(() => undefined),
+            onError: (failure) => failChangeset(project.root, sessionId, failure).then(() => undefined),
+            onPersistenceError: (error) => logger.warn(`Failed to persist internal agent job ${job.id}: ${(error as Error).message}`),
+          });
+        };
+
         // Shared by the two start routes below. A run-anchored revision
         // carries the origin session and its transcript as evidence; an
         // agent-anchored one (the agent page, for an agent with no finished
@@ -9236,6 +9867,268 @@ export function createServeCommand(): Command {
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, 'REVISION_START_FAILED', (err as Error).message);
+          }
+          return;
+        }
+
+        /* ── Change sets ───────────────────────────────────────────────────
+           The multi-file successor to the draft and revision routes below.
+           One family covers create and revise: start, read, list, and the six
+           review actions. The draft and revision routes stay live until the
+           dashboard has finished moving over. */
+        const changesetMatch = isApi
+          ? routePath.match(/^\/projects\/([^/?#]+)\/changesets(?:\/([^/?#]+))?(?:\/(apply|discard|restore|request-changes|cancel|test-run))?$/)
+          : null;
+        if (changesetMatch) {
+          let mutationKey: string | undefined;
+          try {
+            const projectId = decodeURIComponent(changesetMatch[1]!);
+            const sessionId = changesetMatch[2] ? decodeURIComponent(changesetMatch[2]) : undefined;
+            const action = changesetMatch[3];
+            const project = projectsById.get(projectId);
+            if (!project) {
+              sendError(res, 404, 'PROJECT_NOT_FOUND', `Project not found: ${projectId}`);
+              return;
+            }
+            if (effectiveHideAgentSource) {
+              sendError(res, 403, 'AGENT_SOURCE_HIDDEN', 'Change sets are unavailable while serve.hideAgentSource is enabled');
+              return;
+            }
+            if (sessionId !== undefined && !CHANGESET_ID_PATTERN.test(sessionId)) {
+              sendError(res, 404, 'CHANGESET_NOT_FOUND', 'Change set not found');
+              return;
+            }
+
+            if (req.method === 'GET' && !sessionId) {
+              const target = requestUrl.searchParams.get('target')?.trim();
+              const records = await listChangesetRecords(
+                project.root,
+                target ? { targetPath: target } : {},
+              );
+              sendJSON(res, 200, { success: true, changesets: records.map(changesetListSummary) });
+              return;
+            }
+
+            if (req.method === 'POST' && !sessionId) {
+              if (!sessionAgentRevisionAllowed(req.headers.authorization, apiKey)) {
+                sendError(res, 403, 'OPERATOR_REQUIRED', 'Only an authenticated operator can start a change set');
+                return;
+              }
+              await startChangeset(res, project, await parseJSONBody(req));
+              return;
+            }
+
+            if (!sessionId) {
+              sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Unsupported change set action');
+              return;
+            }
+
+            if (req.method === 'GET' && !action) {
+              const token = requestUrl.searchParams.get('token') ?? undefined;
+              if (!sessionAuthorized(sessionId, token)) {
+                sendError(res, 401, 'UNAUTHORIZED', 'Not authorized for this change set session');
+                return;
+              }
+              const record = await readChangesetRecord(project.root, sessionId);
+              if (!record) {
+                sendError(res, 404, 'CHANGESET_NOT_FOUND', 'Change set not found');
+                return;
+              }
+              const sessionToken = sessionViewToken(sessionId, apiKey);
+              sendJSON(res, 200, {
+                success: true,
+                changeset: record,
+                ...(sessionToken && { sessionToken }),
+              });
+              return;
+            }
+
+            if (req.method !== 'POST' || !action) {
+              sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Unsupported change set action');
+              return;
+            }
+            if (!sessionAgentRevisionAllowed(req.headers.authorization, apiKey)) {
+              sendError(res, 403, 'OPERATOR_REQUIRED', 'Only an authenticated operator can change agent source');
+              return;
+            }
+            // Same ownership rule as the draft and revision locks: only set
+            // once this request owns the lock, so a rejected caller cannot free
+            // the running action's lock on its way out.
+            const changesetKey = `changeset:${project.id}:${sessionId}`;
+            if (changesetMutations.has(changesetKey)) {
+              sendError(res, 409, 'CHANGESET_ACTION_IN_PROGRESS', 'Another action is already changing this change set');
+              return;
+            }
+            changesetMutations.add(changesetKey);
+            mutationKey = changesetKey;
+
+            if (action === 'request-changes') {
+              const body = await parseJSONBody(req);
+              const request = typeof body.request === 'string' ? body.request.trim() : '';
+              if (!request || request.length > 12_000) {
+                sendError(res, 400, 'CHANGESET_FEEDBACK_REQUIRED', 'Describe the change you want to this proposal');
+                return;
+              }
+              const record = await readChangesetRecord(project.root, sessionId);
+              if (!record) {
+                sendError(res, 404, 'CHANGESET_NOT_FOUND', 'Change set not found');
+                return;
+              }
+              if (!changesetAcceptsChangeRequest(record.status)) {
+                sendError(res, 409, 'CHANGESET_NOT_PROPOSED', 'This change set is not waiting for a change request');
+                return;
+              }
+              const activeKey = `${project.id}:${sessionId}`;
+              if (activeApprovalResumes.has(activeKey) || activeSessionContinuations.has(activeKey)) {
+                sendError(res, 409, 'SESSION_ACTIVE', 'This change set session is already continuing');
+                return;
+              }
+              await reopenChangeset(project.root, sessionId, request);
+              const job = onboardingJobs.get(sessionId);
+              if (job?.kind === 'changeset') {
+                job.status = 'running';
+                delete job.error;
+                delete job.result;
+                await persistOnboardingJob(job);
+              }
+              // The staged files are still exactly as the model left them, so
+              // the reopened turn edits them in place rather than being handed
+              // a copy of its own proposal.
+              startSessionContinue(res, {
+                project,
+                sessionId,
+                prompt: [
+                  '[runtime] The operator reviewed your previous change set and asked for a change to it.',
+                  'The files you wrote are still staged exactly as you left them. Read and edit them at their project paths.',
+                  '',
+                  revisionRequestTag(request),
+                  '',
+                  'Call submit_changes again once the files answer the request.',
+                ].join('\n'),
+              });
+              return;
+            }
+
+            if (action === 'cancel') {
+              const record = await readChangesetRecord(project.root, sessionId);
+              if (!record || record.status !== 'running') {
+                sendError(res, 409, 'CHANGESET_NOT_RUNNING', 'This change set is no longer running');
+                return;
+              }
+              const worker = workers.get(project.id);
+              if (worker) {
+                await worker.stopSession({
+                  projectRoot: project.root,
+                  sessionId,
+                  reason: 'Change set cancelled by operator',
+                }).catch(() => undefined);
+              }
+              const cancelled: ChangesetRecord = { ...record, status: 'discarded' };
+              await writeChangesetRecord(cancelled);
+              await removeChangesetWorkspace(project.root, sessionId).catch(() => undefined);
+              const job = onboardingJobs.get(sessionId);
+              if (job?.kind === 'changeset') {
+                job.status = 'error';
+                job.error = { code: 'CHANGESET_CANCELLED', message: 'The change set was cancelled by the operator' };
+                await persistOnboardingJob(job);
+              }
+              wakeListHubs();
+              sendJSON(res, 200, { success: true, changeset: cancelled });
+              return;
+            }
+
+            if (action === 'test-run') {
+              const record = await readChangesetRecord(project.root, sessionId);
+              const proposal = record ? latestChangesetProposal(record) : undefined;
+              if (!record || !proposal || proposal.files.length === 0 || !proposal.entry) {
+                sendError(res, 409, 'CHANGESET_NOT_PROPOSED', 'There are no proposed files to test yet');
+                return;
+              }
+              // A second mount would rebuild the shadow root under a live run.
+              if (record.testRuns.some((run) => run.status === 'running')) {
+                sendError(res, 409, 'CHANGESET_TEST_RUN_ACTIVE', 'A test run of this change set is already in flight');
+                return;
+              }
+              const started = await startChangesetTestRun(project, record, proposal);
+              await recordChangesetTestRun(project.root, sessionId, {
+                sessionId: started.sessionId,
+                proposalIndex: proposal.index,
+                startedAt: Date.now(),
+                status: 'running',
+              });
+              sendJSON(res, 202, { success: true, testRun: started });
+              return;
+            }
+
+            if (action === 'restore') {
+              const result = await restoreChangesetFiles({
+                projectRoot: project.root,
+                scopeRoot: project.scopeRoot,
+                sessionId,
+              });
+              for (const file of result.record.applied?.files ?? []) {
+                agentSummaryCache.delete(resolveScopedAgentPath(project, file.path));
+              }
+              wakeListHubs();
+              sendJSON(res, 200, { success: true, changeset: result.record, skipped: result.skipped });
+              return;
+            }
+
+            if (action === 'discard') {
+              const discarded = await discardProjectChangeset(project.root, sessionId);
+              wakeListHubs();
+              sendJSON(res, 200, { success: true, changeset: discarded });
+              return;
+            }
+
+            // apply
+            const snapshot = await providerSetupSnapshot();
+            const availableModels = [...new Set(
+              (await agentCreationProviders(snapshot.status, preferredAgentCreationModel))
+                .flatMap((provider) => provider.models),
+            )];
+            const availableSkills = (await discoverProjectSkillCatalog(project.root))
+              .filter((skill) => !skill.ambiguous)
+              .map((skill) => skill.name);
+            const applied = await applyProjectChangeset({
+              projectRoot: project.root,
+              scopeRoot: project.scopeRoot,
+              sessionId,
+              availableModels,
+              availableSkills,
+            });
+            let addedAgent = false;
+            for (const file of applied.applied?.files ?? []) {
+              agentSummaryCache.delete(resolveScopedAgentPath(project, file.path));
+              if (!file.path.toLowerCase().endsWith('.agentuse')) continue;
+              if (project.agentFiles.includes(file.path)) continue;
+              project.agentFiles.push(file.path);
+              addedAgent = true;
+            }
+            if (addedAgent) {
+              project.agentFiles.sort();
+              agentCounts.set(project.id, project.agentFiles.length);
+              updateRegistryCounts();
+            }
+            wakeListHubs();
+            sendJSON(res, 200, { success: true, changeset: applied });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            if (err instanceof ChangesetActiveError) {
+              sendJSON(res, 409, {
+                success: false,
+                error: {
+                  code: 'CHANGESET_ALREADY_ACTIVE',
+                  message: err.message,
+                  sessionId: err.sessionId,
+                  href: changesetReviewHref(decodeURIComponent(changesetMatch[1]!), err.sessionId),
+                },
+              });
+              return;
+            }
+            sendError(res, 400, 'CHANGESET_ACTION_FAILED', (err as Error).message);
+          } finally {
+            if (mutationKey) changesetMutations.delete(mutationKey);
           }
           return;
         }
@@ -10843,6 +11736,21 @@ export const __testing = {
   SESSION_LIST_SSE_INTERVAL_MS,
   sessionMatchesAgentFilter,
   agentRevisionSessionPurpose,
+  changesetSessionPurpose,
+  changesetReviewHref,
+  changesetListSummary,
+  changesetAcceptsChangeRequest,
+  activeChangesetForTarget,
+  resolveChangesetTargetPath,
+  ChangesetTargetError,
+  ChangesetActiveError,
+  prepareChangesetStart,
+  removeChangesetWorkspace,
+  changesetApplyValidator,
+  applyProjectChangeset,
+  discardProjectChangeset,
+  settleChangesetSession,
+  CHANGESET_ID_PATTERN,
   sessionMatchesStatusFilter,
   parseSessionMockFilter,
   sessionMatchesMockFilter,

@@ -143,9 +143,11 @@ describe('applyChangeset', () => {
     cleanups.push(() => rm(outside, { recursive: true, force: true }));
     await symlink(outside, join(projectRoot, 'outside'));
 
+    // Paths are scope-relative: `outside/` is a symlink inside the scope whose
+    // real target lives elsewhere, so the write must be refused.
     await expect(applyChangeset({
       projectRoot,
-      scopeRoot: join(projectRoot, 'agents'),
+      scopeRoot: projectRoot,
       sessionId: SESSION_ID,
       validate: noopValidate,
     })).rejects.toThrow('outside the served project scope');

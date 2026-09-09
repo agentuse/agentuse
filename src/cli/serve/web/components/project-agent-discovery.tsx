@@ -1,9 +1,10 @@
 import { useEffect, useReducer, useState } from 'preact/hooks';
-import { agentDetailHref, agentDraftHref, projectDiscoveryHref } from '../lib/links';
+import { agentDetailHref, projectDiscoveryHref } from '../lib/links';
+import { changesetReviewHref } from '../lib/changeset-view';
+import { rememberChangesetToken, startCreateChangeset } from '../lib/changeset-entry';
 import {
   fetchAgentCreationOptions,
   fetchProviderSetup,
-  startOnboardingAgentCreation,
   startProjectDiscoverySession,
   type AgentRow,
   type ProjectAgentSuggestion,
@@ -164,19 +165,21 @@ export function ProjectAgentDiscovery(props: {
     if (!model || !modelReady || state.type === 'creating' || !onboardingDiscovery(state)) return;
     dispatch({ type: 'CREATION_STARTED', suggestion });
     try {
-      const { job } = await startOnboardingAgentCreation({
-        project: props.projectId,
+      // The idea's name, schedule and cited files are context the changeset
+      // endpoint has no fields for, so they are folded into the instruction the
+      // creator reads as its brief.
+      const payload = await startCreateChangeset(props.projectId, {
         name: suggestion.name,
         description: suggestion.description,
         objective: suggestion.objective,
-        model,
         schedule: suggestion.schedule,
         ...(suggestion.evidence.length > 0 && { evidence: suggestion.evidence.join(', ') }),
-      });
-      // An idea lands on the same draft page as a hand-written brief, so review,
-      // refinement, and a test run are one flow rather than two.
+      }, model);
+      // An idea lands on the same review page as a hand-written brief, so
+      // review, refinement, and a test run are one flow rather than two.
+      rememberChangesetToken(payload.changeset.sessionId, payload.sessionToken);
       clearResume();
-      window.location.href = agentDraftHref(props.projectId, job.id);
+      window.location.href = changesetReviewHref(payload.changeset.projectId, payload.changeset.sessionId);
     } catch (caught) {
       dispatch({ type: 'CREATION_FAILED', error: (caught as Error).message || 'Could not create this agent.' });
     }
@@ -432,9 +435,9 @@ export function ProjectAgentDiscovery(props: {
         initialProjectId={props.projectId}
         {...(model ? { initialModel: model } : {})}
         lockProject
-        onDrafted={(job) => {
+        onStarted={(changeset) => {
           clearResume();
-          window.location.href = agentDraftHref(job.projectId, job.id);
+          window.location.href = changesetReviewHref(changeset.projectId, changeset.sessionId);
         }}
         onClose={() => setModal(null)}
       />

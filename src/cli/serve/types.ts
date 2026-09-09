@@ -102,6 +102,14 @@ export type SessionPurpose = {
   /** Absent when the revision was started from the agent page without a run. */
   originSessionId?: string;
   targetAgentName: string;
+} | {
+  /** A multi-file change set: the successor to drafts and revisions. */
+  kind: 'changeset';
+  mode: 'create' | 'revise';
+  /** Revise only: the agent the change set is about. */
+  targetAgentName?: string;
+  /** The review page for this change set. */
+  href: string;
 };
 
 export interface SessionStatusInfo {

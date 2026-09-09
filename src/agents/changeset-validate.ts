@@ -125,7 +125,9 @@ export function isChangesetPathAllowed(relPath: string): { allowed: boolean; rea
 }
 
 function assertPathInScope(relPath: string, projectRoot: string, scopeRoot: string): void {
-  const absolute = resolve(projectRoot, relPath);
+  // Changeset paths are scope-relative; projectRoot only locates the record.
+  void projectRoot;
+  const absolute = resolve(scopeRoot, relPath);
   if (!isPathInside(resolve(scopeRoot), absolute, { allowEqual: false })) {
     throw new Error(`${relPath} is outside the served project scope`);
   }

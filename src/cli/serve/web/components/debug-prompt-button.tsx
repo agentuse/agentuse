@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import { SendToCodingAgentDialog } from './send-to-coding-agent-dialog';
 import { fetchAgents, fetchProviderSetup, reportOnboardingTelemetry, type AgentRow } from '../lib/api';
-import { agentDetailHref, agentDraftHref } from '../lib/links';
+import { agentDetailHref } from '../lib/links';
+import { changesetReviewHref } from '../lib/changeset-view';
 import type { ProviderStatus } from '../../../../auth/provider-status';
 import { hasConfiguredProvider, ProviderSetupDialog } from './provider-setup';
 import { AgentCreateDialog, type AgentCreationDraft } from './agent-create-dialog';
@@ -538,7 +539,7 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
           initialDraft={nativeCreationDraft}
           {...(props.context.projectId ? { initialProjectId: props.context.projectId } : {})}
           lockProject
-          onDrafted={(job) => {
+          onStarted={(changeset) => {
             setAgentCreateOpen(false);
             setWaitingStartedAt(null);
             writeWaitingStartedAt(storageKey, null);
@@ -548,10 +549,10 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
               agent_count: 1,
               detection_method: 'native_create',
             });
-            // The agent is not saved yet; the draft page carries the operator
-            // through review and saving, and completion is reported there when
-            // the agent detection loop sees the written file.
-            window.location.href = agentDraftHref(job.projectId, job.id);
+            // The agent is not saved yet; the changeset review page carries the
+            // operator through review and applying, and completion is reported
+            // there when the agent detection loop sees the written file.
+            window.location.href = changesetReviewHref(changeset.projectId, changeset.sessionId);
           }}
           onCodingAgent={(draft: AgentCreationDraft) => {
             setNativeCreationDraft(draft);

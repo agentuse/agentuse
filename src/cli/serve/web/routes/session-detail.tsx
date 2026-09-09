@@ -8,6 +8,7 @@ import { ContinuePanel } from '../components/continue-panel';
 import { LearningsPanel } from '../components/learnings-panel';
 import { DebugPromptButton } from '../components/debug-prompt-button';
 import { AgentRevisionLauncher, AgentRevisionSessionPanel, type AgentRevisionSessionIdentity } from '../components/agent-revision';
+import { ChangesetSessionPanel } from '../components/changeset-session-panel';
 import { SessionMenu } from '../components/session-menu';
 import { Loading } from '../components/loading';
 import { postSessionDecision, postSessionContinue, postSessionStop, postSessionReopen, fetchSessionArtifacts, fetchApprovals, type SessionArtifact } from '../lib/api';
@@ -1966,6 +1967,19 @@ export default function SessionDetail() {
           )}
         </div>
 
+        <ChangesetSessionPanel
+          sessionId={sessionId}
+          token={token}
+          project={projectId ?? approval.project}
+          sessionStatus={displayStatus}
+          onDetected={(changeset) => {
+            setIsRevisionSession(true);
+            if (changeset.target) setRevisionIdentity({ targetAgentName: changeset.target.name, ...(changeset.originSessionId && { originSessionId: changeset.originSessionId }) });
+          }}
+        />
+
+        {/* Changesets replaced revisions; this panel stays for sessions that
+            authored a revision record before that switch. */}
         <AgentRevisionSessionPanel
           sessionId={sessionId}
           token={token}

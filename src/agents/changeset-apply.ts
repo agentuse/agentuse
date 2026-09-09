@@ -60,7 +60,10 @@ async function resolveInScope(
   relativePath: string,
 ): Promise<string> {
   assertRelativePath(relativePath);
-  const absolute = join(projectRoot, relativePath);
+  // Changeset paths are scope-relative (the overlay and submit_changes both
+  // work from scopeRoot); projectRoot only locates the record and object store.
+  void projectRoot;
+  const absolute = join(scopeRoot, relativePath);
   const missing: string[] = [];
   let existing = dirname(absolute);
   let realExisting: string | undefined;

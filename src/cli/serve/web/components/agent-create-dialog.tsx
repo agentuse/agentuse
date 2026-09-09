@@ -4,13 +4,13 @@ import type { ReasoningLevel } from '../../../../model-compatibility';
 import {
   fetchAgentCreationOptions,
   fetchProviderSetup,
-  startAgentCreationSession,
   type AgentCreationOptionsPayload,
   type AgentCreationSkillPool,
-  type OnboardingJobHandle,
 } from '../lib/api';
+import type { ChangesetRecord } from '../../../../agents/changeset-types';
 import { noAutofill } from '../lib/form';
-import { agentDraftHref } from '../lib/links';
+import { rememberChangesetToken, startCreateChangeset } from '../lib/changeset-entry';
+import { changesetReviewHref } from '../lib/changeset-view';
 import { DashboardSelect } from './dashboard-select';
 import { hasConfiguredProvider, ProviderSetupDialog } from './provider-setup';
 import { SendToCodingAgentDialog } from './send-to-coding-agent-dialog';
@@ -156,8 +156,8 @@ export function AgentCreateDialog(props: {
   initialModel?: string;
   initialDraft?: AgentCreationDraft | null;
   lockProject?: boolean;
-  /** The creator session started; the draft page takes it from here. */
-  onDrafted: (job: OnboardingJobHandle) => void;
+  /** The creator session started; the changeset review page takes it from here. */
+  onStarted: (changeset: ChangesetRecord) => void;
   onCodingAgent?: (draft: AgentCreationDraft) => void;
   onClose: () => void;
 }) {
@@ -230,21 +230,21 @@ export function AgentCreateDialog(props: {
     reasoning,
   }), [projectId, project?.path, objective, model, reasoning]);
 
-  // The dialog's job ends the moment the creator session exists: the draft page
-  // owns the wait, the log, and the review, so the operator is never held in a
-  // modal while a model works.
+  // The dialog's job ends the moment the creator session exists: the review
+  // page owns the wait, the log, and the review, so the operator is never held
+  // in a modal while a model works.
+  //
+  // `reasoning` is still collected and still shapes the coding-agent handoff
+  // prompt, but the changeset endpoint takes no thinking-effort field yet, so
+  // it does not reach the creator session.
   const submit = async () => {
     if (!canSubmit) return;
     setBusy(true);
     setError(null);
     try {
-      const { job } = await startAgentCreationSession({
-        project: projectId,
-        objective: objective.trim(),
-        model: model.trim(),
-        reasoning,
-      });
-      props.onDrafted(job);
+      const payload = await startCreateChangeset(projectId, { objective: objective.trim() }, model);
+      rememberChangesetToken(payload.changeset.sessionId, payload.sessionToken);
+      props.onStarted(payload.changeset);
     } catch (caught) {
       setError((caught as Error).message || 'Could not start the creator session.');
       setBusy(false);
@@ -339,8 +339,8 @@ export function NewAgentButton(props: { initialProjectId?: string; autoOpen?: bo
         initialDraft={draft}
         {...(props.initialProjectId ? { initialProjectId: props.initialProjectId } : {})}
         {...(props.initialProjectId ? { lockProject: true } : {})}
-        onDrafted={(job) => {
-          window.location.href = agentDraftHref(job.projectId, job.id);
+        onStarted={(changeset) => {
+          window.location.href = changesetReviewHref(changeset.projectId, changeset.sessionId);
         }}
         onCodingAgent={(nextDraft) => { setDraft(nextDraft); setCreateOpen(false); setCodingOpen(true); }}
         onClose={() => setCreateOpen(false)}

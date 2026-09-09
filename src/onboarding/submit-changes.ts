@@ -146,7 +146,7 @@ async function readBaseHashes(basePath: string): Promise<Record<string, string>>
 }
 
 /** Reader bound to the served scope; refuses anything that escapes it. */
-function projectFileReader(scopeRoot: string): (relPath: string) => Promise<string | undefined> {
+export function projectFileReader(scopeRoot: string): (relPath: string) => Promise<string | undefined> {
   const root = resolve(scopeRoot);
   return async (relPath) => {
     if (isAbsolute(relPath)) return undefined;
@@ -162,7 +162,7 @@ function projectFileReader(scopeRoot: string): (relPath: string) => Promise<stri
   };
 }
 
-async function listProjectAgents(scopeRoot: string): Promise<string[]> {
+export async function listProjectAgents(scopeRoot: string): Promise<string[]> {
   const matches = await glob('**/*.agentuse', {
     cwd: scopeRoot,
     nodir: true,

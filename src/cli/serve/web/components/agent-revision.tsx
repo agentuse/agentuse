@@ -6,13 +6,20 @@ import {
   fetchAgentCreationOptions,
   fetchAgentRevision,
   fetchAgentRevisions,
+  fetchProjectChangesets,
   fetchSessionRevisions,
   postAgentRevisionAction,
-  startAgentFileRevision,
-  startAgentRevision,
   ApiRequestError,
   type AgentRevisionSummary,
 } from '../lib/api';
+import {
+  changesetCountLine,
+  changesetEntries,
+  rememberChangesetToken,
+  startReviseChangeset,
+  type ChangesetEntry,
+} from '../lib/changeset-entry';
+import { changesetReviewHref } from '../lib/changeset-view';
 import { buildDebugPrompt, type DebugPromptContext } from './debug-prompt-button';
 import { copyText } from './send-to-coding-agent-dialog';
 
@@ -106,6 +113,7 @@ export function AgentRevisionLauncher(props: {
   const [reasoning, setReasoning] = useState<ReasoningLevel>('medium');
   const [models, setModels] = useState<Array<{ value: string; label: string }>>([]);
   const [revisions, setRevisions] = useState<Array<AgentRevisionSummary & { href?: string }>>([]);
+  const [changesets, setChangesets] = useState<ChangesetEntry[]>([]);
   const [historySessionId, setHistorySessionId] = useState<string | null>(null);
   const [loadingOptions, setLoadingOptions] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -113,12 +121,18 @@ export function AgentRevisionLauncher(props: {
   const [errorHref, setErrorHref] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const agentTarget = props.target?.kind === 'agent' ? props.target : undefined;
+  const changesetProjectId = agentTarget?.project ?? props.context.projectId ?? '';
+  /* An agent page knows the agent's run path. A run only carries the agent file
+     path it executed, so that is what the revise call sends and the server
+     resolves against the project root. */
+  const changesetTarget = agentTarget?.path ?? props.context.agentFilePath ?? '';
   // One identity for "whose history is this": the run, or the agent file.
   const historyKey = agentTarget ? `agent:${agentTarget.project}:${agentTarget.path}` : props.context.sessionId;
   const currentSessionId = useRef(historyKey);
   currentSessionId.current = historyKey;
   const historyLoaded = historySessionId === historyKey;
   const currentRevisions = historyLoaded ? revisions : [];
+  const activeChangeset = changesets.find((entry) => entry.active);
   const activeRevision = currentRevisions.find((revision) => ACTIVE_REVISION_STATUSES.has(revision.status));
   const latest = activeRevision ?? currentRevisions[0];
   const earlier = currentRevisions.filter((revision) => revision !== latest);
@@ -147,8 +161,28 @@ export function AgentRevisionLauncher(props: {
     }
   };
 
+  /* Changesets are the current record; the revision list below is history from
+     before this flow existed. A project without the endpoint yet just gets an
+     empty list rather than a broken header. */
+  const refreshChangesets = async (): Promise<ChangesetEntry[]> => {
+    if (!changesetProjectId || !changesetTarget) return [];
+    const requestedSessionId = historyKey;
+    try {
+      const payload = await fetchProjectChangesets(changesetProjectId, changesetTarget);
+      if (currentSessionId.current !== requestedSessionId) return [];
+      const next = changesetEntries(payload.changesets);
+      setChangesets(next);
+      return next;
+    } catch {
+      if (currentSessionId.current !== requestedSessionId) return [];
+      setChangesets([]);
+      return [];
+    }
+  };
+
   useEffect(() => {
     void refresh();
+    void refreshChangesets();
   }, [historyKey, props.context.projectId]);
 
   useEffect(() => {
@@ -166,12 +200,24 @@ export function AgentRevisionLauncher(props: {
     return () => clearInterval(timer);
   }, [latest?.revisionSessionId, latest?.status]);
 
+  useEffect(() => {
+    if (!activeChangeset || activeChangeset.status !== 'running') return;
+    const timer = setInterval(() => void refreshChangesets(), 1500);
+    return () => clearInterval(timer);
+  }, [activeChangeset?.sessionId, activeChangeset?.status]);
+
   const begin = async () => {
     setError(null);
     setErrorHref(null);
     // The list in hand can be stale, so confirm against the server before
     // opening a form the server would reject on submit.
-    const fresh = await refresh();
+    const [fresh, freshChangesets] = await Promise.all([refresh(), refreshChangesets()]);
+    const openChangeset = freshChangesets.find((entry) => entry.active);
+    if (openChangeset) {
+      setError(`This ${agentTarget ? 'agent' : 'run'} already has changes open. Finish or discard them before starting another revision.`);
+      setErrorHref(openChangeset.href);
+      return;
+    }
     const blocking = fresh.find((revision) => ACTIVE_REVISION_STATUSES.has(revision.status));
     if (blocking) {
       setError(`This ${agentTarget ? 'agent' : 'run'} already has a revision open. Finish or discard it before starting another.`);
@@ -202,29 +248,30 @@ export function AgentRevisionLauncher(props: {
 
   const submit = async () => {
     if (!instruction.trim() || !model || busy) return;
+    if (!changesetProjectId || !changesetTarget) {
+      setError('This agent has no project path to revise.');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const { job } = agentTarget
-        ? await startAgentFileRevision({
-          project: agentTarget.project,
-          path: agentTarget.path,
-          instruction: instruction.trim(),
-          model,
-          reasoning,
-        })
-        : await startAgentRevision({
-          sessionId: props.context.sessionId,
-          ...(props.token && { token: props.token }),
-          ...(props.context.projectId && { project: props.context.projectId }),
-          instruction: instruction.trim(),
-          model,
-          reasoning,
-        });
-      try {
-        if (job.sessionToken) localStorage.setItem(`agentuse:revision-token:${job.sessionId}`, job.sessionToken);
-      } catch { /* persistence only improves return navigation */ }
-      window.location.assign(agentRevisionHref(job.projectId, job.sessionId, job.sessionToken));
+      /* Both branches now start a changeset: revising an agent can touch the
+         scripts beside it, so the review page has to be the multi-file one.
+         `reasoning` stays a local preference; the changeset endpoint has no
+         thinking-effort field yet. */
+      const payload = await startReviseChangeset({
+        projectId: changesetProjectId,
+        target: changesetTarget,
+        instruction: instruction.trim(),
+        model,
+        ...(agentTarget ? {} : { originSessionId: props.context.sessionId }),
+      });
+      rememberChangesetToken(payload.changeset.sessionId, payload.sessionToken);
+      window.location.assign(changesetReviewHref(
+        payload.changeset.projectId,
+        payload.changeset.sessionId,
+        payload.sessionToken,
+      ));
     } catch (caught) {
       setError((caught as Error).message || 'Could not start the revision session.');
       const href = caught instanceof ApiRequestError && typeof caught.details.href === 'string'
@@ -244,7 +291,27 @@ export function AgentRevisionLauncher(props: {
 
   return (
     <>
-      {latest && showCard && !open && (
+      {activeChangeset && !open && (
+        <div class="agent-revision-history">
+          <div class={`agent-revision-link is-${activeChangeset.status}`}>
+            <span class="agent-revision-link-copy">
+              <strong>{activeChangeset.status === 'running' && <span class="agent-revision-pulse" aria-hidden="true" />}{activeChangeset.label}</strong>
+              <span>{activeChangeset.detail}</span>
+            </span>
+            <span class="agent-revision-link-actions">
+              <a class="agent-revision-open" href={activeChangeset.href}>
+                {activeChangeset.status === 'running' ? 'Open changeset session' : 'Review the changes'}
+              </a>
+            </span>
+          </div>
+          {error && (
+            <p class="agent-revision-error" role="alert">
+              {error}{errorHref && <> <a href={errorHref}>Open it</a></>}
+            </p>
+          )}
+        </div>
+      )}
+      {latest && showCard && !open && !activeChangeset && (
         <div class="agent-revision-history">
           <div class={`agent-revision-link is-${latest.status}`}>
             <span class="agent-revision-link-copy">
@@ -279,7 +346,7 @@ export function AgentRevisionLauncher(props: {
           )}
         </div>
       )}
-      {historyLoaded && !showCard && (
+      {historyLoaded && !showCard && !activeChangeset && (
         <button
           type="button"
           class={`${props.buttonClassName ?? `debug-prompt-button${props.atGate ? '' : ' is-primary'}`}${open ? ' is-open' : ''}`}
@@ -473,47 +540,78 @@ export function revisionReturnHref(
  * list in its own tab, next to jobs and learnings.
  */
 export function AgentRevisionsPanel(props: { project: string; path: string }) {
+  const [changesets, setChangesets] = useState<ChangesetEntry[] | null>(null);
   const [revisions, setRevisions] = useState<AgentRevisionSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      try {
-        const payload = await fetchAgentRevisions(props.project, props.path);
-        if (!cancelled) { setRevisions(payload.revisions); setError(null); }
-      } catch (caught) {
-        if (!cancelled) { setError((caught as Error).message); setRevisions([]); }
-      }
+      /* Two record types answer the same question. Changesets are what this
+         flow writes now; the revision list is read-only history from before it,
+         so it is rendered only while a project still has some. */
+      const [changesetResult, revisionResult] = await Promise.allSettled([
+        fetchProjectChangesets(props.project, props.path),
+        fetchAgentRevisions(props.project, props.path),
+      ]);
+      if (cancelled) return;
+      setChangesets(changesetResult.status === 'fulfilled'
+        ? changesetEntries(changesetResult.value.changesets)
+        : []);
+      setRevisions(revisionResult.status === 'fulfilled' ? revisionResult.value.revisions : []);
+      setError(changesetResult.status === 'rejected' && revisionResult.status === 'rejected'
+        ? (changesetResult.reason as Error).message
+        : null);
     })();
     return () => { cancelled = true; };
   }, [props.project, props.path]);
 
+  if (changesets === null || revisions === null) return <p class="empty">Loading revisions…</p>;
   if (error) return <p class="empty err">{error}</p>;
-  if (revisions === null) return <p class="empty">Loading revisions…</p>;
-  if (revisions.length === 0) {
+  if (changesets.length === 0 && revisions.length === 0) {
     return <p class="empty">No revisions yet. Use <strong>Revise Agent</strong> to propose a change to this agent.</p>;
   }
 
   return (
-    <div class="agent-revision-list">
-      {revisions.map((revision) => (
-        <a
-          class={`agent-revision-link is-${revision.status}`}
-          key={revision.revisionSessionId}
-          href={revisionHref(revision, undefined, props.project)}
-        >
-          <span class="agent-revision-link-copy">
-            <strong>
-              {ACTIVE_REVISION_STATUSES.has(revision.status) && revision.status === 'running'
-                && <span class="agent-revision-pulse" aria-hidden="true" />}
-              {revisionLabel(revision)}
-            </strong>
-            <span>{revision.summary || revision.instruction}</span>
-          </span>
-          <span class="agent-revision-link-time">{relativeTime(revision.updatedAt)}</span>
-        </a>
-      ))}
-    </div>
+    <>
+      {changesets.length > 0 && (
+        <div class="agent-revision-list">
+          {changesets.map((entry) => (
+            <a class={`agent-revision-link is-${entry.status}`} key={entry.sessionId} href={entry.href}>
+              <span class="agent-revision-link-copy">
+                <strong>
+                  {entry.status === 'running' && <span class="agent-revision-pulse" aria-hidden="true" />}
+                  {entry.label}
+                </strong>
+                <span>{[entry.detail, changesetCountLine(entry)].filter(Boolean).join(' · ')}</span>
+              </span>
+              <span class="agent-revision-link-time">{relativeTime(entry.updatedAt)}</span>
+            </a>
+          ))}
+        </div>
+      )}
+      {revisions.length > 0 && (
+        <div class="agent-revision-list">
+          {changesets.length > 0 && <p class="empty">Earlier single-file revisions</p>}
+          {revisions.map((revision) => (
+            <a
+              class={`agent-revision-link is-${revision.status}`}
+              key={revision.revisionSessionId}
+              href={revisionHref(revision, undefined, props.project)}
+            >
+              <span class="agent-revision-link-copy">
+                <strong>
+                  {ACTIVE_REVISION_STATUSES.has(revision.status) && revision.status === 'running'
+                    && <span class="agent-revision-pulse" aria-hidden="true" />}
+                  {revisionLabel(revision)}
+                </strong>
+                <span>{revision.summary || revision.instruction}</span>
+              </span>
+              <span class="agent-revision-link-time">{relativeTime(revision.updatedAt)}</span>
+            </a>
+          ))}
+        </div>
+      )}
+    </>
   );
 }
