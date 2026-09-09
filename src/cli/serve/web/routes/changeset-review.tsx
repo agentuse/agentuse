@@ -10,6 +10,7 @@ import {
   type ChangesetSkippedFile,
 } from '../lib/api';
 import { useSessionLog } from '../hooks/use-session-log';
+import { useSmartBack } from '../hooks/use-smart-back';
 import { useTitle } from '../hooks/use-title';
 import { Loading } from '../components/loading';
 import { CopyButton } from '../components/copy-button';
@@ -150,6 +151,14 @@ export default function ChangesetReview() {
   useEffect(() => {
     if (tab === 'changes') setSeenReplies(replyCount);
   }, [tab, replyCount]);
+
+  // Back goes wherever the operator came from (the agent page, a session, the
+  // agent list). The fallback only matters on a cold load of this URL: the
+  // revised agent's own page, or the project's agent list for a new agent.
+  const backHref = changeset?.mode === 'revise' && changeset.target?.path
+    ? agentDetailHref(projectId, changeset.target.path)
+    : `/agents/${encodeURIComponent(projectId)}`;
+  const goBack = useSmartBack(backHref);
 
   if (loadError) {
     return <div class="page-draft"><main><p class="empty" role="alert">{loadError}</p></main></div>;
@@ -307,6 +316,11 @@ export default function ChangesetReview() {
       <header class="draft-header">
         <div class="draft-header-row">
           <div class="draft-identity">
+            <a class="draft-back" href={backHref} onClick={goBack} aria-label="Back" title="Back">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
+            </a>
             <span class="changeset-mode">{changeset.mode === 'revise' ? 'Revise' : 'Create'}</span>
             <code>{subject}</code>
             <span class="draft-file-version">

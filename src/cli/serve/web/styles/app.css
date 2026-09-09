@@ -9789,6 +9789,31 @@ main[tabindex="-1"]:focus,
 }
 .draft-header-row.is-meta .draft-meta { flex: 1 1 auto; }
 .draft-header-row.is-meta .draft-usage { margin-left: auto; }
+/* Back arrow, first thing in the header identity line. Same affordance as the
+   session bar's, so the two review surfaces read as one chrome. */
+.page-draft .draft-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  margin-left: -4px;
+  border-radius: 6px;
+  color: var(--muted-2);
+  text-decoration: none;
+  transition: color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+.page-draft a.draft-back:hover {
+  color: var(--fg);
+  background: var(--panel-hover);
+  transform: translateX(-2px);
+}
+.page-draft .draft-back:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 2px; }
+.page-draft .draft-back svg { flex: none; }
+@media (prefers-reduced-motion: reduce) {
+  .page-draft a.draft-back:hover { transform: none; }
+}
+
 .draft-identity {
   display: flex;
   align-items: center;
