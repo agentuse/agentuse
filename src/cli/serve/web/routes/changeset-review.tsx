@@ -258,54 +258,63 @@ export default function ChangesetReview() {
     ? changeset.target?.path ?? changeset.target?.name ?? 'an agent'
     : proposal?.entry ?? 'a new agent';
 
-  // One action group in one place: the header's right end, same order in every
-  // state. Test run is the quietest of the three, Apply carries the weight.
-  const actions = changeset.status === 'applied'
+  // The header carries the actions that are about the run itself. The decision
+  // that settles the change set sits at the bottom instead, beside the thread
+  // the operator just read and the box they would otherwise reply in: leaving
+  // the page without settling silently blocks the next revision of this agent,
+  // and a button pinned to the far corner is exactly what gets walked past.
+  const headerActions = changeset.status === 'applied'
     ? (
       <button type="button" class="draft-secondary" disabled={busy !== null} onClick={() => void restore()}>
         {busy === 'restore' ? 'Restoring…' : 'Restore'}
       </button>
     )
-    : open && (
-      <>
-        {running && (
-          <button type="button" class="draft-secondary" disabled={busy !== null} onClick={() => void act('cancel')}>
-            {busy === 'cancel' ? 'Stopping…' : 'Cancel'}
-          </button>
-        )}
-        {changeset.status === 'proposed' && (
-          <>
-            {/* A disabled button swallows its own hover, so the reason for the
-                block sits on a wrapper that still receives it. */}
-            <span
-              class="changeset-action-slot"
+    : running && (
+      <button type="button" class="draft-secondary" disabled={busy !== null} onClick={() => void act('cancel')}>
+        {busy === 'cancel' ? 'Stopping…' : 'Cancel'}
+      </button>
+    );
+
+  const decision = changeset.status === 'proposed'
+    ? {
+      note: 'This proposal is waiting on you. Until it is applied or discarded, a new revision of this agent cannot be started.',
+      buttons: (
+        <>
+          {/* A disabled button swallows its own hover, so the reason for the
+              block sits on a wrapper that still receives it. */}
+          <span
+            class="changeset-action-slot"
+            title={testBlocked ? 'Open a file first: this proposal includes a script the test run will execute.' : undefined}
+          >
+            <button
+              type="button"
+              class="draft-secondary"
+              disabled={busy !== null || testBlocked}
               title={testBlocked ? 'Open a file first: this proposal includes a script the test run will execute.' : undefined}
+              onClick={() => void testRun()}
             >
-              <button
-                type="button"
-                class="draft-secondary"
-                disabled={busy !== null || testBlocked}
-                title={testBlocked ? 'Open a file first: this proposal includes a script the test run will execute.' : undefined}
-                onClick={() => void testRun()}
-              >
-                {busy === 'test' ? 'Starting…' : 'Test run'}
-              </button>
-            </span>
-            <button type="button" class="draft-secondary" disabled={busy !== null} onClick={() => void act('discard')}>
-              {busy === 'discard' ? 'Discarding…' : 'Discard'}
+              {busy === 'test' ? 'Starting…' : 'Test run'}
             </button>
-            <button type="button" class="draft-primary" disabled={busy !== null} onClick={() => void act('apply')}>
-              {busy === 'apply' ? 'Applying…' : 'Apply'}
-            </button>
-          </>
-        )}
-        {changeset.status === 'no-change' && (
+          </span>
+          <button type="button" class="draft-secondary" disabled={busy !== null} onClick={() => void act('discard')}>
+            {busy === 'discard' ? 'Discarding…' : 'Discard'}
+          </button>
+          <button type="button" class="draft-primary" disabled={busy !== null} onClick={() => void act('apply')}>
+            {busy === 'apply' ? 'Applying…' : 'Apply'}
+          </button>
+        </>
+      ),
+    }
+    : changeset.status === 'no-change'
+      ? {
+        note: 'The author proposed no file change. Accepting closes this out; until then, a new revision of this agent cannot be started.',
+        buttons: (
           <button type="button" class="draft-primary" disabled={busy !== null} onClick={() => void act('discard')}>
             {busy === 'discard' ? 'Accepting…' : 'Accept'}
           </button>
-        )}
-      </>
-    );
+        ),
+      }
+      : null;
 
   const sources = [
     ...(proposal?.externalReads ?? []).map((url) => ({ key: `url:${url}`, label: url, href: url })),
@@ -335,9 +344,9 @@ export default function ChangesetReview() {
                 : running ? 'running' : 'draft'}
             />
           </div>
-          {actions && (
+          {headerActions && (
             <div class="draft-header-actions">
-              <div class="changeset-actions">{actions}</div>
+              <div class="changeset-actions">{headerActions}</div>
             </div>
           )}
         </div>
@@ -465,6 +474,13 @@ export default function ChangesetReview() {
       {actionError || authorSession.streamError || changeset.error?.message
         ? <p class="draft-error" role="alert">{actionError ?? authorSession.streamError ?? changeset.error?.message}</p>
         : null}
+
+      {decision && !question && (
+        <div class="changeset-decision">
+          <p class="changeset-decision-note">{decision.note}</p>
+          <div class="changeset-actions">{decision.buttons}</div>
+        </div>
+      )}
 
       {question ? (
         <DraftAnswerComposer

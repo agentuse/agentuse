@@ -10015,6 +10015,29 @@ main[tabindex="-1"]:focus,
 }
 .draft-evidence-row:hover { background: var(--panel-hover); color: var(--cyan); }
 
+/* The decision that settles a change set, directly above the composer: what is
+   pending, what leaving it pending costs, and the buttons that end it. */
+.changeset-decision {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  padding: 10px var(--draft-gutter);
+  border-top: 1px solid var(--line);
+  background: var(--cyan-soft);
+}
+.changeset-decision-note {
+  margin: 0;
+  min-width: 260px;
+  flex: 1 1 320px;
+  color: var(--fg);
+  font-size: var(--font-size-caption);
+  line-height: var(--lh-snug);
+}
+.changeset-decision .changeset-actions { flex: none; }
+
 .draft-composer {
   display: flex;
   flex-direction: column;
@@ -10032,16 +10055,25 @@ main[tabindex="-1"]:focus,
   text-transform: uppercase;
 }
 .draft-composer textarea {
-  min-height: 40px;
-  padding: 0;
-  border: 0;
-  background: transparent;
+  min-height: 52px;
+  padding: 9px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
   color: var(--fg);
   font-family: inherit;
   font-size: var(--font-size-body);
   resize: vertical;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.draft-composer textarea:focus { outline: none; }
+.draft-composer textarea::placeholder { color: var(--muted-2); }
+.draft-composer textarea:hover:not(:disabled) { border-color: var(--muted-2); }
+.draft-composer textarea:focus {
+  outline: none;
+  border-color: var(--cyan-border);
+  box-shadow: 0 0 0 3px var(--cyan-soft);
+}
+.draft-composer textarea:disabled { background: var(--panel); color: var(--muted); }
 .draft-composer-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .draft-composer-hint { color: var(--muted); font-size: var(--font-size-caption); }
 .draft-composer-hint kbd {
