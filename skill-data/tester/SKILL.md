@@ -19,6 +19,17 @@ agentuse doctor <file>   # ~1s static validation, no tokens
 
 Catches frontmatter/config errors before any token-heavy run.
 
+## Replay Real Inputs After an Instruction Edit
+
+Use `agentuse test <file> --replay <session-id>` to regenerate against recorded
+external results with current instructions and explicit read-only reference
+files. It captures the first proposal before review, or final output, and stops
+on any unmatched tool input. No mock model, live tool execution or fabrication.
+The source must be a real, non-running session; old drafts and human feedback
+are held out of generation. Read `docs/guides/replay.mdx` for the precise
+matching contract. Use ordinary mock tests below for effects and approval-flow
+branches; replay does not test those branches.
+
 ## Run the Test
 
 ```bash

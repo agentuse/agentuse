@@ -292,6 +292,18 @@ agentuse run agent.agentuse -m openai:gpt-5.6:dev
 agentuse run orchestrator.agentuse --model openai:gpt-5.4-mini
 ```
 
+### Replay a recorded session
+
+```bash
+agentuse test <agent-file> --replay <session-id> [--json] [--model <model>]
+```
+
+Generate with current instructions and recorded tool results. Stops at the first
+proposal before automated review, final output, or an unmatched call. Never
+executes live tool operations or fabricates missing results. See
+[Replay recorded inputs](/guides/replay) for matching and reference-file behavior.
+
+
 ## agentuse sessions
 
 View and resume AgentUse sessions.

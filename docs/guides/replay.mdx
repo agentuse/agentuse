@@ -1,0 +1,87 @@
+---
+title: "Replay recorded inputs"
+description: "Test current instructions against a real session's recorded tool results, without live tool operations."
+---
+
+Use replay when you are changing an agent's instructions and want to hold its
+external inputs fixed:
+
+```bash
+agentuse test agents/x/reply.agentuse --replay <session-id>
+```
+
+The writer runs again. Its tools return recorded results instead of opening
+browsers, running commands, updating stores, or starting child agents. No mock
+model is needed. This is a fresh generation, not a continuation of the source
+session.
+
+## What stays fixed and what changes
+
+- **Current:** the local agent definition and configured model, explicit
+  preloaded skills, applicable learnings, and explicitly granted read-only
+  reference files. Replay reads learnings without recording usage.
+- **Recorded:** the original additional user prompt, tool schemas, external
+  results and errors. Relative dates use the original session's start date.
+- **Withheld from the writer:** the old assistant draft, its approval proposal,
+  later revisions and human feedback. Those appear only in the comparison.
+
+Explicit read-only **file** grants are snapshotted before generation so edits to
+writing briefs take effect. Directory and wildcard grants stay recorded because
+they may contain source data or drafts. The report lists refreshed files and
+hashes; do not treat a refreshed data file as frozen evidence. Inline agent
+instructions and preloaded skills are always current. Dynamic skill/tool
+requests use their recordings.
+
+## Where it stops
+
+Replay captures the first `await_human` input **before gate preflight,
+automated verification or human approval**. It does not grant approval, run
+revisions, or publish. An agent that finishes without a gate yields its final
+output. An explicit incomplete report remains incomplete.
+
+A tool call without a matching recording stops the test with
+`REPLAY_INPUT_MISSING`. No live lookup or LLM fabrication fills the gap.
+The failed call and its exact inputs appear in the report.
+
+Matching uses the tool name and arguments. Object key order and the narration
+field `intent` do not matter; filesystem read paths are normalized. Other
+arguments, including shell commands, URLs, prompts and array order, must match.
+Repeated calls consume matching recordings in their original order.
+
+Only recordings before the source's **first** approval gate are available.
+For an ungated run, later user continuations are excluded. Mock and replay
+sessions cannot be used as sources. An actively running source must first
+finish or reach approval.
+
+## Read the result
+
+The CLI prints the old and new proposal/output and a path to `replay.json`.
+With `--json`, it emits the structured comparison, refreshed-reference hashes,
+per-call recording provenance and any mismatch:
+
+```bash
+agentuse test agents/x/reply.agentuse --replay <session-id> --json
+```
+
+The new session is marked as a test (`mock: true`) and stores
+`config.replaySourceSessionId`. It does not modify or resume the original
+session. Replay sessions cannot be resumed as live runs; run another replay to
+try the next instruction change.
+
+Exit status is 0 for a captured proposal or completed output, and 1 for a
+mismatch, incomplete outcome or execution error. Success means the comparison
+was captured, **not** that the draft passed a quality review.
+
+## First-version limits
+
+Replay supports recorded text/JSON tool results. Tool schemas are frozen, so
+this command measures instruction changes, not a migration to new tools. A
+changed query, a new research request, or a write/dry-run containing newly
+generated text may not have a matching recording. That is a visible mismatch,
+not permission to return unrelated old data. No shell command executes,
+including commands that are usually read-only or called “dry run.”
+
+This command does not support `--scope`, `--approval`, `--mock-model`, a remote
+agent URL, or an additional prompt. Use ordinary `agentuse test` for mocked
+flow testing. Judge regression against past human decisions is a separate
+operation; replay deliberately captures the writer before the judge intervenes.

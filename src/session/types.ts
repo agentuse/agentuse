@@ -34,10 +34,12 @@ export interface SessionInfo {
   // Model and version
   model: string;                     // Full model identifier (e.g., "anthropic:claude-sonnet-4-0")
   version: string;                   // agentuse version
-  mock?: boolean;                    // True when run under --mock (tool outputs are LLM-generated)
+  mock?: boolean;                    // Test run: mocked tools or recorded-input replay
 
   // Configuration (from agent YAML)
   config: {
+    /** Recorded-input test provenance. Never a resumable production session. */
+    replaySourceSessionId?: string;
     timeout?: number;                // Timeout in seconds
     maxSteps?: number;               // Max steps configured
     mcpServers?: string[];           // MCP server names (keys from mcpServers object)

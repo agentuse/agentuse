@@ -19,6 +19,7 @@ export interface SessionContext {
 export interface SessionConfigOptions {
   timeout?: number;
   maxSteps?: number;
+  replaySourceSessionId?: string;
   mcpServers?: string[];
   subagents?: Array<{ path: string; name?: string }>;
   modelOverride?: RunModelOverride;
@@ -43,6 +44,8 @@ export interface CreateSessionParams {
   sessionId?: string;
   /** Atomically promote a host-created durable preparing shell. */
   preparedSession?: boolean;
+  /** Replay is a test session without ambient mock-mode environment changes. */
+  mock?: boolean;
 }
 
 /**
@@ -86,10 +89,11 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
     },
     model: agent.config.model,
     version,
-    ...(isMockMode() && { mock: true }),
+    ...((params.mock ?? isMockMode()) && { mock: true }),
     config: {
       ...(config.timeout !== undefined && { timeout: config.timeout }),
       ...(config.maxSteps !== undefined && { maxSteps: config.maxSteps }),
+      ...(config.replaySourceSessionId && { replaySourceSessionId: config.replaySourceSessionId }),
       ...(config.mcpServers && { mcpServers: config.mcpServers }),
       ...(config.subagents && { subagents: config.subagents }),
       ...(config.modelOverride && { modelOverride: config.modelOverride }),

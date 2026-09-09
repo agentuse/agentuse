@@ -15,6 +15,8 @@ import { applyProviderSystemMessages } from '../plugin/provider-behavior';
 export interface BuildSystemMessagesOptions {
   /** Parsed agent configuration */
   agent: ParsedAgent;
+  /** Replay freezes relative dates at the original run time. */
+  now?: Date | undefined;
   /** Whether this is a subagent (affects autonomous prompt) */
   isSubAgent?: boolean | undefined;
   /** Path to the agent file (needed for manager prompt to resolve subagent descriptions) */
@@ -92,7 +94,7 @@ export async function buildSystemMessages(options: BuildSystemMessagesOptions): 
   let systemMessages: Array<{ role: string; content: string }> = [];
 
   // Build today's date for system prompt
-  const todayDate = new Date().toLocaleDateString('en-US', {
+  const todayDate = (options.now ?? new Date()).toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
     month: 'long',

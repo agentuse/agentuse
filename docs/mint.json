@@ -51,6 +51,7 @@
         "guides/store",
         "guides/learning",
         "guides/verify",
+        "guides/replay",
         "guides/testing-agents",
         "guides/macos-desktop-development"
       ]

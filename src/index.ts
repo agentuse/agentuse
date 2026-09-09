@@ -273,7 +273,8 @@ program
 // banner, and execution are shared with `run`.
 program
   .command('test <file> [prompt...]')
-  .description('Test an agent in mock mode: side effects fabricated, approval gates auto-resolved, stores isolated. Scope defaults to "gated" when the agent declares tools.bash.gated, else "all".')
+  .description('Test an agent with mocked tools, or use --replay to generate from recorded inputs without live tool operations.')
+  .option('--replay <session-id>', 'Generate with current instructions and recorded tool results; stop at the first proposal or missing input, without live tools or review')
   .option('--scope <scope>', 'What to mock: "gated" (only tools.bash.gated commands; everything else real) or "all" (every tool result). Default: adaptive.')
   .option('--approval <decision>', 'Gate decision: approve (default), reject, or comment:<text> (comments the first gate, approves the re-gate)')
   .option('--mock-model <model>', 'Model that fabricates mock results (or set AGENTUSE_MOCK_MODEL once, e.g. in ~/.agentuse/.env)')
@@ -287,10 +288,18 @@ program
   .option('-m, --model <model>', 'Override the model specified in the agent file')
   .option('--json', 'Output result as JSON (implies --quiet --no-tty)')
   .action(async (file: string, promptArgs: string[], options: {
-    scope?: string; approval?: string; mockModel?: string;
+    scope?: string; approval?: string; mockModel?: string; replay?: string;
     quiet: boolean; debug: boolean; tty?: boolean; noTty?: boolean; compact: boolean;
     timeout: string; directory?: string; envFile?: string; model?: string; json?: boolean;
   }) => {
+    if (options.replay) {
+      if (options.scope || options.approval || options.mockModel || promptArgs.length || isURL(file)) {
+        logger.error('--replay requires a local agent and the original recorded prompt; it cannot be combined with --scope, --approval, --mock-model, or a new prompt.');
+        process.exit(1);
+      }
+      await runCommandAction(file, [], options);
+      return;
+    }
     let scope = options.scope;
     if (scope !== undefined && scope !== 'all' && scope !== 'gated') {
       logger.error(`Invalid --scope "${scope}". Use "gated" or "all".`);
@@ -317,7 +326,7 @@ program
 interface RunCommandOptions {
   quiet: boolean; debug: boolean; tty?: boolean; noTty?: boolean; compact: boolean;
   timeout: string; directory?: string; envFile?: string; model?: string; sessionId?: string;
-  json?: boolean; mock?: boolean; mockModel?: string; mockApproval?: boolean | string; mockGated?: boolean;
+  json?: boolean; mock?: boolean; mockModel?: string; mockApproval?: boolean | string; mockGated?: boolean; replay?: string;
 }
 
 async function runCommandAction(file: string, promptArgs: string[], options: RunCommandOptions): Promise<void> {
@@ -674,6 +683,30 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
         // Warn if provider-specific options don't match the new provider
         if (agent.config.openai && provider !== 'openai') {
           logger.warn(`Warning: OpenAI-specific options in config will be ignored with ${provider} model`);
+        }
+      }
+
+      if (options.replay) {
+        if (!agentFilePath || !sessionManager) throw new Error('Replay requires a local agent and session storage.');
+        const { runReplay, formatReplayResult } = await import('./replay/run');
+        const abort = new AbortController();
+        const cancel = () => abort.abort(new Error('Replay interrupted'));
+        process.on('SIGINT', cancel);
+        process.on('SIGTERM', cancel);
+        try {
+          const replay = await runReplay({
+            agent, agentFilePath, sourceSessionId: options.replay, sessionManager, projectContext: { ...projectContext, cwd: process.cwd() },
+            timeoutSeconds: resolveTimeout(cliTimeoutSeconds, timeoutWasExplicit, agent.config.timeout),
+            maxSteps: cliMaxSteps, abortSignal: abort.signal,
+          });
+          if (options.directory && originalCwd) process.chdir(originalCwd);
+          await telemetry.shutdown();
+          console.log(options.json ? JSON.stringify(replay) : formatReplayResult(replay));
+          process.exitCode = replay.success ? 0 : 1;
+          return;
+        } finally {
+          process.off('SIGINT', cancel);
+          process.off('SIGTERM', cancel);
         }
       }
 

@@ -514,6 +514,9 @@ type ExecuteAgentCoreOptions = {
   messageID?: string;
   effectWal?: EffectWAL;
   runOutcome?: RunOutcome;
+  /** Internal closed-tool replay runner only: capture before gate preflight and
+   * stop before another model step, compaction, or outcome recovery. */
+  replay?: { stopped(): boolean };
   agentSourceSubmission?: AgentSourceSubmission;
   projectSuggestionsSubmission?: ProjectSuggestionsSubmission;
   pluginEvents?: {
@@ -1003,7 +1006,7 @@ async function* executeAgentAttempt(
   // `stopWhen` predicate: stop after the current step when a plugin explicitly
   // asks to terminate. A blocking interceptor normally sets both `block` and
   // `terminate`, producing a denied tool result and preventing another turn.
-  const stopOnPluginTerminate = (): boolean => pluginTerminateRequested;
+  const stopOnPluginTerminate = (): boolean => pluginTerminateRequested || options.replay?.stopped() === true;
 
   // `stopWhen` predicate: stop the step loop the moment a step carries a
   // SuspendSignal tool-error. This runs synchronously inside the SDK's own
@@ -1270,7 +1273,7 @@ async function* executeAgentAttempt(
       : { ...modelFacingTools };
     const awaitHumanPresent = !!(toolsForStream as any).await_human;
     let coreToolApproval: ((opts: { toolCall: { toolName: string; toolCallId?: string; input?: any } }) => unknown) | undefined;
-    if (awaitHumanPresent || effectPatterns.length > 0) {
+    if (!options.replay && (awaitHumanPresent || effectPatterns.length > 0)) {
       // Barrier state, scoped to this streamText. Real gates suspend and end the
       // stream. Machine preflight/verify decisions and mocked gates resolve
       // inline, so the outer preflight wrapper explicitly clears this state
@@ -2083,6 +2086,8 @@ Current step: ${stepCount}/${options.maxSteps}`);
       }
     }
 
+    if (options.replay?.stopped()) return;
+
     // A gate registered during this segment: finalize the suspension now that
     // the stream is fully drained (or the drain timed out). Every sibling tool
     // call the model emitted alongside the gate has been yielded (journaled by
@@ -2165,6 +2170,14 @@ Current step: ${stepCount}/${options.maxSteps}`);
       } catch (reconcileError) {
         logger.debug(`Segment compaction check failed: ${(reconcileError as Error).message}`);
       }
+    }
+
+    // A replay measures the first completed generation, not a synthesized
+    // outcome or revision. Compaction may continue a still-active turn, but a
+    // finished turn ends the test even without report_complete.
+    if (options.replay) {
+      if (runAnotherSegment) continue;
+      return;
     }
 
     // Creator delivery recovery. Some smaller models correctly inspect and

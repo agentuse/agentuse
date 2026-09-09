@@ -1,6 +1,6 @@
 import { dirname } from 'path';
+import { buildFreshInstructions } from './instructions';
 import { computeAgentId } from '../utils/agent-id';
-import { findProjectRoot } from '../utils/project';
 import { createSubAgentTools } from '../subagent';
 import {
   DoomLoopDetector,
@@ -23,20 +23,12 @@ import { EffectWAL } from './effect-wal';
 import { createLiveToolOutputRelay } from './live-tool-output';
 import {
   buildSystemMessages,
-  buildLearningPrompt,
   ensurePersistentStoreBoundary,
 } from './system-messages';
 import { createSessionAndMessage } from './session-helper';
 import { bindToolsToSnapshot, createToolsSnapshot } from './tool-snapshot';
 import { rehydrateMessages, ensureTrailingUserTurn } from '../session';
 import type { AssistantTokens } from '../session/usage';
-import { appendApprovalInstructions } from './approval';
-import {
-  expandTrustedSkills,
-  getExplicitSkillNames,
-  loadSkillPromptOutputs,
-} from '../skill/index.js';
-import { discoverSkills } from '../skill/discovery.js';
 import { resolveVerifyPlacements, withGateVerify } from '../verify/gate.js';
 
 /**
@@ -70,63 +62,14 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     agentDir: agentFilePath ? dirname(agentFilePath) : undefined,
   };
   let resolvedInstructions = resolveSafeVariables(agent.instructions, pathContext);
-  if (!existingSessionId) {
-    resolvedInstructions = appendApprovalInstructions(resolvedInstructions, agent.config);
-  }
-
-  if (!existingSessionId && projectContext) {
-    const explicitSkillNames = getExplicitSkillNames(agent.config.skills);
-    if (explicitSkillNames.length > 0) {
-      // Pass the trust-expanded config so a trusted skill's own allowed-tools
-      // don't show as "ungranted" in its preloaded prompt output.
-      const discovered = await discoverSkills(projectContext.projectRoot);
-      const effectiveToolsConfig = expandTrustedSkills(
-        agent.config.tools,
-        discovered,
-        agent.config.skills
-      );
-      const preloadedSkills = await loadSkillPromptOutputs(
-        projectContext.projectRoot,
-        effectiveToolsConfig,
-        explicitSkillNames
-      );
-      if (preloadedSkills.length > 0) {
-        resolvedInstructions = [
-          resolvedInstructions,
-          '## Skills (shared defaults; agent instructions and relevant contextual learnings may refine them)',
-          preloadedSkills.map((skill) => skill.output).join('\n\n'),
-        ].join('\n\n');
-        logger.debug(`[Skills] Preloaded ${preloadedSkills.map((skill) => skill.name).join(', ')}`);
-      }
-    }
-  }
-
-  // Append learnings to instructions if apply is enabled. Resume uses the
-  // persisted LLM state, so learning prompts are intentionally not re-derived.
-  let learningsApplied = 0;
-  let learningsStored = 0;
-  let learningsCap = 0;
-  let learningsInjectedIds: string[] = [];
-  if (!existingSessionId && agent.config.learning?.apply && agentFilePath) {
-    // Same state root that keys this run's session and agentId. Derived from the
-    // agent file when the caller supplied no project context, which is exactly
-    // how `resolveProjectContext` would have computed it.
-    const learningResult = await buildLearningPrompt(
-      agent,
-      agentFilePath,
-      projectContext?.stateRoot ?? findProjectRoot(agentFilePath),
-    );
-    if (learningResult?.prompt) {
-      resolvedInstructions = `${resolvedInstructions}\n\n${learningResult.prompt}`;
-    }
-    if (learningResult) {
-      learningsApplied = learningResult.count;
-      learningsStored = learningResult.total;
-      learningsCap = learningResult.cap;
-      learningsInjectedIds = learningResult.injectedIds;
-      logger.debug(`[Learning] Appended ${learningsApplied} of ${learningsStored} learning(s) to instructions`);
-    }
-  }
+  const fresh = !existingSessionId
+    ? await buildFreshInstructions({ agent, agentFilePath, projectContext })
+    : undefined;
+  if (fresh) resolvedInstructions = fresh.instructions;
+  const learningsApplied = fresh?.learningsApplied ?? 0;
+  const learningsStored = fresh?.learningsStored ?? 0;
+  const learningsCap = fresh?.learningsCap ?? 0;
+  const learningsInjectedIds = fresh?.learningsInjectedIds ?? [];
 
   // Precedence: CLI > Agent YAML > Default
   const maxSteps = resolveMaxSteps(cliMaxSteps, agent.config.maxSteps);
@@ -157,6 +100,9 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     const found = await sessionManager.findSession(existingSessionId);
     if (!found) {
       throw new Error(`Session not found: ${existingSessionId}`);
+    }
+    if (found.session.config.replaySourceSessionId) {
+      throw new Error('Replay sessions cannot be resumed as live runs. Start another test --replay instead.');
     }
     // A daemon restart reconstructs the root and subagent tools from agent
     // files. A persisted run-wide override is authoritative for both; otherwise
