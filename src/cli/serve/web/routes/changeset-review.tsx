@@ -39,6 +39,9 @@ const OPEN_STATUSES = new Set(['running', 'proposed', 'no-change']);
 
 type BusyAction = 'apply' | 'discard' | 'restore' | 'cancel' | 'request' | 'test';
 
+/** The two halves of the review: the conversation, and the files it produced. */
+type ChangesetTab = 'changes' | 'files';
+
 export default function ChangesetReview() {
   const location = useLocation();
   const { params } = useRoute();
@@ -53,6 +56,12 @@ export default function ChangesetReview() {
   const [busy, setBusy] = useState<BusyAction | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | undefined>(undefined);
   const [fileTab, setFileTab] = useState<ChangesetFileTab>('diff');
+  const [tab, setTab] = useState<ChangesetTab>('changes');
+  // The reviewer picked a tab; stop steering it for them.
+  const [tabPinned, setTabPinned] = useState(false);
+  // Replies that landed while the reviewer was reading files, so Changes can
+  // say there is something new without stealing the tab.
+  const [seenReplies, setSeenReplies] = useState(0);
   const [diagnosisOpen, setDiagnosisOpen] = useState(false);
   const [skipped, setSkipped] = useState<ChangesetSkippedFile[] | null>(null);
   // The Test run gate: a proposal carrying a runnable script is only testable
@@ -117,6 +126,29 @@ export default function ChangesetReview() {
     () => files.find((file) => file.path === selectedPath),
     [files, selectedPath],
   );
+
+  // This page is a workspace, not a document: it claims the space the shell has
+  // left and scrolls inside itself, so the composer can stay pinned to the
+  // bottom of the viewport. The flag turns the whole chain above it into
+  // height-constrained flex boxes for as long as this page is mounted.
+  useEffect(() => {
+    document.documentElement.setAttribute('data-page', 'draft-panel');
+    return () => document.documentElement.removeAttribute('data-page');
+  }, []);
+
+  const replyCount = (changeset?.exchange ?? []).filter((turn) => turn.reply).length;
+
+  // Files is the default the moment there is something to look at; while the
+  // author is still working, the conversation is the only thing there is.
+  useEffect(() => {
+    if (tabPinned || !changeset) return;
+    setTab(changeset.status !== 'running' && files.length > 0 ? 'files' : 'changes');
+  }, [tabPinned, changeset?.status, files.length]);
+
+  // Reading the thread clears the "new reply" badge.
+  useEffect(() => {
+    if (tab === 'changes') setSeenReplies(replyCount);
+  }, [tab, replyCount]);
 
   if (loadError) {
     return <div class="page-draft"><main><p class="empty" role="alert">{loadError}</p></main></div>;
@@ -183,6 +215,9 @@ export default function ChangesetReview() {
     setActionError(null);
     try {
       await requestChangesetChanges(projectId, sessionId, request);
+      // The answer arrives in the thread, so go where it will show up.
+      setTabPinned(true);
+      setTab('changes');
       await refresh();
     } catch (caught) {
       setActionError((caught as Error).message || 'Could not send that change request.');
@@ -196,6 +231,11 @@ export default function ChangesetReview() {
     setSelectedPath(path);
   };
 
+  const selectTab = (next: ChangesetTab) => {
+    setTabPinned(true);
+    setTab(next);
+  };
+
   const sessionHref = (() => {
     const query = new URLSearchParams({ project: projectId });
     const streamToken = sessionToken ?? token;
@@ -207,6 +247,8 @@ export default function ChangesetReview() {
     ? changeset.target?.path ?? changeset.target?.name ?? 'an agent'
     : proposal?.entry ?? 'a new agent';
 
+  // One action group in one place: the header's right end, same order in every
+  // state. Test run is the quietest of the three, Apply carries the weight.
   const actions = changeset.status === 'applied'
     ? (
       <button type="button" class="draft-secondary" disabled={busy !== null} onClick={() => void restore()}>
@@ -222,15 +264,22 @@ export default function ChangesetReview() {
         )}
         {changeset.status === 'proposed' && (
           <>
-            <button
-              type="button"
-              class="draft-secondary"
-              disabled={busy !== null || testBlocked}
+            {/* A disabled button swallows its own hover, so the reason for the
+                block sits on a wrapper that still receives it. */}
+            <span
+              class="changeset-action-slot"
               title={testBlocked ? 'Open a file first: this proposal includes a script the test run will execute.' : undefined}
-              onClick={() => void testRun()}
             >
-              {busy === 'test' ? 'Starting…' : 'Test run'}
-            </button>
+              <button
+                type="button"
+                class="draft-tertiary"
+                disabled={busy !== null || testBlocked}
+                title={testBlocked ? 'Open a file first: this proposal includes a script the test run will execute.' : undefined}
+                onClick={() => void testRun()}
+              >
+                {busy === 'test' ? 'Starting…' : 'Test run'}
+              </button>
+            </span>
             <button type="button" class="draft-secondary" disabled={busy !== null} onClick={() => void act('discard')}>
               {busy === 'discard' ? 'Discarding…' : 'Discard'}
             </button>
@@ -273,7 +322,7 @@ export default function ChangesetReview() {
           <div class="draft-header-actions">
             <a class="draft-quiet-link" href={`/agents/${encodeURIComponent(projectId)}`}>All agents</a>
             <a class="draft-quiet-link" href={sessionHref}>Open full session log</a>
-            {actions}
+            {actions && <div class="changeset-actions">{actions}</div>}
           </div>
         </div>
         <div class="draft-header-row is-meta">
@@ -304,6 +353,48 @@ export default function ChangesetReview() {
         )}
       </header>
 
+      <div class="draft-tabs" role="tablist" aria-label="Changeset view">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'changes'}
+          class={tab === 'changes' ? 'is-active' : ''}
+          onClick={() => selectTab('changes')}
+        >
+          Changes
+          {running && !question
+            ? <span class="draft-tab-dot" aria-label="running" />
+            : replyCount > seenReplies
+              ? <span class="draft-tab-badge" aria-label="new reply">new</span>
+              : null}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'files'}
+          class={tab === 'files' ? 'is-active' : ''}
+          onClick={() => selectTab('files')}
+        >
+          Files
+          {files.length > 0 && <span class="draft-tab-badge">{files.length}</span>}
+        </button>
+      </div>
+
+      <div class={`draft-file-scroll${tab === 'changes' ? ' is-changes' : ''}`}>
+        {tab === 'changes' ? (
+          <DraftThread
+            turns={changeset.exchange ?? []}
+            entries={authorSession.entries}
+            approval={authorSession.approval}
+            status={authorSession.status}
+            running={running && !question}
+            sessionId={sessionId}
+            projectId={projectId}
+            token={sessionToken ?? token}
+            leadRequest={changeset.instruction}
+            emptyHint="The author is working. Its steps appear here as it goes."
+          />
+        ) : (
       <div class="changeset-body">
         <div class="changeset-rail">
           <ChangesetFileList files={files} selected={selectedPath} onSelect={selectFile} />
@@ -341,20 +432,9 @@ export default function ChangesetReview() {
           {selectedFile
             ? <ChangesetFileView file={selectedFile} tab={fileTab} onTab={setFileTab} />
             : <p class="empty">{running ? 'The author is working. Files appear here as they are written.' : 'This changeset proposes no file changes.'}</p>}
-
-          <DraftThread
-            turns={changeset.exchange ?? []}
-            entries={authorSession.entries}
-            approval={authorSession.approval}
-            status={authorSession.status}
-            running={running && !question}
-            sessionId={sessionId}
-            projectId={projectId}
-            token={sessionToken ?? token}
-            leadRequest={changeset.instruction}
-            emptyHint="The author is working. Its steps appear here as it goes."
-          />
         </div>
+      </div>
+        )}
       </div>
 
       {actionError || authorSession.streamError || changeset.error?.message
@@ -369,7 +449,7 @@ export default function ChangesetReview() {
           projectId={projectId}
           token={sessionToken ?? token}
           onAnswered={authorSession.onAnswered}
-          onShowContext={() => undefined}
+          onShowContext={() => selectTab('changes')}
         />
       ) : open && (
         <DraftComposer

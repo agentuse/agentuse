@@ -10369,10 +10369,38 @@ html[data-page="draft-panel"] .app-route {
    names every file and where the surprises are, and a main column that opens
    one file at a time under the summary that explains all of them. It reuses the
    draft header, tabs, diff body, thread, and composer; only the two-column
-   split and the file rail are new. The page scrolls as a document rather than
-   claiming the viewport, because the thread below the diff is part of the read.
+   split and the file rail are new. Like the draft page it claims the space the
+   shell leaves and scrolls inside itself, so the composer stays pinned to the
+   bottom of the viewport on both tabs and the tab strip never scrolls away.
    Colours come from the shared tokens, so both themes follow automatically. */
-.page-changeset { overflow: visible; }
+
+/* Row 1's right end holds the whole action set, with the quiet links kept
+   visibly apart from the buttons that change something. */
+.changeset-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-left: 4px;
+}
+.changeset-action-slot { display: inline-flex; }
+/* The third-weight action: readable, but never competing with Apply. */
+.draft-tertiary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 7px 11px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--font-size-caption);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+}
+.draft-tertiary:hover:not(:disabled) { background: var(--panel-hover); color: var(--fg); }
+.draft-tertiary:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .changeset-mode {
   padding: 2px 8px;
@@ -10565,11 +10593,24 @@ html[data-page="draft-panel"] .app-route {
   min-width: max-content;
 }
 
-.page-changeset .draft-exchange { padding: 16px 0 0; overflow: visible; }
+/* Requesting a change is how this page talks back, whichever tab is open, so
+   the composer holds the bottom edge instead of sitting at the end of the
+   document. The page is already a viewport-height column, so this only has to
+   survive the cases where it is not, plus the phone's home indicator. */
+.page-changeset .draft-composer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
 
 @media (max-width: 900px) {
-  /* The rail collapses above the diff: on a narrow window the file list is a
-     short index to scroll past, not a column beside the code. */
+  /* The action group wraps under the title rather than squeezing the subject
+     line, and the rail collapses above the diff: on a narrow window the file
+     list is a short index to scroll past, not a column beside the code. */
+  .page-changeset .draft-header-row { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .page-changeset .draft-header-actions { width: 100%; }
+  .changeset-actions { padding-left: 0; }
   .changeset-body { flex-direction: column; gap: 16px; }
   .changeset-rail { position: static; flex: 0 0 auto; width: 100%; }
   .changeset-files { flex-direction: row; flex-wrap: wrap; gap: 12px 24px; }
