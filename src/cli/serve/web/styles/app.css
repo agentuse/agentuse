@@ -7255,10 +7255,14 @@ a.lastrun.waiting { color: var(--cyan); }
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* The list column is fluid so the reader keeps a readable measure at every
+   width the two-pane layout survives: at the 780px minimum the list floors at
+   280px and the reader still gets ~480px. A fixed 380px column left the reader
+   at 380px there, which is where the title started wrapping one word a line. */
 .page-sessions .sessions-split {
   display: grid;
-  grid-template-columns: 380px minmax(0, 1fr);
-  gap: 20px;
+  grid-template-columns: clamp(280px, 33%, 380px) minmax(0, 1fr);
+  gap: 16px;
   align-items: start;
 }
 .page-sessions .sessions-pane { min-width: 0; }
@@ -7560,14 +7564,18 @@ a.lastrun.waiting { color: var(--cyan); }
   box-shadow: var(--surface-shadow);
   overflow: hidden;
 }
+/* Wraps: the actions are four fixed-width buttons, so in a narrow reader they
+   would otherwise hold their full row and crush the title to one word a line.
+   Below ~240px of title room they drop to their own row instead. */
 .page-sessions .reader-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
-  gap: 12px;
+  gap: 10px 12px;
   padding: 16px 20px 12px;
   border-bottom: 1px solid var(--line);
 }
-.page-sessions .reader-identity { min-width: 0; flex: 1; }
+.page-sessions .reader-identity { min-width: 0; flex: 1 1 240px; }
 .page-sessions .reader-title {
   font-size: var(--font-size-title);
   font-weight: var(--weight-bold);
@@ -7590,7 +7598,7 @@ a.lastrun.waiting { color: var(--cyan); }
    dangling interpunct. */
 .page-sessions .reader-meta > span:not(.chip) + span:not(.chip)::before,
 .page-sessions .reader-meta > span:not(.chip) + code::before { content: "· "; color: var(--muted-2); }
-.page-sessions .reader-actions { display: flex; gap: 8px; flex: none; }
+.page-sessions .reader-actions { display: flex; flex-wrap: wrap; gap: 8px; flex: 0 1 auto; margin-left: auto; }
 .page-sessions .btn {
   display: inline-flex;
   align-items: center;
@@ -7832,9 +7840,23 @@ a.lastrun.waiting { color: var(--cyan); }
   text-align: center;
 }
 /* Below the two-pane threshold the reader gets its own view (?open=), so the
-   list takes the full width and every row is a 44px tap target. */
+   list takes the full width. The threshold is measured on <main> in JS and
+   flagged with .is-phone, because the shell's sidebar (224px, 56px collapsed,
+   user-resizable) means the viewport width does not describe the room here. */
+.page-sessions.is-phone .reader { position: static; max-height: none; overflow: visible; }
+/* The full-width reader scrolls with the page, so the footer floats at the
+   bottom of the screen while a long output is on it. */
+.page-sessions.is-phone .prevnext {
+  position: sticky;
+  bottom: 0;
+  border-radius: 0 0 14px 14px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom));
+}
+.page-sessions.is-phone .reader-actions { width: 100%; }
+.page-sessions.is-phone .reader-actions .btn { flex: 1 1 auto; justify-content: center; }
+
+/* True phone: tighter gutters and 44px tap targets on top of the above. */
 @media (max-width: 1000px) {
-  .page-sessions .sessions-split { grid-template-columns: 320px minmax(0, 1fr); }
   .page-sessions .quick .agent-select { width: 150px; }
 }
 @media (max-width: 700px) {
@@ -7842,13 +7864,10 @@ a.lastrun.waiting { color: var(--cyan); }
   .page-sessions .sessions-lede { display: none; }
   .page-sessions .sessions-count { margin-left: 0; width: 100%; }
   .page-sessions .it { padding: 11px 10px; min-height: 44px; }
-  .page-sessions .reader { position: static; max-height: none; overflow: visible; }
-  /* The phone reader scrolls with the page, so the footer floats at the bottom
-     of the screen while a long output is on it. */
-  .page-sessions .prevnext { position: sticky; bottom: 0; border-radius: 0 0 14px 14px; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
-  .page-sessions .reader-head { flex-direction: column; }
-  .page-sessions .reader-actions { width: 100%; }
-  .page-sessions .reader-actions .btn { flex: 1; justify-content: center; min-height: 44px; }
+  .page-sessions .reader-head { padding: 14px 16px 11px; }
+  .page-sessions .out { padding: 14px 16px 20px; }
+  .page-sessions .prevnext { padding: 10px 16px; }
+  .page-sessions .reader-actions .btn { min-height: 44px; }
   /* Its own row: squeezed into the chip line it would run off the screen edge. */
   .page-sessions .quick .agent-select { flex: 1 0 100%; width: auto; }
   .page-sessions .filter-grid-advanced { grid-template-columns: repeat(2, minmax(0, 1fr)); }

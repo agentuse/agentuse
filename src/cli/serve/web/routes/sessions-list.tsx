@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { SessionRow, SessionsPayload } from '../lib/api';
 import { fetchSessions, fetchAgents, runAgentDetached, postSessionStop } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
-import { useMediaQuery } from '../hooks/use-media-query';
+import { useElementWidth } from '../hooks/use-element-width';
 import { useSessionsStream } from '../hooks/use-sessions-stream';
 import { useTitle } from '../hooks/use-title';
 import { Loading } from '../components/loading';
@@ -27,7 +27,13 @@ const MOCK_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'include', label: 'shown' },
   { value: 'only', label: 'only mock' },
 ];
-const PHONE_QUERY = '(max-width: 700px)';
+/* Two panes need a reader wide enough to read a paragraph in. Below this much
+   room the reader takes the whole page instead (?open=), because the alternative
+   at ~1000px viewport was a 364px reader with one word per title line. Measured
+   on the page's own <main>, not the viewport: the shell's sidebar is 224px, 56px
+   collapsed, and user-resizable, so the viewport says nothing about the room
+   this page actually has. */
+const TWO_PANE_MIN_WIDTH = 780;
 
 export function rowKey(row: Pick<SessionRow, 'project' | 'sessionId'>): string {
   return `${row.project}:${row.sessionId}`;
@@ -446,7 +452,12 @@ export default function SessionsList() {
   const win = q.window || defaultWin;
 
   useTitle(pageTitle('Sessions'));
-  const narrow = useMediaQuery(PHONE_QUERY);
+  // min(1140, viewport - sidebar - gutter) is what the stylesheet gives <main>;
+  // the estimate only has to pick the right side of the threshold on frame one.
+  const [mainRef, mainWidth] = useElementWidth(
+    Math.min(1140, (typeof window === 'undefined' ? 1440 : window.innerWidth) - 256),
+  );
+  const narrow = mainWidth < TWO_PANE_MIN_WIDTH;
 
   // The input is local so typing stays instant; the URL (and therefore the
   // query the server runs) catches up on a short debounce.
@@ -819,7 +830,7 @@ export default function SessionsList() {
     const index = rows.findIndex((row) => rowKey(row) === rowKey(openRow));
     return (
       <div class="page-sessions is-phone">
-        <main>
+        <main ref={mainRef}>
           <a class="reader-back" href={withParam({ open: '' })}>← Sessions</a>
           <SessionReader
             row={openRow}
@@ -837,7 +848,7 @@ export default function SessionsList() {
 
   return (
     <div class={`page-sessions${narrow ? ' is-phone' : ''}`}>
-      <main>
+      <main ref={mainRef}>
         <div class="sessions-head">
           <h1>Sessions <PushBell category="sessions" /></h1>
           <span class="sessions-lede">Find a finished run and read what it produced.</span>
