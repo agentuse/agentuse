@@ -21,7 +21,7 @@ import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/c
 import { parseChartSpec } from '../src/cli/serve/web/lib/chart-svg';
 import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { displayAgentName, isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
-import { aggregateToolStats, hasActionableApproval, headerTokenUsage, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, shouldShowResultNotice, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
+import { aggregateToolStats, hasActionableApproval, headerTokenUsage, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, sessionResumeMode, shouldShowResultNotice, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
 import { tokenUsageMetaItems } from '../src/cli/serve/web/components/token-usage-strip';
 import { dayLabel, formatElapsed, Highlight, outputPreview, sessionPurposeLabel, sessionRepeatRunPath, SessionListItem, statusDot } from '../src/cli/serve/web/routes/sessions-list';
 import { labelFor, suspendedGateKinds } from '../src/cli/serve/web/hooks/use-live-home';
@@ -1399,6 +1399,17 @@ describe('DecisionDialog component', () => {
 });
 
 describe('SessionDetail header', () => {
+  it('uses one-click parent resume for a recoverable delegated failure', () => {
+    expect(sessionResumeMode({
+      ended: true,
+      live: false,
+      cascadeRetryable: true,
+      hasAgentFile: true,
+      fatal: false,
+      revision: false,
+    })).toBe('cascade');
+  });
+
   it('does not repeat the Result card error in the bottom action notice', () => {
     const terminalError = 'Session finished with an error: delegated sub-agent ended.';
 

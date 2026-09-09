@@ -214,6 +214,7 @@ describe('header-gate exemption (capability routes)', () => {
     '/sessions/abc',
     '/sessions/abc/decision',
     '/sessions/abc/continue',
+    '/sessions/abc/resume',
     '/sessions/abc/status',
     '/sessions/abc/stop',
     '/sessions/abc/started',

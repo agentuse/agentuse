@@ -705,6 +705,8 @@ interface ApprovalSummary {
   resumeToken?: string;
   errorCode?: string;
   errorMessage?: string;
+  /** The parent can resume by retrying its interrupted delegated child. */
+  cascadeRetryable?: boolean;
   channelMessage?: { type?: string; channel?: string; ts?: string; actionTs?: string; url?: string };
   channels?: {
     slack?: Array<{ channel: string; ts: string; channelId?: string; events: Array<'approval' | 'completion' | 'failure'> }>;
@@ -872,8 +874,9 @@ interface WorkerReconcileResult {
     agentName: string;
     /** 'interrupted': killed mid-run. 'stranded': parked on a child that ended
      *  with nothing usable. 'finishable': parked on a child whose durable
-     *  result can still complete the chain — serve drives finish-cascade. */
-    reason?: 'interrupted' | 'stranded' | 'finishable';
+     *  result can still complete the chain. 'recoverable' waits for the user to
+     *  resume the manager, which retries the interrupted child. */
+    reason?: 'interrupted' | 'stranded' | 'finishable' | 'recoverable';
   }>;
 }
 
@@ -928,6 +931,8 @@ interface ApprovalPageInfo {
   decision?: unknown;
   errorCode?: string;
   errorMessage?: string;
+  /** Resume the parent by retrying its interrupted delegated child. */
+  cascadeRetryable?: boolean;
   childSessions?: ChildSessionSummary[];
   importantDescendants?: ImportantDescendantSummary[];
   importantDescendantEvents?: ImportantDescendantEvent[];
@@ -1442,6 +1447,16 @@ class AgentWorker {
     }) as Promise<WorkerExecuteResult | WorkerExecuteError>;
   }
 
+  /** Retry the recoverable failed child under a parked manager, then walk its
+   *  real result back up through the parent cascade. */
+  retryCascade(projectRoot: string, sessionId: string): Promise<WorkerExecuteResult | WorkerExecuteError> {
+    return this.request({
+      type: "retry-cascade",
+      projectRoot,
+      sessionId,
+    }) as Promise<WorkerExecuteResult | WorkerExecuteError>;
+  }
+
   reconcileOrphans(projectRoot: string, cutoff: number): Promise<WorkerReconcileResult | WorkerExecuteError> {
     return this.request({
       type: "reconcile-orphans",
@@ -1547,7 +1562,7 @@ class AgentWorker {
       }
 
       const id = `req-${++this.requestCounter}`;
-      const longRunningRequest = options.type === "execute" || options.type === "resume" || options.type === "continue-session" || options.type === "finish-cascade";
+      const longRunningRequest = options.type === "execute" || options.type === "resume" || options.type === "continue-session" || options.type === "finish-cascade" || options.type === "retry-cascade";
       if (longRunningRequest) this.activeRuns.add(id);
       const requestTimeoutSeconds = options.timeout ?? (longRunningRequest ? 24 * 60 * 60 : 300);
       const timeoutMs = requestTimeoutSeconds * 1000 + 5000; // Add 5s buffer
@@ -3410,7 +3425,7 @@ function isHeaderGateExemptRoute(routePath: string, isApi: boolean): boolean {
   if (legacyApprovalRoute && legacyApprovalRoute[1] !== 'events') return true;
   if (isApi) return false;
   if (routePath === '/sessions/events') return false;
-  return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|status|stop|started|finished|reopen|events|learnings|learnings\/[^/?#]+\/discard|artifacts-list|artifacts\/.+|tool-artifacts\/.+|context|context-stack))?$/.test(routePath);
+  return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|resume|status|stop|started|finished|reopen|events|learnings|learnings\/[^/?#]+\/discard|artifacts-list|artifacts\/.+|tool-artifacts\/.+|context|context-stack))?$/.test(routePath);
 }
 
 /**
@@ -3942,12 +3957,16 @@ export function createServeCommand(): Command {
         if (!r.success || r.reconciled.length === 0) return;
         const finishable = r.reconciled.filter((o) => o.reason === 'finishable');
         const stranded = r.reconciled.filter((o) => o.reason === 'stranded').length;
-        const interrupted = r.reconciled.length - finishable.length - stranded;
+        const recoverable = r.reconciled.filter((o) => o.reason === 'recoverable').length;
+        const interrupted = r.reconciled.length - finishable.length - stranded - recoverable;
         if (interrupted > 0) {
           logger.warn(`Recovered ${interrupted} interrupted session(s) in ${projectId} (stuck 'running' after a worker restart)`);
         }
         if (stranded > 0) {
           logger.warn(`Ended ${stranded} stranded session(s) in ${projectId} (parked on a delegated sub-agent that had already ended)`);
+        }
+        if (recoverable > 0) {
+          logger.warn(`Marked ${recoverable} interrupted delegated run(s) resumable in ${projectId}`);
         }
         // A restart killed the worker between a delegated child finishing and
         // its manager being resumed. The child's result is durable, so finish
@@ -5663,6 +5682,50 @@ export function createServeCommand(): Command {
 
         res.writeHead(202, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ sessionId, status: "continuing" }));
+      };
+
+      // Parent-facing recovery for a model-stalled delegated child. The user
+      // resumes the workflow they started; the worker resolves and continues
+      // the failed child before walking its result back up automatically.
+      const startCascadeRetry = (
+        res: ServerResponse,
+        params: { project: Project; sessionId: string }
+      ): void => {
+        const { project, sessionId } = params;
+        const projectWorker = workers.get(project.id)!;
+        notifiedFinishedSessions.delete(sessionId);
+        const activeKey = `${project.id}:${sessionId}`;
+        backgroundSessionFailures.delete(activeKey);
+        const retryStart = Date.now();
+        approvalLog.continueStarted(sessionId);
+        const retryPromise = Promise.resolve()
+          .then(() => projectWorker.retryCascade(project.root, sessionId))
+          .then((result) => {
+            if (!result.success) {
+              backgroundSessionFailures.set(activeKey, {
+                status: 'continue',
+                message: result.error.message,
+                at: Date.now(),
+              });
+              approvalLog.continueFailed(sessionId, Date.now() - retryStart, result.error.message);
+              logger.warn(`Session resume ${sessionId} failed: ${result.error.message}`);
+              return;
+            }
+            backgroundSessionFailures.delete(activeKey);
+            approvalLog.continueCompleted(sessionId, Date.now() - retryStart);
+          })
+          .finally(() => {
+            if (activeSessionContinuations.get(activeKey) === retryPromise) {
+              activeSessionContinuations.delete(activeKey);
+            }
+            void refreshProjectLists(project);
+            wakeListHubs();
+          });
+        activeSessionContinuations.set(activeKey, retryPromise);
+        wakeListHubs();
+
+        res.writeHead(202, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ sessionId, status: "resuming" }));
       };
 
       const resumeSuspendedSession = async (decision: SlackApprovalDecision): Promise<void> => {
@@ -7548,6 +7611,44 @@ export function createServeCommand(): Command {
             const rememberTarget = await resolveRememberedLearning(info, remember, targetSessionId);
             startApprovalResume(res, { project, sessionId, info, resumeToken, status, comment, choice });
             persistRememberedLearning(rememberTarget);
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
+        // POST /sessions/:id/resume: recover a parent whose delegated child was
+        // interrupted by a model-stream stall. No prompt is needed because the
+        // child continues from its own durable transcript.
+        const sessionResumeMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/resume$/) : null;
+        if (sessionResumeMatch) {
+          try {
+            const sessionId = decodeURIComponent(sessionResumeMatch[1]);
+            const token = requestUrl.searchParams.get('token') ?? undefined;
+            const body = await parseJSONBody(req);
+            const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
+
+            if (!sessionAuthorized(sessionId, token)) {
+              sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
+              return;
+            }
+            const found = await findSessionInfo(sessionId, projectId);
+            if (!found.success) {
+              sendError(res, found.status, found.code, found.message);
+              return;
+            }
+            const project = found.project;
+            const activeKey = `${project.id}:${sessionId}`;
+            if (activeApprovalResumes.has(activeKey) || activeSessionContinuations.has(activeKey)) {
+              sendError(res, 409, "SESSION_ACTIVE", `Session ${sessionId} is already being resumed`);
+              return;
+            }
+            if (!found.info.approval.cascadeRetryable) {
+              sendError(res, 409, "SESSION_NOT_RESUMABLE", "This run has no safely resumable delegated task");
+              return;
+            }
+            startCascadeRetry(res, { project, sessionId });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_REQUEST", (err as Error).message);

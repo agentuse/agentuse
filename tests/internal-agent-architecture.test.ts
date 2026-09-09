@@ -154,7 +154,11 @@ describe('internal AgentUse architecture', () => {
 
   it('returns a durable revision session before preparing its project context', async () => {
     const serve = await source('cli/serve.ts');
-    const revisionStart = serve.indexOf("routePath.match(/^\\/sessions\\/([^/?#]+)\\/revisions$/)");
+    // The revisions-list route now shares this section with the independent
+    // change-set starter. Scope the ordering check to the revision starter so
+    // an earlier change-set beginInternalAgentJob call cannot be mistaken for
+    // the revision session creation this invariant is about.
+    const revisionStart = serve.indexOf('const startAgentRevisionSession');
     const section = serve.slice(revisionStart, serve.indexOf('const revisionActionMatch', revisionStart));
     const recorded = section.indexOf('createAgentRevisionRecord({');
     const sessionCreated = section.indexOf('beginInternalAgentJob({');

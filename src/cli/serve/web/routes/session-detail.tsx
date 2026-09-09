@@ -11,7 +11,7 @@ import { AgentRevisionLauncher, AgentRevisionSessionPanel, type AgentRevisionSes
 import { ChangesetSessionPanel } from '../components/changeset-session-panel';
 import { SessionMenu } from '../components/session-menu';
 import { Loading } from '../components/loading';
-import { postSessionDecision, postSessionContinue, postSessionStop, postSessionReopen, fetchSessionArtifacts, fetchApprovals, type SessionArtifact } from '../lib/api';
+import { postSessionDecision, postSessionContinue, postSessionResume, postSessionStop, postSessionReopen, fetchSessionArtifacts, fetchApprovals, type SessionArtifact } from '../lib/api';
 import { syncAppBadge } from '../lib/badge';
 import { writeClipboardText } from '../lib/clipboard';
 import { useApprovalStream } from '../hooks/use-approval-stream';
@@ -41,6 +41,19 @@ type ApprovalHeader = Omit<ApprovalPageInfo, 'logs'>;
 // A render-time entry that may carry a collapsed repeat count. Produced only when
 // preparing entries for display; the underlying logsRef entries are never mutated.
 type PreparedLogEntry = ApprovalLogEntry & { repeatCount?: number };
+
+export function sessionResumeMode(options: {
+  ended: boolean;
+  live: boolean;
+  cascadeRetryable?: boolean;
+  hasAgentFile: boolean;
+  fatal: boolean;
+  revision: boolean;
+}): 'cascade' | 'continue' | null {
+  if (!options.ended || options.live || options.fatal || options.revision) return null;
+  if (options.cascadeRetryable && options.hasAgentFile) return 'cascade';
+  return options.hasAgentFile ? 'continue' : null;
+}
 
 export function sessionLogSearchTerms(query: string): string[] {
   return [...new Set(query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean))];
@@ -960,7 +973,16 @@ export default function SessionDetail() {
   // question, governed by learning.apply — surfaced as a hint in the dialog.
   const canRememberLearning = Boolean(approval?.agent.filePath) && !isRevisionSession;
   const rememberApplies = approval?.learning?.apply === true;
-  const continueActionable = ended && !live && Boolean(approval?.agent.filePath) && !fatalError && !isRevisionSession;
+  const resumeMode = sessionResumeMode({
+    ended,
+    live,
+    cascadeRetryable: approval?.cascadeRetryable === true,
+    hasAgentFile: Boolean(approval?.agent.filePath),
+    fatal: Boolean(fatalError),
+    revision: isRevisionSession,
+  });
+  const cascadeRetryActionable = resumeMode === 'cascade';
+  const continueActionable = resumeMode === 'continue';
   // Any session with an agent file to read/write learnings for, not only an
   // ended one. A run suspended at an approval is the moment a reviewer is most
   // likely to want to correct the agent, and it is also when a stranded-
@@ -1092,9 +1114,9 @@ export default function SessionDetail() {
   }, [logQuery, matchingFeedLogs]);
 
   useEffect(() => {
-    if (continueActionable) setSubmittingContinue(false);
+    if (continueActionable || cascadeRetryActionable) setSubmittingContinue(false);
     else setShowResume(false);
-  }, [continueActionable]);
+  }, [continueActionable, cascadeRetryActionable]);
 
   // Pending-queue position, fetched once when a gate becomes actionable. A
   // capability-scoped (?token=) view has no operator access to the approvals
@@ -1211,6 +1233,27 @@ export default function SessionDetail() {
       setSubmittingContinue(false);
     }
   }, [sessionId, token, projectId, approval?.project, submittingContinue, continueActionable, globalApprovals]);
+
+  const submitCascadeRetry = useCallback(async () => {
+    if (submittingContinue || !cascadeRetryActionable) return;
+    setSubmittingContinue(true);
+    setResult({ text: '⋮ resuming…', error: false });
+    try {
+      const payload = await postSessionResume(sessionId, token, {
+        ...(projectId ? { project: projectId } : {}),
+      });
+      setResult({ text: '✓ run resumed.', error: false });
+      setStatus(payload.status || 'resuming');
+      setNudge((n) => n + 1);
+      const resolvedProject = projectId ?? approval?.project;
+      if (resolvedProject) {
+        globalApprovals.restoreAttentionSession({ project: resolvedProject, sessionId });
+      }
+    } catch (err) {
+      setResult({ text: (err as Error).message || String(err), error: true });
+      setSubmittingContinue(false);
+    }
+  }, [sessionId, token, projectId, approval?.project, submittingContinue, cascadeRetryActionable, globalApprovals]);
 
   const submitReopen = useCallback(async () => {
     if (submittingReopen) return;
@@ -1403,6 +1446,8 @@ export default function SessionDetail() {
     ? 'sub-agent run'
     : actionable
       ? 'human approval requested'
+      : cascadeRetryActionable
+        ? 'session needs attention'
       : continueActionable
         ? approval.sessionStatus === 'error' ? 'session needs attention' : 'session completed'
         : 'session log';
@@ -1414,6 +1459,8 @@ export default function SessionDetail() {
       : 'A delegated sub-agent run. Approvals and follow-ups for it are handled on the parent run.'
     : actionable
       ? 'Review the pending request in the session log below, then approve, reject, or send a comment back to the agent. The session is paused until you respond.'
+      : cascadeRetryActionable
+        ? 'This run was interrupted while completing a delegated task. Resume to continue where it stopped.'
       : continueActionable
         ? approval.sessionStatus === 'error'
           ? 'This run stopped with an error. Review the session log, then send a follow-up instruction to continue the same session with its existing context.'
@@ -1936,6 +1983,25 @@ export default function SessionDetail() {
               <span>Resume session</span>
             </button>
           )}
+          {cascadeRetryActionable && (
+            <button
+              type="button"
+              class={`session-action-button${submittingContinue ? ' btn-busy' : ''}`}
+              disabled={submittingContinue}
+              aria-busy={submittingContinue}
+              onClick={() => void submitCascadeRetry()}
+            >
+              {submittingContinue ? (
+                <span class="btn-spinner" aria-hidden="true" />
+              ) : (
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 12a9 9 0 1 1-3-6.7" />
+                  <path d="M21 4v5h-5" />
+                </svg>
+              )}
+              <span>{submittingContinue ? 'Resuming…' : 'Resume'}</span>
+            </button>
+          )}
           {/* No "Learnings" toggle here any more. The panel below is always on
               for a session that has one: its warnings were the whole reason it
               existed, and a warning behind a button nobody presses is not a
@@ -1998,7 +2064,7 @@ export default function SessionDetail() {
           onSubmit={(prompt) => void submitContinue(prompt)}
         />
 
-        <div class="inactive-banner" hidden={actionable || continueActionable || stopActionable || dismissActionable || reopenActionable || live || busy}>
+        <div class="inactive-banner" hidden={actionable || cascadeRetryActionable || continueActionable || stopActionable || dismissActionable || reopenActionable || live || busy}>
           This session is not accepting actions right now.
         </div>
 

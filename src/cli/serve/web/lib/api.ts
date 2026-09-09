@@ -486,6 +486,13 @@ export function postSessionContinue(sessionId: string, token: string | undefined
   return postJson(withToken(`/sessions/${encodeURIComponent(sessionId)}/continue`, token), body);
 }
 
+/** Resume a parent by retrying its recoverable interrupted sub-agent. */
+export function postSessionResume(sessionId: string, token: string | undefined, body: {
+  project?: string;
+} = {}): Promise<{ sessionId: string; status: string }> {
+  return postJson(withToken(`/sessions/${encodeURIComponent(sessionId)}/resume`, token), body);
+}
+
 // Roll an ended (error/completed) session back to its suspended approval gate so
 // the reviewer can retry a resume that failed downstream. No resumeToken needed:
 // the view token authorizes it, and the gate keeps its original token.

@@ -63,6 +63,8 @@ export interface ApprovalSummary {
   resumeToken?: string;
   errorCode?: string;
   errorMessage?: string;
+  /** Resume the parent by retrying its interrupted delegated child. */
+  cascadeRetryable?: boolean;
   channelMessage?: { type?: string; channel?: string; ts?: string; actionTs?: string; url?: string };
   channels?: {
     slack?: Array<{ channel: string; ts: string; channelId?: string; events: Array<'approval' | 'completion' | 'failure'> }>;
@@ -419,6 +421,8 @@ export interface ApprovalPageInfo {
   decision?: unknown;
   errorCode?: string;
   errorMessage?: string;
+  /** Resume the parent by retrying its interrupted delegated child. */
+  cascadeRetryable?: boolean;
   /** Reviewer discarded this ended failed run (see SessionSummary.dismissedAt). */
   dismissedAt?: number;
   /** True when an ended (error/completed) session can be rolled back to its
