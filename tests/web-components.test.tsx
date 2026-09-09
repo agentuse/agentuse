@@ -23,7 +23,7 @@ import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { displayAgentName, isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
 import { aggregateToolStats, hasActionableApproval, headerTokenUsage, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, shouldShowResultNotice, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
 import { tokenUsageMetaItems } from '../src/cli/serve/web/components/token-usage-strip';
-import { dayLabel, formatElapsed, Highlight, outputPreview, SessionListItem, statusDot } from '../src/cli/serve/web/routes/sessions-list';
+import { dayLabel, formatElapsed, Highlight, outputPreview, sessionPurposeLabel, sessionRepeatRunPath, SessionListItem, statusDot } from '../src/cli/serve/web/routes/sessions-list';
 import { labelFor, suspendedGateKinds } from '../src/cli/serve/web/hooks/use-live-home';
 import { formatUntil, scheduleRunFinder } from '../src/cli/serve/web/routes/schedules';
 import type { SerializedSchedule } from '../src/scheduler';
@@ -749,9 +749,91 @@ describe('Session list item', () => {
 
     expect(html).toContain('No final output.');
   });
+
+  it('labels agent creation and revision sessions beside their names', () => {
+    const createHtml = render({
+      ...base,
+      purpose: {
+        kind: 'changeset',
+        mode: 'create',
+        href: '/projects/demo/changesets/01CREATE',
+      },
+    });
+    const reviseHtml = render({
+      ...base,
+      purpose: {
+        kind: 'changeset',
+        mode: 'revise',
+        targetAgentName: 'Inbox triage',
+        href: '/projects/demo/changesets/01REVISE',
+      },
+    });
+
+    expect(createHtml).toContain('<span class="chip internal">create agent</span>');
+    expect(reviseHtml).toContain('<span class="chip internal">revise agent</span>');
+    expect(render(base)).not.toContain('class="chip internal"');
+  });
 });
 
 describe('Session list helpers', () => {
+  it('maps both internal revision formats onto their public labels', () => {
+    expect(sessionPurposeLabel({
+      purpose: {
+        kind: 'changeset',
+        mode: 'create',
+        href: '/projects/demo/changesets/01CREATE',
+      },
+    })).toBe('create agent');
+    expect(sessionPurposeLabel({
+      purpose: {
+        kind: 'changeset',
+        mode: 'revise',
+        href: '/projects/demo/changesets/01REVISE',
+      },
+    })).toBe('revise agent');
+    expect(sessionPurposeLabel({
+      purpose: {
+        kind: 'agent-revision',
+        targetAgentName: 'Inbox triage',
+      },
+    })).toBe('revise agent');
+    expect(sessionPurposeLabel({})).toBeUndefined();
+  });
+
+  it('only repeats loaded project agents by their daemon-stamped run path', () => {
+    const ordinary: SessionRow = {
+      sessionId: 'ordinary',
+      project: 'demo',
+      agent: {
+        id: 'agents/inbox-triage',
+        name: 'Inbox triage',
+        filePath: '/project/agents/inbox-triage.agentuse',
+        runPath: 'agents/inbox-triage.agentuse',
+      },
+      status: 'completed',
+      trigger: 'manual',
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    expect(sessionRepeatRunPath(ordinary)).toBe('agents/inbox-triage.agentuse');
+    expect(sessionRepeatRunPath({
+      ...ordinary,
+      agent: {
+        id: ordinary.agent.id,
+        name: ordinary.agent.name,
+      },
+    })).toBeUndefined();
+    expect(sessionRepeatRunPath({
+      ...ordinary,
+      purpose: {
+        kind: 'changeset',
+        mode: 'revise',
+        targetAgentName: 'Inbox triage',
+        href: '/projects/demo/changesets/01CHANGESET',
+      },
+    })).toBeUndefined();
+  });
+
   it('maps every run state onto one of five dots', () => {
     expect(statusDot({ status: 'running' })).toBe('running');
     expect(statusDot({ status: 'suspended', subagentActive: true })).toBe('running');

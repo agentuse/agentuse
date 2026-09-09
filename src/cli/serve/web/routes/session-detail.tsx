@@ -1363,6 +1363,7 @@ export default function SessionDetail() {
   }
 
   const agentLabel = approval.agent.name || approval.agent.id;
+  const sessionProjectId = projectId ?? approval.project;
   // The name is the headline; the description (often a full sentence with
   // implementation notes) reads as a subhead rather than a giant multi-line H1.
   const revisionTitle = revisionIdentity
@@ -1747,15 +1748,14 @@ export default function SessionDetail() {
           <div class="header-title-row">
             <h1>{pageAgentLabel}</h1>
             {isRevisionSession && <span class="internal-session-badge">AgentUse Reviser</span>}
-            {!isSubagentView && approval.agent.filePath && !isRevisionSession && (
+            {!isSubagentView && approval.agent.runPath && sessionProjectId && !isRevisionSession && (
               <SessionMenu
                 agentName={agentLabel}
-                agentFilePath={approval.agent.filePath}
-                {...(approval.agent.runPath ? { agentRunPath: approval.agent.runPath } : {})}
+                agentRunPath={approval.agent.runPath}
                 // The URL's ?project= wins, but push links and direct session
                 // URLs often omit it; the header's stamped project id keeps
                 // "Run new session" working on multi-project daemons.
-                {...(projectId ?? approval.project ? { projectId: projectId ?? approval.project } : {})}
+                projectId={sessionProjectId}
               />
             )}
           </div>

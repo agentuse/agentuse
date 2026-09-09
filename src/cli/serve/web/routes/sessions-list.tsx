@@ -87,6 +87,31 @@ export function displayName(row: SessionRow): string {
   return revision ? `Revising ${revision.targetAgentName}` : row.agent.name || row.agent.id;
 }
 
+/** The short identity badge for AgentUse-owned authoring sessions. Both the
+ *  legacy single-agent revision flow and its changeset successor are revisions
+ *  from the session list's point of view. */
+export function sessionPurposeLabel(
+  row: Pick<SessionRow, 'purpose'>
+): 'create agent' | 'revise agent' | undefined {
+  if (!row.purpose) return undefined;
+  return row.purpose.kind === 'changeset' && row.purpose.mode === 'create'
+    ? 'create agent'
+    : 'revise agent';
+}
+
+/**
+ * A session's persisted filePath is diagnostic identity, not a capability: it
+ * may point at an AgentUse-owned, one-off workflow outside the served scope.
+ * Only a daemon-stamped runPath names a loaded project agent that /api/run is
+ * allowed to execute. Internal workflow sessions are never repeatable as if
+ * they were ordinary agents, even if a future payload accidentally stamps one.
+ */
+export function sessionRepeatRunPath(
+  row: Pick<SessionRow, 'agent' | 'purpose'>
+): string | undefined {
+  return row.purpose ? undefined : row.agent.runPath;
+}
+
 /**
  * The one line under an agent name: what the run actually said. Markdown is
  * stripped rather than rendered, because a list line has no room for structure
@@ -186,6 +211,7 @@ export function SessionListItem(props: {
   const name = displayName(row);
   const failed = row.status === 'error';
   const incomplete = dot === 'incomplete';
+  const purposeLabel = sessionPurposeLabel(row);
   const now = props.now ?? Date.now();
 
   let line: ComponentChildren;
@@ -222,7 +248,8 @@ export function SessionListItem(props: {
       <span class={`dot ${dot}`} aria-hidden="true" />
       <span class="it-body">
         <span class="it-agent">
-          <Highlight text={name} query={query} />
+          <span class="it-agent-name"><Highlight text={name} query={query} /></span>
+          {purposeLabel && <span class="chip internal">{purposeLabel}</span>}
           {/* Says why the row is dimmed. A failure that has been waved off is
               still a failure, so it keeps its colour and loses its urgency. */}
           {dismissed && <span class="it-dismissed">dismissed</span>}
@@ -263,6 +290,9 @@ export function SessionReader(props: {
   const live = isRunningRow(row) || isLiveSessionStatus(row.status);
   const status = displayStatusLabel(row.status, row.errorCode);
   const statusText = row.subagentActive ? 'running · subagent' : status;
+  const purposeLabel = sessionPurposeLabel(row);
+  const repeatRunPath = sessionRepeatRunPath(row);
+  const changesetHref = row.purpose?.kind === 'changeset' ? row.purpose.href : undefined;
 
   const copy = useCallback(() => {
     if (!row.finalResponse) return;
@@ -301,12 +331,11 @@ export function SessionReader(props: {
   };
 
   const runAgain = async () => {
-    const path = row.agent.filePath ?? row.agent.id;
-    if (running) return;
+    if (running || !repeatRunPath) return;
     setRunning(true);
     setRunError(null);
     try {
-      const res = await runAgentDetached(path, row.project);
+      const res = await runAgentDetached(repeatRunPath, row.project);
       const params = new URLSearchParams({ pending: '1', project: row.project });
       if (res.token) params.set('token', res.token);
       location.route(`/sessions/${encodeURIComponent(res.sessionId)}?${params.toString()}`);
@@ -324,6 +353,7 @@ export function SessionReader(props: {
           <div class="reader-meta">
             <span class={`chip status ${row.subagentActive ? 'running' : status}`}>{statusText}</span>
             {dismissed && <span class="chip dismissed" title="Reviewed and waved off: it no longer asks for attention on Home">dismissed</span>}
+            {purposeLabel && <span class="chip internal">{purposeLabel}</span>}
             <span class="chip trigger">{row.trigger}</span>
             <span>{formatApprovalTime(row.createdAt)}</span>
             <span>{formatElapsed(Math.max(0, row.updatedAt - row.createdAt))}</span>
@@ -338,12 +368,15 @@ export function SessionReader(props: {
             disabled={!row.finalResponse}
             title={row.finalResponse ? 'Copy the final output as Markdown' : 'This run produced no final output'}
           >{copied ? 'Copied' : props.compact ? 'Copy' : 'Copy output'}</button>
-          <button
-            type="button"
-            class={running ? 'btn btn-busy' : 'btn'}
-            onClick={() => void runAgain()}
-            disabled={running}
-          >{running ? 'Starting…' : 'Run again'}</button>
+          {repeatRunPath && (
+            <button
+              type="button"
+              class={running ? 'btn btn-busy' : 'btn'}
+              onClick={() => void runAgain()}
+              disabled={running}
+            >{running ? 'Starting…' : 'Run again'}</button>
+          )}
+          {changesetHref && <a class="btn" href={changesetHref}>Review changes</a>}
           {discardable && (
             <button
               type="button"

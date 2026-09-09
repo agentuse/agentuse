@@ -17,16 +17,15 @@ import { RunCustomDialog } from './run-custom-dialog';
  */
 export function SessionMenu(props: {
   agentName: string;
-  agentFilePath: string;
-  /** Scope-relative agent path; absent when the agent has no detail hub. */
-  agentRunPath?: string;
-  projectId?: string;
+  /** Scope-relative path of a currently loaded project agent. */
+  agentRunPath: string;
+  projectId: string;
 }) {
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
   const [runOpen, setRunOpen] = useState(false);
-  const { run, busy, error } = useRunAgent(props.agentFilePath, props.projectId);
+  const { run, busy, error } = useRunAgent(props.agentRunPath, props.projectId);
 
   useEffect(() => {
     if (!pos) return;
@@ -79,20 +78,18 @@ export function SessionMenu(props: {
         <div ref={popRef} class="menu-popover" role="menu" style={{ top: `${pos.top}px`, right: `${pos.right}px` }}>
           <div class="menu-name">{props.agentName}</div>
           <div class="menu-sep" />
-          {props.agentRunPath && props.projectId && (
-            <a
-              class="menu-item"
-              role="menuitem"
-              href={agentDetailHref(props.projectId, props.agentRunPath)}
-              title="Open this agent's detail page"
-              onClick={() => setPos(null)}
-            >
-              <svg class="menu-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M3.5 2.5h6l3 3v8h-9z" /><path d="M5.75 8.5h4.5" /><path d="M5.75 11h4.5" />
-              </svg>
-              <span>Go to agent</span>
-            </a>
-          )}
+          <a
+            class="menu-item"
+            role="menuitem"
+            href={agentDetailHref(props.projectId, props.agentRunPath)}
+            title="Open this agent's detail page"
+            onClick={() => setPos(null)}
+          >
+            <svg class="menu-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3.5 2.5h6l3 3v8h-9z" /><path d="M5.75 8.5h4.5" /><path d="M5.75 11h4.5" />
+            </svg>
+            <span>Go to agent</span>
+          </a>
           <button
             type="button"
             class="menu-item"
