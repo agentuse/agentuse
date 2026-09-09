@@ -24,6 +24,7 @@ const Settings = lazy(reloadOnChunkError(() => import('./routes/settings')));
 const LearningsTidy = lazy(reloadOnChunkError(() => import('./routes/learnings-tidy')));
 const AgentDraft = lazy(reloadOnChunkError(() => import('./routes/agent-draft')));
 const AgentRevision = lazy(reloadOnChunkError(() => import('./routes/agent-revision')));
+const ChangesetReview = lazy(reloadOnChunkError(() => import('./routes/changeset-review')));
 
 // The shell's #boot spinner (static.ts) covers bundle download AND the first
 // lazy route chunk: it lives outside #app so mounting the (route-less) app
@@ -80,6 +81,9 @@ function AppRoutes() {
       <Route path="/agents/revision" component={AgentRevision} />
       <Route path="/agents/:project" component={Agents} />
       <Route path="/agents/:project/:agent*" component={AgentDetail} />
+      {/* The multi-file successor to /agents/draft and /agents/revision. Both
+          ids are opaque, so this one is addressed by path. */}
+      <Route path="/projects/:projectId/changesets/:sessionId" component={ChangesetReview} />
       <Route path="/schedules" component={Schedules} />
       <Route path="/sessions" component={SessionsList} />
       <Route path="/sessions/:sessionId" component={SessionDetail} />

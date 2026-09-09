@@ -39,6 +39,11 @@ import {
   createSubmitAgentRevisionTool,
   type AgentRevisionSubmission,
 } from '../agents/revision.js';
+import {
+  changesetSubmissionContract,
+  createSubmitChangesTool,
+  type ChangesetSubmission,
+} from '../onboarding/submit-changes.js';
 import { createOverlayFilesystemTools } from '../tools/filesystem-overlay.js';
 import { redactProjectDiscoveryText } from '../agents/discover.js';
 
@@ -110,6 +115,8 @@ export interface LoadedAgentTools {
   projectSuggestionsSubmission?: ProjectSuggestionsSubmission | undefined;
   /** Structured result submitted by the private internal agent reviser. */
   agentRevisionSubmission?: AgentRevisionSubmission | undefined;
+  /** Outcome submitted by the private multi-file changeset creator/reviser. */
+  changesetSubmission?: ChangesetSubmission | undefined;
   /** Store instance (if configured) - caller must call store.releaseLock() when done */
   store?: Store | undefined;
   /** Sandbox instance (if configured) - caller must call sandboxInstance.kill() when done */
@@ -363,8 +370,10 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
   const projectSuggestionsSubmission: ProjectSuggestionsSubmission | undefined = projectSuggestionsContract ? {} : undefined;
   const agentRevisionContract = agentRevisionSubmissionContract(agent.config.metadata);
   const agentRevisionSubmission: AgentRevisionSubmission | undefined = agentRevisionContract ? {} : undefined;
+  const changesetContract = changesetSubmissionContract(agent.config.metadata);
+  const changesetSubmission: ChangesetSubmission | undefined = changesetContract ? {} : undefined;
   const baseReportComplete = createReportCompleteTool(runOutcome);
-  const guardedReportComplete: Tool = agentSourceSubmission || projectSuggestionsSubmission || agentRevisionSubmission
+  const guardedReportComplete: Tool = agentSourceSubmission || projectSuggestionsSubmission || agentRevisionSubmission || changesetSubmission
     ? {
         ...baseReportComplete,
         execute: async (input: unknown, options: unknown) => {
@@ -376,6 +385,9 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
           }
           if (agentRevisionSubmission && !agentRevisionSubmission.outcome) {
             throw new Error('No validated revision outcome has been submitted. Call submit_agent_revision first, correct any validation error, and only then call report_complete.');
+          }
+          if (changesetSubmission && !changesetSubmission.outcome) {
+            throw new Error('No validated change set has been submitted. Call submit_changes first, correct any validation error, and only then call report_complete.');
           }
           return (baseReportComplete.execute as (input: unknown, options: unknown) => unknown)(input, options);
         },
@@ -409,6 +421,16 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
         agentRevisionContract,
         loadedSkillNames,
       ),
+    }),
+    ...(changesetContract && changesetSubmission && {
+      tools__builtin_skill_read: createBuiltinSkillTool(),
+      submit_changes: createSubmitChangesTool(changesetSubmission, changesetContract, {
+        ...(loadedSkillNames && { loadedSkillNames }),
+        ...(changesetContract.mode === 'create' && {
+          reviewCapabilities: (source: string, signal?: AbortSignal) =>
+            reviewAuthoredAgentCapabilities(source, agent.config.model, undefined, signal),
+        }),
+      }),
     }),
   };
 
@@ -465,6 +487,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     ...(agentSourceSubmission && { agentSourceSubmission }),
     ...(projectSuggestionsSubmission && { projectSuggestionsSubmission }),
     ...(agentRevisionSubmission && { agentRevisionSubmission }),
+    ...(changesetSubmission && { changesetSubmission }),
     store,
     sandboxInstance,
     bindSessionId: (id: string) => {

@@ -107,11 +107,11 @@ high: latency and cost with no lift. Start moderate, tune on observed output.
 
 AgentUse resolves these placeholders in filesystem paths and in the agent body:
 
-- `${root}` — project root. Prefer it for project-owned files and directories.
-- `${agentDir}` — directory containing the `.agentuse` file. Use it for scripts,
+- `${root}`, project root. Prefer it for project-owned files and directories.
+- `${agentDir}`, directory containing the `.agentuse` file. Use it for scripts,
   templates, or data shipped beside the agent; it is unavailable when the agent
   was not loaded from a file.
-- `${tmpDir}` — runtime temporary directory. Use it for disposable working files.
+- `${tmpDir}`, runtime temporary directory. Use it for disposable working files.
 
 `${env:VAR_NAME}` is a separate secret placeholder supported only by
 `mcpServers.<name>.auth.token`. Never put it in the agent body, filesystem paths,
@@ -611,6 +611,17 @@ names like `data` instead of `values`):
   sometimes wrong. Pass an effectful payload as an argument to the gated
   command, never as a path to a file the agent could rewrite between approval
   and execution.
+
+  **Multi-file drafts.** When you can write several files at once, keep a
+  persistent script next to the agent that runs it, or in the directory this
+  project already uses for scripts, and have the agent run it by that exact
+  path in `tools.bash.commands` or `tools.bash.gated`. One agent is the entry
+  the operator runs; any worker it delegates to is referenced by relative path,
+  not duplicated. Every file you write must be reachable from the entry, by a
+  subagent path, a `dependsOn`, or an allowlisted command. Write no file the
+  entry cannot reach: an orphan is questioned in review. A manager agent with
+  `agents/collect.py` beside it illustrates the layout and is never itself the
+  bar.
 
 - **Config with runtime override.** To bake in a canonical value but allow
   per-run overrides, resolve the effective value in Steps as: (1) a runtime

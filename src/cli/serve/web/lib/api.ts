@@ -10,6 +10,12 @@ import type { AgentCreationProvider } from "../../../../agents/create";
 import type { ReasoningLevel } from "../../../../model-compatibility";
 import type { AgentRevisionRecord } from "../../../../agents/revision";
 import type { AgentDraftRecord } from "../../../../agents/draft";
+import type {
+  ChangesetFile,
+  ChangesetMode,
+  ChangesetProposal,
+  ChangesetRecord,
+} from "../../../../agents/changeset-types";
 
 export type { SerializedSchedule };
 
@@ -864,6 +870,103 @@ export function requestAgentRevisionChanges(
 ): Promise<{ sessionId: string; status: string }> {
   const query = project ? `?project=${encodeURIComponent(project)}` : '';
   return postJson(`/agent-revisions/${encodeURIComponent(revisionSessionId)}/request-changes${query}`, { prompt });
+}
+
+/* ── Changesets ───────────────────────────────────────────────────────────────
+   The multi-file successor to drafts and revisions. One record covers create
+   and revise: the model stages files, the operator reviews them together, and
+   Apply writes the whole set or none of it. */
+
+/** A file row without its body: what the list endpoint returns. */
+export type ChangesetFileSummary = Omit<ChangesetFile, 'content' | 'patch'>;
+
+export interface ChangesetProposalSummary extends Omit<ChangesetProposal, 'files'> {
+  files: ChangesetFileSummary[];
+}
+
+/** Every `proposals[].files[].content` and `patch` stripped, for cheap lists. */
+export interface ChangesetSummary extends Omit<ChangesetRecord, 'proposals'> {
+  proposals: ChangesetProposalSummary[];
+}
+
+export interface ChangesetPayload {
+  changeset: ChangesetRecord;
+  /** Present when the caller needs it to follow the authoring session log. */
+  sessionToken?: string;
+}
+
+/** Files Restore left alone because they were hand-edited after Apply. */
+export interface ChangesetSkippedFile {
+  path: string;
+  reason: string;
+}
+
+function changesetBase(projectId: string): string {
+  return `/api/projects/${encodeURIComponent(projectId)}/changesets`;
+}
+
+function changesetActionPath(projectId: string, sessionId: string, action: string): string {
+  return `${changesetBase(projectId)}/${encodeURIComponent(sessionId)}/${action}`;
+}
+
+/** Every changeset in the project, or only those targeting one file. */
+export function fetchProjectChangesets(
+  projectId: string,
+  target?: string,
+): Promise<{ changesets: ChangesetSummary[] }> {
+  return getJson(changesetBase(projectId), { target });
+}
+
+export function fetchChangeset(projectId: string, sessionId: string): Promise<ChangesetPayload> {
+  return getJson(`${changesetBase(projectId)}/${encodeURIComponent(sessionId)}`);
+}
+
+export function startChangeset(projectId: string, input: {
+  mode: ChangesetMode;
+  instruction: string;
+  model: string;
+  /** Revise only: the project-relative agent path being changed. */
+  target?: string;
+  /** Revise from a run: the session whose transcript is the evidence. */
+  originSessionId?: string;
+}): Promise<ChangesetPayload> {
+  return postJson(changesetBase(projectId), {
+    mode: input.mode,
+    instruction: input.instruction,
+    model: input.model,
+    ...(input.target && { target: input.target }),
+    ...(input.originSessionId && { originSessionId: input.originSessionId }),
+  });
+}
+
+export function postChangesetAction(
+  projectId: string,
+  sessionId: string,
+  action: 'apply' | 'discard' | 'cancel',
+): Promise<{ success: true; changeset: ChangesetRecord }> {
+  return postJson(changesetActionPath(projectId, sessionId, action), {});
+}
+
+export function restoreChangeset(
+  projectId: string,
+  sessionId: string,
+): Promise<{ success: true; changeset: ChangesetRecord; skipped: ChangesetSkippedFile[] }> {
+  return postJson(changesetActionPath(projectId, sessionId, 'restore'), {});
+}
+
+export function requestChangesetChanges(
+  projectId: string,
+  sessionId: string,
+  request: string,
+): Promise<{ success: true; changeset: ChangesetRecord }> {
+  return postJson(changesetActionPath(projectId, sessionId, 'request-changes'), { request });
+}
+
+export function startChangesetTestRun(
+  projectId: string,
+  sessionId: string,
+): Promise<{ success: true; testRun: { sessionId: string; proposalIndex: number; sessionToken?: string } }> {
+  return postJson(changesetActionPath(projectId, sessionId, 'test-run'), {});
 }
 
 export interface AgentDetailMeta {

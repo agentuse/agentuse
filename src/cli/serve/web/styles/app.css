@@ -10363,3 +10363,216 @@ html[data-page="draft-panel"] .app-route {
   .draft-answer-actions .draft-primary { flex: 1; }
   .draft-answer .draft-composer-hint kbd { display: none; }
 }
+
+/* ── Changeset review ─────────────────────────────────────────────────────────
+   A changeset lands as a set, so the page is built around the set: a rail that
+   names every file and where the surprises are, and a main column that opens
+   one file at a time under the summary that explains all of them. It reuses the
+   draft header, tabs, diff body, thread, and composer; only the two-column
+   split and the file rail are new. The page scrolls as a document rather than
+   claiming the viewport, because the thread below the diff is part of the read.
+   Colours come from the shared tokens, so both themes follow automatically. */
+.page-changeset { overflow: visible; }
+
+.changeset-mode {
+  padding: 2px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--muted-3);
+  font-size: var(--font-size-micro);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+
+.changeset-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  padding: 16px var(--draft-gutter);
+}
+.changeset-rail {
+  flex: 0 0 260px;
+  min-width: 0;
+  position: sticky;
+  top: 12px;
+}
+.changeset-main {
+  flex: 1 1 auto;
+  /* Without this a long diff line would stretch the column instead of
+     scrolling inside the file view. */
+  min-width: 0;
+}
+
+.changeset-files { display: flex; flex-direction: column; gap: 14px; }
+.changeset-files-empty { margin: 0; color: var(--muted); font-size: var(--font-size-caption); }
+.changeset-file-group ul { list-style: none; margin: 0; padding: 0; }
+.changeset-file-group-label {
+  margin: 0 0 4px;
+  color: var(--muted-2);
+  font-size: var(--font-size-micro);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.changeset-file-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted-3);
+  font-family: inherit;
+  font-size: var(--font-size-caption);
+  text-align: left;
+  cursor: pointer;
+}
+.changeset-file-row:hover { background: var(--panel-hover); color: var(--fg); }
+.changeset-file-row.is-active { background: var(--panel-hover); color: var(--fg); }
+.changeset-file-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.changeset-file-stat {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+  font-variant-numeric: tabular-nums;
+}
+.changeset-op {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  color: var(--muted-2);
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+  text-transform: uppercase;
+}
+.changeset-op.is-add { border-color: var(--green-border); background: var(--green-soft); color: var(--green); }
+.changeset-op.is-modify { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
+
+.changeset-summary {
+  margin: 0 0 12px;
+  color: var(--fg);
+  font-size: var(--font-size-body);
+  line-height: var(--lh-snug);
+  white-space: pre-wrap;
+}
+.changeset-diagnosis { margin-bottom: 12px; }
+.changeset-diagnosis-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--font-size-caption);
+  cursor: pointer;
+}
+.changeset-diagnosis-summary:hover { color: var(--fg); background: var(--panel-hover); }
+.changeset-diagnosis-body {
+  margin: 6px 0 0;
+  color: var(--muted-3);
+  font-size: var(--font-size-caption);
+  line-height: var(--lh-snug);
+  white-space: pre-wrap;
+}
+
+/* Provenance: a change that came from a page nobody mentioned should be
+   visible next to the diff, not buried in the session log. */
+.changeset-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.changeset-sources-label {
+  color: var(--muted);
+  font-size: var(--font-size-micro);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+}
+.changeset-sources ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.changeset-sources li { color: var(--muted-3); font-size: var(--font-size-micro); overflow-wrap: anywhere; }
+.changeset-sources code { font-family: var(--mono); }
+
+.changeset-file-view {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.changeset-file-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.changeset-file-title {
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: var(--font-size-caption);
+  overflow-wrap: anywhere;
+}
+.changeset-file-tabs { margin-left: auto; padding: 0; border-bottom: 0; }
+.changeset-file-tabs button { height: 28px; padding: 0 12px; }
+
+.changeset-flags {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.changeset-flag {
+  padding: 2px 8px;
+  border: 1px solid var(--amber-border);
+  border-radius: 999px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: var(--font-size-micro);
+}
+.changeset-file-view .draft-capability-note { padding: 8px 12px; border-bottom: 1px solid var(--line); }
+
+/* The diff is the one thing on this page allowed to scroll sideways: wrapping
+   a long code line hides which line actually changed. */
+.changeset-file-scroll { max-height: 60vh; overflow: auto; }
+.changeset-file-scroll .draft-file-body {
+  padding: 12px;
+  white-space: pre;
+  overflow-wrap: normal;
+  min-width: max-content;
+}
+
+.page-changeset .draft-exchange { padding: 16px 0 0; overflow: visible; }
+
+@media (max-width: 900px) {
+  /* The rail collapses above the diff: on a narrow window the file list is a
+     short index to scroll past, not a column beside the code. */
+  .changeset-body { flex-direction: column; gap: 16px; }
+  .changeset-rail { position: static; flex: 0 0 auto; width: 100%; }
+  .changeset-files { flex-direction: row; flex-wrap: wrap; gap: 12px 24px; }
+  .changeset-file-group { flex: 1 1 240px; min-width: 0; }
+  .changeset-file-scroll { max-height: none; }
+}
