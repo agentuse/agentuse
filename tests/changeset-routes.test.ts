@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { REASONING_LEVELS } from '../src/model-compatibility';
 import { buildChangesetCreatorSessionAgent } from '../src/onboarding/session-agents';
 import { buildChangesetRevisionSessionAgent } from '../src/agents/revision';
+import { parseAgentContent } from '../src/parser';
 import {
   appendChangesetProposal,
   contentHash,
@@ -263,6 +264,28 @@ describe('authoring effort', () => {
       objective: 'Collect the overnight orders.',
       availableModels: ['openai:gpt-5.6-luna'],
     })).toContain('reasoning: low');
+  });
+});
+
+describe('reviser session name', () => {
+  it('stays a parseable agent name when the target name came from a filename', () => {
+    const reviser = buildChangesetRevisionSessionAgent({
+      sessionId: SESSION_ID,
+      projectId: 'demo',
+      projectRoot: '/tmp/project',
+      scopeRoot: '/tmp/project',
+      editRoot: '/tmp/edit',
+      basePath: '/tmp/base.json',
+      targetRunPath: TARGET,
+      targetAgentName: 'process-fastmail-support.agentuse',
+      instruction: 'Exclude refunded orders.',
+      model: 'openai:gpt-5.6-luna',
+      currentSource: TARGET_SOURCE,
+      creatorSkill: 'Creator guidance.',
+      availableModels: ['openai:gpt-5.6-luna'],
+      availableSkills: [],
+    });
+    expect(() => parseAgentContent(reviser, 'reviser')).not.toThrow();
   });
 });
 

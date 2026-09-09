@@ -475,6 +475,15 @@ function renderSkillCatalog(skills: readonly ProjectSkillSummary[]): string {
   ].join('\n')).join('\n');
 }
 
+/** The reviser session is itself an agent file, so its `name` has to satisfy
+ *  the agent schema (alphanumerics, spaces, hyphens, underscores). A target
+ *  name that fell back to a filename can carry characters the schema rejects
+ *  (a dot, most obviously), which would make the reviser itself unparseable. */
+export function agentRevisionAgentName(targetAgentName: string): string {
+  const cleaned = targetAgentName.replace(/[^a-zA-Z0-9 _-]+/g, '-').trim();
+  return cleaned ? `Revise ${cleaned}` : 'Revise agent';
+}
+
 /** One phrasing for the internal session's description, in the record, the
  *  serve job, and the agent frontmatter. */
 export function agentRevisionDescription(targetAgentName: string, originSessionId?: string): string {
@@ -503,7 +512,7 @@ export function buildAgentRevisionSessionAgent(input: {
   availableSkills: readonly ProjectSkillSummary[];
 }): string {
   const frontmatter = YAML.stringify({
-    name: `Revise ${input.targetAgentName}`,
+    name: agentRevisionAgentName(input.targetAgentName),
     model: input.model,
     reasoning: input.reasoning ?? 'medium',
     description: agentRevisionDescription(input.targetAgentName, input.originSessionId),
@@ -582,7 +591,7 @@ export function buildChangesetRevisionSessionAgent(input: {
   existingAgents?: readonly ExistingProjectAgentSummary[];
 }): string {
   const frontmatter = YAML.stringify({
-    name: `Revise ${input.targetAgentName}`,
+    name: agentRevisionAgentName(input.targetAgentName),
     model: input.model,
     reasoning: input.reasoning ?? 'medium',
     description: agentRevisionDescription(input.targetAgentName, input.originSessionId),

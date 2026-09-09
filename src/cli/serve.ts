@@ -117,6 +117,7 @@ import {
 } from "../agents/create";
 import { validateAuthoredAgentSource } from "../agents/author";
 import {
+  agentRevisionAgentName,
   agentRevisionDescription,
   applyAgentRevision,
   buildAgentRevisionSessionAgent,
@@ -9420,7 +9421,7 @@ export function createServeCommand(): Command {
             currentSource = await readFile(resolveScopedAgentPath(project, requestedPath), 'utf8');
             target = {
               path: requestedPath,
-              name: parseAgentContent(currentSource, basename(requestedPath)).name,
+              name: parseAgentContent(currentSource, basename(requestedPath).replace(/\.agentuse$/u, '')).name,
             };
           }
 
@@ -9460,7 +9461,7 @@ export function createServeCommand(): Command {
 
           const timeout = mode === 'create' ? CHANGESET_CREATE_TIMEOUT_SECONDS : CHANGESET_REVISE_TIMEOUT_SECONDS;
           const maxSteps = mode === 'create' ? CHANGESET_CREATE_MAX_STEPS : CHANGESET_REVISE_MAX_STEPS;
-          const agentName = mode === 'create' ? 'internal-agent-creator' : `Revise ${target!.name}`;
+          const agentName = mode === 'create' ? 'internal-agent-creator' : agentRevisionAgentName(target!.name);
           const agentDescription = mode === 'create'
             ? 'Turn a user brief into a production AgentUse agent'
             : agentRevisionDescription(target!.name, originSessionId);
