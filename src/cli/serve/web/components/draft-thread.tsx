@@ -65,12 +65,48 @@ function stepDuration(steps: readonly ApprovalLogEntry[]): string | null {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
+/**
+ * Seconds since the newest step landed, ticking once a second while the turn
+ * is live. A long silence while the author drafts a big reply or approval card
+ * is exactly when the thread looks frozen, so the heartbeat row carries it.
+ */
+function useSilenceSeconds(steps: readonly ApprovalLogEntry[], running: boolean): number {
+  const last = steps.reduce<number | undefined>(
+    (max, step) => (typeof step.time === 'number' && (max === undefined || step.time > max) ? step.time : max),
+    undefined,
+  );
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!running) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [running, last]);
+  if (!running || last === undefined) return 0;
+  return Math.max(0, Math.floor((now - last) / 1000));
+}
+
+/** Same heartbeat row the session page shows between entries. */
+function DraftWorkingRow(props: { seconds: number }) {
+  return (
+    <li class="log-item log-working">
+      <div class="log-head">
+        <span class="log-time">{props.seconds >= 5 ? `${props.seconds}s` : ''}</span>
+        <span class="log-marker"><span class="log-spinner" aria-label="working" /></span>
+        <span class="log-title">Author is working<span class="log-dots" aria-hidden="true" /></span>
+      </div>
+    </li>
+  );
+}
+
 function DraftSteps(props: {
   steps: ApprovalLogEntry[];
   approval?: Omit<ApprovalPageInfo, 'logs'> | null | undefined;
   status?: string | undefined;
   /** Open while the turn is still producing steps; closed once its reply lands. */
   defaultOpen: boolean;
+  /** This turn is live: a heartbeat row sits under its newest step. */
+  running: boolean;
   sessionId: string;
   projectId: string | undefined;
   token: string | undefined;
@@ -88,7 +124,16 @@ function DraftSteps(props: {
     }
   }, [props.defaultOpen]);
 
-  if (props.steps.length === 0) return null;
+  const silence = useSilenceSeconds(props.steps, props.running);
+  if (props.steps.length === 0) {
+    // A fresh turn with nothing logged yet: the author is reading the request.
+    if (!props.running) return null;
+    return (
+      <div class="draft-steps is-open">
+        <ul class="draft-steps-list"><DraftWorkingRow seconds={0} /></ul>
+      </div>
+    );
+  }
   const actionable = props.steps.some((entry) => isDraftApprovalActionable(entry, props.approval, props.status));
   const visible = open || actionable;
   const duration = stepDuration(props.steps);
@@ -117,6 +162,7 @@ function DraftSteps(props: {
               onAction={() => undefined}
             />
           ))}
+          {props.running && <DraftWorkingRow seconds={silence} />}
         </ul>
       )}
     </div>
@@ -180,6 +226,7 @@ export function DraftThread(props: {
               approval={props.approval}
               status={props.status}
               defaultOpen={isLast && (props.running || !group.turn?.reply)}
+              running={isLast && props.running}
               sessionId={props.sessionId}
               projectId={props.projectId}
               token={props.token}
