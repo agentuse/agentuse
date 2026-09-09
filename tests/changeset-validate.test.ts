@@ -117,6 +117,28 @@ describe('changeset validation', () => {
     }))).rejects.toThrow('runs agents/collect.py, which is neither in this changeset nor in the project');
   });
 
+  it('resolves bash script paths from the project root, not the agent folder', async () => {
+    const rootRelative = agentSource({
+      name: 'Collector Manager',
+      extra: `subagents:
+  - name: worker
+    path: ./worker.agentuse
+tools:
+  bash:
+    commands:
+      - python3 agents/collect.py`,
+    });
+    const files = await validateChangesetFiles(input({
+      files: [file({ path: 'agents/manager.agentuse', content: rootRelative }), passingSet[1]!, passingSet[2]!],
+    }));
+    expect(files).toHaveLength(3);
+
+    const bare = rootRelative.replace('python3 agents/collect.py', 'python3 collect.py');
+    await expect(validateChangesetFiles(input({
+      files: [file({ path: 'agents/manager.agentuse', content: bare }), passingSet[1]!, passingSet[2]!],
+    }))).rejects.toThrow('runs collect.py, which is neither in this changeset nor in the project');
+  });
+
   it('resolves a reference that only exists in the project', async () => {
     const files = await validateChangesetFiles(input({
       files: [passingSet[0]!, passingSet[1]!],

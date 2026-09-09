@@ -615,7 +615,9 @@ names like `data` instead of `values`):
   **Multi-file drafts.** When you can write several files at once, keep a
   persistent script next to the agent that runs it, or in the directory this
   project already uses for scripts, and have the agent run it by that exact
-  path in `tools.bash.commands` or `tools.bash.gated`. One agent is the entry
+  path in `tools.bash.commands` or `tools.bash.gated`. Bash runs from the
+  project root, so write that path from the root (`python3 agents/collect.py`)
+  or anchor it with `${agentDir}`; a bare filename resolves at the root. One agent is the entry
   the operator runs; any worker it delegates to is referenced by relative path,
   not duplicated. Every file you write must be reachable from the entry, by a
   subagent path, a `dependsOn`, or an allowlisted command. Write no file the

@@ -162,6 +162,7 @@ import {
 } from "../agents/changeset";
 import { applyChangeset, restoreChangeset as restoreChangesetFiles, type ChangesetValidate } from "../agents/changeset-apply";
 import { validateChangesetFiles } from "../agents/changeset-validate";
+import { computeAgentId } from '../utils/agent-id.js';
 import { mountChangesetShadow } from "../agents/changeset-mount";
 import {
   assertChangesetId,
@@ -4556,10 +4557,14 @@ export function createServeCommand(): Command {
             ...mockRunEnv({ scope, model: mockModel }),
           });
           await worker.spawn();
+          // The runner keys the session directory by the entry's path relative
+          // to the project root (see computeAgentId in session-helper), and the
+          // shadow lives under .agentuse/, so the prepared shell must use the
+          // same derived id or promotion fails with PREPARING_SESSION_NOT_FOUND.
           const prepared = await worker.createPreparingSession({
             projectRoot: project.root,
             sessionId: testSessionId,
-            agentId: entry.replace(/\.agentuse$/u, ''),
+            agentId: computeAgentId(entryPath, project.root, parsed.name),
             agentName: parsed.name,
             agentDescription: `Mock test run of change set proposal ${proposal.index}`,
             model: parsed.config.model,

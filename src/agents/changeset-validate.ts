@@ -290,7 +290,14 @@ function validateModifiedAgentSource(input: {
   };
 }
 
-function expandPathVariables(token: string, agentDir: string): string | undefined {
+/**
+ * Resolve a path token to a scope-relative path. `base` is the directory a
+ * bare relative token is joined onto: the agent's own directory for
+ * `subagents` / `dependsOn` (that is how the parser resolves them), and the
+ * scope root for bash commands, because the bash tool runs with cwd =
+ * project root, so `python3 agents/x.py` means `<root>/agents/x.py`.
+ */
+function expandPathVariables(token: string, agentDir: string, base: string = agentDir): string | undefined {
   if (token.includes('${tmpDir}')) return undefined;
   const rootAnchored = token.startsWith('${root}');
   const agentAnchored = token.startsWith('${agentDir}');
@@ -302,7 +309,7 @@ function expandPathVariables(token: string, agentDir: string): string | undefine
   }
   if (value.includes('${')) return undefined;
   if (value.startsWith('/') || /^[A-Za-z]:/u.test(value)) return undefined;
-  const resolved = rootAnchored || agentAnchored ? value : posix.join(agentDir, value);
+  const resolved = rootAnchored || agentAnchored ? value : posix.join(base, value);
   const normalized = normalizeRelative(resolved);
   return normalized.startsWith('..') ? undefined : normalized;
 }
@@ -316,7 +323,8 @@ function scriptReferencesIn(commands: readonly string[], agentDir: string): stri
       const token = raw.replace(/^["']+/u, '').replace(/["';]+$/u, '');
       if (!token || token.includes('*') || token.includes('?')) continue;
       if (!CHANGESET_SUPPORT_EXTENSIONS.some((extension) => token.toLowerCase().endsWith(extension))) continue;
-      const resolved = expandPathVariables(token, agentDir);
+      // Bash runs from the project root, so a bare script path is root-relative.
+      const resolved = expandPathVariables(token, agentDir, '');
       if (resolved) references.push(resolved);
     }
   }

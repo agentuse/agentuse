@@ -323,7 +323,7 @@ Workspace:
 - Follow this project's existing agent layout, taken from existing_project_agents: put new agent files in the directory those agents already use. When that catalog is empty, use \`agents/\`.
 - Never reuse a path listed in existing_project_agents; the host rejects a collision when the change is applied. Pick a more specific filename instead, without renaming the existing agent.
 - You may write more than one file: several agents when the brief needs a manager and a worker, plus the supporting scripts or data those agents run. Reference existing agents and scripts by relative path instead of copying them.
-- Any script an agent runs must appear by its exact path in that agent's \`tools.bash.commands\`, or in \`tools.bash.gated\` when the action is irreversible or outward.
+- Any script an agent runs must appear by its exact path in that agent's \`tools.bash.commands\`, or in \`tools.bash.gated\` when the action is irreversible or outward. Bash runs from the project root, so write the path from the root (\`python3 agents/collect.py\`) or anchor it with \`\${agentDir}\`; a bare \`python3 collect.py\` looks for the file at the root and fails.
 - Write only what the brief needs. Every other file you touch is questioned in the operator's review, so do not tidy, reformat, or improve unrelated project files.
 - If a write is refused, call await_human with the path and why you need it. Do not retry the write and do not work around the refusal.
 
