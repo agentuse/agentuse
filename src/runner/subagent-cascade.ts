@@ -135,6 +135,24 @@ export async function findStaleCascadeChild(
 
 /** Error code stamped on a parent stranded by a dead cascade chain. */
 export const CASCADE_ORPHANED_CODE = 'CASCADE_ORPHANED';
+/** A parked manager whose failed child can be safely continued from durable history. */
+export const CASCADE_RECOVERABLE_CODE = 'CASCADE_RECOVERABLE';
+
+/**
+ * Only retry failures that happened inside a model response, after the runtime
+ * had already persisted every preceding tool result. A model-stream stall can
+ * leave partial text/reasoning, but rehydration turns that durable tail into
+ * context for a fresh continuation turn. Do not broaden this to generic
+ * EXECUTION_ERROR: tool failures and arbitrary provider errors can have
+ * ambiguous external effects.
+ */
+export function isRecoverableCascadeFailure(
+  stale: { status: string; error?: { code?: string | undefined; message?: string | undefined } | undefined }
+): boolean {
+  return stale.status === 'error' &&
+    stale.error?.code === 'EXECUTION_ERROR' &&
+    stale.error.message?.startsWith('Model stream stalled:') === true;
+}
 
 /**
  * Whether an ended child left a durable result its parked parent can be
@@ -220,6 +238,8 @@ export function describeStaleCascade(stale: StaleCascadeChild): string {
       : `it ended ${stale.status}${reason ? `: ${reason}` : ''}`;
   const wayOut = isFinishableStale(stale)
     ? 'Its result is saved; the serve daemon folds it into this run at its next startup sweep.'
+    : isRecoverableCascadeFailure(stale)
+      ? 'Resume this run to continue the interrupted task.'
     : 'This run can no longer be resumed; stop it and re-run the agent.';
   return `Waiting on delegated sub-agent "${stale.agentName}", but ${cause}. ${wayOut}`;
 }

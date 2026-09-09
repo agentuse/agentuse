@@ -5,6 +5,7 @@ import {
   descendToLeafGate,
   findStaleCascadeChild,
   describeStaleCascade,
+  isRecoverableCascadeFailure,
   findRootSessionId,
   type CascadeSessionReader,
 } from '../src/runner/subagent-cascade';
@@ -250,6 +251,19 @@ describe('describeStaleCascade', () => {
     expect(incomplete).toContain('it ended incomplete: Image billing limit reached');
     expect(incomplete).toContain('Its result is saved');
     expect(incomplete).not.toContain('re-run');
+  });
+
+  it('offers resume only for a model-stream stall', () => {
+    const stalled = {
+      sessionId: 'leaf', agentName: 'Newsletter Pipeline', status: 'error',
+      error: { code: 'EXECUTION_ERROR', message: 'Model stream stalled: no output for 120s (1 attempt)' },
+    };
+    expect(isRecoverableCascadeFailure(stalled)).toBe(true);
+    expect(describeStaleCascade(stalled)).toContain('Resume this run');
+    expect(isRecoverableCascadeFailure({
+      ...stalled,
+      error: { code: 'EXECUTION_ERROR', message: 'Browser closed unexpectedly' },
+    })).toBe(false);
   });
 
   it('does not double the sentence period when the child reason ends in one', () => {

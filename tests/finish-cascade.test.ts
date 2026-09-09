@@ -120,6 +120,60 @@ async function makeStrandedCascade(projectRoot: string) {
   return { rootSm, rootId, rootAgentId, rootMsg, leafId };
 }
 
+async function makeRetryableCascade(projectRoot: string) {
+  const managerPath = join(projectRoot, 'manager.agentuse');
+  const leafPath = join(projectRoot, 'newsletter-pipeline.agentuse');
+  await writeFile(managerPath, '---\nmodel: demo:default\n---\nContinue after the delegated task returns.\n');
+  await writeFile(leafPath, '---\nmodel: demo:default\n---\nFinish the delegated task from the durable transcript.\n');
+
+  const rootSm = new SessionManager();
+  const rootAgentId = 'agents/manager';
+  const rootId = await rootSm.createSession({
+    agent: { id: rootAgentId, name: 'Newsletter manager', isSubAgent: false, filePath: managerPath },
+    model: 'demo:default', version: 'test', config: {},
+    project: { root: projectRoot, cwd: projectRoot },
+  });
+  const rootMsg = await rootSm.createMessage(rootId, rootAgentId, {
+    user: { prompt: { task: 'delegate' } }, assistant: ASSISTANT(projectRoot),
+  });
+  await rootSm.writeToolsSnapshot(rootId, rootAgentId, { tools: [] });
+
+  const leafSm = new SessionManager();
+  leafSm.setParentPath(rootSm.getFullPath()!);
+  const leafAgentId = 'agents/newsletter-pipeline';
+  const leafId = await leafSm.createSession({
+    agent: { id: leafAgentId, name: 'Newsletter Pipeline', isSubAgent: true, filePath: leafPath },
+    parentSessionID: rootId,
+    model: 'demo:default', version: 'test', config: {},
+    project: { root: projectRoot, cwd: projectRoot },
+  });
+  const leafMsg = await leafSm.createMessage(leafId, leafAgentId, {
+    user: { prompt: { task: 'prepare newsletter' } }, assistant: ASSISTANT(projectRoot),
+  });
+  await leafSm.addPart(leafId, leafAgentId, leafMsg, {
+    type: 'text', text: 'I prepared the source material and was about to assemble the final artifact.',
+  } as any);
+  await leafSm.writeToolsSnapshot(leafId, leafAgentId, { tools: [] });
+  await leafSm.setSessionError(leafId, leafAgentId, {
+    code: 'EXECUTION_ERROR',
+    message: 'Model stream stalled: no output for 120s (1 attempt)',
+  });
+
+  await rootSm.addPart(rootId, rootAgentId, rootMsg, {
+    type: 'tool', callID: 'root-call', tool: 'subagent__newsletter_pipeline',
+    state: {
+      status: 'pending', input: { task: 'prepare newsletter' }, suspendedAt: Date.now() - 3_000,
+      resumePayload: { kind: 'subagent_wait', childSessionID: leafId, childAgentName: 'Newsletter Pipeline' },
+    },
+  } as any);
+  await rootSm.setSessionError(rootId, rootAgentId, {
+    code: 'CASCADE_ORPHANED',
+    message: 'Legacy terminal message from before resumable cascades.',
+  });
+
+  return { rootId, leafId };
+}
+
 describe('finish-cascade (worker integration)', () => {
   let workers: Array<{ child: ChildProcessWithoutNullStreams; rl: ReadlineInterface }> = [];
 
@@ -295,4 +349,49 @@ describe('finish-cascade (worker integration)', () => {
       await rm(dataHome, { recursive: true, force: true });
     }
   }, 45_000);
+
+  it('resumes the parent by retrying its model-stalled child in place', async () => {
+    const originalXdg = process.env.XDG_DATA_HOME;
+    const dataHome = await mkdtemp(join(tmpdir(), 'agentuse-retry-cascade-'));
+    const projectRoot = join(dataHome, 'project');
+    process.env.XDG_DATA_HOME = dataHome;
+    try {
+      await mkdir(projectRoot, { recursive: true });
+      await initStorage(projectRoot);
+      const { rootId, leafId } = await makeRetryableCascade(projectRoot);
+
+      const child = spawn(process.execPath, ['src/index.ts', '--internal-worker'], { cwd: process.cwd(), env: { ...process.env } });
+      const rl = createInterface({ input: child.stdout });
+      workers.push({ child, rl });
+      await readReady(rl);
+
+      child.stdin.write(`${JSON.stringify({ id: 'info', type: 'approval-info', projectRoot, sessionId: rootId, skipTokenCheck: true })}\n`);
+      const info = await readResponseFor(rl, 'info');
+      expect(info.success).toBe(true);
+      expect(info.approval.cascadeRetryable).toBe(true);
+      expect(info.approval.errorCode).toBe('CASCADE_RECOVERABLE');
+
+      child.stdin.write(`${JSON.stringify({ id: 'retry', type: 'retry-cascade', projectRoot, sessionId: rootId })}\n`);
+      const res = await readResponseFor(rl, 'retry');
+
+      expect(res.success).toBe(true);
+      expect(res.result.sessionId).toBe(rootId);
+
+      const verifySm = new SessionManager();
+      const rootFound = await verifySm.findSession(rootId);
+      const leafFound = await verifySm.findSession(leafId);
+      expect(rootFound?.session.status).toBe('completed');
+      expect(leafFound?.session.status).toBe('completed');
+      expect((await verifySm.listChildSessions(rootId)).map((entry) => entry.session.id)).toEqual([leafId]);
+
+      const rootParts = await loadParts(verifySm, rootId, rootFound!.agentId);
+      const bookmark = rootParts.find((part: any) => part?.tool === 'subagent__newsletter_pipeline') as any;
+      expect(bookmark?.state?.status).toBe('completed');
+      expect(JSON.stringify(bookmark?.state?.output ?? '')).toContain('demo response from AgentUse');
+    } finally {
+      if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdg;
+      await rm(dataHome, { recursive: true, force: true });
+    }
+  }, 30_000);
 });

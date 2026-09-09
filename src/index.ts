@@ -8,7 +8,7 @@ import { isMockMode, resolveMockApprovalDecision, resolveMockScope } from './run
 import { extractToolIntent, withoutToolIntent } from './runner/tool-intent';
 import { LIVE_OUTPUT_METADATA_KEY } from './tools/types';
 import { composeSubagentResult, formatOutcomeLine, normalizeHeadline, stripLeadingOutcomeLine, REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL } from './tools/report-outcome';
-import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, descendToLeafGate, findStaleCascadeChild, describeStaleCascade, isFinishableStale, loadStoredSubagentResult, CASCADE_ORPHANED_CODE, findRootSessionId, MAX_CASCADE_DEPTH } from './runner/subagent-cascade';
+import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, descendToLeafGate, findStaleCascadeChild, describeStaleCascade, isRecoverableCascadeFailure, isFinishableStale, loadStoredSubagentResult, CASCADE_ORPHANED_CODE, CASCADE_RECOVERABLE_CODE, findRootSessionId, MAX_CASCADE_DEPTH } from './runner/subagent-cascade';
 import { currentProcessRef } from './utils/process-info';
 import { withOwnershipLock } from './utils/ownership-lock';
 import { contextUsageFromSnapshot } from './session/usage';
@@ -1174,7 +1174,7 @@ async function runInternalWorker() {
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute' | 'resume' | 'continue-session' | 'finish-cascade' | 'approval-info' | 'session-status' | 'create-preparing-session' | 'fail-preparing-session' | 'session-context' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'session-final-responses' | 'stop-session' | 'reopen-gate' | 'invalidate-lists' | 'reset-provider-plugins' | 'release';
+    type: 'execute' | 'resume' | 'continue-session' | 'finish-cascade' | 'retry-cascade' | 'approval-info' | 'session-status' | 'create-preparing-session' | 'fail-preparing-session' | 'session-context' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'session-final-responses' | 'stop-session' | 'reopen-gate' | 'invalidate-lists' | 'reset-provider-plugins' | 'release';
     agentPath?: string;
     /** In-memory agent definition. Fresh execute only; never persisted as a file. */
     agentContent?: string;
@@ -2272,8 +2272,9 @@ async function runInternalWorker() {
     startTime: number;
     debug?: boolean;
     maxSteps?: number;
+    continuationPrompt?: string;
   }): Promise<Awaited<ReturnType<typeof runAgent>>> {
-    const { sessionManager, sessionId, projectRoot, abortController, startTime, debug, maxSteps } = opts;
+    const { sessionManager, sessionId, projectRoot, abortController, startTime, debug, maxSteps, continuationPrompt } = opts;
     const existingSessionPreRunError = Symbol.for('agentuse.existingSessionPreRunError');
     const markPreRunError = (error: unknown): unknown => {
       if (error && typeof error === 'object') {
@@ -2316,6 +2317,7 @@ async function runInternalWorker() {
         cliMaxSteps: maxSteps,
         sessionManager,
         projectContext,
+        userPrompt: continuationPrompt,
         abortSignal: abortController.signal,
         pluginManager,
         verbose: debug ?? false,
@@ -2324,8 +2326,8 @@ async function runInternalWorker() {
       enteredRunAgent = true;
       return await runAgent(
         agent, mcp, debug ?? false, abortController.signal, startTime, false, agentPath,
-        maxSteps, sessionManager, projectContext, undefined, preparedExecution, true,
-        pluginManager, true, sessionId,
+        maxSteps, sessionManager, projectContext, continuationPrompt, preparedExecution, true,
+        pluginManager, true, sessionId, undefined, continuationPrompt,
       );
     } catch (err) {
       // runAgent closes MCP in its own finally; if we threw before/around it, close
@@ -2491,6 +2493,7 @@ async function runInternalWorker() {
           await restoreResumeToolResult({ sessionManager, rollback: parentRollback }).catch((restoreErr) => {
             logger.warn(`Failed to restore sub-agent bookmark after resume setup error: ${(restoreErr as Error).message}`);
           });
+          await sessionManager.setSessionSuspended(parent.sessionId, parent.agentId).catch(() => {});
         }
         throw error;
       }
@@ -2603,6 +2606,172 @@ async function runInternalWorker() {
       handled: true,
       response: workerRunResponse(reqId, walked.result, duration, rootSessionId),
     };
+  }
+
+  // Resume is addressed to the manager the user started, but recovery begins at
+  // the deepest child that failed in a model stream. Rehydrate that same child
+  // session from its durable transcript, let it finish, then use the normal
+  // child-to-root walk so every parked subagent__* call receives a real result.
+  // This deliberately handles only isRecoverableCascadeFailure: a generic
+  // execution error may have an ambiguous external effect and must not be
+  // replayed automatically.
+  async function retryFailedCascade(opts: {
+    sessionManager: InstanceType<typeof SessionManager>;
+    rootSessionId: string;
+    projectRoot: string;
+    abortController: AbortController;
+    startTime: number;
+    reqId: string;
+    debug?: boolean;
+    maxSteps?: number;
+  }): Promise<any> {
+    const { sessionManager, rootSessionId, projectRoot, abortController, startTime, reqId, debug, maxSteps } = opts;
+    const root = await sessionManager.findSession(rootSessionId);
+    if (!root) {
+      return { id: reqId, success: false, error: { code: 'SESSION_NOT_FOUND', message: `Session not found: ${rootSessionId}` } };
+    }
+    const rootDirectory = await sessionManager.getSessionDirectory(rootSessionId, root.agentId);
+
+    // Share the finish-cascade claim because completing an already-finished
+    // child and retrying a failed one both mutate the same pending bookmarks.
+    return withOwnershipLock(join(rootDirectory, '.finish-cascade-claim'), async () => {
+      const currentRoot = await sessionManager.findSession(rootSessionId);
+      if (!currentRoot) {
+        return { id: reqId, success: false, error: { code: 'SESSION_NOT_FOUND', message: `Session not found: ${rootSessionId}` } };
+      }
+      const rootCanRetry = currentRoot.session.status === 'suspended' ||
+        (currentRoot.session.status === 'error' &&
+          (currentRoot.session.error?.code === CASCADE_RECOVERABLE_CODE || currentRoot.session.error?.code === CASCADE_ORPHANED_CODE));
+      if (!rootCanRetry) {
+        return { id: reqId, success: false, error: { code: 'SESSION_NOT_RESUMABLE', message: `Session ${rootSessionId} is ${currentRoot.session.status}` } };
+      }
+
+      const ancestors: Array<{ sessionId: string; agentId: string; agentName: string }> = [
+        { sessionId: rootSessionId, agentId: currentRoot.agentId, agentName: currentRoot.session.agent.name || currentRoot.agentId },
+      ];
+      let cursorChildId = findPendingSubagentWaitChildId(
+        await loadSessionPartsFlat(sessionManager, rootSessionId, currentRoot.agentId)
+      );
+      let failed: { sessionId: string; agentId: string; agentName: string } | undefined;
+
+      for (let i = 0; i < MAX_CASCADE_DEPTH && cursorChildId; i++) {
+        const child = await sessionManager.findSession(cursorChildId);
+        if (!child) break;
+        if (isRecoverableCascadeFailure(child.session)) {
+          failed = {
+            sessionId: cursorChildId,
+            agentId: child.agentId,
+            agentName: child.session.agent.name || child.agentId,
+          };
+          break;
+        }
+        const parked = child.session.status === 'suspended' ||
+          (child.session.status === 'error' &&
+            (child.session.error?.code === CASCADE_RECOVERABLE_CODE || child.session.error?.code === CASCADE_ORPHANED_CODE));
+        if (!parked) break;
+        const parts = await loadSessionPartsFlat(sessionManager, cursorChildId, child.agentId);
+        if (findPendingAwaitHumanPart(parts)) break;
+        const nextChildId = findPendingSubagentWaitChildId(parts);
+        if (!nextChildId) break;
+        ancestors.push({
+          sessionId: cursorChildId,
+          agentId: child.agentId,
+          agentName: child.session.agent.name || child.agentId,
+        });
+        cursorChildId = nextChildId;
+      }
+
+      if (!failed) {
+        return {
+          id: reqId,
+          success: false,
+          error: {
+            code: 'CASCADE_NOT_RETRYABLE',
+            message: `Session ${rootSessionId} is not waiting on a sub-agent interrupted by a recoverable model-stream stall`,
+          },
+        };
+      }
+
+      // Fail before changing any status or bookmark when a level cannot be
+      // reloaded. Once the child finishes, every ancestor must be runnable for
+      // the result to reach the user-facing root.
+      for (const level of [...ancestors, failed]) {
+        const found = await sessionManager.findSession(level.sessionId);
+        if (!found?.session.agent.filePath) {
+          return {
+            id: reqId,
+            success: false,
+            error: { code: 'AGENT_NOT_FOUND', message: `Session ${level.sessionId} does not record an agent file path` },
+          };
+        }
+      }
+
+      await claimCascadeChain(sessionManager, [...ancestors, failed]);
+      for (const ancestor of ancestors) {
+        await sessionManager.updateSession(ancestor.sessionId, ancestor.agentId, {
+          status: 'suspended',
+          error: undefined,
+        } as any);
+      }
+
+      let childResult: Awaited<ReturnType<typeof runAgent>>;
+      try {
+        childResult = await runExistingSession({
+          sessionManager,
+          sessionId: failed.sessionId,
+          projectRoot,
+          abortController,
+          startTime,
+          continuationPrompt: 'Continue the interrupted task from the existing progress. Do not repeat completed work.',
+          ...(debug !== undefined && { debug }),
+          ...(maxSteps !== undefined && { maxSteps }),
+        });
+      } catch (error) {
+        // Keep the manager actionable when the retry itself fails. The child
+        // run has already persisted its latest terminal error.
+        const latest = await sessionManager.findSession(failed.sessionId);
+        const stale = latest ? {
+          sessionId: failed.sessionId,
+          agentName: failed.agentName,
+          status: latest.session.status,
+          ...(latest.session.error && { error: latest.session.error }),
+        } : {
+          sessionId: failed.sessionId,
+          agentName: failed.agentName,
+          status: 'missing',
+        };
+        await sessionManager.setSessionError(rootSessionId, currentRoot.agentId, {
+          code: isRecoverableCascadeFailure(stale) ? CASCADE_RECOVERABLE_CODE : CASCADE_ORPHANED_CODE,
+          message: describeStaleCascade(stale),
+        }).catch(() => {});
+        throw error;
+      }
+
+      if (childResult.status === 'suspended') {
+        return cascadeReparkedResponse(reqId, rootSessionId);
+      }
+      const walked = await walkUpCascadeChain({
+        sessionManager,
+        ancestors,
+        childSessionId: failed.sessionId,
+        childAgentName: failed.agentName,
+        childResult,
+        projectRoot,
+        abortController,
+        startTime,
+        ...(debug !== undefined && { debug }),
+        ...(maxSteps !== undefined && { maxSteps }),
+      });
+      if (walked.suspended) {
+        return cascadeReparkedResponse(reqId, rootSessionId);
+      }
+      return workerRunResponse(reqId, walked.result, Date.now() - startTime, rootSessionId);
+    }, {
+      staleMs: 30_000,
+      retryMs: 10,
+      maxWaitMs: 35_000,
+      label: `retry-cascade:${rootSessionId}`,
+    });
   }
 
   // Finish a cascade whose driving worker died after the delegated child ended
@@ -2892,15 +3061,23 @@ async function runInternalWorker() {
       // durably suspended on a delegated child that has already ended, so it has no
       // gate of its own and none below. Without this the page renders a bare
       // "suspended" run with no hint that nothing will ever move it again.
-      let orphanedCascadeFields: { errorCode: string; errorMessage: string } | undefined;
-      if (!effectiveApprovalPart && found.session.status === 'suspended' && !found.session.error) {
+      let orphanedCascadeFields: { errorCode: string; errorMessage: string; cascadeRetryable?: true } | undefined;
+      if (!effectiveApprovalPart) {
         const childSessionId = findPendingSubagentWaitChildId(parts);
         const stale = childSessionId ? await findStaleCascadeChild(sessionManager, childSessionId) : null;
         if (stale) {
-          orphanedCascadeFields = {
-            errorCode: CASCADE_ORPHANED_CODE,
-            errorMessage: describeStaleCascade(stale),
-          };
+          if (isRecoverableCascadeFailure(stale)) {
+            orphanedCascadeFields = {
+              errorCode: CASCADE_RECOVERABLE_CODE,
+              errorMessage: describeStaleCascade(stale),
+              cascadeRetryable: true,
+            };
+          } else if (found.session.status === 'suspended' && !found.session.error) {
+            orphanedCascadeFields = {
+              errorCode: CASCADE_ORPHANED_CODE,
+              errorMessage: describeStaleCascade(stale),
+            };
+          }
         }
       }
 
@@ -4176,6 +4353,25 @@ async function runInternalWorker() {
           ...(req.maxSteps !== undefined && { maxSteps: req.maxSteps }),
         });
       }
+      if (req.type === 'retry-cascade') {
+        if (!req.sessionId) {
+          return {
+            id: req.id,
+            success: false,
+            error: { code: 'SESSION_REQUIRED', message: 'Missing sessionId for retry-cascade request' },
+          };
+        }
+        return await retryFailedCascade({
+          sessionManager,
+          rootSessionId: req.sessionId,
+          projectRoot: req.projectRoot,
+          abortController,
+          startTime,
+          reqId: req.id,
+          ...(req.debug !== undefined && { debug: req.debug }),
+          ...(req.maxSteps !== undefined && { maxSteps: req.maxSteps }),
+        });
+      }
       if (req.type === 'resume') {
         if (!req.sessionId) {
           return {
@@ -4877,7 +5073,7 @@ async function runInternalWorker() {
           parentWatchTimer = undefined;
         }
         finishReleaseIfDrained();
-      } else if (request.type === 'execute' || request.type === 'resume' || request.type === 'continue-session' || request.type === 'finish-cascade') {
+      } else if (request.type === 'execute' || request.type === 'resume' || request.type === 'continue-session' || request.type === 'finish-cascade' || request.type === 'retry-cascade') {
         // Don't await - handle requests concurrently
         // Each request runs in parallel, response sent when complete
         inFlightRuns += 1;

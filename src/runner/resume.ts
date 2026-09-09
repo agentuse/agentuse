@@ -9,7 +9,9 @@ import {
   findPendingSubagentWaitChildId,
   findStaleCascadeChild,
   describeStaleCascade,
+  isRecoverableCascadeFailure,
   isFinishableStale,
+  CASCADE_RECOVERABLE_CODE,
   CASCADE_ORPHANED_CODE,
 } from './subagent-cascade';
 import { logger } from '../utils/logger';
@@ -361,10 +363,10 @@ export interface ReconciledOrphan {
   agentId: string;
   agentName: string;
   /** 'interrupted': killed mid-run. 'stranded': parked on a child that ended
-   *  with nothing to fold in (error/missing) — marked terminal. 'finishable':
-   *  parked on a child whose durable result can still complete the chain — NOT
-   *  marked; the caller drives a finish-cascade run instead. */
-  reason: 'interrupted' | 'stranded' | 'finishable';
+   *  with nothing safe to fold in or retry. 'finishable': the child's durable
+   *  result can complete the chain automatically. 'recoverable': a reviewer can
+   *  resume the manager to retry its model-stalled child. */
+  reason: 'interrupted' | 'stranded' | 'finishable' | 'recoverable';
 }
 
 /** Bounds the probe cache below; entries are tiny, and a daemon serving more
@@ -502,6 +504,16 @@ export async function reconcileOrphanedSessions(options: {
       const parentId = (session as { parentSessionID?: string }).parentSessionID;
       if (typeof parentId === 'string' && parentId.length > 0) continue;
       reconciled.push({ sessionId: session.id, agentId, agentName: session.agent.name || session.agent.id, reason: 'finishable' });
+      continue;
+    }
+    if (isRecoverableCascadeFailure(stale)) {
+      if (!dryRun) {
+        await sessionManager.setSessionError(session.id, agentId, {
+          code: CASCADE_RECOVERABLE_CODE,
+          message: describeStaleCascade(stale),
+        }).catch(() => {});
+      }
+      reconciled.push({ sessionId: session.id, agentId, agentName: session.agent.name || session.agent.id, reason: 'recoverable' });
       continue;
     }
     if (!dryRun) {

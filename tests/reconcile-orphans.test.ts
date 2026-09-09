@@ -379,6 +379,29 @@ describe('reconcileOrphanedSessions', () => {
     }
   });
 
+  it('marks a manager resumable when its delegated child hit a model-stream stall', async () => {
+    const { projectRoot, sessionManager, sessionID, agentId, childId, childSm, childAgentId } =
+      await makeDelegatingPair('error');
+    try {
+      await childSm.setSessionError(childId, childAgentId, {
+        code: 'EXECUTION_ERROR',
+        message: 'Model stream stalled: no output for 120s (1 attempt)',
+      });
+      await sessionManager.updateSession(sessionID, agentId, { owner: { pid: DEAD_PID } });
+
+      const reconciled = await reconcileOrphanedSessions({ sessionManager, cutoff: Date.now() + 60_000 });
+
+      expect(reconciled).toContainEqual(expect.objectContaining({ sessionId: sessionID, reason: 'recoverable' }));
+      const found = await sessionManager.findSession(sessionID);
+      expect(found?.session.status).toBe('error');
+      expect(found?.session.error?.code).toBe('CASCADE_RECOVERABLE');
+      expect(found?.session.error?.message).toContain('Resume this run');
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
   // The ordering that matters: pass 1 kills the leaf, so pass 2 must already see
   // it as terminal and sweep the manager that pass 1 just widowed.
   it('sweeps the manager widowed by its own first pass, in one call', async () => {
