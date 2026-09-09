@@ -18,6 +18,7 @@ import { DraftUsageLine } from '../components/token-usage-strip';
 import { DraftComposer, DraftStatusPill } from '../components/draft-panel';
 import { DraftAnswerComposer, pendingDraftQuestion } from '../components/draft-answer-composer';
 import { DraftThread } from '../components/draft-thread';
+import { LogContent } from '../components/content';
 import { ChangesetFileList } from '../components/changeset-file-list';
 import { ChangesetFileView, type ChangesetFileTab } from '../components/changeset-file-view';
 import { changesetNeedsFileReview } from '../lib/changeset-view';
@@ -420,7 +421,9 @@ export default function ChangesetReview() {
           <ChangesetFileList files={files} selected={selectedPath} onSelect={selectFile} />
         </div>
         <div class="changeset-main">
-          {proposal?.reply && <p class="changeset-summary">{proposal.reply}</p>}
+          {proposal?.reply && (
+            <div class="changeset-summary"><LogContent value={proposal.reply} forceMarkdown /></div>
+          )}
           {proposal?.diagnosis && (
             <div class={`changeset-diagnosis${diagnosisOpen ? ' is-open' : ''}`}>
               <button
@@ -431,7 +434,9 @@ export default function ChangesetReview() {
               >
                 <span aria-hidden="true">{diagnosisOpen ? '▾' : '▸'}</span> Diagnosis
               </button>
-              {diagnosisOpen && <p class="changeset-diagnosis-body">{proposal.diagnosis}</p>}
+              {diagnosisOpen && (
+                <div class="changeset-diagnosis-body"><LogContent value={proposal.diagnosis} forceMarkdown /></div>
+              )}
             </div>
           )}
           {sources.length > 0 && (

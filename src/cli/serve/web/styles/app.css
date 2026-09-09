@@ -10000,9 +10000,8 @@ main[tabindex="-1"]:focus,
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface);
-  /* A reply can carry a headline and the diagnosis behind it, separated by a
-     blank line. Collapsing that runs the two into one sentence. */
-  white-space: pre-wrap;
+  /* Model prose: rendered as markdown, so paragraphs, lists, and `code` come
+     out as markup rather than as literal backticks in one wall of text. */
 }
 .draft-evidence-row {
   align-self: flex-start;
@@ -10544,7 +10543,6 @@ html[data-page="draft-panel"] .app-route {
   color: var(--fg);
   font-size: var(--font-size-body);
   line-height: var(--lh-snug);
-  white-space: pre-wrap;
 }
 .changeset-diagnosis { margin-bottom: 12px; }
 .changeset-diagnosis-summary {
@@ -10566,7 +10564,6 @@ html[data-page="draft-panel"] .app-route {
   color: var(--muted-3);
   font-size: var(--font-size-caption);
   line-height: var(--lh-snug);
-  white-space: pre-wrap;
 }
 
 /* Provenance: a change that came from a page nobody mentioned should be

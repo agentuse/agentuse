@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ApprovalLogEntry, ApprovalPageInfo } from '../../types';
 import { LogEntry } from './log-entry';
 import { isDraftApprovalActionable } from './draft-answer-composer';
+import { LogContent } from './content';
 import { isDebugLog } from '../lib/format';
 import type { DraftExchangeTurn } from './draft-panel';
 
@@ -231,7 +232,9 @@ export function DraftThread(props: {
               projectId={props.projectId}
               token={props.token}
             />
-            {group.turn?.reply && <div class="draft-exchange-reply">{group.turn.reply}</div>}
+            {group.turn?.reply && (
+              <div class="draft-exchange-reply"><LogContent value={group.turn.reply} forceMarkdown /></div>
+            )}
           </div>
         );
       })}
