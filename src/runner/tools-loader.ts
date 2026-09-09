@@ -39,6 +39,27 @@ import {
   createSubmitAgentRevisionTool,
   type AgentRevisionSubmission,
 } from '../agents/revision.js';
+import { createOverlayFilesystemTools } from '../tools/filesystem-overlay.js';
+import { redactProjectDiscoveryText } from '../agents/discover.js';
+
+/**
+ * Host-authored metadata (like `metadata.internal`) that puts the filesystem
+ * tools into changeset overlay mode: the model sees the real project scope,
+ * every write lands in `editRoot`. Never set from an ordinary agent file.
+ */
+interface ChangesetOverlayMetadata {
+  scopeRoot: string;
+  editRoot: string;
+  basePath: string;
+}
+
+function readChangesetOverlay(metadata: Record<string, unknown> | undefined): ChangesetOverlayMetadata | undefined {
+  const value = metadata?.changesetOverlay;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const { scopeRoot, editRoot, basePath } = value as Record<string, unknown>;
+  if (typeof scopeRoot !== 'string' || typeof editRoot !== 'string' || typeof basePath !== 'string') return undefined;
+  return { scopeRoot, editRoot, basePath };
+}
 
 /**
  * Options for loading agent tools
@@ -218,7 +239,23 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
         modelInputModalities,
         mediaToolResultSupport,
       } as PathResolverContext;
-      configuredTools = getConfiguredTools(toolsConfig, toolContext);
+      // Changeset overlay mode: the creator/reviser sees one tree (the project
+      // scope) while every write is staged under editRoot. The plain filesystem
+      // mounts are dropped so the model gets exactly one filesystem surface.
+      const overlay = readChangesetOverlay(agent.config.metadata);
+      const { filesystem: _overlaidFilesystem, ...toolsConfigWithoutFilesystem } = toolsConfig;
+      configuredTools = overlay
+        ? {
+            ...getConfiguredTools(toolsConfigWithoutFilesystem, toolContext),
+            ...createOverlayFilesystemTools({
+              scopeRoot: overlay.scopeRoot,
+              editRoot: overlay.editRoot,
+              basePath: overlay.basePath,
+              redact: redactProjectDiscoveryText,
+              context: toolContext,
+            }),
+          }
+        : getConfiguredTools(toolsConfig, toolContext);
       if (Object.keys(configuredTools).length > 0) {
         logger.debug(`${logPrefix}Loaded ${Object.keys(configuredTools).length} configured tool(s): ${Object.keys(configuredTools).join(', ')}`);
       }
