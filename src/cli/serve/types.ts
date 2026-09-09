@@ -77,6 +77,13 @@ export interface SessionSummary {
     name: string;
     description?: string;
     filePath?: string;
+    /**
+     * Path relative to the served scope, present only when this session's
+     * agent is still one of the project's loaded agents. Clients must use
+     * this value, rather than the persisted absolute file path, to start a
+     * fresh run through POST /api/run.
+     */
+    runPath?: string;
   };
   status: string;
   trigger: SessionTrigger;

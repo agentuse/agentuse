@@ -359,6 +359,20 @@ describe('header-gate exemption (capability routes)', () => {
 });
 
 describe('session list helpers', () => {
+  it('stamps a repeatable run path only for an agent loaded inside the served scope', () => {
+    const project = {
+      id: 'demo',
+      root: '/workspace/project',
+      scopeRoot: '/workspace/project/agents',
+      agentFiles: ['inbox.agentuse'],
+      envFile: '/workspace/project/.env',
+    };
+
+    expect(__testing.toAgentRunPath(project, '/workspace/project/agents/inbox.agentuse')).toBe('inbox.agentuse');
+    expect(__testing.toAgentRunPath(project, '/workspace/project/agents/removed.agentuse')).toBeUndefined();
+    expect(__testing.toAgentRunPath(project, '/state/changesets/reviser.agentuse')).toBeUndefined();
+  });
+
   it('derives a stable public purpose from a durable revision record', () => {
     expect(__testing.agentRevisionSessionPurpose({
       originSessionId: '01ORIGINSESSION000000000000',

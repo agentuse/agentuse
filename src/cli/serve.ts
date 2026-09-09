@@ -6366,9 +6366,9 @@ export function createServeCommand(): Command {
 
         pageItems = await Promise.all(pageItems.map(async (row) => {
           const cacheKey = `${row.projectId}\0${row.session.sessionId}`;
+          const project = projects.find((candidate) => candidate.id === row.projectId);
           let purpose = sessionPurposeCache.get(cacheKey);
           if (!sessionPurposeCache.has(cacheKey)) {
-            const project = projects.find((candidate) => candidate.id === row.projectId);
             if (project) {
               try {
                 // Change sets first: they are the successor record, and a
@@ -6389,9 +6389,18 @@ export function createServeCommand(): Command {
             }
             sessionPurposeCache.set(cacheKey, purpose);
           }
-          return purpose
-            ? { ...row, session: { ...row.session, purpose } }
-            : row;
+          const runPath = project
+            ? toAgentRunPath(project, row.session.agent.filePath)
+            : undefined;
+          if (!purpose && !runPath) return row;
+          return {
+            ...row,
+            session: {
+              ...row.session,
+              ...(purpose && { purpose }),
+              ...(runPath && { agent: { ...row.session.agent, runPath } }),
+            },
+          };
         }));
 
         while (sessionPurposeCache.size > 2_000) {
@@ -11777,6 +11786,7 @@ export const __testing = {
   agentRevisionSessionPurpose,
   changesetSessionPurpose,
   changesetReviewHref,
+  toAgentRunPath,
   changesetListSummary,
   changesetAcceptsChangeRequest,
   activeChangesetForTarget,
