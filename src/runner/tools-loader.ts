@@ -427,8 +427,8 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
       submit_changes: createSubmitChangesTool(changesetSubmission, changesetContract, {
         ...(loadedSkillNames && { loadedSkillNames }),
         ...(changesetContract.mode === 'create' && {
-          reviewCapabilities: (source: string, signal?: AbortSignal) =>
-            reviewAuthoredAgentCapabilities(source, agent.config.model, undefined, signal),
+          reviewCapabilities: (source: string, objective: string, signal?: AbortSignal) =>
+            reviewAuthoredAgentCapabilities(source, agent.config.model, objective, signal),
         }),
       }),
     }),

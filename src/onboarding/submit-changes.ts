@@ -47,7 +47,8 @@ export interface SubmitChangesDeps {
   /** Web URLs read while producing this proposal, for provenance in review. */
   externalReads?: () => readonly string[];
   /** The create flow's capability review, run once per added agent file. */
-  reviewCapabilities?: (agentSource: string, signal?: AbortSignal) => Promise<void>;
+  /** Create mode: the host's capability review of each added agent, given the operator's instruction as context. */
+  reviewCapabilities?: (agentSource: string, objective: string, signal?: AbortSignal) => Promise<void>;
 }
 
 /**
@@ -292,7 +293,19 @@ export function createSubmitChangesTool(
           for (const file of files) {
             if (file.kind !== 'agent' || file.op !== 'add') continue;
             options?.abortSignal?.throwIfAborted();
-            await deps.reviewCapabilities(file.content, options?.abortSignal);
+            try {
+              await deps.reviewCapabilities(file.content, record.instruction, options?.abortSignal);
+            } catch (error) {
+              // The review is a separate 60s-capped model call. When the
+              // provider stalls, the session must not burn its own budget on
+              // an opaque abort: tell the model exactly what to do next.
+              if (options?.abortSignal?.aborted) throw error;
+              const message = (error as Error).message;
+              if (/abort|timeout/iu.test(message)) {
+                throw new Error(`Capability review of ${file.path} timed out before finishing. The files were not rejected; call submit_changes again to rerun the review.`);
+              }
+              throw new Error(`Changes rejected: ${file.path}: ${message}. Correct the files and call submit_changes again.`);
+            }
           }
           options?.abortSignal?.throwIfAborted();
         }
