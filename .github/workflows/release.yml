@@ -59,16 +59,102 @@ jobs:
             bun scripts/release-brief.ts
           fi
 
-  # Required native signal. This assembles the unsigned .app on macOS, compiles
-  # the Swift Settings helper, and smoke-tests the CLI embedded in the bundle.
+  # Build each release on its native architecture. A tag build signs and
+  # notarizes the final artifacts; a manual rehearsal remains credential-free
+  # and exercises the same architecture-specific package assembly.
   desktop:
     if: github.repository == 'agentuse/agentuse' || vars.RELEASE_REHEARSAL == 'true'
-    runs-on: macos-14
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+            helper_arch: arm64
+          - arch: x64
+            runner: macos-15-intel
+            helper_arch: x86_64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: ./.github/actions/setup
+
       - name: Desktop package gate
+        if: github.repository != 'agentuse/agentuse' || github.event_name != 'push'
         run: bun scripts/release.ts verify-desktop
+
+      - name: Require signing credentials
+        if: github.repository == 'agentuse/agentuse' && github.event_name == 'push'
+        shell: bash
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in MAC_CSC_LINK MAC_CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!name}" ]; then
+              echo "Missing required Actions secret: $name"
+              exit 1
+            fi
+          done
+
+      - name: Build, sign, and notarize ${{ matrix.arch }}
+        if: github.repository == 'agentuse/agentuse' && github.event_name == 'push'
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          AGENTUSE_SKIP_SERVE_RESTART: '1'
+        run: |
+          pnpm run build
+          pnpm --filter @agentuse/desktop run build
+          pnpm --filter @agentuse/desktop exec electron-builder \
+            --mac \
+            --${{ matrix.arch }} \
+            --publish never \
+            -c.forceCodeSigning=true
+
+      - name: Verify ${{ matrix.arch }} signature and notarization
+        if: github.repository == 'agentuse/agentuse' && github.event_name == 'push'
+        shell: bash
+        run: |
+          APP_PATH="$(find apps/desktop/dist -type d -name AgentUse.app -print -quit)"
+          if [ -z "$APP_PATH" ]; then
+            echo "AgentUse.app was not produced"
+            exit 1
+          fi
+
+          EXECUTABLE="$APP_PATH/Contents/MacOS/AgentUse"
+          SETTINGS="$APP_PATH/Contents/Frameworks/AgentUseSettings.app/Contents/MacOS/AgentUseSettings"
+          for binary in "$EXECUTABLE" "$SETTINGS"; do
+            if ! lipo -archs "$binary" | tr ' ' '\n' | grep -Fxq '${{ matrix.helper_arch }}'; then
+              echo "$binary does not contain ${{ matrix.helper_arch }}"
+              lipo -archs "$binary"
+              exit 1
+            fi
+          done
+
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+          spctl --assess --verbose=2 --type execute "$APP_PATH"
+
+      - name: Preserve ${{ matrix.arch }} release artifacts
+        if: github.repository == 'agentuse/agentuse' && github.event_name == 'push'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.zip
+            apps/desktop/dist/*.blockmap
+            apps/desktop/dist/latest-mac.yml
 
   # Advisory. Drives a real browser, and by decision it never blocks a release,
   # so it is deliberately absent from publish's `needs`. A red X here is
@@ -102,6 +188,22 @@ jobs:
 
       - uses: ./.github/actions/setup
 
+      - name: Download architecture-specific macOS artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: macos-*
+          path: tmp/macos-artifacts
+
+      - name: Merge macOS updater metadata
+        shell: bash
+        run: |
+          mkdir -p tmp/macos-release
+          find tmp/macos-artifacts -type f ! -name latest-mac.yml -exec cp {} tmp/macos-release/ \;
+          bun scripts/merge-mac-update-metadata.ts \
+            tmp/macos-artifacts/macos-arm64/latest-mac.yml \
+            tmp/macos-artifacts/macos-x64/latest-mac.yml \
+            tmp/macos-release/latest-mac.yml
+
       # Trusted publishing needs npm >= 11.5.1; keep the privileged job on the
       # minimum audited version instead of executing a mutable `latest` release.
       - run: npm install -g npm@11.5.1
@@ -112,3 +214,8 @@ jobs:
       - run: bun scripts/release.ts finish
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Upload macOS release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" tmp/macos-release/* --clobber

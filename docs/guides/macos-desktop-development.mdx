@@ -94,10 +94,11 @@ APPLE_KEYCHAIN_PROFILE=agentuse-notary pnpm desktop:package:mac
 `notarytool` prompts securely for the app-specific password. electron-builder
 uses the Developer ID Application identity installed in the login Keychain.
 
-For CI, set the electron-builder signing variables `CSC_LINK` and
-`CSC_KEY_PASSWORD`, plus `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and
-`APPLE_TEAM_ID`. Keep all signing credentials in CI secrets. Hardened runtime is
-enabled, and the packaged native Settings helper is placed under
+For CI, configure repository Actions secrets named `MAC_CSC_LINK` and
+`MAC_CSC_KEY_PASSWORD`, plus `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and
+`APPLE_TEAM_ID`. The certificate value is the base64-encoded Developer ID
+Application `.p12`. Keep all signing credentials in CI secrets. Hardened runtime
+is enabled, and the packaged native Settings helper is placed under
 `Contents/Frameworks` before notarization.
 
 ## Prepare an updater-enabled release
@@ -110,19 +111,17 @@ separately:
 bun scripts/release.ts prepare X.Y.Z
 ```
 
-Build the Mac release with the signing and notarization credentials above. The
-local build uses `--publish never`: creating packages must not upload or publish
-anything automatically.
+Push the prepared tag to the public repository. After the portable release gate
+passes, GitHub Actions builds on native Apple Silicon and Intel runners. Each
+package is signed, notarized, stapled, and verified before it is preserved as a
+workflow artifact. The publishing job merges their update metadata and uploads
+two DMGs, two Mac ZIPs, four blockmaps, and one `latest-mac.yml` to the release.
+Every artifact filename includes `arm64` or `x64`, and the merged metadata lists
+both architectures so electron-updater selects the matching ZIP.
 
-Before uploading, verify that the release output contains the signed and
-notarized DMG, the Mac ZIP, their blockmaps, and `latest-mac.yml`. Confirm that
-`latest-mac.yml` references both primary artifacts with the prepared version,
-and that the packaged app contains an `app-update.yml` feed pointing to the
-public `agentuse/agentuse` GitHub Releases repository.
-
-After the normal GitHub release exists, manually upload all of those Mac assets
-to that same public release. Test the completed feed from an older signed build:
-confirm that the update downloads in the background, choose **Later** in the
-native prompt, install it from **Settings → About**, and confirm the new version
-launches. Repeat with **Restart Now**, then repeat a check while offline and
-confirm the app continues working while the About tab reports the failure.
+Confirm the completed GitHub Release contains that nine-file set. Test the feed
+from an older signed build on each architecture: confirm that the update
+downloads in the background, choose **Later** in the native prompt, install it
+from **Settings → About**, and confirm the new version launches. Repeat with
+**Restart Now**, then repeat a check while offline and confirm the app continues
+working while the About tab reports the failure.

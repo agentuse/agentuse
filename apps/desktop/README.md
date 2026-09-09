@@ -88,7 +88,7 @@ starts the same compiled CLI that users run in a terminal without recursively
 embedding the repository. The signed application places the native Settings
 helper under `Contents/Frameworks`, where nested macOS code is expected.
 
-### Updates and the first manual upload
+### Updates and release artifacts
 
 The packaged app checks the public `agentuse/agentuse` GitHub Releases feed in
 the background after startup and downloads available updates automatically.
@@ -103,20 +103,36 @@ the human-facing installer; the ZIP and `latest-mac.yml` are required by
 package command includes `--publish never`, so building locally cannot upload
 artifacts.
 
-For each Mac release, keep build and upload manual:
+Tag-triggered releases build native `arm64` and `x64` packages on separate
+GitHub-hosted Mac runners. Each app is signed and notarized independently. The
+release job combines both electron-builder documents into one `latest-mac.yml`,
+then uploads both DMGs, both ZIPs, and their blockmaps to the GitHub Release.
+Architecture is explicit in every filename so electron-updater selects the
+matching ZIP instead of relying on artifact order.
+
+Configure these repository Actions secrets before the first automated release:
+
+- `MAC_CSC_LINK`: base64-encoded Developer ID Application `.p12`
+- `MAC_CSC_KEY_PASSWORD`: password used to export that `.p12`
+- `APPLE_ID`: Apple developer account email
+- `APPLE_APP_SPECIFIC_PASSWORD`: app-specific Apple ID password
+- `APPLE_TEAM_ID`: Apple Developer team identifier
+
+The signing jobs run only after the portable release gate passes and only for a
+tag push in `agentuse/agentuse`. The existing `release` environment remains the
+approval and OIDC boundary for npm publication and GitHub Release creation.
+Manual workflow dispatches use unsigned packages and do not receive signing
+credentials.
+
+For each Mac release:
 
 1. Use `bun scripts/release.ts prepare X.Y.Z` to bump both the npm and
    Desktop manifests together. Do not hand-edit one version independently.
-2. On a release Mac with the signing identity and notarization profile, run
-   `APPLE_KEYCHAIN_PROFILE=agentuse-notary pnpm desktop:package:mac`.
-3. Before uploading, confirm `apps/desktop/dist` contains the signed/notarized
-   DMG, Mac ZIP, their blockmaps, and `latest-mac.yml`. Inspect the YAML and
-   verify its version and ZIP filename match the release.
-4. After the normal release workflow has created the matching GitHub Release,
-   manually upload the DMG, ZIP, blockmaps, and `latest-mac.yml` to it. Do not
-   create a second release or upload only the DMG.
-5. From an older signed build, verify background discovery and download, the
+2. Push the prepared tag to the public repository. The release workflow builds,
+   signs, notarizes, verifies, and uploads both Mac architectures before it
+   completes.
+3. Confirm the GitHub Release contains two DMGs, two Mac ZIPs, four blockmaps,
+   and one merged `latest-mac.yml` whose `files` list names both architectures.
+4. From an older signed build, verify background discovery and download, the
    native **Restart Now** / **Later** prompt, and explicit restart/install. Also
    repeat once without network access to confirm the app continues normally.
-
-The updater does not add an automated signing or artifact-upload job.

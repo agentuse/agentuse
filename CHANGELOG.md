@@ -4,6 +4,7 @@
 
 ### Changed
 
+- **Mac releases now build separate signed and notarized Apple Silicon and Intel artifacts in GitHub Actions.** Architecture-specific downloads remain close to the existing app size, while one merged updater manifest routes each installation to the correct ZIP.
 - **GitHub Releases no longer attach coding-assistant integration archives.** Install the repository skill with `npx skills add agentuse/agentuse`; platform-specific Codex, Claude Code, and Pi packages remain local-development outputs and are no longer coupled to AgentUse release creation.
 
 ## [0.21.1] - 2026-09-08
