@@ -330,7 +330,6 @@ export default function ChangesetReview() {
             <span><span class="draft-meta-key">Project</span> {changeset.projectId}</span>
             <span><span class="draft-meta-key">Files</span> {files.length}</span>
             <span><span class="draft-meta-key">Model</span> {changeset.authoringModel}</span>
-            <a class="draft-quiet-link" href={sessionHref}>Session log</a>
           </div>
           <DraftUsageLine
             tokenUsage={authorSession.approval?.tokenUsage}
