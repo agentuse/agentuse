@@ -12,6 +12,7 @@ import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 process.env.CONTEXT_COMPACTION = 'false';
 
 import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
+import { z } from 'zod';
 
 let currentModel: MockLanguageModelV3;
 mock.module('../src/models', () => ({
@@ -143,6 +144,19 @@ describe('createStallWatchdog', () => {
     expect(disabled.signal.aborted).toBe(false);
   });
 
+  test('pause() excludes tool execution from the model-idle window', async () => {
+    const watchdog = createStallWatchdog(40);
+    watchdog.pause();
+    await Bun.sleep(100);
+    expect(watchdog.stalled).toBe(false);
+    expect(watchdog.signal.aborted).toBe(false);
+
+    watchdog.resume();
+    await Bun.sleep(80);
+    expect(watchdog.stalled).toBe(true);
+    watchdog.dispose();
+  });
+
   test('an upstream abort passes through without being called a stall', () => {
     const upstream = new AbortController();
     const watchdog = createStallWatchdog(0, upstream.signal);
@@ -154,6 +168,51 @@ describe('createStallWatchdog', () => {
 });
 
 describe('agent loop stall handling', () => {
+  test('a long tool call does not count as a stalled model stream', async () => {
+    process.env[ENV_VAR] = '0.05';
+    let calls = 0;
+    currentModel = new MockLanguageModelV3({
+      doStream: async () => {
+        calls++;
+        return {
+          stream: convertArrayToReadableStream((calls === 1
+            ? [
+                { type: 'stream-start', warnings: [] },
+                { type: 'tool-call', toolCallId: 'slow-1', toolName: 'slow_tool', input: '{}' },
+                { type: 'finish', finishReason: 'tool-calls', usage: USAGE },
+              ]
+            : [
+                { type: 'stream-start', warnings: [] },
+                { type: 'text-start', id: 'text-1' },
+                { type: 'text-delta', id: 'text-1', delta: 'done' },
+                { type: 'text-end', id: 'text-1' },
+                { type: 'finish', finishReason: 'stop', usage: USAGE },
+              ]) as any),
+        };
+      },
+    });
+
+    const chunks: AgentChunk[] = [];
+    const generator = executeAgentCore(agent, {
+      slow_tool: {
+        description: 'slow test tool',
+        inputSchema: z.object({}),
+        execute: async () => {
+          await Bun.sleep(140);
+          return 'ok';
+        },
+      },
+    } as any, {
+      userMessage: 'go',
+      systemMessages: [],
+      maxSteps: 5,
+    });
+    for await (const chunk of generator) chunks.push(chunk);
+
+    expect(calls).toBe(2);
+    expect(errorMessages(chunks)).toEqual([]);
+  });
+
   test('a silent stream is retried, then fails naming the stall', async () => {
     process.env[ENV_VAR] = '0.5';
     const { model, calls } = stallingModel();

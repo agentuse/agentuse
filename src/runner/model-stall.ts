@@ -68,6 +68,10 @@ export interface StallWatchdog {
   readonly stalled: boolean;
   /** Re-arm the idle timer. Call on every chunk received. */
   notify(): void;
+  /** Pause model-idle detection while the stream is executing tools. */
+  pause(): void;
+  /** Resume model-idle detection when the model can emit again. */
+  resume(): void;
   /** Stop the timer. Safe to call more than once. */
   dispose(): void;
 }
@@ -83,15 +87,23 @@ export function createStallWatchdog(idleMs: number, upstream?: AbortSignal): Sta
 
   if (!(idleMs > 0)) {
     // Disabled: still hand back a combined signal so callers stay uniform.
-    return { signal, stalled: false, notify: () => {}, dispose: () => {} };
+    return {
+      signal,
+      stalled: false,
+      notify: () => {},
+      pause: () => {},
+      resume: () => {},
+      dispose: () => {},
+    };
   }
 
   let stalled = false;
   let disposed = false;
+  let paused = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const arm = (): void => {
-    if (disposed || stalled) return;
+    if (disposed || stalled || paused) return;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       stalled = true;
@@ -108,6 +120,16 @@ export function createStallWatchdog(idleMs: number, upstream?: AbortSignal): Sta
       return stalled;
     },
     notify: arm,
+    pause() {
+      paused = true;
+      if (timer) clearTimeout(timer);
+      timer = undefined;
+    },
+    resume() {
+      if (disposed || stalled || !paused) return;
+      paused = false;
+      arm();
+    },
     dispose() {
       disposed = true;
       if (timer) clearTimeout(timer);

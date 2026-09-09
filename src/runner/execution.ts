@@ -1755,6 +1755,11 @@ Error: ${errorMessage}`);
       }
       switch (chunk.type) {
         case 'tool-call': {
+          // A model-stream idle window measures whether the provider can emit.
+          // Tool execution is a separate phase and may legitimately exceed that
+          // window (notably a delegated subagent), so leave it to the tool and
+          // session timeouts until every in-flight tool has settled.
+          stallWatchdog?.pause();
           stepCount++; // Each tool call counts as a step
 
           // Warn when approaching step limit
@@ -1847,6 +1852,8 @@ Error: ${errorMessage}`);
             toolStartTimes.delete(toolCallId);
           }
 
+          if (toolStartTimes.size === 0) stallWatchdog?.resume();
+
           // No new LLM segment starts while a suspension is draining: the SDK
           // is aborted and the run ends at the gate.
           if (suspendState) break;
@@ -1933,6 +1940,7 @@ Error: ${errorMessage}`);
           if (startTime) {
             toolStartTimes.delete(toolCallId);
           }
+          if (toolStartTimes.size === 0) stallWatchdog?.resume();
           break;
         }
 
