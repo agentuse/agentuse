@@ -624,7 +624,7 @@ describe('Compactor', () => {
     expect(summary.content).toBeDefined();
   });
 
-  it('threads the run cancellation signal into the summarizer call', async () => {
+  it('threads run cancellation through the summarizer watchdog signal', async () => {
     const controller = new AbortController();
     const { streamText } = await import('ai');
     const messages: any[] = [
@@ -635,6 +635,12 @@ describe('Compactor', () => {
     await compactMessages(messages, 'test:model', controller.signal);
 
     const lastCall = (streamText as any).mock.calls.at(-1)[0];
-    expect(lastCall.abortSignal).toBe(controller.signal);
+    const forwardedSignal = lastCall.abortSignal as AbortSignal;
+    expect(forwardedSignal.aborted).toBe(false);
+
+    const reason = new Error('cancel compaction');
+    controller.abort(reason);
+    expect(forwardedSignal.aborted).toBe(true);
+    expect(forwardedSignal.reason).toBe(reason);
   });
 });

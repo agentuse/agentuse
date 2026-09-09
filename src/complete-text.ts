@@ -4,9 +4,9 @@ import { CodexAuth } from './auth/codex';
 import { resolveModelProvider } from './utils/model-utils';
 import {
   createStallWatchdog,
-  HELPER_IDLE_TIMEOUT_SECONDS,
+  estimateModelContextTokens,
   ModelStreamStallError,
-  resolveModelIdleTimeoutMs,
+  resolveModelStallPolicy,
 } from './runner/model-stall';
 
 export interface CompleteTextOptions {
@@ -31,7 +31,8 @@ export interface CompleteTextOptions {
   onTextDelta?: (text: string) => void;
   /**
    * Idle window before a silent stream is treated as stalled, in milliseconds.
-   * Defaults to `AGENTUSE_MODEL_IDLE_TIMEOUT` (seconds) or 60s; `0` disables.
+   * Defaults to the adaptive model policy; `AGENTUSE_MODEL_IDLE_TIMEOUT`
+   * overrides it in seconds and `0` disables it.
    * Exists for tests; production callers should use the env var.
    */
   idleTimeoutMs?: number;
@@ -70,8 +71,14 @@ export async function completeText(modelString: string, options: CompleteTextOpt
   // Stall watchdog: a helper stream that opens and then never emits would
   // otherwise hang until the session timeout. Combined with (never replacing)
   // the caller's signal, so cancellation still works.
-  const idleMs = options.idleTimeoutMs ?? resolveModelIdleTimeoutMs(HELPER_IDLE_TIMEOUT_SECONDS);
-  const watchdog = createStallWatchdog(idleMs, options.abortSignal);
+  const policy = options.idleTimeoutMs === undefined
+    ? resolveModelStallPolicy({
+        modelString,
+        contextTokens: estimateModelContextTokens([options.instructions, options.extraSystem, options.prompt]),
+        codexBackend: usesCodexBackend,
+      })
+    : options.idleTimeoutMs;
+  const watchdog = createStallWatchdog(policy, options.abortSignal);
 
   const result = streamText({
     model,
@@ -107,9 +114,9 @@ export async function completeText(modelString: string, options: CompleteTextOpt
   let text = '';
   try {
     for await (const chunk of result.stream) {
-      watchdog.notify();
+      watchdog.notify(chunk.type === 'text-delta');
       if (chunk.type === 'error') {
-        if (watchdog.stalled) throw new ModelStreamStallError(idleMs);
+        if (watchdog.stalled) throw watchdog.failure ?? new ModelStreamStallError(0);
         throw (chunk as { error: unknown }).error;
       }
       if (chunk.type === 'text-delta') {
@@ -121,14 +128,14 @@ export async function completeText(modelString: string, options: CompleteTextOpt
   } catch (error) {
     // A stall aborts our own controller, so the provider surfaces a generic
     // abort. Report the real cause instead.
-    if (watchdog.stalled) throw new ModelStreamStallError(idleMs);
+    if (watchdog.stalled) throw watchdog.failure ?? new ModelStreamStallError(0);
     throw error;
   } finally {
     watchdog.dispose();
   }
   // Some provider streams end quietly on abort. Never turn their partial text
   // into a successful compaction or verification result.
-  if (watchdog.stalled) throw new ModelStreamStallError(idleMs);
+  if (watchdog.stalled) throw watchdog.failure ?? new ModelStreamStallError(0);
   options.abortSignal?.throwIfAborted();
   return text;
 }

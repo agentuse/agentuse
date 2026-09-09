@@ -4,8 +4,9 @@
  * Production incident (2026-09-08): a model call opened a stream and emitted
  * nothing for ~400s. Only the session timeout stopped it, and the run reported
  * a generic "execution timeout or manual cancellation". These tests pin the
- * watchdog: a silent stream is aborted per attempt, retried while nothing has
- * been produced, and finally reported with a message that names the stall.
+ * watchdog: a silent model step is aborted per attempt, retried from its
+ * checkpoint while that step has produced nothing, and finally reported with
+ * a message that names the stall.
  */
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 
@@ -23,8 +24,9 @@ import { executeAgentCore } from '../src/runner/execution';
 import { completeText } from '../src/complete-text';
 import {
   createStallWatchdog,
+  modelStallRetryDelayMs,
   ModelStreamStallError,
-  resolveModelIdleTimeoutMs,
+  resolveModelStallPolicy,
 } from '../src/runner/model-stall';
 import type { AgentChunk } from '../src/runner/types';
 
@@ -34,15 +36,21 @@ const USAGE = {
 };
 
 const ENV_VAR = 'AGENTUSE_MODEL_IDLE_TIMEOUT';
+const RETRY_DELAY_ENV_VAR = 'AGENTUSE_MODEL_STALL_RETRY_BASE_DELAY';
 let savedEnv: string | undefined;
+let savedRetryDelayEnv: string | undefined;
 
 beforeEach(() => {
   savedEnv = process.env[ENV_VAR];
+  savedRetryDelayEnv = process.env[RETRY_DELAY_ENV_VAR];
+  process.env[RETRY_DELAY_ENV_VAR] = '0';
 });
 
 afterEach(() => {
   if (savedEnv === undefined) delete process.env[ENV_VAR];
   else process.env[ENV_VAR] = savedEnv;
+  if (savedRetryDelayEnv === undefined) delete process.env[RETRY_DELAY_ENV_VAR];
+  else process.env[RETRY_DELAY_ENV_VAR] = savedRetryDelayEnv;
 });
 
 /** A stream that emits `parts`, then goes silent until the attempt is aborted. */
@@ -101,21 +109,47 @@ function errorMessages(chunks: AgentChunk[]): string[] {
     .map((chunk) => ((chunk as { error: unknown }).error as Error)?.message ?? '');
 }
 
-describe('resolveModelIdleTimeoutMs', () => {
-  test('falls back to the caller default when unset or blank', () => {
-    expect(resolveModelIdleTimeoutMs(120, {})).toBe(120_000);
-    expect(resolveModelIdleTimeoutMs(60, { [ENV_VAR]: '  ' })).toBe(60_000);
+describe('resolveModelStallPolicy', () => {
+  test('uses five minutes for a generic model call', () => {
+    expect(resolveModelStallPolicy({ modelString: 'anthropic:claude-haiku', env: {} })).toEqual({
+      firstProgressMs: 300_000,
+      idleMs: 300_000,
+      hardTimeoutMs: 1_500_000,
+    });
   });
 
-  test('the env var overrides both defaults and 0 disables', () => {
-    expect(resolveModelIdleTimeoutMs(120, { [ENV_VAR]: '5' })).toBe(5_000);
-    expect(resolveModelIdleTimeoutMs(60, { [ENV_VAR]: '5' })).toBe(5_000);
-    expect(resolveModelIdleTimeoutMs(120, { [ENV_VAR]: '0' })).toBe(0);
+  test('gives high reasoning six minutes, or nine minutes above 50k tokens', () => {
+    expect(resolveModelStallPolicy({
+      modelString: 'openai:gpt-5.6-sol', reasoning: 'high', contextTokens: 50_000, env: {},
+    }).firstProgressMs).toBe(600_000);
+    expect(resolveModelStallPolicy({
+      modelString: 'openai:gpt-5.6-sol', reasoning: 'high', contextTokens: 50_001, env: {},
+    }).firstProgressMs).toBe(900_000);
   });
 
-  test('an unparseable value keeps the default', () => {
-    expect(resolveModelIdleTimeoutMs(120, { [ENV_VAR]: 'soon' })).toBe(120_000);
-    expect(resolveModelIdleTimeoutMs(120, { [ENV_VAR]: '-3' })).toBe(120_000);
+  test('treats Codex OAuth as reasoning and preserves the explicit legacy override', () => {
+    expect(resolveModelStallPolicy({
+      modelString: 'openai:gpt-5.6-sol', codexBackend: true, contextTokens: 80_000, env: {},
+    }).firstProgressMs).toBe(900_000);
+    expect(resolveModelStallPolicy({
+      modelString: 'openai:gpt-5.6-sol', codexBackend: true,
+      env: { [ENV_VAR]: '42' },
+    })).toEqual({ firstProgressMs: 42_000, idleMs: 42_000, hardTimeoutMs: 0 });
+    expect(resolveModelStallPolicy({
+      modelString: 'openai:gpt-5.6-sol', env: { [ENV_VAR]: '0' },
+    })).toEqual({ firstProgressMs: 0, idleMs: 0, hardTimeoutMs: 0 });
+  });
+
+  test('ignores an invalid legacy override', () => {
+    expect(resolveModelStallPolicy({
+      modelString: 'anthropic:claude-haiku', env: { [ENV_VAR]: 'soon' },
+    }).idleMs).toBe(300_000);
+  });
+
+  test('uses capped exponential retry delays', () => {
+    expect(modelStallRetryDelayMs(1, {})).toBe(2_000);
+    expect(modelStallRetryDelayMs(2, {})).toBe(4_000);
+    expect(modelStallRetryDelayMs(9, {})).toBe(60_000);
   });
 });
 
@@ -142,6 +176,33 @@ describe('createStallWatchdog', () => {
     await Bun.sleep(60);
     expect(disabled.stalled).toBe(false);
     expect(disabled.signal.aborted).toBe(false);
+  });
+
+  test('keeps the long first-progress budget until substantive progress arrives', async () => {
+    const watchdog = createStallWatchdog({ firstProgressMs: 100, idleMs: 30, hardTimeoutMs: 0 });
+    await Bun.sleep(45);
+    watchdog.notify(false);
+    await Bun.sleep(45);
+    expect(watchdog.stalled).toBe(false);
+
+    watchdog.notify(true);
+    await Bun.sleep(60);
+    expect(watchdog.stalled).toBe(true);
+    expect(watchdog.failure?.phase).toBe('idle');
+    watchdog.dispose();
+  });
+
+  test('enforces a per-step hard ceiling and resets it at the next step', async () => {
+    const policy = { firstProgressMs: 200, idleMs: 200, hardTimeoutMs: 80 };
+    const watchdog = createStallWatchdog(policy);
+    await Bun.sleep(45);
+    watchdog.beginStep(policy);
+    await Bun.sleep(45);
+    expect(watchdog.stalled).toBe(false);
+    await Bun.sleep(55);
+    expect(watchdog.stalled).toBe(true);
+    expect(watchdog.failure?.phase).toBe('hard-limit');
+    watchdog.dispose();
   });
 
   test('pause() excludes tool execution from the model-idle window', async () => {
@@ -213,6 +274,66 @@ describe('agent loop stall handling', () => {
     expect(errorMessages(chunks)).toEqual([]);
   });
 
+  test('a silent later model step retries from its checkpoint without replaying completed tools', async () => {
+    process.env[ENV_VAR] = '0.15';
+    let modelCalls = 0;
+    let toolCalls = 0;
+    const prompts: unknown[] = [];
+    currentModel = new MockLanguageModelV3({
+      doStream: async (options: any) => {
+        modelCalls++;
+        prompts.push(options.prompt);
+        if (modelCalls === 1) {
+          return {
+            stream: convertArrayToReadableStream([
+              { type: 'stream-start', warnings: [] },
+              { type: 'tool-call', toolCallId: 'checkpoint-1', toolName: 'checkpoint_tool', input: '{}' },
+              { type: 'finish', finishReason: 'tool-calls', usage: USAGE },
+            ] as any),
+          };
+        }
+        if (modelCalls === 2) {
+          return { stream: stallingStream([], options?.abortSignal) };
+        }
+        return {
+          stream: convertArrayToReadableStream([
+            { type: 'stream-start', warnings: [] },
+            { type: 'text-start', id: 'text-1' },
+            { type: 'text-delta', id: 'text-1', delta: 'recovered' },
+            { type: 'text-end', id: 'text-1' },
+            { type: 'finish', finishReason: 'stop', usage: USAGE },
+          ] as any),
+        };
+      },
+    });
+
+    const chunks: AgentChunk[] = [];
+    const generator = executeAgentCore(agent, {
+      checkpoint_tool: {
+        description: 'checkpoint test tool',
+        inputSchema: z.object({}),
+        execute: async () => {
+          toolCalls++;
+          return 'settled result';
+        },
+      },
+    } as any, {
+      userMessage: 'go',
+      systemMessages: [],
+      maxSteps: 5,
+    });
+    for await (const chunk of generator) chunks.push(chunk);
+
+    expect(modelCalls).toBe(3);
+    expect(toolCalls).toBe(1);
+    expect(errorMessages(chunks)).toEqual([]);
+    expect(JSON.stringify(prompts[2])).toContain('settled result');
+    expect(chunks.filter((chunk) => chunk.type === 'text').map((chunk) => chunk.text).join('')).toBe('recovered');
+    const finalUsage = chunks.filter((chunk) => chunk.type === 'finish').at(-1)?.usage;
+    expect(finalUsage?.inputTokens).toBe(20);
+    expect(finalUsage?.outputTokens).toBe(10);
+  });
+
   test('a silent stream is retried, then fails naming the stall', async () => {
     process.env[ENV_VAR] = '0.5';
     const { model, calls } = stallingModel();
@@ -223,7 +344,40 @@ describe('agent loop stall handling', () => {
     expect(calls()).toBe(3);
     const messages = errorMessages(chunks);
     expect(messages.length).toBe(1);
-    expect(messages[0]).toMatch(/^Model stream stalled: no output for \d+s \(3 attempts\)$/);
+    expect(messages[0]).toMatch(/^Model stream stalled: no model progress for \d+s \(3 attempts\)$/);
+  });
+
+  test('a reasoning-only stall retries because no visible output or tool call was committed', async () => {
+    process.env[ENV_VAR] = '0.15';
+    let calls = 0;
+    currentModel = new MockLanguageModelV3({
+      doStream: async (options: any) => {
+        calls++;
+        if (calls < 3) {
+          return {
+            stream: stallingStream([
+              { type: 'reasoning-start', id: `reasoning-${calls}` },
+              { type: 'reasoning-delta', id: `reasoning-${calls}`, delta: `attempt ${calls}` },
+            ], options?.abortSignal),
+          };
+        }
+        return {
+          stream: convertArrayToReadableStream([
+            { type: 'stream-start', warnings: [] },
+            { type: 'text-start', id: 'text-1' },
+            { type: 'text-delta', id: 'text-1', delta: 'recovered' },
+            { type: 'text-end', id: 'text-1' },
+            { type: 'finish', finishReason: 'stop', usage: USAGE },
+          ] as any),
+        };
+      },
+    });
+
+    const chunks = await runCore();
+
+    expect(calls).toBe(3);
+    expect(errorMessages(chunks)).toEqual([]);
+    expect(chunks.filter((chunk) => chunk.type === 'text').map((chunk) => chunk.text).join('')).toBe('recovered');
   });
 
   test('a stall after the model produced output is not retried', async () => {
@@ -331,7 +485,7 @@ describe('completeText stall handling', () => {
         idleTimeoutMs: 120,
         maxRetries: 0,
       })
-    ).rejects.toThrow(/^Model stream stalled: no output for \d+s$/);
+    ).rejects.toThrow(/^Model stream stalled: no model progress for \d+s$/);
     expect(calls()).toBe(1);
   });
 

@@ -16,11 +16,13 @@ import {
 import { CodexAuth } from '../auth/codex';
 import { logger } from '../utils/logger';
 import {
-  AGENT_LOOP_IDLE_TIMEOUT_SECONDS,
   createStallWatchdog,
+  estimateModelContextTokens,
   MODEL_STALL_MAX_ATTEMPTS,
   ModelStreamStallError,
-  resolveModelIdleTimeoutMs,
+  modelStallRetryDelayMs,
+  resolveModelStallPolicy,
+  waitForModelStallRetry,
   type StallWatchdog,
 } from './model-stall';
 import { ContextManager } from '../context-manager';
@@ -73,19 +75,18 @@ import {
 
 // Constants
 const MAX_RETRIES = 3;
-// Chunk types that mean the model actually produced something this segment.
-// Their presence makes a stalled segment unsafe to retry: text and reasoning
-// have already been yielded downstream, and tool input means a call is being
-// (or has been) dispatched.
-const MODEL_OUTPUT_CHUNK_TYPES = new Set([
+// Chunk types that commit externally visible output or begin a tool call in the
+// current step. Their presence makes that step unsafe to retry. Reasoning is
+// deliberately excluded: it is diagnostic-only and has no external effect, so
+// a provider that emits a reasoning preamble and then stalls can safely restart
+// from the same model-step checkpoint.
+const MODEL_COMMITTED_OUTPUT_CHUNK_TYPES = new Set([
   'text-delta',
-  'reasoning-delta',
   'tool-input-start',
   'tool-input-delta',
   'tool-call',
   'tool-result',
   'tool-error',
-  'finish-step',
 ]);
 // Agent creation has the same two-phase contract as project discovery. Keep
 // three turns for submit/validation repair and one for report_complete so a
@@ -820,8 +821,7 @@ async function* executeAgentAttempt(
   // Stall watchdog: a provider stream that opens and then goes silent used to
   // hang until the session timeout killed the whole run. The watchdog aborts
   // only its own per-attempt controller (never runAbort or the caller's
-  // signal), so a stalled segment can be retried instead of ending the run.
-  const modelIdleTimeoutMs = resolveModelIdleTimeoutMs(AGENT_LOOP_IDLE_TIMEOUT_SECONDS);
+  // signal), so a silent model step can be retried instead of ending the run.
   let stallWatchdog: StallWatchdog | undefined;
 
   // Approval leases (agentuse-lab#165, Phase 2): gated commands declared in
@@ -1115,6 +1115,15 @@ async function* executeAgentAttempt(
   let gateBarrierActive = false;
   let gateBarrierCallId: string | undefined;
 
+  // `streamText` may run several model/tool steps inside one stream. Keep the
+  // canonical input for each model step so a later silent provider call can be
+  // retried without replaying tool calls that already completed. `prepareStep`
+  // can run ahead of our stream consumer, so checkpoints are queued and paired
+  // with the corresponding `start-step` chunk in stream order.
+  const preparedStepInputs: ModelMessage[][] = [];
+  let activeStepInput: ModelMessage[] | undefined;
+  let activeStepProducedCommittedOutput = false;
+
   // Function to create stream with current messages
   const createStream = async () => {
     // Check if we need to compact before creating stream
@@ -1162,11 +1171,13 @@ async function* executeAgentAttempt(
 
     // Only include provider options if they exist and match the model provider
     let providerOptions: any = undefined;
+    let usesCodexBackend = false;
     if (provider === 'openai') {
       const openaiOptions = openAIOptionsWithCacheDefaults(agent);
       // Check if using Codex OAuth (Responses API) vs regular API key (Chat Completions API)
       const codexAccess = await CodexAuth.access();
       if (codexAccess) {
+        usesCodexBackend = true;
         // Codex OAuth uses Responses API which requires `instructions` field
         const systemMessage = messages.find(m => m.role === 'system');
         const instructions = typeof systemMessage?.content === 'string'
@@ -1219,10 +1230,17 @@ async function* executeAgentAttempt(
       : 0;
     const structuredDeliveryReserve = Math.max(agentSourceReserve, projectSuggestionsReserve);
     const remainingSteps = Math.max(1, options.maxSteps - stepCount - structuredDeliveryReserve);
+    const policyForMessages = (stepMessages: ModelMessage[]) => resolveModelStallPolicy({
+      modelString: agent.config.model,
+      contextTokens: contextManager?.getStats().activeTokens ?? estimateModelContextTokens(stepMessages),
+      reasoning: agent.config.reasoning,
+      anthropicThinking: Boolean(anthropicThinkingBudget),
+      codexBackend: usesCodexBackend,
+    });
     // One watchdog per streamText call. The previous segment's timer is dropped
     // here as well as on stream end, so a compaction retry never leaves one armed.
     stallWatchdog?.dispose();
-    const watchdog = createStallWatchdog(modelIdleTimeoutMs, effectiveAbortSignal);
+    const watchdog = createStallWatchdog(policyForMessages(messages), effectiveAbortSignal);
     stallWatchdog = watchdog;
 
     const streamConfig: any = {
@@ -1251,25 +1269,26 @@ async function* executeAgentAttempt(
       // to the normal invalid-input -> tool-error -> model-retry path.
       repairToolCall: repairSmuggledXmlToolCall,
       ...(providerOptions && { providerOptions }),
-      ...((usesAnthropicCacheControl || contextManager) && {
-        prepareStep: async ({ messages: stepMessages }: { messages: ModelMessage[] }) => {
-          // Measurement + cache annotation only. Compaction runs BETWEEN
-          // streamText calls (the segment loop), because messages returned from
-          // prepareStep do not replace the SDK's accumulated history, so
-          // compacting here re-summarizes every step without ever shrinking the
-          // real conversation.
-          if (contextManager) {
-            contextManager.setMessages(stepMessages as any[]);
-            persistContextSnapshot();
-          }
+      prepareStep: async ({ messages: stepMessages }: { messages: ModelMessage[] }) => {
+        preparedStepInputs.push([...stepMessages]);
 
-          return {
-            messages: usesAnthropicCacheControl
-              ? applyAnthropicCacheControlToStepMessages(stepMessages as any[])
-              : stepMessages
-          };
+        // Measurement + cache annotation only. Compaction runs BETWEEN
+        // streamText calls (the segment loop), because messages returned from
+        // prepareStep do not replace the SDK's accumulated history, so
+        // compacting here re-summarizes every step without ever shrinking the
+        // real conversation.
+        if (contextManager) {
+          contextManager.setMessages(stepMessages as any[]);
+          persistContextSnapshot();
         }
-      }),
+        watchdog.beginStep(policyForMessages(stepMessages));
+
+        return {
+          messages: usesAnthropicCacheControl
+            ? applyAnthropicCacheControlToStepMessages(stepMessages as any[])
+            : stepMessages
+        };
+      },
       // Resolved from our own model registry (with thinking/custom/override
       // precedence), so a stale SDK model table can't silently cap us at 4096.
       ...(maxOutputTokens && { maxOutputTokens }),
@@ -1620,24 +1639,27 @@ async function* executeAgentAttempt(
   // report). See the text-delta case.
   let sawText = false;
   let suppressTextAfterNudge = false;
-  // Stall retries across segments. Reset as soon as a segment produces output,
-  // so the budget covers one stall episode rather than the whole run.
+  // Stall retries across model steps. Reset as soon as the active step produces
+  // output, so the budget covers one stall episode rather than the whole run.
   let stallAttempt = 0;
-  // Decide what a detected stall means: retry the segment from the same
-  // messages, or give up with an error that names the stall and attempt count.
+  // Decide what a detected stall means: retry the active step from its prepared
+  // input, or give up with an error that names the stall and attempt count.
   const classifyStall = (
     producedOutput: boolean
   ): { retry: true } | { retry: false; error: ModelStreamStallError } => {
-    const seconds = Math.round(modelIdleTimeoutMs / 1000);
+    const failure = stallWatchdog?.failure ?? new ModelStreamStallError(0);
+    const seconds = Math.round(failure.idleMs / 1000);
     if (!producedOutput && stallAttempt + 1 < MODEL_STALL_MAX_ATTEMPTS) {
       stallAttempt++;
+      const delayMs = modelStallRetryDelayMs(stallAttempt);
       logger.warn(
         `Model stream stalled after ${seconds}s with no output; retrying ` +
+        `in ${Math.round(delayMs / 100) / 10}s ` +
         `(attempt ${stallAttempt + 1} of ${MODEL_STALL_MAX_ATTEMPTS})`
       );
       return { retry: true };
     }
-    const error = new ModelStreamStallError(modelIdleTimeoutMs, stallAttempt + 1);
+    const error = new ModelStreamStallError(failure.idleMs, stallAttempt + 1, failure.phase);
     logger.warn(`⚠️  ${error.message}`);
     return { retry: false, error };
   };
@@ -1645,11 +1667,13 @@ async function* executeAgentAttempt(
   runAnotherSegment = false;
   let segmentFinishReason: string | undefined;
   segmentToolCalls.clear();
-  // Retry rule for a stalled segment: only when the model produced nothing in
-  // it. Once text/reasoning has been yielded downstream or a tool call has
-  // started, replaying the same messages would duplicate visible output or
-  // re-run effects, so a stall there fails fast instead.
-  let segmentProducedOutput = false;
+  preparedStepInputs.length = 0;
+  activeStepInput = undefined;
+  activeStepProducedCommittedOutput = false;
+  // Usage from completed steps in a stream that later stalls. The normal final
+  // `finish` chunk is cumulative, but an aborted stream has no final total; fold
+  // these settled steps into the next segment's cumulative usage explicitly.
+  let completedStepUsageInSegment: any;
   let stallRetryRequested = false;
 
   let stream;
@@ -1702,6 +1726,15 @@ Error: ${errorMessage}`);
 
   // What was actually sent this segment (createStream may compact pre-stream).
   const segmentInput = messages;
+  const stalledStepState = (): { input: ModelMessage[]; producedOutput: boolean } => {
+    // The SDK calls prepareStep before it emits start-step. If the provider then
+    // stays completely silent, the pending checkpoint is the active call even
+    // though the consumer has not seen its boundary marker yet.
+    const pendingInput = preparedStepInputs[preparedStepInputs.length - 1];
+    return pendingInput
+      ? { input: pendingInput, producedOutput: false }
+      : { input: activeStepInput ?? segmentInput, producedOutput: activeStepProducedCommittedOutput };
+  };
 
   // Suspension capture: when a gate registers we do NOT abandon the stream.
   // We abort the SDK (no further steps; in-flight effect executes get the
@@ -1736,17 +1769,28 @@ Error: ${errorMessage}`);
       }
       if (iteration.done) break;
       const chunk = iteration.value;
-      stallWatchdog?.notify();
-      if (!segmentProducedOutput && MODEL_OUTPUT_CHUNK_TYPES.has(chunk.type)) {
-        segmentProducedOutput = true;
+      const isModelProgress = chunk.type === 'text-delta'
+        || chunk.type === 'reasoning-delta'
+        || chunk.type === 'tool-input-delta'
+        || chunk.type === 'tool-call';
+      stallWatchdog?.notify(isModelProgress);
+      if (chunk.type === 'start-step') {
+        activeStepInput = preparedStepInputs.shift() ?? activeStepInput ?? segmentInput;
+        activeStepProducedCommittedOutput = false;
+      }
+      if (!activeStepProducedCommittedOutput && MODEL_COMMITTED_OUTPUT_CHUNK_TYPES.has(chunk.type)) {
+        activeStepProducedCommittedOutput = true;
         stallAttempt = 0;
       }
       // A stall aborts only our per-attempt controller, so the SDK reports it as
       // a plain abort (or error) chunk. Claim it here, before the generic
       // handling below calls it an "execution timeout or manual cancellation".
       if (stallWatchdog?.stalled && !suspendState && (chunk.type === 'abort' || chunk.type === 'error')) {
-        const decision = classifyStall(segmentProducedOutput);
+        const stalledStep = stalledStepState();
+        const decision = classifyStall(stalledStep.producedOutput);
         if (decision.retry) {
+          messages = [...stalledStep.input];
+          contextManager?.setMessages(messages);
           stallRetryRequested = true;
           break;
         }
@@ -2104,6 +2148,9 @@ Current step: ${stepCount}/${options.maxSteps}`);
         // Handle other AI SDK chunk types that we don't need to process but shouldn't warn about
         case 'finish-step': {
           const { usage, usageKind } = usageFromStreamChunk(chunk);
+          if (usage) {
+            completedStepUsageInSegment = addLanguageModelUsage(completedStepUsageInSegment, usage);
+          }
           if (contextManager && usage) {
             contextManager.updateUsage(usage, usageKind);
           }
@@ -2174,8 +2221,15 @@ Current step: ${stepCount}/${options.maxSteps}`);
     }
 
     if (stallRetryRequested) {
-      // Nothing was generated, so `messages` is untouched: the next segment
-      // re-sends exactly the same request with a fresh stream and watchdog.
+      // The active model step generated nothing. Its prepared input already
+      // contains every settled assistant/tool turn from earlier steps, so the
+      // next segment resumes there without replaying completed effects.
+      if (completedStepUsageInSegment) {
+        priorSegmentsUsage = addLanguageModelUsage(priorSegmentsUsage, completedStepUsageInSegment);
+      }
+      stallWatchdog?.dispose();
+      stallWatchdog = undefined;
+      await waitForModelStallRetry(stallAttempt, effectiveAbortSignal);
       runAnotherSegment = true;
       continue;
     }
@@ -2393,8 +2447,17 @@ Current step: ${stepCount}/${options.maxSteps}`);
     // Some providers throw the abort out of the iterator instead of emitting an
     // abort chunk; the stall verdict is the same either way.
     if (stallWatchdog?.stalled && !suspendState) {
-      const decision = classifyStall(segmentProducedOutput);
+      const stalledStep = stalledStepState();
+      const decision = classifyStall(stalledStep.producedOutput);
       if (decision.retry) {
+        messages = [...stalledStep.input];
+        contextManager?.setMessages(messages);
+        if (completedStepUsageInSegment) {
+          priorSegmentsUsage = addLanguageModelUsage(priorSegmentsUsage, completedStepUsageInSegment);
+        }
+        stallWatchdog?.dispose();
+        stallWatchdog = undefined;
+        await waitForModelStallRetry(stallAttempt, effectiveAbortSignal);
         runAnotherSegment = true;
         continue;
       }
