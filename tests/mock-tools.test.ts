@@ -135,10 +135,20 @@ describe("approval gate exclusion", () => {
 });
 
 describe("mockExclusions", () => {
-  it("excludes await_human by default and nothing when approval is mocked", () => {
+  it("always keeps the outcome tools real so a mock run can end", () => {
+    for (const name of ["report_complete", "report_incomplete"]) {
+      expect(mod.mockExclusions().has(name)).toBe(true);
+      process.env.AGENTUSE_MOCK_APPROVAL = "approve";
+      expect(mod.mockExclusions().has(name)).toBe(true);
+      delete process.env.AGENTUSE_MOCK_APPROVAL;
+    }
+  });
+
+  it("excludes await_human by default and only the outcome tools when approval is mocked", () => {
     expect(mod.mockExclusions().has("await_human")).toBe(true);
     process.env.AGENTUSE_MOCK_APPROVAL = "1";
-    expect(mod.mockExclusions().size).toBe(0);
+    expect(mod.mockExclusions().has("await_human")).toBe(false);
+    expect(mod.mockExclusions().size).toBe(2);
   });
 });
 

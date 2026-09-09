@@ -4425,6 +4425,9 @@ export function createServeCommand(): Command {
        *  dedicated worker carries the mock env, so the shared project worker
        *  keeps executing real runs untouched. The session it produces is marked
        *  mock by the runtime and stays out of Sessions and Home by default. */
+      // Test runs execute in their own AgentWorker, not the project's, so the
+      // session stop route must be able to find that worker by session id.
+      const testRunWorkers = new Map<string, AgentWorker>();
       const startMockTestRun = async (
         project: Project,
         candidate: { source: string; name: string; fileName: string; model: string; index: number },
@@ -4462,6 +4465,7 @@ export function createServeCommand(): Command {
           ...mockRunEnv({ scope, model: mockModel }),
         });
         await worker.spawn();
+        testRunWorkers.set(sessionId, worker);
         const prepared = await worker.createPreparingSession({
           projectRoot: project.root,
           sessionId,
@@ -4475,6 +4479,7 @@ export function createServeCommand(): Command {
           owner: currentProcessRef(),
         });
         if (!prepared.success) {
+          testRunWorkers.delete(sessionId);
           worker.shutdown();
           throw new Error(prepared.error.message);
         }
@@ -4499,6 +4504,7 @@ export function createServeCommand(): Command {
             error: { code: 'TEST_RUN_FAILED', message: (error as Error).message },
           }).catch(() => undefined);
         }).finally(() => {
+          testRunWorkers.delete(sessionId);
           worker.shutdown();
           wakeListHubs();
         });
@@ -4557,6 +4563,7 @@ export function createServeCommand(): Command {
             ...mockRunEnv({ scope, model: mockModel }),
           });
           await worker.spawn();
+          testRunWorkers.set(testSessionId, worker);
           // The runner keys the session directory by the entry's path relative
           // to the project root (see computeAgentId in session-helper), and the
           // shadow lives under .agentuse/, so the prepared shell must use the
@@ -4574,6 +4581,7 @@ export function createServeCommand(): Command {
             owner: currentProcessRef(),
           });
           if (!prepared.success) {
+            testRunWorkers.delete(testSessionId);
             worker.shutdown();
             throw new Error(prepared.error.message);
           }
@@ -4600,6 +4608,7 @@ export function createServeCommand(): Command {
               error: { code: 'TEST_RUN_FAILED', message: (error as Error).message },
             }))
             .finally(async () => {
+              testRunWorkers.delete(testSessionId);
               worker.shutdown();
               await mount.cleanup().catch(() => undefined);
               wakeListHubs();
@@ -8197,7 +8206,10 @@ export function createServeCommand(): Command {
 
             // This route is always human-initiated (web Discard / CLI stop), so
             // an already-ended failed session gets dismissed instead of no-op'd.
-            const result = await projectWorker.stopSession({
+            // A test run lives in its own worker; stopping it through the
+            // project worker only stamps the record while the run keeps going.
+            const stopWorker = testRunWorkers.get(sessionId) ?? projectWorker;
+            const result = await stopWorker.stopSession({
               projectRoot: project.root,
               sessionId,
               reason,

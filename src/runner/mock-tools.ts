@@ -257,9 +257,12 @@ function withMockedGateExecute(tool: Tool): Tool {
  * (see {@link resolveMockApprovalDecision}) for fully-unattended runs.
  */
 export function mockExclusions(): Set<string> {
+  // The outcome tools are bookkeeping, not side effects: report_complete's real
+  // execute is what records the outcome the run's stop condition waits for.
+  // Mocking it produced runs that called report_complete until the step cap.
   const exclusions = resolveMockApprovalDecision()
-    ? new Set<string>()
-    : new Set<string>(['await_human']);
+    ? new Set<string>(['report_complete', 'report_incomplete'])
+    : new Set<string>(['await_human', 'report_complete', 'report_incomplete']);
   // AGENTUSE_MOCK_EXCLUDE: comma-separated tool names whose real execute is kept
   // under --mock. Meant for side-effect-free tools (e.g. tools__filesystem_read)
   // so mock runs ground themselves in real project data instead of inventing it.
