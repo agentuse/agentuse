@@ -272,7 +272,7 @@ export default function ChangesetReview() {
             >
               <button
                 type="button"
-                class="draft-tertiary"
+                class="draft-secondary"
                 disabled={busy !== null || testBlocked}
                 title={testBlocked ? 'Open a file first: this proposal includes a script the test run will execute.' : undefined}
                 onClick={() => void testRun()}
@@ -319,17 +319,18 @@ export default function ChangesetReview() {
                 : running ? 'running' : 'draft'}
             />
           </div>
-          <div class="draft-header-actions">
-            <a class="draft-quiet-link" href={`/agents/${encodeURIComponent(projectId)}`}>All agents</a>
-            <a class="draft-quiet-link" href={sessionHref}>Open full session log</a>
-            {actions && <div class="changeset-actions">{actions}</div>}
-          </div>
+          {actions && (
+            <div class="draft-header-actions">
+              <div class="changeset-actions">{actions}</div>
+            </div>
+          )}
         </div>
         <div class="draft-header-row is-meta">
           <div class="draft-meta">
             <span><span class="draft-meta-key">Project</span> {changeset.projectId}</span>
             <span><span class="draft-meta-key">Files</span> {files.length}</span>
             <span><span class="draft-meta-key">Model</span> {changeset.authoringModel}</span>
+            <a class="draft-quiet-link" href={sessionHref}>Session log</a>
           </div>
           <DraftUsageLine
             tokenUsage={authorSession.approval?.tokenUsage}
