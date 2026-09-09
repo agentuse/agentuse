@@ -25,6 +25,7 @@ import { SchedulePill } from '../components/schedule-pill';
 import { LastRunCell, RunHistorySpark } from '../components/run-health';
 import { agentDetailHref, projectDiscoveryHref } from '../lib/links';
 import { NewAgentButton } from '../components/agent-create-dialog';
+import { fetchSiteWorkflow } from '../lib/site-workflows';
 
 /** Shared empty fallback, so a miss never hands a memoizing child a fresh array. */
 const NO_AGENTS: AgentRow[] = [];
@@ -633,6 +634,29 @@ export default function Agents({ project }: { project?: string } = {}) {
   const scoped = typeof project === 'string' && project.length > 0;
   const location = useLocation();
   const goBack = useSmartBack('/agents');
+  // agentuse.io workflow pages link here as ?new=1&workflow=<slug>. The build
+  // prompt is fetched by slug (it is too long for a URL), and the dialog waits
+  // for it so the objective is filled in before the operator sees the box.
+  // ?objective=<text> covers short prompts that fit in a link.
+  const workflowSlug = typeof location.query.workflow === 'string' ? location.query.workflow : '';
+  const objectiveParam = typeof location.query.objective === 'string' ? location.query.objective : '';
+  const [siteObjective, setSiteObjective] = useState<{ slug: string; text: string } | null>(null);
+  const [siteObjectiveError, setSiteObjectiveError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!workflowSlug) return;
+    let cancelled = false;
+    setSiteObjectiveError(null);
+    void fetchSiteWorkflow(workflowSlug).then(
+      (workflow) => { if (!cancelled) setSiteObjective({ slug: workflowSlug, text: workflow.prompt }); },
+      (caught) => { if (!cancelled) setSiteObjectiveError((caught as Error).message || 'Could not load the workflow from agentuse.io.'); },
+    );
+    return () => { cancelled = true; };
+  }, [workflowSlug]);
+  const initialObjective = workflowSlug ? (siteObjective?.slug === workflowSlug ? siteObjective.text : '') : objectiveParam;
+  const wantsNew = location.query.new === '1';
+  // Hold the auto-open until the site prompt arrives; on failure open empty so
+  // the operator can still type, with the reason shown under the title row.
+  const autoOpenNew = wantsNew && (!workflowSlug || initialObjective !== '' || siteObjectiveError !== null);
   const { data, error, loading } = useFetch('agents', () => fetchAgents(), { refreshMs: 30_000 });
   const info = useFetch('agents-info', () => fetchInfo(), { refreshMs: 30_000 });
   // ABOUT.md identity (#156): directory path -> display info, keyed
@@ -791,8 +815,9 @@ export default function Agents({ project }: { project?: string } = {}) {
           <div class="agents-title-row">
             <h1 {...(scoped && aboutOf(project, '.')?.name ? { title: project } : {})}>{scoped ? projectLabel(project) : 'Agents'}</h1>
             {/* ?new=1 is the command palette's "New agent" action landing here. */}
-            {!noProjects && !projectMissing && <NewAgentButton {...(scoped ? { initialProjectId: project } : {})} {...(location.query.new === '1' ? { autoOpen: true } : {})} />}
+            {!noProjects && !projectMissing && <NewAgentButton {...(scoped ? { initialProjectId: project } : {})} {...(autoOpenNew ? { autoOpen: true } : {})} {...(initialObjective ? { initialObjective } : {})} />}
           </div>
+          {siteObjectiveError && <p class="new-agent-error" role="alert">{siteObjectiveError} Describe the agent yourself instead.</p>}
           <p class="lede">{lede}</p>
           {scoped && (() => {
             // The scoped view is the project's detail surface: the ABOUT.md

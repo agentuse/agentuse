@@ -155,6 +155,8 @@ export function AgentCreateDialog(props: {
   initialProjectId?: string;
   initialModel?: string;
   initialDraft?: AgentCreationDraft | null;
+  /** Objective text to start from when there is no draft (a site workflow link). */
+  initialObjective?: string;
   lockProject?: boolean;
   /** The creator session started; the changeset review page takes it from here. */
   onStarted: (changeset: ChangesetRecord) => void;
@@ -190,7 +192,7 @@ export function AgentCreateDialog(props: {
     setProjectId('');
     setModel('');
     setReasoning(props.initialDraft?.reasoning ?? 'medium');
-    setObjective(props.initialDraft?.objective ?? '');
+    setObjective(props.initialDraft?.objective ?? props.initialObjective ?? '');
     void fetchAgentCreationOptions(props.initialDraft?.projectId ?? props.initialProjectId).then((next) => {
       const initialSelection = initialModelSelection(next, props.initialDraft?.model ?? props.initialModel);
       setPayload(next);
@@ -200,7 +202,7 @@ export function AgentCreateDialog(props: {
         : next.default ?? next.projects[0]?.id ?? '');
       setModel(initialSelection);
     }, (caught) => setError((caught as Error).message || 'Could not load agent creation options.'));
-  }, [props.open, props.initialProjectId, props.initialModel, props.initialDraft]);
+  }, [props.open, props.initialProjectId, props.initialModel, props.initialDraft, props.initialObjective]);
 
   // The skill pool belongs to the selected project, so switching project on a
   // multi-project daemon has to re-read it rather than keep showing the first
@@ -297,7 +299,7 @@ export function AgentCreateDialog(props: {
 }
 
 /** Normal Agents-view entry point. Onboarding uses the same dialog from its session CTA. */
-export function NewAgentButton(props: { initialProjectId?: string; autoOpen?: boolean }) {
+export function NewAgentButton(props: { initialProjectId?: string; autoOpen?: boolean; initialObjective?: string }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [providerOpen, setProviderOpen] = useState(false);
   const [codingOpen, setCodingOpen] = useState(false);
@@ -337,6 +339,7 @@ export function NewAgentButton(props: { initialProjectId?: string; autoOpen?: bo
       <AgentCreateDialog
         open={createOpen}
         initialDraft={draft}
+        {...(props.initialObjective ? { initialObjective: props.initialObjective } : {})}
         {...(props.initialProjectId ? { initialProjectId: props.initialProjectId } : {})}
         {...(props.initialProjectId ? { lockProject: true } : {})}
         onStarted={(changeset) => {
