@@ -15,6 +15,14 @@ import {
 } from '../model-compatibility';
 import { CodexAuth } from '../auth/codex';
 import { logger } from '../utils/logger';
+import {
+  AGENT_LOOP_IDLE_TIMEOUT_SECONDS,
+  createStallWatchdog,
+  MODEL_STALL_MAX_ATTEMPTS,
+  ModelStreamStallError,
+  resolveModelIdleTimeoutMs,
+  type StallWatchdog,
+} from './model-stall';
 import { ContextManager } from '../context-manager';
 import { compactMessages } from '../compactor';
 import { addLanguageModelUsage } from '../session/usage';
@@ -65,6 +73,20 @@ import {
 
 // Constants
 const MAX_RETRIES = 3;
+// Chunk types that mean the model actually produced something this segment.
+// Their presence makes a stalled segment unsafe to retry: text and reasoning
+// have already been yielded downstream, and tool input means a call is being
+// (or has been) dispatched.
+const MODEL_OUTPUT_CHUNK_TYPES = new Set([
+  'text-delta',
+  'reasoning-delta',
+  'tool-input-start',
+  'tool-input-delta',
+  'tool-call',
+  'tool-result',
+  'tool-error',
+  'finish-step',
+]);
 // Agent creation has the same two-phase contract as project discovery. Keep
 // three turns for submit/validation repair and one for report_complete so a
 // model cannot spend the entire budget browsing the project and then lose the
@@ -795,6 +817,13 @@ async function* executeAgentAttempt(
     ? AbortSignal.any([options.abortSignal, runAbort.signal])
     : runAbort.signal;
 
+  // Stall watchdog: a provider stream that opens and then goes silent used to
+  // hang until the session timeout killed the whole run. The watchdog aborts
+  // only its own per-attempt controller (never runAbort or the caller's
+  // signal), so a stalled segment can be retried instead of ending the run.
+  const modelIdleTimeoutMs = resolveModelIdleTimeoutMs(AGENT_LOOP_IDLE_TIMEOUT_SECONDS);
+  let stallWatchdog: StallWatchdog | undefined;
+
   // Approval leases (agentuse-lab#165, Phase 2): gated commands declared in
   // `tools.bash.gated` only run when covered by the latest approved await_human
   // changes[]. The store is file-based in the session directory (granted at
@@ -1190,6 +1219,12 @@ async function* executeAgentAttempt(
       : 0;
     const structuredDeliveryReserve = Math.max(agentSourceReserve, projectSuggestionsReserve);
     const remainingSteps = Math.max(1, options.maxSteps - stepCount - structuredDeliveryReserve);
+    // One watchdog per streamText call. The previous segment's timer is dropped
+    // here as well as on stream end, so a compaction retry never leaves one armed.
+    stallWatchdog?.dispose();
+    const watchdog = createStallWatchdog(modelIdleTimeoutMs, effectiveAbortSignal);
+    stallWatchdog = watchdog;
+
     const streamConfig: any = {
       model,
       messages,
@@ -1210,7 +1245,7 @@ async function* executeAgentAttempt(
       stopWhen: contextManager
         ? [isStepCount(remainingSteps), stopForCompaction, stopOnSuspend, stopOnDeliveredOutcome, stopOnDeliveredAgentSource, stopOnDeliveredProjectSuggestions, stopOnPluginTerminate]
         : [isStepCount(remainingSteps), stopOnSuspend, stopOnDeliveredOutcome, stopOnDeliveredAgentSource, stopOnDeliveredProjectSuggestions, stopOnPluginTerminate],
-      abortSignal: effectiveAbortSignal,
+      abortSignal: watchdog.signal,
       // Deterministic fix for the XML-drift failure mode (fields smuggled into
       // neighboring strings as <parameter> markup); anything else falls through
       // to the normal invalid-input -> tool-error -> model-retry path.
@@ -1585,10 +1620,37 @@ async function* executeAgentAttempt(
   // report). See the text-delta case.
   let sawText = false;
   let suppressTextAfterNudge = false;
+  // Stall retries across segments. Reset as soon as a segment produces output,
+  // so the budget covers one stall episode rather than the whole run.
+  let stallAttempt = 0;
+  // Decide what a detected stall means: retry the segment from the same
+  // messages, or give up with an error that names the stall and attempt count.
+  const classifyStall = (
+    producedOutput: boolean
+  ): { retry: true } | { retry: false; error: ModelStreamStallError } => {
+    const seconds = Math.round(modelIdleTimeoutMs / 1000);
+    if (!producedOutput && stallAttempt + 1 < MODEL_STALL_MAX_ATTEMPTS) {
+      stallAttempt++;
+      logger.warn(
+        `Model stream stalled after ${seconds}s with no output; retrying ` +
+        `(attempt ${stallAttempt + 1} of ${MODEL_STALL_MAX_ATTEMPTS})`
+      );
+      return { retry: true };
+    }
+    const error = new ModelStreamStallError(modelIdleTimeoutMs, stallAttempt + 1);
+    logger.warn(`⚠️  ${error.message}`);
+    return { retry: false, error };
+  };
   while (runAnotherSegment) {
   runAnotherSegment = false;
   let segmentFinishReason: string | undefined;
   segmentToolCalls.clear();
+  // Retry rule for a stalled segment: only when the model produced nothing in
+  // it. Once text/reasoning has been yielded downstream or a tool call has
+  // started, replaying the same messages would duplicate visible output or
+  // re-run effects, so a stall there fails fast instead.
+  let segmentProducedOutput = false;
+  let stallRetryRequested = false;
 
   let stream;
   try {
@@ -1674,6 +1736,23 @@ Error: ${errorMessage}`);
       }
       if (iteration.done) break;
       const chunk = iteration.value;
+      stallWatchdog?.notify();
+      if (!segmentProducedOutput && MODEL_OUTPUT_CHUNK_TYPES.has(chunk.type)) {
+        segmentProducedOutput = true;
+        stallAttempt = 0;
+      }
+      // A stall aborts only our per-attempt controller, so the SDK reports it as
+      // a plain abort (or error) chunk. Claim it here, before the generic
+      // handling below calls it an "execution timeout or manual cancellation".
+      if (stallWatchdog?.stalled && !suspendState && (chunk.type === 'abort' || chunk.type === 'error')) {
+        const decision = classifyStall(segmentProducedOutput);
+        if (decision.retry) {
+          stallRetryRequested = true;
+          break;
+        }
+        yield { type: 'error', error: decision.error };
+        return;
+      }
       switch (chunk.type) {
         case 'tool-call': {
           stepCount++; // Each tool call counts as a step
@@ -2086,6 +2165,13 @@ Current step: ${stepCount}/${options.maxSteps}`);
       }
     }
 
+    if (stallRetryRequested) {
+      // Nothing was generated, so `messages` is untouched: the next segment
+      // re-sends exactly the same request with a fresh stream and watchdog.
+      runAnotherSegment = true;
+      continue;
+    }
+
     if (options.replay?.stopped()) return;
 
     // A gate registered during this segment: finalize the suspension now that
@@ -2296,6 +2382,17 @@ Current step: ${stepCount}/${options.maxSteps}`);
     }
 
   } catch (error: any) {
+    // Some providers throw the abort out of the iterator instead of emitting an
+    // abort chunk; the stall verdict is the same either way.
+    if (stallWatchdog?.stalled && !suspendState) {
+      const decision = classifyStall(segmentProducedOutput);
+      if (decision.retry) {
+        runAnotherSegment = true;
+        continue;
+      }
+      yield { type: 'error', error: decision.error };
+      return;
+    }
     if (isSuspendSignal(error)) {
       // Thrown through the iteration itself (no chance to drain): still abort
       // so in-flight sibling executes get the signal, and leave a WAL record.
@@ -2389,6 +2486,8 @@ Error: ${errorMessage}`);
       yield { type: 'error', error };
     }
   } finally {
+    // Disarm the idle timer for this segment; a new one is armed by createStream.
+    stallWatchdog?.dispose();
     // Release the stream reader; for-await used to do this implicitly. Cancels
     // the stream when we returned early (suspension), no-op when it completed.
     try {

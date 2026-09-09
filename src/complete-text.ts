@@ -2,6 +2,12 @@ import { streamText } from 'ai';
 import { createModel } from './models';
 import { CodexAuth } from './auth/codex';
 import { resolveModelProvider } from './utils/model-utils';
+import {
+  createStallWatchdog,
+  HELPER_IDLE_TIMEOUT_SECONDS,
+  ModelStreamStallError,
+  resolveModelIdleTimeoutMs,
+} from './runner/model-stall';
 
 export interface CompleteTextOptions {
   /** System prompt (v7 `instructions`). On the Codex backend this is also sent as the required provider-level `instructions`. */
@@ -23,6 +29,12 @@ export interface CompleteTextOptions {
   abortSignal?: AbortSignal;
   /** Optional live text observer for UI surfaces that expose helper progress. */
   onTextDelta?: (text: string) => void;
+  /**
+   * Idle window before a silent stream is treated as stalled, in milliseconds.
+   * Defaults to `AGENTUSE_MODEL_IDLE_TIMEOUT` (seconds) or 60s; `0` disables.
+   * Exists for tests; production callers should use the env var.
+   */
+  idleTimeoutMs?: number;
 }
 
 /**
@@ -55,6 +67,12 @@ export async function completeText(modelString: string, options: CompleteTextOpt
   const usesCodexBackend = resolveModelProvider(modelString) === 'openai' && Boolean(await CodexAuth.access());
   options.abortSignal?.throwIfAborted();
 
+  // Stall watchdog: a helper stream that opens and then never emits would
+  // otherwise hang until the session timeout. Combined with (never replacing)
+  // the caller's signal, so cancellation still works.
+  const idleMs = options.idleTimeoutMs ?? resolveModelIdleTimeoutMs(HELPER_IDLE_TIMEOUT_SECONDS);
+  const watchdog = createStallWatchdog(idleMs, options.abortSignal);
+
   const result = streamText({
     model,
     instructions: options.instructions,
@@ -77,7 +95,7 @@ export async function completeText(modelString: string, options: CompleteTextOpt
     // Codex requires the top-level instructions field; the system message in
     // `messages` alone is not enough.
     ...(usesCodexBackend && { providerOptions: { openai: { instructions: options.instructions, store: false } } }),
-    ...(options.abortSignal && { abortSignal: options.abortSignal }),
+    abortSignal: watchdog.signal,
     // Swallow the SDK's own error logging. Its default `onError` prints the raw
     // error object to the console, so a helper call that failed and was handled
     // — a tidy-up group that retries, an overloaded provider — still dumped a
@@ -87,18 +105,30 @@ export async function completeText(modelString: string, options: CompleteTextOpt
   });
 
   let text = '';
-  for await (const chunk of result.stream) {
-    if (chunk.type === 'error') {
-      throw (chunk as { error: unknown }).error;
+  try {
+    for await (const chunk of result.stream) {
+      watchdog.notify();
+      if (chunk.type === 'error') {
+        if (watchdog.stalled) throw new ModelStreamStallError(idleMs);
+        throw (chunk as { error: unknown }).error;
+      }
+      if (chunk.type === 'text-delta') {
+        const delta = (chunk as { text?: string }).text ?? '';
+        text += delta;
+        if (delta) options.onTextDelta?.(delta);
+      }
     }
-    if (chunk.type === 'text-delta') {
-      const delta = (chunk as { text?: string }).text ?? '';
-      text += delta;
-      if (delta) options.onTextDelta?.(delta);
-    }
+  } catch (error) {
+    // A stall aborts our own controller, so the provider surfaces a generic
+    // abort. Report the real cause instead.
+    if (watchdog.stalled) throw new ModelStreamStallError(idleMs);
+    throw error;
+  } finally {
+    watchdog.dispose();
   }
   // Some provider streams end quietly on abort. Never turn their partial text
   // into a successful compaction or verification result.
+  if (watchdog.stalled) throw new ModelStreamStallError(idleMs);
   options.abortSignal?.throwIfAborted();
   return text;
 }
