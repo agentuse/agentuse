@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { readFile, stat } from 'fs/promises';
 import { homedir } from 'os';
 import { dirname, resolve } from 'path';
@@ -141,7 +141,7 @@ function containsMedia(value: unknown): boolean {
 export interface ReplayTrace {
   tool: string;
   input: unknown;
-  source: 'recording' | 'current-reference' | 'proposal' | 'outcome' | 'missing' | 'stopped';
+  source: 'store-projection' | 'temporary-store' | 'recording' | 'current-reference' | 'proposal' | 'outcome' | 'missing' | 'stopped';
   partId?: string;
   reference?: { path: string; sha256: string };
 }
@@ -159,6 +159,67 @@ export class ReplayDispatcher {
   stop?: ReplayStop;
   private recordings = new Map<string, ToolPart[]>();
   private references: Map<string, ReplayReference>;
+  private storeChanged = false;
+  private temporaryItems = new Map<string, Record<string, any>>();
+
+  private storeReplay(tool: string, input: Record<string, any>): { output: unknown; source: 'store-projection' | 'temporary-store'; partId?: string } | undefined {
+    if (tool === 'store_create') {
+      this.storeChanged = true;
+      const id = `replay-${randomUUID()}`;
+      const { intent, ...item } = structuredClone(input);
+      const now = new Date(this.recording.createdAt).toISOString();
+      const row = { ...item, id, createdAt: now, updatedAt: now };
+      this.temporaryItems.set(id, row);
+      const { data, ...metadata } = row as Record<string, any>;
+      return { source: 'temporary-store', output: { success: true, replay: true, store: 'replay-memory', id, item: metadata } };
+    }
+    const local = this.temporaryItems.get(input.id);
+    if (local && ['store_get', 'store_update', 'store_delete'].includes(tool)) {
+      if (tool === 'store_delete') {
+        this.temporaryItems.delete(input.id);
+        return { source: 'temporary-store', output: { success: true, store: 'replay-memory', id: input.id, deleted: true } };
+      }
+      if (tool === 'store_update') {
+        const { intent, id, data, ...patch } = structuredClone(input);
+        Object.assign(local, patch, { data: { ...local.data, ...data } });
+      }
+      const { data, ...meta } = structuredClone(local);
+      const item = tool === 'store_get' ? { ...meta, data: input.fields ? Object.fromEntries(input.fields.filter((k: string) => Object.hasOwn(data, k)).map((k: string) => [k, data[k]])) : data } : meta;
+      return { source: 'temporary-store', output: { success: true, store: 'replay-memory', id: input.id, item } };
+    }
+    if (tool !== 'store_list' || input.countOnly || input.includeData || this.storeChanged) return;
+    const { fields, intent, limit, offset = 0, ...query } = input;
+    if (fields !== undefined && (!Array.isArray(fields) || fields.some(k => typeof k !== 'string'))) return;
+    for (const queues of this.recordings.values()) {
+      const part = queues[0];
+      if (!part || part.tool !== tool || part.state.status !== 'completed') continue;
+      const { fields: oldFields, intent: oldIntent, includeData, limit: oldLimit, offset: oldOffset = 0, ...oldQuery } = part.state.input as Record<string, any>;
+      if (JSON.stringify(canonical(query)) !== JSON.stringify(canonical(oldQuery))) continue;
+      const output = part.state.output as any;
+      if (!output?.success || !Array.isArray(output.items) || containsMedia(output)) continue;
+      const start = offset - oldOffset;
+      const end = limit === undefined ? output.total - oldOffset : start + limit;
+      if (start < 0 || start > output.items.length || (end > output.items.length && oldOffset + output.items.length < output.total)) continue;
+      let available = true;
+      const rows = output.items.slice(start, end).map((row: Record<string, any>) => {
+        const { data, missingFields, ...meta } = row;
+        const picked: Record<string, unknown> = {};
+        const missing: string[] = [];
+        for (const key of fields ?? []) {
+          if (data && Object.hasOwn(data, key)) picked[key] = data[key];
+          else if (Object.hasOwn(meta, key)) continue; // already returned as metadata
+          else if (includeData || missingFields?.includes(key)) missing.push(key);
+          else available = false;
+        }
+        return { ...meta, ...(fields?.length ? { data: picked } : {}), ...(missing.length ? { missingFields: missing } : {}) };
+      });
+      if (!available) continue;
+      queues.shift();
+      const { dataKeysByType, ...rest } = structuredClone(output);
+      return { source: 'store-projection', partId: part.id, output: { ...rest, count: rows.length, items: rows, replay: true } };
+    }
+    return undefined;
+  }
 
   constructor(readonly recording: ReplayRecording, references: ReplayReference[], private cwd: string) {
     this.references = new Map(references.map(r => [r.path, r]));
@@ -192,6 +253,19 @@ export class ReplayDispatcher {
         this.trace.push({ tool, input, source: 'current-reference', reference: { path: ref.path, sha256: ref.sha256 } });
         return referenceOutput(ref, args);
       }
+    }
+    if (input && typeof input === 'object' && !Array.isArray(input)) {
+      const adapted = this.storeReplay(tool, input as Record<string, any>);
+      if (adapted) {
+        this.trace.push({ tool, input, source: adapted.source, ...(adapted.partId && { partId: adapted.partId }) });
+        return adapted.output;
+      }
+    }
+    if (tool === 'store_list' && this.storeChanged) {
+      const reason = 'Store queries after temporary writes require a complete snapshot; returning the old list would be stale.';
+      this.stop = { kind: 'missing', tool, input: structuredClone(input), reason };
+      this.trace.push({ tool, input, source: 'missing' });
+      return { replay: true, error: 'REPLAY_INPUT_MISSING', reason };
     }
     const queue = this.recordings.get(replayCallKey(tool, input, this.cwd));
     const match = queue?.shift();

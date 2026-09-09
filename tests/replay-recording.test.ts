@@ -69,6 +69,55 @@ describe('recorded-input replay', () => {
     }
   });
 
+  it('projects recorded store rows without losing metadata or inventing fields', () => {
+    const source = () => recording([toolPart('list', 'store_list', { type: 'draft', limit: 28, fields: ['target', 'absent'] },
+      { success: true, count: 1, total: 1, items: [{ id: 'old', title: 'Recorded', data: { target: 'real' }, missingFields: ['absent'] }] })]);
+    const replay = new ReplayDispatcher(source(), [], '/project');
+    expect(replay.execute('store_list', { type: 'draft', limit: 28, fields: ['id', 'title', 'target', 'absent'] })).toMatchObject({
+      items: [{ id: 'old', title: 'Recorded', data: { target: 'real' }, missingFields: ['absent'] }] });
+    expect(replay.trace[0]?.source).toBe('store-projection');
+    for (const input of [
+      { type: 'draft', limit: 28, fields: ['uncaptured'] },
+      { type: 'other', limit: 28, fields: ['target'] },
+      { type: 'draft', limit: 28, includeData: true },
+    ]) {
+      const missing = new ReplayDispatcher(source(), [], '/project');
+      missing.execute('store_list', input);
+      expect(missing.stop?.kind).toBe('missing');
+    }
+  });
+
+  it('serves smaller pages only within the recorded window', () => {
+    const source = () => recording([toolPart('list', 'store_list', { type: 'draft', limit: 3 },
+      { success: true, total: 10, count: 3, items: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] })]);
+    const replay = new ReplayDispatcher(source(), [], '/project');
+    expect(replay.execute('store_list', { type: 'draft', offset: 1, limit: 2, fields: ['id'] })).toMatchObject({ count: 2, total: 10, items: [{ id: 'b' }, { id: 'c' }] });
+    const missing = new ReplayDispatcher(source(), [], '/project');
+    missing.execute('store_list', { type: 'draft', offset: 2, limit: 2 });
+    expect(missing.stop?.kind).toBe('missing');
+  });
+
+  it('keeps fresh drafts isolated and supports read, update and delete', () => {
+    const replay = new ReplayDispatcher(recording(), [], '/project');
+    const created = replay.execute('store_create', { type: 'draft', data: { text: 'NEW' } }) as any;
+    expect(created.id).toStartWith('replay-');
+    expect(created.item.data).toBeUndefined();
+    replay.execute('store_update', { id: created.id, data: { selected: true } });
+    expect(replay.execute('store_get', { id: created.id })).toMatchObject({ item: { data: { text: 'NEW', selected: true } } });
+    expect(replay.execute('store_get', { id: created.id, fields: ['selected'] })).toMatchObject({ item: { data: { selected: true } } });
+    expect(replay.execute('store_delete', { id: created.id })).toMatchObject({ deleted: true });
+    replay.execute('store_get', { id: created.id });
+    expect(replay.stop?.kind).toBe('missing');
+    expect(new ReplayDispatcher(recording(), [], '/project').execute('store_get', { id: created.id })).toMatchObject({ error: 'REPLAY_INPUT_MISSING' });
+  });
+
+  it('never returns a stale recorded list after a temporary draft write', () => {
+    const replay = new ReplayDispatcher(recording([toolPart('list', 'store_list', { type: 'draft' }, { success: true, items: [] })]), [], '/project');
+    replay.execute('store_create', { type: 'draft', data: { text: 'new' } });
+    replay.execute('store_list', { type: 'draft' });
+    expect(replay.stop?.kind).toBe('missing');
+  });
+
   it('preserves recorded errors without inventing a success', () => {
     const part = toolPart('1', 'tools__bash', { command: 'read' }, null);
     part.state = { status: 'error', input: { command: 'read' }, error: 'recorded failure', time: { start: 1, end: 2 } };
