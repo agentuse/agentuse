@@ -25,6 +25,8 @@ export const LARGE_CONTEXT_FIRST_PROGRESS_TIMEOUT_SECONDS = 900;
 export const MODEL_STEP_HARD_TIMEOUT_SECONDS = 1500;
 /** Total attempts (initial + retries) a stalled agent-loop model step gets. */
 export const MODEL_STALL_MAX_ATTEMPTS = 3;
+/** Total attempts a model step gets when its transport keeps dropping. */
+export const MODEL_TRANSPORT_MAX_ATTEMPTS = 3;
 /** Agent-visible retry backoff. Attempts 2 and 3 wait 2s and 4s. */
 export const MODEL_STALL_RETRY_BASE_DELAY_MS = 2000;
 
@@ -76,6 +78,76 @@ export class ModelStreamStallError extends Error {
 
 export function isModelStreamStallError(error: unknown): error is ModelStreamStallError {
   return error instanceof Error && error.name === 'ModelStreamStallError';
+}
+
+/**
+ * A live model stream whose transport died underneath it.
+ *
+ * Distinct from a stall: the provider accepted the request and was emitting,
+ * then the connection dropped. undici surfaces this as `TypeError: terminated`
+ * (cause `SocketError: other side closed`), which carries no model verdict at
+ * all. Production data 2026-09: 17 runs across 8 agents ended fatally this way
+ * in eight weeks, ~2 per week and rising, each abandoning a run mid-flight.
+ */
+export class ModelStreamTransportError extends Error {
+  readonly attempts: number | undefined;
+  readonly detail: string;
+
+  constructor(detail: string, attempts?: number) {
+    const suffix = attempts === undefined
+      ? ''
+      : ` (${attempts} attempt${attempts === 1 ? '' : 's'})`;
+    super(`Model stream connection dropped: ${detail}${suffix}`);
+    this.name = 'ModelStreamTransportError';
+    this.attempts = attempts;
+    this.detail = detail;
+  }
+}
+
+/** Socket-level codes that mean the connection died, not that a request failed. */
+const TRANSPORT_DROP_CODES = new Set([
+  'ECONNRESET',
+  'ECONNABORTED',
+  'EPIPE',
+  'ETIMEDOUT',
+  'UND_ERR_SOCKET',
+  'ERR_STREAM_PREMATURE_CLOSE',
+]);
+
+/** Message shapes for the same failure, since not every layer preserves a code. */
+const TRANSPORT_DROP_PATTERNS = [
+  /^terminated$/,
+  /socket hang up/,
+  /other side closed/,
+  /premature close/,
+  /connection reset/,
+  /network socket disconnected/,
+];
+
+/**
+ * Was this error the transport dying under a stream that had already opened?
+ *
+ * Deliberately narrow. Cancellation (`AbortError`, `UND_ERR_ABORTED`) and a
+ * stall both mean something specific and are handled by their own paths, so
+ * they are excluded here rather than swept into a retry.
+ */
+export function isModelStreamTransportDrop(error: unknown): boolean {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  for (let depth = 0; depth < 6 && current; depth++) {
+    if (seen.has(current)) break;
+    seen.add(current);
+    const candidate = current as { name?: unknown; message?: unknown; code?: unknown; cause?: unknown };
+    const name = typeof candidate.name === 'string' ? candidate.name : '';
+    const code = typeof candidate.code === 'string' ? candidate.code : '';
+    const message = typeof candidate.message === 'string' ? candidate.message.trim().toLowerCase() : '';
+    if (name === 'AbortError' || name === 'TimeoutError' || code === 'UND_ERR_ABORTED') return false;
+    if (name === 'ModelStreamStallError') return false;
+    if (TRANSPORT_DROP_CODES.has(code)) return true;
+    if (TRANSPORT_DROP_PATTERNS.some((pattern) => pattern.test(message))) return true;
+    current = candidate.cause;
+  }
+  return false;
 }
 
 /**

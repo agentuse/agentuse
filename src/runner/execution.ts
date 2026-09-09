@@ -20,6 +20,9 @@ import {
   estimateModelContextTokens,
   MODEL_STALL_MAX_ATTEMPTS,
   ModelStreamStallError,
+  ModelStreamTransportError,
+  MODEL_TRANSPORT_MAX_ATTEMPTS,
+  isModelStreamTransportDrop,
   modelStallRetryDelayMs,
   resolveModelStallPolicy,
   waitForModelStallRetry,
@@ -1642,6 +1645,10 @@ async function* executeAgentAttempt(
   // Stall retries across model steps. Reset as soon as the active step produces
   // output, so the budget covers one stall episode rather than the whole run.
   let stallAttempt = 0;
+  // Transport-drop retries across model steps. Separate budget from the stall
+  // one: a dropped connection and a silent provider are different failures and
+  // one must not consume the other's attempts.
+  let transportAttempt = 0;
   // Decide what a detected stall means: retry the active step from its prepared
   // input, or give up with an error that names the stall and attempt count.
   const classifyStall = (
@@ -1663,6 +1670,28 @@ async function* executeAgentAttempt(
     logger.warn(`⚠️  ${error.message}`);
     return { retry: false, error };
   };
+  // Decide what a mid-stream transport drop means. Same checkpoint contract as
+  // a stall: the active step is safe to restart only while it has committed no
+  // visible text and begun no tool call, so a retry can never double an effect.
+  const classifyTransportDrop = (
+    error: unknown,
+    producedOutput: boolean
+  ): { retry: true } | { retry: false; error: ModelStreamTransportError } => {
+    const detail = toErrorMessage(error);
+    if (!producedOutput && transportAttempt + 1 < MODEL_TRANSPORT_MAX_ATTEMPTS) {
+      transportAttempt++;
+      const delayMs = modelStallRetryDelayMs(transportAttempt);
+      logger.warn(
+        `Model stream connection dropped (${detail}); retrying ` +
+        `in ${Math.round(delayMs / 100) / 10}s ` +
+        `(attempt ${transportAttempt + 1} of ${MODEL_TRANSPORT_MAX_ATTEMPTS})`
+      );
+      return { retry: true };
+    }
+    const failure = new ModelStreamTransportError(detail, transportAttempt + 1);
+    logger.warn(`⚠️  ${failure.message}`);
+    return { retry: false, error: failure };
+  };
   while (runAnotherSegment) {
   runAnotherSegment = false;
   let segmentFinishReason: string | undefined;
@@ -1674,7 +1703,10 @@ async function* executeAgentAttempt(
   // `finish` chunk is cumulative, but an aborted stream has no final total; fold
   // these settled steps into the next segment's cumulative usage explicitly.
   let completedStepUsageInSegment: any;
-  let stallRetryRequested = false;
+  // Set when the active step must be restarted from its checkpoint, holding the
+  // attempt number that sets the backoff. A stall and a transport drop both
+  // land here; the two carry their own budgets but share the recovery.
+  let segmentRetryAttempt: number | undefined;
 
   let stream;
   try {
@@ -1781,6 +1813,7 @@ Error: ${errorMessage}`);
       if (!activeStepProducedCommittedOutput && MODEL_COMMITTED_OUTPUT_CHUNK_TYPES.has(chunk.type)) {
         activeStepProducedCommittedOutput = true;
         stallAttempt = 0;
+        transportAttempt = 0;
       }
       // A stall aborts only our per-attempt controller, so the SDK reports it as
       // a plain abort (or error) chunk. Claim it here, before the generic
@@ -1791,7 +1824,28 @@ Error: ${errorMessage}`);
         if (decision.retry) {
           messages = [...stalledStep.input];
           contextManager?.setMessages(messages);
-          stallRetryRequested = true;
+          segmentRetryAttempt = stallAttempt;
+          break;
+        }
+        yield { type: 'error', error: decision.error };
+        return;
+      }
+      // Some providers report a dead socket as an error chunk rather than
+      // throwing out of the iterator. Claim it before `case 'error'` yields it
+      // as a run-ending verdict, since the connection dying says nothing about
+      // the request.
+      if (
+        chunk.type === 'error'
+        && !suspendState
+        && !effectiveAbortSignal.aborted
+        && isModelStreamTransportDrop((chunk as { error?: unknown }).error)
+      ) {
+        const droppedStep = stalledStepState();
+        const decision = classifyTransportDrop((chunk as { error?: unknown }).error, droppedStep.producedOutput);
+        if (decision.retry) {
+          messages = [...droppedStep.input];
+          contextManager?.setMessages(messages);
+          segmentRetryAttempt = transportAttempt;
           break;
         }
         yield { type: 'error', error: decision.error };
@@ -2220,7 +2274,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
       }
     }
 
-    if (stallRetryRequested) {
+    if (segmentRetryAttempt !== undefined) {
       // The active model step generated nothing. Its prepared input already
       // contains every settled assistant/tool turn from earlier steps, so the
       // next segment resumes there without replaying completed effects.
@@ -2229,7 +2283,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
       }
       stallWatchdog?.dispose();
       stallWatchdog = undefined;
-      await waitForModelStallRetry(stallAttempt, effectiveAbortSignal);
+      await waitForModelStallRetry(segmentRetryAttempt, effectiveAbortSignal);
       runAnotherSegment = true;
       continue;
     }
@@ -2458,6 +2512,31 @@ Current step: ${stepCount}/${options.maxSteps}`);
         stallWatchdog?.dispose();
         stallWatchdog = undefined;
         await waitForModelStallRetry(stallAttempt, effectiveAbortSignal);
+        runAnotherSegment = true;
+        continue;
+      }
+      yield { type: 'error', error: decision.error };
+      return;
+    }
+    // A transport drop under a live stream: the request was accepted, bytes
+    // were flowing, and the connection died underneath. That is not a model
+    // verdict, and the SDK's own retry covers stream creation only, so without
+    // this a socket blip ends the whole run (production: `TypeError:
+    // terminated`, quora-engage-answer 2026-09-09, and 16 more in eight weeks).
+    // Excluded by design: a run the caller cancelled, and a suspension drain,
+    // where a dead socket is the intended consequence rather than a fault.
+    if (isModelStreamTransportDrop(error) && !suspendState && !effectiveAbortSignal.aborted) {
+      const droppedStep = stalledStepState();
+      const decision = classifyTransportDrop(error, droppedStep.producedOutput);
+      if (decision.retry) {
+        messages = [...droppedStep.input];
+        contextManager?.setMessages(messages);
+        if (completedStepUsageInSegment) {
+          priorSegmentsUsage = addLanguageModelUsage(priorSegmentsUsage, completedStepUsageInSegment);
+        }
+        stallWatchdog?.dispose();
+        stallWatchdog = undefined;
+        await waitForModelStallRetry(transportAttempt, effectiveAbortSignal);
         runAnotherSegment = true;
         continue;
       }
