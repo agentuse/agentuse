@@ -33,8 +33,9 @@ function creator(): string {
   });
 }
 
-function reviser(): string {
+function reviser(origin?: { originSessionId: string; originTranscript?: string }): string {
   return buildChangesetRevisionSessionAgent({
+    ...origin,
     sessionId: SESSION_ID,
     projectId: 'project-id',
     projectRoot: PROJECT_ROOT,
@@ -130,5 +131,22 @@ describe('changeset session prompts', () => {
     expect(parsed.instructions).toContain('untrusted evidence');
     expect(parsed.instructions).toContain('agents/daily.agentuse');
     expect(parsed.instructions).toContain('outcome no-change');
+  });
+
+  it('reviser inlines the origin run transcript as the evidence to diagnose', () => {
+    const parsed = parseAgentContent(
+      reviser({ originSessionId: '01ORIGIN', originTranscript: '[error] INCOMPLETE: refresh policy missing' }),
+      'changeset-reviser',
+    );
+    expect(parsed.config.description).toContain('01ORIGIN');
+    expect(parsed.instructions).toContain('refresh policy missing');
+    expect(parsed.instructions).toContain('Diagnose the latest execution attempt');
+    expect(parsed.instructions).not.toContain('This agent has not run yet');
+  });
+
+  it('reviser refuses an origin session that comes without its transcript', () => {
+    // A silent fallback here told the model "this agent has not run yet"
+    // about the failed run the operator was asking about.
+    expect(() => reviser({ originSessionId: '01ORIGIN' })).toThrow(/01ORIGIN/);
   });
 });

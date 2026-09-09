@@ -9415,6 +9415,27 @@ export function createServeCommand(): Command {
             };
           }
 
+          // A run-anchored revision carries that run's transcript as evidence.
+          // Resolve it before anything durable is written: an origin the daemon
+          // cannot read is a request error, not a revision that quietly works
+          // from the source alone.
+          let originTranscript: string | undefined;
+          if (originSessionId) {
+            const origin = await findSessionInfo(originSessionId, project.id);
+            if (!origin.success) {
+              sendError(res, origin.status, origin.code, origin.message);
+              return;
+            }
+            originTranscript = buildRunTranscript(origin.info.approval.logs, 80_000, {
+              focus: 'latest-attempt',
+              terminal: {
+                status: origin.info.approval.sessionStatus,
+                ...(origin.info.approval.errorCode && { errorCode: origin.info.approval.errorCode }),
+                ...(origin.info.approval.errorMessage && { errorMessage: origin.info.approval.errorMessage }),
+              },
+            });
+          }
+
           const sessionId = ulid();
           const record = await prepareChangesetStart({
             sessionId,
@@ -9498,6 +9519,7 @@ export function createServeCommand(): Command {
                 : buildChangesetRevisionSessionAgent({
                     sessionId,
                     ...(originSessionId && { originSessionId }),
+                    ...(originTranscript && { originTranscript }),
                     projectId: project.id,
                     projectRoot: project.root,
                     scopeRoot: project.scopeRoot,

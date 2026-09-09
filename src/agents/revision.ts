@@ -610,7 +610,13 @@ export function buildChangesetRevisionSessionAgent(input: {
     },
   }, { lineWidth: 0 }).trimEnd();
 
-  const hasRun = Boolean(input.originSessionId && input.originTranscript);
+  // An origin id without its transcript would tell the reviser "this agent has
+  // not run yet" about the very run the operator is pointing at. Fail the start
+  // instead of authoring a session that cannot see its own evidence.
+  if (input.originSessionId && !input.originTranscript?.trim()) {
+    throw new Error(`Revision of ${input.targetRunPath} names origin session ${input.originSessionId} but carries no transcript for it`);
+  }
+  const hasRun = Boolean(input.originSessionId);
   const opening = hasRun
     ? 'You are revising one existing AgentUse agent from evidence in a completed or failed run. Diagnose before editing.'
     : 'You are revising one existing AgentUse agent that has no run to diagnose: the operator asked for this change from the agent page. Read the current source before editing.';
