@@ -28,7 +28,7 @@ export function inputCandidates(recording: ReplayRecording): InputCandidate[] {
     const value = call.state.status === 'completed' ? call.state.output : call.state.status === 'error' ? call.state.error : '';
     const content = typeof value === 'string' ? value
       : value && typeof value === 'object' && typeof (value as any).output === 'string' ? (value as any).output as string
-      : JSON.stringify(value) ?? ''; 
+      : JSON.stringify(value) ?? '';
     const knownMutation = /^(store_(create|update|delete)|tools__filesystem_(write|edit|delete)|report_(complete|incomplete))$/.test(call.tool);
     const media = /"(?:_media|__mediaCacheRef)"\s*:/.test(JSON.stringify(value) ?? '');
     return { partId: call.id, tool: call.tool, input: call.state.input,

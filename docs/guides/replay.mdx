@@ -48,6 +48,15 @@ field `intent` do not matter; filesystem read paths are normalized. Other
 arguments, including shell commands, URLs, prompts and array order, must match.
 Repeated calls consume matching recordings in their original order.
 
+`store_list` permits a different field projection when filters are identical and the requested page is contained in the recorded page and every requested value or known absence is recorded. Metadata
+requests (such as `id` and `title`) use the metadata already present on each row.
+Unknown data fields still stop the replay. Projection provenance appears in the report.
+
+`store_create` writes to an isolated in-memory store with fresh `replay-` IDs.
+Those items support `store_get`, `store_update`, and `store_delete`, so new drafts
+can change without touching production. Queries after these writes are not yet
+supported; replay stops rather than returning stale recorded lists.
+
 Only recordings before the source's **first** approval gate are available.
 For an ungated run, later user continuations are excluded. Mock and replay
 sessions cannot be used as sources. An actively running source must first
@@ -85,3 +94,71 @@ This command does not support `--scope`, `--approval`, `--mock-model`, a remote
 agent URL, or an additional prompt. Use ordinary `agentuse test` for mocked
 flow testing. Judge regression against past human decisions is a separate
 operation; replay deliberately captures the writer before the judge intervenes.
+
+
+## Experimental fixed-input extraction
+
+Full workflow replay still depends on recorded calls. For testing an agent's
+output from fixed evidence, the prototype `scripts/extract-fixed-inputs.ts`
+asks a model to classify the source session's pre-approval tool results. It
+works across tool names and output formats; it does not assume the output is
+writing. It does not grade the output or rerun the agent.
+
+The selector distinguishes source evidence, agent-produced material, feedback,
+reference instructions, irrelevant records, and uncertain provenance. It sees
+call arguments to detect generated material read back through another tool.
+Only tool-result text is selectable. Code validates complete classification,
+source IDs, exact excerpts, and exclusion of known mutation outputs. Classifier
+reasons stay in a separate audit, not the evidence pack.
+
+This is LLM-assisted selection, not a guarantee of semantic purity: arbitrary
+tools can return mixed evidence and generated content, and classification can
+be wrong. Inspect the audit before treating a pack as a regression fixture.
+The model receives broader historical tool data than the eventual input pack;
+use an endpoint authorized for that data. No tool executes during extraction.
+
+From the source checkout, build the standalone prototype for Node:
+
+```bash
+bun build scripts/extract-fixed-inputs.ts --target node --packages external --outfile scripts/extract-fixed-inputs.local.mjs
+```
+
+Then run from the original agent's project so session storage resolves correctly:
+
+```bash
+node /path/to/agentuse/scripts/extract-fixed-inputs.local.mjs SESSION_ID /path/to/new-output-directory openai:gpt-5.6-sol
+```
+
+The output is `input-pack.json`, `selection-audit.json`, `source-records.json`,
+and a separate `baseline.json`. The pack contains exact excerpts, hashes, and UTF-16 string offsets;
+old assistant output and classifier explanations are not copied into it.
+Reference instructions should be supplied fresh to the output-generation step.
+Large sessions currently fail an explicit size limit instead of silently
+truncating evidence. This is a prototype script, not a new `agentuse test` mode.
+
+
+## Experimental output loop
+
+`scripts/loop-x-output.ts` reuses an existing fixed-input pack for a controlled
+X reply experiment. It performs fresh generation, conversation and evidence
+checks, then instruction revision only after failure. The canonical brief,
+source pack, model and evaluator criteria remain fixed. A passing draft stops
+the loop without forced polishing; three failed rounds exhaust the run.
+
+The reviser produces a separate test-guidance paragraph. The next writer sees
+that guidance, not the prior drafts, judgments, or historical baseline. Nothing
+is written back to production instructions and no publishing tools exist in the
+experiment. Automated acceptance is not proof of improvement or permission to
+publish. A single example cannot establish a general instruction improvement.
+
+Build from the source checkout and run from the source agent's project:
+
+```bash
+bun build scripts/loop-x-output.ts --target node --packages external --outfile scripts/loop-x-output.local.mjs
+node /path/to/agentuse/scripts/loop-x-output.local.mjs /path/to/input-pack.json /path/to/brief.md /path/to/judge.agentuse /path/to/new-output-dir openai:gpt-5.6-sol /path/to/baseline.json
+```
+
+The result directory preserves every role's exact request/response, each round's
+judgment and instruction revision, frozen inputs, hashes, and the final status.
+The optional historical baseline is loaded only after all model calls finish.
+This prototype is separate from the public `agentuse test` command.
