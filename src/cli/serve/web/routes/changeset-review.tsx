@@ -12,6 +12,7 @@ import {
 import { useSessionLog } from '../hooks/use-session-log';
 import { useTitle } from '../hooks/use-title';
 import { Loading } from '../components/loading';
+import { CopyButton } from '../components/copy-button';
 import { DraftUsageLine } from '../components/token-usage-strip';
 import { DraftComposer, DraftStatusPill } from '../components/draft-panel';
 import { DraftAnswerComposer, pendingDraftQuestion } from '../components/draft-answer-composer';
@@ -330,6 +331,11 @@ export default function ChangesetReview() {
             <span><span class="draft-meta-key">Project</span> {changeset.projectId}</span>
             <span><span class="draft-meta-key">Files</span> {files.length}</span>
             <span><span class="draft-meta-key">Model</span> {changeset.authoringModel}</span>
+            <span class="changeset-session-id">
+              <span class="draft-meta-key">Session</span>{' '}
+              <a class="draft-quiet-link" href={sessionHref} title="Open the full session log">{sessionId}</a>
+              <CopyButton text={sessionId} label="session id" />
+            </span>
           </div>
           <DraftUsageLine
             tokenUsage={authorSession.approval?.tokenUsage}

@@ -10617,3 +10617,7 @@ html[data-page="draft-panel"] .app-route {
   .changeset-file-group { flex: 1 1 240px; min-width: 0; }
   .changeset-file-scroll { max-height: none; }
 }
+
+/* Session id in the changeset meta row: monospace id, copy icon beside it. */
+.changeset-session-id { display: inline-flex; align-items: center; gap: 6px; }
+.changeset-session-id .draft-quiet-link { font-family: var(--mono); }
