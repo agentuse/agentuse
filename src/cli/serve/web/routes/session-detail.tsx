@@ -943,7 +943,36 @@ export default function SessionDetail() {
   }, []);
   // Long logs bury the gate under hundreds of entries; the bar keeps a one-tap
   // jump to it for as long as a decision is owed on this page.
-  const canJumpToGate = hasActionableApproval(status, approval);
+  const gateOwed = hasActionableApproval(status, approval);
+  // Hidden while the gate card is on screen: a jump that lands where you
+  // already are is noise, and the up-arrow follows the same rule at the top.
+  const [gateInView, setGateInView] = useState(false);
+  useEffect(() => {
+    if (!gateOwed || typeof IntersectionObserver === 'undefined') {
+      setGateInView(false);
+      return;
+    }
+    let observer: IntersectionObserver | undefined;
+    let raf = 0;
+    const attach = () => {
+      const gate = document.querySelector('.log-item.is-actionable');
+      if (!gate) {
+        raf = requestAnimationFrame(attach);
+        return;
+      }
+      observer = new IntersectionObserver(
+        ([entry]) => setGateInView(Boolean(entry?.isIntersecting)),
+        { rootMargin: `-${stickyHeaderOffset()}px 0px 0px 0px`, threshold: 0 }
+      );
+      observer.observe(gate);
+    };
+    attach();
+    return () => {
+      cancelAnimationFrame(raf);
+      observer?.disconnect();
+    };
+  }, [gateOwed, logsVersion]);
+  const canJumpToGate = gateOwed && !gateInView;
   const jumpToGate = useCallback(() => {
     const gate = document.querySelector('.log-item.is-actionable');
     if (!gate) return;
