@@ -703,6 +703,7 @@ interface ApprovalSummary {
   decisionComment?: string;
   decisionReviewer?: string;
   resumeToken?: string;
+  reviewHref?: string;
   errorCode?: string;
   errorMessage?: string;
   /** The parent can resume by retrying its interrupted delegated child. */
@@ -6189,6 +6190,35 @@ export function createServeCommand(): Command {
       // the live Sessions SSE cadence does not repeatedly probe the filesystem
       // for ordinary sessions.
       const sessionPurposeCache = new Map<string, SessionPurpose | null>();
+
+      /** What an AgentUse-owned session is for (a change set or a legacy agent
+       *  revision), or null for an ordinary run. Cached per session so the
+       *  sessions list and the approvals list share one disk read. */
+      const sessionPurposeFor = async (
+        project: { id: string; root: string } | undefined,
+        sessionId: string,
+      ): Promise<SessionPurpose | null> => {
+        if (!project) return null;
+        const cacheKey = `${project.id}\0${sessionId}`;
+        const cached = sessionPurposeCache.get(cacheKey);
+        if (cached !== undefined) return cached;
+        let purpose: SessionPurpose | null = null;
+        try {
+          // Change sets first: they are the successor record, and a session
+          // never carries both.
+          const changeset = await readChangesetRecord(project.root, sessionId);
+          if (changeset) {
+            purpose = changesetSessionPurpose(project.id, changeset);
+          } else {
+            const revision = await readAgentRevisionRecord(project.root, sessionId);
+            purpose = revision ? agentRevisionSessionPurpose(revision) : null;
+          }
+        } catch (error) {
+          logger.warn(`Could not classify session ${sessionId}: ${(error as Error).message}`);
+        }
+        sessionPurposeCache.set(cacheKey, purpose);
+        return purpose;
+      };
       // The list hubs poll on a slow steady cadence; nudge them the moment the
       // daemon knows the lists are about to change (run triggered, decision
       // made, runner announced a state change) so dashboards update in ~1s.
@@ -6429,30 +6459,8 @@ export function createServeCommand(): Command {
         }
 
         pageItems = await Promise.all(pageItems.map(async (row) => {
-          const cacheKey = `${row.projectId}\0${row.session.sessionId}`;
           const project = projects.find((candidate) => candidate.id === row.projectId);
-          let purpose = sessionPurposeCache.get(cacheKey);
-          if (!sessionPurposeCache.has(cacheKey)) {
-            if (project) {
-              try {
-                // Change sets first: they are the successor record, and a
-                // session never carries both.
-                const changeset = await readChangesetRecord(project.root, row.session.sessionId);
-                if (changeset) {
-                  purpose = changesetSessionPurpose(project.id, changeset);
-                } else {
-                  const revision = await readAgentRevisionRecord(project.root, row.session.sessionId);
-                  purpose = revision ? agentRevisionSessionPurpose(revision) : null;
-                }
-              } catch (error) {
-                logger.warn(`Could not classify session ${row.session.sessionId}: ${(error as Error).message}`);
-                purpose = null;
-              }
-            } else {
-              purpose = null;
-            }
-            sessionPurposeCache.set(cacheKey, purpose);
-          }
+          const purpose = await sessionPurposeFor(project, row.session.sessionId);
           const runPath = project
             ? toAgentRunPath(project, row.session.agent.filePath)
             : undefined;
@@ -6546,7 +6554,11 @@ export function createServeCommand(): Command {
             continue;
           }
           for (const approval of result.approvals ?? []) {
-            rows.push({ projectId: result.project.id, approval });
+            // A change set has its own review page (proposal + pending
+            // question side by side); send the reviewer there, not to the log.
+            const purpose = await sessionPurposeFor(result.project, approval.sessionId);
+            const reviewHref = purpose?.kind === 'changeset' ? purpose.href : undefined;
+            rows.push({ projectId: result.project.id, approval: reviewHref ? { ...approval, reviewHref } : approval });
           }
         }
 

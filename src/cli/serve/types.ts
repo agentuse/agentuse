@@ -64,6 +64,9 @@ export interface ApprovalSummary {
   decisionComment?: string;
   decisionReviewer?: string;
   resumeToken?: string;
+  /** The page where this gate is best answered when it is not the session
+   *  log: a change set's review page. Absent for ordinary runs. */
+  reviewHref?: string;
   errorCode?: string;
   errorMessage?: string;
   /** Resume the parent by retrying its interrupted delegated child. */

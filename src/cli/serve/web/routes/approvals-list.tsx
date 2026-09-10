@@ -43,12 +43,17 @@ const WINDOWS: Array<{ id: ApprovalWindow; label: string }> = [
   { id: 'all', label: 'All' },
 ];
 
-/** Rows link into the session, which is where a decision is actually made. A
- *  row with no resume token has nothing to open, so it renders static. */
-function sessionHref(row: ApprovalRow, multiProject: boolean): string | null {
+/** Rows link to where a decision is actually made: the change set review
+ *  page when the row has one, otherwise the session. A row with no resume
+ *  token has nothing to open, so it renders static. */
+export function sessionHref(row: ApprovalRow, multiProject: boolean): string | null {
   if (row.resumeToken === undefined) return null;
   const params = new URLSearchParams();
   if (row.resumeToken) params.set('token', row.resumeToken);
+  if (row.reviewHref) {
+    const query = params.toString();
+    return query ? `${row.reviewHref}?${query}` : row.reviewHref;
+  }
   if (multiProject) params.set('project', row.project);
   return `/sessions/${encodeURIComponent(row.sessionId)}?${params.toString()}`;
 }
