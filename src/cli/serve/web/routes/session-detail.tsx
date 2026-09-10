@@ -941,6 +941,16 @@ export default function SessionDetail() {
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
   }, []);
+  // Long logs bury the gate under hundreds of entries; the bar keeps a one-tap
+  // jump to it for as long as a decision is owed on this page.
+  const canJumpToGate = hasActionableApproval(status, approval);
+  const jumpToGate = useCallback(() => {
+    const gate = document.querySelector('.log-item.is-actionable');
+    if (!gate) return;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const top = gate.getBoundingClientRect().top + window.scrollY - stickyHeaderOffset() - 12;
+    window.scrollTo({ top: Math.max(0, top), behavior: reduce ? 'auto' : 'smooth' });
+  }, []);
 
   const live = isLiveStatus(status, orderedLogs);
   // While the run is live, keep a persistent "working" row pinned to the end of
@@ -1775,6 +1785,21 @@ export default function SessionDetail() {
               </svg>
             </button>
           </div>}
+          {canJumpToGate && (
+            <button
+              type="button"
+              class="session-bar-gate"
+              onClick={jumpToGate}
+              aria-label="Jump to the approval gate"
+              title="Jump to the approval gate"
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 5v14" />
+                <path d="m5 12 7 7 7-7" />
+              </svg>
+              <span class="session-bar-gate-label">gate</span>
+            </button>
+          )}
           <button
             type="button"
             class="session-bar-top"
