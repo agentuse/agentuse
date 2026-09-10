@@ -337,10 +337,20 @@ function stickyHeaderOffset(): number {
  * off the top, behind them. A gate reads top-down: what you are replying to, then
  * the options, then the commitment.
  */
-function scrollToActionableGate(): boolean {
+/** The element the reviewer must reach: the approval question itself. A
+ *  cascade gate wraps a delegated-run tree above that question, and the tree
+ *  can run 10,000px on a manager with many children, so landing on the gate
+ *  item's top leaves the reviewer a long way from the thing they came to read. */
+function actionableGateTarget(): Element | null {
   const gate = document.querySelector('.log-item.is-actionable');
-  if (!gate) return false;
-  const top = gate.getBoundingClientRect().top + window.scrollY - stickyHeaderOffset() - 12;
+  if (!gate) return null;
+  return gate.querySelector('.approval-card') ?? gate;
+}
+
+function scrollToActionableGate(): boolean {
+  const target = actionableGateTarget();
+  if (!target) return false;
+  const top = target.getBoundingClientRect().top + window.scrollY - stickyHeaderOffset() - 12;
   window.scrollTo({ top: Math.max(0, top), behavior: 'auto' });
   return true;
 }
@@ -955,8 +965,8 @@ export default function SessionDetail() {
     let observer: IntersectionObserver | undefined;
     let raf = 0;
     const attach = () => {
-      const gate = document.querySelector('.log-item.is-actionable');
-      if (!gate) {
+      const target = actionableGateTarget();
+      if (!target) {
         raf = requestAnimationFrame(attach);
         return;
       }
@@ -964,7 +974,7 @@ export default function SessionDetail() {
         ([entry]) => setGateInView(Boolean(entry?.isIntersecting)),
         { rootMargin: `-${stickyHeaderOffset()}px 0px 0px 0px`, threshold: 0 }
       );
-      observer.observe(gate);
+      observer.observe(target);
     };
     attach();
     return () => {
@@ -974,10 +984,10 @@ export default function SessionDetail() {
   }, [gateOwed, logsVersion]);
   const canJumpToGate = gateOwed && !gateInView;
   const jumpToGate = useCallback(() => {
-    const gate = document.querySelector('.log-item.is-actionable');
-    if (!gate) return;
+    const target = actionableGateTarget();
+    if (!target) return;
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    const top = gate.getBoundingClientRect().top + window.scrollY - stickyHeaderOffset() - 12;
+    const top = target.getBoundingClientRect().top + window.scrollY - stickyHeaderOffset() - 12;
     window.scrollTo({ top: Math.max(0, top), behavior: reduce ? 'auto' : 'smooth' });
   }, []);
 
