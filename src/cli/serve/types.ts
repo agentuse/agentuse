@@ -85,6 +85,8 @@ export interface SessionSummary {
     name: string;
     description?: string;
     filePath?: string;
+    /** A delegated child run; listed only when the caller asks for subagents. */
+    isSubAgent?: boolean;
     /**
      * Path relative to the served scope, present only when this session's
      * agent is still one of the project's loaded agents. Clients must use
@@ -101,6 +103,11 @@ export interface SessionSummary {
   errorMessage?: string;
   /** Reviewer discarded this ended failed run; needs-attention surfaces skip it. */
   dismissedAt?: number;
+  /** Reviewer opened this ended run's page; "results you haven't seen" skips it. */
+  reviewedAt?: number;
+  /** Business results the run recorded (record_metric), newest first. Present
+   *  on feed-detail rows and whenever a metric/results filter is applied. */
+  results?: SessionResult[];
   mock?: boolean;
   /** Suspended parent parked on a running delegated child: the run is live, work
    *  is in a subagent, so surfaces render it "running · subagent" rather than the
@@ -110,6 +117,17 @@ export interface SessionSummary {
   finalResponse?: string;
   /** Why this session exists when it is an AgentUse-owned internal workflow. */
   purpose?: SessionPurpose;
+}
+
+/** One record_metric fact a run wrote, as the sessions list shows it. */
+export interface SessionResult {
+  metric: string;
+  count?: number;
+  value?: number;
+  unit?: string;
+  note?: string;
+  /** Epoch ms of the record's last write. */
+  at: number;
 }
 
 export type SessionPurpose = {

@@ -16,6 +16,8 @@ export function useSessionsStream(options: {
   limit?: number | undefined;
   detail?: 'feed' | 'agents' | undefined;
   mock?: 'include' | 'only' | undefined;
+  metric?: string | undefined;
+  results?: 'unseen' | undefined;
   enabled: boolean;
   onData: (payload: SessionsPayload) => void;
   onError: (error: ApiRequestError) => void;
@@ -51,6 +53,8 @@ export function useSessionsStream(options: {
         limit: options.limit,
         detail: options.detail,
         mock: options.mock,
+        metric: options.metric,
+        results: options.results,
       }));
       source = es;
 
@@ -99,5 +103,5 @@ export function useSessionsStream(options: {
       document.removeEventListener('visibilitychange', onVisible);
       source?.close();
     };
-  }, [options.agent, options.status, options.triage, options.trigger, options.approval, options.q, options.window, options.limit, options.detail, options.mock, options.enabled]);
+  }, [options.agent, options.status, options.triage, options.trigger, options.approval, options.q, options.window, options.limit, options.detail, options.mock, options.metric, options.results, options.enabled]);
 }

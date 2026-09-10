@@ -1,11 +1,13 @@
 import { existsSync } from "fs";
-import { readFile } from "fs/promises";
+import { readFile, stat } from "fs/promises";
 import { dirname, join } from "path";
 import { glob } from "glob";
 import { StoreFileSchema, isSafeStoreName } from "../../store/schema";
 import type { StoreItem } from "../../store/types";
 import { storeItemPreview, storeItemTitle, summarizeStoreItems } from "../../store/display";
 import type { StoreDisplay } from "../../store/display";
+import { normalizeMetricValues } from "../../shared/metric-values";
+import type { SessionResult } from "./types";
 import { escapeHtml, formatApprovalTime, isJsonLikeContent, valueAsRecord } from "./ui";
 
 export { isSafeStoreName };
@@ -201,4 +203,57 @@ export async function findStoreItemRelations(project: StoreProjectRef, storeName
 
 export function storeItemUpdatedTime(item: StoreItem): string {
   return formatApprovalTime(Date.parse(item.updatedAt));
+}
+
+const METRICS_STORE = 'metrics';
+const sessionResultsCache = new Map<string, { mtimeMs: number; bySession: Map<string, SessionResult[]> }>();
+
+/**
+ * Every record_metric fact in the project, grouped by the session that wrote
+ * it. This is what turns a finished run into "a run with results": the agent
+ * already said what it did (metric + note), so no extra declaration is needed.
+ * Cached on the store file's mtime; a missing store is an empty map.
+ */
+export async function readSessionResults(projectRoot: string): Promise<Map<string, SessionResult[]>> {
+  const storePath = join(resolveStoreRoot(projectRoot), METRICS_STORE, 'items.json');
+  let mtimeMs: number;
+  try {
+    mtimeMs = (await stat(storePath)).mtimeMs;
+  } catch {
+    sessionResultsCache.delete(projectRoot);
+    return new Map();
+  }
+  const cached = sessionResultsCache.get(projectRoot);
+  if (cached && cached.mtimeMs === mtimeMs) return cached.bySession;
+
+  const bySession = new Map<string, SessionResult[]>();
+  let items: StoreItem[];
+  try {
+    items = await readStoreItems(projectRoot, METRICS_STORE);
+  } catch {
+    // A half-written or invalid store must not take the sessions list down.
+    return new Map();
+  }
+  for (const item of items) {
+    if (item.type !== 'metric') continue;
+    const { metric, sessionId, note } = item.data;
+    if (typeof metric !== 'string' || typeof sessionId !== 'string') continue;
+    const at = Date.parse(item.updatedAt);
+    if (!Number.isFinite(at)) continue;
+    const { count, value, unit } = normalizeMetricValues(item.data);
+    const result: SessionResult = {
+      metric,
+      ...(count !== null && { count }),
+      ...(value !== null && { value }),
+      ...(unit !== null && { unit }),
+      ...(typeof note === 'string' && note.trim() !== '' && { note: note.trim() }),
+      at,
+    };
+    const list = bySession.get(sessionId) ?? [];
+    list.push(result);
+    bySession.set(sessionId, list);
+  }
+  for (const list of bySession.values()) list.sort((a, b) => b.at - a.at);
+  sessionResultsCache.set(projectRoot, { mtimeMs, bySession });
+  return bySession;
 }

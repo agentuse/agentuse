@@ -11,8 +11,9 @@ import { Loading } from '../components/loading';
 import { PushBell } from '../components/push-bell';
 import { AgentFilterSelect } from '../components/agent-filter-select';
 import { LogContent } from '../components/content';
+import { ResultChips, isUnseenResultsRow } from '../components/session-results';
 import { writeClipboardText } from '../lib/clipboard';
-import { formatApprovalTime, errorText, displayStatusLabel } from '../lib/format';
+import { formatApprovalTime, errorText, displayStatusLabel, humanizeMetric } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
 import { isExecutingSessionStatus, isIncompleteOutcome, isLiveSessionStatus } from '../../../../session/status';
@@ -261,6 +262,9 @@ export function SessionListItem(props: {
           {dismissed && <span class="it-dismissed">dismissed</span>}
         </span>
         <span class={lineClass}>{line}</span>
+        {row.results && row.results.length > 0 && (
+          <ResultChips results={row.results} unseen={isUnseenResultsRow(row)} />
+        )}
       </span>
       <span class="it-time" title={formatApprovalTime(row.createdAt)}>
         {running ? 'now' : clockTime(row.createdAt)}
@@ -444,11 +448,16 @@ export default function SessionsList() {
   const mockParam: 'include' | 'only' | undefined = mockFilter === '' ? undefined : mockFilter;
   const searchParam = q.q || '';
   const openParam = q.open || '';
+  // ?metric= (a Home results tile) and ?results=unseen (Home's "results you
+  // haven't opened") narrow the list to runs that recorded results.
+  const metricFilter = (q.metric || '').trim() || undefined;
+  const resultsFilter: 'unseen' | undefined = q.results === 'unseen' ? 'unseen' : undefined;
 
   // 7d, not 24h: this page is opened to find a run someone remembers, and most
   // of those are older than today. An agent/approval filter widens further,
-  // because a single agent often has not run at all this week.
-  const defaultWin = agentFilter || approvalFilter ? '30d' : '7d';
+  // because a single agent often has not run at all this week. A results view
+  // widens the same way: the point is to catch what was missed, however old.
+  const defaultWin = agentFilter || approvalFilter || metricFilter || resultsFilter ? '30d' : '7d';
   const win = q.window || defaultWin;
 
   useTitle(pageTitle('Sessions'));
@@ -483,9 +492,11 @@ export default function SessionsList() {
     searchParam !== '',
     Boolean(agentFilter),
     Boolean(approvalFilter),
+    Boolean(metricFilter),
+    Boolean(resultsFilter),
   ].filter(Boolean).length;
 
-  const key = `sessions:${win}:${statusFilter}:${triageFilter}:${triggerFilter}:${mockFilter}:${agentFilter ?? ''}:${approvalFilter ?? ''}:${searchParam}`;
+  const key = `sessions:${win}:${statusFilter}:${triageFilter}:${triggerFilter}:${mockFilter}:${agentFilter ?? ''}:${approvalFilter ?? ''}:${searchParam}:${metricFilter ?? ''}:${resultsFilter ?? ''}`;
   const [streamData, setStreamData] = useState<SessionsPayload | null>(null);
   const [streamError, setStreamError] = useState<Error | null>(null);
   const [streamFallback, setStreamFallback] = useState(false);
@@ -512,6 +523,8 @@ export default function SessionsList() {
     limit: 50,
     detail: 'feed' as const,
     mock: mockParam,
+    metric: metricFilter,
+    results: resultsFilter,
   };
 
   const fetched = useFetch(key, () => fetchSessions(query), streamFallback ? { refreshMs: 10_000 } : {});
@@ -592,12 +605,13 @@ export default function SessionsList() {
     const base: Record<string, string | undefined> = {
       window: q.window, status: statusFilter, triage: triageFilter, trigger: triggerFilter,
       mock: mockFilter, agent: agentFilter, approval: approvalFilter, q: searchParam, open: openParam,
+      metric: metricFilter, results: resultsFilter,
     };
     for (const [k, v] of Object.entries(changes)) base[k] = v;
     for (const [k, v] of Object.entries(base)) if (v) params.set(k, v);
     const qs = params.toString();
     return qs ? `/sessions?${qs}` : '/sessions';
-  }, [q.window, statusFilter, triageFilter, triggerFilter, mockFilter, agentFilter, approvalFilter, searchParam, openParam]);
+  }, [q.window, statusFilter, triageFilter, triggerFilter, mockFilter, agentFilter, approvalFilter, searchParam, openParam, metricFilter, resultsFilter]);
 
   // Debounced URL sync for the search box.
   useEffect(() => {
@@ -717,6 +731,16 @@ export default function SessionsList() {
         {!narrow && <kbd>/</kbd>}
       </div>
       <div class="sessions-hint">Searches agent names and the final output text.</div>
+      {(metricFilter || resultsFilter) && (
+        <div class="sessions-scope" role="status">
+          <span class="sessions-scope-text">
+            {resultsFilter
+              ? 'Finished runs with results you have not opened yet. Opening a run clears it.'
+              : <>Runs that recorded <strong>{humanizeMetric(metricFilter ?? '')}</strong>.</>}
+          </span>
+          <a class="sessions-scope-clear" href={withParam({ metric: '', results: '' })}>show all runs →</a>
+        </div>
+      )}
       <div class="quick">
         {statusChip('', 'All', counts?.all)}
         {statusChip('running', 'Running', counts?.running, 'running')}

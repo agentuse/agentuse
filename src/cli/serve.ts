@@ -76,6 +76,7 @@ import {
   isSafeStoreName,
   listProjectStores,
   listStoreRows,
+  readSessionResults,
   type StoreBrowserRows,
   type StoreBrowserSummary,
   type StoreItemRef
@@ -83,7 +84,7 @@ import {
 // Type-only, so this stays erased at compile and adds nothing to the bundle.
 // The context payload is elaborate enough that a hand-kept local copy (as the
 // older session types above are) would drift from the page that consumes it.
-import type { SessionContextPayload, SessionPurpose } from "./serve/types";
+import type { SessionContextPayload, SessionPurpose, SessionResult } from "./serve/types";
 import { startOrphanReconcileLoop } from "./serve/orphan-reconcile";
 import { ONBOARDING_AGENT_ID, ONBOARDING_AGENT_SOURCE } from "../onboarding";
 import {
@@ -754,6 +755,7 @@ interface SessionSummary {
     name: string;
     description?: string;
     filePath?: string;
+    isSubAgent?: boolean;
   };
   status: string;
   trigger: SessionTrigger;
@@ -763,6 +765,10 @@ interface SessionSummary {
   errorMessage?: string;
   /** Reviewer discarded this ended failed run; needs-attention surfaces skip it. */
   dismissedAt?: number;
+  /** Reviewer opened this ended run's page (see serve/types). */
+  reviewedAt?: number;
+  /** record_metric facts this run wrote (see serve/types). */
+  results?: SessionResult[];
   mock?: boolean;
   /** Suspended parent parked on a running delegated child (see serve/types). */
   subagentActive?: boolean;
@@ -860,6 +866,12 @@ interface WorkerStopSessionResult {
     /** Already-ended failed session acknowledged (dismissedAt stamped) instead of stopped. */
     dismissed?: boolean;
   }>;
+}
+
+interface WorkerMarkReviewedResult {
+  success: true;
+  reviewedAt: number;
+  alreadyReviewed: boolean;
 }
 
 interface WorkerReopenGateResult {
@@ -1347,6 +1359,19 @@ class AgentWorker {
       ...(options.dismissEnded && { dismissEnded: true }),
       timeout: 30,
     }) as Promise<WorkerStopSessionResult | WorkerExecuteError>;
+  }
+
+  /** Reviewer opened an ended run's page: stamp reviewedAt (idempotent). */
+  markSessionReviewed(options: {
+    projectRoot: string;
+    sessionId: string;
+  }): Promise<WorkerMarkReviewedResult | WorkerExecuteError> {
+    return this.request({
+      type: "mark-session-reviewed",
+      projectRoot: options.projectRoot,
+      sessionId: options.sessionId,
+      timeout: 30,
+    }) as Promise<WorkerMarkReviewedResult | WorkerExecuteError>;
   }
 
   reopenGate(options: {
@@ -2102,6 +2127,37 @@ function sessionMatchesTriageFilter(
   return filter === 'dismissed' ? session.dismissedAt !== undefined : session.dismissedAt === undefined;
 }
 
+type SessionResultsFilter = 'unseen';
+
+function parseSessionResultsFilter(value: string | undefined): SessionResultsFilter | undefined {
+  return value === 'unseen' ? value : undefined;
+}
+
+/** Runs that recorded the named record_metric (rows must carry `results`). */
+function sessionMatchesMetricFilter(
+  session: Pick<SessionSummary, 'results'>,
+  filter: string | undefined
+): boolean {
+  if (!filter) return true;
+  return (session.results ?? []).some((result) => result.metric === filter);
+}
+
+/**
+ * `unseen` = a finished run that recorded results and that no reviewer has
+ * opened (reviewedAt) or waved off (dismissedAt). Failures are not "results";
+ * they have their own queue.
+ */
+function sessionMatchesResultsFilter(
+  session: Pick<SessionSummary, 'status' | 'results' | 'reviewedAt' | 'dismissedAt'>,
+  filter: SessionResultsFilter | undefined
+): boolean {
+  if (!filter) return true;
+  return session.status === 'completed'
+    && (session.results?.length ?? 0) > 0
+    && session.reviewedAt === undefined
+    && session.dismissedAt === undefined;
+}
+
 type SessionMockFilter = 'exclude' | 'include' | 'only';
 
 function parseSessionMockFilter(value: string | undefined): SessionMockFilter {
@@ -2152,6 +2208,8 @@ function sessionListStreamKey(requestUrl: URL): string {
     requestUrl.searchParams.get('approval') ?? '',
     requestUrl.searchParams.get('q') ?? '',
     requestUrl.searchParams.get('mock') ?? '',
+    requestUrl.searchParams.get('metric') ?? '',
+    requestUrl.searchParams.get('results') ?? '',
     requestUrl.searchParams.get('detail') ?? '',
     requestUrl.searchParams.get('limit') ?? '',
     requestUrl.searchParams.get('cursor') ?? '',
@@ -6243,6 +6301,11 @@ export function createServeCommand(): Command {
             : undefined;
         const approvalFilter = parseApprovalSessionFilter(requestUrl.searchParams.get('approval') ?? undefined);
         const mockFilter = parseSessionMockFilter(requestUrl.searchParams.get('mock') ?? undefined);
+        // ?metric=<name>: runs that recorded this record_metric name (the Home
+        // tile's way in). ?results=unseen: finished runs with results nobody has
+        // opened yet, the "don't miss the good ones" queue.
+        const metricFilter = (requestUrl.searchParams.get('metric') ?? '').trim() || undefined;
+        const resultsFilter = parseSessionResultsFilter(requestUrl.searchParams.get('results') ?? undefined);
         const updatedAfter = sessionListUpdatedAfter(requestUrl);
         const daysFilter = sessionDaysFilterValue(requestUrl);
         const detail = requestUrl.searchParams.get('detail');
@@ -6255,9 +6318,15 @@ export function createServeCommand(): Command {
         const requestedLimit = parsedLimit !== undefined && Number.isFinite(parsedLimit) && parsedLimit > 0
           ? Math.min(Math.floor(parsedLimit), LIST_PAGE_MAX_LIMIT)
           : rawLimit === null ? undefined : LIST_PAGE_DEFAULT_LIMIT;
+        // Results are often recorded by a delegated sub-agent under its own
+        // session id, while the run a human opens is the top-level one. Any view
+        // that shows or filters by results therefore needs the sub-agent rows
+        // too, only to map each child back to the run that delegated it.
+        const needSubagentIndex = detail === 'feed' || Boolean(metricFilter) || Boolean(resultsFilter);
         const canPrelimit = requestedLimit !== undefined &&
           !requestUrl.searchParams.get('cursor') &&
-          !agentFilter && !statusFilter && !triageFilter && !triggerFilter && !approvalFilter && !searchQuery;
+          !agentFilter && !statusFilter && !triageFilter && !triggerFilter && !approvalFilter && !searchQuery &&
+          !needSubagentIndex;
 
         type ProjectSessionRow = { projectId: string; session: SessionSummary };
         const rows: ProjectSessionRow[] = [];
@@ -6273,7 +6342,7 @@ export function createServeCommand(): Command {
             project.root,
             {
               ...(updatedAfter !== undefined && { updatedAfter }),
-              ...(approvalFilter && { includeSubagents: true }),
+              ...((approvalFilter || needSubagentIndex) && { includeSubagents: true }),
               // The trim is an IPC-payload optimization (the worker has already
               // read every summary), so widen it to the count scan: chips that
               // report only the first page's split would be worse than no chips.
@@ -6316,12 +6385,34 @@ export function createServeCommand(): Command {
           }
         }
 
+        // child session id -> the top-level run it descends from, per project.
+        const rootBySessionByProject = new Map<string, Map<string, string>>();
         for (const result of projectResults) {
           if (result.error) {
             errors.push({ projectId: result.project.id, message: result.error });
             continue;
           }
+          if (needSubagentIndex) {
+            const parentOf = new Map<string, string>();
+            for (const session of result.sessions ?? []) {
+              if (session.parentSessionId) parentOf.set(session.sessionId, session.parentSessionId);
+            }
+            const rootOf = new Map<string, string>();
+            for (const childId of parentOf.keys()) {
+              let current = childId;
+              const seen = new Set<string>();
+              while (parentOf.has(current) && !seen.has(current)) {
+                seen.add(current);
+                current = parentOf.get(current)!;
+              }
+              rootOf.set(childId, current);
+            }
+            rootBySessionByProject.set(result.project.id, rootOf);
+          }
           for (const session of result.sessions ?? []) {
+            // Sub-agent rows were only fetched for the index above; the list
+            // itself stays top-level unless an approval filter asked for them.
+            if (needSubagentIndex && !approvalFilter && session.agent.isSubAgent) continue;
             if (!sessionMatchesMockFilter(session, mockFilter)) continue;
             // Status is applied AFTER the chip counts are taken, so "Done 128"
             // stays true while the reader is looking at the Failed subset.
@@ -6428,6 +6519,41 @@ export function createServeCommand(): Command {
             matchesIdentity(row) || textMatches.has(`${row.projectId}\0${row.session.sessionId}`));
         }
 
+        // Results (record_metric facts) come from each project's metrics store,
+        // keyed by session. One cached read per project, so attaching them to a
+        // page, or filtering a whole window by them, costs no per-row I/O.
+        const attachResults = async (targets: ProjectSessionRow[]): Promise<ProjectSessionRow[]> => {
+          const byProject = new Map<string, Map<string, SessionResult[]>>();
+          await Promise.all([...new Set(targets.map((row) => row.projectId))].map(async (projectId) => {
+            const project = projects.find((candidate) => candidate.id === projectId);
+            if (!project) return;
+            byProject.set(projectId, await readSessionResults(project.root));
+          }));
+          // Fold each child's results into its top-level run.
+          const byRoot = new Map<string, Map<string, SessionResult[]>>();
+          for (const [projectId, bySession] of byProject) {
+            const rootOf = rootBySessionByProject.get(projectId);
+            const folded = new Map<string, SessionResult[]>();
+            for (const [sessionId, results] of bySession) {
+              const rootId = rootOf?.get(sessionId) ?? sessionId;
+              const list = folded.get(rootId) ?? [];
+              list.push(...results);
+              folded.set(rootId, list);
+            }
+            for (const list of folded.values()) list.sort((a, b) => b.at - a.at);
+            byRoot.set(projectId, folded);
+          }
+          return targets.map((row) => {
+            const results = byRoot.get(row.projectId)?.get(row.session.sessionId);
+            return results && results.length > 0 ? { ...row, session: { ...row.session, results } } : row;
+          });
+        };
+        if (metricFilter || resultsFilter) {
+          scopedRows = (await attachResults(scopedRows)).filter((row) =>
+            sessionMatchesMetricFilter(row.session, metricFilter) &&
+            sessionMatchesResultsFilter(row.session, resultsFilter));
+        }
+
         // Counts describe the window as the reader narrowed it by search/agent,
         // but BEFORE the status chip: a chip that changed its own number when
         // clicked could never tell you how big the other buckets are.
@@ -6442,15 +6568,16 @@ export function createServeCommand(): Command {
         // it would silently expire every cursor at the next minute boundary and
         // restart Load more from page 1. A cursor row that slides out of the
         // window is still caught by cursorPage's row-lookup fallback.
-        const fingerprint = ['sessions', daysFilter, agentFilter ?? '', statusFilter ?? '', triageFilter ?? '', triggerFilter ?? '', approvalFilter ?? '', searchQuery].join('\0');
+        const fingerprint = ['sessions', daysFilter, agentFilter ?? '', statusFilter ?? '', triageFilter ?? '', triggerFilter ?? '', approvalFilter ?? '', searchQuery, metricFilter ?? '', resultsFilter ?? ''].join('\0');
         const page = cursorPage(requestUrl, fingerprint, statusRows, (row) =>
           `${row.session.createdAt}\0${row.projectId}\0${row.session.sessionId}`
         );
 
         let pageItems = page.items;
         if (detail === 'feed') {
-          const finalResponses = await resolveFinalResponses(page.items);
-          pageItems = page.items.map((row) => {
+          pageItems = await attachResults(pageItems);
+          const finalResponses = await resolveFinalResponses(pageItems);
+          pageItems = pageItems.map((row) => {
             const finalResponse = finalResponses.get(`${row.projectId}\0${row.session.sessionId}`);
             return finalResponse === undefined
               ? row
@@ -6501,6 +6628,8 @@ export function createServeCommand(): Command {
             ...(triggerFilter && { trigger: triggerFilter }),
             ...(approvalFilter && { approval: approvalFilter }),
             ...(searchQuery && { q: searchQuery }),
+            ...(metricFilter && { metric: metricFilter }),
+            ...(resultsFilter && { results: resultsFilter }),
             counts,
             ...(page.limit !== undefined && { limit: page.limit }),
             ...(page.nextCursor && { nextCursor: page.nextCursor }),
@@ -8468,6 +8597,49 @@ export function createServeCommand(): Command {
         // to its suspended approval gate so the reviewer can retry a resume that
         // failed downstream. User-initiated only; the normal approval/decision
         // flow takes over once it is suspended again.
+        // POST /sessions/:id/reviewed: the session page opened on an ended run.
+        // Stamps reviewedAt (idempotent) so "results you haven't seen" drops it.
+        const sessionReviewedMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/reviewed$/) : null;
+        if (sessionReviewedMatch) {
+          try {
+            const sessionId = decodeURIComponent(sessionReviewedMatch[1]);
+            const token = requestUrl.searchParams.get('token') ?? undefined;
+            const body = await parseJSONBody(req);
+            const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
+
+            if (!sessionAuthorized(sessionId, token)) {
+              sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
+              return;
+            }
+            const found = await findSessionInfo(sessionId, projectId);
+            if (!found.success) {
+              sendError(res, found.status, found.code, found.message);
+              return;
+            }
+            if (!isEndedSessionStatus(found.info.approval.sessionStatus)) {
+              sendError(res, 409, "SESSION_NOT_ENDED", `Session is ${found.info.approval.sessionStatus}`);
+              return;
+            }
+            const project = found.project;
+            const projectWorker = workers.get(project.id);
+            if (!projectWorker) {
+              sendError(res, 500, "WORKER_UNAVAILABLE", `No worker for project ${project.id}`);
+              return;
+            }
+            const result = await projectWorker.markSessionReviewed({ projectRoot: project.root, sessionId });
+            if (!result.success) {
+              sendError(res, result.error.code === 'SESSION_NOT_FOUND' ? 404 : 500, result.error.code, result.error.message);
+              return;
+            }
+            if (!result.alreadyReviewed) wakeListHubs();
+            sendJSON(res, 200, { success: true, sessionId, reviewedAt: result.reviewedAt, alreadyReviewed: result.alreadyReviewed });
+          } catch (err) {
+            if (sendRequestParseError(res, err)) return;
+            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+          }
+          return;
+        }
+
         const sessionReopenMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/reopen$/) : null;
         if (sessionReopenMatch) {
           try {
@@ -11897,6 +12069,9 @@ export const __testing = {
   sessionListUpdatedAfter,
   SESSION_LIST_SSE_INTERVAL_MS,
   sessionMatchesAgentFilter,
+  sessionMatchesMetricFilter,
+  sessionMatchesResultsFilter,
+  parseSessionResultsFilter,
   agentRevisionSessionPurpose,
   changesetSessionPurpose,
   changesetReviewHref,

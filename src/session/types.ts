@@ -112,6 +112,10 @@ export interface SessionInfo {
   // outcome in status/error.
   dismissedAt?: number;
 
+  // Reviewer opened this ended run's page (web). Lets needs-attention surfaces
+  // stop asking a human to look at a finished run they already looked at.
+  reviewedAt?: number;
+
   // Outcome of the verify feature's final judgment on this run. `failed` means
   // the output shipped despite exhausting redos (or the judge itself erroring)
   // — a needs-attention signal, not a crash. Absent when verify is off.

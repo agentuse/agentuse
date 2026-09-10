@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { useCountUp } from '../hooks/use-count-up';
 import type { ApprovalRow, ProjectInfo, SerializedSchedule, SessionRow, StoreRowsPayload } from '../lib/api';
-import { fetchInfo, fetchAgents, fetchSchedules, fetchStoreRows, postSessionStop } from '../lib/api';
+import { fetchInfo, fetchAgents, fetchSchedules, fetchSessions, fetchStoreRows, postSessionStop } from '../lib/api';
+import { agentDetailHref } from '../lib/links';
+import { resultsHeadline } from '../components/session-results';
 import { useFetch } from '../hooks/use-fetch';
 import { useHomeSections } from '../hooks/use-home-sections';
 import { useMetricPrefs, type MetricDisplay } from '../hooks/use-metric-prefs';
@@ -123,6 +125,23 @@ function WorkingNow(props: { running: SessionRow[] }) {
   );
 }
 
+/** A finished run worth a look: agent, what it recorded, when. Opening it is
+ *  what clears it, so there is no ✕ here. */
+function UnseenResultRow(props: { row: SessionRow }) {
+  const { row } = props;
+  const at = row.updatedAt || row.createdAt;
+  const agentName = displayAgentName(row.agent.name, row.agent.filePath, row.agent.id);
+  const headline = resultsHeadline(row.results) ?? 'Recorded results';
+  return (
+    <a class="attn-run attn-result" href={`/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`}>
+      <span class="feed-dot done" aria-hidden="true"></span>
+      <span class="attn-agent">{agentName}</span>
+      <span class="attn-result-line">{headline}</span>
+      <span class="feed-time" title={formatApprovalTime(at)}>{formatRelativeTime(at)} · open →</span>
+    </a>
+  );
+}
+
 function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => void; label?: string }) {
   const { row } = props;
   const at = row.updatedAt || row.createdAt;
@@ -241,13 +260,18 @@ function AttentionSection(props: {
   pending: ApprovalRow[];
   failed: SessionRow[];
   stranded: SessionRow[];
+  /** Finished runs with results nobody has opened yet. */
+  unseen: SessionRow[];
   onDismissFailed: (row: SessionRow) => void;
   onDismissAll: (rows: SessionRow[], onProgress: (done: number) => void) => Promise<number>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [pendingOpen, setPendingOpen] = useState(false);
-  const { pending, failed, stranded } = props;
-  const total = pending.length + failed.length + stranded.length;
+  const [unseenOpen, setUnseenOpen] = useState(false);
+  const { pending, failed, stranded, unseen } = props;
+  const total = pending.length + failed.length + stranded.length + unseen.length;
+  const shownUnseen = unseenOpen ? unseen : unseen.slice(0, ATTENTION_ROWS);
+  const foldedUnseen = unseen.length - shownUnseen.length;
   const now = useNow(pending.length > 0);
   const ordered = pendingNewestFirst(pending);
   const shownPending = pendingOpen ? ordered : ordered.slice(0, PENDING_ROWS);
@@ -292,6 +316,20 @@ function AttentionSection(props: {
                     onDismiss={props.onDismissFailed}
                   />
                 ))}
+              </div>
+            )}
+            {unseen.length > 0 && (
+              <div class="surface results-surface">
+                <div class="attn-group-head">
+                  <span>Finished with results you haven't opened</span>
+                  <a class="attn-group-link" href="/sessions?results=unseen&window=7d">all {unseen.length} →</a>
+                </div>
+                {shownUnseen.map((row) => <UnseenResultRow key={`${row.project}:${row.sessionId}`} row={row} />)}
+                {(foldedUnseen > 0 || unseenOpen) && (
+                  <button type="button" class="attn-more pending-more" onClick={() => setUnseenOpen((on) => !on)}>
+                    {unseenOpen ? 'show fewer' : `show all ${unseen.length} →`}
+                  </button>
+                )}
               </div>
             )}
             {(folded > 0 || expanded || reviewable.length > 1) && (
@@ -528,6 +566,9 @@ interface MetricAgg {
   latestAt: number;
   note?: string | undefined;
   events: MetricEvent[];
+  /** Distinct (project, agent) pairs that wrote this metric: one means the
+   *  tile can lead straight to that agent's jobs. */
+  sources: Array<{ projectId: string; agentId: string }>;
 }
 
 /** Selectable Results rollup windows; 30 is also the section-visibility probe. */
@@ -562,8 +603,12 @@ function aggregateMetrics(payload: StoreRowsPayload | null | undefined, windowDa
 
       let agg = byMetric.get(metric);
       if (!agg) {
-        agg = { metric, count: 0, hasCount: false, value: 0, hasValue: false, unit: null, mixedUnits: false, latestAt: 0, events: [] };
+        agg = { metric, count: 0, hasCount: false, value: 0, hasValue: false, unit: null, mixedUnits: false, latestAt: 0, events: [], sources: [] };
         byMetric.set(metric, agg);
+      }
+      if (typeof item.createdBy === 'string' && item.createdBy
+        && !agg.sources.some((source) => source.projectId === row.projectId && source.agentId === item.createdBy)) {
+        agg.sources.push({ projectId: row.projectId, agentId: item.createdBy });
       }
       const { note } = item.data;
       const { count, value, unit } = normalizeMetricValues(item.data);
@@ -671,7 +716,25 @@ interface MetricTileEdit {
   onDisplay: (display: MetricDisplay) => void;
 }
 
-function MetricTile(props: { agg: MetricAgg; windowDays: number; display: MetricDisplay; edit?: MetricTileEdit | undefined }) {
+/**
+ * Where a results tile leads: the runs behind the number. One recording agent
+ * means that agent's jobs tab, narrowed to this metric; several (or an agent
+ * the fleet no longer lists) means the sessions list narrowed the same way.
+ */
+export function metricTileHref(
+  agg: Pick<MetricAgg, 'metric' | 'sources'>,
+  agents: ReadonlyArray<{ projectId: string; path: string; runPath: string }> | undefined,
+): string {
+  if (agg.sources.length === 1) {
+    const [source] = agg.sources;
+    const agent = agents?.find((candidate) =>
+      candidate.projectId === source.projectId && candidate.path.replace(/\.agentuse$/, '') === source.agentId);
+    if (agent) return agentDetailHref(agent.projectId, agent.runPath, { tab: 'jobs', metric: agg.metric });
+  }
+  return `/sessions?metric=${encodeURIComponent(agg.metric)}`;
+}
+
+function MetricTile(props: { agg: MetricAgg; windowDays: number; display: MetricDisplay; href: string; edit?: MetricTileEdit | undefined }) {
   const { agg, display, edit } = props;
   const showValue = agg.hasValue && !agg.mixedUnits;
   const big = useCountUp(Math.round(showValue ? agg.value : agg.count));
@@ -695,7 +758,7 @@ function MetricTile(props: { agg: MetricAgg; windowDays: number; display: Metric
     </>
   );
   if (!edit) {
-    return <a class="metric-tile" href="/stores/metrics" title={agg.metric}>{body}</a>;
+    return <a class="metric-tile" href={props.href} title={`${agg.metric} · open the runs behind this number`}>{body}</a>;
   }
   // Edit mode swaps the link for a still tile with its own controls; hidden
   // tiles stay on the board (dimmed) so they can be turned back on.
@@ -805,6 +868,18 @@ export default function Home() {
     }
     return best;
   }, [schedules.data]);
+
+  // Finished runs that recorded results and that nobody has opened. The runs
+  // people miss are exactly these: no gate, no failure, just a result sitting
+  // in a long list. 7 days, not 24h, because "missed" means it is already old.
+  const unseenResults = useFetch(
+    'home-unseen-results',
+    () => fetchSessions({ results: 'unseen', window: '7d', limit: 50, detail: 'feed' }),
+    { refreshMs: 30_000, enabled: primaryReady }
+  );
+  const unseenRows = useMemo(() => (unseenResults.data?.sessions ?? [])
+    .filter((s) => s.trigger !== 'onboarding')
+    .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)), [unseenResults.data]);
 
   // Agent-recorded business metrics (reserved "metrics" store). Missing store
   // is normal and returns empty rows, so the section simply doesn't render.
@@ -931,7 +1006,7 @@ export default function Home() {
 
   // Header sentence + stat line. "Waiting on you" counts what the section of
   // the same name lists: pending gates, recent failures, stranded runs.
-  const waitingOnYou = liveHome.pendingRows.length + failedRecent.length + strandedRecent.length;
+  const waitingOnYou = liveHome.pendingRows.length + failedRecent.length + strandedRecent.length + unseenRows.length;
   const runs24h = operationalSessions.length;
   // Crashes only, matching the /sessions?status=error filter this stat links to.
   // A run the agent declared incomplete is listed under its own filter there.
@@ -982,7 +1057,7 @@ export default function Home() {
         {sections.isVisible('running') && running.length > 0 && <WorkingNow running={running} />}
 
         {sections.isVisible('attention') && (
-          <AttentionSection pending={liveHome.pendingRows} failed={failedRecent} stranded={strandedRecent} onDismissFailed={dismissFailed} onDismissAll={dismissAll} />
+          <AttentionSection pending={liveHome.pendingRows} failed={failedRecent} stranded={strandedRecent} unseen={unseenRows} onDismissFailed={dismissFailed} onDismissAll={dismissAll} />
         )}
 
         {sections.isVisible('results') && hasAnyMetrics && (
@@ -1019,6 +1094,7 @@ export default function Home() {
                     <MetricTile
                       key={agg.metric}
                       agg={agg}
+                      href={metricTileHref(agg, agents.data?.agents)}
                       windowDays={metricsWindow}
                       display={metricPrefs.prefs.display[agg.metric] ?? 'number'}
                       edit={editMetrics

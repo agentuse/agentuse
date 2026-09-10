@@ -10732,3 +10732,63 @@ html[data-page="draft-panel"] .app-route {
 /* Session id in the changeset meta row: monospace id, copy icon beside it. */
 .changeset-session-id { display: inline-flex; align-items: center; gap: 6px; }
 .changeset-session-id .draft-quiet-link { font-family: var(--mono); }
+
+/* ---- Results on runs: what a finished run recorded (record_metric), and
+   whether anyone has opened it yet. Shared by the sessions list, the agent
+   jobs tab, and Home. ---- */
+.result-chips {
+  display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  margin-top: 4px; min-width: 0;
+}
+.result-chip {
+  display: inline-flex; align-items: center;
+  padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--green-border); background: var(--green-soft); color: var(--green);
+  font-family: var(--mono); font-size: var(--font-size-micro); letter-spacing: 0;
+  white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+}
+.result-chip.more { border-color: var(--line); background: transparent; color: var(--muted-2); }
+.result-new {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: var(--mono); font-size: var(--font-size-micro); font-weight: var(--weight-medium);
+  color: var(--cyan); text-transform: uppercase; letter-spacing: var(--tracking-caps);
+}
+.result-new::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--cyan);
+}
+.page-sessions .it .result-chips { margin-top: 5px; }
+.page-agent-detail .job-row-results { margin: 6px 0 0 16px; }
+.page-agent-detail .job-row.unseen { box-shadow: inset 3px 0 0 var(--cyan); }
+.page-agent-detail .unseen-count { color: var(--cyan); }
+
+/* Sessions list: a results view (a Home tile, or "not opened yet") says so. */
+.page-sessions .sessions-scope {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin: 10px 0 0; padding: 8px 12px;
+  border: 1px solid var(--cyan-border); background: var(--cyan-soft); border-radius: var(--radius-sm, 8px);
+  font-size: var(--font-size-caption); color: var(--fg);
+}
+.page-sessions .sessions-scope-text { flex: 1 1 auto; min-width: 0; }
+.page-sessions .sessions-scope-clear {
+  font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted); text-decoration: none; white-space: nowrap;
+}
+.page-sessions .sessions-scope-clear:hover { color: var(--fg); }
+
+/* Home: the "finished with results you haven't opened" group. */
+.page-home .results-surface { border-color: var(--green-border); }
+.page-home .attn-group-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 18px; border-bottom: 1px solid var(--line);
+  font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted);
+  text-transform: uppercase; letter-spacing: var(--tracking-caps);
+}
+.page-home .attn-group-link { color: var(--muted); text-decoration: none; text-transform: none; letter-spacing: 0; }
+.page-home .attn-group-link:hover { color: var(--fg); }
+.page-home .attn-result-line {
+  font-family: var(--sans); font-size: var(--font-size-caption); color: var(--muted);
+  flex: 1 1 auto; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+@media (max-width: 560px) {
+  .page-home .attn-run .attn-result-line { grid-column: 2; grid-row: 2; white-space: normal; }
+}

@@ -61,6 +61,7 @@ export interface SessionListSummary {
   updatedAt: number;
   error?: { code?: string; message?: string };
   dismissedAt?: number;
+  reviewedAt?: number;
   mock?: boolean;
   /** This session has participated in an approval/cascade lifecycle. */
   approvalRelevant?: boolean;
@@ -174,6 +175,7 @@ function toSessionListSummary(session: SessionInfo, sessionPath: string): Sessio
     updatedAt: session.time.updated,
     ...(session.error && { error: { code: session.error.code, message: session.error.message } }),
     ...(session.dismissedAt !== undefined && { dismissedAt: session.dismissedAt }),
+    ...(session.reviewedAt !== undefined && { reviewedAt: session.reviewedAt }),
     ...(session.mock && { mock: true }),
     path: sessionPath,
   };
@@ -612,7 +614,7 @@ export class SessionManager {
   private async updateSessionAtPath(
     sessionPath: string,
     updates: Partial<Omit<SessionInfo, 'id'>>,
-    options: { approvalRelevant?: boolean } = {}
+    options: { approvalRelevant?: boolean; touch?: boolean } = {}
   ): Promise<void> {
     const key = `${sessionPath}/session`;
 
@@ -620,7 +622,9 @@ export class SessionManager {
       const session = await readJSON<SessionInfo>(key);
       if (!session) return;
       Object.assign(session, updates);
-      session.time.updated = Date.now();
+      // touch:false = bookkeeping only (a reviewer looked), not activity: the
+      // run must not resurface as "updated" in windows and feeds because of it.
+      if (options.touch !== false) session.time.updated = Date.now();
       await writeJSON(key, session);
       await this.updateSessionIndex(session, sessionPath, options);
     }));
@@ -1309,6 +1313,23 @@ export class SessionManager {
     };
     visit(rootSessionID);
     return ordered;
+  }
+
+  /**
+   * Stamp `reviewedAt` on an ended session the reviewer has opened. Idempotent:
+   * the first look is the one that counts, so a later visit never moves it.
+   * Returns null when the session does not exist.
+   */
+  async markSessionReviewed(sessionID: string): Promise<{ reviewedAt: number; alreadyReviewed: boolean } | null> {
+    const entries = await this.readSessionEntries();
+    const entry = entries.find((candidate) => candidate.session.id === sessionID);
+    if (!entry) return null;
+    if (entry.session.reviewedAt !== undefined) {
+      return { reviewedAt: entry.session.reviewedAt, alreadyReviewed: true };
+    }
+    const reviewedAt = Date.now();
+    await this.updateSessionAtPath(entry.path, { reviewedAt }, { touch: false });
+    return { reviewedAt, alreadyReviewed: false };
   }
 
   async stopSessionTree(

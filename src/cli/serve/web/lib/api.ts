@@ -496,6 +496,13 @@ export function postSessionResume(sessionId: string, token: string | undefined, 
 // Roll an ended (error/completed) session back to its suspended approval gate so
 // the reviewer can retry a resume that failed downstream. No resumeToken needed:
 // the view token authorizes it, and the gate keeps its original token.
+/** The session page opened on an ended run: stamp it reviewed (idempotent). */
+export function postSessionReviewed(sessionId: string, token: string | undefined, body: {
+  project?: string;
+} = {}): Promise<{ sessionId: string; reviewedAt: number; alreadyReviewed: boolean }> {
+  return postJson(withToken(`/sessions/${encodeURIComponent(sessionId)}/reviewed`, token), body);
+}
+
 export function postSessionReopen(sessionId: string, token: string | undefined, body: {
   project?: string;
 } = {}): Promise<{ sessionId: string; status: string }> {
@@ -1235,6 +1242,8 @@ export interface SessionsPayload {
   trigger?: string;
   approval?: string;
   q?: string;
+  metric?: string;
+  results?: string;
   counts: SessionStatusCounts;
   errors: Array<{ projectId: string; message: string }>;
   nextCursor?: string;
@@ -1255,6 +1264,10 @@ export function fetchSessions(options: {
   detail?: 'feed' | 'agents' | undefined;
   /** Mock/test runs are excluded server-side by default; 'include' mixes them in, 'only' shows just them. */
   mock?: 'include' | 'only' | undefined;
+  /** Only runs that recorded this record_metric name. */
+  metric?: string | undefined;
+  /** 'unseen': finished runs with results no reviewer has opened yet. */
+  results?: 'unseen' | undefined;
 } = {}): Promise<SessionsPayload> {
   return getJson('/api/sessions', {
     agent: options.agent,
@@ -1268,6 +1281,8 @@ export function fetchSessions(options: {
     cursor: options.cursor,
     detail: options.detail,
     mock: options.mock,
+    metric: options.metric,
+    results: options.results,
   });
 }
 
@@ -1312,6 +1327,8 @@ export function sessionsEventUrl(options: {
   limit?: number | undefined;
   detail?: 'feed' | 'agents' | undefined;
   mock?: 'include' | 'only' | undefined;
+  metric?: string | undefined;
+  results?: 'unseen' | undefined;
 } = {}): string {
   const url = new URL('/sessions/events', location.origin);
   if (options.agent !== undefined) url.searchParams.set('agent', options.agent);
@@ -1324,5 +1341,7 @@ export function sessionsEventUrl(options: {
   if (options.limit !== undefined) url.searchParams.set('limit', String(options.limit));
   if (options.detail !== undefined) url.searchParams.set('detail', options.detail);
   if (options.mock !== undefined) url.searchParams.set('mock', options.mock);
+  if (options.metric !== undefined) url.searchParams.set('metric', options.metric);
+  if (options.results !== undefined) url.searchParams.set('results', options.results);
   return url.toString();
 }

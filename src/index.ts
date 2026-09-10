@@ -1175,7 +1175,7 @@ async function runInternalWorker() {
 
   interface ExecuteRequest {
     id: string;
-    type: 'execute' | 'resume' | 'continue-session' | 'finish-cascade' | 'retry-cascade' | 'approval-info' | 'session-status' | 'create-preparing-session' | 'fail-preparing-session' | 'session-context' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'session-final-responses' | 'stop-session' | 'reopen-gate' | 'invalidate-lists' | 'reset-provider-plugins' | 'release';
+    type: 'execute' | 'resume' | 'continue-session' | 'finish-cascade' | 'retry-cascade' | 'approval-info' | 'session-status' | 'create-preparing-session' | 'fail-preparing-session' | 'session-context' | 'sweep-expired' | 'reconcile-orphans' | 'list-approvals' | 'list-sessions' | 'session-final-responses' | 'stop-session' | 'mark-session-reviewed' | 'reopen-gate' | 'invalidate-lists' | 'reset-provider-plugins' | 'release';
     agentPath?: string;
     /** In-memory agent definition. Fresh execute only; never persisted as a file. */
     agentContent?: string;
@@ -1430,8 +1430,13 @@ async function runInternalWorker() {
 
   // Reviewer's "reviewed, wave it off" stamp on an ended failed run; surfaced
   // so needs-attention lists drop the row and the UI hides the Discard action.
-  function dismissedAtField(session: { dismissedAt?: number }) {
-    return typeof session.dismissedAt === 'number' ? { dismissedAt: session.dismissedAt } : {};
+  // reviewedAt rides along: the reviewer opened the run's page, so "results
+  // you haven't seen" surfaces drop it the same way.
+  function dismissedAtField(session: { dismissedAt?: number; reviewedAt?: number }) {
+    return {
+      ...(typeof session.dismissedAt === 'number' ? { dismissedAt: session.dismissedAt } : {}),
+      ...(typeof session.reviewedAt === 'number' ? { reviewedAt: session.reviewedAt } : {}),
+    };
   }
 
   // Showcase mode: mock runs stay fully functional (cheap, no real side effects)
@@ -4200,6 +4205,7 @@ async function runInternalWorker() {
             name: session.agent.name,
             ...(session.agent.description && { description: session.agent.description }),
             ...(session.agent.filePath && { filePath: session.agent.filePath }),
+            ...(session.agent.isSubAgent && { isSubAgent: true }),
           },
           status: session.status,
           trigger: session.trigger ?? 'manual',
@@ -4655,6 +4661,36 @@ async function runInternalWorker() {
     }
   }
 
+  async function markSessionReviewed(req: ExecuteRequest) {
+    try {
+      if (!req.sessionId) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'SESSION_REQUIRED', message: 'Missing sessionId for review request' },
+        };
+      }
+      await initStorage(req.projectRoot);
+      const sessionManager = new SessionManager();
+      const result = await sessionManager.markSessionReviewed(req.sessionId);
+      if (!result) {
+        return {
+          id: req.id,
+          success: false,
+          error: { code: 'SESSION_NOT_FOUND', message: `Session not found: ${req.sessionId}` },
+        };
+      }
+      if (!result.alreadyReviewed) invalidateListCaches(req.projectRoot);
+      return { id: req.id, success: true, ...result };
+    } catch (err) {
+      return {
+        id: req.id,
+        success: false,
+        error: { code: 'MARK_REVIEWED_ERROR', message: (err as Error).message },
+      };
+    }
+  }
+
   async function stopSession(req: ExecuteRequest) {
     try {
       if (!req.sessionId) {
@@ -5068,6 +5104,8 @@ async function runInternalWorker() {
         dispatchOperation(request, () => getSessionFinalResponses(request));
       } else if (request.type === 'stop-session') {
         dispatchOperation(request, () => stopSession(request));
+      } else if (request.type === 'mark-session-reviewed') {
+        dispatchOperation(request, () => markSessionReviewed(request));
       } else if (request.type === 'reopen-gate') {
         dispatchOperation(request, () => reopenGate(request));
       } else if (request.type === 'release') {

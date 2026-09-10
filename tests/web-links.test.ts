@@ -16,21 +16,34 @@ describe('agent detail links', () => {
     expect(agentDetailViewState('?tab=source&onboarding=first-agent')).toEqual({
       tab: 'source',
       tutorialStep: 'run',
+      metric: undefined,
     });
     expect(agentDetailViewState('?tab=source&onboarding=first-agent-schedule')).toEqual({
       tab: 'source',
       tutorialStep: 'schedule',
+      metric: undefined,
     });
   });
 
   it('opens later created agents on Source without an onboarding spotlight', () => {
     const href = agentDetailHref('my-agents', 'agents/daily.agentuse', { tab: 'source' });
     expect(href).toBe('/agents/my-agents/agents/daily.agentuse?tab=source');
-    expect(agentDetailViewState('?tab=source')).toEqual({ tab: 'source', tutorialStep: null });
+    expect(agentDetailViewState('?tab=source')).toEqual({ tab: 'source', tutorialStep: null, metric: undefined });
   });
 
   it('falls back to Recent jobs for an unknown tab', () => {
-    expect(agentDetailViewState('?tab=unknown')).toEqual({ tab: 'jobs', tutorialStep: null });
+    expect(agentDetailViewState('?tab=unknown')).toEqual({ tab: 'jobs', tutorialStep: null, metric: undefined });
+  });
+
+  it('carries a Home results tile into the jobs tab as a metric filter', () => {
+    const href = agentDetailHref('my-agents', 'agents/daily.agentuse', { tab: 'jobs', metric: 'linkedin_posts_scheduled' });
+    expect(href).toBe('/agents/my-agents/agents/daily.agentuse?tab=jobs&metric=linkedin_posts_scheduled');
+    expect(agentDetailViewState('?tab=jobs&metric=linkedin_posts_scheduled')).toEqual({
+      tab: 'jobs',
+      tutorialStep: null,
+      metric: 'linkedin_posts_scheduled',
+    });
+    expect(agentDetailViewState('?metric=%20').metric).toBeUndefined();
   });
 });
 

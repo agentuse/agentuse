@@ -11,6 +11,8 @@ export type AgentTutorialStep = 'run' | 'schedule' | null;
 export interface AgentDetailLinkOptions {
   tab?: AgentDetailTab;
   spotlightRun?: boolean;
+  /** Narrow the jobs tab to runs that recorded this record_metric name. */
+  metric?: string;
 }
 
 /** Build the deep link a list row points at: /agents/<project>/<runPath>. */
@@ -24,13 +26,15 @@ export function agentDetailHref(
   const params = new URLSearchParams();
   if (options.tab) params.set('tab', options.tab);
   if (options.spotlightRun) params.set('onboarding', 'first-agent');
+  if (options.metric) params.set('metric', options.metric);
   const query = params.toString();
   return query ? `${path}?${query}` : path;
 }
 
 /** Read the agent-detail entry state from a deep link. */
-export function agentDetailViewState(search: string): { tab: AgentDetailTab; tutorialStep: AgentTutorialStep } {
+export function agentDetailViewState(search: string): { tab: AgentDetailTab; tutorialStep: AgentTutorialStep; metric: string | undefined } {
   const params = new URLSearchParams(search);
+  const metric = params.get('metric')?.trim() || undefined;
   const requested = params.get('tab');
   const tab: AgentDetailTab = requested === 'learnings' || requested === 'revisions' || requested === 'source' ? requested : 'jobs';
   const onboarding = params.get('onboarding');
@@ -39,7 +43,7 @@ export function agentDetailViewState(search: string): { tab: AgentDetailTab; tut
     : onboarding === 'first-agent-schedule'
       ? 'schedule'
       : null;
-  return { tab, tutorialStep };
+  return { tab, tutorialStep, metric };
 }
 
 /** Stable onboarding destination used across provider setup reloads and app

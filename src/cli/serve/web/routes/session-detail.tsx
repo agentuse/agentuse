@@ -11,7 +11,7 @@ import { AgentRevisionLauncher, AgentRevisionSessionPanel, type AgentRevisionSes
 import { ChangesetSessionPanel } from '../components/changeset-session-panel';
 import { SessionMenu } from '../components/session-menu';
 import { Loading } from '../components/loading';
-import { postSessionDecision, postSessionContinue, postSessionResume, postSessionStop, postSessionReopen, fetchSessionArtifacts, fetchApprovals, type SessionArtifact } from '../lib/api';
+import { postSessionDecision, postSessionContinue, postSessionResume, postSessionStop, postSessionReopen, postSessionReviewed, fetchSessionArtifacts, fetchApprovals, type SessionArtifact } from '../lib/api';
 import { syncAppBadge } from '../lib/badge';
 import { writeClipboardText } from '../lib/clipboard';
 import { useApprovalStream } from '../hooks/use-approval-stream';
@@ -1014,6 +1014,18 @@ export default function SessionDetail() {
   if (approval !== null && firstViewEndedRef.current === null) {
     firstViewEndedRef.current = ended;
   }
+  // Opening a finished run is reviewing it: stamp it so Home's "results you
+  // haven't opened" and the unseen marks drop it. Once per page load; the
+  // server ignores repeats. Best-effort, a miss only leaves the mark on.
+  const reviewedPostedRef = useRef(false);
+  useEffect(() => {
+    if (reviewedPostedRef.current) return;
+    if (approval?.sessionStatus !== 'completed') return;
+    reviewedPostedRef.current = true;
+    void postSessionReviewed(sessionId, token, projectId ? { project: projectId } : {}).catch(() => {
+      // Nothing to show the reader; the run simply stays marked new.
+    });
+  }, [approval?.sessionStatus, sessionId, token, projectId]);
   // Summary-first (issue #150): outcome + artifacts lead, transcript collapses.
   // Only for sessions that arrived already ended; live views keep feed-first
   // behavior for their whole lifetime (see firstViewEndedRef).

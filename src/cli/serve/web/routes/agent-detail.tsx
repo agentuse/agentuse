@@ -13,7 +13,8 @@ import { AgentLearningsPanel, StrandedLearningsBanner } from '../components/lear
 import { AgentRevisionLauncher, AgentRevisionsPanel } from '../components/agent-revision';
 import { RunCustomDialog } from '../components/run-custom-dialog';
 import { LogContent } from '../components/content';
-import { formatApprovalTime, formatRelativeTime, displayStatusLabel, errorText, isEndedStatus } from '../lib/format';
+import { ResultChips, isUnseenResultsRow } from '../components/session-results';
+import { humanizeMetric, formatApprovalTime, formatRelativeTime, displayStatusLabel, errorText, isEndedStatus } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 import { agentDetailViewState, type AgentDetailTab } from '../lib/links';
 import { isExecutingSessionStatus } from '../../../../session/status';
@@ -239,8 +240,9 @@ export function RecentJobRow(props: { row: SessionRow }) {
   const live = isExecutingSessionStatus(row.status) || row.subagentActive === true;
   const statusClass = row.status === 'preparing' ? 'preparing' : live ? 'running' : status;
   const when = row.updatedAt || row.createdAt;
+  const unseen = isUnseenResultsRow(row);
   return (
-    <article class={`job-row${live ? ' live' : ''}`} title={row.sessionId}>
+    <article class={`job-row${live ? ' live' : ''}${unseen ? ' unseen' : ''}`} title={row.sessionId}>
       {/* The outcome leads, and its link stretches over the whole row so the
           text you read is the thing you click. */}
       <a class="job-row-link" href={href}>
@@ -248,6 +250,9 @@ export function RecentJobRow(props: { row: SessionRow }) {
         <span class="job-row-headline">{headline}</span>
       </a>
       {detail && <p class="job-row-detail">{detail}</p>}
+      {row.results && row.results.length > 0 && (
+        <div class="job-row-results"><ResultChips results={row.results} unseen={unseen} /></div>
+      )}
       <div class="job-row-meta">
         <span class="job-row-status">{row.subagentActive ? 'running · subagent' : status}</span>
         <span class="job-row-sep" aria-hidden="true">·</span>
@@ -270,15 +275,22 @@ export function revisionContextSession(rows: SessionRow[], project: string): Ses
   return rows.find((row) => row.project === project && (isEndedStatus(row.status) || row.status === 'suspended')) ?? null;
 }
 
-function RecentJobs(props: { agentId: string; project: string; onRevisionSession?: (row: SessionRow | null) => void }) {
+function RecentJobs(props: {
+  agentId: string;
+  project: string;
+  /** From a Home results tile: only runs that recorded this metric. */
+  metric?: string | undefined;
+  onRevisionSession?: (row: SessionRow | null) => void;
+}) {
   const { data, error, loading } = useFetch(
-    `agent-jobs:${props.project}:${props.agentId}`,
-    () => fetchSessions({ agent: props.agentId, window: '30d', detail: 'feed' }),
+    `agent-jobs:${props.project}:${props.agentId}:${props.metric ?? ''}`,
+    () => fetchSessions({ agent: props.agentId, window: '30d', detail: 'feed', metric: props.metric }),
     { refreshMs: 15_000 }
   );
   const projectRows = (data?.sessions ?? []).filter((r) => r.project === props.project);
   const rows = projectRows.slice(0, 8);
-  const seeAll = `/sessions?agent=${encodeURIComponent(props.agentId)}`;
+  const seeAll = `/sessions?agent=${encodeURIComponent(props.agentId)}${props.metric ? `&metric=${encodeURIComponent(props.metric)}` : ''}`;
+  const unseenCount = projectRows.filter(isUnseenResultsRow).length;
 
   // Reported only once the answer is known, so the header does not offer a
   // source-only revision for a moment before the run history arrives.
@@ -290,14 +302,30 @@ function RecentJobs(props: { agentId: string; project: string; onRevisionSession
   return (
     <section class="group">
       <div class="group-title">
-        <span class="count">last 30 days</span>
+        <span class="count">
+          {props.metric ? <>runs that recorded <strong>{humanizeMetric(props.metric)}</strong> · last 30 days</> : 'last 30 days'}
+          {unseenCount > 0 && <> · <span class="unseen-count">{unseenCount} with results not opened yet</span></>}
+        </span>
         <span class="rule" />
+        {props.metric && (
+          <a class="see-all" href={window.location.pathname}>all jobs →</a>
+        )}
         <a class="see-all" href={seeAll}>view all →</a>
       </div>
       <div class="panel">
         {loading && !data && <Loading label="Loading jobs…" />}
         {error && <div class="empty err">Failed to load jobs: {error.message}</div>}
-        {data && rows.length === 0 && <div class="empty">No jobs in the last 30 days.</div>}
+        {data && rows.length === 0 && (
+          <div class="empty">
+            {props.metric
+              ? <>
+                  No top-level runs of this agent recorded {humanizeMetric(props.metric)} in the last 30 days.
+                  When it works as a delegated sub-agent, its results roll up to the run that delegated it.{' '}
+                  <a href={`/sessions?metric=${encodeURIComponent(props.metric)}`}>See every run that recorded it →</a>
+                </>
+              : 'No jobs in the last 30 days.'}
+          </div>
+        )}
         {rows.length > 0 && <div class="job-list">{rows.map((r) => <RecentJobRow key={r.sessionId} row={r} />)}</div>}
       </div>
     </section>
@@ -659,7 +687,7 @@ export default function AgentDetail() {
             </div>
 
             <div id="panel-jobs" class="tab-panel" role="tabpanel" aria-labelledby="tab-jobs" hidden={tab !== 'jobs'}>
-              <RecentJobs agentId={agentIdFromPath(data.path)} project={data.projectId} onRevisionSession={setRevisionSession} />
+              <RecentJobs agentId={agentIdFromPath(data.path)} project={data.projectId} metric={entryState.metric} onRevisionSession={setRevisionSession} />
             </div>
             <div id="panel-learnings" class="tab-panel" role="tabpanel" aria-labelledby="tab-learnings" hidden={tab !== 'learnings'}>
               <LearningsGroup project={data.projectId} runPath={data.runPath} hoistStranded={setStrandedAt} />
