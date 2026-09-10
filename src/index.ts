@@ -8,6 +8,7 @@ import { isMockMode, resolveMockApprovalDecision, resolveMockScope } from './run
 import { extractToolIntent, withoutToolIntent } from './runner/tool-intent';
 import { LIVE_OUTPUT_METADATA_KEY } from './tools/types';
 import { composeSubagentResult, formatOutcomeLine, normalizeHeadline, stripLeadingOutcomeLine, REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL } from './tools/report-outcome';
+import { gateRound } from './session/gate-rounds';
 import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, descendToLeafGate, findStaleCascadeChild, describeStaleCascade, isRecoverableCascadeFailure, isFinishableStale, loadStoredSubagentResult, CASCADE_ORPHANED_CODE, CASCADE_RECOVERABLE_CODE, findRootSessionId, MAX_CASCADE_DEPTH } from './runner/subagent-cascade';
 import { currentProcessRef } from './utils/process-info';
 import { withOwnershipLock } from './utils/ownership-lock';
@@ -1359,6 +1360,9 @@ async function runInternalWorker() {
     risk?: string;
     /** The gate offers a pick-among-options menu; one-tap approve is not enough. */
     hasOptions?: boolean;
+    /** Which look this is for the reviewer: one more than the earlier gates in
+     *  this session a human answered with a comment. Omitted on round one. */
+    round?: number;
     suspendedAt?: number;
     expiresAt?: number;
     createdAt?: number;
@@ -3622,6 +3626,7 @@ async function runInternalWorker() {
   const approvalPartCache = new Map<string, {
     updatedAt: number;
     part: ToolPart | null;
+    round: number;
   }>();
   const APPROVAL_INFO_CACHE_TTL_MS = 10_000;
   // Non-terminal (running/suspended) responses are reused while their change
@@ -3981,11 +3986,13 @@ async function runInternalWorker() {
         const cacheKey = approvalPartCacheKey(req.projectRoot, session, agentId);
         const updatedAt = session.time.updated;
         const cached = approvalPartCache.get(cacheKey);
-        let approvalPart = cached && cached.updatedAt === updatedAt
-          ? cached.part
-          : await sessionManager.getLatestApprovalPart(session.id, agentId);
+        const gate = cached && cached.updatedAt === updatedAt
+          ? cached
+          : await sessionManager.getLatestApprovalGate(session.id, agentId);
+        let approvalPart = gate?.part ?? null;
+        let round = gate?.round ?? 1;
         if (!cached || cached.updatedAt !== updatedAt) {
-          boundedCacheSet(approvalPartCache, cacheKey, { updatedAt, part: approvalPart }, MAX_CACHED_APPROVAL_PARTS);
+          boundedCacheSet(approvalPartCache, cacheKey, { updatedAt, part: approvalPart, round }, MAX_CACHED_APPROVAL_PARTS);
         }
         // Cascade: a root parked on a delegated child's gate (subagent_wait) has no
         // await_human part of its own. Descend to the leaf and surface its gate here,
@@ -3999,6 +4006,7 @@ async function runInternalWorker() {
             const leaf = await descendToLeafGate(sessionManager, childId);
             if (leaf) {
               approvalPart = leaf.approvalPart;
+              round = gateRound(leaf.parts);
               originAgentName = leaf.session.agent.name;
               originAgentFilePath = leaf.session.agent.filePath;
             } else {
@@ -4099,6 +4107,7 @@ async function runInternalWorker() {
           ...(typeof input.summary === 'string' && { summary: input.summary }),
           ...(typeof input.risk === 'string' && { risk: input.risk }),
           ...(normalizeApprovalOptions(input.options) && { hasOptions: true }),
+          ...(round > 1 && { round }),
           ...(suspendedAt !== undefined && { suspendedAt }),
           ...(typeof resumePayload.expiresAt === 'number' && { expiresAt: resumePayload.expiresAt }),
           ...(typeof session.time?.created === 'number' && { createdAt: session.time.created }),

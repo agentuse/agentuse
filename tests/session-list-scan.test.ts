@@ -369,6 +369,24 @@ describe('session list scanning', () => {
 
       const approvalPart = await new SessionManager().getLatestApprovalPart(sessionId, 'agents/review');
       expect(approvalPart?.id).toBe(approvalPartId);
+
+      // Two earlier gates a human answered with a comment make this round 3.
+      // A pre-review comment and a plain approve do not count as rounds.
+      const earlier = (offset: number, output: Record<string, unknown>) => writeFile(
+        join(partDir, `${ulid(created - offset)}.json`),
+        JSON.stringify({
+          id: ulid(created - offset), sessionID: sessionId, messageID: messageId, type: 'tool', tool: 'await_human',
+          state: { status: 'completed', input: { prompt: 'Approve?' }, output, time: { start: 1, end: 2 } },
+        }),
+        'utf-8'
+      );
+      await earlier(10, { status: 'comment', comment: 'tighter', reviewer: { username: 'leon' } });
+      await earlier(20, { status: 'commented', comment: 'shorter' });
+      await earlier(30, { status: 'comment', comment: 'judge says no', source: 'pre-review' });
+      await earlier(40, { status: 'approve' });
+      const gate = await new SessionManager().getLatestApprovalGate(sessionId, 'agents/review');
+      expect(gate?.part.id).toBe(approvalPartId);
+      expect(gate?.round).toBe(3);
     } finally {
       if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
       else process.env.XDG_DATA_HOME = originalXdg;

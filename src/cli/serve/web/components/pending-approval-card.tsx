@@ -23,7 +23,8 @@ function waitingTone(ms: number): 'fresh' | 'aging' | 'stale' {
 
 /** A round-two gate: the agent is re-presenting work after the reviewer's
  *  comment. That is a quick re-check, not a fresh read, and the reviewer
- *  wants to know before opening it. Heuristic on the agent's own wording. */
+ *  wants to know before opening it. Heuristic on the agent's own wording,
+ *  used only when the server did not count the rounds (`row.round`). */
 const REVISED_RE = /\b(revised|re-?presented|rebuilt around your|your (comment|edit|feedback)|round 2)\b/i;
 export function isRevisedGate(row: ApprovalRow): boolean {
   return REVISED_RE.test(row.summary || row.prompt || '');
@@ -91,7 +92,9 @@ export function PendingApprovalRow(props: {
       )}
       <span class="pending-row-text">
         {row.hasOptions && <span class="pending-row-tag">pick</span>}
-        {isRevisedGate(row) && <span class="pending-row-tag revised">revised</span>}
+        {row.round !== undefined && row.round > 1
+          ? <span class="pending-row-tag revised" title={`Round ${row.round}: you commented ${row.round - 1} time${row.round === 2 ? '' : 's'} on this gate`}>round {row.round}</span>
+          : isRevisedGate(row) && <span class="pending-row-tag revised">revised</span>}
         {text}
       </span>
       {risk && <span class="pending-row-risk">{risk}</span>}

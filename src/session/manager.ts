@@ -10,6 +10,7 @@ import { mapLimit, Semaphore } from '../utils/concurrency';
 import { dehydrateSnapshotMedia, rehydrateSnapshotMedia } from './media-cache';
 import { computeSubagentActiveIds } from './subagent-active';
 import { isExecutingSessionStatus, isLiveSessionStatus } from './status';
+import { isHumanCommentDecision } from './gate-rounds';
 import type {
   SessionInfo,
   SessionTrigger,
@@ -1164,15 +1165,33 @@ export class SessionManager {
    * large session stores make repeatedly loading messages noticeably slow.
    */
   async getLatestApprovalPart(sessionID: string, agentId: string): Promise<ToolPart | null> {
+    return (await this.getLatestApprovalGate(sessionID, agentId))?.part ?? null;
+  }
+
+  /**
+   * The latest await_human part plus which round it is: one more than the
+   * number of earlier gates in this session a human answered with a comment.
+   * A reviewer scanning the approvals list wants to know "this is the third
+   * time I am looking at this" before opening it. Automated verdicts
+   * (pre-review, gate-preflight, the verify judge) are not rounds.
+   */
+  async getLatestApprovalGate(sessionID: string, agentId: string): Promise<{ part: ToolPart; round: number } | null> {
     const sessionPath = await this.resolveSessionDir(sessionID, agentId);
     const partKeys = await this.listPartKeysShallow(sessionPath);
 
+    let latest: ToolPart | null = null;
+    let round = 1;
     for (const key of partKeys) {
       const part = await this.readApprovalToolPart(key);
-      if (part) return part;
+      if (!part) continue;
+      if (!latest) {
+        latest = part;
+        continue;
+      }
+      if (isHumanCommentDecision(part)) round += 1;
     }
 
-    return null;
+    return latest ? { part: latest, round } : null;
   }
 
   /** One-stat live-view change probe. Nested transcript writes touch the
@@ -1728,3 +1747,4 @@ export class SessionManager {
     return this.fullPath;
   }
 }
+

@@ -488,6 +488,18 @@ describe('PendingApprovalRow', () => {
     expect(html).toContain('pending-row-risk">Auto-publishes Monday.');
   });
 
+  it('shows the server-counted round instead of the revised heuristic', () => {
+    const now = Date.now();
+    const html = renderToString(<PendingApprovalGroups now={now} rows={[
+      { ...base, sessionId: 'r3', summary: 'Same slate, revised as instructed.', round: 3, suspendedAt: now - 60_000 },
+      { ...base, sessionId: 'r1', summary: 'Fresh gate.', round: 1, suspendedAt: now - 30_000 },
+    ]} />);
+    expect(html).toContain('>round 3<');
+    expect(html).toContain('you commented 2 times');
+    expect(html).not.toContain('>revised<');
+    expect(html.match(/pending-row-tag revised/g)).toHaveLength(1);
+  });
+
   it('orders home pending gates newest first and leaves missing timestamps last', () => {
     const rows = [
       { ...base, sessionId: 'old', suspendedAt: 100 },

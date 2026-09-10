@@ -53,6 +53,9 @@ export interface ApprovalSummary {
   risk?: string;
   /** The gate offers a pick-among-options menu; one-tap approve is not enough. */
   hasOptions?: boolean;
+  /** Which look this is for the reviewer: one more than the earlier gates in
+   *  this session a human answered with a comment. Omitted on round one. */
+  round?: number;
   suspendedAt?: number;
   expiresAt?: number;
   createdAt?: number;
