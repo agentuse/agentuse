@@ -958,28 +958,37 @@ export default function SessionDetail() {
   // already are is noise, and the up-arrow follows the same rule at the top.
   const [gateInView, setGateInView] = useState(false);
   useEffect(() => {
-    if (!gateOwed || typeof IntersectionObserver === 'undefined') {
+    if (!gateOwed) {
       setGateInView(false);
       return;
     }
-    let observer: IntersectionObserver | undefined;
+    // The question card is itself over a thousand pixels tall, so "any sliver
+    // visible" hides the button while the reviewer is still far from the
+    // question. Track the card's top edge instead: in view means the heading
+    // sits between the sticky bar and the lower part of the viewport.
     let raf = 0;
-    const attach = () => {
+    const measure = () => {
+      raf = 0;
       const target = actionableGateTarget();
       if (!target) {
-        raf = requestAnimationFrame(attach);
+        setGateInView(false);
         return;
       }
-      observer = new IntersectionObserver(
-        ([entry]) => setGateInView(Boolean(entry?.isIntersecting)),
-        { rootMargin: `-${stickyHeaderOffset()}px 0px 0px 0px`, threshold: 0 }
-      );
-      observer.observe(target);
+      const top = target.getBoundingClientRect().top;
+      const upper = stickyHeaderOffset() - 24;
+      const lower = window.innerHeight * 0.75;
+      setGateInView(top >= upper && top <= lower);
     };
-    attach();
+    const schedule = () => {
+      if (raf === 0) raf = requestAnimationFrame(measure);
+    };
+    schedule();
+    window.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
     return () => {
-      cancelAnimationFrame(raf);
-      observer?.disconnect();
+      if (raf !== 0) cancelAnimationFrame(raf);
+      window.removeEventListener('scroll', schedule);
+      window.removeEventListener('resize', schedule);
     };
   }, [gateOwed, logsVersion]);
   const canJumpToGate = gateOwed && !gateInView;
