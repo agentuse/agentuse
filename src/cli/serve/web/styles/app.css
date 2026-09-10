@@ -10774,21 +10774,3 @@ html[data-page="draft-panel"] .app-route {
 }
 .page-sessions .sessions-scope-clear:hover { color: var(--fg); }
 
-/* Home: the "finished with results you haven't opened" group. */
-.page-home .results-surface { border-color: var(--green-border); }
-.page-home .attn-group-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 8px 18px; border-bottom: 1px solid var(--line);
-  font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted);
-  text-transform: uppercase; letter-spacing: var(--tracking-caps);
-}
-.page-home .attn-group-link { color: var(--muted); text-decoration: none; text-transform: none; letter-spacing: 0; }
-.page-home .attn-group-link:hover { color: var(--fg); }
-.page-home .attn-result-line {
-  font-family: var(--sans); font-size: var(--font-size-caption); color: var(--muted);
-  flex: 1 1 auto; min-width: 0;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-@media (max-width: 560px) {
-  .page-home .attn-run .attn-result-line { grid-column: 2; grid-row: 2; white-space: normal; }
-}

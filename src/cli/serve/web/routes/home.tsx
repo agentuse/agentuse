@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { useCountUp } from '../hooks/use-count-up';
 import type { ApprovalRow, ProjectInfo, SerializedSchedule, SessionRow, StoreRowsPayload } from '../lib/api';
-import { fetchInfo, fetchAgents, fetchSchedules, fetchSessions, fetchStoreRows, postSessionStop } from '../lib/api';
+import { fetchInfo, fetchAgents, fetchSchedules, fetchStoreRows, postSessionStop } from '../lib/api';
 import { agentDetailHref } from '../lib/links';
-import { resultsHeadline } from '../components/session-results';
 import { useFetch } from '../hooks/use-fetch';
 import { useHomeSections } from '../hooks/use-home-sections';
 import { useMetricPrefs, type MetricDisplay } from '../hooks/use-metric-prefs';
@@ -125,23 +124,6 @@ function WorkingNow(props: { running: SessionRow[] }) {
   );
 }
 
-/** A finished run worth a look: agent, what it recorded, when. Opening it is
- *  what clears it, so there is no ✕ here. */
-function UnseenResultRow(props: { row: SessionRow }) {
-  const { row } = props;
-  const at = row.updatedAt || row.createdAt;
-  const agentName = displayAgentName(row.agent.name, row.agent.filePath, row.agent.id);
-  const headline = resultsHeadline(row.results) ?? 'Recorded results';
-  return (
-    <a class="attn-run attn-result" href={`/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`}>
-      <span class="feed-dot done" aria-hidden="true"></span>
-      <span class="attn-agent">{agentName}</span>
-      <span class="attn-result-line">{headline}</span>
-      <span class="feed-time" title={formatApprovalTime(at)}>{formatRelativeTime(at)} · open →</span>
-    </a>
-  );
-}
-
 function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => void; label?: string }) {
   const { row } = props;
   const at = row.updatedAt || row.createdAt;
@@ -260,18 +242,13 @@ function AttentionSection(props: {
   pending: ApprovalRow[];
   failed: SessionRow[];
   stranded: SessionRow[];
-  /** Finished runs with results nobody has opened yet. */
-  unseen: SessionRow[];
   onDismissFailed: (row: SessionRow) => void;
   onDismissAll: (rows: SessionRow[], onProgress: (done: number) => void) => Promise<number>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [pendingOpen, setPendingOpen] = useState(false);
-  const [unseenOpen, setUnseenOpen] = useState(false);
-  const { pending, failed, stranded, unseen } = props;
-  const total = pending.length + failed.length + stranded.length + unseen.length;
-  const shownUnseen = unseenOpen ? unseen : unseen.slice(0, ATTENTION_ROWS);
-  const foldedUnseen = unseen.length - shownUnseen.length;
+  const { pending, failed, stranded } = props;
+  const total = pending.length + failed.length + stranded.length;
   const now = useNow(pending.length > 0);
   const ordered = pendingNewestFirst(pending);
   const shownPending = pendingOpen ? ordered : ordered.slice(0, PENDING_ROWS);
@@ -316,20 +293,6 @@ function AttentionSection(props: {
                     onDismiss={props.onDismissFailed}
                   />
                 ))}
-              </div>
-            )}
-            {unseen.length > 0 && (
-              <div class="surface results-surface">
-                <div class="attn-group-head">
-                  <span>Finished with results you haven't opened</span>
-                  <a class="attn-group-link" href="/sessions?results=unseen&window=7d">all {unseen.length} →</a>
-                </div>
-                {shownUnseen.map((row) => <UnseenResultRow key={`${row.project}:${row.sessionId}`} row={row} />)}
-                {(foldedUnseen > 0 || unseenOpen) && (
-                  <button type="button" class="attn-more pending-more" onClick={() => setUnseenOpen((on) => !on)}>
-                    {unseenOpen ? 'show fewer' : `show all ${unseen.length} →`}
-                  </button>
-                )}
               </div>
             )}
             {(folded > 0 || expanded || reviewable.length > 1) && (
@@ -869,18 +832,6 @@ export default function Home() {
     return best;
   }, [schedules.data]);
 
-  // Finished runs that recorded results and that nobody has opened. The runs
-  // people miss are exactly these: no gate, no failure, just a result sitting
-  // in a long list. 7 days, not 24h, because "missed" means it is already old.
-  const unseenResults = useFetch(
-    'home-unseen-results',
-    () => fetchSessions({ results: 'unseen', window: '7d', limit: 50, detail: 'feed' }),
-    { refreshMs: 30_000, enabled: primaryReady }
-  );
-  const unseenRows = useMemo(() => (unseenResults.data?.sessions ?? [])
-    .filter((s) => s.trigger !== 'onboarding')
-    .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)), [unseenResults.data]);
-
   // Agent-recorded business metrics (reserved "metrics" store). Missing store
   // is normal and returns empty rows, so the section simply doesn't render.
   // Visibility probes the widest window so picking a quiet 1-day view leaves
@@ -1006,7 +957,7 @@ export default function Home() {
 
   // Header sentence + stat line. "Waiting on you" counts what the section of
   // the same name lists: pending gates, recent failures, stranded runs.
-  const waitingOnYou = liveHome.pendingRows.length + failedRecent.length + strandedRecent.length + unseenRows.length;
+  const waitingOnYou = liveHome.pendingRows.length + failedRecent.length + strandedRecent.length;
   const runs24h = operationalSessions.length;
   // Crashes only, matching the /sessions?status=error filter this stat links to.
   // A run the agent declared incomplete is listed under its own filter there.
@@ -1057,7 +1008,7 @@ export default function Home() {
         {sections.isVisible('running') && running.length > 0 && <WorkingNow running={running} />}
 
         {sections.isVisible('attention') && (
-          <AttentionSection pending={liveHome.pendingRows} failed={failedRecent} stranded={strandedRecent} unseen={unseenRows} onDismissFailed={dismissFailed} onDismissAll={dismissAll} />
+          <AttentionSection pending={liveHome.pendingRows} failed={failedRecent} stranded={strandedRecent} onDismissFailed={dismissFailed} onDismissAll={dismissAll} />
         )}
 
         {sections.isVisible('results') && hasAnyMetrics && (
