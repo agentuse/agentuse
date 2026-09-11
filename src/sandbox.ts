@@ -13,6 +13,7 @@ import type { ResolvedMount } from './tools/path-validator.js';
 import { logger } from './utils/logger';
 import { durationSecondsSchema } from './utils/duration';
 import { getGlobalConfigDir } from './utils/global-config';
+import { toErrorMessage } from './utils/error-message';
 
 // ── Schema ──────────────────────────────────────────────────────────
 
@@ -555,7 +556,7 @@ export function createSandboxTools(
         } catch (error) {
           return {
             stdout: '',
-            stderr: error instanceof Error ? error.message : String(error),
+            stderr: toErrorMessage(error),
             exitCode: 124,
           };
         }

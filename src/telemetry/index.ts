@@ -19,6 +19,7 @@ import {
 } from './id';
 import type { ExecutionResult, StartupError, ServerStartConfig, ServerShutdownStats, AddCommandResult, TimeoutUnitError, WebUITelemetryEvent } from './types';
 import type { ToolCallTrace } from '../plugin/types';
+import { toErrorMessage } from '../utils/error-message';
 export { aggregateToolCalls, configuredFeatureUsage, countSteps, emptyToolCallMetrics } from './metrics.js';
 export { classifyExecution, isCanonicalRemoteExample } from './classification.js';
 export type { ExecutionClassification, ToolCallMetrics } from './types.js';
@@ -144,7 +145,7 @@ export function getTimeToFirstToken(traces: ToolCallTrace[] | undefined): number
 export function categorizeError(error: unknown): ExecutionResult['errorType'] {
   if (!error) return undefined;
 
-  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  const message = toErrorMessage(error).toLowerCase();
 
   if (message.includes('timeout') || message.includes('timed out')) {
     return 'timeout';

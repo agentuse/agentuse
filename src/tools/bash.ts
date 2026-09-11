@@ -19,6 +19,7 @@ import { logger } from '../utils/logger.js';
 import { parseDurationMs } from '../utils/duration.js';
 import { telemetry } from '../telemetry/index.js';
 import type { ModelToolOutputArtifactRef, ToolOutputArtifactRef, ToolOutputArtifactStream } from '../session/types.js';
+import { toErrorMessage } from '../utils/error-message';
 
 const DEFAULT_TIMEOUT = 120000; // 2 minutes
 
@@ -267,7 +268,7 @@ Commands not matching these patterns will be rejected.`;
     try {
       return parseDurationMs(timeout, { bareUnit: 'milliseconds', field: 'timeout' });
     } catch (error) {
-      return { error: error instanceof Error ? error.message : String(error) };
+      return { error: toErrorMessage(error) };
     }
   }
 

@@ -1,4 +1,5 @@
 import type { CustomProviderAuth } from './types.js';
+import { toErrorMessage } from '../utils/error-message';
 
 const DISCOVERY_TIMEOUT_MS = 3_000;
 const COMPLETION_CHECK_TIMEOUT_MS = 30_000;
@@ -137,7 +138,7 @@ export async function detectCustomProviderApi(
       await checkCustomProviderCompletion({ ...provider, api }, model);
       return api;
     } catch (error) {
-      failures.push(`${api}: ${error instanceof Error ? error.message : String(error)}`);
+      failures.push(`${api}: ${toErrorMessage(error)}`);
     }
   }
   throw new Error(`Could not detect a supported API format. ${failures.join('; ')}`);

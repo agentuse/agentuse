@@ -21,6 +21,7 @@ import {
   type MediaToolOutput,
 } from './media.js';
 import { expandHome } from '../utils/path.js';
+import { toErrorMessage } from '../utils/error-message';
 
 // Absolute ceiling for a single filesystem_read. Well above the largest media
 // cap (32MB PDF) and any realistic text read, so it only turns would-be OOM
@@ -200,7 +201,7 @@ Use absolute paths within these directories. Other paths will be rejected.`;
       } catch (err) {
         const error: ToolErrorOutput = {
           success: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: toErrorMessage(err),
         };
         return { output: JSON.stringify(error) };
       }
@@ -261,7 +262,7 @@ Results are sorted and capped at ${FILESYSTEM_LIST_MAX_ENTRIES} entries. Only pa
         }
         return { output: JSON.stringify({ success: true, directory: validation.resolvedPath, files, truncated: candidates.length > files.length }) };
       } catch (error) {
-        return { output: JSON.stringify({ success: false, error: error instanceof Error ? error.message : String(error) }) };
+        return { output: JSON.stringify({ success: false, error: toErrorMessage(error) }) };
       }
     },
   };
@@ -322,7 +323,7 @@ The query is a literal case-insensitive string. Results include path, line numbe
         }
         return { output: JSON.stringify({ success: true, directory: validation.resolvedPath, query, matches, truncated: matches.length >= cap }) };
       } catch (error) {
-        return { output: JSON.stringify({ success: false, error: error instanceof Error ? error.message : String(error) }) };
+        return { output: JSON.stringify({ success: false, error: toErrorMessage(error) }) };
       }
     },
   };
@@ -474,7 +475,7 @@ Use absolute paths within these directories. Other paths will be rejected.`;
       } catch (err) {
         const error: ToolErrorOutput = {
           success: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: toErrorMessage(err),
         };
         return { output: JSON.stringify(error) };
       }
@@ -656,7 +657,7 @@ Use absolute paths within these directories. Other paths will be rejected.`;
           };
         });
       } catch (err) {
-        return singleEditError(err instanceof Error ? err.message : String(err));
+        return singleEditError(toErrorMessage(err));
       }
     },
   };

@@ -13,6 +13,7 @@ import {
 } from './artifact-manifest.js';
 import { isPathInside } from '../utils/path-policy.js';
 import { atomicWriteFile } from '../utils/atomic-write.js';
+import { toErrorMessage } from '../utils/error-message';
 
 export interface ArtifactToolContext {
   projectRoot: string;
@@ -125,7 +126,7 @@ export function createArtifactTool(context: ArtifactToolContext): Tool {
           }),
         };
       } catch (err) {
-        return errOut(err instanceof Error ? err.message : String(err));
+        return errOut(toErrorMessage(err));
       }
     },
   };
@@ -173,7 +174,7 @@ export function createListArtifactsTool(context: ArtifactToolContext): Tool {
 
         return { output: JSON.stringify({ success: true, count: artifacts.length, artifacts }) };
       } catch (err) {
-        return errOut(err instanceof Error ? err.message : String(err));
+        return errOut(toErrorMessage(err));
       }
     },
   };

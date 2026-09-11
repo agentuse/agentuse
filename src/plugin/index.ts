@@ -15,6 +15,7 @@ import { logger } from '../utils/logger';
 import { enterPluginHost } from './context';
 import { getInstalledPluginHost } from './provider-runtime';
 import { getGlobalConfigDir } from '../utils/global-config';
+import { toErrorMessage } from '../utils/error-message';
 
 /** Per-execution facade over the unified plugin host. */
 export class PluginManager {
@@ -54,7 +55,7 @@ export class PluginManager {
             }
             logger.debug(`Loaded plugin: ${file}`);
           } catch (error) {
-            logger.warn(`Failed to load plugin ${file}: ${error instanceof Error ? error.message : String(error)}`);
+            logger.warn(`Failed to load plugin ${file}: ${toErrorMessage(error)}`);
           }
         }
       } catch (error) {
@@ -96,7 +97,7 @@ export class PluginManager {
       try {
         await plugin.handlers['agent:complete']?.(legacyEvent);
       } catch (error) {
-        logger.warn(`Plugin '${plugin.path}' failed: ${error instanceof Error ? error.message : String(error)}`);
+        logger.warn(`Plugin '${plugin.path}' failed: ${toErrorMessage(error)}`);
       }
     }
     return current;

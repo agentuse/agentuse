@@ -33,6 +33,7 @@ import {
   loadProviderPlugins,
 } from './plugin/provider-runtime';
 import { providerMediaSupport } from './plugin/provider-behavior';
+import { toErrorMessage } from './utils/error-message';
 
 /**
  * Check if DevTools is enabled via environment variable
@@ -63,7 +64,7 @@ async function maybeWrapWithDevTools<T>(model: T): Promise<T> {
       logger.info('DevTools enabled - run `npx @ai-sdk/devtools` to inspect agent runs');
     } catch (error) {
       logger.warn('DevTools requested but @ai-sdk/devtools not installed. Run: pnpm add -D @ai-sdk/devtools');
-      logger.debug(`DevTools import error: ${error instanceof Error ? error.message : String(error)}`);
+      logger.debug(`DevTools import error: ${toErrorMessage(error)}`);
     }
   }
 
@@ -659,7 +660,7 @@ export async function createModel(modelString: string, options: { sessionId?: st
         throw new AuthenticationError(
           'bedrock',
           'AWS_ACCESS_KEY_ID',
-          `No authentication found for Amazon Bedrock and @aws-sdk/credential-providers is not available (${error instanceof Error ? error.message : String(error)}). Set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY, AWS_BEARER_TOKEN_BEDROCK, or install @aws-sdk/credential-providers to use AWS_PROFILE / SSO / instance roles: pnpm add @aws-sdk/credential-providers`
+          `No authentication found for Amazon Bedrock and @aws-sdk/credential-providers is not available (${toErrorMessage(error)}). Set AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY, AWS_BEARER_TOKEN_BEDROCK, or install @aws-sdk/credential-providers to use AWS_PROFILE / SSO / instance roles: pnpm add @aws-sdk/credential-providers`
         );
       }
     }

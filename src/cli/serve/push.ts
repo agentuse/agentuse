@@ -23,6 +23,7 @@ import {
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { atomicWriteFileSync } from "../../utils/atomic-write.js";
+import { toErrorMessage } from "../../utils/error-message.js";
 
 export type PushCategory = "approvals" | "sessions";
 
@@ -188,7 +189,7 @@ export class PushService {
         return { subscriptions: parsed.subscriptions ?? [], ...(parsed.vapid && { vapid: parsed.vapid }) };
       }
     } catch (error) {
-      this.log(`push: state file unreadable, starting fresh: ${error instanceof Error ? error.message : error}`);
+      this.log(`push: state file unreadable, starting fresh: ${toErrorMessage(error)}`);
     }
     return { subscriptions: [] };
   }
@@ -322,7 +323,7 @@ export class PushService {
             this.log(`push: ${new URL(sub.endpoint).host} rejected notification (${status})`);
           }
         } catch (error) {
-          this.log(`push: send failed: ${error instanceof Error ? error.message : error}`);
+          this.log(`push: send failed: ${toErrorMessage(error)}`);
         }
       })
     );

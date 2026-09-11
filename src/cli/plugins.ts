@@ -10,6 +10,7 @@ import {
 import { getInstalledPluginHost, readInstalledPluginRecords, resetProviderPluginCache } from '../plugin/provider-runtime';
 import { getProviderStatus } from '../auth/provider-status';
 import { logger } from '../utils/logger';
+import { toErrorMessage } from '../utils/error-message';
 
 /** Print one actionable line instead of a Node stack trace. */
 function run<T extends unknown[]>(action: (...args: T) => Promise<void>): (...args: T) => Promise<void> {
@@ -17,7 +18,7 @@ function run<T extends unknown[]>(action: (...args: T) => Promise<void>): (...ar
     try {
       await action(...args);
     } catch (error) {
-      logger.error(error instanceof Error ? error.message : String(error));
+      logger.error(toErrorMessage(error));
       process.exit(1);
     }
   };

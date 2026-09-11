@@ -19,6 +19,7 @@ import { getSessionStorageDir, getStorageState } from '../storage/index.js';
 import { SessionManager } from './manager.js';
 import { logger } from '../utils/logger.js';
 import { isBlockedReviewPath, isPathInside } from '../utils/path-policy.js';
+import { toErrorMessage } from '../utils/error-message.js';
 
 export interface GateArtifactSnapshot {
   /** Project-root-relative path the gate referenced. */
@@ -204,7 +205,7 @@ export async function snapshotGateArtifacts(
       }
       snapshots.push({ path: rel, hash, ext, bytes: content.length });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = toErrorMessage(error);
       if (!required) {
         // Command-only path: nothing is displayed, so nothing mutable can be
         // substituted. Blocking here would deadlock the common case of gating

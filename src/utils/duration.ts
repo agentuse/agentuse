@@ -12,6 +12,7 @@
  */
 
 import { z } from 'zod';
+import { toErrorMessage } from './error-message';
 
 const SUFFIX_MS: Record<string, number> = {
   ms: 1,
@@ -83,7 +84,7 @@ export function durationSecondsSchema(field: string) {
     } catch (error) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: error instanceof Error ? error.message : String(error),
+        message: toErrorMessage(error),
       });
       return z.NEVER;
     }

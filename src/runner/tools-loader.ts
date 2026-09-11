@@ -46,6 +46,7 @@ import {
 } from '../onboarding/submit-changes.js';
 import { createOverlayFilesystemTools } from '../tools/filesystem-overlay.js';
 import { redactProjectDiscoveryText } from '../agents/discover.js';
+import { toErrorMessage } from '../utils/error-message';
 
 /**
  * Host-authored metadata (like `metadata.internal`) that puts the filesystem
@@ -224,7 +225,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
             // An unavailable fallback provider must not remove unrelated tools.
             // Unknown transport support disables binary media for the shared
             // toolset, preserving the intersection across fallback candidates.
-            logger.warn(`${logPrefix}Could not determine media tool support for ${model}; disabling binary media: ${error instanceof Error ? error.message : String(error)}`);
+            logger.warn(`${logPrefix}Could not determine media tool support for ${model}; disabling binary media: ${toErrorMessage(error)}`);
             return { image: false, pdf: false };
           }
         })

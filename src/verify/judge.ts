@@ -31,6 +31,7 @@ import type { Part } from '../session/types.js';
 import { computeAgentId } from '../utils/agent-id.js';
 import { usageToAssistantTokens } from '../session/usage.js';
 import type { CandidateVerdict, CanonicalVerifyConfig, GateCandidate, VerifyVerdict } from './types.js';
+import { toErrorMessage } from '../utils/error-message';
 
 /** Parent-session handles so a judge agent can run as an inspectable child
  * session (appears under the parent's childSessions) instead of a discarded
@@ -552,7 +553,7 @@ async function judgeViaAgent(
         code: cancelled ? 'JUDGE_CANCELLED' : 'JUDGE_ERROR',
         message: cancelled
           ? 'judge execution was cancelled'
-          : `judge execution failed: ${error instanceof Error ? error.message : String(error)}`,
+          : `judge execution failed: ${toErrorMessage(error)}`,
       };
       throw error;
     } finally {

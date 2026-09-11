@@ -5,6 +5,7 @@ import { isSuspendSignal } from './suspend';
 import type { EffectAuditSink } from '../tools/types.js';
 import { atomicWriteFileSync } from '../utils/atomic-write';
 import { logger } from '../utils/logger';
+import { toErrorMessage } from '../utils/error-message.js';
 
 export const EFFECT_WAL_FILENAME = 'effect-wal.jsonl';
 export const STRUCTURED_DELIVERY_CHECKPOINT = 'structured-delivery';
@@ -131,7 +132,7 @@ export function wrapToolsWithWAL(tools: ToolSet, wal: EffectAuditSink): ToolSet 
                 event: 'tool-error',
                 ...(callId && { callId }),
                 tool: name,
-                error: (error as Error)?.message ?? String(error),
+                error: toErrorMessage(error),
                 durationMs: Date.now() - startedAt,
               });
           throw error;

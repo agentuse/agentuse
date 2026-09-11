@@ -52,6 +52,7 @@ import type {
   ResolvedProviderAuth,
 } from './types';
 import type { PluginIdentity } from './internal-types';
+import { toErrorMessage } from '../utils/error-message';
 
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
@@ -140,7 +141,7 @@ async function ensureLegacyProviderPlugins(): Promise<void> {
         return true;
       })
       .catch((error) => {
-        logger.warn(`Could not automatically upgrade existing provider credentials: ${error instanceof Error ? error.message : String(error)}`);
+        logger.warn(`Could not automatically upgrade existing provider credentials: ${toErrorMessage(error)}`);
         legacyProviderPluginMigrationFailedAt = Date.now();
         return false;
       });
@@ -192,7 +193,7 @@ export async function getInstalledPluginHost(): Promise<PluginHost> {
           }
         } catch (error) {
           await Promise.allSettled(packageRegistrations.reverse().map((item) => item.dispose()));
-          logger.warn(`Failed to load installed plugin ${record.name}: ${error instanceof Error ? error.message : String(error)}`);
+          logger.warn(`Failed to load installed plugin ${record.name}: ${toErrorMessage(error)}`);
         }
       }
       return host;
@@ -221,7 +222,7 @@ export async function loadProviderPlugins(): Promise<ProviderDefinition[]> {
     try {
       await cacheProviderMetadata(provider);
     } catch (error) {
-      logger.warn(`Failed to discover models for plugin provider ${provider.id}: ${error instanceof Error ? error.message : String(error)}`);
+      logger.warn(`Failed to discover models for plugin provider ${provider.id}: ${toErrorMessage(error)}`);
       continue;
     }
     providers.push(provider);
@@ -487,7 +488,7 @@ async function runProviderReadinessCheck(provider: ProviderDefinition): Promise<
       ? { ok: true, ...(result.detail && { detail: result.detail }) }
       : { ok: false, message: result.message, ...(result.fix && { fix: result.fix }) };
   } catch (error) {
-    readiness = { ok: false, message: `${provider.name} readiness check failed: ${error instanceof Error ? error.message : String(error)}` };
+    readiness = { ok: false, message: `${provider.name} readiness check failed: ${toErrorMessage(error)}` };
   } finally {
     clearTimeout(timer);
   }

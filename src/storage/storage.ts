@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { atomicWriteFile } from '../utils/atomic-write';
 import { getSessionStorageDir } from './paths';
+import { toErrorMessage } from '../utils/error-message';
 
 export interface StorageState {
   dir: string;
@@ -18,7 +19,7 @@ let storageState: Promise<StorageState> | null = null;
  */
 export class CorruptStorageError extends Error {
   constructor(public readonly storageKey: string, parseError: unknown) {
-    super(`Corrupt storage file at ${storageKey}: ${(parseError as Error)?.message ?? String(parseError)}`);
+    super(`Corrupt storage file at ${storageKey}: ${toErrorMessage(parseError)}`);
     this.name = 'CorruptStorageError';
   }
 }

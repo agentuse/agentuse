@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { atomicWriteFile } from '../utils/atomic-write.js';
+import { toErrorMessage } from '../utils/error-message';
 import {
   changesetDir,
   changesetObjectPath,
@@ -102,7 +103,7 @@ async function reconcileChangesetMutation(record: ChangesetRecord): Promise<Chan
   } catch (error) {
     return failReconcile(
       record,
-      `Could not reconcile the interrupted changeset: ${error instanceof Error ? error.message : String(error)}`,
+      `Could not reconcile the interrupted changeset: ${toErrorMessage(error)}`,
     );
   }
 

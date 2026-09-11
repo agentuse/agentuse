@@ -18,6 +18,7 @@ import {
   type ProviderPatch,
 } from './types';
 import type { PluginIdentity } from './internal-types';
+import { toErrorMessage } from '../utils/error-message';
 
 interface Registration<T> { owner: PluginIdentity; value: T }
 interface ActivatedExtension { identity: PluginIdentity; disposables: Disposable[] }
@@ -216,7 +217,7 @@ export class PluginHost {
   }
 
   private reportEventError(registration: Registration<PluginEventHandler<any>>, error: unknown): void {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = toErrorMessage(error);
     logger.warn(`Plugin '${registration.owner.name}' failed (${registration.owner.source}): ${message}`);
   }
 

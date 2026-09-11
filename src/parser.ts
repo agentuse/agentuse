@@ -18,6 +18,7 @@ import { LearningConfigSchema, legacyLearningConfigNotices } from './learning/in
 import { VerifyConfigSchema } from './verify/types.js';
 import { SandboxConfigSchema } from './sandbox.js';
 import { SkillsConfigSchema, defaultSkillsConfig } from './skill/config.js';
+import { toErrorMessage } from './utils/error-message';
 
 const warnedParserMessages = new Set<string>();
 function warnOnce(key: string, message: string): void {
@@ -93,7 +94,7 @@ const ApprovalConfigSchema = z.union([
       } catch (error) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: error instanceof Error ? error.message : String(error),
+          message: toErrorMessage(error),
         });
       }
     }).optional(),

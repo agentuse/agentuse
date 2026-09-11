@@ -8,6 +8,7 @@ import { resolveToolTimeout } from './utils/config';
 import { z } from 'zod';
 import type { AgentConfig } from './parser';
 import { resolve, isAbsolute } from 'path';
+import { toErrorMessage } from './utils/error-message';
 
 // Use the actual type from the parser to avoid mismatches
 // Note: Using mcpServers (the normalized field after transform)
@@ -411,7 +412,7 @@ export async function connectMCP(
 
       // Check if this is a fatal error (missing required env vars)
       if ((error as any).fatal) {
-        logger.error(`[ERROR] ${error instanceof Error ? error.message : String(error)}`);
+        logger.error(`[ERROR] ${toErrorMessage(error)}`);
         // Re-throw fatal errors immediately
         throw error;
       }
@@ -419,7 +420,7 @@ export async function connectMCP(
       // Smart error detection: check if allowed env vars are missing
       const missingAllowed = config.allowedEnvVars?.filter(v => !process.env[v]) || [];
       
-      let errorMessage = `Failed to connect to MCP server ${name}: ${error instanceof Error ? error.message : String(error)}`;
+      let errorMessage = `Failed to connect to MCP server ${name}: ${toErrorMessage(error)}`;
       
       if (missingAllowed.length > 0) {
         errorMessage += `\n\nNote: The following optional environment variables are not set: ${missingAllowed.join(', ')}`;
@@ -494,7 +495,7 @@ async function getMCPResources(connection: MCPConnection): Promise<MCPResource[]
 
     return response.resources || [];
   } catch (error) {
-    logger.debug(`Server ${connection.name} does not support resources: ${error instanceof Error ? error.message : String(error)}`);
+    logger.debug(`Server ${connection.name} does not support resources: ${toErrorMessage(error)}`);
     return [];
   }
 }
@@ -532,7 +533,7 @@ function createResourceTools(connection: MCPConnection, resources: MCPResource[]
         };
       } catch (error) {
         return {
-          output: `Error listing resources: ${error instanceof Error ? error.message : String(error)}`
+          output: `Error listing resources: ${toErrorMessage(error)}`
         };
       }
     }
@@ -566,7 +567,7 @@ function createResourceTools(connection: MCPConnection, resources: MCPResource[]
         };
       } catch (error) {
         return {
-          output: `Error reading resource ${uri}: ${error instanceof Error ? error.message : String(error)}`
+          output: `Error reading resource ${uri}: ${toErrorMessage(error)}`
         };
       }
     }
@@ -747,7 +748,7 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
         logger.info(`[MCP] Tools disallowed for server ${connection.name}: ${toolsList}`);
       }
     } catch (error) {
-      logger.warn(`[MCP] Failed to get tools from ${connection.name}: ${error instanceof Error ? error.message : String(error)}`);
+      logger.warn(`[MCP] Failed to get tools from ${connection.name}: ${toErrorMessage(error)}`);
       logger.debug(`[MCP] Full error for ${connection.name}: ${error instanceof Error ? error.stack : String(error)}`);
       // Don't return yet - try to get resources
     }
@@ -764,7 +765,7 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
         logger.debug(`[MCP] No resources found in ${connection.name}`);
       }
     } catch (error) {
-      logger.debug(`[MCP] Failed to get resources from ${connection.name}: ${error instanceof Error ? error.message : String(error)}`);
+      logger.debug(`[MCP] Failed to get resources from ${connection.name}: ${toErrorMessage(error)}`);
     }
     
     return connectionTools;

@@ -31,6 +31,7 @@ import { atomicWriteFile } from '../utils/atomic-write.js';
 import { isPathInside } from '../utils/path-policy.js';
 import { CHANGESET_DENIED_SEGMENTS, CHANGESET_LIMITS } from '../agents/changeset-types.js';
 import { isProjectDiscoveryPathAllowed } from '../agents/discover.js';
+import { toErrorMessage } from '../utils/error-message';
 
 const OVERLAY_LIST_MAX_ENTRIES = 500;
 const OVERLAY_SEARCH_MAX_MATCHES = 100;
@@ -309,7 +310,7 @@ ${projectDescription}`,
       try {
         buffer = await fs.readFile(resolved.realPath);
       } catch (error) {
-        return errorOutput(error instanceof Error ? error.message : String(error));
+        return errorOutput(toErrorMessage(error));
       }
       // Binary media carries no redactable text; hand it to the real read tool
       // so the modality/transport gates and size caps behave identically.

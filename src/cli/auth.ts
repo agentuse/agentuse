@@ -22,6 +22,7 @@ import {
 import { getProviderAdapters, getProviderPlugin, loadProviderPlugins, loginProviderPlugin, logoutProviderPlugin, providerPluginAuthStatus, readInstalledPluginRecords } from '../plugin/provider-runtime.js';
 import { PROVIDER_PLUGIN_REGISTRY } from '../plugin/provider-registry.js';
 import type { AuthInteraction } from '../plugin/types.js';
+import { toErrorMessage } from '../utils/error-message';
 
 const GITHUB_REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
@@ -256,7 +257,7 @@ Use these only when an endpoint reports a protocol compatibility error.
         process.stdout.write(`   Models: ${models.length} saved\n`);
         process.stdout.write(`\nUsage: agentuse run agent.agentuse -m ${providerName}:${models[0]}\n`);
       } catch (error) {
-        logger.error(`Could not configure provider: ${error instanceof Error ? error.message : String(error)}`);
+        logger.error(`Could not configure provider: ${toErrorMessage(error)}`);
         process.exit(1);
       }
     });

@@ -7,6 +7,7 @@ import { existsSync } from 'fs';
 import { mkdir } from 'fs/promises';
 import { parseAgent } from '../parser.js';
 import { resolveProjectContext } from '../utils/project.js';
+import { toErrorMessage } from '../utils/error-message';
 import {
   LearningStore,
   activeLearnings,
@@ -136,7 +137,7 @@ async function offerToDeleteSources(
       deleted++;
     } catch (error) {
       console.log(chalk.red(`  could not delete ${displayPath(entry.from)}`));
-      console.log(chalk.red(`    ${error instanceof Error ? error.message : String(error)}`));
+      console.log(chalk.red(`    ${toErrorMessage(error)}`));
       process.exitCode = 1;
     }
   }
@@ -526,7 +527,7 @@ export function createLearningsCommand(): Command {
           copied.push(entry);
           printMigration(chalk.green('copied'), entry);
         } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
+          const detail = toErrorMessage(error);
           failures.push({ entry, detail });
           printMigration(chalk.red('failed'), entry);
           console.log(chalk.red(`    ${detail}`));

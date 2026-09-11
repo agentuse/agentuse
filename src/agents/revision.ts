@@ -14,6 +14,7 @@ import type { ExistingProjectAgentSummary, ProjectSkillSummary } from './discove
 import { internalAgentSourcePath, writeInternalAgentSource } from './internal-agent-file.js';
 import { isPathInside } from '../utils/path-policy.js';
 import { atomicWriteFile } from '../utils/atomic-write.js';
+import { toErrorMessage } from '../utils/error-message';
 
 export type AgentRevisionStatus =
   | 'running'
@@ -138,7 +139,7 @@ async function reconcileRevisionMutation(record: AgentRevisionRecord): Promise<A
       status: 'error',
       error: {
         code: record.status === 'applying' ? 'REVISION_APPLY_STATE_DIVERGED' : 'REVISION_RESTORE_STATE_DIVERGED',
-        message: `Could not reconcile the interrupted revision: ${error instanceof Error ? error.message : String(error)}`,
+        message: `Could not reconcile the interrupted revision: ${toErrorMessage(error)}`,
       },
       updatedAt: Date.now(),
     };

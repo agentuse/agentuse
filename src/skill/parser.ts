@@ -4,6 +4,7 @@ import { basename, dirname } from 'path';
 import type { ZodError } from 'zod';
 import { SkillFrontmatterSchema, type SkillInfo, type SkillContent } from './types.js';
 import { logger } from '../utils/logger.js';
+import { toErrorMessage } from '../utils/error-message';
 
 /**
  * Format Zod error as a single sentence
@@ -83,7 +84,7 @@ export async function parseSkillFrontmatter(filePath: string): Promise<SkillInfo
       metadata: frontmatter.metadata,
     };
   } catch (error) {
-    logger.warn(`Failed to parse skill at ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+    logger.warn(`Failed to parse skill at ${filePath}: ${toErrorMessage(error)}`);
     return null;
   }
 }
