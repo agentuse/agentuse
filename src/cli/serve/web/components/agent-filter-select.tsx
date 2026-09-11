@@ -99,7 +99,7 @@ export function AgentFilterSelect(props: {
                 id={`${listboxId}-opt-${i}`}
                 class={`agent-select-opt${i === active ? ' active' : ''}${id === props.value ? ' selected' : ''}`}
                 role="option"
-                aria-selected={i === active}
+                aria-selected={id === props.value}
                 onMouseMove={() => setActive(i)}
                 onMouseDown={(e) => { e.preventDefault(); choose(id); }}
               >

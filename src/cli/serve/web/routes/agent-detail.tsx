@@ -19,6 +19,7 @@ import { humanizeMetric, formatApprovalTime, formatRelativeTime, displayStatusLa
 import { pageTitle } from '../lib/brand';
 import { agentDetailViewState, type AgentDetailTab } from '../lib/links';
 import { isExecutingSessionStatus } from '../../../../session/status';
+import { Tabs } from '../components/tabs';
 
 /**
  * Split an `.agentuse` file into its YAML frontmatter and Markdown body.
@@ -442,14 +443,6 @@ function AgentResults(props: { project: string; agentId: string }) {
   );
 }
 
-const AGENT_TABS: { id: AgentDetailTab; label: string }[] = [
-  { id: 'jobs', label: 'Recent jobs' },
-  { id: 'results', label: 'Results' },
-  { id: 'learnings', label: 'Learnings' },
-  { id: 'revisions', label: 'Revisions' },
-  { id: 'source', label: 'Source' },
-];
-
 export default function AgentDetail() {
   const { params } = useRoute();
   const project = decodeURIComponent(params.project ?? '');
@@ -520,6 +513,7 @@ export default function AgentDetail() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
+        finishTutorial();
         return;
       }
       if (event.key !== 'Tab') return;
@@ -693,39 +687,46 @@ export default function AgentDetail() {
 
             <StrandedLearningsBanner strandedAt={strandedAt} />
 
-            <div class="tabs" role="tablist" aria-label="Agent views">
-              {AGENT_TABS.filter((t) => t.id !== 'source' || data.source !== undefined).map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  role="tab"
-                  id={`tab-${t.id}`}
-                  aria-controls={`panel-${t.id}`}
-                  aria-selected={tab === t.id}
-                  onClick={() => setTab(t.id)}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-
-            <div id="panel-jobs" class="tab-panel" role="tabpanel" aria-labelledby="tab-jobs" hidden={tab !== 'jobs'}>
-              <RecentJobs agentId={agentIdFromPath(data.path)} project={data.projectId} metric={entryState.metric} onRevisionSession={setRevisionSession} />
-            </div>
-            <div id="panel-results" class="tab-panel" role="tabpanel" aria-labelledby="tab-results" hidden={tab !== 'results'}>
-              {tab === 'results' && <AgentResults project={data.projectId} agentId={agentIdFromPath(data.path)} />}
-            </div>
-            <div id="panel-learnings" class="tab-panel" role="tabpanel" aria-labelledby="tab-learnings" hidden={tab !== 'learnings'}>
-              <LearningsGroup project={data.projectId} runPath={data.runPath} hoistStranded={setStrandedAt} />
-            </div>
-            <div id="panel-revisions" class="tab-panel" role="tabpanel" aria-labelledby="tab-revisions" hidden={tab !== 'revisions'}>
-              {tab === 'revisions' && <AgentRevisionsPanel project={data.projectId} path={data.runPath} />}
-            </div>
-            {data.source !== undefined && (
-              <div id="panel-source" class="tab-panel" role="tabpanel" aria-labelledby="tab-source" hidden={tab !== 'source'}>
-                <SourcePanel source={data.source} runPath={data.runPath} />
-              </div>
-            )}
+            <Tabs
+              label="Agent views"
+              value={tab}
+              onChange={setTab}
+              tabClass={() => undefined}
+              tabs={[
+                {
+                  id: 'jobs' as AgentDetailTab,
+                  label: 'Recent jobs',
+                  panelClass: 'tab-panel',
+                  panel: <RecentJobs agentId={agentIdFromPath(data.path)} project={data.projectId} metric={entryState.metric} onRevisionSession={setRevisionSession} />,
+                },
+                {
+                  id: 'results' as AgentDetailTab,
+                  label: 'Results',
+                  panelClass: 'tab-panel',
+                  panel: tab === 'results' ? <AgentResults project={data.projectId} agentId={agentIdFromPath(data.path)} /> : null,
+                },
+                {
+                  id: 'learnings' as AgentDetailTab,
+                  label: 'Learnings',
+                  panelClass: 'tab-panel',
+                  panel: <LearningsGroup project={data.projectId} runPath={data.runPath} hoistStranded={setStrandedAt} />,
+                },
+                {
+                  id: 'revisions' as AgentDetailTab,
+                  label: 'Revisions',
+                  panelClass: 'tab-panel',
+                  panel: tab === 'revisions' ? <AgentRevisionsPanel project={data.projectId} path={data.runPath} /> : null,
+                },
+                ...(data.source !== undefined
+                  ? [{
+                    id: 'source' as AgentDetailTab,
+                    label: 'Source',
+                    panelClass: 'tab-panel',
+                    panel: <SourcePanel source={data.source} runPath={data.runPath} />,
+                  }]
+                  : []),
+              ]}
+            />
 
             <RunCustomDialog
               open={runOpen}

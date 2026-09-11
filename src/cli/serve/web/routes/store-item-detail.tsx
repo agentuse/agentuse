@@ -11,6 +11,8 @@ import { formatApprovalTime, formatRelativeTime, looksLikeUlid, shortAgentName, 
 import { statusChipClass } from '../lib/store-view';
 import { pageTitle } from '../lib/brand';
 import type { StoreItemRef } from '../../stores';
+import { InlineError } from '../components/error-banner';
+import { Tabs } from '../components/tabs';
 
 /** Nested fields step in by this much per level, matching the mock's tree. */
 const INDENT_PX = 22;
@@ -169,7 +171,7 @@ export default function StoreItemDetail() {
           <a href={backHref} onClick={goBack}>{storeName}</a>
           {item && <><span class="sep">›</span><span>{storeItemTitle(item)}</span></>}
         </div>
-        {error && <div class="errors" role="alert">Failed to load item: {error.message}</div>}
+        {error && <InlineError>Failed to load item: {error.message}</InlineError>}
         {loading && !item && <div class="panel"><Loading label="Loading item…" /></div>}
         {item && data && (
           <>
@@ -228,30 +230,39 @@ export default function StoreItemDetail() {
               )}
             </div>
 
-            <div class="item-tabs">
-              <div class="segments" role="tablist" aria-label="Store item views">
-                <button type="button" role="tab" id="tab-fields" aria-controls="panel-fields" aria-selected={tab === 'fields'} class={`segment${tab === 'fields' ? ' active' : ''}`} onClick={() => setTab('fields')}>
-                  <span>Fields</span><span class="count">{fields.length}</span>
-                </button>
-                <button type="button" role="tab" id="tab-json" aria-controls="panel-json" aria-selected={tab === 'json'} class={`segment${tab === 'json' ? ' active' : ''}`} onClick={() => setTab('json')}>
-                  <span>Raw JSON</span>
-                </button>
-              </div>
-              {tab === 'fields' && fields.length > 0 && (
-                <ListFilter value={query} onInput={setQuery} placeholder="Find a field…" label="Find a field" />
-              )}
-            </div>
-
-            <section id="panel-fields" class="tab-panel surface field-tree" role="tabpanel" aria-labelledby="tab-fields" hidden={tab !== 'fields'}>
-              {fields.length === 0 && <div class="empty">No item data.</div>}
-              {fields.length > 0 && visibleFields.length === 0 && <div class="empty">No field matches “{query}”.</div>}
-              {visibleFields.map(([key, value]) => (
-                <FieldNode key={key} name={key} value={value} depth={0} needle={needle} links={links} />
-              ))}
-            </section>
-            <section id="panel-json" class="tab-panel panel" role="tabpanel" aria-labelledby="tab-json" hidden={tab !== 'json'}>
-              <pre class="raw-json"><code>{JSON.stringify(item, null, 2)}</code></pre>
-            </section>
+            <Tabs
+              listWrapClass="item-tabs"
+              listClass="segments"
+              label="Store item views"
+              value={tab}
+              onChange={setTab}
+              tabClass={(active) => `segment${active ? ' active' : ''}`}
+              afterList={tab === 'fields' && fields.length > 0
+                ? <ListFilter value={query} onInput={setQuery} placeholder="Find a field…" label="Find a field" />
+                : undefined}
+              tabs={[
+                {
+                  id: 'fields' as typeof tab,
+                  label: <><span>Fields</span><span class="count">{fields.length}</span></>,
+                  panelClass: 'tab-panel surface field-tree',
+                  panel: (
+                    <>
+                      {fields.length === 0 && <div class="empty">No item data.</div>}
+                      {fields.length > 0 && visibleFields.length === 0 && <div class="empty">No field matches “{query}”.</div>}
+                      {visibleFields.map(([key, value]) => (
+                        <FieldNode key={key} name={key} value={value} depth={0} needle={needle} links={links} />
+                      ))}
+                    </>
+                  ),
+                },
+                {
+                  id: 'json' as typeof tab,
+                  label: <span>Raw JSON</span>,
+                  panelClass: 'tab-panel panel',
+                  panel: <pre class="raw-json"><code>{JSON.stringify(item, null, 2)}</code></pre>,
+                },
+              ]}
+            />
           </>
         )}
       </main>

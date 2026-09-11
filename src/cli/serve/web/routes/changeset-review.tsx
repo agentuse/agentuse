@@ -24,6 +24,7 @@ import { ChangesetFileView, type ChangesetFileTab } from '../components/changese
 import { changesetNeedsFileReview } from '../lib/changeset-view';
 import { agentDetailHref } from '../lib/links';
 import { pageTitle } from '../lib/brand';
+import { Tabs } from '../components/tabs';
 
 /**
  * Reviewing a changeset: one page for both create and revise.
@@ -383,35 +384,28 @@ export default function ChangesetReview() {
         )}
       </header>
 
-      <div class="draft-tabs" role="tablist" aria-label="Changeset view">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'changes'}
-          class={tab === 'changes' ? 'is-active' : ''}
-          onClick={() => selectTab('changes')}
-        >
-          Changes
-          {running && !question
-            ? <span class="draft-tab-dot" aria-label="running" />
-            : replyCount > seenReplies
-              ? <span class="draft-tab-badge" aria-label="new reply">new</span>
-              : null}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'files'}
-          class={tab === 'files' ? 'is-active' : ''}
-          onClick={() => selectTab('files')}
-        >
-          Files
-          {files.length > 0 && <span class="draft-tab-badge">{files.length}</span>}
-        </button>
-      </div>
-
-      <div class={`draft-file-scroll${tab === 'changes' ? ' is-changes' : ''}`}>
-        {tab === 'changes' ? (
+      <Tabs
+        idPrefix="changeset"
+        listClass="draft-tabs"
+        label="Changeset view"
+        value={tab}
+        onChange={selectTab}
+        tabs={[
+          {
+            id: 'changes' as ChangesetTab,
+            mount: 'active',
+            panelClass: 'draft-file-scroll is-changes',
+            label: (
+              <>
+                Changes
+                {running && !question
+                  ? <span class="draft-tab-dot" aria-label="running" />
+                  : replyCount > seenReplies
+                    ? <span class="draft-tab-badge" aria-label="new reply">new</span>
+                    : null}
+              </>
+            ),
+            panel: (
           <DraftThread
             turns={changeset.exchange ?? []}
             entries={authorSession.entries}
@@ -424,7 +418,19 @@ export default function ChangesetReview() {
             leadRequest={changeset.instruction}
             emptyHint="The author is working. Its steps appear here as it goes."
           />
-        ) : (
+            ),
+          },
+          {
+            id: 'files' as ChangesetTab,
+            mount: 'active',
+            panelClass: 'draft-file-scroll',
+            label: (
+              <>
+                Files
+                {files.length > 0 && <span class="draft-tab-badge">{files.length}</span>}
+              </>
+            ),
+            panel: (
       <div class="changeset-body">
         <div class="changeset-rail">
           <ChangesetFileList files={files} selected={selectedPath} onSelect={selectFile} />
@@ -468,8 +474,10 @@ export default function ChangesetReview() {
             : <p class="empty">{running ? 'The author is working. Files appear here as they are written.' : 'This changeset proposes no file changes.'}</p>}
         </div>
       </div>
-        )}
-      </div>
+            ),
+          },
+        ]}
+      />
 
       {actionError || authorSession.streamError || changeset.error?.message
         ? <p class="draft-error" role="alert">{actionError ?? authorSession.streamError ?? changeset.error?.message}</p>

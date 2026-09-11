@@ -1,6 +1,7 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { revisionLineDiff } from '../lib/revision-diff';
+import { Tabs } from './tabs';
 
 /**
  * The draft-and-refine surface, shared by agent creation, an idea picked from
@@ -149,17 +150,11 @@ export function DraftPanel(props: {
     return () => document.documentElement.removeAttribute('data-page');
   }, []);
 
-  const tabButton = (id: DraftFileTab, label: string, badge?: ComponentChildren) => (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={props.tab === id}
-      class={props.tab === id ? 'is-active' : ''}
-      onClick={() => props.onTab(id)}
-    >
+  const tabLabel = (label: string, badge?: ComponentChildren) => (
+    <>
       {label}
       {badge !== undefined && badge !== false && <span class="draft-tab-badge">{badge}</span>}
-    </button>
+    </>
   );
 
   return (
@@ -183,23 +178,44 @@ export function DraftPanel(props: {
         {props.capabilityNote && <p class="draft-capability-note">{props.capabilityNote}</p>}
         {props.notice && <p class="draft-waiting" role="status">{props.notice}</p>}
       </header>
-      <div class="draft-tabs" role="tablist" aria-label="Draft view">
-        {tabButton('changes', 'Changes', props.running ? <span class="draft-tab-dot" aria-label="running" /> : undefined)}
-        {tabButton('diff', 'Diff', props.diffBadge)}
-        {tabButton('source', 'Source')}
-        {/* A Test run tab sat here. Disabled pending an MCP-aware mock scope:
-            today's scopes only ground bash-fenced agents, and an MCP-first
-            agent would either be fully fabricated or fire a real send. The
-            server route and the shared mock helpers are still in place. */}
-        {props.headerNote && <span class="draft-tabs-note">{props.headerNote}</span>}
-      </div>
-      <div class={`draft-file-scroll${props.tab === 'changes' ? ' is-changes' : ''}`} ref={bodyRef}>
-        {props.tab === 'source'
-          ? <pre class="draft-file-body" aria-label="Agent source">{props.source}</pre>
-          : props.tab === 'changes'
-            ? props.exchange
-            : <DraftDiff baseSource={props.baseSource} source={props.source} />}
-      </div>
+      {/* A Test run tab sat between Changes and Source. Disabled pending an
+          MCP-aware mock scope: today's scopes only ground bash-fenced agents,
+          and an MCP-first agent would either be fully fabricated or fire a real
+          send. The server route and the shared mock helpers are still in place. */}
+      <Tabs
+        idPrefix="draft"
+        listClass="draft-tabs"
+        label="Draft view"
+        value={props.tab}
+        onChange={props.onTab}
+        listExtra={props.headerNote ? <span class="draft-tabs-note">{props.headerNote}</span> : undefined}
+        tabs={[
+          {
+            id: 'changes' as DraftFileTab,
+            mount: 'active',
+            panelClass: 'draft-file-scroll is-changes',
+            panelRef: bodyRef,
+            label: tabLabel('Changes', props.running ? <span class="draft-tab-dot" aria-label="running" /> : undefined),
+            panel: props.exchange,
+          },
+          {
+            id: 'diff' as DraftFileTab,
+            mount: 'active',
+            panelClass: 'draft-file-scroll',
+            panelRef: bodyRef,
+            label: tabLabel('Diff', props.diffBadge),
+            panel: <DraftDiff baseSource={props.baseSource} source={props.source} />,
+          },
+          {
+            id: 'source' as DraftFileTab,
+            mount: 'active',
+            panelClass: 'draft-file-scroll',
+            panelRef: bodyRef,
+            label: tabLabel('Source'),
+            panel: <pre class="draft-file-body" aria-label="Agent source">{props.source}</pre>,
+          },
+        ]}
+      />
       {props.error && <p class="draft-error" role="alert">{props.error}</p>}
       {props.composer}
     </div>

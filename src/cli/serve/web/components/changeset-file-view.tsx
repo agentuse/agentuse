@@ -2,6 +2,7 @@ import { useMemo } from 'preact/hooks';
 import type { ChangesetFile } from '../../../../agents/changeset-types';
 import { changesetDiffStat, patchDiffLines } from '../lib/changeset-view';
 import { revisionLineDiff } from '../lib/revision-diff';
+import { Tabs } from './tabs';
 
 export type ChangesetFileTab = 'diff' | 'source';
 
@@ -41,69 +42,78 @@ export function ChangesetFileView(props: {
 
   return (
     <section class="changeset-file-view" aria-label={`Changes to ${file.path}`}>
-      <div class="changeset-file-head">
-        <code class="changeset-file-title">{file.path}</code>
-        <span class={`changeset-op is-${file.op}`}>{file.op}</span>
-        {stat && (
-          <span class="changeset-file-stat">
-            <span class="draft-added">+{stat.added}</span> <span class="draft-removed">−{stat.removed}</span>
-          </span>
-        )}
-        <div class="draft-tabs changeset-file-tabs" role="tablist" aria-label="File view">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={props.tab === 'diff'}
-            class={props.tab === 'diff' ? 'is-active' : ''}
-            onClick={() => props.onTab('diff')}
-          >Diff</button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={props.tab === 'source'}
-            class={props.tab === 'source' ? 'is-active' : ''}
-            onClick={() => props.onTab('source')}
-          >Source</button>
-        </div>
-      </div>
-
-      {file.kind === 'agent' && capabilityChanges.length > 0 && (
-        <p class="draft-capability-note">Capability changes: {capabilityChanges.join('; ')}</p>
-      )}
-      {(properties.length > 0 || callers.length > 0 || warnings.length > 0) && (
-        <div class="changeset-file-context">
-          {properties.length > 0 && <p class="changeset-file-properties">{properties.join(' · ')}</p>}
-          {callers.length > 0 && (
-            <details class="changeset-shared" key={file.path}>
-              <summary>
-                <span>Shared file · Used by {callers.length} other {callers.length === 1 ? 'agent' : 'agents'}</span>
-                <span class="changeset-shared-show">Show</span>
-                <span class="changeset-shared-hide">Hide</span>
-              </summary>
-              <ul>{callers.map((path) => <li key={path}><code>{path}</code></li>)}</ul>
-            </details>
-          )}
-          {warnings.length > 0 && (
-            <ul class="changeset-file-warnings" aria-label="Review warnings">
-              {warnings.map((flag) => <li key={flag}>{flag}</li>)}
-            </ul>
-          )}
-        </div>
-      )}
-
-      <div class="changeset-file-scroll">
-        {props.tab === 'source'
-          ? <pre class="draft-file-body" aria-label="File source">{file.content}</pre>
-          : <pre class="draft-file-body is-diff" aria-label="File changes">
-              {lines.map((line, index) => (
-                <span class={`is-${line.kind}`} key={`${index}-${line.text}`}>
-                  {line.kind === 'add' ? '+ ' : line.kind === 'remove' ? '- ' : line.kind === 'same' ? '  ' : ''}
-                  {line.text}
-                  {'\n'}
-                </span>
-              ))}
-            </pre>}
-      </div>
+      <Tabs
+        idPrefix="changeset-file"
+        listWrapClass="changeset-file-head"
+        listClass="draft-tabs changeset-file-tabs"
+        label="File view"
+        value={props.tab}
+        onChange={props.onTab}
+        head={
+          <>
+            <code class="changeset-file-title">{file.path}</code>
+            <span class={`changeset-op is-${file.op}`}>{file.op}</span>
+            {stat && (
+              <span class="changeset-file-stat">
+                <span class="draft-added">+{stat.added}</span> <span class="draft-removed">−{stat.removed}</span>
+              </span>
+            )}
+          </>
+        }
+        beforePanels={
+          <>
+            {file.kind === 'agent' && capabilityChanges.length > 0 && (
+              <p class="draft-capability-note">Capability changes: {capabilityChanges.join('; ')}</p>
+            )}
+            {(properties.length > 0 || callers.length > 0 || warnings.length > 0) && (
+              <div class="changeset-file-context">
+                {properties.length > 0 && <p class="changeset-file-properties">{properties.join(' · ')}</p>}
+                {callers.length > 0 && (
+                  <details class="changeset-shared" key={file.path}>
+                    <summary>
+                      <span>Shared file · Used by {callers.length} other {callers.length === 1 ? 'agent' : 'agents'}</span>
+                      <span class="changeset-shared-show">Show</span>
+                      <span class="changeset-shared-hide">Hide</span>
+                    </summary>
+                    <ul>{callers.map((path) => <li key={path}><code>{path}</code></li>)}</ul>
+                  </details>
+                )}
+                {warnings.length > 0 && (
+                  <ul class="changeset-file-warnings" aria-label="Review warnings">
+                    {warnings.map((flag) => <li key={flag}>{flag}</li>)}
+                  </ul>
+                )}
+              </div>
+            )}
+          </>
+        }
+        tabs={[
+          {
+            id: 'diff' as ChangesetFileTab,
+            label: 'Diff',
+            mount: 'active',
+            panelClass: 'changeset-file-scroll',
+            panel: (
+              <pre class="draft-file-body is-diff" aria-label="File changes">
+                {lines.map((line, index) => (
+                  <span class={`is-${line.kind}`} key={`${index}-${line.text}`}>
+                    {line.kind === 'add' ? '+ ' : line.kind === 'remove' ? '- ' : line.kind === 'same' ? '  ' : ''}
+                    {line.text}
+                    {'\n'}
+                  </span>
+                ))}
+              </pre>
+            ),
+          },
+          {
+            id: 'source' as ChangesetFileTab,
+            label: 'Source',
+            mount: 'active',
+            panelClass: 'changeset-file-scroll',
+            panel: <pre class="draft-file-body" aria-label="File source">{file.content}</pre>,
+          },
+        ]}
+      />
     </section>
   );
 }

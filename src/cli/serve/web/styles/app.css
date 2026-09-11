@@ -113,7 +113,7 @@
    below refine it. On touch devices every outline is suppressed. */
 :focus { outline: none; }
 :focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 2px; }
-@media (pointer: coarse) {
+@media (pointer: coarse) and (hover: none) {
   :focus, :focus-visible { outline: none !important; }
 }
 /* Mac desktop app: the keyboard focus ring uses the system accent color, the
@@ -1085,7 +1085,6 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   height: 100%;
   padding: 0;
   border: 0;
-  outline: 0;
   appearance: none;
   background: transparent;
   color: var(--fg);
@@ -3592,28 +3591,18 @@ dialog#decision-dialog form { margin: 0; padding: 0; }
   box-shadow: 0 20px 60px rgba(0,0,0,0.45);
 }
 /* Close button shared by every dialog, like .dialog-head/.dialog-foot below.
-   Kept scoped per dialog (not a bare .dialog-close) so page-level button
-   rules can't out-compete it. The hover's border: 0 guards against page
-   button:hover rules that set border-color. */
-.push-bell-dialog .dialog-close,
-.page-approval-detail .dialog-close,
-.page-agents .run-dialog .dialog-close,
-.page-agent-detail .run-dialog .dialog-close,
-.cca-dialog .dialog-close,
-.provider-setup-dialog .dialog-close,
-.agent-create-dialog .dialog-close {
+   <Modal> always renders it inside .dialog-head, and matching on the head is
+   what keeps this at two classes: page-level button rules reach 0,1,1 at most
+   for the base and tie on :hover, which this rule wins by sitting later in the
+   file. The hover's border: 0 guards against page button:hover rules that set
+   border-color. */
+.dialog-head .dialog-close {
   min-height: 0; padding: 4px 8px;
   background: transparent; border: 0;
   color: var(--muted-2); font-size: var(--font-size-body); line-height: 1;
   cursor: pointer; border-radius: 6px;
 }
-.push-bell-dialog .dialog-close:hover,
-.page-approval-detail .dialog-close:hover,
-.page-agents .run-dialog .dialog-close:hover,
-.page-agent-detail .run-dialog .dialog-close:hover,
-.cca-dialog .dialog-close:hover,
-.provider-setup-dialog .dialog-close:hover,
-.agent-create-dialog .dialog-close:hover { background: var(--panel-hover); color: var(--fg); border: 0; }
+.dialog-head .dialog-close:hover { background: var(--panel-hover); color: var(--fg); border: 0; }
 .dialog-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 18px;
@@ -4556,7 +4545,6 @@ th[aria-sort="descending"] .sort-indicator::before { content: "↓"; }
   flex: 1;
   min-width: 0;
   border: 0;
-  outline: 0;
   background: transparent;
   color: var(--fg);
   font-family: var(--sans);
@@ -4607,7 +4595,7 @@ th[aria-sort="descending"] .sort-indicator::before { content: "↓"; }
   background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
   padding: 3px 26px 3px 11px; cursor: pointer;
 }
-.page-agents .agents-cols-select select:focus { outline: none; border-color: var(--cyan-border); }
+.page-agents .agents-cols-select select:focus { border-color: var(--cyan-border); }
 .page-agents .agents-cols-select::after {
   content: ""; position: absolute; right: 11px; top: 50%; width: 6px; height: 6px;
   border-right: 1.5px solid var(--muted-2); border-bottom: 1.5px solid var(--muted-2);
@@ -6207,7 +6195,7 @@ a.lastrun.waiting { color: var(--cyan); }
   width: 100%; min-height: 38px; padding: 0 10px;
   border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--fg);
   font-family: var(--sans); font-size: var(--field-font-size); font-weight: var(--weight-normal);
-  outline: none; transition: border-color 120ms ease;
+  transition: border-color 120ms ease;
 }
 .run-dialog .run-custom-select:focus { border-color: var(--cyan-border); }
 .run-dialog .run-custom-select:disabled { opacity: 0.55; cursor: not-allowed; }
@@ -6574,7 +6562,7 @@ a.lastrun.waiting { color: var(--cyan); }
   background: var(--panel); color: var(--fg);
   font-family: var(--mono); font-size: var(--field-font-size); line-height: var(--lh-snug);
 }
-.cca-detail textarea:focus { outline: none; border-color: var(--cyan-border); }
+.cca-detail textarea:focus { border-color: var(--cyan-border); }
 .cca-detail textarea::placeholder { color: var(--muted); }
 
 /* Provider setup is shared by the first-agent handoff and Preferences. */
