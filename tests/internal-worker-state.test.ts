@@ -55,10 +55,10 @@ describe('internal worker session state ordering', () => {
   });
 
   it('renders recovered post-approval failures as approved gate plus session error', async () => {
-    const source = await readFile(join(import.meta.dir, '..', 'src', 'index.ts'), 'utf-8');
+    const source = await readFile(join(import.meta.dir, '..', 'src', 'worker', 'approval-logs.ts'), 'utf-8');
     const recoveryStart = source.indexOf('function logsWithRecoveredApprovalDecision');
     const sessionErrorStart = source.indexOf('function logsWithSessionError');
-    const hierarchySummariesStart = source.indexOf('async function sessionHierarchySummaries');
+    const hierarchySummariesStart = source.length;
     expect(recoveryStart).toBeGreaterThanOrEqual(0);
     expect(sessionErrorStart).toBeGreaterThan(recoveryStart);
     expect(hierarchySummariesStart).toBeGreaterThan(sessionErrorStart);

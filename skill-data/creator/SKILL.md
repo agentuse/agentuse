@@ -631,6 +631,12 @@ names like `data` instead of `values`):
   else (3) refuse on the placeholder and stop. Lets you commit the default
   without blocking ad-hoc runs.
 
+- **Stores hold business data, not runtime ownership.** Store drafts, queue
+  items, and confirmed results. AgentUse sessions and gates own execution and
+  approval state, even without a store. Do not use copied statuses or timestamps
+  as proof that a run or gate is live. Give managers a runtime read path before
+  selecting work; verify external results before retrying an uncertain action.
+
 - **Aggregating over a store: read the file via a script, don't slurp.** The
   store is a local JSON file (`.agentuse/store/<name>/items.json`). An agent that
   filters or aggregates over dozens of items must NOT do it via `store_list` +

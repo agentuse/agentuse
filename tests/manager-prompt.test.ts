@@ -144,7 +144,7 @@ describe("buildManagerPrompt", () => {
 
       const prompt = buildManagerPrompt(context);
 
-      expect(prompt).toContain('Use structured metadata in the "my-project" store to track workflow state and progress');
+      expect(prompt).toContain('Use the "my-project" store for business records, drafts, and confirmed results');
       expect(prompt).toContain("store_create");
       expect(prompt).toContain("store_update");
       expect(prompt).toContain("store_list");
@@ -157,8 +157,9 @@ describe("buildManagerPrompt", () => {
 
       const prompt = buildManagerPrompt(context);
 
-      expect(prompt).toContain("No persistent store is configured");
-      expect(prompt).toContain("track work items in your working memory");
+      expect(prompt).toContain("No business-data store is configured");
+      expect(prompt).toContain("AgentUse still persists sessions and approvals");
+      expect(prompt).toContain("track other work items in your working memory");
       expect(prompt).toContain("store: true");
     });
 
@@ -172,7 +173,8 @@ describe("buildManagerPrompt", () => {
 
       expect(prompt).toContain('type: "task"');
       expect(prompt).toContain('status: "pending"');
-      expect(prompt).toContain('status: "in_progress"');
+      expect(prompt).not.toContain('status: "in_progress"');
+      expect(prompt).toContain("AgentUse sessions and gates own execution and approval state");
       expect(prompt).toContain('status: "done"');
     });
 
