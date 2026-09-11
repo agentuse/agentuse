@@ -1,13 +1,13 @@
-import { constants } from 'node:fs';
-import { link, lstat, mkdir, open, readdir, realpath, unlink } from 'node:fs/promises';
+import { lstat, mkdir, readdir, realpath } from 'node:fs/promises';
 import { join, relative } from 'node:path';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import * as YAML from 'yaml';
 import { getModelFromRegistry, getSuggestedModelIds } from '../generated/models.js';
 import { parseAgentContent } from '../parser.js';
 import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go.js';
 import type { ProviderStatus } from '../auth/provider-status.js';
 import { getProviderPlugin, suggestedProviderPluginModels } from '../plugin/provider-runtime.js';
+import { createFileExclusive } from '../utils/atomic-write.js';
 import { isPathInside } from '../utils/path-policy.js';
 
 export interface AgentCreationProject {
@@ -320,17 +320,9 @@ export async function createAgentFile(
     ? `${slug}.agentuse`
     : validateAgentFileName(input.fileName);
   const absolutePath = join(realDirectory, fileName);
-  const temporary = join(realDirectory, `.${fileName}.${process.pid}.${randomUUID()}.tmp`);
-  let handle;
   try {
-    handle = await open(temporary, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
-    await handle.writeFile(source, 'utf8');
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
-    await link(temporary, absolutePath);
+    await createFileExclusive(absolutePath, source);
   } catch (error) {
-    await handle?.close().catch(() => undefined);
     if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
       throw new AgentCreationError(
         'AGENT_EXISTS',
@@ -339,8 +331,6 @@ export async function createAgentFile(
     }
     if (error instanceof AgentCreationError) throw error;
     throw new AgentCreationError('CREATE_FAILED', `Could not create agent: ${(error as Error).message}`);
-  } finally {
-    await unlink(temporary).catch(() => undefined);
   }
 
   return {

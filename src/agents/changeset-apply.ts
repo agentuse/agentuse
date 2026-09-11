@@ -1,8 +1,6 @@
-import { constants } from 'node:fs';
-import { link, lstat, mkdir, open, readFile, realpath, rm, unlink } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { lstat, readFile, realpath, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { atomicWriteFile } from '../utils/atomic-write.js';
+import { atomicWriteFile, createFileExclusive } from '../utils/atomic-write.js';
 import { isPathInside } from '../utils/path-policy.js';
 import type {
   ChangesetAppliedFile,
@@ -143,26 +141,6 @@ async function planFile(
   return { file, absolutePath, before };
 }
 
-/** Exclusive create through a temp file plus `link`, as `createAgentFile` does. */
-async function createExclusive(absolutePath: string, content: string): Promise<void> {
-  await mkdir(dirname(absolutePath), { recursive: true });
-  const temporary = join(dirname(absolutePath), `.${basename(absolutePath)}.${process.pid}.${randomUUID()}.tmp`);
-  let handle;
-  try {
-    handle = await open(temporary, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600);
-    await handle.writeFile(content, 'utf8');
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
-    await link(temporary, absolutePath);
-  } catch (error) {
-    await handle?.close().catch(() => undefined);
-    throw error;
-  } finally {
-    await unlink(temporary).catch(() => undefined);
-  }
-}
-
 export async function applyChangeset(input: {
   projectRoot: string;
   scopeRoot: string;
@@ -199,7 +177,7 @@ export async function applyChangeset(input: {
 
   for (const entry of planned) {
     if (entry.file.op === 'add') {
-      await createExclusive(entry.absolutePath, entry.file.content);
+      await createFileExclusive(entry.absolutePath, entry.file.content);
     } else {
       await atomicWriteFile(entry.absolutePath, entry.file.content);
     }
