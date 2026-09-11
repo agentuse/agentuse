@@ -3,7 +3,7 @@ import { useCountUp } from '../hooks/use-count-up';
 import { useMetricPrefs, type MetricDisplay } from '../hooks/use-metric-prefs';
 import type { StoreRowsPayload } from '../lib/api';
 import { agentDetailHref } from '../lib/links';
-import { humanizeMetric, plural } from '../lib/format';
+import { displayAgentName, humanizeMetric, plural } from '../lib/format';
 import { normalizeMetricValues } from '../../../../shared/metric-values';
 
 /**
@@ -386,6 +386,198 @@ export function MetricResults(props: {
             {metricAggs.length > 0
               ? <>All metrics are hidden. <button type="button" class="metric-empty-link" onClick={() => setEditMetrics(true)}>Customize</button> to bring them back.</>
               : <>No results in the last {metricsWindow === 1 ? 'day' : `${metricsWindow} days`}.</>}
+          </div>
+        )}
+    </section>
+  );
+}
+
+/** One agent's metrics for the results window, lead metric first. */
+export interface AgentMetricGroup {
+  source: MetricSource;
+  metrics: MetricAgg[];
+  /** Sum of every metric's headline number; drives the row order. */
+  total: number;
+  latestAt: number;
+}
+
+/** Headline number a metric shows: its value when it has one unit, else its count. */
+function headline(agg: MetricAgg): number {
+  return agg.hasValue && !agg.mixedUnits ? agg.value : agg.count;
+}
+
+/**
+ * Fold metric records into one group per recording agent. Same window and
+ * plain-code sums as aggregateMetrics, but a metric name two agents both
+ * record stays separate under each, so a row never mixes agents.
+ */
+export function aggregateMetricsByAgent(payload: StoreRowsPayload | null | undefined, windowDays: number): AgentMetricGroup[] {
+  if (!payload) return [];
+  const sources = new Map<string, MetricSource>();
+  for (const row of payload.rows) {
+    for (const item of row.items) {
+      if (item.type !== 'metric' || typeof item.createdBy !== 'string' || !item.createdBy) continue;
+      const key = `${row.projectId}\u0000${item.createdBy}`;
+      if (!sources.has(key)) sources.set(key, { projectId: row.projectId, agentId: item.createdBy });
+    }
+  }
+  const groups: AgentMetricGroup[] = [];
+  for (const source of sources.values()) {
+    const metrics = aggregateMetrics(payload, windowDays, source)
+      .sort((a, b) => headline(b) - headline(a) || b.latestAt - a.latestAt);
+    if (metrics.length === 0) continue;
+    groups.push({
+      source,
+      metrics,
+      total: metrics.reduce((sum, agg) => sum + headline(agg), 0),
+      latestAt: Math.max(...metrics.map((agg) => agg.latestAt)),
+    });
+  }
+  return groups.sort((a, b) => b.total - a.total || b.latestAt - a.latestAt);
+}
+
+function metricChipLabel(agg: MetricAgg): { big: string; name: string } {
+  const showValue = agg.hasValue && !agg.mixedUnits;
+  const n = Math.round(showValue ? agg.value : agg.count);
+  const big = showValue
+    ? (agg.unit === 'usd' ? `$${n.toLocaleString()}` : `${n.toLocaleString()}${agg.unit ? ` ${agg.unit}` : ''}`)
+    : n.toLocaleString();
+  return { big, name: humanizeMetric(agg.metric) };
+}
+
+/**
+ * Home's Results section: one row per agent, so the eye scans agent names
+ * instead of a grid of same-looking tiles. Chips carry that agent's metrics
+ * (lead metric first, with its bars for the window); the row leads to the
+ * agent's Results tab. Customize hides or shows individual metrics, sharing
+ * the same per-viewer prefs as the tile view.
+ */
+export function AgentResultsRows(props: {
+  payload: StoreRowsPayload | null | undefined;
+  agents: ReadonlyArray<{ projectId: string; path: string; runPath: string; name: string }> | undefined;
+}) {
+  const { payload } = props;
+  const [metricsWindow, setMetricsWindowState] = useState(() => readMetricsWindow());
+  const setMetricsWindow = (days: number) => {
+    try {
+      if (days === 7) localStorage.removeItem(METRICS_WINDOW_KEY);
+      else localStorage.setItem(METRICS_WINDOW_KEY, String(days));
+    } catch {
+      // Private/restricted contexts may deny localStorage; the tab still switches.
+    }
+    setMetricsWindowState(days);
+  };
+  const groups = useMemo(() => aggregateMetricsByAgent(payload, metricsWindow), [payload, metricsWindow]);
+  // Visibility probes the widest window so a quiet 1-day view keeps the
+  // section (and its window toggle) on screen instead of stranding you.
+  const hasAny = useMemo(
+    () => (metricsWindow === 30 ? groups : aggregateMetricsByAgent(payload, 30)).length > 0,
+    [payload, metricsWindow, groups]
+  );
+  const metricPrefs = useMetricPrefs();
+  const [editing, setEditing] = useState(false);
+  const hidden = metricPrefs.prefs.hidden;
+  const shown = editing
+    ? groups
+    : groups.map((g) => ({ ...g, metrics: g.metrics.filter((agg) => !hidden.includes(agg.metric)) })).filter((g) => g.metrics.length > 0);
+  const now = Date.now();
+
+  if (!hasAny) return null;
+
+  const findAgent = (source: MetricSource) => props.agents?.find((candidate) =>
+    candidate.projectId === source.projectId && candidate.path.replace(/\.agentuse$/, '') === source.agentId);
+
+  return (
+    <section class="group">
+      <h2 class="group-title">
+        <span>Results</span>
+        <div class="metric-window" role="group" aria-label="Results window">
+          {METRIC_WINDOW_DAYS.map((days) => (
+            <button
+              key={days}
+              type="button"
+              class={days === metricsWindow ? 'on' : ''}
+              aria-pressed={days === metricsWindow}
+              onClick={() => setMetricsWindow(days)}
+            >
+              {days}d
+            </button>
+          ))}
+        </div>
+        <span class="rule"></span>
+        <button
+          type="button"
+          class={`metric-edit-btn${editing ? ' on' : ''}`}
+          aria-pressed={editing}
+          onClick={() => setEditing((on) => !on)}
+        >
+          {editing ? 'done' : 'customize'}
+        </button>
+      </h2>
+      {shown.length === 0
+        ? (
+          <div class="metric-empty">
+            {groups.length > 0
+              ? <>All metrics are hidden. <button type="button" class="metric-empty-link" onClick={() => setEditing(true)}>Customize</button> to bring them back.</>
+              : <>No results in the last {metricsWindow === 1 ? 'day' : `${metricsWindow} days`}.</>}
+          </div>
+        )
+        : (
+          <div class="metric-rows surface">
+            {shown.map((group) => {
+              const agent = findAgent(group.source);
+              const name = agent
+                ? displayAgentName(agent.name, agent.path, group.source.agentId)
+                : displayAgentName(undefined, group.source.agentId, group.source.agentId);
+              const href = agent
+                ? agentDetailHref(agent.projectId, agent.runPath, { tab: 'results' })
+                : `/sessions?agent=${encodeURIComponent(group.source.agentId)}`;
+              const lead = group.metrics[0]!;
+              const leadShowValue = lead.hasValue && !lead.mixedUnits;
+              const chips = (
+                <div class="metric-row-chips">
+                  {group.metrics.map((agg, i) => {
+                    const { big, name: metricName } = metricChipLabel(agg);
+                    const isHidden = hidden.includes(agg.metric);
+                    const cls = `metric-chip-pill${i === 0 ? ' lead' : ''}${isHidden ? ' is-hidden' : ''}${big === '0' ? ' zero' : ''}`;
+                    if (!editing) {
+                      return (
+                        <span class={cls} key={agg.metric} title={agg.note ? `${agg.metric} · ${agg.note}` : agg.metric}>
+                          <strong>{big}</strong><span>{metricName}</span>
+                        </span>
+                      );
+                    }
+                    return (
+                      <button
+                        type="button"
+                        class={cls}
+                        key={agg.metric}
+                        aria-pressed={!isHidden}
+                        title={isHidden ? `Show ${metricName}` : `Hide ${metricName}`}
+                        onClick={() => metricPrefs.toggleHidden(agg.metric)}
+                      >
+                        <strong>{big}</strong><span>{metricName}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+              const body = (
+                <>
+                  <div class="metric-row-agent">
+                    <span class="metric-row-name">{name}</span>
+                    <span class="metric-row-project">{group.source.projectId}</span>
+                  </div>
+                  {chips}
+                  <MetricSpark series={bucketMetricSeries(lead.events, metricsWindow, leadShowValue, now)} kind="bars" />
+                  <span class="metric-row-open" aria-hidden="true">→</span>
+                </>
+              );
+              const key = `${group.source.projectId}/${group.source.agentId}`;
+              return editing
+                ? <div class="metric-row is-editing" key={key}>{body}</div>
+                : <a class="metric-row" key={key} href={href} title={`${name} · open its results`}>{body}</a>;
+            })}
           </div>
         )}
     </section>

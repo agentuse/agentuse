@@ -9,7 +9,7 @@ import { useSessionTail } from '../hooks/use-session-tail';
 import { useTitle } from '../hooks/use-title';
 import { UpdateBanner } from '../components/update-banner';
 import { Loading } from '../components/loading';
-import { MetricResults, metricTileHref } from '../components/metric-results';
+import { AgentResultsRows } from '../components/metric-results';
 import { pendingNewestFirst, PendingApprovalRow } from '../components/pending-approval-card';
 import { displayAgentName, errorText, formatApprovalTime, formatRelativeTime, displayStatusLabel, plural, runTone, type RunTone } from '../lib/format';
 import { pageTitle } from '../lib/brand';
@@ -721,7 +721,7 @@ export default function Home() {
         )}
 
         {sections.isVisible('results') && (
-          <MetricResults payload={metricRows.data} hrefFor={(agg) => metricTileHref(agg, agents.data?.agents)} />
+          <AgentResultsRows payload={metricRows.data} agents={agents.data?.agents} />
         )}
 
         {sections.isVisible('latest') && (
