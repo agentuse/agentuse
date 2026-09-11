@@ -29,7 +29,7 @@ describe('internal worker session state ordering', () => {
   });
 
   it('does not cache suspended approval snapshots', async () => {
-    const source = await readFile(join(import.meta.dir, '..', 'src', 'index.ts'), 'utf-8');
+    const source = await readFile(join(import.meta.dir, '..', 'src', 'worker', 'cache.ts'), 'utf-8');
     const helperStart = source.indexOf('function shouldCacheApprovalInfoResponse');
     const nextHelper = source.indexOf('async function withApprovalInfoCache', helperStart);
     expect(helperStart).toBeGreaterThanOrEqual(0);
