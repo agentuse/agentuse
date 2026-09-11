@@ -232,7 +232,7 @@ function MetricTile(props: { agg: MetricAgg; windowDays: number; display: Metric
     </>
   );
   if (!edit) {
-    return <a class="metric-tile" href={props.href} onClick={props.onOpen} title={`${agg.metric} · open the runs behind this number`}>{body}</a>;
+    return <a class="metric-tile" href={props.href} onClick={props.onOpen} title={`${agg.metric} · open the records behind this number`}>{body}</a>;
   }
   // Edit mode swaps the link for a still tile with its own controls; hidden
   // tiles stay on the board (dimmed) so they can be turned back on.

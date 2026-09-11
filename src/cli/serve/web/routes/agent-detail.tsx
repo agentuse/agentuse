@@ -17,7 +17,7 @@ import { LogContent } from '../components/content';
 import { ResultChips, isUnseenResultsRow } from '../components/session-results';
 import { humanizeMetric, formatApprovalTime, formatRelativeTime, displayStatusLabel, errorText, isEndedStatus } from '../lib/format';
 import { pageTitle } from '../lib/brand';
-import { agentDetailHref, agentDetailViewState, type AgentDetailTab } from '../lib/links';
+import { agentDetailViewState, type AgentDetailTab } from '../lib/links';
 import { isExecutingSessionStatus } from '../../../../session/status';
 
 /**
@@ -421,9 +421,9 @@ function SourcePanel(props: { source: string; runPath: string }) {
   );
 }
 
-/** This agent's own Results tiles: the same rollup as Home, counting only
- *  records it wrote. Each tile leads to the jobs tab narrowed to that metric. */
-function AgentResults(props: { project: string; runPath: string; agentId: string; onOpenMetric: () => void }) {
+/** This agent's own Results tiles, counting only records it wrote. Each tile
+ *  leads to the metrics store narrowed to this agent's records of that metric. */
+function AgentResults(props: { project: string; agentId: string }) {
   const { data, error, loading } = useFetch(
     `agent-metrics:${props.project}:${props.agentId}`,
     () => fetchStoreRows('metrics', props.project),
@@ -436,8 +436,7 @@ function AgentResults(props: { project: string; runPath: string; agentId: string
     <MetricResults
       payload={data}
       source={source}
-      hrefFor={(agg) => agentDetailHref(props.project, props.runPath, { tab: 'jobs', metric: agg.metric })}
-      onOpen={props.onOpenMetric}
+      hrefFor={(agg) => `/stores/metrics?project=${encodeURIComponent(props.project)}&agent=${encodeURIComponent(props.agentId)}&q=${encodeURIComponent(agg.metric)}`}
       emptyLabel="This agent has not recorded any results in the last 30 days."
     />
   );
@@ -714,7 +713,7 @@ export default function AgentDetail() {
               <RecentJobs agentId={agentIdFromPath(data.path)} project={data.projectId} metric={entryState.metric} onRevisionSession={setRevisionSession} />
             </div>
             <div id="panel-results" class="tab-panel" role="tabpanel" aria-labelledby="tab-results" hidden={tab !== 'results'}>
-              {tab === 'results' && <AgentResults project={data.projectId} runPath={data.runPath} agentId={agentIdFromPath(data.path)} onOpenMetric={() => setTab('jobs')} />}
+              {tab === 'results' && <AgentResults project={data.projectId} agentId={agentIdFromPath(data.path)} />}
             </div>
             <div id="panel-learnings" class="tab-panel" role="tabpanel" aria-labelledby="tab-learnings" hidden={tab !== 'learnings'}>
               <LearningsGroup project={data.projectId} runPath={data.runPath} hoistStranded={setStrandedAt} />

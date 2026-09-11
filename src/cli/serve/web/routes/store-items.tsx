@@ -59,10 +59,12 @@ export default function StoreItems() {
   );
 
   const multiProject = data?.multiProject ?? false;
-  const [query, setQuery] = useState('');
+  // `q` and `agent` seed the filters from a deep link (an agent's results
+  // tile lands here narrowed to its own records of one metric).
+  const [query, setQuery] = useState(() => location.query.q || '');
   const [status, setStatus] = useState('');
   const [type, setType] = useState('');
-  const [agent, setAgent] = useState('');
+  const [agent, setAgent] = useState(() => location.query.agent || '');
   const [view, setView] = useState<StoreViewChoice>(() => readStoreView(project, storeName));
 
   const summary = useMemo(() => mergeStoreSummaries((data?.rows ?? []).map((group) => ({
