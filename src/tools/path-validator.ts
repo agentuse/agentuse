@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { minimatch } from 'minimatch';
 import { expandHome } from '../utils/path.js';
-import { isPathInside } from '../utils/path-policy.js';
+import { isPathInside, SAFE_ENV_FILENAMES } from '../utils/path-policy.js';
 import {
   grantsPermission,
   type EffectAuditSink,
@@ -23,14 +23,6 @@ const SENSITIVE_FILE_PATTERNS = [
   '.env.production',
   '.env.staging',
   '.env.*',
-];
-
-// Exceptions to sensitive file patterns (safe to read)
-const SENSITIVE_FILE_EXCEPTIONS = [
-  '.env.sample',
-  '.env.example',
-  '.env.template',
-  '.env.defaults',
 ];
 
 export interface PathResolverContext {
@@ -257,10 +249,8 @@ export class PathValidator {
     const basename = path.basename(filePath);
 
     // Check if it's an exception (safe files)
-    for (const exception of SENSITIVE_FILE_EXCEPTIONS) {
-      if (basename === exception || basename.toLowerCase() === exception.toLowerCase()) {
-        return false;
-      }
+    if (SAFE_ENV_FILENAMES.has(basename.toLowerCase())) {
+      return false;
     }
 
     // Check if it matches sensitive patterns

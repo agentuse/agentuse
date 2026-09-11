@@ -24,6 +24,20 @@ export function isPathInside(
 }
 
 /**
+ * Environment files that are safe to read: they are checked-in templates that
+ * carry variable names, not values. Shared by the filesystem path validator's
+ * sensitive-file block and project discovery, so the two cannot drift.
+ *
+ * Membership is tested against a lower-cased basename.
+ */
+export const SAFE_ENV_FILENAMES: ReadonlySet<string> = new Set([
+  '.env.example',
+  '.env.sample',
+  '.env.template',
+  '.env.defaults',
+]);
+
+/**
  * Shared denylist for project files that must never enter a reviewer-visible
  * surface. This is deliberately stricter than ordinary agent filesystem
  * permissions: even example environment files can reveal deployment details.
