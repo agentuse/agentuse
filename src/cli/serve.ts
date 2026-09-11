@@ -4780,14 +4780,12 @@ export function createServeCommand(): Command {
           return;
         }
 
+        // The route table, in the order the inline if-chain ran it. Each group
+        // answers the request or hands the next one its turn.
         if (await pushRoutes(ctx, rq)) return;
-
         if (await homeRoutes(ctx, rq)) return;
-
         if (await agentRoutes(ctx, rq)) return;
-
         if (await scheduleRoutes(ctx, rq)) return;
-
         if (await storeRoutes(ctx, rq)) return;
         if (await sessionRoutes(ctx, rq)) return;
         if (await sessionLearningRoutes(ctx, rq)) return;
