@@ -25,6 +25,19 @@ export function ChangesetFileView(props: {
   const stat = changesetDiffStat(file);
   const capabilityChanges = file.capabilityChanges ?? [];
   const flags = file.flags ?? [];
+  const callers = [...new Set(flags.filter((flag) => flag.startsWith('also used by ')).map((flag) => flag.slice(13)))];
+  const propertyLabels: Record<string, string> = {
+    'shell script': 'Shell script',
+    'manifest': 'Manifest',
+    'makes network calls': 'Uses network',
+    'reads environment variables': 'Reads environment variables',
+  };
+  const properties = flags.filter((flag) => propertyLabels[flag]).map((flag) => propertyLabels[flag]);
+  const warnings = flags.filter((flag) => !propertyLabels[flag]
+    && !flag.startsWith('also used by ')
+    && flag !== 'existing project file outside the agent folder'
+    && !(callers.length > 0 && flag === 'not referenced by any agent in this changeset'));
+
 
   return (
     <section class="changeset-file-view" aria-label={`Changes to ${file.path}`}>
@@ -57,10 +70,25 @@ export function ChangesetFileView(props: {
       {file.kind === 'agent' && capabilityChanges.length > 0 && (
         <p class="draft-capability-note">Capability changes: {capabilityChanges.join('; ')}</p>
       )}
-      {flags.length > 0 && (
-        <ul class="changeset-flags" aria-label="Review flags">
-          {flags.map((flag) => <li class="changeset-flag" key={flag}>{flag}</li>)}
-        </ul>
+      {(properties.length > 0 || callers.length > 0 || warnings.length > 0) && (
+        <div class="changeset-file-context">
+          {properties.length > 0 && <p class="changeset-file-properties">{properties.join(' · ')}</p>}
+          {callers.length > 0 && (
+            <details class="changeset-shared" key={file.path}>
+              <summary>
+                <span>Shared file · Used by {callers.length} other {callers.length === 1 ? 'agent' : 'agents'}</span>
+                <span class="changeset-shared-show">Show</span>
+                <span class="changeset-shared-hide">Hide</span>
+              </summary>
+              <ul>{callers.map((path) => <li key={path}><code>{path}</code></li>)}</ul>
+            </details>
+          )}
+          {warnings.length > 0 && (
+            <ul class="changeset-file-warnings" aria-label="Review warnings">
+              {warnings.map((flag) => <li key={flag}>{flag}</li>)}
+            </ul>
+          )}
+        </div>
       )}
 
       <div class="changeset-file-scroll">

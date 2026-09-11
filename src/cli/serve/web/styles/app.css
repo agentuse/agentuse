@@ -10675,23 +10675,39 @@ html[data-page="draft-panel"] .app-route {
 .changeset-file-tabs { margin-left: auto; padding: 0; border-bottom: 0; }
 .changeset-file-tabs button { height: 28px; padding: 0 12px; }
 
-.changeset-flags {
-  list-style: none;
+.changeset-file-context {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 0;
+  flex-direction: column;
+  gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--font-size-caption);
 }
-.changeset-flag {
-  padding: 2px 8px;
-  border: 1px solid var(--amber-border);
-  border-radius: 999px;
-  background: var(--amber-soft);
-  color: var(--amber);
-  font-size: var(--font-size-micro);
+.changeset-file-properties { margin: 0; }
+.changeset-shared summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 28px;
+  cursor: pointer;
+  list-style: none;
 }
+.changeset-shared summary::-webkit-details-marker { display: none; }
+.changeset-shared summary:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+.changeset-shared-show, .changeset-shared-hide { margin-left: auto; color: var(--fg); }
+.changeset-shared-hide, .changeset-shared[open] .changeset-shared-show { display: none; }
+.changeset-shared[open] .changeset-shared-hide { display: inline; }
+.changeset-shared ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  padding: 8px 0;
+  margin: 0;
+}
+.changeset-shared code { font-family: var(--mono); font-size: var(--font-size-micro); overflow-wrap: anywhere; }
+.changeset-file-warnings { margin: 0; padding-left: 16px; color: var(--amber); }
 .changeset-file-view .draft-capability-note { padding: 8px 12px; border-bottom: 1px solid var(--line); }
 
 /* The diff is the one thing on this page allowed to scroll sideways: wrapping

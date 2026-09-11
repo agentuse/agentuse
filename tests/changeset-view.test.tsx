@@ -135,6 +135,22 @@ describe('ChangesetFileList', () => {
 });
 
 describe('ChangesetFileView', () => {
+  it('groups shared callers and keeps properties neutral, including older misleading flags', () => {
+    const html = renderToString(<ChangesetFileView file={{ ...script, flags: [
+      'shell script', 'makes network calls', 'existing project file outside the agent folder',
+      'not referenced by any agent in this changeset', 'also used by agents/one.agentuse',
+      'also used by tmp/two.agentuse', 'runs subprocesses or evaluates code',
+    ] }} tab="diff" onTab={() => {}} />);
+    expect(html).toContain('Shell script · Uses network');
+    expect(html).toContain('Used by 2 other agents');
+    expect(html).toContain('<details');
+    expect(html).not.toContain('<details open');
+    expect(html).toContain('tmp/two.agentuse');
+    expect(html).not.toContain('not referenced');
+    expect(html).not.toContain('outside the agent folder');
+    expect(html).toContain('runs subprocesses or evaluates code');
+  });
+
   it('shows the stored patch, capability changes, and flags', () => {
     const html = renderToString(<ChangesetFileView file={readme} tab="diff" onTab={() => {}} />);
     expect(html).toContain('docs/notes.md');
