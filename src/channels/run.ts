@@ -1,7 +1,9 @@
 import type { ParsedAgent } from '../parser';
 import type { RunAgentResult } from '../runner/types';
 import { formatShortDuration } from '../utils/duration';
+import { toErrorMessage } from '../utils/error-message';
 import { logger } from '../utils/logger';
+import { truncate } from '../tools/tool-output-limits';
 import { getSessionUrl } from '../tools/await-human';
 import {
   bestEffortClearSlackThreadStatus,
@@ -49,16 +51,6 @@ export interface RunChannelHandle extends SlackChannel {
 interface RunChannelDisplayOptions extends Omit<RunChannelOptions, 'event'> {
   event?: RunChannelEvent;
   lifecycleStatus?: RunLifecycleStatus;
-}
-
-function truncate(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value;
-  return `${value.slice(0, Math.max(0, maxLength - 12))}\n...(truncated)`;
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
 }
 
 function slackChannelForEvent(agent: ParsedAgent, event: RunChannelEvent): SlackChannel[] {
@@ -124,7 +116,7 @@ function runPreview(options: RunChannelOptions): string {
   if (options.event === 'completion') {
     return options.result?.text?.trim() || 'Agent completed without a final answer.';
   }
-  return options.error !== undefined ? errorMessage(options.error) : 'Agent run failed.';
+  return options.error !== undefined ? toErrorMessage(options.error) : 'Agent run failed.';
 }
 
 /**

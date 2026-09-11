@@ -4,6 +4,7 @@ import {
   clampToolResultForModel,
   truncateHeadTail,
   truncateEnd,
+  truncate,
   getToolOutputLimits,
   DEFAULT_MAX_OUTPUT_BYTES,
   DEFAULT_MAX_LINES,
@@ -15,6 +16,27 @@ import {
 function hasLoneSurrogate(s: string): boolean {
   return /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(s);
 }
+
+describe('truncate', () => {
+  it('leaves a string within budget alone', () => {
+    expect(truncate('short', 10)).toBe('short');
+    expect(truncate('exactly10!', 10)).toBe('exactly10!');
+  });
+
+  it('appends the suffix within the budget, so the result never grows', () => {
+    const ellipsis = truncate('abcdefghij', 5, '…');
+    expect(ellipsis).toBe('abcd…');
+    expect(ellipsis.length).toBe(5);
+  });
+
+  it('marks a cut with the default suffix', () => {
+    expect(truncate('x'.repeat(40), 20)).toBe(`${'x'.repeat(5)}\n...(truncated)`);
+  });
+
+  it('never slices past the start when the budget is under the suffix', () => {
+    expect(truncate('abcdef', 1, '…')).toBe('…');
+  });
+});
 
 describe('truncateHeadTail', () => {
   it('returns input unchanged when within budget', () => {

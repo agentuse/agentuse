@@ -1,11 +1,13 @@
 import { Command } from "commander";
 import fs from "fs/promises";
+import { existsSync } from "fs";
 import path from "path";
 import * as dotenv from "dotenv";
 import { getSessionStorageDir, getProjectDir, getAgentuseDataDir } from "../storage/paths";
 import type { SessionInfo, Message, Part, SessionStatus } from "../session/types";
 import { initStorage } from "../storage";
 import { SessionManager } from "../session";
+import type { SessionListSummary } from "../session/manager";
 import { computeSubagentActiveIds } from "../session/subagent-active";
 import { summarizeSessionTiming } from "../session/timing";
 import { resolveProjectContext } from "../utils/project";
@@ -17,15 +19,14 @@ import { applyResumeToolResult, restoreResumeToolResult, runAgent, describeError
 import { reconcileOrphanedSessions } from "../runner/resume";
 import { describeLearningOutcome, effectiveCap, saveManualLearning, type LearningSource } from "../learning";
 import { findServerForProject } from "../utils/server-registry";
-import { Semaphore } from "../utils/concurrency";
 import { formatCompactDuration } from "../utils/duration";
 import { isExecutingSessionStatus, sessionOutcome } from "../session/status";
+import { truncate as truncateText } from "../tools/tool-output-limits";
 
 interface SessionSummary {
   id: string;
   agentId: string;
   agentName: string;
-  model: string;
   created: Date;
   updated?: Date;
   isSubAgent: boolean;
@@ -95,168 +96,141 @@ export function resolveResumeExecutionContext(
   };
 }
 
-/**
- * Parse session directory name to extract ID and agent name
- * Format: {sessionID}-{agentName}
- */
-function parseSessionDirName(dirName: string): { id: string; agentName: string } | null {
-  // ULID is 26 characters
-  const ulidLength = 26;
-  if (dirName.length < ulidLength + 2) {
-    return null;
-  }
-
-  const id = dirName.substring(0, ulidLength);
-  const agentName = dirName.substring(ulidLength + 1); // Skip the hyphen
-
-  // Validate ULID format (basic check)
-  if (!/^[0-9A-Z]{26}$/i.test(id)) {
-    return null;
-  }
-
-  return { id, agentName };
-}
-
-// One shared cap across the whole recursive walk (and the session.json reads
-// below): with thousands of session dirs, unbounded fan-out exhausts fds.
-const fsScanLimit = new Semaphore(64);
-
-async function walkSessionDirs(sessionDir: string, relativeDir = ""): Promise<string[]> {
-  const absoluteDir = path.join(sessionDir, relativeDir);
-  const entries = await fsScanLimit
-    .run(() => fs.readdir(absoluteDir, { withFileTypes: true }))
-    .catch(() => [] as import("fs").Dirent[]);
-  const hasSession = entries.some((entry) => entry.isFile() && entry.name === "session.json");
-  const results: string[] = hasSession ? [relativeDir] : [];
-
-  // Prune like SessionManager.walkSessionDirs: below a session dir the only
-  // place another session can live is subagent/, so skip message/part/artifact
-  // dirs (the bulk of the store) and the .index dir entirely.
-  const childDirs = hasSession
-    ? entries.filter((entry) => entry.isDirectory() && entry.name === "subagent")
-    : entries.filter((entry) => entry.isDirectory() && entry.name !== ".index");
-
-  const children = await Promise.all(
-    childDirs.map((entry) => walkSessionDirs(sessionDir, path.join(relativeDir, entry.name)))
-  );
-  for (const child of children) results.push(...child);
-
-  return results;
-}
-
-function sessionSummaryFromInfo(sessionInfo: SessionInfo & { agent: { id?: string } }, dirPath: string, projectRoot: string): SessionSummary {
-  const agentId = sessionInfo.agent.id
-    ?? computeAgentId(sessionInfo.agent.filePath, sessionInfo.project.root, sessionInfo.agent.name);
-
+function summaryFromIndex(entry: SessionListSummary, sessionDir: string, fallbackProjectRoot: string): SessionSummary {
+  const projectRoot = entry.projectRoot || fallbackProjectRoot;
   return {
-    id: sessionInfo.id,
-    agentId,
-    agentName: sessionInfo.agent.name,
-    model: sessionInfo.model,
-    created: new Date(sessionInfo.time.created),
-    updated: new Date(sessionInfo.time.updated),
-    isSubAgent: sessionInfo.agent.isSubAgent,
-    ...(sessionInfo.parentSessionID && { parentSessionID: sessionInfo.parentSessionID }),
-    dirPath,
-    projectRoot: sessionInfo.project.root || projectRoot,
-    status: sessionInfo.status,
-    ...(sessionInfo.error?.code && { errorCode: sessionInfo.error.code }),
-    ...(sessionInfo.error?.message && { errorMessage: sessionInfo.error.message }),
-    ...(sessionInfo.mock && { mock: true }),
+    id: entry.sessionId,
+    // Sessions written before agent.id existed are indexed without one.
+    agentId: entry.agent.id ?? computeAgentId(entry.agent.filePath, projectRoot, entry.agent.name),
+    agentName: entry.agent.name,
+    created: new Date(entry.createdAt),
+    updated: new Date(entry.updatedAt),
+    isSubAgent: entry.agent.isSubAgent,
+    ...(entry.parentSessionId && { parentSessionID: entry.parentSessionId }),
+    dirPath: path.join(sessionDir, entry.path),
+    projectRoot,
+    status: entry.status,
+    ...(entry.error?.code && { errorCode: entry.error.code }),
+    ...(entry.error?.message && { errorMessage: entry.error.message }),
+    ...(entry.mock && { mock: true }),
   };
 }
 
 /**
- * List all sessions from storage
+ * List a project's sessions from the durable session index (the same catalog
+ * the Web UI reads), rather than re-walking the store and reading every
+ * session.json. The index self-heals: a missing or dirty one is rebuilt once
+ * from the files, which stay the source of truth.
  */
 async function listSessions(projectRoot: string): Promise<SessionSummary[]> {
   const sessionDir = await getSessionStorageDir(projectRoot);
+  if (!existsSync(sessionDir)) return [];
+  await initStorage(projectRoot);
+  const summaries = await new SessionManager().listSessionSummaries({ includeSubagents: true });
+  return summaries.map((entry) => summaryFromIndex(entry, sessionDir, projectRoot));
+}
+
+/**
+ * Every project's sessions. Storage is per project and addressed by a digest of
+ * the project root, so each stored project is resolved back to its root (from
+ * any one session in it) and then listed through the same index-backed path.
+ * A project whose root no longer digests to the directory it lives in is
+ * skipped rather than pointed at someone else's storage.
+ */
+async function listAllProjectSessions(): Promise<SessionSummary[]> {
+  const projectsDir = path.join(getAgentuseDataDir(), "project");
+  const projectEntries = await fs.readdir(projectsDir, { withFileTypes: true }).catch(() => []);
+
+  const sessionDirs = projectEntries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(projectsDir, entry.name, "session"));
+
+  const resolved = await Promise.all(sessionDirs.map(async (sessionDir) => {
+    const root = await readAnyProjectRoot(sessionDir);
+    // Only trust the root when it still addresses this very directory: a
+    // digest that has moved would point the listing at someone else's storage.
+    const addressable = root !== null && (await getSessionStorageDir(root)) === sessionDir;
+    return { sessionDir, root, addressable };
+  }));
+
   const sessions: SessionSummary[] = [];
-
-  try {
-    const sessionDirs = await walkSessionDirs(sessionDir);
-
-    const summaries = await Promise.all(sessionDirs.map(async (relativeDir): Promise<SessionSummary | null> => {
-      const dirName = path.basename(relativeDir);
-      const parsed = parseSessionDirName(dirName);
-      if (!parsed) return null;
-
-      // Try to read session.json for more details
-      const dirPath = path.join(sessionDir, relativeDir);
-      const sessionJsonPath = path.join(dirPath, "session.json");
-      try {
-        const content = await fsScanLimit.run(() => fs.readFile(sessionJsonPath, "utf-8"));
-        // Use Partial for agent.id to handle old sessions that don't have it
-        const sessionInfo = JSON.parse(content) as SessionInfo & { agent: { id?: string } };
-
-        return sessionSummaryFromInfo(sessionInfo, dirPath, projectRoot);
-      } catch {
-        // If session.json is missing or invalid, use parsed info
-        return {
-          id: parsed.id,
-          agentId: parsed.agentName, // Use agentName as fallback for old sessions without session.json
-          agentName: parsed.agentName,
-          model: "unknown",
-          created: new Date(0),
-          isSubAgent: false,
-          dirPath,
-          projectRoot,
-        };
-      }
-    }));
-    sessions.push(...summaries.filter((summary): summary is SessionSummary => summary !== null));
-  } catch {
-    // Directory doesn't exist or can't be read
-    return [];
+  // Sequential: storage state is process-global, so one project is listed at a
+  // time (the same shape `sessions reconcile --all` already uses).
+  const seenRoots = new Set<string>();
+  for (const entry of resolved) {
+    if (entry.addressable && entry.root !== null) {
+      if (seenRoots.has(entry.root)) continue;
+      seenRoots.add(entry.root);
+      sessions.push(...await listSessions(entry.root));
+    } else {
+      sessions.push(...await listLegacyStoredSessions(entry.sessionDir));
+    }
   }
 
-  // Sort by created date (newest first)
   sessions.sort((a, b) => b.created.getTime() - a.created.getTime());
-
   return sessions;
 }
 
-async function listAllProjectSessions(): Promise<SessionSummary[]> {
-  const projectsDir = path.join(getAgentuseDataDir(), "project");
-  const sessions: SessionSummary[] = [];
+/**
+ * The project root recorded by any one session in a storage directory. Reads at
+ * most one session.json: every session in the directory shares the root.
+ */
+async function readAnyProjectRoot(sessionDir: string): Promise<string | null> {
+  for (const dirPath of await topLevelSessionDirs(sessionDir)) {
+    const session = await readSessionJson(dirPath);
+    const root = session?.project?.root;
+    if (typeof root === "string" && root.length > 0) return root;
+  }
+  return null;
+}
 
-  const projectEntries = await fs.readdir(projectsDir, { withFileTypes: true }).catch(() => []);
-  const perProject = await Promise.all(projectEntries.map(async (projectEntry): Promise<SessionSummary[]> => {
-    if (!projectEntry.isDirectory()) return [];
-    const sessionDir = path.join(projectsDir, projectEntry.name, "session");
-    const sessionDirs = await walkSessionDirs(sessionDir).catch(() => []);
+async function topLevelSessionDirs(sessionDir: string): Promise<string[]> {
+  const entries = await fs.readdir(sessionDir, { withFileTypes: true }).catch(() => []);
+  return entries
+    .filter((entry) => entry.isDirectory() && entry.name !== ".index")
+    .map((entry) => path.join(sessionDir, entry.name));
+}
 
-    const summaries = await Promise.all(sessionDirs.map(async (relativeDir): Promise<SessionSummary | null> => {
-      const dirName = path.basename(relativeDir);
-      const parsed = parseSessionDirName(dirName);
-      if (!parsed) return null;
+async function readSessionJson(dirPath: string): Promise<SessionInfo | null> {
+  try {
+    return JSON.parse(await fs.readFile(path.join(dirPath, "session.json"), "utf-8")) as SessionInfo;
+  } catch {
+    // Not a session directory, or unreadable.
+    return null;
+  }
+}
 
-      const dirPath = path.join(sessionDir, relativeDir);
-      const sessionJsonPath = path.join(dirPath, "session.json");
-      try {
-        const content = await fsScanLimit.run(() => fs.readFile(sessionJsonPath, "utf-8"));
-        const sessionInfo = JSON.parse(content) as SessionInfo & { agent: { id?: string } };
-        const projectRoot = sessionInfo.project.root;
-        return sessionSummaryFromInfo(sessionInfo, dirPath, projectRoot);
-      } catch {
-        return {
-          id: parsed.id,
-          agentId: parsed.agentName,
-          agentName: parsed.agentName,
-          model: "unknown",
-          created: new Date(0),
-          isSubAgent: false,
-          dirPath,
-          projectRoot: projectEntry.name,
-        };
-      }
-    }));
-    return summaries.filter((summary): summary is SessionSummary => summary !== null);
+/**
+ * Sessions in a storage directory that no project root addresses any more:
+ * the pre-digest `project/global` directory, and projects whose root moved out
+ * from under its digest. Nothing can initialize storage there, so the index is
+ * out of reach and their top-level sessions are read directly. Subagents nested
+ * below them are not listed; they were only ever reachable through their parent.
+ */
+async function listLegacyStoredSessions(sessionDir: string): Promise<SessionSummary[]> {
+  const dirs = await topLevelSessionDirs(sessionDir);
+  const summaries = await Promise.all(dirs.map(async (dirPath): Promise<SessionSummary | null> => {
+    const session = await readSessionJson(dirPath);
+    // Legacy stores predate parts of the shape; skip anything not recognizable
+    // as a session rather than crashing the listing on it.
+    if (!session?.id || !session.agent || !session.project || !session.time) return null;
+    return {
+      id: session.id,
+      agentId: session.agent.id ?? computeAgentId(session.agent.filePath, session.project.root, session.agent.name),
+      agentName: session.agent.name,
+      created: new Date(session.time.created),
+      updated: new Date(session.time.updated),
+      isSubAgent: session.agent.isSubAgent,
+      ...(session.parentSessionID && { parentSessionID: session.parentSessionID }),
+      dirPath,
+      projectRoot: session.project.root || path.basename(path.dirname(sessionDir)),
+      status: session.status,
+      ...(session.error?.code && { errorCode: session.error.code }),
+      ...(session.error?.message && { errorMessage: session.error.message }),
+      ...(session.mock && { mock: true }),
+    };
   }));
-  for (const projectSessions of perProject) sessions.push(...projectSessions);
-
-  sessions.sort((a, b) => b.created.getTime() - a.created.getTime());
-  return sessions;
+  return summaries.filter((summary): summary is SessionSummary => summary !== null);
 }
 
 /**
@@ -375,12 +349,9 @@ function formatDate(date: Date): string {
   }
 }
 
-/**
- * Truncate string with ellipsis
- */
+/** Truncate string with an ellipsis, within the given width. */
 function truncate(str: string, len: number): string {
-  if (str.length <= len) return str;
-  return str.substring(0, len - 1) + "…";
+  return truncateText(str, len, "…");
 }
 
 function resolveProjectOption(project?: string | boolean): string {
@@ -628,18 +599,13 @@ function buildApprovalToolResult(options: {
   };
 }
 
-function lastAssistantText(details: { messages: Array<{ message: Message; parts: Part[] }> }): string | undefined {
-  for (const entry of [...details.messages].reverse()) {
-    const text = [...entry.parts].reverse().find((part): part is Part & { type: "text"; text: string } =>
-      part.type === "text" && typeof (part as any).text === "string" && (part as any).text.trim().length > 0
-    );
-    if (text) return text.text.trim();
-  }
-  return undefined;
-}
-
-function buildContinuationPrompt(session: SessionInfo, details: { messages: Array<{ message: Message; parts: Part[] }> }, prompt?: string): string {
-  const previous = lastAssistantText(details);
+/**
+ * `previous` is the session's last assistant text, read via
+ * SessionManager.getLastAssistantText: it searches newest-first and skips user
+ * parts, so a continuation's synthetic user turn is never quoted back to the
+ * agent as its own previous output.
+ */
+function buildContinuationPrompt(session: SessionInfo, previous: string | undefined, prompt?: string): string {
   return [
     `Continue from previous AgentUse session ${session.id}.`,
     `Previous session status: ${session.status}.`,
@@ -1804,11 +1770,6 @@ async function resumeSession(
     throw new Error(`Session ${summary.id} is ${found.session.status}; approval and tool-result flags only apply to suspended sessions`);
   }
 
-  const details = await getSessionDetails(summary.dirPath);
-  if (!details.session) {
-    throw new Error(`Failed to read session: ${summary.id}`);
-  }
-
   const agent = await parseAgent(found.session.agent.filePath);
   const mcp = await connectMCP(
     agent.config.mcpServers,
@@ -1816,7 +1777,11 @@ async function resumeSession(
     path.dirname(found.session.agent.filePath),
     cwd
   );
-  const continuationPrompt = buildContinuationPrompt(found.session, details, options.prompt);
+  const continuationPrompt = buildContinuationPrompt(
+    found.session,
+    await sessionManager.getLastAssistantText(summary.id, found.agentId),
+    options.prompt
+  );
   const result = await runAgent(
     agent,
     mcp,

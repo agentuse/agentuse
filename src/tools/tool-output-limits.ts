@@ -61,6 +61,19 @@ export function getToolOutputLimits(): ToolOutputLimits {
   };
 }
 
+/**
+ * Cap a display string at `maxLength`, appending `suffix` when it had to cut.
+ * The suffix is counted inside the budget, so the result never exceeds
+ * `maxLength` — which is what the CLI's fixed-width columns rely on.
+ *
+ * Shared by the Slack/channel message builders (default suffix) and the
+ * sessions CLI (ellipsis suffix); each previously kept its own copy.
+ */
+export function truncate(value: string, maxLength: number, suffix = '\n...(truncated)'): string {
+  if (value.length <= maxLength) return value;
+  return value.slice(0, Math.max(0, maxLength - suffix.length)) + suffix;
+}
+
 function truncationMarker(omitted: number, total: number): string {
   return `\n\n... [${omitted} chars truncated of ${total} total] ...\n\n`;
 }

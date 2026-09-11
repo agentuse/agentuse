@@ -2,6 +2,7 @@ import type { SocketModeClient, LogLevel as SlackSocketLogLevel, Logger as Slack
 import type { WebClient } from '@slack/web-api';
 import { formatShortDuration } from '../utils/duration';
 import { logger } from '../utils/logger';
+import { truncate } from '../tools/tool-output-limits';
 import {
   bestEffortClearSlackThreadStatus,
   bestEffortSlackThreadStatus,
@@ -179,11 +180,6 @@ class SlackSocketSdkLogger implements SlackSocketLogger {
     }).join(' ');
     return `Slack ${this.name}: ${body}`;
   }
-}
-
-function truncate(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value;
-  return `${value.slice(0, Math.max(0, maxLength - 12))}\n...(truncated)`;
 }
 
 function actionIdFor(action: { id: string }, index: number): string {
