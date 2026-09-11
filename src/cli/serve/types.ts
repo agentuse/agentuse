@@ -1,7 +1,8 @@
 import type { ActiveContextUsage, SessionTrigger } from "../../session/types";
+import type { SessionTimingSummary } from "../../session/timing";
 import type { DescendantActivity, DescendantBreadcrumb, DescendantReport, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary, VerifyCandidateSummary } from '../../session/important-descendants';
 
-export type { SessionTrigger };
+export type { SessionTrigger, SessionTimingSummary };
 
 export interface RunRequest {
   agent: string;
@@ -381,13 +382,7 @@ export interface SessionTokenUsage {
   context?: ActiveContextUsage;
 }
 
-export interface SessionTimingSummary {
-  calculatedAt: number;
-  wallMs: number;
-  activeMs: number;
-  approvalMs: number;
-  approvalCount: number;
-}
+
 
 export interface ApprovalPageInfo {
   sessionId: string;

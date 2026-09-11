@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { getModelFromRegistry } from '../generated/models';
+import type { ToolCallTrace } from '../plugin/types';
 
 // ============ Expected Output Validation ============
 
@@ -86,15 +87,8 @@ export type BenchmarkSuite = z.infer<typeof BenchmarkSuiteSchema>;
 
 // ============ Tool Call Trace (from existing types) ============
 
-export interface ToolCallTrace {
-  name: string;
-  type: 'tool' | 'subagent' | 'llm';
-  startTime: number;
-  duration: number;
-  tokens?: number;
-  success?: boolean;
-  input?: unknown;
-}
+/** Traces come from the plugin event contract; benchmarks only ever read them. */
+export type { ToolCallTrace };
 
 // ============ Goal Tracking ============
 
