@@ -125,7 +125,40 @@ describe('PathValidator Security', () => {
     });
   });
 
+  describe('home directory expansion', () => {
+    it('expands ~ but leaves ~user untouched', () => {
+      const validator = new PathValidator([], { projectRoot });
+      expect(validator.resolvePath('~/notes.txt')).toBe(path.join(os.homedir(), 'notes.txt'));
+      expect(validator.resolvePath('~')).toBe(path.normalize(os.homedir()));
+      // `~someone-else` must not be mangled into `<home>someone-else/...`
+      expect(validator.resolvePath('~otheruser/notes.txt'))
+        .toBe(path.resolve(projectRoot, '~otheruser/notes.txt'));
+    });
+  });
+
   describe('symlink attack prevention', () => {
+    it('blocks a write through a symlink with several missing levels', () => {
+      const configs: FilesystemPathConfig[] = [
+        { path: `${projectRoot}/**`, permissions: ['read', 'write'] },
+      ];
+      const validator = new PathValidator(configs, { projectRoot });
+
+      const outsideDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'outside-target-')));
+      const symlinkPath = path.join(projectRoot, 'escape-link');
+      try {
+        fs.symlinkSync(outsideDir, symlinkPath);
+
+        // Two levels below the link do not exist yet, so resolution has to walk
+        // up more than one parent before it reaches the symlink itself.
+        const result = validator.validate(path.join(symlinkPath, 'newdir', 'nested', 'file.txt'), 'write');
+        expect(result.allowed).toBe(false);
+        expect(result.resolvedPath.startsWith(outsideDir)).toBe(true);
+      } finally {
+        try { fs.unlinkSync(symlinkPath); } catch { /* ignore */ }
+        try { fs.rmSync(outsideDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
+    });
+
     it('resolves symlinks and validates the real path', () => {
       const configs: FilesystemPathConfig[] = [
         { path: `${projectRoot}/**`, permissions: ['read'] },

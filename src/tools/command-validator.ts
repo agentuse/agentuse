@@ -1,9 +1,10 @@
 import * as path from 'path';
-import * as os from 'os';
 import type { CommandValidationResult } from './types.js';
 import { parseBashCommand, extractPaths, extractPipeTargets, extractRedirectionTargets, maskInertPayloads, type ParsedCommand } from './bash-parser.js';
 import { matchStructured, type StructuredCommand } from './wildcard.js';
-import { resolveRealPath, type PathResolverContext } from './path-validator.js';
+import { resolveAllowedPath, resolveRealPath, type PathResolverContext } from './path-validator.js';
+import { expandHome } from '../utils/path.js';
+import { isPathInside } from '../utils/path-policy.js';
 
 // Standard shell byte sinks/streams, always readable/writable regardless of
 // allowedPaths. Writing a *device* like /dev/sda stays gated (and dd of=/dev/*
@@ -270,27 +271,8 @@ export class CommandValidator {
    * Supported: ${root}, ${agentDir}, ${tmpDir}, ~
    */
   private resolveAllowedPath(allowedPath: string): string {
-    let result = allowedPath;
-
-    // Resolve ~ for home directory
-    if (result.startsWith('~')) {
-      result = result.replace(/^~/, os.homedir());
-    }
-
-    // Resolve variables if context is available
-    if (this.context) {
-      const tmpDir = resolveRealPath(this.context.tmpDir ?? os.tmpdir());
-      result = result
-        .replace(/\$\{root\}/g, this.context.projectRoot)
-        .replace(/\$\{tmpDir\}/g, tmpDir);
-
-      // Only replace ${agentDir} if it's defined
-      if (this.context.agentDir) {
-        result = result.replace(/\$\{agentDir\}/g, this.context.agentDir);
-      }
-    }
-
-    return result;
+    if (!this.context) return expandHome(allowedPath);
+    return resolveAllowedPath(allowedPath, this.context);
   }
 
   /**
@@ -299,9 +281,7 @@ export class CommandValidator {
    */
   private resolvePath(filePath: string): string {
     // Handle ~ for home directory
-    if (filePath.startsWith('~')) {
-      filePath = filePath.replace(/^~/, process.env.HOME || '/tmp');
-    }
+    filePath = expandHome(filePath);
 
     // Resolve relative paths against project root or cwd
     if (!path.isAbsolute(filePath)) {
@@ -322,13 +302,7 @@ export class CommandValidator {
       // Also resolve symlinks for rootDir for consistent comparison
       const normalizedRoot = resolveRealPath(rootDir);
 
-      // Check if the path is within root
-      const relative = path.relative(normalizedRoot, resolvedPath);
-
-      // Path is within if:
-      // 1. relative path doesn't start with '..' (not going up)
-      // 2. relative path is not absolute (not a completely different path)
-      return !relative.startsWith('..') && !path.isAbsolute(relative);
+      return isPathInside(normalizedRoot, resolvedPath);
     } catch {
       return false;
     }

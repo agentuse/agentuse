@@ -20,6 +20,7 @@ import {
   type InlineMedia,
   type MediaToolOutput,
 } from './media.js';
+import { expandHome } from '../utils/path.js';
 
 // Absolute ceiling for a single filesystem_read. Well above the largest media
 // cap (32MB PDF) and any realistic text read, so it only turns would-be OOM
@@ -54,10 +55,9 @@ function formatWithLineNumbers(content: string, offset: number = 1, maxLineLengt
  * Supported: ${root}, ${agentDir}, ${tmpDir}, ~
  */
 function resolvePathVariables(pattern: string, context: PathResolverContext): string {
-  let result = pattern
+  let result = expandHome(pattern)
     .replace(/\$\{root\}/g, context.projectRoot)
-    .replace(/\$\{tmpDir\}/g, context.tmpDir ?? os.tmpdir())
-    .replace(/^~/, os.homedir());
+    .replace(/\$\{tmpDir\}/g, context.tmpDir ?? os.tmpdir());
 
   // Only replace ${agentDir} if it's defined
   if (context.agentDir) {

@@ -10,6 +10,8 @@ import { validateAllowedTools } from './validate.js';
 import type { SkillContent, SkillInfo } from './types.js';
 import type { ToolsConfig } from '../tools/types.js';
 import { PathValidator, resolveRealPath } from '../tools/path-validator.js';
+import { expandHome } from '../utils/path.js';
+import { isPathInside } from '../utils/path-policy.js';
 
 // Script file extensions that would need bash access
 const SCRIPT_EXTENSIONS = ['.sh', '.py', '.js', '.ts', '.rb', '.pl', '.php'];
@@ -66,15 +68,10 @@ async function checkSkillPathAccess(
   // Check if skill directory is covered by any allowedPath
   for (const allowedPath of allowedPaths) {
     // Resolve ~ and ${...} placeholders
-    let resolved = allowedPath;
-
-    if (resolved.startsWith('~')) {
-      resolved = resolved.replace(/^~/, os.homedir());
-    }
+    const resolved = expandHome(allowedPath);
 
     // Check if skillDir is within this allowed path
-    const relative = path.relative(resolved, skillDir);
-    if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+    if (isPathInside(resolved, skillDir)) {
       return null;
     }
   }

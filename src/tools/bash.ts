@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { spawn } from 'child_process';
 import { StringDecoder } from 'string_decoder';
 import * as path from 'path';
-import * as os from 'os';
 import { CommandValidator, getBuiltinPayloadCommandInvocation } from './command-validator.js';
 import {
   LIVE_OUTPUT_MAX_CHARS,
@@ -13,7 +12,8 @@ import {
   type ToolOutput,
   type ToolErrorOutput,
 } from './types.js';
-import { resolveRealPath, type PathResolverContext } from './path-validator.js';
+import { resolveAllowedPath, resolveRealPath, type PathResolverContext } from './path-validator.js';
+import { isPathInside } from '../utils/path-policy.js';
 import { createBoundedAccumulator, getToolOutputLimits } from './tool-output-limits.js';
 import { logger } from '../utils/logger.js';
 import { parseDurationMs } from '../utils/duration.js';
@@ -131,32 +131,6 @@ async function killProcessTree(pid: number): Promise<void> {
 }
 
 /**
- * Resolve variable placeholders in an allowed path.
- * Supported: ${root}, ${agentDir}, ${tmpDir}, ~
- */
-function resolveAllowedPath(allowedPath: string, context: PathResolverContext): string {
-  let result = allowedPath;
-
-  // Resolve ~ for home directory
-  if (result.startsWith('~')) {
-    result = result.replace(/^~/, os.homedir());
-  }
-
-  // Resolve variables
-  const tmpDir = resolveRealPath(context.tmpDir ?? os.tmpdir());
-  result = result
-    .replace(/\$\{root\}/g, context.projectRoot)
-    .replace(/\$\{tmpDir\}/g, tmpDir);
-
-  // Only replace ${agentDir} if it's defined
-  if (context.agentDir) {
-    result = result.replace(/\$\{agentDir\}/g, context.agentDir);
-  }
-
-  return result;
-}
-
-/**
  * Check if a path is within any of the allowed directories
  */
 function isPathWithinAllowed(
@@ -169,8 +143,7 @@ function isPathWithinAllowed(
 
   // Check project root
   const normalizedProjectRoot = resolveRealPath(projectRoot);
-  const relativeToProject = path.relative(normalizedProjectRoot, normalizedTarget);
-  if (!relativeToProject.startsWith('..') && !path.isAbsolute(relativeToProject)) {
+  if (isPathInside(normalizedProjectRoot, normalizedTarget)) {
     return true;
   }
 
@@ -178,8 +151,7 @@ function isPathWithinAllowed(
   for (const allowedPath of allowedPaths) {
     const resolvedAllowedPath = resolveAllowedPath(allowedPath, context);
     const normalizedAllowed = resolveRealPath(resolvedAllowedPath);
-    const relative = path.relative(normalizedAllowed, normalizedTarget);
-    if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+    if (isPathInside(normalizedAllowed, normalizedTarget)) {
       return true;
     }
   }

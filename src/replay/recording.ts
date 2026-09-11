@@ -1,6 +1,5 @@
 import { randomUUID, createHash } from 'crypto';
 import { readFile, stat } from 'fs/promises';
-import { homedir } from 'os';
 import { dirname, resolve } from 'path';
 import { jsonSchema, type ToolSet } from 'ai';
 import type { ParsedAgent } from '../parser';
@@ -8,6 +7,7 @@ import type { Message, Part, ToolsSnapshot, ToolPart } from '../session/types';
 import type { SessionManager } from '../session';
 import { resolveSafeVariables } from '../tools/path-validator';
 import { getToolOutputLimits, truncateEnd } from '../tools/tool-output-limits';
+import { expandHome } from '../utils/path.js';
 
 export interface ReplayRecording {
   sessionId: string;
@@ -103,7 +103,7 @@ export async function snapshotReplayReferences(agent: ParsedAgent, projectRoot: 
     if (!grant.permissions.includes('read') || grant.permissions.some(p => p !== 'read')) continue;
     for (const raw of [grant.path, ...(grant.paths ?? [])]) {
       if (!raw || /[*?\[\]{}]/.test(raw.replace(/\$\{(?:root|agentDir|tmpDir)\}/g, ''))) continue;
-      const expanded = resolveSafeVariables(raw, { projectRoot, agentDir: dirname(agentFile) }).replace(/^~(?=\/|$)/, homedir());
+      const expanded = expandHome(resolveSafeVariables(raw, { projectRoot, agentDir: dirname(agentFile) }));
       const path = resolve(projectRoot, expanded);
       let info;
       try { info = await stat(path); } catch { throw new Error(`Current replay reference is unavailable: ${path}`); }

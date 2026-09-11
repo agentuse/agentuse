@@ -2,6 +2,8 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import { minimatch } from 'minimatch';
+import { expandHome } from '../utils/path.js';
+import { isPathInside } from '../utils/path-policy.js';
 import {
   grantsPermission,
   type EffectAuditSink,
@@ -97,6 +99,29 @@ export function resolveRealPath(inputPath: string): string {
 }
 
 /**
+ * Resolve the variable placeholders allowed in a configured path.
+ * Supported: `~`, ${root}, ${agentDir}, ${tmpDir}.
+ *
+ * Shared by the filesystem path validator, the bash tool, and the command
+ * validator so a path written in config resolves identically everywhere.
+ */
+export function resolveAllowedPath(allowedPath: string, context: PathResolverContext): string {
+  let result = expandHome(allowedPath);
+
+  const tmpDir = resolveRealPath(context.tmpDir ?? os.tmpdir());
+  result = result
+    .replace(/\$\{root\}/g, context.projectRoot)
+    .replace(/\$\{tmpDir\}/g, tmpDir);
+
+  // Only replace ${agentDir} if it's defined
+  if (context.agentDir) {
+    result = result.replace(/\$\{agentDir\}/g, context.agentDir);
+  }
+
+  return result;
+}
+
+/**
  * Resolve safe variable placeholders in a string.
  * Only resolves ${root}, ${agentDir}, ${tmpDir} - NOT ${env:*} to prevent secret exposure.
  *
@@ -160,8 +185,7 @@ export function resolveFilesystemMounts(
       if (/[*?[\]]/.test(pattern)) continue;
 
       // Resolve variables and ~ expansion
-      let resolved = resolveSafeVariables(pattern, context)
-        .replace(/^~/, os.homedir());
+      let resolved = expandHome(resolveSafeVariables(pattern, context));
 
       // Resolve to real path (follows symlinks, handles macOS /var → /private/var)
       resolved = resolveRealPath(resolved);
@@ -193,15 +217,11 @@ export class PathValidator {
    * Supported: ${root}, ${agentDir}, ${tmpDir}, ~
    */
   private resolveVariables(pattern: string): string {
-    let result = pattern
-      .replace(/\$\{root\}/g, this.projectRoot)
-      .replace(/\$\{tmpDir\}/g, this.tmpDir)
-      .replace(/^~/, os.homedir());
-
-    // Only replace ${agentDir} if it's defined
-    if (this.agentDir) {
-      result = result.replace(/\$\{agentDir\}/g, this.agentDir);
-    }
+    let result = resolveAllowedPath(pattern, {
+      projectRoot: this.projectRoot,
+      agentDir: this.agentDir,
+      tmpDir: this.tmpDir,
+    });
 
     if (result.includes('${')) {
       return path.normalize(result);
@@ -219,9 +239,7 @@ export class PathValidator {
    */
   resolvePath(filePath: string): string {
     // Handle ~ for home directory
-    if (filePath.startsWith('~')) {
-      filePath = filePath.replace(/^~/, os.homedir());
-    }
+    filePath = expandHome(filePath);
 
     // Resolve to absolute path
     const absolutePath = path.isAbsolute(filePath)
@@ -264,26 +282,6 @@ export class PathValidator {
   }
 
   /**
-   * Resolve symlinks to get the real path
-   */
-  private resolveSymlinks(filePath: string): string {
-    try {
-      // For existing files, resolve symlinks
-      return fs.realpathSync(filePath);
-    } catch {
-      // For non-existing files (write), resolve parent directory
-      const dir = path.dirname(filePath);
-      try {
-        const realDir = fs.realpathSync(dir);
-        return path.join(realDir, path.basename(filePath));
-      } catch {
-        // Parent doesn't exist either, return as-is
-        return filePath;
-      }
-    }
-  }
-
-  /**
    * Check if a path matches a pattern.
    * - If pattern has no glob chars (*, ?, [): uses containment (path is within directory)
    * - If pattern has glob chars: uses glob matching via minimatch
@@ -297,8 +295,7 @@ export class PathValidator {
 
     // If no glob characters, use containment (industry standard: path = path/**)
     if (!/[*?[\]]/.test(normalizedPattern)) {
-      const relative = path.relative(normalizedPattern, normalizedPath);
-      return !relative.startsWith('..') && !path.isAbsolute(relative);
+      return isPathInside(normalizedPattern, normalizedPath);
     }
 
     // Otherwise use glob matching
@@ -346,7 +343,7 @@ export class PathValidator {
     const resolvedPath = this.resolvePath(filePath);
 
     // Resolve symlinks to prevent symlink-based escapes
-    const realPath = this.resolveSymlinks(resolvedPath);
+    const realPath = resolveRealPath(resolvedPath);
 
     // Check for sensitive files (e.g., .env)
     if (this.isSensitiveFile(realPath)) {
