@@ -1,8 +1,8 @@
 import type { ComponentChildren, VNode } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useRoute } from 'preact-iso';
 import type { AgentDetailMeta, SessionRow } from '../lib/api';
-import { fetchAgentDetail, fetchSessions, setAgentSchedulePaused } from '../lib/api';
+import { fetchAgentDetail, fetchSessions, fetchStoreRows, setAgentSchedulePaused } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { useRunAgent } from '../hooks/use-run-agent';
@@ -12,11 +12,12 @@ import { SchedulePill } from '../components/schedule-pill';
 import { AgentLearningsPanel, StrandedLearningsBanner } from '../components/learnings-panel';
 import { AgentRevisionLauncher, AgentRevisionsPanel } from '../components/agent-revision';
 import { RunCustomDialog } from '../components/run-custom-dialog';
+import { MetricResults } from '../components/metric-results';
 import { LogContent } from '../components/content';
 import { ResultChips, isUnseenResultsRow } from '../components/session-results';
 import { humanizeMetric, formatApprovalTime, formatRelativeTime, displayStatusLabel, errorText, isEndedStatus } from '../lib/format';
 import { pageTitle } from '../lib/brand';
-import { agentDetailViewState, type AgentDetailTab } from '../lib/links';
+import { agentDetailHref, agentDetailViewState, type AgentDetailTab } from '../lib/links';
 import { isExecutingSessionStatus } from '../../../../session/status';
 
 /**
@@ -420,8 +421,31 @@ function SourcePanel(props: { source: string; runPath: string }) {
   );
 }
 
+/** This agent's own Results tiles: the same rollup as Home, counting only
+ *  records it wrote. Each tile leads to the jobs tab narrowed to that metric. */
+function AgentResults(props: { project: string; runPath: string; agentId: string; onOpenMetric: () => void }) {
+  const { data, error, loading } = useFetch(
+    `agent-metrics:${props.project}:${props.agentId}`,
+    () => fetchStoreRows('metrics', props.project),
+    { refreshMs: 60_000 }
+  );
+  const source = useMemo(() => ({ projectId: props.project, agentId: props.agentId }), [props.project, props.agentId]);
+  if (loading && !data) return <Loading label="Loading results…" />;
+  if (error) return <div class="empty err">Failed to load results: {error.message}</div>;
+  return (
+    <MetricResults
+      payload={data}
+      source={source}
+      hrefFor={(agg) => agentDetailHref(props.project, props.runPath, { tab: 'jobs', metric: agg.metric })}
+      onOpen={props.onOpenMetric}
+      emptyLabel="This agent has not recorded any results in the last 30 days."
+    />
+  );
+}
+
 const AGENT_TABS: { id: AgentDetailTab; label: string }[] = [
   { id: 'jobs', label: 'Recent jobs' },
+  { id: 'results', label: 'Results' },
   { id: 'learnings', label: 'Learnings' },
   { id: 'revisions', label: 'Revisions' },
   { id: 'source', label: 'Source' },
@@ -688,6 +712,9 @@ export default function AgentDetail() {
 
             <div id="panel-jobs" class="tab-panel" role="tabpanel" aria-labelledby="tab-jobs" hidden={tab !== 'jobs'}>
               <RecentJobs agentId={agentIdFromPath(data.path)} project={data.projectId} metric={entryState.metric} onRevisionSession={setRevisionSession} />
+            </div>
+            <div id="panel-results" class="tab-panel" role="tabpanel" aria-labelledby="tab-results" hidden={tab !== 'results'}>
+              {tab === 'results' && <AgentResults project={data.projectId} runPath={data.runPath} agentId={agentIdFromPath(data.path)} onOpenMetric={() => setTab('jobs')} />}
             </div>
             <div id="panel-learnings" class="tab-panel" role="tabpanel" aria-labelledby="tab-learnings" hidden={tab !== 'learnings'}>
               <LearningsGroup project={data.projectId} runPath={data.runPath} hoistStranded={setStrandedAt} />

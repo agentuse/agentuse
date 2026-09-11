@@ -292,3 +292,8 @@ export function splitOutcomeHeadline(text: string): { headline?: string; body: s
   if (!headline) return { body: text };
   return { headline, body: text.slice(match[0].length).trim() };
 }
+
+/** "1 agent", "3 agents". */
+export function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? '' : 's'}`;
+}

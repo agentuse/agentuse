@@ -31,6 +31,10 @@ describe('agent detail links', () => {
     expect(agentDetailViewState('?tab=source')).toEqual({ tab: 'source', tutorialStep: null, metric: undefined });
   });
 
+  it('opens the Results tab from a deep link', () => {
+    expect(agentDetailViewState('?tab=results')).toEqual({ tab: 'results', tutorialStep: null, metric: undefined });
+  });
+
   it('falls back to Recent jobs for an unknown tab', () => {
     expect(agentDetailViewState('?tab=unknown')).toEqual({ tab: 'jobs', tutorialStep: null, metric: undefined });
   });

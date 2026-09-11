@@ -4956,15 +4956,15 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 }
 
 /* --- home --- */
-/* Agent-recorded metric rollups (Results section) */
-.page-home .metric-window {
+/* Agent-recorded metric rollups (Results tiles on Home and the agent Results tab) */
+.metric-window {
   display: inline-flex;
   gap: 2px;
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 2px;
 }
-.page-home .metric-window button {
+.metric-window button {
   font-family: var(--sans);
   font-size: var(--font-size-micro);
   letter-spacing: var(--tracking-caps);
@@ -4976,20 +4976,20 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   padding: 1px 8px;
   cursor: pointer;
 }
-.page-home .metric-window button:hover { color: var(--fg); }
-.page-home .metric-window button.on { color: var(--green); background: var(--green-soft); }
-.page-home .metric-empty {
+.metric-window button:hover { color: var(--fg); }
+.metric-window button.on { color: var(--green); background: var(--green-soft); }
+.metric-empty {
   font-family: var(--sans);
   font-size: var(--font-size-caption);
   color: var(--muted-2);
   padding: 4px 2px;
 }
-.page-home .metric-grid {
+.metric-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 12px;
 }
-.page-home .metric-tile {
+.metric-tile {
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -5002,16 +5002,16 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   text-decoration: none;
   transition: background 120ms ease, border-color 120ms ease;
 }
-.page-home .metric-tile:hover { background: var(--panel-hover); border-color: var(--line-strong); }
-.page-home .metric-num {
+.metric-tile:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+.metric-num {
   font-family: var(--mono);
   font-size: var(--font-size-heading);
   font-weight: var(--weight-bold);
   color: var(--fg);
   font-variant-numeric: tabular-nums;
 }
-.page-home .metric-name { font-family: var(--sans); font-size: var(--font-size-supporting); color: var(--muted-3); margin-top: 2px; }
-.page-home .metric-sub {
+.metric-name { font-family: var(--sans); font-size: var(--font-size-supporting); color: var(--muted-3); margin-top: 2px; }
+.metric-sub {
   font-family: var(--sans);
   font-size: var(--font-size-caption);
   color: var(--muted);
@@ -5022,7 +5022,7 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 }
 
 /* Customize toggle + per-tile edit tools on the Results grid. */
-.page-home .metric-edit-btn {
+.metric-edit-btn {
   font-family: var(--sans);
   font-size: var(--font-size-micro);
   letter-spacing: var(--tracking-caps);
@@ -5034,11 +5034,11 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   padding: 2px 10px;
   cursor: pointer;
 }
-.page-home .metric-edit-btn:hover { color: var(--fg); }
-.page-home .metric-edit-btn.on { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
-.page-home .metric-tile.is-editing { cursor: default; }
-.page-home .metric-tile.is-hidden > :not(.metric-tools) { opacity: 0.35; }
-.page-home .metric-tools {
+.metric-edit-btn:hover { color: var(--fg); }
+.metric-edit-btn.on { color: var(--cyan); border-color: var(--cyan-border); background: var(--cyan-soft); }
+.metric-tile.is-editing { cursor: default; }
+.metric-tile.is-hidden > :not(.metric-tools) { opacity: 0.35; }
+.metric-tools {
   display: flex;
   align-items: center;
   gap: 3px;
@@ -5046,8 +5046,8 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   padding-top: 8px;
   border-top: 1px dashed var(--line);
 }
-.page-home .metric-tools-gap { flex: 1; }
-.page-home .metric-tools button {
+.metric-tools-gap { flex: 1; }
+.metric-tools button {
   font-family: var(--sans);
   font-size: var(--font-size-micro);
   line-height: 1;
@@ -5058,10 +5058,10 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
   padding: 4px 6px;
   cursor: pointer;
 }
-.page-home .metric-tools button:hover:not(:disabled) { color: var(--fg); border-color: var(--line-strong); }
-.page-home .metric-tools button.on { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
-.page-home .metric-tools button:disabled { opacity: 0.35; cursor: default; }
-.page-home .metric-empty-link {
+.metric-tools button:hover:not(:disabled) { color: var(--fg); border-color: var(--line-strong); }
+.metric-tools button.on { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
+.metric-tools button:disabled { opacity: 0.35; cursor: default; }
+.metric-empty-link {
   font: inherit;
   color: var(--cyan);
   background: none;
@@ -5073,11 +5073,11 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 }
 
 /* Inline tile charts (bars = per-bucket, line = cumulative). */
-.page-home .metric-spark { width: 100%; height: 30px; margin-top: 4px; display: block; }
-.page-home .metric-spark .bar { fill: var(--green); opacity: 0.8; }
-.page-home .metric-spark .none { fill: var(--line-strong); }
-.page-home .metric-spark .line { fill: none; stroke: var(--green); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
-.page-home .metric-spark .area { fill: var(--green-soft); stroke: none; }
+.metric-spark { width: 100%; height: 30px; margin-top: 4px; display: block; }
+.metric-spark .bar { fill: var(--green); opacity: 0.8; }
+.metric-spark .none { fill: var(--line-strong); }
+.metric-spark .line { fill: none; stroke: var(--green); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.metric-spark .area { fill: var(--green-soft); stroke: none; }
 
 /* "View all →" drill-in on outcome section headers. */
 .page-home .group-title .group-link {
