@@ -987,12 +987,15 @@ export class SessionManager {
     const cachedSession = cachedPath
       ? await readJSON<SessionInfo>(`${cachedPath}/session`)
       : null;
-    const sessionPath = cachedSession?.id === sessionID
+    const cacheHit = cachedSession?.id === sessionID;
+    const sessionPath = cacheHit
       ? cachedPath!
       : await this.resolveSessionDirById(state.dir, sessionID);
     if (!sessionPath) return null;
 
-    const session = await readJSON<SessionInfo>(`${sessionPath}/session`);
+    // On a cache hit the read above already returned this session's file; a
+    // second read of the same path only costs another open/parse.
+    const session = cacheHit ? cachedSession : await readJSON<SessionInfo>(`${sessionPath}/session`);
     if (!session) return null;
 
     const dirName = path.basename(sessionPath);
@@ -1321,8 +1324,9 @@ export class SessionManager {
    * Returns null when the session does not exist.
    */
   async markSessionReviewed(sessionID: string): Promise<{ reviewedAt: number; alreadyReviewed: boolean } | null> {
-    const entries = await this.readSessionEntries();
-    const entry = entries.find((candidate) => candidate.session.id === sessionID);
+    // Scoped lookup, not a project-wide scan: findSession walks straight to the
+    // one session directory (and answers from the path cache when it is warm).
+    const entry = await this.findSession(sessionID);
     if (!entry) return null;
     if (entry.session.reviewedAt !== undefined) {
       return { reviewedAt: entry.session.reviewedAt, alreadyReviewed: true };
@@ -1336,27 +1340,13 @@ export class SessionManager {
     sessionID: string,
     options: { message?: string; code?: string; dismissEnded?: boolean } = {}
   ): Promise<StoppedSession[]> {
-    const entries = await this.readSessionEntries();
-    const byParent = new Map<string, SessionEntry[]>();
-    for (const entry of entries) {
-      const parentId = entry.session.parentSessionID;
-      if (!parentId) continue;
-      const children = byParent.get(parentId) ?? [];
-      children.push(entry);
-      byParent.set(parentId, children);
-    }
-
-    const root = entries.find((entry) => entry.session.id === sessionID);
+    // Scoped to the tree being stopped: the root is found directly and its
+    // descendants live under `{root}/subagent`, so nothing here reads sessions
+    // outside the tree. This used to scan every session in the project on each
+    // stop, which on a large store dominated the request.
+    const root = await this.findSession(sessionID);
     if (!root) return [];
-
-    const ordered: SessionEntry[] = [];
-    const visit = (entry: SessionEntry) => {
-      ordered.push(entry);
-      for (const child of byParent.get(entry.session.id) ?? []) {
-        visit(child);
-      }
-    };
-    visit(root);
+    const ordered: SessionEntry[] = [root, ...(await this.listDescendantSessions(sessionID, root.path))];
 
     const now = Date.now();
     const code = options.code ?? 'USER_STOPPED';

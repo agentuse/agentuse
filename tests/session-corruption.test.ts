@@ -73,10 +73,17 @@ describe('storage corruption handling', () => {
       const children = await mgr.listChildSessions(parentId);
       expect(children.map((c) => c.session.id)).toContain(childId);
 
-      // stopSessionTree does a full cross-session scan (the production path that
-      // 500'd): it must skip the corrupt file and still stop the tree.
+      // stopSessionTree is scoped to the tree, so an unrelated corrupt session
+      // is not even read; the tree still stops.
       const stopped = await mgr.stopSessionTree(parentId);
       expect(stopped.map((s) => s.sessionId)).toContain(parentId);
+      expect(stopped.map((s) => s.sessionId)).toEqual([parentId, childId]);
+
+      // Marking reviewed is a single-session lookup too, not a scan.
+      const reviewed = await mgr.markSessionReviewed(parentId);
+      expect(reviewed?.alreadyReviewed).toBe(false);
+      expect((await mgr.markSessionReviewed(parentId))?.alreadyReviewed).toBe(true);
+      expect(await mgr.markSessionReviewed('01JZZZZZZZZZZZZZZZZZZZZZZZ')).toBeNull();
     } finally {
       if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
       else process.env.XDG_DATA_HOME = originalXdg;
