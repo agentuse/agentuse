@@ -164,7 +164,10 @@ import {
 } from "../agents/changeset";
 import { applyChangeset, restoreChangeset as restoreChangesetFiles, type ChangesetValidate } from "../agents/changeset-apply";
 import { validateChangesetFiles } from "../agents/changeset-validate";
-import { computeAgentId } from '../utils/agent-id.js';
+import { agentBaseName, computeAgentId, stripAgentExtension } from '../utils/agent-id.js';
+import { formatCliRow, renderCliTable, renderCliTableHeader } from '../utils/cli-table.js';
+import { mapLimit } from '../utils/concurrency.js';
+import { toErrorMessage } from '../utils/error-message.js';
 import { mountChangesetShadow } from "../agents/changeset-mount";
 import {
   assertChangesetId,
@@ -1272,7 +1275,7 @@ class AgentWorker {
     this.respawnTimer = setTimeout(() => {
       this.respawnTimer = null;
       this.spawn().catch((error) => {
-        logger.warn(`Worker respawn failed: ${(error as Error).message}`);
+        logger.warn(`Worker respawn failed: ${toErrorMessage(error)}`);
         this.scheduleRespawn();
       });
     }, delayMs);
@@ -1723,7 +1726,7 @@ class AgentWorker {
       logger.info(`Recycled ${projectId} worker holding ${rssMb.toFixed(0)}MB (threshold ${WORKER_RECYCLE_MB}MB); a fresh one is serving now.`);
       return true;
     } catch (error) {
-      logger.warn(`Worker recycle for ${projectId} failed: ${(error as Error).message}`);
+      logger.warn(`Worker recycle for ${projectId} failed: ${toErrorMessage(error)}`);
       return false;
     } finally {
       this.recycling = false;
@@ -2929,16 +2932,23 @@ const agentSummaryCache = new Map<string, CachedAgentSummary>();
 async function collectAgents(projects: Project[]): Promise<CollectAgentsResult> {
   const agents: AgentSummary[] = [];
   const errors: CollectAgentsResult['errors'] = [];
-  for (const project of projects) {
-    for (const agentFile of project.agentFiles) {
+  // One stat + parse per agent file, and a cold cache parses every one of them.
+  // Sequential awaits made that latency additive across the whole fleet, so fan
+  // the per-file work out and fold the ordered results afterwards.
+  const files = projects.flatMap((project) =>
+    project.agentFiles.map((agentFile) => ({ project, agentFile })),
+  );
+  type CollectedAgent =
+    | { ok: true; summary: AgentSummary }
+    | { ok: false; projectId: string; path: string; message: string };
+  const collected = await mapLimit(files, 16, async ({ project, agentFile }): Promise<CollectedAgent> => {
       try {
         const absPath = resolveScopedAgentPath(project, agentFile);
         const fileStat = await stat(absPath);
         const cached = agentSummaryCache.get(absPath);
         if (cached && cached.mtimeMs === fileStat.mtimeMs && cached.size === fileStat.size) {
-          if ('error' in cached) errors.push({ projectId: project.id, path: agentFile, message: cached.error });
-          else agents.push({ ...cached.summary, projectId: project.id, path: toProjectRelativeAgentPath(project, agentFile), runPath: agentFile });
-          continue;
+          if ('error' in cached) return { ok: false, projectId: project.id, path: agentFile, message: cached.error };
+          return { ok: true, summary: { ...cached.summary, projectId: project.id, path: toProjectRelativeAgentPath(project, agentFile), runPath: agentFile } };
         }
         const parsed = await parseAgent(absPath);
         // Relationship targets normalize to the same project-relative notation
@@ -2964,12 +2974,14 @@ async function collectAgents(projects: Project[]): Promise<CollectAgentsResult> 
           ...(parsed.config.type && { type: parsed.config.type }),
         };
         agentSummaryCache.set(absPath, { mtimeMs: fileStat.mtimeMs, size: fileStat.size, summary });
-        agents.push(summary);
+        return { ok: true, summary };
       } catch (err) {
-        const message = (err as Error).message;
-        errors.push({ projectId: project.id, path: agentFile, message });
+        return { ok: false, projectId: project.id, path: agentFile, message: toErrorMessage(err) };
       }
-    }
+  });
+  for (const entry of collected) {
+    if (entry.ok) agents.push(entry.summary);
+    else errors.push({ projectId: entry.projectId, path: entry.path, message: entry.message });
   }
   agents.sort((a, b) => a.projectId.localeCompare(b.projectId) || a.path.localeCompare(b.path));
   annotateRelationshipWarnings(agents);
@@ -3169,9 +3181,7 @@ function redactAgentDetailSource(detail: AgentDetail): Omit<AgentDetail, 'source
 }
 
 function normalizeSubagentName(value: string): string {
-  const fileBase = value.split('/').pop() || value;
-  return fileBase
-    .replace(/\.agentuse$/i, '')
+  return agentBaseName(value)
     .toLowerCase()
     .replace(/[^a-z0-9_-]/g, '_')
     .replace(/-/g, '_');
@@ -3778,7 +3788,7 @@ export function createServeCommand(): Command {
       try {
         globalConfig = loadGlobalConfig();
       } catch (err) {
-        console.error(chalk.red((err as Error).message));
+        console.error(chalk.red(toErrorMessage(err)));
         process.exit(1);
       }
       const serveCfg = globalConfig?.serve;
@@ -3858,7 +3868,7 @@ export function createServeCommand(): Command {
           try {
             projectSeeds.push(resolveProjectFromPath(dir));
           } catch (err) {
-            console.error(chalk.red((err as Error).message));
+            console.error(chalk.red(toErrorMessage(err)));
             process.exit(1);
           }
         }
@@ -3867,7 +3877,7 @@ export function createServeCommand(): Command {
           try {
             projectSeeds.push(resolveProjectFromPath(p.path, p.id));
           } catch (err) {
-            console.error(chalk.red(`Config project ${p.id ?? p.path}: ${(err as Error).message}`));
+            console.error(chalk.red(`Config project ${p.id ?? p.path}: ${toErrorMessage(err)}`));
             process.exit(1);
           }
         }
@@ -3947,7 +3957,7 @@ export function createServeCommand(): Command {
         try {
           await initStorage(p.root);
         } catch (err) {
-          logger.warn(`Failed to initialize session storage for ${p.id}: ${(err as Error).message}`);
+          logger.warn(`Failed to initialize session storage for ${p.id}: ${toErrorMessage(err)}`);
         }
       }
 
@@ -4060,7 +4070,7 @@ export function createServeCommand(): Command {
           await reconcileWorkerOrphans(worker, project.id, project.root, cutoff);
         }));
       }, {
-        onError: (error) => logger.debug(`Orphan reconciliation failed: ${(error as Error).message}`),
+        onError: (error) => logger.debug(`Orphan reconciliation failed: ${toErrorMessage(error)}`),
       });
       const spawnProjectWorker = async (p: Omit<Project, 'agentFiles'>): Promise<AgentWorker> => {
         const w = new AgentWorker({
@@ -4079,7 +4089,7 @@ export function createServeCommand(): Command {
         try {
           await w.spawn();
         } catch (err) {
-          throw new Error(`Failed to spawn worker for ${p.id}: ${(err as Error).message}`);
+          throw new Error(`Failed to spawn worker for ${p.id}: ${toErrorMessage(err)}`);
         }
         workers.set(p.id, w);
         return w;
@@ -4088,7 +4098,7 @@ export function createServeCommand(): Command {
         try {
           await spawnProjectWorker(p);
         } catch (err) {
-          console.error(chalk.red((err as Error).message));
+          console.error(chalk.red(toErrorMessage(err)));
           for (const live of workers.values()) live.shutdown();
           process.exit(1);
         }
@@ -4126,7 +4136,7 @@ export function createServeCommand(): Command {
           try {
             await worker.invalidateLists(project.root, options);
           } catch (err) {
-            logger.debug(`List cache invalidation failed: ${(err as Error).message}`);
+            logger.debug(`List cache invalidation failed: ${toErrorMessage(err)}`);
           }
         }
         wakeListHubs();
@@ -4162,7 +4172,7 @@ export function createServeCommand(): Command {
           return {
             success: false,
             duration,
-            error: (parseError as Error).message,
+            error: toErrorMessage(parseError),
           };
         }
 
@@ -4268,7 +4278,7 @@ export function createServeCommand(): Command {
         try {
           pausedSchedulesByProject.set(seed.id, await loadPausedSchedules(seed.root));
         } catch (error) {
-          logger.warn(`Could not load schedule state for ${seed.id}: ${(error as Error).message}`);
+          logger.warn(`Could not load schedule state for ${seed.id}: ${toErrorMessage(error)}`);
           pausedSchedulesByProject.set(seed.id, new Set());
         }
       }
@@ -4327,7 +4337,7 @@ export function createServeCommand(): Command {
               logger.debug(`Loaded schedule for ${seed.id}: ${agentFile}`);
             }
           } catch (err) {
-            logger.warn(`Failed to load agent ${seed.id}/${agentFile}: ${(err as Error).message}`);
+            logger.warn(`Failed to load agent ${seed.id}/${agentFile}: ${toErrorMessage(err)}`);
           }
         }
       }
@@ -4548,7 +4558,7 @@ export function createServeCommand(): Command {
         const prepared = await worker.createPreparingSession({
           projectRoot: project.root,
           sessionId,
-          agentId: draft.fileName.replace(/\.agentuse$/u, ''),
+          agentId: stripAgentExtension(draft.fileName),
           agentName: draft.name,
           agentDescription: `Mock test run of draft ${draft.index}`,
           model: draft.model,
@@ -4580,7 +4590,7 @@ export function createServeCommand(): Command {
         }).catch(async (error: unknown) => {
           await onSettled?.(sessionId, {
             status: 'error',
-            error: { code: 'TEST_RUN_FAILED', message: (error as Error).message },
+            error: { code: 'TEST_RUN_FAILED', message: toErrorMessage(error) },
           }).catch(() => undefined);
         }).finally(() => {
           testRunWorkers.delete(sessionId);
@@ -4684,7 +4694,7 @@ export function createServeCommand(): Command {
             : { status: 'error', error: result.error }))
             .catch((error: unknown) => settle({
               status: 'error',
-              error: { code: 'TEST_RUN_FAILED', message: (error as Error).message },
+              error: { code: 'TEST_RUN_FAILED', message: toErrorMessage(error) },
             }))
             .finally(async () => {
               testRunWorkers.delete(testSessionId);
@@ -4758,7 +4768,7 @@ export function createServeCommand(): Command {
               job.status = 'error';
               job.error = {
                 code: error instanceof AgentCreationError ? error.code : 'AGENT_CREATE_FAILED',
-                message: (error as Error).message,
+                message: toErrorMessage(error),
               };
             }
           }
@@ -4969,7 +4979,7 @@ export function createServeCommand(): Command {
             } catch (err) {
               // Keep it in agentFiles so it shows as an error row and is retried
               // on the next edit/scan; do not drop it.
-              logger.warn(`Hot reload: Failed to parse new agent ${project.id}/${relativePath}: ${(err as Error).message}`);
+              logger.warn(`Hot reload: Failed to parse new agent ${project.id}/${relativePath}: ${toErrorMessage(err)}`);
             }
           },
 
@@ -4999,7 +5009,7 @@ export function createServeCommand(): Command {
 
               updateRegistryCounts();
             } catch (err) {
-              logger.warn(`Hot reload: Failed to parse changed agent ${project.id}/${relativePath}: ${(err as Error).message}`);
+              logger.warn(`Hot reload: Failed to parse changed agent ${project.id}/${relativePath}: ${toErrorMessage(err)}`);
             }
           },
 
@@ -5086,7 +5096,7 @@ export function createServeCommand(): Command {
           try {
             pausedSchedulesByProject.set(seed.id, await loadPausedSchedules(seed.root));
           } catch (error) {
-            logger.warn(`Could not load schedule state for ${seed.id}: ${(error as Error).message}`);
+            logger.warn(`Could not load schedule state for ${seed.id}: ${toErrorMessage(error)}`);
             pausedSchedulesByProject.set(seed.id, new Set());
           }
           agentCounts.set(seed.id, agentFiles.length);
@@ -5102,7 +5112,7 @@ export function createServeCommand(): Command {
                 scheduler.add(seed.id, agentFile, agent.config.schedule, agent.config.name, scheduleIsEnabled(seed, agentFile));
               }
             } catch (err) {
-              logger.warn(`Failed to load agent ${seed.id}/${agentFile}: ${(err as Error).message}`);
+              logger.warn(`Failed to load agent ${seed.id}/${agentFile}: ${toErrorMessage(err)}`);
             }
           }
           watcher = watchProject(project);
@@ -5406,7 +5416,7 @@ export function createServeCommand(): Command {
       ): void => {
         if (!target) return;
         void saveManualLearning(target).catch((err) => {
-          logger.warn(`Failed to persist remembered learning: ${(err as Error).message}`);
+          logger.warn(`Failed to persist remembered learning: ${toErrorMessage(err)}`);
         });
       };
 
@@ -5626,7 +5636,7 @@ export function createServeCommand(): Command {
             ...(info.approval.expiresAt && { expiresAt: new Date(info.approval.expiresAt).toISOString() }),
             status: 'resuming',
             decision: status
-          }).catch((err) => logger.warn(`Slack approval status update failed: ${(err as Error).message}`));
+          }).catch((err) => logger.warn(`Slack approval status update failed: ${toErrorMessage(err)}`));
         }
         const resumePromise = Promise.resolve().then(() => projectWorker.execute({
           projectRoot: project.root,
@@ -5641,7 +5651,7 @@ export function createServeCommand(): Command {
           debug: options.debug,
         })).then(async result => {
           await settleAgentRevisionExecution(project, targetSessionId, result).catch((err) => {
-            logger.warn(`Failed to settle revision session ${targetSessionId}: ${(err as Error).message}`);
+            logger.warn(`Failed to settle revision session ${targetSessionId}: ${toErrorMessage(err)}`);
           });
           if (!result.success) {
             const alreadyCompleted = /SESSION_NOT_SUSPENDED:\s*completed/i.test(result.error.message);
@@ -5657,7 +5667,7 @@ export function createServeCommand(): Command {
             try {
               params.onResumeFailure?.();
             } catch (hookErr) {
-              logger.warn(`Approval resume failure hook for ${targetSessionId} failed: ${(hookErr as Error).message}`);
+              logger.warn(`Approval resume failure hook for ${targetSessionId} failed: ${toErrorMessage(hookErr)}`);
             }
             if (slackChannelMessage && info.approval.prompt) {
               void updateSlackApprovalRequestStatus({
@@ -5674,7 +5684,7 @@ export function createServeCommand(): Command {
                 status: 'failed',
                 decision: status,
                 error: result.error.message
-              }).catch((err) => logger.warn(`Slack approval status update failed: ${(err as Error).message}`));
+              }).catch((err) => logger.warn(`Slack approval status update failed: ${toErrorMessage(err)}`));
             }
           } else {
             backgroundSessionFailures.delete(activeKey);
@@ -5693,7 +5703,7 @@ export function createServeCommand(): Command {
                 ...(info.approval.expiresAt && { expiresAt: new Date(info.approval.expiresAt).toISOString() }),
                 status: 'completed',
                 decision: status
-              }).catch((err) => logger.warn(`Slack approval status update failed: ${(err as Error).message}`));
+              }).catch((err) => logger.warn(`Slack approval status update failed: ${toErrorMessage(err)}`));
             }
           }
         }).finally(() => {
@@ -5733,13 +5743,13 @@ export function createServeCommand(): Command {
           }))
           .then(async result => {
             await settleAgentRevisionExecution(project, sessionId, result).catch((err) => {
-              logger.warn(`Failed to settle revision session ${sessionId}: ${(err as Error).message}`);
+              logger.warn(`Failed to settle revision session ${sessionId}: ${toErrorMessage(err)}`);
             });
             await settleAgentDraftExecution(project, sessionId, result).catch((err) => {
-              logger.warn(`Failed to settle draft session ${sessionId}: ${(err as Error).message}`);
+              logger.warn(`Failed to settle draft session ${sessionId}: ${toErrorMessage(err)}`);
             });
             await settleChangesetExecution(project, sessionId, result).catch((err) => {
-              logger.warn(`Failed to settle change set session ${sessionId}: ${(err as Error).message}`);
+              logger.warn(`Failed to settle change set session ${sessionId}: ${toErrorMessage(err)}`);
             });
             if (!result.success) {
               backgroundSessionFailures.set(activeKey, {
@@ -5914,7 +5924,7 @@ export function createServeCommand(): Command {
           status,
           decision,
           ...(error !== undefined && { error })
-        }).catch((err) => logger.warn(`Slack approval status update failed: ${(err as Error).message}`));
+        }).catch((err) => logger.warn(`Slack approval status update failed: ${toErrorMessage(err)}`));
       };
 
       const postSlackApprovalThreadNote = (
@@ -5950,7 +5960,7 @@ export function createServeCommand(): Command {
               }
             ] as any[]
           });
-        })().catch((err) => logger.warn(`Slack approval thread note failed: ${(err as Error).message}`));
+        })().catch((err) => logger.warn(`Slack approval thread note failed: ${toErrorMessage(err)}`));
       };
 
       const sessionIdForLocalApprovalThread = async (comment: SlackApprovalThreadComment): Promise<string | undefined> => {
@@ -5992,7 +6002,7 @@ export function createServeCommand(): Command {
             text,
             blocks
           });
-        })().catch((err) => logger.warn(`Slack run thread note failed: ${(err as Error).message}`));
+        })().catch((err) => logger.warn(`Slack run thread note failed: ${toErrorMessage(err)}`));
       };
 
       const continueSlackRunThread = async (comment: SlackApprovalThreadComment): Promise<SlackRunThreadCommentResult> => {
@@ -6000,7 +6010,7 @@ export function createServeCommand(): Command {
         try {
           sessionId = await sessionIdForLocalApprovalThread(comment);
         } catch (err) {
-          logger.warn(`Slack run thread lookup failed: ${(err as Error).message}`);
+          logger.warn(`Slack run thread lookup failed: ${toErrorMessage(err)}`);
           return { handled: false };
         }
         if (!sessionId) return { handled: false };
@@ -6158,7 +6168,7 @@ export function createServeCommand(): Command {
         });
         slackApprovalSocket.start()
           .then(() => logger.info('Slack approval socket connected'))
-          .catch((err) => logger.warn(`Slack approval socket failed to start: ${(err as Error).message}`));
+          .catch((err) => logger.warn(`Slack approval socket failed to start: ${toErrorMessage(err)}`));
       } else if (slackAppToken && !slackBotToken) {
         logger.warn('Slack Socket Mode requires SLACK_BOT_TOKEN when SLACK_APP_TOKEN is set; listener not started.');
       } else if (loadedServeEnvFiles.length === 0) {
@@ -6206,7 +6216,7 @@ export function createServeCommand(): Command {
                   status: 'failed',
                   decision: 'expired',
                   error: 'Approval timed out'
-                }).catch((err) => logger.debug(`Slack expired update failed: ${(err as Error).message}`));
+                }).catch((err) => logger.debug(`Slack expired update failed: ${toErrorMessage(err)}`));
               }
             }
           }
@@ -6296,7 +6306,7 @@ export function createServeCommand(): Command {
             purpose = revision ? agentRevisionSessionPurpose(revision) : null;
           }
         } catch (error) {
-          logger.warn(`Could not classify session ${sessionId}: ${(error as Error).message}`);
+          logger.warn(`Could not classify session ${sessionId}: ${toErrorMessage(error)}`);
         }
         sessionPurposeCache.set(cacheKey, purpose);
         return purpose;
@@ -7001,7 +7011,7 @@ export function createServeCommand(): Command {
               sendJSON(res, 200, { subscribed: true, prefs: record.prefs });
             } catch (err) {
               if (sendRequestParseError(res, err)) return;
-              sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+              sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
             }
             return;
           }
@@ -7017,7 +7027,7 @@ export function createServeCommand(): Command {
             sendJSON(res, 200, { removed: pushService.remove(endpoint) });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -7109,7 +7119,7 @@ export function createServeCommand(): Command {
               ...(detail.schedule && { scheduleEnabled: scheduleIsEnabled(project, requestedPath) }),
             });
           } catch (err) {
-            sendError(res, 500, "AGENT_READ_FAILED", (err as Error).message);
+            sendError(res, 500, "AGENT_READ_FAILED", toErrorMessage(err));
           }
           return;
         }
@@ -7148,7 +7158,7 @@ export function createServeCommand(): Command {
               }),
             });
           } catch (err) {
-            sendError(res, 400, 'REVISION_LIST_FAILED', (err as Error).message);
+            sendError(res, 400, 'REVISION_LIST_FAILED', toErrorMessage(err));
           }
           return;
         }
@@ -7186,7 +7196,7 @@ export function createServeCommand(): Command {
             sendJSON(res, 200, { success: true, paused: body.paused, scheduleEnabled: !body.paused });
           } catch (error) {
             if (sendRequestParseError(res, error)) return;
-            sendError(res, 500, 'SCHEDULE_STATE_FAILED', (error as Error).message);
+            sendError(res, 500, 'SCHEDULE_STATE_FAILED', toErrorMessage(error));
           }
           return;
         }
@@ -7242,7 +7252,7 @@ export function createServeCommand(): Command {
             } catch (err) {
               const code = (err as NodeJS.ErrnoException).code;
               if (code !== 'ENOENT') {
-                errors.push({ projectId: project.id, message: (err as Error).message });
+                errors.push({ projectId: project.id, message: toErrorMessage(err) });
               }
             }
           }
@@ -7288,7 +7298,7 @@ export function createServeCommand(): Command {
             } catch (err) {
               const code = (err as NodeJS.ErrnoException).code;
               if (code !== 'ENOENT') {
-                errors.push({ projectId: project.id, message: (err as Error).message });
+                errors.push({ projectId: project.id, message: toErrorMessage(err) });
               }
             }
           }
@@ -7778,7 +7788,7 @@ export function createServeCommand(): Command {
             persistRememberedLearning(rememberTarget);
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -7816,7 +7826,7 @@ export function createServeCommand(): Command {
             startCascadeRetry(res, { project, sessionId });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -7871,7 +7881,7 @@ export function createServeCommand(): Command {
             startSessionContinue(res, { project, sessionId, prompt });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -8049,7 +8059,7 @@ export function createServeCommand(): Command {
               ? await sessionLearningPayload(found.project, resolved, sessionId, allowTidy)
               : { success: true, learnings: [] });
           } catch (err) {
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -8097,7 +8107,7 @@ export function createServeCommand(): Command {
               : { success: true, learnings: [] });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -8128,7 +8138,7 @@ export function createServeCommand(): Command {
               : { success: true, learnings: [] });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -8187,7 +8197,7 @@ export function createServeCommand(): Command {
             if (!target) return;
             sendJSON(res, 200, await agentLearningPayload(target));
           } catch (err) {
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -8218,7 +8228,7 @@ export function createServeCommand(): Command {
             sendJSON(res, 200, await agentLearningPayload(target));
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -8242,7 +8252,7 @@ export function createServeCommand(): Command {
             sendJSON(res, 200, await agentLearningPayload(target));
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -8328,13 +8338,13 @@ export function createServeCommand(): Command {
             }).catch((err: unknown) => {
               job.status = 'error';
               job.finishedAt = Date.now();
-              job.error = (err as Error).message;
+              job.error = toErrorMessage(err);
             });
 
             sendJSON(res, 202, { success: true, job: tidyJobView(job) });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -8367,7 +8377,7 @@ export function createServeCommand(): Command {
               ...(result ? { tidy: result } : {}),
             });
           } catch (err) {
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -8398,7 +8408,7 @@ export function createServeCommand(): Command {
             });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -8461,7 +8471,7 @@ export function createServeCommand(): Command {
               const hardStop = (): void => {
                 void projectWorker.stopSession({ projectRoot: project.root, sessionId, reason, dismissEnded: true })
                   .then(() => wakeListHubs())
-                  .catch((err) => logger.warn(`Fallback stop after failed reject-resume of ${sessionId} failed: ${(err as Error).message}`));
+                  .catch((err) => logger.warn(`Fallback stop after failed reject-resume of ${sessionId} failed: ${toErrorMessage(err)}`));
               };
               startApprovalResume(res, {
                 project,
@@ -8499,7 +8509,7 @@ export function createServeCommand(): Command {
             sendJSON(res, 200, { success: true, sessionId, stopped: result.stopped });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -8532,7 +8542,7 @@ export function createServeCommand(): Command {
             sendJSON(res, 200, { success: true, status: "refreshed" });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 500, "INTERNAL_ERROR", (err as Error).message);
+            sendError(res, 500, "INTERNAL_ERROR", toErrorMessage(err));
           }
           return;
         }
@@ -8612,7 +8622,7 @@ export function createServeCommand(): Command {
             sendJSON(res, 200, { success: true, status: "notified" });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -8659,7 +8669,7 @@ export function createServeCommand(): Command {
             sendJSON(res, 200, { success: true, sessionId, reviewedAt: result.reviewedAt, alreadyReviewed: result.alreadyReviewed });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -8721,7 +8731,7 @@ export function createServeCommand(): Command {
             sendJSON(res, 200, { success: true, sessionId, status: "suspended" });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -8886,7 +8896,7 @@ export function createServeCommand(): Command {
             sendJSON(res, 200, { success: true, status: "logged", sessionId });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -9010,7 +9020,7 @@ export function createServeCommand(): Command {
             persistRememberedLearning(rememberTarget);
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -9082,7 +9092,7 @@ export function createServeCommand(): Command {
             startSessionContinue(res, { project, sessionId, prompt });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -9129,7 +9139,7 @@ export function createServeCommand(): Command {
             res.end(JSON.stringify({ sessionId, status: "running" }));
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -9142,7 +9152,7 @@ export function createServeCommand(): Command {
             const readiness = requestUrl.searchParams.get('readiness') === 'defer' ? 'defer' : 'run';
             sendJSON(res, 200, { success: true, ...await providerSetupSnapshot({ readiness }) });
           } catch (err) {
-            sendError(res, 500, "PROVIDER_STATUS_FAILED", (err as Error).message);
+            sendError(res, 500, "PROVIDER_STATUS_FAILED", toErrorMessage(err));
           }
           return;
         }
@@ -9154,7 +9164,7 @@ export function createServeCommand(): Command {
               ...(requestUrl.searchParams.get('provider') && { provider: requestUrl.searchParams.get('provider')! }),
             }) });
           } catch (err) {
-            sendError(res, 500, "PROVIDER_STATUS_FAILED", (err as Error).message);
+            sendError(res, 500, "PROVIDER_STATUS_FAILED", toErrorMessage(err));
           }
           return;
         }
@@ -9172,7 +9182,7 @@ export function createServeCommand(): Command {
             sendJSON(res, 200, { success: true, ...result });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, providerRoute.code, (err as Error).message);
+            sendError(res, 400, providerRoute.code, toErrorMessage(err));
           }
           return;
         }
@@ -9217,7 +9227,7 @@ export function createServeCommand(): Command {
               },
             });
           } catch (err) {
-            sendError(res, 500, "AGENT_CREATE_OPTIONS_FAILED", (err as Error).message);
+            sendError(res, 500, "AGENT_CREATE_OPTIONS_FAILED", toErrorMessage(err));
           }
           return;
         }
@@ -9323,7 +9333,7 @@ export function createServeCommand(): Command {
               job,
               worker,
               project,
-              agentId: relative(project.root, internalAgentDraftPath(project.root, sessionId)).replace(/\.agentuse$/u, ''),
+              agentId: stripAgentExtension(relative(project.root, internalAgentDraftPath(project.root, sessionId))),
               agentName: 'internal-agent-creator',
               agentDescription: 'Turn a user brief into a production AgentUse agent',
               timeout: 300,
@@ -9421,7 +9431,7 @@ export function createServeCommand(): Command {
               mapError: (error) => {
                 const mapped = {
                   code: error instanceof AgentCreationError ? error.code : 'AGENT_CREATE_FAILED',
-                  message: (error as Error).message,
+                  message: toErrorMessage(error),
                 };
                 void failAgentDraft(project.root, job.id, mapped).catch(() => undefined);
                 return mapped;
@@ -9441,14 +9451,14 @@ export function createServeCommand(): Command {
                   await cleanupInternalView(job.id);
                 }
               },
-              onPersistenceError: (error) => logger.warn(`Failed to persist internal agent job ${job.id}: ${(error as Error).message}`),
+              onPersistenceError: (error) => logger.warn(`Failed to persist internal agent job ${job.id}: ${toErrorMessage(error)}`),
             });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
             if (err instanceof AgentCreationError) {
               sendError(res, 400, err.code, err.message);
             } else {
-              sendError(res, 500, "AGENT_CREATE_START_FAILED", (err as Error).message);
+              sendError(res, 500, "AGENT_CREATE_START_FAILED", toErrorMessage(err));
             }
           }
           return;
@@ -9494,7 +9504,7 @@ export function createServeCommand(): Command {
             if (err instanceof ManagedProjectError && err.code === 'PROJECT_EXISTS') {
               sendError(res, 409, err.code, err.message);
             } else {
-              sendError(res, err instanceof ManagedProjectError ? 500 : 400, "INVALID_PROJECT", (err as Error).message);
+              sendError(res, err instanceof ManagedProjectError ? 500 : 400, "INVALID_PROJECT", toErrorMessage(err));
             }
           } finally {
             projectMutationInFlight = false;
@@ -9536,7 +9546,7 @@ export function createServeCommand(): Command {
           } catch (err) {
             await rollback?.().catch(() => {});
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_PROJECT", (err as Error).message);
+            sendError(res, 400, "INVALID_PROJECT", toErrorMessage(err));
           } finally {
             projectMutationInFlight = false;
           }
@@ -9598,7 +9608,7 @@ export function createServeCommand(): Command {
             orphanReconcileLoop.runNow();
             sendJSON(res, 200, { success: true });
           } catch (err) {
-            sendError(res, 500, "PROJECT_REMOVE_FAILED", (err as Error).message);
+            sendError(res, 500, "PROJECT_REMOVE_FAILED", toErrorMessage(err));
           } finally {
             projectMutationInFlight = false;
           }
@@ -9618,7 +9628,7 @@ export function createServeCommand(): Command {
             const path = await pickLocalProjectFolder();
             sendJSON(res, 200, { success: true, path });
           } catch (err) {
-            sendError(res, 500, "FOLDER_PICKER_FAILED", (err as Error).message);
+            sendError(res, 500, "FOLDER_PICKER_FAILED", toErrorMessage(err));
           }
           return;
         }
@@ -9657,7 +9667,7 @@ export function createServeCommand(): Command {
               }),
             });
           } catch (err) {
-            sendError(res, 400, 'REVISION_LIST_FAILED', (err as Error).message);
+            sendError(res, 400, 'REVISION_LIST_FAILED', toErrorMessage(err));
           }
           return;
         }
@@ -9730,7 +9740,7 @@ export function createServeCommand(): Command {
             currentSource = await readFile(resolveScopedAgentPath(project, requestedPath), 'utf8');
             target = {
               path: requestedPath,
-              name: parseAgentContent(currentSource, basename(requestedPath).replace(/\.agentuse$/u, '')).name,
+              name: parseAgentContent(currentSource, agentBaseName(requestedPath)).name,
             };
           }
 
@@ -9788,8 +9798,9 @@ export function createServeCommand(): Command {
             job,
             worker,
             project,
-            agentId: relative(project.root, internalAgentSourcePath(project.root, 'changeset', sessionId))
-              .replace(/\.agentuse$/u, ''),
+            agentId: stripAgentExtension(
+              relative(project.root, internalAgentSourcePath(project.root, 'changeset', sessionId)),
+            ),
             agentName,
             agentDescription,
             trigger: 'manual',
@@ -9880,7 +9891,7 @@ export function createServeCommand(): Command {
                 job.error = failure;
               }
             },
-            mapError: (error) => ({ code: 'CHANGESET_FAILED', message: (error as Error).message }),
+            mapError: (error) => ({ code: 'CHANGESET_FAILED', message: toErrorMessage(error) }),
             persist: () => persistOnboardingJob(job),
             wake: wakeListHubs,
             failPreparing: (failure) => worker.failPreparingSession({
@@ -9890,7 +9901,7 @@ export function createServeCommand(): Command {
               message: failure.message,
             }).then(() => undefined),
             onError: (failure) => failChangeset(project.root, sessionId, failure).then(() => undefined),
-            onPersistenceError: (error) => logger.warn(`Failed to persist internal agent job ${job.id}: ${(error as Error).message}`),
+            onPersistenceError: (error) => logger.warn(`Failed to persist internal agent job ${job.id}: ${toErrorMessage(error)}`),
           });
         };
 
@@ -10011,7 +10022,7 @@ export function createServeCommand(): Command {
               job,
               worker,
               project,
-              agentId: relative(project.root, internalAgentRevisionPath(project.root, revisionSessionId)).replace(/\.agentuse$/u, ''),
+              agentId: stripAgentExtension(relative(project.root, internalAgentRevisionPath(project.root, revisionSessionId))),
               agentName: `Revise ${targetAgentName}`,
               agentDescription: agentRevisionDescription(targetAgentName, originSessionId),
               trigger: 'manual',
@@ -10109,7 +10120,7 @@ export function createServeCommand(): Command {
                 job.error = error;
                 await failAgentRevision(project.root, revisionSessionId, error);
               },
-              mapError: (error) => ({ code: 'REVISION_FAILED', message: (error as Error).message }),
+              mapError: (error) => ({ code: 'REVISION_FAILED', message: toErrorMessage(error) }),
               persist: () => persistOnboardingJob(job),
               wake: wakeListHubs,
               failPreparing: (failure) => worker.failPreparingSession({
@@ -10126,11 +10137,11 @@ export function createServeCommand(): Command {
                   await cleanupInternalView(revisionSessionId);
                 }
               },
-              onPersistenceError: (error) => logger.warn(`Failed to persist internal agent job ${job.id}: ${(error as Error).message}`),
+              onPersistenceError: (error) => logger.warn(`Failed to persist internal agent job ${job.id}: ${toErrorMessage(error)}`),
             });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, 'REVISION_START_FAILED', (err as Error).message);
+            sendError(res, 400, 'REVISION_START_FAILED', toErrorMessage(err));
           } finally {
             revisionMutations.delete(input.mutationKey);
           }
@@ -10179,7 +10190,7 @@ export function createServeCommand(): Command {
             });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, 'REVISION_START_FAILED', (err as Error).message);
+            sendError(res, 400, 'REVISION_START_FAILED', toErrorMessage(err));
           }
           return;
         }
@@ -10224,7 +10235,7 @@ export function createServeCommand(): Command {
             });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, 'REVISION_START_FAILED', (err as Error).message);
+            sendError(res, 400, 'REVISION_START_FAILED', toErrorMessage(err));
           }
           return;
         }
@@ -10486,7 +10497,7 @@ export function createServeCommand(): Command {
               });
               return;
             }
-            sendError(res, 400, 'CHANGESET_ACTION_FAILED', (err as Error).message);
+            sendError(res, 400, 'CHANGESET_ACTION_FAILED', toErrorMessage(err));
           } finally {
             if (mutationKey) changesetMutations.delete(mutationKey);
           }
@@ -10651,7 +10662,7 @@ export function createServeCommand(): Command {
             if (err instanceof AgentCreationError) {
               sendError(res, 400, err.code, err.message);
             } else {
-              sendError(res, 400, 'DRAFT_ACTION_FAILED', (err as Error).message);
+              sendError(res, 400, 'DRAFT_ACTION_FAILED', toErrorMessage(err));
             }
           } finally {
             if (mutationKey) draftMutations.delete(mutationKey);
@@ -10841,7 +10852,7 @@ export function createServeCommand(): Command {
             sendJSON(res, 200, { success: true, revision: visibleRecord });
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, 'REVISION_ACTION_FAILED', (err as Error).message);
+            sendError(res, 400, 'REVISION_ACTION_FAILED', toErrorMessage(err));
           } finally {
             if (mutationKey) revisionMutations.delete(mutationKey);
           }
@@ -11085,7 +11096,7 @@ export function createServeCommand(): Command {
               },
               mapError: (error, phase) => ({
                   code: phase === 'preparing' ? 'PROJECT_DISCOVERY_START_FAILED' : 'PROJECT_DISCOVERY_FAILED',
-                  message: (error as Error).message,
+                  message: toErrorMessage(error),
                 }),
               persist: () => persistOnboardingJob(job),
               wake: wakeListHubs,
@@ -11096,11 +11107,11 @@ export function createServeCommand(): Command {
                 message: error.message,
               }).then(() => undefined),
               cleanup: async () => { await cleanupView?.(); },
-              onPersistenceError: (error) => logger.warn(`Failed to persist internal agent job ${job.id}: ${(error as Error).message}`),
+              onPersistenceError: (error) => logger.warn(`Failed to persist internal agent job ${job.id}: ${toErrorMessage(error)}`),
             });
           } catch (error) {
             if (sendRequestParseError(res, error)) return;
-            sendError(res, 500, 'PROJECT_DISCOVERY_START_FAILED', (error as Error).message);
+            sendError(res, 500, 'PROJECT_DISCOVERY_START_FAILED', toErrorMessage(error));
           }
           return;
         }
@@ -11151,7 +11162,7 @@ export function createServeCommand(): Command {
                 logger.warn(`Onboarding run ${preassignedId} failed: ${result.error.message}`);
               }
             }).catch((err) => {
-              logger.warn(`Onboarding run ${preassignedId} errored: ${(err as Error).message}`);
+              logger.warn(`Onboarding run ${preassignedId} errored: ${toErrorMessage(err)}`);
             }).finally(wakeListHubs);
 
             wakeListHubs();
@@ -11165,7 +11176,7 @@ export function createServeCommand(): Command {
             }));
           } catch (err) {
             if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", (err as Error).message);
+            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
           }
           return;
         }
@@ -11287,7 +11298,7 @@ export function createServeCommand(): Command {
             }).catch((err) => {
               totalExecutions++;
               failedExecutions++;
-              logger.warn(`Detached run ${preassignedId} errored: ${(err as Error).message}`);
+              logger.warn(`Detached run ${preassignedId} errored: ${toErrorMessage(err)}`);
               telemetry.captureExecution({
                 ...parseModel(body.model || agent.config.model),
                 durationMs: Date.now() - startTime,
@@ -11511,7 +11522,7 @@ export function createServeCommand(): Command {
           }
         } catch (err) {
           if (sendRequestParseError(res, err)) return;
-          const message = (err as Error).message;
+          const message = toErrorMessage(err);
 
           if (message.includes("Invalid JSON")) {
             sendError(res, 400, "INVALID_REQUEST", message);
@@ -11650,7 +11661,7 @@ export function createServeCommand(): Command {
             logHandle = startLogFile({ path: getDefaultLogFilePath(process.pid) });
             logFilePath = logHandle.path;
           } catch (err) {
-            logger.warn(`Could not open server log file: ${(err as Error).message}`);
+            logger.warn(`Could not open server log file: ${toErrorMessage(err)}`);
           }
         }
 
@@ -11781,9 +11792,6 @@ function formatPsTable(servers: ServerEntry[]): string {
   const headers = ["PID", "PORT", "PROJECTS", "AGENTS", "SCHEDULES", "UPTIME"];
   const widths = [7, 7, 40, 7, 10, 10];
 
-  const headerRow = headers.map((h, i) => h.padEnd(widths[i])).join("  ");
-  const separator = widths.map((w) => "─".repeat(w)).join("──");
-
   const formatProjects = (s: ServerEntry): string[] => {
     if (s.projects && s.projects.length > 0) {
       if (s.projects.length === 1) {
@@ -11794,27 +11802,19 @@ function formatPsTable(servers: ServerEntry[]): string {
     return [truncatePath(s.projectRoot, widths[2])];
   };
 
-  const blocks: string[] = [chalk.dim(headerRow), chalk.dim(separator)];
+  const blocks: string[] = [...renderCliTableHeader(headers, widths)];
   for (const s of servers) {
     const projects = formatProjects(s);
-    const row = [
-      String(s.pid).padEnd(widths[0]),
-      String(s.port).padEnd(widths[1]),
-      projects[0].padEnd(widths[2]),
-      String(s.agentCount).padEnd(widths[3]),
-      String(s.scheduleCount).padEnd(widths[4]),
-      formatUptime(s.startTime).padEnd(widths[5]),
-    ].join("  ");
-    blocks.push(row);
+    blocks.push(formatCliRow([
+      String(s.pid),
+      String(s.port),
+      projects[0],
+      String(s.agentCount),
+      String(s.scheduleCount),
+      formatUptime(s.startTime),
+    ], widths));
     for (const project of projects.slice(1)) {
-      blocks.push([
-        "".padEnd(widths[0]),
-        "".padEnd(widths[1]),
-        project.padEnd(widths[2]),
-        "".padEnd(widths[3]),
-        "".padEnd(widths[4]),
-        "".padEnd(widths[5]),
-      ].join("  ").trimEnd());
+      blocks.push(formatCliRow(["", "", project, "", "", ""], widths).trimEnd());
     }
     if (s.logFile) {
       const shortLog = s.logFile.startsWith(homedir())
@@ -11966,17 +11966,6 @@ async function fetchDaemonJson(server: ServerEntry, path: string): Promise<unkno
   return res.json();
 }
 
-/** Render an aligned, headered table for CLI output (mirrors `serve ps`). */
-function renderCliTable(headers: string[], rows: string[][]): string {
-  const widths = headers.map((header, i) =>
-    Math.max(header.length, ...rows.map((row) => (row[i] ?? "").length))
-  );
-  const line = (cells: string[]) => cells.map((cell, i) => (cell ?? "").padEnd(widths[i])).join("  ");
-  const out = [chalk.dim(line(headers)), chalk.dim(widths.map((w) => "─".repeat(w)).join("──"))];
-  for (const row of rows) out.push(line(row));
-  return out.join("\n");
-}
-
 function formatAgentsTable(agents: AgentSummary[]): string {
   if (agents.length === 0) return chalk.dim("No agents loaded by this serve daemon.");
   const multiProject = new Set(agents.map((a) => a.projectId)).size > 1;
@@ -12035,7 +12024,7 @@ function createAgentsSubcommand(): Command {
           }
         }
       } catch (err) {
-        console.error(chalk.red((err as Error).message));
+        console.error(chalk.red(toErrorMessage(err)));
         process.exit(1);
       }
     });
@@ -12059,7 +12048,7 @@ function createSchedulesSubcommand(): Command {
         }
         console.log(formatSchedulesTable(data.schedules));
       } catch (err) {
-        console.error(chalk.red((err as Error).message));
+        console.error(chalk.red(toErrorMessage(err)));
         process.exit(1);
       }
     });
