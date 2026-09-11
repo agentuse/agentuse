@@ -4699,7 +4699,31 @@ export function createServeCommand(): Command {
         }
       };
 
-      const recoverAgentCreationJob =(job: OnboardingModelJob, missingIsInterrupted = false): Promise<void> => {
+      /**
+       * A test run is settled by the daemon that launched it, so a restart
+       * mid-run leaves its `running` row behind forever, and that row blocks
+       * every later test run of the change set. A run this daemon is not
+       * driving cannot still be in flight: settle it as interrupted.
+       */
+      const settleStaleChangesetTestRuns = async (
+        project: Project,
+        record: ChangesetRecord,
+      ): Promise<ChangesetRecord> => {
+        let latest = record;
+        for (const run of record.testRuns) {
+          if (run.status !== 'running' || testRunWorkers.has(run.sessionId)) continue;
+          latest = await settleChangesetTestRun(project.root, record.sessionId, run.sessionId, {
+            status: 'error',
+            error: {
+              code: 'TEST_RUN_INTERRUPTED',
+              message: 'The AgentUse server restarted while this test run was in flight',
+            },
+          }) ?? latest;
+        }
+        return latest;
+      };
+
+      const recoverAgentCreationJob = (job: OnboardingModelJob, missingIsInterrupted = false): Promise<void> => {
         const existing = activeInternalJobRecoveries.get(job.id);
         if (existing) return existing;
         const operation = (async () => {
@@ -10263,11 +10287,12 @@ export function createServeCommand(): Command {
                 sendError(res, 401, 'UNAUTHORIZED', 'Not authorized for this change set session');
                 return;
               }
-              const record = await readChangesetRecord(project.root, sessionId);
-              if (!record) {
+              const stored = await readChangesetRecord(project.root, sessionId);
+              if (!stored) {
                 sendError(res, 404, 'CHANGESET_NOT_FOUND', 'Change set not found');
                 return;
               }
+              const record = await settleStaleChangesetTestRuns(project, stored);
               const sessionToken = sessionViewToken(sessionId, apiKey);
               sendJSON(res, 200, {
                 success: true,
@@ -10372,7 +10397,8 @@ export function createServeCommand(): Command {
             }
 
             if (action === 'test-run') {
-              const record = await readChangesetRecord(project.root, sessionId);
+              const stored = await readChangesetRecord(project.root, sessionId);
+              const record = stored ? await settleStaleChangesetTestRuns(project, stored) : undefined;
               const proposal = record ? latestChangesetProposal(record) : undefined;
               if (!record || !proposal || proposal.files.length === 0 || !proposal.entry) {
                 sendError(res, 409, 'CHANGESET_NOT_PROPOSED', 'There are no proposed files to test yet');
