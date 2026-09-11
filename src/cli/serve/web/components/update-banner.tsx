@@ -1,5 +1,6 @@
 import { useState } from 'preact/hooks';
 import type { InfoPayload } from '../lib/api';
+import { CopyButton } from './copy-button';
 
 type UpdateInfo = NonNullable<InfoPayload['update']>;
 const DISMISSED_VERSION_KEY = 'agentuse:update-dismissed-version';
@@ -21,7 +22,6 @@ export function UpdateBanner(props: { update: UpdateInfo; persistDismissal?: boo
       return null;
     }
   });
-  const [copied, setCopied] = useState(false);
   if (isUpdateVersionDismissed(dismissedVersion, update.latestVersion)) return null;
 
   const dismiss = () => {
@@ -29,15 +29,6 @@ export function UpdateBanner(props: { update: UpdateInfo; persistDismissal?: boo
       try { localStorage.setItem(DISMISSED_VERSION_KEY, update.latestVersion); } catch { /* tab-only dismissal */ }
     }
     setDismissedVersion(update.latestVersion);
-  };
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(update.command);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2_000);
-    } catch {
-      setCopied(false);
-    }
   };
 
   return (
@@ -51,7 +42,7 @@ export function UpdateBanner(props: { update: UpdateInfo; persistDismissal?: boo
         </div>
       </div>
       <div class="home-update-actions">
-        <button type="button" class="home-update-action" onClick={() => void copy()}>{copied ? 'Copied' : 'Copy command'}</button>
+        <CopyButton text={update.command} label="the update command" variant="button" class="home-update-action">Copy command</CopyButton>
         <button type="button" class="home-update-dismiss" aria-label={`Dismiss update ${update.latestVersion}`} title="Dismiss this release" onClick={dismiss}>×</button>
       </div>
     </aside>

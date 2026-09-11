@@ -1,6 +1,6 @@
 import type { VNode } from 'preact';
 import { useLocation } from 'preact-iso';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useMemo, useState } from 'preact/hooks';
 import type { AboutInfo, AgentRow, SessionRow, SessionsPayload } from '../lib/api';
 import { fetchAgents, fetchInfo, fetchSessions } from '../lib/api';
 import { useSessionsStream } from '../hooks/use-sessions-stream';
@@ -27,6 +27,7 @@ import { agentDetailHref, projectDiscoveryHref } from '../lib/links';
 import { NewAgentButton } from '../components/agent-create-dialog';
 import { fetchSiteWorkflow } from '../lib/site-workflows';
 import { InlineError } from '../components/error-banner';
+import { MenuPopover } from '../components/menu-popover';
 
 /** Shared empty fallback, so a miss never hands a memoizing child a fresh array. */
 const NO_AGENTS: AgentRow[] = [];
@@ -84,58 +85,18 @@ function PinIcon(props: { filled?: boolean }) {
  */
 function AgentMenu(props: { agent: AgentRow; pinned: boolean; onTogglePin: () => void }) {
   const { agent, pinned, onTogglePin } = props;
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const popRef = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
   const [runOpen, setRunOpen] = useState(false);
   const { run, busy, error } = useRunAgent(agent.runPath, agent.projectId);
 
-  useEffect(() => {
-    if (!pos) return;
-    const close = () => setPos(null);
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (popRef.current?.contains(t) || btnRef.current?.contains(t)) return;
-      close();
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
-    };
-  }, [pos]);
-
-  const toggle = (e: Event) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (pos) { setPos(null); return; }
-    const r = btnRef.current!.getBoundingClientRect();
-    setPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
-  };
-
   return (
-    <div class="agent-menu">
-      <button
-        type="button"
-        ref={btnRef}
-        class={pos ? 'menu-btn open' : 'menu-btn'}
-        aria-haspopup="menu"
-        aria-expanded={pos ? 'true' : 'false'}
-        aria-label="Agent details and actions"
-        onClick={toggle}
+    <>
+      <MenuPopover
+        wrapClass="agent-menu"
+        label="Agent details and actions"
+        triggerClass={(open) => (open ? 'menu-btn open' : 'menu-btn')}
       >
-        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" />
-        </svg>
-      </button>
-      {pos && (
-        <div ref={popRef} class="menu-popover" role="menu" style={{ top: `${pos.top}px`, right: `${pos.right}px` }}>
+        {(close) => (
+          <>
           <div class="menu-name">{agent.name}</div>
           {agent.description && <div class="menu-desc">{agent.description}</div>}
           <div class="menu-meta">
@@ -166,7 +127,7 @@ function AgentMenu(props: { agent: AgentRow; pinned: boolean; onTogglePin: () =>
             type="button"
             class="menu-item"
             role="menuitem"
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setPos(null); setRunOpen(true); }}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); close(); setRunOpen(true); }}
           >
             <svg class="menu-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
               <path d="M5 3.5v9a.75.75 0 0 0 1.14.64l7.25-4.5a.75.75 0 0 0 0-1.28l-7.25-4.5A.75.75 0 0 0 5 3.5Z" />
@@ -177,7 +138,7 @@ function AgentMenu(props: { agent: AgentRow; pinned: boolean; onTogglePin: () =>
             class="menu-item"
             role="menuitem"
             href={agentDetailHref(agent.projectId, agent.runPath)}
-            onClick={() => setPos(null)}
+            onClick={() => close()}
           >
             <svg class="menu-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M6 4 2.5 8 6 12" /><path d="M10 4l3.5 4L10 12" />
@@ -188,13 +149,14 @@ function AgentMenu(props: { agent: AgentRow; pinned: boolean; onTogglePin: () =>
             type="button"
             class={pinned ? 'menu-item unpin' : 'menu-item'}
             role="menuitem"
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onTogglePin(); setPos(null); }}
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onTogglePin(); close(); }}
           >
             <PinIcon filled={pinned} />
             <span>{pinned ? 'Unpin from top' : 'Pin to top'}</span>
           </button>
-        </div>
-      )}
+          </>
+        )}
+      </MenuPopover>
       <RunCustomDialog
         open={runOpen}
         agentName={agent.name}
@@ -204,7 +166,7 @@ function AgentMenu(props: { agent: AgentRow; pinned: boolean; onTogglePin: () =>
         onSubmit={(custom) => { void run(custom); }}
         onClose={() => { if (!busy) setRunOpen(false); }}
       />
-    </div>
+    </>
   );
 }
 

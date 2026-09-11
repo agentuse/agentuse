@@ -21,7 +21,7 @@ import {
 } from '../lib/changeset-entry';
 import { changesetReviewHref } from '../lib/changeset-view';
 import { buildDebugPrompt, type DebugPromptContext } from './debug-prompt-button';
-import { copyText } from './send-to-coding-agent-dialog';
+import { writeClipboardText } from '../lib/clipboard';
 
 const ACTIVE_REVISION_STATUSES = new Set(['running', 'proposed', 'no-change']);
 const AUTHORING_PREFS_KEY = 'agentuse:revision-authoring';
@@ -375,7 +375,7 @@ export function AgentRevisionLauncher(props: {
           <div class="agent-revision-actions"><span class="hint"><span class="kbd">⌘⏎</span> start</span><button type="button" class="agent-revision-cancel" disabled={busy} onClick={() => setOpen(false)}>Cancel</button><button type="button" class="agent-revision-primary" disabled={busy || loadingOptions || !instruction.trim() || !model} onClick={() => void submit()}>{busy ? 'Starting revision…' : 'Start revision session'}</button></div>
           <div class="agent-revision-handoff">
             <span><strong>Need project code or a custom integration?</strong><small>Use your coding agent when the change is larger than this AgentUse file.</small></span>
-            <button type="button" disabled={busy} onClick={() => { void copyText(agentTarget ? agentTarget.handoffPrompt(instruction) : buildDebugPrompt(props.context, instruction)).then((ok) => { if (!ok) return; setHandoffCopied(true); setTimeout(() => setHandoffCopied(false), 2000); }); }}>{handoffCopied ? 'Prompt copied — paste it into your coding agent' : 'Copy prompt for Coding Agent'}</button>
+            <button type="button" disabled={busy} onClick={() => { void writeClipboardText(agentTarget ? agentTarget.handoffPrompt(instruction) : buildDebugPrompt(props.context, instruction)).then((ok) => { if (!ok) return; setHandoffCopied(true); setTimeout(() => setHandoffCopied(false), 2000); }); }}>{handoffCopied ? 'Prompt copied — paste it into your coding agent' : 'Copy prompt for Coding Agent'}</button>
           </div>
         </div>
       </section>}

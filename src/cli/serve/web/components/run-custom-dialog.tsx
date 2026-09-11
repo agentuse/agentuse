@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { noAutofill } from '../lib/form';
 import { fetchAgentCreationOptions } from '../lib/api';
+import { InlineError } from './error-banner';
+import { Modal } from './modal';
+import { BusyButton } from './busy-button';
 
 export interface RunCustomization {
   /** One-off instruction appended to the agent's prompt; absent = none. */
@@ -30,28 +33,12 @@ export function RunCustomDialog(props: {
   onSubmit: (customization: RunCustomization) => void;
   onClose: () => void;
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [instruction, setInstruction] = useState('');
   const [model, setModel] = useState('');
   const [models, setModels] = useState<ModelOption[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (props.open && !dialog.open) {
-      setInstruction('');
-      setModel('');
-      if (typeof dialog.showModal === 'function') dialog.showModal();
-      else dialog.setAttribute('open', '');
-      requestAnimationFrame(() => inputRef.current?.focus());
-    } else if (!props.open && dialog.open) {
-      if (typeof dialog.close === 'function') dialog.close();
-      else dialog.removeAttribute('open');
-    }
-  }, [props.open]);
 
   // The model list is fetched once, on first open: it is the same catalog the
   // creator and revision dialogs use (every configured provider's models).
@@ -89,19 +76,20 @@ export function RunCustomDialog(props: {
   const keepLabel = props.agentModel ? `Agent default · ${props.agentModel}` : 'Agent default';
 
   return (
-    <dialog
+    <Modal
       class="run-dialog"
-      ref={dialogRef}
-      aria-labelledby="run-dialog-title"
-      aria-describedby="run-dialog-description"
-      onClick={(event) => { if (event.target === dialogRef.current) props.onClose(); }}
+      form
+      open={props.open}
       onClose={props.onClose}
+      title="run with custom"
+      describedBy="run-dialog-description"
+      onOpened={() => {
+        setInstruction('');
+        setModel('');
+        requestAnimationFrame(() => inputRef.current?.focus());
+      }}
     >
-      <form method="dialog">
-        <div class="dialog-head">
-          <span id="run-dialog-title" class="title">run with custom</span>
-          <button type="button" class="dialog-close" aria-label="Close" onClick={props.onClose}>×</button>
-        </div>
+      <>
         <p id="run-dialog-description" class="dialog-description">
           Applies to <strong>{props.agentName}</strong> for this run only. Leave a field alone to keep the agent's default.
         </p>
@@ -136,19 +124,24 @@ export function RunCustomDialog(props: {
             <option value="">{loadingModels ? 'Loading models…' : keepLabel}</option>
             {models.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
           </select>
-          {modelsError && <p class="dialog-hint run-custom-models-error" role="alert">{modelsError}</p>}
+          {modelsError && <InlineError class="dialog-hint run-custom-models-error">{modelsError}</InlineError>}
         </div>
-        {props.error && <p class="dialog-error">{props.error}</p>}
+        {props.error && <InlineError class="dialog-error">{props.error}</InlineError>}
         <div class="dialog-foot">
           <span class="hint"><span class="kbd">⌘⏎</span> run <span class="kbd">esc</span> cancel</span>
           <span class="actions">
             <button type="button" onClick={props.onClose}>Cancel</button>
-            <button type="button" class={`primary${props.busy ? ' btn-busy' : ''}`} disabled={!canSubmit} aria-busy={props.busy} onClick={submit}>
-              {props.busy ? <><span class="btn-spinner" aria-hidden="true" />Starting…</> : 'Run agent'}
-            </button>
+            <BusyButton
+              busy={props.busy}
+              class="primary"
+              disabled={!canSubmit}
+              label="Run agent"
+              busyLabel="Starting…"
+              onClick={submit}
+            />
           </span>
         </div>
-      </form>
-    </dialog>
+      </>
+    </Modal>
   );
 }

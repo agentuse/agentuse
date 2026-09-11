@@ -35,6 +35,7 @@ import {
 import { brandName, pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
 import { ONBOARDING_AGENT_NAME, ONBOARDING_MODEL } from '../../../../onboarding';
+import { BusyButton } from '../components/busy-button';
 
 type ApprovalHeader = Omit<ApprovalPageInfo, 'logs'>;
 
@@ -2069,23 +2070,21 @@ export default function SessionDetail() {
             </button>
           )}
           {cascadeRetryActionable && (
-            <button
-              type="button"
-              class={`session-action-button${submittingContinue ? ' btn-busy' : ''}`}
-              disabled={submittingContinue}
-              aria-busy={submittingContinue}
+            <BusyButton
+              busy={submittingContinue}
+              class="session-action-button"
+              label={
+                <>
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 12a9 9 0 1 1-3-6.7" />
+                    <path d="M21 4v5h-5" />
+                  </svg>
+                  <span>Resume</span>
+                </>
+              }
+              busyLabel={<span>Resuming…</span>}
               onClick={() => void submitCascadeRetry()}
-            >
-              {submittingContinue ? (
-                <span class="btn-spinner" aria-hidden="true" />
-              ) : (
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M21 12a9 9 0 1 1-3-6.7" />
-                  <path d="M21 4v5h-5" />
-                </svg>
-              )}
-              <span>{submittingContinue ? 'Resuming…' : 'Resume'}</span>
-            </button>
+            />
           )}
           {/* No "Learnings" toggle here any more. The panel below is always on
               for a session that has one: its warnings were the whole reason it

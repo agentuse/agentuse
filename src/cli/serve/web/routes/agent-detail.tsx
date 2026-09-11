@@ -20,6 +20,8 @@ import { pageTitle } from '../lib/brand';
 import { agentDetailViewState, type AgentDetailTab } from '../lib/links';
 import { isExecutingSessionStatus } from '../../../../session/status';
 import { Tabs } from '../components/tabs';
+import { CopyButton } from '../components/copy-button';
+import { BusyButton } from '../components/busy-button';
 
 /**
  * Split an `.agentuse` file into its YAML frontmatter and Markdown body.
@@ -391,14 +393,7 @@ export function buildCodingAgentPrompt(opts: { project: string; path: string; so
 }
 
 function SourcePanel(props: { source: string; runPath: string }) {
-  const [copied, setCopied] = useState(false);
   const [rendered, setRendered] = useState(true);
-  const copy = () => {
-    void navigator.clipboard?.writeText(props.source).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
   const { frontmatter, body } = splitFrontmatter(props.source);
   return (
     <section class="group">
@@ -406,7 +401,7 @@ function SourcePanel(props: { source: string; runPath: string }) {
         <span class="count">{props.runPath}</span>
         <span class="rule" />
         <button type="button" class="source-view-btn" onClick={() => setRendered((v) => !v)}>{rendered ? 'raw' : 'rendered'}</button>
-        <button type="button" class="copy-btn" onClick={copy}>{copied ? 'copied' : 'copy'}</button>
+        <CopyButton text={props.source} label="the agent source" variant="button">copy</CopyButton>
       </div>
       <div class="panel source-panel">
         {rendered ? (
@@ -572,18 +567,16 @@ export default function AgentDetail() {
                 {tutorialStep && <div class="first-agent-spotlight-backdrop" aria-hidden="true" />}
                 <div class="run-cta-row">
                   <div class={`run-spotlight-anchor${tutorialStep === 'run' ? ' is-active' : ''}`}>
-                    <button
-                      ref={runButtonRef}
-                      type="button"
-                      class={`run-cta${busy ? ' btn-busy' : ''}`}
-                      disabled={busy}
-                      aria-busy={busy}
-                      aria-disabled={tutorialStep === 'run'}
-                      {...(tutorialStep === 'run' ? { 'aria-describedby': 'first-agent-run-tutorial-copy' } : {})}
+                    <BusyButton
+                      buttonRef={runButtonRef}
+                      busy={busy}
+                      class="run-cta"
+                      ariaDisabled={tutorialStep === 'run'}
+                      {...(tutorialStep === 'run' ? { describedBy: 'first-agent-run-tutorial-copy' } : {})}
+                      label="▶ Run agent"
+                      busyLabel="Starting…"
                       onClick={() => { if (!tutorialStep) void run(); }}
-                    >
-                      {busy ? <><span class="btn-spinner" aria-hidden="true" />Starting…</> : '▶ Run agent'}
-                    </button>
+                    />
                     {tutorialStep === 'run' && (
                       <div class="first-agent-spotlight-card" role="dialog" aria-modal="true" aria-label="Run your first agent">
                         {runTutorialCopy.progress && <small>{runTutorialCopy.progress}</small>}

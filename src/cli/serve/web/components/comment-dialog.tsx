@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import { noAutofill } from '../lib/form';
+import { Modal } from './modal';
 
 export type DecisionDialogMode = 'comment' | 'reject';
 
@@ -54,7 +55,6 @@ export function DecisionDialog(props: {
   onSubmit: (payload: { comment?: string; remember?: string }) => void;
   onClose: () => void;
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [rememberChecked, setRememberChecked] = useState(false);
   // Default on: the reviewer opened this dialog while a candidate was picked,
@@ -63,22 +63,6 @@ export function DecisionDialog(props: {
   // real case and rewriting someone's words without showing them is not.
   const [aboutChoice, setAboutChoice] = useState(true);
   const copy = COPY[props.mode];
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (props.open && !dialog.open) {
-      if (inputRef.current) inputRef.current.value = '';
-      setRememberChecked(false);
-      setAboutChoice(true);
-      if (typeof dialog.showModal === 'function') dialog.showModal();
-      else dialog.setAttribute('open', '');
-      requestAnimationFrame(() => inputRef.current?.focus());
-    } else if (!props.open && dialog.open) {
-      if (typeof dialog.close === 'function') dialog.close();
-      else dialog.removeAttribute('open');
-    }
-  }, [props.open]);
 
   const submit = () => {
     const raw = (inputRef.current?.value ?? '').trim();
@@ -105,21 +89,22 @@ export function DecisionDialog(props: {
   };
 
   return (
-    <dialog
+    <Modal
       id="decision-dialog"
-      ref={dialogRef}
-      aria-labelledby="decision-dialog-title"
-      aria-describedby={copy.body ? 'decision-dialog-description' : undefined}
-      onClick={(event) => {
-        if (event.target === dialogRef.current) props.onClose();
-      }}
+      form
+      open={props.open}
       onClose={props.onClose}
+      title={copy.title}
+      titleClass={props.mode}
+      {...(copy.body ? { describedBy: 'decision-dialog-description' } : {})}
+      onOpened={() => {
+        if (inputRef.current) inputRef.current.value = '';
+        setRememberChecked(false);
+        setAboutChoice(true);
+        requestAnimationFrame(() => inputRef.current?.focus());
+      }}
     >
-      <form method="dialog">
-        <div class="dialog-head">
-          <span id="decision-dialog-title" class={`title ${props.mode}`}>{copy.title}</span>
-          <button type="button" class="dialog-close" aria-label="Close" onClick={props.onClose}>×</button>
-        </div>
+      <>
         {copy.body && <p id="decision-dialog-description" class="dialog-description">{copy.body}</p>}
         <div class="dialog-body">
           <span class="prefix">&gt;</span>
@@ -173,7 +158,7 @@ export function DecisionDialog(props: {
             <button type="button" class={copy.submitClass} onClick={submit}>{copy.submitLabel}</button>
           </span>
         </div>
-      </form>
-    </dialog>
+      </>
+    </Modal>
   );
 }

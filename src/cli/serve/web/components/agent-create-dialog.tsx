@@ -14,6 +14,7 @@ import { changesetReviewHref } from '../lib/changeset-view';
 import { DashboardSelect } from './dashboard-select';
 import { hasConfiguredProvider, ProviderSetupDialog } from './provider-setup';
 import { SendToCodingAgentDialog } from './send-to-coding-agent-dialog';
+import { Modal } from './modal';
 
 export interface AgentCreationDraft {
   projectId: string;
@@ -163,7 +164,6 @@ export function AgentCreateDialog(props: {
   onCodingAgent?: (draft: AgentCreationDraft) => void;
   onClose: () => void;
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const [payload, setPayload] = useState<AgentCreationOptionsPayload | null>(null);
   const [projectId, setProjectId] = useState('');
   const [model, setModel] = useState('');
@@ -171,18 +171,6 @@ export function AgentCreateDialog(props: {
   const [objective, setObjective] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (props.open && !dialog.open) {
-      if (typeof dialog.showModal === 'function') dialog.showModal();
-      else dialog.setAttribute('open', '');
-    } else if (!props.open && dialog.open) {
-      if (typeof dialog.close === 'function') dialog.close();
-      else dialog.removeAttribute('open');
-    }
-  }, [props.open]);
 
   useEffect(() => {
     if (!props.open) return;
@@ -254,8 +242,12 @@ export function AgentCreateDialog(props: {
   };
 
   return (
-    <dialog class="agent-create-dialog" ref={dialogRef} aria-labelledby="agent-create-title" onClose={close} onClick={(event) => { if (event.target === dialogRef.current) close(); }}>
-      <div class="dialog-head"><span id="agent-create-title" class="title">{props.title ?? 'new agent'}</span><button type="button" class="dialog-close" aria-label="Close" onClick={close}>×</button></div>
+    <Modal
+      class="agent-create-dialog"
+      open={props.open}
+      onClose={close}
+      title={props.title ?? 'new agent'}
+    >
       <div class="agent-create-body">
         <div class="agent-create-intro">
           <strong>New agent</strong>
@@ -290,7 +282,7 @@ export function AgentCreateDialog(props: {
         )}
         {!payload && error && <p class="agent-create-error" role="alert">{error}</p>}
       </div>
-    </dialog>
+    </Modal>
   );
 }
 

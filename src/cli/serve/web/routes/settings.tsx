@@ -9,6 +9,7 @@ import { debugSettingsEnabled, requestUpdatePreview } from '../lib/update-previe
 import { ProviderSettingsGroup } from '../components/provider-setup';
 import { ProjectsSettingsGroup, RestartOnboardingGroup } from '../components/project-settings';
 import { SettingsGroup as Group, SettingsRow as Row } from '../components/settings-layout';
+import { BusyButton } from '../components/busy-button';
 
 /** Two per-category checkboxes when push can work here; otherwise a single
  *  explanation of what stands in the way (mirrors the push-bell dialogs). */
@@ -224,9 +225,13 @@ export default function Settings() {
                 </Row>
                 {!isDesktop && (
                   <Row label="Clear cached files & reload" hint="Use if the Dashboard keeps showing an older version.">
-                    <button type="button" class={`settings-item${clearing ? ' btn-busy' : ''}`} onClick={clearCacheAndReload} disabled={clearing} aria-busy={clearing}>
-                      {clearing ? <><span class="btn-spinner" aria-hidden="true" />Clearing…</> : 'Clear cached files'}
-                    </button>
+                    <BusyButton
+                      busy={clearing}
+                      class="settings-item"
+                      label="Clear cached files"
+                      busyLabel="Clearing…"
+                      onClick={clearCacheAndReload}
+                    />
                   </Row>
                 )}
               </Group>

@@ -27,6 +27,7 @@ import {
 } from '../lib/api';
 import type { PluginSourceInspection } from '../../../../plugin/provider-installer';
 import { DashboardSelect } from './dashboard-select';
+import { Modal } from './modal';
 
 export function hasConfiguredProvider(status: ProviderStatus | undefined): boolean {
   return Boolean(status?.providers.some((provider) => provider.configured)
@@ -542,7 +543,6 @@ export function ProviderSetupDialog(props: {
   missingOnly?: boolean;
   reconnect?: boolean;
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const [payload, setPayload] = useState<ProviderSetupPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -550,18 +550,6 @@ export function ProviderSetupDialog(props: {
   const [formKey, setFormKey] = useState(0);
   const setupPayload = payload && (props.missingOnly ? missingProviderMethods(payload) : payload);
   const hasOptions = setupPayload && providerSetupOptions(setupPayload, props.allowCustom, props.scope, props.initialProvider).length > 0;
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (props.open && !dialog.open) {
-      if (typeof dialog.showModal === 'function') dialog.showModal();
-      else dialog.setAttribute('open', '');
-    } else if (!props.open && dialog.open) {
-      if (typeof dialog.close === 'function') dialog.close();
-      else dialog.removeAttribute('open');
-    }
-  }, [props.open]);
 
   useEffect(() => {
     if (!props.open) return;
@@ -576,8 +564,12 @@ export function ProviderSetupDialog(props: {
   const installingPlugins = props.scope === 'plugins';
 
   return (
-    <dialog class="provider-setup-dialog" ref={dialogRef} aria-labelledby="provider-setup-title" onClose={props.onClose} onClick={(event) => { if (event.target === dialogRef.current) props.onClose(); }}>
-      <div class="dialog-head"><span id="provider-setup-title" class="title">{props.title ?? 'connect a provider'}</span><button type="button" class="dialog-close" aria-label="Close" onClick={props.onClose}>×</button></div>
+    <Modal
+      class="provider-setup-dialog"
+      open={props.open}
+      onClose={props.onClose}
+      title={props.title ?? 'connect a provider'}
+    >
       <div class="provider-setup-body">
         {!installingPlugins && <ProviderSetupSteps step={done ? 3 : step} />}
         <div class="provider-setup-intro"><strong>{installingPlugins ? 'Install a provider plugin' : 'Connect a model provider'}</strong><span>{installingPlugins ? 'Plugins add providers that AgentUse does not ship with. Reviewed ones are one click; anything else is checked from GitHub and pinned to the commit you approve.' : 'Credentials are stored on the AgentUse server host and shared by projects that use its credential store.'}</span></div>
@@ -617,7 +609,7 @@ export function ProviderSetupDialog(props: {
           </>
         )}
       </div>
-    </dialog>
+    </Modal>
   );
 }
 

@@ -1,27 +1,8 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { noAutofill } from '../lib/form';
+import { Modal } from './modal';
+import { CopyButton } from './copy-button';
 
-export async function copyText(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch { /* fall through to legacy path */ }
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-    return ok;
-  } catch {
-    return false;
-  }
-}
 
 /**
  * A ready-to-paste prompt for handing work to a coding agent (Claude Code,
@@ -48,35 +29,13 @@ export function SendToCodingAgentDialog(props: {
   onCopied?: () => void;
   onClose: () => void;
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const [detail, setDetail] = useState('');
-  const [copied, setCopied] = useState(false);
   const prompt = props.buildPrompt(detail);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    if (props.open && !dialog.open) {
-      if (typeof dialog.showModal === 'function') dialog.showModal();
-      else dialog.setAttribute('open', '');
-    } else if (!props.open && dialog.open) {
-      if (typeof dialog.close === 'function') dialog.close();
-      else dialog.removeAttribute('open');
-    }
-  }, [props.open]);
 
   useEffect(() => {
     if (props.open) setDetail(props.initialDetail ?? '');
   }, [props.open, props.initialDetail]);
 
-  const copy = () => {
-    void copyText(prompt).then((ok) => {
-      if (!ok) return;
-      setCopied(true);
-      props.onCopied?.();
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
 
   const detailField = (
     <div class="cca-detail">
@@ -105,28 +64,26 @@ export function SendToCodingAgentDialog(props: {
 
   const copyControls = (
     <>
-      <button type="button" class="cca-copy" onClick={copy}>
-        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-          <path d="M5.5 1.5A1.5 1.5 0 0 0 4 3v8a1.5 1.5 0 0 0 1.5 1.5h6A1.5 1.5 0 0 0 13 11V5.62a1.5 1.5 0 0 0-.44-1.06l-2.12-2.12a1.5 1.5 0 0 0-1.06-.44H5.5Z" /><path d="M2.5 4.5A1.5 1.5 0 0 0 1 6v8A1.5 1.5 0 0 0 2.5 15.5h6A1.5 1.5 0 0 0 10 14h-6a.5.5 0 0 1-.5-.5V4.5h-1Z" opacity="0.55" />
-        </svg>
-        {copied ? 'Copied' : (props.copyLabel ?? 'Copy prompt')}
-      </button>
+      <CopyButton
+        text={prompt}
+        label={props.copyLabel ?? 'the prompt'}
+        variant="button"
+        class="cca-copy"
+        {...(props.onCopied ? { onCopied: props.onCopied } : {})}
+      >
+        {props.copyLabel ?? 'Copy prompt'}
+      </CopyButton>
       {props.copyHint && <p class="cca-copy-hint">{props.copyHint}</p>}
     </>
   );
 
   return (
-    <dialog
+    <Modal
       class="cca-dialog"
-      ref={dialogRef}
-      aria-labelledby="cca-title"
-      onClick={(event) => { if (event.target === dialogRef.current) props.onClose(); }}
+      open={props.open}
       onClose={props.onClose}
+      title={props.title ?? 'send to coding agent'}
     >
-      <div class="dialog-head">
-        <span id="cca-title" class="title">{props.title ?? 'send to coding agent'}</span>
-        <button type="button" class="dialog-close" aria-label="Close" onClick={props.onClose}>×</button>
-      </div>
       <div class="cca-body">
         {props.contextValue && (
           <div class="cca-context">
@@ -149,6 +106,6 @@ export function SendToCodingAgentDialog(props: {
         )}
         {!props.detailFirst && detailField}
       </div>
-    </dialog>
+    </Modal>
   );
 }

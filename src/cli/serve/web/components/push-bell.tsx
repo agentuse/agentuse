@@ -1,6 +1,7 @@
-import { useRef } from 'preact/hooks';
+import { useState } from 'preact/hooks';
 import { usePushBell, type PushCategory } from '../hooks/use-push';
 import { brandName } from '../lib/brand';
+import { Modal } from './modal';
 
 const CATEGORY_LABEL: Record<PushCategory, string> = {
   approvals: 'pending approvals',
@@ -25,13 +26,13 @@ function bellTitle(state: string, category: PushCategory): string {
  */
 export function PushBell({ category }: { category: PushCategory }) {
   const { state, toggle } = usePushBell(category);
-  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [explainerOpen, setExplainerOpen] = useState(false);
 
   if (state === 'unsupported') return null;
 
   const title = bellTitle(state, category);
   const onClick = () => {
-    if (state === 'needs-install' || state === 'denied') dialogRef.current?.showModal();
+    if (state === 'needs-install' || state === 'denied') setExplainerOpen(true);
     else toggle();
   };
 
@@ -53,17 +54,12 @@ export function PushBell({ category }: { category: PushCategory }) {
           {state === 'denied' && <path d="M2.5 2.5l11 11" fill="none" />}
         </svg>
       </button>
-      <dialog
-        ref={dialogRef}
+      <Modal
         class="push-bell-dialog"
-        onClick={(event) => {
-          if (event.target === dialogRef.current) dialogRef.current?.close();
-        }}
+        open={explainerOpen}
+        onClose={() => setExplainerOpen(false)}
+        title={state === 'denied' ? 'Notifications blocked' : 'Install to enable notifications'}
       >
-        <div class="dialog-head">
-          <strong>{state === 'denied' ? 'Notifications blocked' : 'Install to enable notifications'}</strong>
-          <button type="button" class="dialog-close" aria-label="Close" onClick={() => dialogRef.current?.close()}>×</button>
-        </div>
         {state === 'denied' ? (
           <p class="dialog-description">
             This site's notifications were blocked, so the browser won't ask again.
@@ -75,7 +71,7 @@ export function PushBell({ category }: { category: PushCategory }) {
             In Safari, tap <strong>Share</strong> → <strong>Add to Home Screen</strong>, open {brandName()} from the new icon, and tap this bell again.
           </p>
         )}
-      </dialog>
+      </Modal>
     </>
   );
 }

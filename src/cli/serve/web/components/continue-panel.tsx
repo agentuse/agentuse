@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'preact/hooks';
 import { noAutofill } from '../lib/form';
+import { BusyButton } from './busy-button';
 
 export function ContinuePanel(props: {
   hidden: boolean;
@@ -44,9 +45,14 @@ export function ContinuePanel(props: {
       />
       <div class="continue-actions">
         <span class="continue-hint"><span class="kbd">⌘⏎</span> resume with this instruction</span>
-        <button type="button" class={`primary${props.busy ? ' btn-busy' : ''}`} disabled={props.disabled} aria-busy={props.busy} onClick={submit}>
-          {props.busy ? <><span class="btn-spinner" aria-hidden="true" />Resuming…</> : 'Resume session'}
-        </button>
+        <BusyButton
+          busy={props.busy}
+          class="primary"
+          disabled={props.disabled}
+          label="Resume session"
+          busyLabel="Resuming…"
+          onClick={submit}
+        />
       </div>
     </div>
   );

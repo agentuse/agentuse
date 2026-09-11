@@ -21,6 +21,9 @@ export function CopyButton(props: {
   text: string;
   label: string;
   variant?: 'icon' | 'button';
+  /** Extra class, when the surrounding layout styles its own copy control. */
+  class?: string;
+  onCopied?: () => void;
   children?: ComponentChildren;
 }) {
   const [copied, setCopied] = useState(false);
@@ -29,7 +32,7 @@ export function CopyButton(props: {
   return (
     <button
       type="button"
-      class={`copy-btn ${variant}${copied ? ' copied' : ''}`}
+      class={`copy-btn ${variant}${copied ? ' copied' : ''}${props.class ? ` ${props.class}` : ''}`}
       title={what}
       aria-label={copied ? `${what} — copied` : what}
       onClick={(event) => {
@@ -37,6 +40,7 @@ export function CopyButton(props: {
         void writeClipboardText(props.text).then((ok) => {
           if (!ok) return;
           setCopied(true);
+          props.onCopied?.();
           setTimeout(() => setCopied(false), 1500);
         });
       }}

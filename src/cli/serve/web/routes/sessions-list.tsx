@@ -18,6 +18,7 @@ import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
 import { isExecutingSessionStatus, isIncompleteOutcome, isLiveSessionStatus } from '../../../../session/status';
 import { InlineError } from '../components/error-banner';
+import { BusyButton } from '../components/busy-button';
 
 /** Time windows offered as the list's segmented control. */
 const WINDOWS = ['24h', '7d', '30d', 'all'];
@@ -380,22 +381,24 @@ export function SessionReader(props: {
             title={row.finalResponse ? 'Copy the final output as Markdown' : 'This run produced no final output'}
           >{copied ? 'Copied' : props.compact ? 'Copy' : 'Copy output'}</button>
           {repeatRunPath && (
-            <button
-              type="button"
-              class={running ? 'btn btn-busy' : 'btn'}
+            <BusyButton
+              busy={running}
+              class="btn"
+              label="Run again"
+              busyLabel="Starting…"
               onClick={() => void runAgain()}
-              disabled={running}
-            >{running ? 'Starting…' : 'Run again'}</button>
+            />
           )}
           {changesetHref && <a class="btn" href={changesetHref}>Review changes</a>}
           {discardable && (
-            <button
-              type="button"
-              class={discarding ? 'btn btn-busy' : 'btn'}
-              onClick={() => void discard()}
-              disabled={discarding}
+            <BusyButton
+              busy={discarding}
+              class="btn"
+              label="Discard"
+              busyLabel="Discarding…"
               title="Discard: mark this run reviewed so it stops asking for attention on Home (its status is kept)"
-            >{discarding ? 'Discarding…' : 'Discard'}</button>
+              onClick={() => void discard()}
+            />
           )}
           <a class="btn" href={sessionHref(row)}>{props.compact ? 'Session' : 'Full session'}</a>
         </div>
@@ -842,9 +845,13 @@ export default function SessionsList() {
           </div>
         ))}
       {nextCursor && (
-        <button type="button" class={loadingMore ? 'load-more btn-busy' : 'load-more'} onClick={loadMore} disabled={loadingMore}>
-          {loadingMore ? <><span class="btn-spinner" aria-hidden="true" />Loading…</> : 'Load more'}
-        </button>
+        <BusyButton
+          busy={loadingMore}
+          class="load-more"
+          label="Load more"
+          busyLabel="Loading…"
+          onClick={loadMore}
+        />
       )}
     </div>
   );
