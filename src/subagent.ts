@@ -7,7 +7,7 @@ import { executeAgentCore, processAgentStream } from './runner';
 import { createSessionLogSink, type SessionLogSink } from './runner/session-helper';
 import { DoomLoopDetector } from './tools/index.js';
 import { resolve, dirname } from 'path';
-import { computeAgentId } from './utils/agent-id';
+import { agentBaseName, computeAgentId } from './utils/agent-id';
 import { findProjectRoot } from './utils/project';
 import {
   applyRunModelOverride,
@@ -763,7 +763,7 @@ export async function createSubAgentTools(
       let name = config.name;
       if (!name) {
         // Extract agent name from path (e.g., "./code-reviewer.agentuse" -> "code_reviewer")
-        const filename = config.path.split('/').pop()?.replace(/\.agentuse$/, '') || 'agent';
+        const filename = agentBaseName(config.path) || 'agent';
         // Replace all non-alphanumeric characters (except underscore and hyphen) with underscore
         name = filename.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/-/g, '_');
       }

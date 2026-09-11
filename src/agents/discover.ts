@@ -8,6 +8,7 @@ import { formatScheduleHuman, parseScheduleExpression } from '../scheduler/parse
 import { discoverSkills } from '../skill/discovery.js';
 import { SAFE_ENV_FILENAMES, isPathInside } from '../utils/path-policy.js';
 import { validateAgentName } from './create.js';
+import { agentBaseName } from '../utils/agent-id.js';
 
 const ADAPTIVE_MAX_FILES = 400;
 const ADAPTIVE_MAX_FILE_BYTES = 64_000;
@@ -139,7 +140,7 @@ async function readExistingProjectAgentSummary(
     const data = parsed.data && typeof parsed.data === 'object'
       ? parsed.data as Record<string, unknown>
       : {};
-    const fallbackName = basename(relativePath, '.agentuse');
+    const fallbackName = agentBaseName(relativePath);
     const name = typeof data.name === 'string' && data.name.trim()
       ? data.name.trim().slice(0, 120)
       : fallbackName;
@@ -150,7 +151,7 @@ async function readExistingProjectAgentSummary(
   } catch {
     return {
       path: relativePath,
-      name: basename(relativePath, '.agentuse').slice(0, 120),
+      name: agentBaseName(relativePath).slice(0, 120),
       description: '',
     };
   }

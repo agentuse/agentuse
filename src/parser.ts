@@ -2,8 +2,9 @@ import matter from 'gray-matter';
 import { z } from 'zod';
 import { REASONING_LEVELS } from './model-compatibility';
 import { readFile } from 'fs/promises';
-import { resolve, basename } from 'path';
+import { resolve } from 'path';
 import { logger } from './utils/logger';
+import { agentBaseName } from './utils/agent-id';
 import { durationSecondsSchema, parseDurationMs } from './utils/duration';
 import {
   MODEL_DEFAULT_ENV,
@@ -463,7 +464,9 @@ export function parseAgentContent(content: string, name: string): ParsedAgent {
 export async function parseAgent(filePath: string): Promise<ParsedAgent> {
   try {
     // Validate file extension
-    if (!filePath.endsWith('.agentuse')) {
+    // Case-insensitive to match how agents/discover.ts finds files on disk;
+    // a discoverable AGENT.AGENTUSE must also be parseable.
+    if (!/\.agentuse$/iu.test(filePath)) {
       throw new Error(`Invalid file extension. Agent files must use .agentuse extension (got: ${filePath})`);
     }
     
@@ -474,7 +477,7 @@ export async function parseAgent(filePath: string): Promise<ParsedAgent> {
     const content = await readFile(absolutePath, 'utf-8');
     
     // Extract agent name from filename (without .agentuse extension)
-    const name = basename(filePath).replace(/\.agentuse$/, '');
+    const name = agentBaseName(filePath);
     
     // Parse using the content parser
     return parseAgentContent(content, name);

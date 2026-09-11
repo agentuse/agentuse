@@ -9,6 +9,7 @@ import * as readline from 'readline';
 import type * as ClackPrompts from '@clack/prompts';
 
 import { resolveProjectContext } from '../utils/project.js';
+import { agentBaseName } from '../utils/agent-id.js';
 import { telemetry, type AddCommandResult } from '../telemetry/index.js';
 
 /**
@@ -192,7 +193,7 @@ export async function discoverItems(workDir: string): Promise<{ skills: SkillInf
   });
 
   for (const agent of agentFiles) {
-    agents.push({ path: agent, name: basename(agent, '.agentuse') });
+    agents.push({ path: agent, name: agentBaseName(agent) });
   }
 
   return { skills, agents };
@@ -650,7 +651,7 @@ export function createAddCommand(): Command {
               .map((s) => s.name);
             const installedAgents = result.agents
               .filter((a) => a.action === 'added' || a.action === 'overwritten')
-              .map((a) => basename(a.path, '.agentuse'));
+              .map((a) => agentBaseName(a.path));
             if (installedSkills.length > 0) {
               telemetryData.skillsInstalled = installedSkills;
             }

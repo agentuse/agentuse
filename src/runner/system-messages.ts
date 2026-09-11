@@ -1,5 +1,5 @@
 import { dirname, resolve } from 'path';
-import { computeAgentId } from '../utils/agent-id';
+import { agentBaseName, computeAgentId } from '../utils/agent-id';
 import { buildAutonomousAgentPrompt } from './prompt';
 import { buildManagerPrompt, type SubagentInfo, type ScheduleInfo } from '../manager/index.js';
 import { parseScheduleExpression, formatScheduleHuman } from '../scheduler/parser.js';
@@ -181,7 +181,7 @@ async function buildManagerSystemPrompt(agent: ParsedAgent, agentFilePath?: stri
         });
       } catch (error) {
         // If we can't parse the subagent, add basic info
-        const name = sa.name || sa.path.split('/').pop()?.replace(/\.agentuse$/, '') || 'unknown';
+        const name = sa.name || agentBaseName(sa.path) || 'unknown';
         subagentInfo.push({
           name,
           path: sa.path,
