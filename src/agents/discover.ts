@@ -6,7 +6,7 @@ import { glob } from 'glob';
 import matter from 'gray-matter';
 import { formatScheduleHuman, parseScheduleExpression } from '../scheduler/parser.js';
 import { discoverSkills } from '../skill/discovery.js';
-import { isPathInside } from '../utils/path-policy.js';
+import { SAFE_ENV_FILENAMES, isPathInside } from '../utils/path-policy.js';
 import { validateAgentName } from './create.js';
 
 const ADAPTIVE_MAX_FILES = 400;
@@ -20,7 +20,6 @@ const IGNORED = [
   '**/*secret*', '**/*credential*', '**/.npmrc', '**/.pypirc', '**/.netrc',
 ];
 
-const SAFE_ENV_EXAMPLES = new Set(['.env.example', '.env.sample', '.env.template', '.env.defaults']);
 const SENSITIVE_BASENAMES = /^(?:id_[a-z0-9_-]+|credentials?|secrets?|auth|tokens?)(?:\.[a-z0-9_-]+)?$/iu;
 const SENSITIVE_EXTENSIONS = /\.(?:pem|key|p12|pfx|jks|keystore)$/iu;
 /** The credential shapes AgentUse refuses to move between a project and a model.
@@ -40,7 +39,7 @@ const KNOWN_SECRET_TOKEN_ALL = everyMatch(KNOWN_SECRET_TOKEN);
 export function isProjectDiscoveryPathAllowed(path: string): boolean {
   const normalized = path.replace(/\\/g, '/');
   const name = basename(normalized);
-  if (SAFE_ENV_EXAMPLES.has(name.toLowerCase())) return true;
+  if (SAFE_ENV_FILENAMES.has(name.toLowerCase())) return true;
   if (name === '.env' || name.toLowerCase().startsWith('.env.')) return false;
   if (SENSITIVE_BASENAMES.test(name) || SENSITIVE_EXTENSIONS.test(name)) return false;
   const segments = normalized.toLowerCase().split('/');
