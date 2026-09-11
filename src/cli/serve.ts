@@ -87,6 +87,7 @@ import {
   toProjectRelativeAgentPath,
   type Project,
 } from "./serve/project";
+import type { ServeMutableState } from "./serve/context";
 import { FAVICON_SVG, TOUCH_ICON_180_PNG_BASE64, ICON_192_PNG_BASE64, ICON_512_PNG_BASE64, webManifestJson } from "./serve/brand";
 
 // Decoded once; brand.ts itself stays Buffer-free because the web bundle
@@ -335,7 +336,7 @@ function tidyJobView(job: TidyJob) {
   };
 }
 
-interface RunRequest {
+export interface RunRequest {
   agent: string;
   project?: string;
   prompt?: string;
@@ -573,7 +574,7 @@ interface WorkerExecuteResult {
   };
 }
 
-interface WorkerExecuteError {
+export interface WorkerExecuteError {
   success: false;
   /** The reporting worker's RSS when the run settled (see worker recycling). */
   workerRssBytes?: number;
@@ -610,7 +611,7 @@ const CHANGESET_CREATE_MAX_STEPS = 24;
 const CHANGESET_REVISE_TIMEOUT_SECONDS = 600;
 const CHANGESET_REVISE_MAX_STEPS = 32;
 
-interface OnboardingModelJob {
+export interface OnboardingModelJob {
   id: string;
   sessionId: string;
   projectId: string;
@@ -623,7 +624,7 @@ interface OnboardingModelJob {
   error?: { code: string; message: string };
 }
 
-interface AgentCreationRecoveryInput {
+export interface AgentCreationRecoveryInput {
   request: { name?: string; objective: string; model: string };
   schedule?: string;
   guided: boolean;
@@ -631,7 +632,7 @@ interface AgentCreationRecoveryInput {
   availableModels: string[];
 }
 
-interface PersistedOnboardingModelJob {
+export interface PersistedOnboardingModelJob {
   job: OnboardingModelJob;
   /** Stable process identity for deciding whether a missing preparing shell is
    * still being created or was lost with a prior daemon. */
@@ -668,7 +669,7 @@ function workerExecutionErrorResponse(error: WorkerExecuteError): {
   };
 }
 
-interface WorkerApprovalInfoResult {
+export interface WorkerApprovalInfoResult {
   success: true;
   approval: ApprovalPageInfo;
 }
@@ -678,7 +679,7 @@ interface WorkerSessionStatusResult {
   session: SessionStatusInfo;
 }
 
-interface WorkerPreparingSessionResult {
+export interface WorkerPreparingSessionResult {
   success: true;
   sessionId: string;
 }
@@ -751,7 +752,7 @@ interface WorkerListApprovalsResult {
 
 type ApprovalRow = ApprovalSummary & { project: string };
 
-interface ApprovalListPayload {
+export interface ApprovalListPayload {
   success: true;
   multiProject: boolean;
   approvals: ApprovalRow[];
@@ -817,7 +818,7 @@ interface SessionStatusCounts {
   incomplete: number;
 }
 
-interface SessionsPayload {
+export interface SessionsPayload {
   success: true;
   sessions: SessionRow[];
   window: { value: string; days?: number | 'all'; hours?: number; updatedAfter?: number };
@@ -837,7 +838,7 @@ interface SessionsPayload {
   limit?: number;
 }
 
-interface SessionStatusInfo {
+export interface SessionStatusInfo {
   sessionId: string;
   sessionStatus: string;
   createdAt?: number;
@@ -1120,7 +1121,7 @@ interface ApprovalLogDetails {
  * This works around the EBADF issue where spawn() fails in async callback
  * contexts (HTTP handlers, scheduler callbacks) in bundled Node.js code.
  */
-class AgentWorker {
+export class AgentWorker {
   private process: ChildProcess | null = null;
   private readline: ReadlineInterface | null = null;
   private forceKillTimer: NodeJS.Timeout | null = null;
@@ -3222,7 +3223,7 @@ function isAgentDraftContinuationInFlight(
     || activeApprovalResumes.has(`${projectId}:${jobId}`);
 }
 
-type BackgroundSessionFailure = { status: string; message: string; at: number };
+export type BackgroundSessionFailure = { status: string; message: string; at: number };
 
 /** Add an asynchronous resume/continuation failure to the next session payload. */
 function applyBackgroundSessionFailure<T extends { errorMessage?: string; sessionStatus?: string }>(
@@ -3478,22 +3479,29 @@ export function createServeCommand(): Command {
         idSeen.set(p.id, p.root);
       }
 
-      let multiProject = projectSeeds.length > 1;
-
-      // CLI --default > config.serve.default.
-      let effectiveDefault = options.default ?? serveCfg?.default;
+      // Daemon locals that routes REASSIGN (not just mutate): one object so
+      // every reader and writer, here and in the route modules, shares a cell.
+      // `serveState.effectiveDefault` is CLI --default > config.serve.default.
+      const serveState: ServeMutableState = {
+        multiProject: projectSeeds.length > 1,
+        effectiveDefault: options.default ?? serveCfg?.default,
+        projectMutationInFlight: false,
+        totalExecutions: 0,
+        successfulExecutions: 0,
+        failedExecutions: 0,
+      };
 
       // Validate effective default
-      if (effectiveDefault !== undefined) {
-        if (!multiProject) {
+      if (serveState.effectiveDefault !== undefined) {
+        if (!serveState.multiProject) {
           const from = options.default !== undefined ? '--default' : 'config.serve.default';
           console.error(chalk.red(`\nError: ${from} is only meaningful with multiple projects.`));
           process.exit(1);
         }
-        if (!idSeen.has(effectiveDefault)) {
+        if (!idSeen.has(serveState.effectiveDefault)) {
           const known = projectSeeds.map((p) => p.id).join(', ');
           const from = options.default !== undefined ? '--default' : 'config.serve.default';
-          console.error(chalk.red(`\nError: ${from} "${effectiveDefault}" is not a known project id.`));
+          console.error(chalk.red(`\nError: ${from} "${serveState.effectiveDefault}" is not a known project id.`));
           console.error(chalk.dim(`Known ids: ${known}`));
           process.exit(1);
         }
@@ -3674,9 +3682,6 @@ export function createServeCommand(): Command {
 
       // Execution stats tracking
       const serverStartTime = Date.now();
-      let totalExecutions = 0;
-      let successfulExecutions = 0;
-      let failedExecutions = 0;
       let logHandle: LogFileHandle | null = null;
 
       // Nudges the list SSE hubs to poll fast for a bounded window. Assigned
@@ -3716,8 +3721,8 @@ export function createServeCommand(): Command {
         const startTime = Date.now();
         const project = projectsById.get(schedule.projectId);
         if (!project) {
-          totalExecutions++;
-          failedExecutions++;
+          serveState.totalExecutions++;
+          serveState.failedExecutions++;
           return {
             success: false,
             duration: 0,
@@ -3733,8 +3738,8 @@ export function createServeCommand(): Command {
           agent = await parseAgent(agentPath);
         } catch (parseError) {
           const duration = Date.now() - startTime;
-          totalExecutions++;
-          failedExecutions++;
+          serveState.totalExecutions++;
+          serveState.failedExecutions++;
           return {
             success: false,
             duration,
@@ -3744,8 +3749,8 @@ export function createServeCommand(): Command {
 
         const projectWorker = workers.get(project.id);
         if (!projectWorker) {
-          totalExecutions++;
-          failedExecutions++;
+          serveState.totalExecutions++;
+          serveState.failedExecutions++;
           return {
             success: false,
             duration: 0,
@@ -3768,8 +3773,8 @@ export function createServeCommand(): Command {
         const duration = Date.now() - startTime;
 
         if (spawnResult.success) {
-          totalExecutions++;
-          successfulExecutions++;
+          serveState.totalExecutions++;
+          serveState.successfulExecutions++;
 
           // Capture telemetry for scheduled execution
           telemetry.captureExecution({
@@ -3801,8 +3806,8 @@ export function createServeCommand(): Command {
             ...(spawnResult.result.finishReason === 'suspended' && { suspended: true }),
           };
         } else {
-          totalExecutions++;
-          failedExecutions++;
+          serveState.totalExecutions++;
+          serveState.failedExecutions++;
 
           // Capture telemetry for failed scheduled execution
           telemetry.captureExecution({
@@ -4495,7 +4500,7 @@ export function createServeCommand(): Command {
       // Helper to print hot reload messages
       const printHotReload = (projectId: string, action: "added" | "changed" | "removed", path: string, schedule?: Schedule) => {
         const actionColor = action === "added" ? chalk.green : action === "removed" ? chalk.red : chalk.yellow;
-        const label = multiProject ? `${projectId}/${path}` : path;
+        const label = serveState.multiProject ? `${projectId}/${path}` : path;
         console.log(`  ${chalk.cyan("Hot reload")} Agent ${actionColor(action)}: ${chalk.dim(label)}`);
         if (schedule) {
           const nextRun = schedule.nextRun?.toLocaleString("en-US", {
@@ -4512,7 +4517,6 @@ export function createServeCommand(): Command {
       // One file watcher per project
       const fileWatchers: FileWatcher[] = [];
       const projectWatchers = new Map<string, FileWatcher>();
-      let projectMutationInFlight = false;
       const watchProject = (project: Project): FileWatcher => {
         const watcher = new FileWatcher({
           projectRoot: project.root,
@@ -4652,7 +4656,7 @@ export function createServeCommand(): Command {
           agentCounts.delete(seed.id);
           pathSeen.delete(seed.root);
           idSeen.delete(seed.id);
-          multiProject = projects.length > 1;
+          serveState.multiProject = projects.length > 1;
           updateRegistryCounts();
         };
         try {
@@ -4668,8 +4672,8 @@ export function createServeCommand(): Command {
           agentCounts.set(seed.id, agentFiles.length);
           pathSeen.set(seed.root, seed.id);
           idSeen.set(seed.id, seed.root);
-          multiProject = projects.length > 1;
-          if (projects.length === 1) effectiveDefault = undefined;
+          serveState.multiProject = projects.length > 1;
+          if (projects.length === 1) serveState.effectiveDefault = undefined;
           for (const agentFile of agentFiles) {
             try {
               const agentPath = resolveScopedAgentPath(seed, agentFile);
@@ -4717,12 +4721,12 @@ export function createServeCommand(): Command {
           };
         }
 
-        if (!multiProject) {
+        if (!serveState.multiProject) {
           return { project: projects[0]! };
         }
 
-        if (effectiveDefault) {
-          return { project: projectsById.get(effectiveDefault)! };
+        if (serveState.effectiveDefault) {
+          return { project: projectsById.get(serveState.effectiveDefault)! };
         }
 
         return {
@@ -4746,7 +4750,7 @@ export function createServeCommand(): Command {
       > => {
         // A session lives in exactly one project, so locate it by searching
         // every served project (session ids are globally-unique ULIDs). Do not
-        // collapse to `effectiveDefault` here: that preference is for routing
+        // collapse to `serveState.effectiveDefault` here: that preference is for routing
         // *new* runs, and applying it to an existing-session lookup makes
         // approvals for non-default projects fail with SESSION_NOT_FOUND.
         const selectedProjects = options.projectId
@@ -5758,7 +5762,7 @@ export function createServeCommand(): Command {
               continue;
             }
             for (const item of result.expired) {
-              const label = multiProject ? `${project.id}/${item.agentName}` : item.agentName;
+              const label = serveState.multiProject ? `${project.id}/${item.agentName}` : item.agentName;
               approvalLog.expired(label, item.sessionId, item.expiresAt);
 
               if (
@@ -6601,7 +6605,7 @@ export function createServeCommand(): Command {
         // GET /api returns server-info JSON; GET / serves the HTML dashboard.
         // Both share the same project rollup so the two surfaces never drift.
         if (req.method === "GET" && routePath === "/") {
-          const defaultProject = effectiveDefault ?? (projects.length === 1 ? projects[0]!.id : null);
+          const defaultProject = serveState.effectiveDefault ?? (projects.length === 1 ? projects[0]!.id : null);
           // ABOUT.md at the project root names the project for the UI (#156):
           // display identity only, read per request (mtime-cached) so edits
           // show up without a restart.
@@ -8181,7 +8185,7 @@ export function createServeCommand(): Command {
             sessionQuery.set('project', found.project.id);
             void deliverNotification('sessions', {
               title: status === 'completed' ? "Session completed" : "Session failed",
-              body: multiProject ? `${found.project.id}/${agentName}` : agentName,
+              body: serveState.multiProject ? `${found.project.id}/${agentName}` : agentName,
               url: `${effectivePublicUrl}/sessions/${encodeURIComponent(sessionId)}?${sessionQuery.toString()}`,
               tag: `session-${sessionId}`,
             });
@@ -8395,12 +8399,12 @@ export function createServeCommand(): Command {
                 ? relative(found.project.root, filePath)
                 : found.info.approval.agent.name;
               approvalLog.sent(
-                multiProject ? `${found.project.id}/${agentLabel}` : agentLabel,
+                serveState.multiProject ? `${found.project.id}/${agentLabel}` : agentLabel,
                 found.info.approval.approvalUrl ?? approvalUrl,
                 sessionId
               );
               // Same dedup guard as the log line: one push per unique approval.
-              const label = multiProject ? `${found.project.id}/${agentLabel}` : agentLabel;
+              const label = serveState.multiProject ? `${found.project.id}/${agentLabel}` : agentLabel;
               const prompt = found.info.approval.prompt;
               // The first change is the verbatim payload under review; showing it in
               // the push lets the reviewer judge without opening the page.
@@ -8760,7 +8764,7 @@ export function createServeCommand(): Command {
             // the brief is written, because a thin catalog usually means a thin
             // agent and that is worth knowing while the brief is still editable.
             const skillProjectId = requestUrl.searchParams.get('project')
-              ?? effectiveDefault
+              ?? serveState.effectiveDefault
               ?? (projects.length === 1 ? projects[0]!.id : null);
             const skillProject = skillProjectId ? projectsById.get(skillProjectId) : undefined;
             const skillCatalog = skillProject
@@ -8777,7 +8781,7 @@ export function createServeCommand(): Command {
                 path: project.root,
                 ...(project.scopeRoot !== project.root && { scope: project.scopeRoot }),
               })),
-              default: effectiveDefault ?? (projects.length === 1 ? projects[0]!.id : null),
+              default: serveState.effectiveDefault ?? (projects.length === 1 ? projects[0]!.id : null),
               skills: {
                 ...(skillProject && { project: skillProject.id }),
                 counts: {
@@ -9031,11 +9035,11 @@ export function createServeCommand(): Command {
         }
 
         if (req.method === "POST" && routePath === "/projects") {
-          if (projectMutationInFlight) {
+          if (serveState.projectMutationInFlight) {
             sendError(res, 409, "PROJECT_MUTATION_IN_PROGRESS", "Another project change is already in progress");
             return;
           }
-          projectMutationInFlight = true;
+          serveState.projectMutationInFlight = true;
           try {
             const body = await parseJSONBody(req);
             // Runtime attachment is staged before config registration. A failed
@@ -9073,17 +9077,17 @@ export function createServeCommand(): Command {
               sendError(res, err instanceof ManagedProjectError ? 500 : 400, "INVALID_PROJECT", toErrorMessage(err));
             }
           } finally {
-            projectMutationInFlight = false;
+            serveState.projectMutationInFlight = false;
           }
           return;
         }
 
         if (req.method === "POST" && routePath === "/projects/attach") {
-          if (projectMutationInFlight) {
+          if (serveState.projectMutationInFlight) {
             sendError(res, 409, "PROJECT_MUTATION_IN_PROGRESS", "Another project change is already in progress");
             return;
           }
-          projectMutationInFlight = true;
+          serveState.projectMutationInFlight = true;
           let rollback: (() => Promise<void>) | undefined;
           try {
             const body = await parseJSONBody(req);
@@ -9114,13 +9118,13 @@ export function createServeCommand(): Command {
             if (sendRequestParseError(res, err)) return;
             sendError(res, 400, "INVALID_PROJECT", toErrorMessage(err));
           } finally {
-            projectMutationInFlight = false;
+            serveState.projectMutationInFlight = false;
           }
           return;
         }
 
         if (req.method === "DELETE" && routePath.startsWith("/projects/")) {
-          if (projectMutationInFlight) {
+          if (serveState.projectMutationInFlight) {
             sendError(res, 409, "PROJECT_MUTATION_IN_PROGRESS", "Another project change is already in progress");
             return;
           }
@@ -9136,7 +9140,7 @@ export function createServeCommand(): Command {
             return;
           }
 
-          projectMutationInFlight = true;
+          serveState.projectMutationInFlight = true;
           try {
             // Persist first: if config cannot be updated, the live project stays
             // fully attached. Removing a project never deletes its directory.
@@ -9168,15 +9172,15 @@ export function createServeCommand(): Command {
             agentCounts.delete(project.id);
             pathSeen.delete(project.root);
             idSeen.delete(project.id);
-            if (effectiveDefault === project.id || projects.length < 2) effectiveDefault = undefined;
-            multiProject = projects.length > 1;
+            if (serveState.effectiveDefault === project.id || projects.length < 2) serveState.effectiveDefault = undefined;
+            serveState.multiProject = projects.length > 1;
             updateRegistryCounts();
             orphanReconcileLoop.runNow();
             sendJSON(res, 200, { success: true });
           } catch (err) {
             sendError(res, 500, "PROJECT_REMOVE_FAILED", toErrorMessage(err));
           } finally {
-            projectMutationInFlight = false;
+            serveState.projectMutationInFlight = false;
           }
           return;
         }
@@ -10790,7 +10794,7 @@ export function createServeCommand(): Command {
             return;
           }
 
-          executionLog.start(multiProject ? `${project.id}/${body.agent}` : body.agent);
+          executionLog.start(serveState.multiProject ? `${project.id}/${body.agent}` : body.agent);
 
           // Parse agent for telemetry (env validation happens in the worker,
           // which loads the project's .env before checking process.env)
@@ -10821,14 +10825,14 @@ export function createServeCommand(): Command {
               trigger: 'api',
             }).then((result) => {
               const duration = Date.now() - startTime;
-              totalExecutions++;
+              serveState.totalExecutions++;
               if (result.success) {
-                successfulExecutions++;
+                serveState.successfulExecutions++;
                 if (result.result.finishReason !== 'suspended') {
                   executionLog.complete(body.agent, Date.now() - startTime);
                 }
               } else {
-                failedExecutions++;
+                serveState.failedExecutions++;
                 logger.warn(`Detached run ${preassignedId} failed: ${result.error.message}`);
               }
               telemetry.captureExecution({
@@ -10862,8 +10866,8 @@ export function createServeCommand(): Command {
                 },
               });
             }).catch((err) => {
-              totalExecutions++;
-              failedExecutions++;
+              serveState.totalExecutions++;
+              serveState.failedExecutions++;
               logger.warn(`Detached run ${preassignedId} errored: ${toErrorMessage(err)}`);
               telemetry.captureExecution({
                 ...parseModel(body.model || agent.config.model),
@@ -10948,8 +10952,8 @@ export function createServeCommand(): Command {
           const duration = Date.now() - startTime;
 
           if (spawnResult.success) {
-            totalExecutions++;
-            successfulExecutions++;
+            serveState.totalExecutions++;
+            serveState.successfulExecutions++;
 
             // Capture telemetry
             telemetry.captureExecution({
@@ -11018,8 +11022,8 @@ export function createServeCommand(): Command {
               sendJSON(res, 200, response);
             }
           } else {
-            totalExecutions++;
-            failedExecutions++;
+            serveState.totalExecutions++;
+            serveState.failedExecutions++;
 
             const errorCode = spawnResult.error.code;
             const errorMessage = spawnResult.error.message;
@@ -11172,9 +11176,9 @@ export function createServeCommand(): Command {
         // Capture server shutdown telemetry
         telemetry.captureServerShutdown({
           uptimeMs: Date.now() - serverStartTime,
-          totalExecutions,
-          successfulExecutions,
-          failedExecutions,
+          totalExecutions: serveState.totalExecutions,
+          successfulExecutions: serveState.successfulExecutions,
+          failedExecutions: serveState.failedExecutions,
         });
         await telemetry.shutdown();
 
@@ -11254,7 +11258,7 @@ export function createServeCommand(): Command {
         if (projects.length === 0) {
           console.log(`  ${chalk.dim("Projects")}  ${chalk.dim("None yet — create one in the Web UI")}`);
           console.log(`  ${chalk.dim("Storage")}   ${chalk.dim(join(getManagedProjectsRoot(), '<project>'))}`);
-        } else if (!multiProject) {
+        } else if (!serveState.multiProject) {
           console.log(`  ${chalk.dim("AgentUse data")}`);
           console.log(`    ${chalk.dim("Global")}  ${chalk.dim("~/.agentuse")}`);
           console.log(`    ${chalk.dim("Project")} ${chalk.dim(join(projects[0]!.root, '.agentuse'))}`);
@@ -11263,7 +11267,7 @@ export function createServeCommand(): Command {
           console.log(`  ${chalk.dim("Projects")}  ${projects.length}`);
           for (const p of projects) {
             const scheduleN = schedules.filter((s) => s.projectId === p.id).length;
-            const marker = effectiveDefault === p.id ? chalk.green(' (default)') : '';
+            const marker = serveState.effectiveDefault === p.id ? chalk.green(' (default)') : '';
             const scopeLabel = p.scopeRoot !== p.root ? ` scope ${relative(p.root, p.scopeRoot)}` : '';
             console.log(`    ${chalk.cyan(p.id.padEnd(20))} ${chalk.dim(p.root)}  ${chalk.dim(`${p.agentFiles.length} agents, ${scheduleN} scheduled${scopeLabel}`)}${marker}`);
           }
@@ -11287,7 +11291,7 @@ export function createServeCommand(): Command {
         const firstProject = projects[0];
         if (firstProject) {
           const firstAgent = firstProject.agentFiles[0] || "path/to/agent.agentuse";
-          if (!multiProject) {
+          if (!serveState.multiProject) {
             console.log(`    curl -X POST ${serverUrl}/run${authHeader} -H "Content-Type: application/json" -d '{"agent": "${firstAgent}"}'`);
           } else {
             console.log(`    curl -X POST ${serverUrl}/run${authHeader} -H "Content-Type: application/json" -d '{"project": "${firstProject.id}", "agent": "${firstAgent}"}'`);
@@ -11299,7 +11303,7 @@ export function createServeCommand(): Command {
         }
 
         // Available agents for webhooks (only in single-project mode to avoid noise)
-        if (!multiProject && firstProject && firstProject.agentFiles.length > 0) {
+        if (!serveState.multiProject && firstProject && firstProject.agentFiles.length > 0) {
           console.log(`\n    ${chalk.dim(`Agents (${firstProject.agentFiles.length})`)}`);
           for (const agent of firstProject.agentFiles) {
             console.log(`      ${agent}`);
