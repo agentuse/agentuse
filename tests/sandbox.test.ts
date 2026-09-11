@@ -2,7 +2,71 @@ import { describe, expect, it } from 'bun:test';
 import { homedir } from 'os';
 import { dirname } from 'path';
 import { PassThrough } from 'stream';
-import { createSandbox, createSandboxTools } from '../src/sandbox';
+import { buildSandboxMounts, createSandbox, createSandboxTools } from '../src/sandbox';
+
+describe('buildSandboxMounts', () => {
+  it('preserves colons in bind-mount source and target paths', () => {
+    const skillPath = '/Users/example/.agents/skills/lifehack:listmonk';
+
+    const mounts = buildSandboxMounts(
+      '/project/.agentuse/sandbox/session-id',
+      '/project',
+      [{ hostPath: skillPath, writable: false }],
+      [],
+    );
+
+    expect(mounts).toEqual([
+      {
+        Type: 'bind',
+        Source: '/project/.agentuse/sandbox/session-id',
+        Target: '/output',
+        ReadOnly: false,
+      },
+      {
+        Type: 'bind',
+        Source: skillPath,
+        Target: skillPath,
+        ReadOnly: true,
+      },
+      {
+        Type: 'bind',
+        Source: '/project',
+        Target: '/project',
+        ReadOnly: true,
+      },
+    ]);
+  });
+
+  it('preserves writable mounts and does not duplicate a covered project root', () => {
+    const mounts = buildSandboxMounts(
+      '/project/.agentuse/sandbox/session-id',
+      '/project',
+      [{ hostPath: '/project', writable: true }],
+      ['/Users/example/.agents/skills'],
+    );
+
+    expect(mounts).toEqual([
+      {
+        Type: 'bind',
+        Source: '/project/.agentuse/sandbox/session-id',
+        Target: '/output',
+        ReadOnly: false,
+      },
+      {
+        Type: 'bind',
+        Source: '/project',
+        Target: '/project',
+        ReadOnly: false,
+      },
+      {
+        Type: 'bind',
+        Source: '/Users/example/.agents/skills',
+        Target: '/Users/example/.agents/skills',
+        ReadOnly: true,
+      },
+    ]);
+  });
+});
 
 describe('createSandbox $HOME guard', () => {
   it('refuses to mount $HOME as projectRoot', async () => {

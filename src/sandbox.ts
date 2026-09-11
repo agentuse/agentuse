@@ -142,6 +142,68 @@ export interface CreateSandboxOptions {
   filesystemMounts?: ResolvedMount[] | undefined;
 }
 
+/**
+ * Build Docker's structured bind-mount configuration.
+ *
+ * Do not use HostConfig.Binds strings here. Their colon-delimited
+ * source:target:mode syntax cannot represent valid POSIX paths that contain a
+ * colon, including namespaced skill directories such as lifehack:listmonk.
+ */
+export function buildSandboxMounts(
+  sandboxDir: string,
+  projectRoot: string,
+  filesystemMounts: ResolvedMount[] | undefined,
+  globalSkillDirs: string[],
+): Dockerode.MountSettings[] {
+  const mounts: Dockerode.MountSettings[] = [{
+    Type: 'bind',
+    Source: sandboxDir,
+    Target: '/output',
+    ReadOnly: false,
+  }];
+
+  if (filesystemMounts && filesystemMounts.length > 0) {
+    for (const mount of filesystemMounts) {
+      mounts.push({
+        Type: 'bind',
+        Source: mount.hostPath,
+        Target: mount.hostPath,
+        ReadOnly: !mount.writable,
+      });
+    }
+
+    const projectCovered = filesystemMounts.some(m =>
+      projectRoot === m.hostPath || projectRoot.startsWith(m.hostPath + '/')
+    );
+    if (!projectCovered) {
+      mounts.push({
+        Type: 'bind',
+        Source: projectRoot,
+        Target: projectRoot,
+        ReadOnly: true,
+      });
+    }
+  } else {
+    mounts.push({
+      Type: 'bind',
+      Source: projectRoot,
+      Target: projectRoot,
+      ReadOnly: true,
+    });
+  }
+
+  for (const dir of globalSkillDirs) {
+    mounts.push({
+      Type: 'bind',
+      Source: dir,
+      Target: dir,
+      ReadOnly: true,
+    });
+  }
+
+  return mounts;
+}
+
 class SandboxExecTimeoutError extends Error {
   constructor(cmd: string, timeoutMs: number) {
     super(`[Sandbox] Command timed out after ${Math.ceil(timeoutMs / 1000)}s: ${cmd}`);
@@ -225,27 +287,19 @@ export async function createSandbox(options: CreateSandboxOptions): Promise<Sand
   const sandboxDir = join(projectRoot, '.agentuse', 'sandbox', ...(sessionId ? [sessionId] : []));
   mkdirSync(sandboxDir, { recursive: true });
 
-  // Build bind mounts — each filesystem path mounted at its real host path
-  const binds: string[] = [`${sandboxDir}:/output:rw`];
-
+  // Build bind mounts — each filesystem path mounted at its real host path.
   if (filesystemMounts && filesystemMounts.length > 0) {
-    // Mount each resolved path at its real host path
     for (const mount of filesystemMounts) {
       const mode = mount.writable ? 'rw' : 'ro';
-      binds.push(`${mount.hostPath}:${mount.hostPath}:${mode}`);
       logger.debug(`[Sandbox] Mount: ${mount.hostPath} (${mode})`);
     }
-    // Ensure projectRoot is always mounted (add as ro if not already covered)
     const projectCovered = filesystemMounts.some(m =>
       projectRoot === m.hostPath || projectRoot.startsWith(m.hostPath + '/')
     );
     if (!projectCovered) {
-      binds.push(`${projectRoot}:${projectRoot}:ro`);
       logger.debug(`[Sandbox] Mount: ${projectRoot} (ro, implicit project root)`);
     }
   } else {
-    // Backward compat: no mounts provided, mount projectRoot as ro
-    binds.push(`${projectRoot}:${projectRoot}:ro`);
     logger.debug(`[Sandbox] Mount: ${projectRoot} (ro, default)`);
   }
 
@@ -255,11 +309,13 @@ export async function createSandbox(options: CreateSandboxOptions): Promise<Sand
     join(getGlobalConfigDir(), 'skills'),
     join(home, '.claude', 'skills'),
   ];
-  for (const dir of globalSkillDirs) {
-    if (existsSync(dir)) {
-      binds.push(`${dir}:${dir}:ro`);
-    }
-  }
+  const existingGlobalSkillDirs = globalSkillDirs.filter(dir => existsSync(dir));
+  const mounts = buildSandboxMounts(
+    sandboxDir,
+    projectRoot,
+    filesystemMounts,
+    existingGlobalSkillDirs,
+  );
 
   // Auto-pull image if not available locally
   try {
@@ -309,7 +365,7 @@ export async function createSandbox(options: CreateSandboxOptions): Promise<Sand
       ...(sessionId && { [LABEL_SESSION]: sessionId }),
     },
     Env: envVars.length > 0 ? envVars : undefined,
-    HostConfig: { Binds: binds },
+    HostConfig: { Mounts: mounts },
   });
 
   await container.start();
