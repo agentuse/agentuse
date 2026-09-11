@@ -252,6 +252,69 @@ function sameFile(a: FileIdentity, b: FileIdentity): boolean {
 }
 
 /**
+ * Read and validate a store file, served from the in-process parse cache when
+ * the file on disk is still the one that was parsed. Returns null when no file
+ * exists yet.
+ *
+ * Standalone (not a Store method) so read-only consumers — the serve store
+ * browser, session results — share this cache without constructing a Store,
+ * whose constructor re-roots under mock mode and asserts on symlinked paths.
+ *
+ * The file is identified *before* the read: pairing the content with an
+ * identity taken afterwards could tag stale content as current if a writer
+ * landed in between, whereas an identity taken first can only ever cost an
+ * extra re-read.
+ */
+export async function readStoreItemsAtPath(storePath: string): Promise<StoreItem[] | null> {
+  const identity = await fileIdentity(storePath);
+  if (!identity) {
+    parsedStoreCache.delete(storePath);
+    return null;
+  }
+  const cached = cacheGet(storePath);
+  if (cached && sameFile(cached.identity, identity)) return cached.items.slice();
+
+  let content: string;
+  try {
+    content = await readFile(storePath, 'utf-8');
+  } catch (error) {
+    // A transient read failure (EMFILE/EIO/etc.) must NOT be mistaken for an
+    // empty store: mutate() would then write [] over a healthy file, wiping
+    // it. Surface the error so the enclosing write transaction aborts.
+    throw new Error(
+      `[Store] Failed to read store from ${storePath}: ${(error as Error).message}`
+    );
+  }
+  try {
+    const data = JSON.parse(content);
+    // Full-file validation runs here and only here: this is the one point
+    // where content of unknown provenance enters the process. Items handed
+    // back from the cache were validated on the read that filled it, and
+    // items added by a write are validated individually in withWriteLock.
+    const validated = StoreFileSchema.parse(data);
+    // Cast is safe because Zod schema matches our type structure
+    const items = validated.items as StoreItem[];
+    cacheSet(storePath, { identity, items });
+    return items.slice();
+  } catch (error) {
+    // Corrupt/truncated content is also not an empty store. Refuse rather
+    // than overwrite whatever is on disk with [].
+    logger.warn(`[Store] Store file is unreadable at ${storePath}: ${(error as Error).message}`);
+    throw new Error(
+      `[Store] Refusing to operate on a corrupt store at ${storePath}: ${(error as Error).message}`
+    );
+  }
+}
+
+/**
+ * Absolute path of a store's items file for a project. Resolved exactly as the
+ * Store constructor does, so both reach the same parse-cache entry.
+ */
+export function storeItemsPath(projectRoot: string, storeName: string): string {
+  return join(resolve(projectRoot, '.agentuse', 'store', storeName), 'items.json');
+}
+
+/**
  * Store class that manages persistent data for agents
  */
 export class Store {
@@ -375,53 +438,11 @@ export class Store {
   /**
    * Read the store file. Does not take the lock - atomic writes (temp +
    * rename) mean a reader always sees a whole prior or next file, never a torn
-   * one, so reads can run lock-free.
-   *
-   * Served from the in-process parse cache when the file on disk is still the
-   * one that was parsed. The file is identified *before* the read: pairing the
-   * content with an identity taken afterwards could tag stale content as
-   * current if a writer landed in between, whereas an identity taken first can
-   * only ever cost an extra re-read.
+   * one, so reads can run lock-free. Parsing and caching live in
+   * {@link readStoreItemsAtPath}; a store with no file yet reads as empty.
    */
   private async readItems(): Promise<StoreItem[]> {
-    const identity = await fileIdentity(this.storePath);
-    if (!identity) {
-      parsedStoreCache.delete(this.storePath);
-      return [];
-    }
-    const cached = cacheGet(this.storePath);
-    if (cached && sameFile(cached.identity, identity)) return cached.items.slice();
-
-    let content: string;
-    try {
-      content = await readFile(this.storePath, 'utf-8');
-    } catch (error) {
-      // A transient read failure (EMFILE/EIO/etc.) must NOT be mistaken for an
-      // empty store: mutate() would then write [] over a healthy file, wiping
-      // it. Surface the error so the enclosing write transaction aborts.
-      throw new Error(
-        `[Store] Failed to read store from ${this.storePath}: ${(error as Error).message}`
-      );
-    }
-    try {
-      const data = JSON.parse(content);
-      // Full-file validation runs here and only here: this is the one point
-      // where content of unknown provenance enters the process. Items handed
-      // back from the cache were validated on the read that filled it, and
-      // items added by a write are validated individually in withWriteLock.
-      const validated = StoreFileSchema.parse(data);
-      // Cast is safe because Zod schema matches our type structure
-      const items = validated.items as StoreItem[];
-      cacheSet(this.storePath, { identity, items });
-      return items.slice();
-    } catch (error) {
-      // Corrupt/truncated content is also not an empty store. Refuse rather
-      // than overwrite whatever is on disk with [].
-      logger.warn(`[Store] Store file is unreadable at ${this.storePath}: ${(error as Error).message}`);
-      throw new Error(
-        `[Store] Refusing to operate on a corrupt store at ${this.storePath}: ${(error as Error).message}`
-      );
-    }
+    return (await readStoreItemsAtPath(this.storePath)) ?? [];
   }
 
   /**

@@ -1,8 +1,8 @@
 import { existsSync } from "fs";
-import { readFile, stat } from "fs/promises";
 import { dirname, join } from "path";
 import { glob } from "glob";
-import { StoreFileSchema, isSafeStoreName } from "../../store/schema";
+import { isSafeStoreName } from "../../store/schema";
+import { readStoreItemsAtPath, storeItemsPath } from "../../store/store";
 import type { StoreItem } from "../../store/types";
 import { storeItemPreview, storeItemTitle, summarizeStoreItems } from "../../store/display";
 import type { StoreDisplay } from "../../store/display";
@@ -136,11 +136,19 @@ function resolveStoreRoot(projectRoot: string): string {
   return join(projectRoot, '.agentuse', 'store');
 }
 
+/**
+ * Read a store through the shared parse cache in ../../store/store: the browser
+ * re-reads the same files on every page load, and a per-store JSON.parse plus
+ * full Zod validation was being paid each time (and once per store, in series,
+ * by listProjectStores). The cache is keyed on the file's identity, so a write
+ * by any agent in this process is picked up on the next read.
+ */
 async function readStoreItems(projectRoot: string, storeName: string): Promise<StoreItem[]> {
   if (!isSafeStoreName(storeName)) throw new Error('Invalid store name');
-  const storePath = join(resolveStoreRoot(projectRoot), storeName, 'items.json');
-  const parsed = StoreFileSchema.parse(JSON.parse(await readFile(storePath, 'utf-8')));
-  return parsed.items as StoreItem[];
+  const storePath = storeItemsPath(projectRoot, storeName);
+  const items = await readStoreItemsAtPath(storePath);
+  if (!items) throw new Error(`No store at ${storePath}`);
+  return items;
 }
 
 export async function listProjectStores(project: StoreProjectRef): Promise<{ stores: StoreBrowserSummary[]; errors: Array<{ storeName?: string; message: string }> }> {
@@ -206,32 +214,24 @@ export function storeItemUpdatedTime(item: StoreItem): string {
 }
 
 const METRICS_STORE = 'metrics';
-const sessionResultsCache = new Map<string, { mtimeMs: number; bySession: Map<string, SessionResult[]> }>();
 
 /**
  * Every record_metric fact in the project, grouped by the session that wrote
  * it. This is what turns a finished run into "a run with results": the agent
  * already said what it did (metric + note), so no extra declaration is needed.
- * Cached on the store file's mtime; a missing store is an empty map.
+ * A missing store is an empty map.
+ *
+ * No local cache: the expensive part (read + parse + validate) is now served
+ * from the shared store parse cache, keyed on the file's identity, so a second
+ * mtime cache here would only duplicate that check and add a way to go stale.
  */
 export async function readSessionResults(projectRoot: string): Promise<Map<string, SessionResult[]>> {
-  const storePath = join(resolveStoreRoot(projectRoot), METRICS_STORE, 'items.json');
-  let mtimeMs: number;
-  try {
-    mtimeMs = (await stat(storePath)).mtimeMs;
-  } catch {
-    sessionResultsCache.delete(projectRoot);
-    return new Map();
-  }
-  const cached = sessionResultsCache.get(projectRoot);
-  if (cached && cached.mtimeMs === mtimeMs) return cached.bySession;
-
   const bySession = new Map<string, SessionResult[]>();
   let items: StoreItem[];
   try {
     items = await readStoreItems(projectRoot, METRICS_STORE);
   } catch {
-    // A half-written or invalid store must not take the sessions list down.
+    // Missing, half-written or invalid store must not take the sessions list down.
     return new Map();
   }
   for (const item of items) {
@@ -254,6 +254,5 @@ export async function readSessionResults(projectRoot: string): Promise<Map<strin
     bySession.set(sessionId, list);
   }
   for (const list of bySession.values()) list.sort((a, b) => b.at - a.at);
-  sessionResultsCache.set(projectRoot, { mtimeMs, bySession });
   return bySession;
 }

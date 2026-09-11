@@ -50,13 +50,15 @@ describe('readSessionResults', () => {
     }
   });
 
-  it('re-reads only when the store file changes', async () => {
+  it('picks up a changed store file', async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-results-'));
     try {
       const store = new Store(projectRoot, METRICS_STORE_NAME, 'agents/poster');
       await store.create({ type: 'metric', data: { metric: 'a', count: 1, sessionId: 's1' } });
       const first = await readSessionResults(projectRoot);
-      expect(await readSessionResults(projectRoot)).toBe(first);
+      // An unchanged file reads back identically (served from the shared store
+      // parse cache; the grouping itself is rebuilt per call).
+      expect(await readSessionResults(projectRoot)).toEqual(first);
       await store.create({ type: 'metric', data: { metric: 'b', count: 1, sessionId: 's2' } });
       await store.releaseLock();
       // Same-millisecond writes can leave mtime unchanged; force it forward.
@@ -64,8 +66,8 @@ describe('readSessionResults', () => {
       const later = new Date(Date.now() + 5_000);
       await utimes(itemsPath, later, later);
       const second = await readSessionResults(projectRoot);
-      expect(second).not.toBe(first);
       expect(second.has('s2')).toBe(true);
+      expect(first.has('s2')).toBe(false);
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }
