@@ -449,7 +449,7 @@ function metricChipLabel(agg: MetricAgg): { big: string; name: string } {
  * Home's Results section: one row per agent, so the eye scans agent names
  * instead of a grid of same-looking tiles. Chips carry that agent's metrics
  * (lead metric first, with its bars for the window); the row leads to the
- * agent's Results tab. Customize hides or shows individual metrics, sharing
+ * agent's Recent jobs tab. Customize hides or shows individual metrics, sharing
  * the same per-viewer prefs as the tile view.
  */
 export function AgentResultsRows(props: {
@@ -530,7 +530,7 @@ export function AgentResultsRows(props: {
                 ? displayAgentName(agent.name, agent.path, group.source.agentId)
                 : displayAgentName(undefined, group.source.agentId, group.source.agentId);
               const href = agent
-                ? agentDetailHref(agent.projectId, agent.runPath, { tab: 'results' })
+                ? agentDetailHref(agent.projectId, agent.runPath, { tab: 'jobs' })
                 : `/sessions?agent=${encodeURIComponent(group.source.agentId)}`;
               const lead = group.metrics[0]!;
               const leadShowValue = lead.hasValue && !lead.mixedUnits;
@@ -576,7 +576,7 @@ export function AgentResultsRows(props: {
               const key = `${group.source.projectId}/${group.source.agentId}`;
               return editing
                 ? <div class="metric-row is-editing" key={key}>{body}</div>
-                : <a class="metric-row" key={key} href={href} title={`${name} · open its results`}>{body}</a>;
+                : <a class="metric-row" key={key} href={href} title={`${name} · open its recent jobs`}>{body}</a>;
             })}
           </div>
         )}
