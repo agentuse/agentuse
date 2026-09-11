@@ -66,13 +66,3 @@ export function parseJsonEnvVar<T = unknown>(value: string | undefined): T | nul
     }
   }
 }
-
-/**
- * Get and parse a JSON environment variable
- * 
- * @param name The environment variable name
- * @returns Parsed JSON object or null if not found or parsing fails
- */
-export function getJsonEnvVar<T = unknown>(name: string): T | null {
-  return parseJsonEnvVar<T>(process.env[name]);
-}

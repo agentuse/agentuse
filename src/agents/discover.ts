@@ -23,9 +23,19 @@ const IGNORED = [
 const SAFE_ENV_EXAMPLES = new Set(['.env.example', '.env.sample', '.env.template', '.env.defaults']);
 const SENSITIVE_BASENAMES = /^(?:id_[a-z0-9_-]+|credentials?|secrets?|auth|tokens?)(?:\.[a-z0-9_-]+)?$/iu;
 const SENSITIVE_EXTENSIONS = /\.(?:pem|key|p12|pfx|jks|keystore)$/iu;
-const SECRET_ASSIGNMENT = /\b([A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE[_-]?KEY)[A-Z0-9_]*)\b(\s*[:=]\s*)(["']?)([^\s,"'}]+)\3/giu;
-const PRIVATE_KEY_BLOCK = /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/gu;
-const KNOWN_SECRET_TOKEN = /\b(?:gh[opusr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b/gu;
+/** The credential shapes AgentUse refuses to move between a project and a model.
+ *  Declared without the `g` flag so `.test()` is stateless; `redactProjectDiscoveryText`
+ *  builds global copies for replacement. Shared with `changeset-validate.ts`, which
+ *  applies the same three patterns as a write-time block: what is redacted on the way
+ *  out must also be rejected on the way back in. */
+export const SECRET_ASSIGNMENT = /\b([A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE[_-]?KEY)[A-Z0-9_]*)\b(\s*[:=]\s*)(["']?)([^\s,"'}]+)\3/iu;
+export const PRIVATE_KEY_BLOCK = /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/u;
+export const KNOWN_SECRET_TOKEN = /\b(?:gh[opusr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b/u;
+
+const everyMatch = (pattern: RegExp): RegExp => new RegExp(pattern.source, `${pattern.flags}g`);
+const SECRET_ASSIGNMENT_ALL = everyMatch(SECRET_ASSIGNMENT);
+const PRIVATE_KEY_BLOCK_ALL = everyMatch(PRIVATE_KEY_BLOCK);
+const KNOWN_SECRET_TOKEN_ALL = everyMatch(KNOWN_SECRET_TOKEN);
 
 export function isProjectDiscoveryPathAllowed(path: string): boolean {
   const normalized = path.replace(/\\/g, '/');
@@ -39,9 +49,9 @@ export function isProjectDiscoveryPathAllowed(path: string): boolean {
 
 export function redactProjectDiscoveryText(text: string): string {
   return text
-    .replace(PRIVATE_KEY_BLOCK, '[REDACTED PRIVATE KEY]')
-    .replace(SECRET_ASSIGNMENT, (_match, name: string, separator: string) => `${name}${separator}[REDACTED]`)
-    .replace(KNOWN_SECRET_TOKEN, '[REDACTED CREDENTIAL]');
+    .replace(PRIVATE_KEY_BLOCK_ALL, '[REDACTED PRIVATE KEY]')
+    .replace(SECRET_ASSIGNMENT_ALL, (_match, name: string, separator: string) => `${name}${separator}[REDACTED]`)
+    .replace(KNOWN_SECRET_TOKEN_ALL, '[REDACTED CREDENTIAL]');
 }
 
 export interface ProjectDiscoveryView {

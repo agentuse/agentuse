@@ -192,6 +192,14 @@ tools:
     }))).rejects.toThrow('unsupported extension');
   });
 
+  it('allows a credential-shaped name that reads from the environment', async () => {
+    const fromEnv = `${script}\nDB_PASSWORD = os.environ["DB_PASSWORD"]\nAPI_KEY = config.apiKey\n`;
+    const files = await validateChangesetFiles(input({
+      files: [passingSet[0]!, passingSet[1]!, file({ path: 'agents/collect.py', content: fromEnv })],
+    }));
+    expect(files.some((entry) => entry.path === 'agents/collect.py')).toBe(true);
+  });
+
   it('blocks secrets and unsafe shell in a support script', async () => {
     const withKey = `${script}\nKEY = """-----BEGIN RSA PRIVATE KEY-----\nMIIB\n-----END RSA PRIVATE KEY-----"""\n`;
     await expect(validateChangesetFiles(input({
@@ -202,6 +210,11 @@ tools:
     await expect(validateChangesetFiles(input({
       files: [passingSet[0]!, passingSet[1]!, file({ path: 'agents/collect.py', content: withToken })],
     }))).rejects.toThrow('live API token');
+
+    const withAssignment = `${script}\nDB_PASSWORD = "hunter2"\n`;
+    await expect(validateChangesetFiles(input({
+      files: [passingSet[0]!, passingSet[1]!, file({ path: 'agents/collect.py', content: withAssignment })],
+    }))).rejects.toThrow('assigns a literal value to DB_PASSWORD');
 
     const withSudo = 'sudo rm /etc/hosts\n';
     await expect(validateChangesetFiles(input({

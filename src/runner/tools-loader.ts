@@ -316,7 +316,13 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
       const storeName = store.getStoreName();
       logger.debug(`${logPrefix}Loaded store tools for "${storeName}"`);
     } catch (error) {
-      logger.warn(`${logPrefix}Failed to create store: ${(error as Error).message}`);
+      // A configured store is a declared dependency, not an optional extra.
+      // Continuing without store tools makes the agent silently lose every
+      // read and write it was written against, so fail the run instead.
+      throw new Error(
+        `Agent "${agentId}" configures store "${agent.config.store === true ? agentId : agent.config.store}" but it could not be created: ${(error as Error).message}`,
+        { cause: error },
+      );
     }
   }
 

@@ -20,7 +20,12 @@ import { grantsArbitraryCode, grantsUnnamedSubcommands } from '../tools/effectfu
 import { match as wildcardMatch } from '../tools/wildcard.js';
 import { isPathInside } from '../utils/path-policy.js';
 import { validateAuthoredAgentSource } from './author.js';
-import { isProjectDiscoveryPathAllowed } from './discover.js';
+import {
+  KNOWN_SECRET_TOKEN,
+  PRIVATE_KEY_BLOCK,
+  SECRET_ASSIGNMENT,
+  isProjectDiscoveryPathAllowed,
+} from './discover.js';
 import {
   CHANGESET_DENIED_SEGMENTS,
   CHANGESET_LIMITS,
@@ -29,12 +34,6 @@ import {
   type ChangesetFileOp,
   type ChangesetMode,
 } from './changeset-types.js';
-
-/** Credential shapes that must never reach the project through a changeset.
- *  Kept here (rather than imported) because `discover.ts` does not export them;
- *  the redaction pass there is a read-time defence, this is a write-time one. */
-export const CHANGESET_PRIVATE_KEY_BLOCK = /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/u;
-export const CHANGESET_KNOWN_SECRET_TOKEN = /\b(?:gh[opusr]_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16})\b/u;
 
 const SUDO = /(^|[\s;&|(])sudo\s/u;
 const CHMOD = /(^|[\s;&|(])chmod\s/u;
@@ -133,9 +132,23 @@ function assertPathInScope(relPath: string, projectRoot: string, scopeRoot: stri
   }
 }
 
+/** A credential-shaped name assigned an expression rather than a literal:
+ *  `os.environ["API_KEY"]`, `${API_KEY}`, `process.env.TOKEN`, `config.apiKey`.
+ *  That is precisely the practice the error text asks for, so it must pass.
+ *  `discover.ts` stays deliberately over-eager on the read side, where an extra
+ *  redaction costs nothing and a missed one leaks. */
+const CREDENTIAL_EXPRESSION = /[.[({$]/u;
+
+/** The write-time half of the credential defence. `discover.ts` redacts these
+ *  three shapes on the way out to the model; refusing all three here keeps a
+ *  changeset from putting one back into the project. */
 function assertNoSecrets(relPath: string, content: string): void {
-  if (CHANGESET_PRIVATE_KEY_BLOCK.test(content)) throw new Error(`${relPath} contains a private key block. Read credentials from the environment at run time instead.`);
-  if (CHANGESET_KNOWN_SECRET_TOKEN.test(content)) throw new Error(`${relPath} contains what looks like a live API token. Read credentials from the environment at run time instead.`);
+  if (PRIVATE_KEY_BLOCK.test(content)) throw new Error(`${relPath} contains a private key block. Read credentials from the environment at run time instead.`);
+  if (KNOWN_SECRET_TOKEN.test(content)) throw new Error(`${relPath} contains what looks like a live API token. Read credentials from the environment at run time instead.`);
+  const assignment = SECRET_ASSIGNMENT.exec(content);
+  if (assignment && !CREDENTIAL_EXPRESSION.test(assignment[4] ?? '')) {
+    throw new Error(`${relPath} assigns a literal value to ${assignment[1]}. Read credentials from the environment at run time instead.`);
+  }
 }
 
 function assertSupportContentSafe(relPath: string, content: string): void {
