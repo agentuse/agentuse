@@ -8,6 +8,23 @@ async function source(path: string): Promise<string> {
   return readFile(join(sourceRoot, path), 'utf8');
 }
 
+/**
+ * serve.ts kept the whole route table inline; the routes now live in
+ * cli/serve/routes/*.ts. Assertions about a single route read that route's own
+ * module, and the ones that must hold across the whole daemon read this.
+ */
+async function serveSurface(): Promise<string> {
+  const parts = await Promise.all([
+    source('cli/serve.ts'),
+    source('cli/serve/routes/agent-create.ts'),
+    source('cli/serve/routes/onboarding.ts'),
+    source('cli/serve/routes/revisions.ts'),
+    source('cli/serve/routes/projects.ts'),
+    source('cli/serve/routes/run.ts'),
+  ]);
+  return parts.join('\n');
+}
+
 describe('internal AgentUse architecture', () => {
   it('keeps agent design and idea discovery out of helper completions', async () => {
     const protectedModules = [
@@ -27,7 +44,7 @@ describe('internal AgentUse architecture', () => {
 
   it('has no callable legacy project-discovery completion endpoint', async () => {
     const [serve, webApi] = await Promise.all([
-      source('cli/serve.ts'),
+      serveSurface(),
       source('cli/serve/web/lib/api.ts'),
     ]);
 
@@ -37,7 +54,7 @@ describe('internal AgentUse architecture', () => {
   });
 
   it('leaves a finished creator session drafted, writing the agent only on save', async () => {
-    const serve = await source('cli/serve.ts');
+    const serve = await source('cli/serve/routes/agent-create.ts');
     // The creator's consume path records a numbered draft; the project file is
     // written by the save route alone, so a draft the operator never accepts
     // never lands in the project.
@@ -46,7 +63,8 @@ describe('internal AgentUse architecture', () => {
     expect(consumeBody).toContain('appendAgentDraft');
     expect(consumeBody).not.toContain('finishAgentCreation');
 
-    const saveRoute = serve.slice(serve.indexOf('draftActionMatch'));
+    const revisions = await source('cli/serve/routes/revisions.ts');
+    const saveRoute = revisions.slice(revisions.indexOf('draftActionMatch'));
     expect(saveRoute).toContain('markAgentDraftSaved');
     expect(saveRoute).toContain('finishAgentCreation');
   });
@@ -80,17 +98,20 @@ describe('internal AgentUse architecture', () => {
   });
 
   it('routes New Agent and project ideas through persisted workers', async () => {
-    const serve = await source('cli/serve.ts');
-    const newAgentStart = serve.indexOf('routePath === "/agents" && req.method === "POST"');
-    const projectIdeasStart = serve.indexOf("routePath === '/onboarding/discovery' && req.method === 'POST'");
+    const [agentCreate, onboarding] = await Promise.all([
+      source('cli/serve/routes/agent-create.ts'),
+      source('cli/serve/routes/onboarding.ts'),
+    ]);
+    const newAgentStart = agentCreate.indexOf('routePath === "/agents" && req.method === "POST"');
+    const projectIdeasStart = onboarding.indexOf("routePath === '/onboarding/discovery' && req.method === 'POST'");
     expect(newAgentStart).toBeGreaterThan(-1);
     expect(projectIdeasStart).toBeGreaterThan(-1);
-    expect(serve.slice(newAgentStart, serve.indexOf('routePath === "/projects"', newAgentStart))).toContain('worker.execute({');
-    expect(serve.slice(projectIdeasStart, serve.indexOf('routePath === "/onboarding/run"', projectIdeasStart))).toContain('worker.execute({');
+    expect(agentCreate.slice(newAgentStart)).toContain('worker.execute({');
+    expect(onboarding.slice(projectIdeasStart, onboarding.indexOf('routePath === "/onboarding/run"', projectIdeasStart))).toContain('worker.execute({');
   });
 
   it('runs agent revisions as persisted, resumable AgentUse sessions', async () => {
-    const serve = await source('cli/serve.ts');
+    const serve = await source('cli/serve/routes/revisions.ts');
     const revisionStart = serve.indexOf("routePath.match(/^\\/sessions\\/([^/?#]+)\\/revisions$/)");
     expect(revisionStart).toBeGreaterThan(-1);
     const section = serve.slice(revisionStart, serve.indexOf('const revisionActionMatch', revisionStart));
@@ -102,7 +123,7 @@ describe('internal AgentUse architecture', () => {
 
   it('uses one creator endpoint, worker path, and SSE job controller', async () => {
     const [serve, webApi, draftPage, onboarding, controller] = await Promise.all([
-      source('cli/serve.ts'),
+      serveSurface(),
       source('cli/serve/web/lib/api.ts'),
       source('cli/serve/web/routes/agent-draft.tsx'),
       source('cli/serve/web/components/project-agent-discovery.tsx'),
@@ -128,15 +149,15 @@ describe('internal AgentUse architecture', () => {
   });
 
   it('creates durable preparing jobs before preparing project context', async () => {
-    const serve = await source('cli/serve.ts');
+    const [agentCreate, onboarding] = await Promise.all([
+      source('cli/serve/routes/agent-create.ts'),
+      source('cli/serve/routes/onboarding.ts'),
+    ]);
     const routeSections = [
-      serve.slice(
-        serve.indexOf('routePath === "/agents" && req.method === "POST"'),
-        serve.indexOf('routePath === "/projects"'),
-      ),
-      serve.slice(
-        serve.indexOf("routePath === '/onboarding/discovery' && req.method === 'POST'"),
-        serve.indexOf('routePath === "/onboarding/run"'),
+      agentCreate.slice(agentCreate.indexOf('routePath === "/agents" && req.method === "POST"')),
+      onboarding.slice(
+        onboarding.indexOf("routePath === '/onboarding/discovery' && req.method === 'POST'"),
+        onboarding.indexOf('routePath === "/onboarding/run"'),
       ),
     ];
 
@@ -153,7 +174,7 @@ describe('internal AgentUse architecture', () => {
   });
 
   it('returns a durable revision session before preparing its project context', async () => {
-    const serve = await source('cli/serve.ts');
+    const serve = await source('cli/serve/routes/revisions.ts');
     // The revisions-list route now shares this section with the independent
     // change-set starter. Scope the ordering check to the revision starter so
     // an earlier change-set beginInternalAgentJob call cannot be mistaken for

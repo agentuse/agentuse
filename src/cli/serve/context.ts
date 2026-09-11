@@ -23,19 +23,12 @@ import type { AgentDraftRecord } from "../../agents/draft";
 import type { AgentRevisionRecord } from "../../agents/revision";
 import type { ChangesetProposal, ChangesetRecord } from "../../agents/changeset-types";
 import type { RecoveredAgentSourceSubmission } from "../../onboarding/internal-job-store.js";
-import type {
-  AgentCreationRecoveryInput,
-  AgentWorker,
-  ApprovalListPayload,
-  BackgroundSessionFailure,
-  OnboardingModelJob,
-  PersistedOnboardingModelJob,
-  RunRequest,
-  SessionStatusInfo,
-  SessionsPayload,
-  WorkerApprovalInfoResult,
-  WorkerPreparingSessionResult,
-} from "../serve";
+import type { AgentWorker, BackgroundSessionFailure, WorkerPreparingSessionResult } from "../serve";
+import type { ApprovalListPayload, SessionsPayload } from "./list-payloads";
+import type { AgentCreationRecoveryInput, OnboardingModelJob, PersistedOnboardingModelJob } from "./internal-jobs";
+import type { RunRequest } from "./run-request";
+import type { SessionStatusInfo, WorkerApprovalInfoResult } from "./session-types";
+import type { startOrphanReconcileLoop } from "./orphan-reconcile";
 import type { WorkerExecuteError } from "./worker-types";
 import type { SessionTrigger } from "../../session/types";
 
@@ -76,6 +69,8 @@ export interface ServeMutableState {
 
 export interface ServeContext {
   // --- identity / config -------------------------------------------------
+  /** The parsed `agentuse serve` flags, as commander handed them over. */
+  options: { debug?: boolean };
   apiKey: string | undefined;
   serverUrl: string;
   effectivePublicUrl: string;
@@ -126,7 +121,7 @@ export interface ServeContext {
   schedulerLocksHeld: Set<string>;
   scheduleIsEnabled: (project: Project | Omit<Project, "agentFiles">, agentPath: string) => boolean;
   canArmSchedules: (projectId: string, projectRoot: string) => boolean;
-  orphanReconcileLoop: { stop: () => void };
+  orphanReconcileLoop: ReturnType<typeof startOrphanReconcileLoop>;
 
   // --- static / push / SSE ----------------------------------------------
   staticAssets: WebAssets;

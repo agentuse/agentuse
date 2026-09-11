@@ -1,7 +1,8 @@
+import { compareStoreBrowserSummaries } from "../stores";
 import type { StoreItem } from "../../../store/types";
 import { toErrorMessage } from "../../../utils/error-message.js";
 import { sendError, sendJSON } from "../http";
-import { compareStoreBrowserSummaries, findStoreItemRelations, isSafeStoreName, listProjectStores, listStoreRows } from "../stores";
+import { findStoreItemRelations, isSafeStoreName, listProjectStores, listStoreRows } from "../stores";
 import type { StoreBrowserRows, StoreBrowserSummary, StoreItemRef } from "../stores";
 import type { ServeContext, ServeRequest } from "../context";
 
