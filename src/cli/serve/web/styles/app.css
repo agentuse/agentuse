@@ -110,7 +110,8 @@
    change), and on a touch screen that is pure noise. Nothing gets the UA ring.
    With a mouse or keyboard, Tab focus draws the app's own hairline instead, so
    keyboard users still see where they are; per-component :focus-visible rules
-   below refine it. On touch devices every outline is suppressed. */
+   below refine it. Outlines are suppressed only on a device that is touch-only
+   (coarse pointer and no hover), so an iPad with a keyboard keeps its ring. */
 :focus { outline: none; }
 :focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 2px; }
 @media (pointer: coarse) and (hover: none) {
