@@ -13,6 +13,8 @@ import { activeLearnings, effectiveCap, rankLearnings } from './ranking';
 import { hashInstructions, isStaleAgainst } from './contract';
 import { vetCandidates, describeVetFailure } from './vet';
 import type { LearningDraft } from './types';
+import type { ConsolidationChange, TidyRemaining } from './types';
+export type { ConsolidationChange, TidyRemaining };
 import { LEARNED_BLOCK_END, LEARNED_BLOCK_START, agentFileIsWritable, parseLearnedBlock, spliceLearnedBlock } from './graduate';
 import type { PermanentRule } from './graduate';
 import type { Learning, LearningCategory, LearningConfig } from './types';
@@ -172,40 +174,6 @@ export interface TidyProgress {
   /** Corrections that would still be active if the pass stopped here. */
   projectedActive: number;
   cap: number;
-}
-
-export interface ConsolidationChange {
-  kind: 'merge' | 'rewrite' | 'compress' | 'retire' | 'graduate' | 'quarantine' | 'drop-permanent' | 'merge-permanent' | 'rewrite-permanent';
-  /** Titles involved, for the human-readable summary. */
-  titles: string[];
-  why: string;
-}
-
-/**
- * Why the corrections still in force are still in force.
- *
- * Present only when a press ends above the cap, which is the moment the whole
- * feature looks broken: the user sees "42 → 30", a cap of 10, and no reason for
- * the gap. The rules that produced that gap already exist ({@link retireBlocked},
- * {@link isGraduationEligible}) — they were just never shown to anyone but the
- * model. Every remaining correction lands in exactly one bucket, so the counts
- * add up to the number on screen.
- *
- * Sentences rather than codes because both surfaces render this verbatim, and
- * the web bundle cannot import this module to phrase it itself.
- */
-export interface TidyRemaining {
-  /** Corrections still in force. */
-  active: number;
-  cap: number;
-  /** True when the press stopped at its round limit rather than because nothing
-   *  more could be done: pressing again really will get further. */
-  moreToDo: boolean;
-  /** One clause per group, rendered as "{count} {because}". */
-  reasons: { count: number; because: string }[];
-  /** What would let more of these become permanent. Absent when some already
-   *  can, since then the wait is not what is holding the file up. */
-  graduationWait?: string;
 }
 
 export interface ConsolidationResult {

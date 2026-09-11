@@ -16,6 +16,17 @@ import type {
   ChangesetProposal,
   ChangesetRecord,
 } from "../../../../agents/changeset-types";
+import type { ChangesetSkippedFile } from "../../../../agents/changeset-apply";
+import type { ProjectAgentSuggestion } from "../../../../agents/discover";
+import type { CustomProviderApi, CustomProviderApiSelection } from "../../../../auth/custom-provider-models";
+import type {
+  ConsolidationChange as TidyChange,
+  LearningChannel,
+  LearningState,
+  TidyRemaining,
+} from "../../../../learning/types";
+import type { AboutInfo } from "../../about";
+import type { PushPrefs } from "../../push";
 
 export type { SerializedSchedule };
 
@@ -290,9 +301,7 @@ export function fetchSessionContext(
 
 export type SessionLearningSource = 'auto' | 'approval' | 'manual';
 
-export type LearningState = 'active' | 'graduated' | 'retired' | 'quarantined';
-
-export type LearningChannel = 'corrections' | 'tool-errors' | 'custom' | 'agent';
+export type { LearningState, LearningChannel };
 
 export interface SessionLearning {
   id: string;
@@ -332,24 +341,10 @@ export interface LearningSummary {
   byChannel?: Record<string, number>;
 }
 
-export interface TidyChange {
-  kind: 'merge' | 'rewrite' | 'compress' | 'retire' | 'graduate' | 'quarantine' | 'drop-permanent' | 'merge-permanent' | 'rewrite-permanent';
-  titles: string[];
-  why: string;
-}
-
-/** Why the corrections still in force are still in force. Present only when a
- *  tidy-up ends above the cap. The sentences are written server-side so the two
- *  surfaces cannot word the same rule differently. */
-export interface TidyRemaining {
-  active: number;
-  cap: number;
-  /** True when the pass stopped at its round limit, so pressing again helps. */
-  moreToDo: boolean;
-  /** Rendered as "{count} {because}". */
-  reasons: { count: number; because: string }[];
-  graduationWait?: string;
-}
+/** The server's `ConsolidationChange`, under the name the UI calls it. The
+ *  sentences in `TidyRemaining` are written server-side so the two surfaces
+ *  cannot word the same rule differently. */
+export type { TidyChange, TidyRemaining };
 
 export interface TidyResult {
   ran: boolean;
@@ -575,12 +570,7 @@ export function fetchStoreItem(storeName: string, itemId: string, project?: stri
  * `description` replaces the absolute path, `body` renders on the detail
  * surface. Absent file means absent field, and the UI falls back to paths.
  */
-export interface AboutInfo {
-  name?: string;
-  description?: string;
-  owner?: string;
-  body?: string;
-}
+export type { AboutInfo };
 
 export interface ProjectInfo {
   id: string;
@@ -733,15 +723,7 @@ export function startAgentDraftTestRun(
   return postJson(draftActionPath(jobId, 'test-run', project), {});
 }
 
-export interface ProjectAgentSuggestion {
-  id: string;
-  name: string;
-  description: string;
-  objective: string;
-  schedule: string;
-  scheduleHuman: string;
-  evidence: string[];
-}
+export type { ProjectAgentSuggestion };
 
 export interface ProjectDiscoveryPayload {
   success: true;
@@ -910,10 +892,7 @@ export interface ChangesetPayload {
 }
 
 /** Files Restore left alone because they were hand-edited after Apply. */
-export interface ChangesetSkippedFile {
-  path: string;
-  reason: string;
-}
+export type { ChangesetSkippedFile };
 
 function changesetBase(projectId: string): string {
   return `/api/projects/${encodeURIComponent(projectId)}/changesets`;
@@ -1189,8 +1168,7 @@ export function removeProviderCredential(
   });
 }
 
-export type CustomProviderApi = 'openai-completions' | 'openai-responses' | 'anthropic-messages';
-export type CustomProviderApiSelection = CustomProviderApi | 'auto';
+export type { CustomProviderApi, CustomProviderApiSelection };
 
 export function saveCustomProvider(name: string, baseURL: string, api: CustomProviderApiSelection, key?: string, models: string[] = []): Promise<ProviderSetupPayload> {
   return postJson('/api/providers/custom', { name, baseURL, api, ...(key ? { key } : {}), models });
@@ -1293,10 +1271,7 @@ export function fetchSessions(options: {
 // Subscriptions are per browser+device; prefs pick which event categories this
 // device gets. A device with every category off is dropped server-side.
 
-export interface PushPrefs {
-  approvals: boolean;
-  sessions: boolean;
-}
+export type { PushPrefs };
 
 export interface PushSubscriptionKeys {
   endpoint: string;
