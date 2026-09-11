@@ -26,6 +26,7 @@ import { LastRunCell, RunHistorySpark } from '../components/run-health';
 import { agentDetailHref, projectDiscoveryHref } from '../lib/links';
 import { NewAgentButton } from '../components/agent-create-dialog';
 import { fetchSiteWorkflow } from '../lib/site-workflows';
+import { InlineError } from '../components/error-banner';
 
 /** Shared empty fallback, so a miss never hands a memoizing child a fresh array. */
 const NO_AGENTS: AgentRow[] = [];
@@ -921,7 +922,7 @@ export default function Agents({ project }: { project?: string } = {}) {
               )}
             </div>
           )}
-          {error && <div class="errors">Failed to load agents: {error.message}</div>}
+          {error && <InlineError>Failed to load agents: {error.message}</InlineError>}
           {errors.length > 0 && (
             <details class="issues">
               <summary class="issues-badge">⚠ {errors.length} failed to parse</summary>

@@ -7,6 +7,7 @@ import { useTitle } from '../hooks/use-title';
 import { fetchInfo } from '../lib/api';
 import { pageTitle } from '../lib/brand';
 import { WORDMARK_SVG } from '../../brand';
+import { InlineError } from '../components/error-banner';
 
 /** Dedicated first-use workflow. Dashboard routes stay operational surfaces. */
 export default function Onboarding() {
@@ -28,7 +29,7 @@ export default function Onboarding() {
         {info.loading && !info.data
           ? <Loading label="Loading onboarding…" />
           : info.error
-            ? <div class="errors" role="alert">Failed to load: {info.error.message}</div>
+            ? <InlineError>Failed to load: {info.error.message}</InlineError>
             : !info.data || !requestedProjectId
               ? <FirstProjectEmptyState folderPickerAvailable={info.data?.capabilities?.projectFolderPicker === true} />
               : requestedProjectId && !project

@@ -18,6 +18,7 @@ import { pageTitle } from '../lib/brand';
 import { agentDetailHref } from '../lib/links';
 import { term } from '../lib/terms';
 import type { AgentApprovalStats, ApprovalOutcome, ApprovalWindow } from '../lib/approval-stats';
+import { InlineError } from '../components/error-banner';
 import {
   SLOW_REPLY_MS,
   agentApprovalStats,
@@ -397,13 +398,13 @@ export default function ApprovalsList() {
         </header>
 
         {error && (
-          <div class="errors" role="alert">Failed to load approvals: {error.message}</div>
+          <InlineError>Failed to load approvals: {error.message}</InlineError>
         )}
         {data && data.errors.length > 0 && (
-          <div class="errors" role="alert">
+          <InlineError>
             Some {term('project', 2)} failed to load:
             <ul>{data.errors.map((e) => <li key={e.projectId}>{e.projectId}: {e.message}</li>)}</ul>
-          </div>
+          </InlineError>
         )}
         {loading && !data && <Loading label="Loading approvals…" />}
 

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { ApprovalLogEntry } from '../../types';
 import type { OnboardingJobHandle } from '../lib/api';
 import { isLiveSessionStatus } from '../../../../session/status';
+import { InlineError } from './error-banner';
 
 function entryLine(entry: ApprovalLogEntry): { label: string; text: string } | null {
   if (entry.type === 'log' && entry.level === 'debug') return null;
@@ -61,7 +62,7 @@ export function OnboardingSessionLog(props: {
             <pre>Still working<span class="onboarding-session-working-dots" aria-hidden="true" /></pre>
           </div>
         )}
-        {props.streamError && <div class="onboarding-session-error">{props.streamError}</div>}
+        {props.streamError && <InlineError class="onboarding-session-error">{props.streamError}</InlineError>}
       </div>
       {lines.length > 12 && (
         <button type="button" class="onboarding-session-expand" onClick={() => setExpanded((value) => !value)}>

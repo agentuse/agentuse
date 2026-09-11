@@ -17,6 +17,7 @@ import { formatApprovalTime, errorText, displayStatusLabel, humanizeMetric } fro
 import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
 import { isExecutingSessionStatus, isIncompleteOutcome, isLiveSessionStatus } from '../../../../session/status';
+import { InlineError } from '../components/error-banner';
 
 /** Time windows offered as the list's segmented control. */
 const WINDOWS = ['24h', '7d', '30d', 'all'];
@@ -399,8 +400,8 @@ export function SessionReader(props: {
           <a class="btn" href={sessionHref(row)}>{props.compact ? 'Session' : 'Full session'}</a>
         </div>
       </div>
-      {runError && <div class="errors" role="alert">Could not start a run: {runError}</div>}
-      {discardError && <div class="errors" role="alert">Could not discard this run: {discardError}</div>}
+      {runError && <InlineError>Could not start a run: {runError}</InlineError>}
+      {discardError && <InlineError>Could not discard this run: {discardError}</InlineError>}
       <div class="out">
         <div class="out-label">
           {live ? 'Latest output' : 'Final output'}
@@ -793,9 +794,9 @@ export default function SessionsList() {
         </div>
       </details>
 
-      {resolvedError && <div class="errors" role="alert">Failed to load sessions: {resolvedError.message}</div>}
+      {resolvedError && <InlineError>Failed to load sessions: {resolvedError.message}</InlineError>}
       {resolvedData && resolvedData.errors.length > 0 && (
-        <div class="errors" role="alert">Some {term('project', 2)} failed: <ul>{resolvedData.errors.map((e) => <li key={e.projectId}>{e.projectId}: {e.message}</li>)}</ul></div>
+        <InlineError>Some {term('project', 2)} failed: <ul>{resolvedData.errors.map((e) => <li key={e.projectId}>{e.projectId}: {e.message}</li>)}</ul></InlineError>
       )}
       {resolvedLoading && <Loading label="Loading sessions…" />}
       {resolvedData && (rows.length === 0

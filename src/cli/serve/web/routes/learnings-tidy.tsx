@@ -12,6 +12,7 @@ import { Loading } from '../components/loading';
 import { TidyResultView } from '../components/learnings-panel';
 import { agentDetailHref, learningsTidyHref } from '../lib/links';
 import { pageTitle } from '../lib/brand';
+import { InlineError } from '../components/error-banner';
 
 const POLL_MS = 1500;
 
@@ -186,8 +187,8 @@ export default function LearningsTidy() {
           </p>
         </header>
 
-        {startError && <div class="errors">{startError}</div>}
-        {error && !data && <div class="errors">Failed to load this tidy-up: {error.message}</div>}
+        {startError && <InlineError>{startError}</InlineError>}
+        {error && !data && <InlineError>Failed to load this tidy-up: {error.message}</InlineError>}
 
         {waiting && <Loading label="Starting the tidy-up…" />}
 
@@ -203,7 +204,7 @@ export default function LearningsTidy() {
         )}
 
         {job?.status === 'error' && (
-          <div class="errors">The tidy-up failed: {job.error ?? 'unknown error'}. Nothing was changed.</div>
+          <InlineError>The tidy-up failed: {job.error ?? 'unknown error'}. Nothing was changed.</InlineError>
         )}
 
         {alreadyUndone && (

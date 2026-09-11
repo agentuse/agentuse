@@ -12,6 +12,7 @@ import { shortenCommand } from '../lib/shorten-command';
 import { formatTokens } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 import { TokenPromptButton } from '../components/token-prompt-button';
+import { InlineError } from '../components/error-banner';
 import type {
   ContextCorrectionCounts,
   ContextFileRead,
@@ -517,7 +518,7 @@ export default function SessionContext() {
     <div class="page-approval-detail page-session-context">
       <main>
         <a class="back-link" href={backHref} onClick={goBack}>Back to session</a>
-        {error && <div class="errors" role="alert">Failed to load diagnostics: {error.message}</div>}
+        {error && <InlineError>Failed to load diagnostics: {error.message}</InlineError>}
         {loading && !context && <Loading label="Loading diagnostics…" />}
         {context && (
           <>

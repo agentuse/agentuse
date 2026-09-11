@@ -16,6 +16,7 @@ import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
 import { isIncompleteOutcome } from '../../../../session/status';
 import { consumeUpdatePreview, previewUpdate } from '../lib/update-preview';
+import { InlineError } from '../components/error-banner';
 
 /** Shared 1s clock for the header clock, elapsed timers and the countdown. */
 function useNow(enabled: boolean): number {
@@ -710,8 +711,8 @@ export default function Home() {
               : 'No runs in the last 24 hours'}
             {nextSchedule && <NextRunStat nextSchedule={nextSchedule} refetch={schedules.refetch} />}
           </div>
-          {error && <div class="errors" role="alert">Failed to load: {error.message}</div>}
-          {liveHome.error && <div class="errors" role="alert">Failed to load sessions: {liveHome.error.message}</div>}
+          {error && <InlineError>Failed to load: {error.message}</InlineError>}
+          {liveHome.error && <InlineError>Failed to load sessions: {liveHome.error.message}</InlineError>}
         </header>
 
         {sections.isVisible('running') && running.length > 0 && <WorkingNow running={running} />}

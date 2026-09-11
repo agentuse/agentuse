@@ -17,6 +17,7 @@ import {
 import { learningsTidyHref } from '../lib/links';
 import { formatRelativeTime } from '../lib/format';
 import { Loading } from './loading';
+import { InlineError } from './error-banner';
 
 // Grouped by provenance, manual first (highest-signal, human-authored), then
 // promoted comments, then auto-extracted — mirrors injection ranking.
@@ -123,7 +124,7 @@ export function TidyResultView(props: { result: TidyResult; onUndo: () => void; 
   if (!r.ran) return <p class="learnings-empty">Nothing to tidy up — every learning reaches this agent.</p>;
   // `note` doubles as a partial-failure warning alongside real changes, so it
   // only replaces the result when there is nothing else to show.
-  if (r.note && r.changes.length === 0) return <p class="learnings-error">{r.note}</p>;
+  if (r.note && r.changes.length === 0) return <InlineError class="learnings-error">{r.note}</InlineError>;
 
   const parts: string[] = [];
   if (r.merged > 0) parts.push(`${r.merged} merged`);
@@ -391,7 +392,7 @@ function LearningsSection(props: {
         </p>
       )}
 
-      {error && <p class="learnings-error">{error}</p>}
+      {error && <InlineError class="learnings-error">{error}</InlineError>}
       {learnings === null && !error && <Loading wrapClass="learnings-empty" label="Loading learnings…" />}
       {learnings !== null && items.length === 0 && (
         <p class="learnings-empty">{props.emptyText}</p>

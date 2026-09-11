@@ -10,6 +10,7 @@ import { LastRunCell, RunHistorySpark } from '../components/run-health';
 import { formatApprovalTime, formatRelativeTime, isRunningStatus, runTone } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 import { agentDetailHref } from '../lib/links';
+import { InlineError } from '../components/error-banner';
 
 type Filter = 'all' | 'attention' | 'running' | 'paused';
 type Bucket = 'today' | 'tomorrow' | 'later' | 'paused';
@@ -380,7 +381,7 @@ export default function Schedules() {
             <div class="eyebrow">scheduled agents</div>
             <h1>Schedules</h1>
             <p class="lede">{lede}</p>
-            {error && <div class="errors" role="alert">Failed to load schedules: {error.message}</div>}
+            {error && <InlineError>Failed to load schedules: {error.message}</InlineError>}
           </div>
           {multiProject && (
             <select class="project-filter" aria-label="Project" value={project} onChange={(e) => setProject((e.currentTarget as HTMLSelectElement).value)}>

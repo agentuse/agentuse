@@ -4,7 +4,7 @@ import { fetchStores } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { Loading } from '../components/loading';
-import { ErrorBanner } from '../components/error-banner';
+import { ErrorBanner, InlineError } from '../components/error-banner';
 import { ListFilter } from '../components/list-filter';
 import { formatApprovalTime, formatRelativeTime, storeNeedsAttention } from '../lib/format';
 import { statusBar, statusSlices, typeSummary } from '../lib/store-view';
@@ -175,7 +175,7 @@ export default function StoresIndex() {
             <p class="lede">{lede}</p>
           </div>
         </header>
-        {error && <div class="errors" role="alert">Failed to load stores: {error.message}</div>}
+        {error && <InlineError>Failed to load stores: {error.message}</InlineError>}
         {data && <ErrorBanner errors={data.errors} />}
 
         {stores.length > 0 && (

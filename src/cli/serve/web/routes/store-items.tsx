@@ -4,7 +4,7 @@ import { fetchStoreRows } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
 import { Loading } from '../components/loading';
-import { ErrorBanner } from '../components/error-banner';
+import { ErrorBanner, InlineError } from '../components/error-banner';
 import { ListFilter } from '../components/list-filter';
 import { StoreTable, type StoreTableColumn } from '../components/store-table';
 import { CopyButton } from '../components/copy-button';
@@ -197,7 +197,7 @@ export default function StoreItems() {
             </div>
           )}
         </header>
-        {error && <div class="errors" role="alert">Failed to load store: {error.message}</div>}
+        {error && <InlineError>Failed to load store: {error.message}</InlineError>}
         {data && <ErrorBanner errors={data.errors} />}
 
         {data && allRows.length > 0 && (
