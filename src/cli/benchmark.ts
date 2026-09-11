@@ -6,6 +6,7 @@ import { runBenchmarkSuite } from '../benchmark/runner.js';
 import { saveReports, generateMarkdownReport, generateHtmlReport, isRawBenchmarkResult, type ReportFormat } from '../benchmark/reporter/index.js';
 import { calculateMetrics } from '../benchmark/calculator.js';
 import type { BenchmarkRunConfig, SuiteResult } from '../benchmark/types.js';
+import { formatCliRow, renderCliTableHeader } from '../utils/cli-table.js';
 
 export function createBenchmarkCommand(): Command {
   const benchmarkCommand = new Command('benchmark')
@@ -326,8 +327,14 @@ export function createBenchmarkCommand(): Command {
           // Header
           const headers = ['Model', 'Score', 'Completion', 'Pass^k', 'Consistency', 'Efficiency', 'Latency', 'Cost'];
           const widths = [nameWidth, 7, 10, 8, 11, 10, 9, 10];
-          console.log(chalk.gray(headers.map((h, i) => h.padEnd(widths[i])).join(' ')));
-          console.log(chalk.gray('─'.repeat(widths.reduce((a, b) => a + b + 1, 0))));
+          // The rule runs one cell-gap wider than the columns themselves, as
+          // it always has; keep it explicit rather than letting the default
+          // full-width calculation silently shorten it.
+          for (const line of renderCliTableHeader(headers, widths, {
+            gap: ' ',
+            dim: chalk.gray,
+            separatorLength: widths.reduce((a, b) => a + b + 1, 0),
+          })) console.log(line);
 
           // Sort by rank
           const sortedModels = [...models].sort((a, b) => {
@@ -340,17 +347,21 @@ export function createBenchmarkCommand(): Command {
             const agg = result.modelResults[model].aggregate;
             const scoreColor = agg.overallScore >= 80 ? chalk.green : agg.overallScore >= 60 ? chalk.yellow : chalk.red;
 
-            const row = [
-              getModelName(model).padEnd(widths[0]),
+            // The score cell is pre-padded so the color codes sit outside the
+            // padding; 'none' passes it through untouched.
+            console.log(formatCliRow([
+              getModelName(model),
               scoreColor(agg.overallScore.toFixed(1).padStart(widths[1] - 1) + ' '),
-              pct(agg.completionRate).padStart(widths[2]),
-              pct(agg.passK).padStart(widths[3]),
-              pct(agg.consistency).padStart(widths[4]),
-              pct(agg.efficiency).padStart(widths[5]),
-              dur(agg.latencyMeanMs).padStart(widths[6]),
-              cost(agg.totalCostUsd).padStart(widths[7]),
-            ];
-            console.log(row.join(' '));
+              pct(agg.completionRate),
+              pct(agg.passK),
+              pct(agg.consistency),
+              pct(agg.efficiency),
+              dur(agg.latencyMeanMs),
+              cost(agg.totalCostUsd),
+            ], widths, {
+              gap: ' ',
+              align: ['left', 'none', 'right', 'right', 'right', 'right', 'right', 'right'],
+            }));
           }
 
           // Show errors if any
