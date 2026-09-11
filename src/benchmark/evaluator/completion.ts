@@ -1,4 +1,5 @@
 import { completeText } from '../../complete-text.js';
+import { toErrorMessage } from '../../utils/error-message.js';
 import type { OutputValidation } from '../types.js';
 import { providerHelperSystemPrompt as helperSystemPrompt } from '../../plugin/provider-behavior.js';
 
@@ -123,7 +124,7 @@ Respond ONLY with the JSON object, no other text.`;
   } catch (error) {
     return {
       valid: false,
-      details: `LLM judge error: ${error instanceof Error ? error.message : String(error)}`,
+      details: `LLM judge error: ${toErrorMessage(error)}`,
     };
   }
 }

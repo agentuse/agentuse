@@ -16,6 +16,7 @@ import { activeLearnings, effectiveCap } from './ranking';
 import { hashInstructions, isStaleAgainst } from './contract';
 import { vetCandidates, describeVetFailure, type VetVerdict } from './vet';
 import { detectToolErrorRecoveries, toolErrorDraft } from './tool-errors';
+import { toErrorMessage } from '../utils/error-message';
 import { logger } from '../utils/logger';
 
 export interface ExtractLearningsOptions {
@@ -333,7 +334,7 @@ export async function extractLearnings(options: ExtractLearningsOptions): Promis
       quarantined: quarantinedTotal,
     };
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = toErrorMessage(error);
     spinner.fail('Failed to extract learnings');
     logger.debug(`[Learning] Error: ${detail}`);
     return { status: 'failed', source: 'auto', count: 0, titles: [], detail };

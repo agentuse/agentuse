@@ -21,6 +21,7 @@ import {
 } from './types.js';
 import { evaluateCompletion } from './evaluator/completion.js';
 import { evaluateArtifacts } from './evaluator/artifacts.js';
+import { toErrorMessage } from '../utils/error-message.js';
 import type { ParsedAgent } from '../parser.js';
 import { logger } from '../utils/logger.js';
 import { GoalTracker } from './goal-tracker.js';
@@ -209,7 +210,7 @@ async function runTrial(
 
     const errorInfo = {
       type: error instanceof Error ? error.name : 'unknown',
-      message: error instanceof Error ? error.message : String(error),
+      message: toErrorMessage(error),
       category: isAbort ? 'timeout' as ErrorCategory : 'runtime_error' as ErrorCategory,
     };
 
@@ -237,7 +238,7 @@ async function runTrial(
         valid: false,
         validationDetails: isAbort
           ? `Timeout after ${timeout}s`
-          : `Error: ${error instanceof Error ? error.message : String(error)}`,
+          : `Error: ${toErrorMessage(error)}`,
       },
       artifacts: {
         checked: 0,

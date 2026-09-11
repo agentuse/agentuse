@@ -5,6 +5,7 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { randomBytes } from 'crypto';
 import { parseAgent, type ParsedAgent } from '../parser.js';
+import { toErrorMessage } from '../utils/error-message.js';
 import {
   BenchmarkSuiteSchema,
   type BenchmarkSuite,
@@ -165,7 +166,7 @@ export async function loadSuite(suitePath: string): Promise<LoadedSuite> {
       });
     } catch (error) {
       throw new SuiteConfigError(
-        `Failed to load agent "${test.agent}": ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to load agent "${test.agent}": ${toErrorMessage(error)}`,
         `tests.${test.agent}`,
         'agent_load_error'
       );
