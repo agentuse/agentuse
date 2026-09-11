@@ -34,9 +34,9 @@ import type {
   SessionStatusInfo,
   SessionsPayload,
   WorkerApprovalInfoResult,
-  WorkerExecuteError,
   WorkerPreparingSessionResult,
 } from "../serve";
+import type { WorkerExecuteError } from "./worker-types";
 import type { SessionTrigger } from "../../session/types";
 
 /** A learning captured from a `remember` correction, ready to persist. */

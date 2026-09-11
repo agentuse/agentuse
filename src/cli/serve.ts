@@ -1,4 +1,9 @@
 import { Command } from "commander";
+import { LIST_PAGE_DEFAULT_LIMIT, LIST_PAGE_MAX_LIMIT, buildRunTranscript, cursorPage, isEndedSessionStatus, sessionLearningTargetAgent, sessionListStreamKey, sessionLogLimit, shouldLogApprovalRequest } from "./serve/session-lists";
+import { CHANGESET_ID_PATTERN, ChangesetActiveError, ChangesetTargetError, activeChangesetForTarget, applyProjectChangeset, changesetAcceptsChangeRequest, changesetApplyValidator, changesetListSummary, changesetReviewHref, changesetSessionPurpose, discardProjectChangeset, prepareChangesetStart, removeChangesetWorkspace, resolveChangesetTargetPath, settleChangesetSession } from "./serve/changesets";
+import { PROVIDER_POST_ROUTES } from "./serve/provider-routes";
+import { TidyJob, pruneTidyJobs, runningTidyJob, runningTidyJobForFile, tidyJobView, tidyJobs } from "./serve/tidy";
+import { WorkerExecuteError, WorkerExecuteOptions, WorkerExecuteResult } from "./serve/worker-types";
 import { ApprovalLogEntry, ChildSessionSummary, importantDescendantTree, logsWithChildSessions } from "./serve/session-log";
 import { serveSessionArtifact, serveSessionToolOutputArtifact } from "./serve/artifacts";
 import { isExposedHost, isHeaderGateExemptRoute, isSessionCapabilityAuthorized, isSpaPageRoute, sessionAgentRevisionAllowed, sessionLearningTidyAllowed, validateApiKey, validateApiKeyHeader } from "./serve/auth";
@@ -6,7 +11,7 @@ import { createServer, IncomingMessage, ServerResponse } from "http";
 import { spawn, type ChildProcess } from "child_process";
 import { join, resolve, basename, relative, dirname } from "path";
 import { existsSync } from "fs";
-import { lstat, mkdir, readFile, realpath, rm, writeFile } from "fs/promises";
+import { lstat, readFile, realpath } from "fs/promises";
 import { glob } from "glob";
 import { createInterface, type Interface as ReadlineInterface } from "readline";
 import chalk from "chalk";
@@ -16,7 +21,7 @@ import { type AgentChunk } from "../runner";
 import { resolveProjectContext } from "../utils/project";
 import { logger, LogLevel, executionLog, approvalLog } from "../utils/logger";
 import { isPathInside } from "../utils/path-policy";
-import { isExecutingSessionStatus, isIncompleteOutcome, isTerminalSessionStatus } from "../session/status";
+import { isExecutingSessionStatus, isIncompleteOutcome } from "../session/status";
 import { runInternalJobLifecycle } from "../onboarding/internal-job-runner";
 import { printLogo } from "../utils/branding";
 import { initStorage } from "../storage/index.js";
@@ -24,18 +29,7 @@ import { getAgentuseDataDir } from "../storage/paths.js";
 import { Scheduler, type Schedule, type SerializedSchedule } from "../scheduler";
 import { loadPausedSchedules, normalizeScheduleAgentPath, setSchedulePaused } from '../scheduler/state.js';
 import { FileWatcher } from "../watcher";
-import {
-  telemetry,
-  classifyExecution,
-  configuredFeatureUsage,
-  emptyToolCallMetrics,
-  parseModel,
-  type ToolCallMetrics,
-  type OnboardingRoute,
-  type OnboardingStep,
-  type WebUIClientSurface,
-  type WebUITelemetryEvent,
-} from "../telemetry";
+import { telemetry, classifyExecution, configuredFeatureUsage, emptyToolCallMetrics, parseModel, type OnboardingRoute, type OnboardingStep, type WebUIClientSurface, type WebUITelemetryEvent } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
 import { getBuildInfo, isDevCheckout } from "../utils/build-info";
 import { refreshUpdateCacheInBackground } from "../update-check";
@@ -46,7 +40,7 @@ import { loadGlobalConfig, applyGlobalConfigEnv, getGlobalConfigPath, getGlobalE
 import { createManagedProjectTransaction, ManagedProjectError } from "../utils/managed-project";
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
 import { getSlackWebClient } from "../slack/lifecycle";
-import { saveManualLearning, LearningStore, effectiveCap, partitionLearnings, consolidateLearnings, undoConsolidation, readTidyRecord, writeTidyRecord, clearTidyRecord, strandedLearningsFile, type LearningConfig, type ConsolidationResult, type TidyProgress } from "../learning";
+import { saveManualLearning, LearningStore, effectiveCap, partitionLearnings, consolidateLearnings, undoConsolidation, readTidyRecord, writeTidyRecord, clearTidyRecord, strandedLearningsFile, type LearningConfig } from "../learning";
 import { homedir } from "os";
 import type { ActiveContextUsage, SessionTrigger } from "../session/types";
 import type { ImportantDescendantEvent, ImportantDescendantSummary } from "../session/important-descendants";
@@ -108,28 +102,7 @@ import { readSessionResults } from "./serve/stores";
 import type { SessionContextPayload, SessionPurpose, SessionResult } from "./serve/types";
 import { startOrphanReconcileLoop } from "./serve/orphan-reconcile";
 import { ONBOARDING_AGENT_ID, ONBOARDING_AGENT_SOURCE } from "../onboarding";
-import {
-  completeProviderPluginOAuth,
-  completeProviderOAuth,
-  inspectUnreviewedProviderPlugin,
-  installProviderPluginFromRegistry,
-  cancelProviderOAuth,
-  type ProviderPluginOAuthStart,
-  providerReadinessSnapshot,
-  providerSetupSnapshot,
-  removeCustomProvider,
-  removeInstalledProviderPlugin,
-  removeProviderCredential,
-  checkCustomProvider,
-  refreshCustomProviderModels,
-  saveCustomProvider,
-  saveProviderApiKey,
-  startProviderOAuth,
-  startProviderPluginOAuth,
-  startUnreviewedProviderPluginOAuth,
-  installUnreviewedProviderPlugin,
-  updateInstalledProviderPlugin,
-} from "../auth/provider-setup";
+import { providerReadinessSnapshot, providerSetupSnapshot } from "../auth/provider-setup";
 import {
   AgentCreationError,
   agentCreationProviders,
@@ -171,45 +144,15 @@ import {
   writeInternalAgentDraftSource,
   type AgentDraftRecord,
 } from "../agents/draft";
-import {
-  createChangesetRecord,
-  discardChangeset,
-  failChangeset,
-  latestChangesetProposal,
-  listChangesetRecords,
-  readChangesetRecord,
-  recordChangesetTestRun,
-  reopenChangeset,
-  settleChangesetTestRun,
-  writeChangesetRecord,
-} from "../agents/changeset";
-import { applyChangeset, restoreChangeset as restoreChangesetFiles, type ChangesetValidate } from "../agents/changeset-apply";
-import { validateChangesetFiles } from "../agents/changeset-validate";
+import { failChangeset, latestChangesetProposal, listChangesetRecords, readChangesetRecord, recordChangesetTestRun, reopenChangeset, settleChangesetTestRun, writeChangesetRecord } from "../agents/changeset";
+import { restoreChangeset as restoreChangesetFiles } from "../agents/changeset-apply";
 import { agentBaseName, computeAgentId, stripAgentExtension } from '../utils/agent-id.js';
 import { formatCliRow, renderCliTable, renderCliTableHeader } from '../utils/cli-table.js';
 import { toErrorMessage } from '../utils/error-message.js';
 import { mountChangesetShadow } from "../agents/changeset-mount";
-import {
-  assertChangesetId,
-  changesetBasePath,
-  changesetDir,
-  changesetEditRoot,
-  type ChangesetFile,
-  type ChangesetMode,
-  type ChangesetProposal,
-  type ChangesetRecord,
-  type ChangesetStatus,
-} from "../agents/changeset-types";
-import {
-  listProjectAgents as listChangesetProjectAgents,
-  projectFileReader as changesetProjectFileReader,
-} from "../onboarding/submit-changes";
+import { changesetBasePath, changesetEditRoot, type ChangesetProposal, type ChangesetRecord } from "../agents/changeset-types";
 import { internalAgentSourcePath, writeInternalAgentSource } from "../agents/internal-agent-file";
-import {
-  discoverProjectSkillCatalog,
-  prepareProjectDiscoveryView,
-  type ProjectDiscoveryResult,
-} from "../agents/discover";
+import { discoverProjectSkillCatalog, prepareProjectDiscoveryView } from "../agents/discover";
 import { loadBuiltinSkillSource } from "../skill/builtin";
 import { configuredMockModel, mockRunEnv, resolveMockScope } from "../runner/mock-tools";
 import { parseAgentContent } from "../parser";
@@ -251,83 +194,11 @@ const SESSION_SEARCH_SCAN_LIMIT = 400;
  *  a worker ships across IPC when the page itself only needs the first 50. */
 const SESSION_COUNT_SCAN_LIMIT = 500;
 
-/**
- * A tidy-up in flight, or one this process finished recently.
- *
- * The pass is minutes of model work on a large corrections file, far too long to
- * hold a request open for: the browser or a proxy times out and the user is left
- * with two rewritten files and no idea what happened. So the request starts a
- * job and returns its id, and the page polls this registry.
- */
-interface TidyJob {
-  id: string;
-  project: string;
-  path: string;
-  agentFilePath: string;
-  stateRoot: string;
-  startedAt: number;
-  finishedAt?: number;
-  status: 'running' | 'done' | 'error' | 'undone';
-  phase: TidyProgress['phase'];
-  step: number;
-  total: number;
-  round: number;
-  maxRounds: number;
-  projectedActive: number;
-  cap: number;
-  dryRun: boolean;
-  result?: ConsolidationResult;
-  error?: string;
-}
 
-const tidyJobs = new Map<string, TidyJob>();
-/** How long a finished job stays queryable in memory. Beyond this the page
- *  falls back to the record on disk, which is what survives a daemon restart. */
-const TIDY_JOB_RETENTION_MS = 6 * 60 * 60 * 1000;
 
-function pruneTidyJobs(now = Date.now()): void {
-  for (const [id, job] of tidyJobs) {
-    if (job.finishedAt && now - job.finishedAt > TIDY_JOB_RETENTION_MS) tidyJobs.delete(id);
-  }
-}
 
-/** The running job for this agent, if any. A second Tidy up press joins the
- *  first rather than starting a competing pass over the same two files. */
-function runningTidyJob(project: string, path: string): TidyJob | undefined {
-  for (const job of tidyJobs.values()) {
-    if (job.status === 'running' && job.project === project && job.path === path) return job;
-  }
-  return undefined;
-}
 
-/** Same question asked by agent file, for the list payload — which knows the
- *  file it is describing but not which project id was used to reach it. */
-function runningTidyJobForFile(agentFilePath: string): TidyJob | undefined {
-  for (const job of tidyJobs.values()) {
-    if (job.status === 'running' && job.agentFilePath === agentFilePath) return job;
-  }
-  return undefined;
-}
 
-function tidyJobView(job: TidyJob) {
-  return {
-    id: job.id,
-    project: job.project,
-    path: job.path,
-    status: job.status,
-    phase: job.phase,
-    step: job.step,
-    total: job.total,
-    round: job.round,
-    maxRounds: job.maxRounds,
-    projectedActive: job.projectedActive,
-    cap: job.cap,
-    dryRun: job.dryRun,
-    startedAt: job.startedAt,
-    ...(job.finishedAt ? { finishedAt: job.finishedAt } : {}),
-    ...(job.error ? { error: job.error } : {}),
-  };
-}
 
 export interface RunRequest {
   agent: string;
@@ -514,71 +385,8 @@ interface RunResponse {
   };
 }
 
-interface WorkerExecuteOptions {
-  agentPath?: string;
-  /** In-memory agent definition used by the zero-file onboarding run. */
-  agentContent?: string;
-  agentName?: string;
-  projectRoot: string;
-  prompt?: string | undefined;
-  model?: string | undefined;
-  timeout?: number | undefined;
-  maxSteps?: number | undefined;
-  debug?: boolean | undefined;
-  sessionId?: string | undefined;
-  /** Pre-assigned id for a fresh `execute` (detached run). */
-  newSessionId?: string | undefined;
-  /** The pre-assigned id already has a durable `preparing` session shell. */
-  preparedSession?: boolean | undefined;
-  toolResult?: unknown;
-  resumeToken?: string | undefined;
-  trigger?: SessionTrigger | undefined;
-  signal?: AbortSignal | undefined;
-}
 
-interface WorkerExecuteResult {
-  success: true;
-  /** The reporting worker's RSS when the run settled (see worker recycling). */
-  workerRssBytes?: number;
-  telemetry?: {
-    toolCalls: ToolCallMetrics;
-    steps: number;
-  };
-  result: {
-    text: string;
-    finishReason?: string;
-    duration: number;
-    tokens?: { input: number; output: number };
-    toolCalls: number;
-    sessionId?: string;
-    approvalUrl?: string;
-    /** One-line outcome from report_complete, when the run called it. */
-    headline?: string;
-    /** Validated source returned by the creator-only submission tool. */
-    agentSource?: string;
-    /** Human-facing name returned with creator-only source. */
-    authoredAgentName?: string;
-    /** Project-local filename returned with creator-only source. */
-    authoredAgentFileName?: string;
-    /** Skills the creator loaded before the accepted source was submitted. */
-    authoredAgentLoadedSkills?: string[];
-    /** Validated suggestions returned by the discovery-only submission tool. */
-    projectDiscovery?: ProjectDiscoveryResult;
-  };
-}
 
-export interface WorkerExecuteError {
-  success: false;
-  /** The reporting worker's RSS when the run settled (see worker recycling). */
-  workerRssBytes?: number;
-  telemetry?: WorkerExecuteResult['telemetry'];
-  error: {
-    code: string;
-    message: string;
-  };
-  /** Final output remains useful when report_incomplete ends the run. */
-  result?: WorkerExecuteResult['result'];
-}
 
 /** Tag helpers for the reviser's follow-up prompt, kept out of the route body
  *  so the literal tag text is written once. */
@@ -1667,7 +1475,6 @@ export class AgentWorker {
   }
 }
 
-const LOGGED_APPROVAL_REQUEST_TTL_MS = 24 * 60 * 60 * 1000;
 // How long shutdown waits for in-flight approval resumes / session continuations
 // to settle before killing workers, so a graceful restart mid-resume finishes (or
 // rolls back) cleanly instead of orphaning the session as a stuck 'running'.
@@ -1710,16 +1517,6 @@ function shouldRecycleWorker(state: {
   return state.rssBytes / (1024 * 1024) >= thresholdMb;
 }
 
-function shouldLogApprovalRequest(logged: Map<string, number>, key: string, now = Date.now()): boolean {
-  for (const [existingKey, loggedAt] of logged) {
-    if (now - loggedAt > LOGGED_APPROVAL_REQUEST_TTL_MS) {
-      logged.delete(existingKey);
-    }
-  }
-  if (logged.has(key)) return false;
-  logged.set(key, now);
-  return true;
-}
 
 function parseRequestBody(req: IncomingMessage): Promise<RunRequest> {
   return new Promise((resolve, reject) => {
@@ -1738,111 +1535,8 @@ function parseRequestBody(req: IncomingMessage): Promise<RunRequest> {
   });
 }
 
-/** Flatten a plugin OAuth start so the dashboard reads one shape. */
-function oauthStartResult(started: ProviderPluginOAuthStart): Record<string, unknown> {
-  return started.connected ? { connected: true, ...started.snapshot } : started;
-}
 
-/** Provider setup POST endpoints: every one parses a JSON body and answers 400 on failure. */
-const PROVIDER_POST_ROUTES: Record<string, { code: string; handle(body: Record<string, unknown>): Promise<object> }> = {
-  "/providers/api-key": { code: "PROVIDER_SETUP_INVALID", handle: (body) => saveProviderApiKey(body.provider, body.key) },
-  "/providers/plugins/install": { code: "PROVIDER_PLUGIN_INSTALL_FAILED", handle: (body) => installProviderPluginFromRegistry(body.plugin) },
-  "/providers/plugins/install-unreviewed": { code: "PROVIDER_PLUGIN_INSTALL_FAILED", handle: (body) => installUnreviewedProviderPlugin(body.source, body.commit) },
-  "/providers/plugins/inspect": { code: "PROVIDER_PLUGIN_INSPECTION_FAILED", handle: async (body) => ({ plugin: await inspectUnreviewedProviderPlugin(body.source) }) },
-  "/providers/plugins/oauth/start": { code: "PROVIDER_PLUGIN_OAUTH_START_FAILED", handle: async (body) => oauthStartResult(await startProviderPluginOAuth(body.plugin, body.reconnect === true)) },
-  "/providers/plugins/oauth/start-unreviewed": { code: "PROVIDER_PLUGIN_OAUTH_START_FAILED", handle: async (body) => oauthStartResult(await startUnreviewedProviderPluginOAuth(body.source, body.commit)) },
-  "/providers/plugins/oauth/complete": { code: "PROVIDER_PLUGIN_OAUTH_COMPLETE_FAILED", handle: (body) => completeProviderPluginOAuth(body.flowId, body.code) },
-  "/providers/plugins/update": { code: "PROVIDER_PLUGIN_UPDATE_FAILED", handle: (body) => updateInstalledProviderPlugin(body.name) },
-  "/providers/plugins/remove": { code: "PROVIDER_PLUGIN_REMOVE_FAILED", handle: (body) => removeInstalledProviderPlugin(body.name) },
-  "/providers/oauth/start": { code: "PROVIDER_OAUTH_START_FAILED", handle: (body) => startProviderOAuth(body.provider) },
-  "/providers/oauth/cancel": { code: "PROVIDER_OAUTH_CANCEL_FAILED", handle: async (body) => cancelProviderOAuth(body.flowId) },
-  "/providers/oauth/complete": { code: "PROVIDER_OAUTH_COMPLETE_FAILED", handle: (body) => completeProviderOAuth(body.flowId, body.code) },
-  "/providers/remove": { code: "PROVIDER_REMOVE_FAILED", handle: (body) => removeProviderCredential(body.provider, body.kind, body.pluginName, body.authMethodId) },
-  "/providers/custom": { code: "CUSTOM_PROVIDER_INVALID", handle: (body) => saveCustomProvider({ name: body.name, baseURL: body.baseURL, key: body.key, api: body.api, models: body.models }) },
-  "/providers/custom/check": { code: "CUSTOM_PROVIDER_CHECK_FAILED", handle: (body) => checkCustomProvider({ name: body.name, baseURL: body.baseURL, key: body.key, api: body.api, models: body.models }) },
-  "/providers/custom/refresh": { code: "CUSTOM_PROVIDER_REFRESH_FAILED", handle: (body) => refreshCustomProviderModels(body.name) },
-  "/providers/custom/remove": { code: "CUSTOM_PROVIDER_REMOVE_FAILED", handle: (body) => removeCustomProvider(body.name) },
-};
 
-// Compact transcript of what the agent did in a run — its text output, tool
-// calls (name + truncated input/output), and any reviewed draft — pulled from
-// the session log the daemon already holds in-process. Used to ground a manual
-// instruction in the run the reviewer was looking at.
-function buildRunTranscript(
-  logs: ApprovalLogEntry[] | undefined,
-  maxChars = 6000,
-  options: {
-    focus?: 'earliest' | 'latest' | 'latest-attempt';
-    terminal?: { status?: string; errorCode?: string; errorMessage?: string };
-  } = {},
-): string {
-  const clip = (s: string | undefined, n: number): string => {
-    if (!s) return '';
-    const t = s.trim();
-    return t.length > n ? t.slice(0, n) + '…' : t;
-  };
-  const blocks: string[] = [];
-  const allLogs = logs ?? [];
-  let latestContinuationIndex = -1;
-  if (options.focus === 'latest-attempt') {
-    for (let index = allLogs.length - 1; index >= 0; index -= 1) {
-      const entry = allLogs[index]!;
-      if (entry.type === 'text' && entry.title === 'User response') {
-        latestContinuationIndex = index;
-        break;
-      }
-    }
-  }
-  const scopedLogs = latestContinuationIndex >= 0 ? allLogs.slice(latestContinuationIndex) : allLogs;
-  if (options.focus === 'latest-attempt') {
-    blocks.push(latestContinuationIndex >= 0
-      ? 'Transcript scope: latest execution attempt after the most recent user continuation.'
-      : 'Transcript scope: latest execution attempt.');
-  }
-  for (const e of scopedLogs) {
-    if (e.type === 'text' && e.message?.trim()) {
-      const label = e.title === 'User response' ? 'User continuation' : 'Agent output';
-      blocks.push(`${label}:\n${clip(e.message, 4000)}`);
-    } else if (e.type === 'tool') {
-      const io = [
-        e.details?.input ? `input ${clip(e.details.input, 300)}` : '',
-        e.details?.output ? `output ${clip(e.details.output, 500)}` : '',
-        e.details?.errorMessage ? `error ${clip(e.details.errorMessage, 500)}` : '',
-        !e.details && e.status === 'error' && e.message ? `error ${clip(e.message, 500)}` : '',
-      ].filter(Boolean).join(' → ');
-      blocks.push(`Tool ${e.tool ?? e.title}${io ? `: ${io}` : ''}`);
-    } else if (e.type === 'error' || (e.type === 'log' && e.level === 'error')) {
-      blocks.push(`Error ${e.title}${e.message?.trim() ? `:\n${clip(e.message, 1000)}` : ''}`);
-    } else if (e.details?.draft?.trim()) {
-      blocks.push(`Reviewed work:\n${clip(e.details.draft, 1500)}`);
-    }
-  }
-
-  const terminal = options.terminal;
-  if (terminal?.status === 'error' && terminal.errorMessage) {
-    const code = terminal.errorCode ? ` (${terminal.errorCode})` : '';
-    blocks.push(`Current terminal error${code}:\n${clip(terminal.errorMessage, 4000)}`);
-  }
-
-  const out = blocks.join('\n\n');
-  if (out.length <= maxChars) return out;
-  if (options.focus !== 'latest' && options.focus !== 'latest-attempt') {
-    return out.slice(0, maxChars) + '\n…(truncated)';
-  }
-
-  const marker = '…(earlier activity omitted; showing the latest session activity)';
-  const budget = Math.max(0, maxChars - marker.length - 2);
-  const selected: string[] = [];
-  let selectedLength = 0;
-  for (let index = blocks.length - 1; index >= 0; index -= 1) {
-    const block = blocks[index]!;
-    const separatorLength = selected.length > 0 ? 2 : 0;
-    if (selectedLength + separatorLength + block.length > budget) continue;
-    selected.unshift(block);
-    selectedLength += separatorLength + block.length;
-  }
-  return `${marker}\n\n${selected.join('\n\n')}`;
-}
 
 // The worker's list-response cache (src/index.ts) keys on the resolved
 // createdAfter cutoff. Deriving that cutoff from a raw Date.now() yields a
@@ -2019,27 +1713,6 @@ function sessionStatusCounts(
   return counts;
 }
 
-/** Every filter captured by the first SSE subscriber must partition the hub. */
-function sessionListStreamKey(requestUrl: URL): string {
-  return [
-    'sessions',
-    requestUrl.searchParams.get('window') ?? '',
-    requestUrl.searchParams.get('days') ?? '',
-    requestUrl.searchParams.get('hours') ?? '',
-    requestUrl.searchParams.get('status') ?? '',
-    requestUrl.searchParams.get('triage') ?? '',
-    requestUrl.searchParams.get('trigger') ?? '',
-    requestUrl.searchParams.get('agent') ?? '',
-    requestUrl.searchParams.get('approval') ?? '',
-    requestUrl.searchParams.get('q') ?? '',
-    requestUrl.searchParams.get('mock') ?? '',
-    requestUrl.searchParams.get('metric') ?? '',
-    requestUrl.searchParams.get('results') ?? '',
-    requestUrl.searchParams.get('detail') ?? '',
-    requestUrl.searchParams.get('limit') ?? '',
-    requestUrl.searchParams.get('cursor') ?? '',
-  ].join(':');
-}
 
 /**
  * Mock/test runs are excluded from every list-backed surface (home aggregates,
@@ -2061,60 +1734,9 @@ function parseApprovalSessionFilter(value: string | undefined): ApprovalSessionF
     : undefined;
 }
 
-const LIST_PAGE_DEFAULT_LIMIT = 50;
-const LIST_PAGE_MAX_LIMIT = 100;
-const SESSION_LOG_DEFAULT_LIMIT = 400;
-const SESSION_LOG_MAX_LIMIT = 5_000;
 
-function sessionLogLimit(requestUrl: URL): number {
-  const parsed = Number(requestUrl.searchParams.get('logsLimit'));
-  return Number.isFinite(parsed) && parsed > 0
-    ? Math.min(Math.floor(parsed), SESSION_LOG_MAX_LIMIT)
-    : SESSION_LOG_DEFAULT_LIMIT;
-}
 
-type CursorPage<T> = { items: T[]; nextCursor?: string; limit?: number };
 
-/**
- * Cursor pagination is deliberately opt-in: integrations which omit `limit`
- * keep receiving the historical complete arrays. Cursors carry the complete
- * sort key plus a filter fingerprint, preventing a cursor for one filtered
- * view from silently skipping rows in another.
- */
-function cursorPage<T>(
-  requestUrl: URL,
-  fingerprint: string,
-  rows: T[],
-  key: (row: T) => string
-): CursorPage<T> {
-  const rawLimit = requestUrl.searchParams.get('limit');
-  if (rawLimit === null) return { items: rows };
-  const parsed = Number(rawLimit);
-  const limit = Number.isFinite(parsed) && parsed > 0
-    ? Math.min(Math.floor(parsed), LIST_PAGE_MAX_LIMIT)
-    : LIST_PAGE_DEFAULT_LIMIT;
-  const rawCursor = requestUrl.searchParams.get('cursor');
-  let start = 0;
-  if (rawCursor) {
-    try {
-      const decoded = JSON.parse(Buffer.from(rawCursor, 'base64url').toString('utf8')) as { f?: string; k?: string };
-      if (decoded.f !== fingerprint || typeof decoded.k !== 'string') throw new Error('mismatched cursor');
-      const index = rows.findIndex((row) => key(row) === decoded.k);
-      if (index < 0) throw new Error('cursor row no longer exists');
-      start = index + 1;
-    } catch {
-      // A stale cursor is safe to restart from the current first page. This is
-      // friendlier than failing a dashboard reload after retention cleanup.
-      start = 0;
-    }
-  }
-  const items = rows.slice(start, start + limit);
-  const last = items.at(-1);
-  const nextCursor = last && start + items.length < rows.length
-    ? Buffer.from(JSON.stringify({ f: fingerprint, k: key(last) })).toString('base64url')
-    : undefined;
-  return { items, ...(nextCursor && { nextCursor }), limit };
-}
 
 function approvalMatchesSessionFilter(status: ApprovalSummaryStatus, filter: ApprovalSessionFilter): boolean {
   if (filter === 'pending') return status === 'pending';
@@ -2144,248 +1766,6 @@ function agentRevisionSessionPurpose(
    part of the route family that does not need the server closure, so it can be
    exercised directly by the route tests. */
 
-/** ULID, the only shape a change set id can take. Checked before the record
- *  helpers throw on it, so a junk path is a 404 rather than a 400. */
-const CHANGESET_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
-
-/** Where a changeset review page lives. */
-function changesetReviewHref(projectId: string, sessionId: string): string {
-  return `/projects/${encodeURIComponent(projectId)}/changesets/${encodeURIComponent(sessionId)}`;
-}
-
-function changesetSessionPurpose(
-  projectId: string,
-  record: Pick<ChangesetRecord, 'sessionId' | 'mode' | 'target'>,
-): SessionPurpose {
-  return {
-    kind: 'changeset',
-    mode: record.mode,
-    ...(record.target?.name && { targetAgentName: record.target.name }),
-    href: changesetReviewHref(projectId, record.sessionId),
-  };
-}
-
-/** A change set the operator can still steer: a second one on the same target
- *  would review two proposals against the same base. */
-const CHANGESET_OPEN_STATUSES: ReadonlySet<ChangesetStatus> = new Set<ChangesetStatus>([
-  'running', 'proposed', 'no-change',
-]);
-
-/** Statuses whose turn has ended, so a change request reopens the session
- *  instead of racing a running one. `error` is included so a failed authoring
- *  turn can be steered rather than abandoned. */
-function changesetAcceptsChangeRequest(status: ChangesetStatus): boolean {
-  return status === 'proposed' || status === 'no-change' || status === 'error';
-}
-
-function activeChangesetForTarget(
-  records: readonly ChangesetRecord[],
-  targetPath: string,
-): ChangesetRecord | undefined {
-  return records.find((record) => record.target?.path === targetPath
-    && CHANGESET_OPEN_STATUSES.has(record.status));
-}
-
-/** A revise target that is not a plain agent file inside the served scope. */
-class ChangesetTargetError extends Error {}
-
-/**
- * Resolve the agent a revise change set is about, to the scope-relative run
- * path the record, the overlay and `submit_changes` all speak.
- *
- * Both forms arrive here: the agent page sends a relative run path, while the
- * session page only knows `context.agentFilePath` and sends an absolute one.
- * The realpath pair is what decides scope membership, so an absolute path
- * reached through a symlinked ancestor still normalizes onto the real tree
- * instead of naming a file the apply would later refuse.
- */
-async function resolveChangesetTargetPath(scopeRoot: string, requested: string): Promise<string> {
-  const outsideScope = 'The agent is outside the served project scope';
-  const notAFile = 'The agent must be a regular file inside the served project scope';
-  const realScope = await realpath(scopeRoot);
-  // The session page reads its path back from a run, so it can already be in
-  // realpath form (/private/var/... for a /var/... scope). Accept the target
-  // under either spelling of the scope, then settle both on the real tree.
-  const absolute = [resolve(scopeRoot, requested), resolve(realScope, requested)]
-    .find((candidate) => isPathInside(scopeRoot, candidate) || isPathInside(realScope, candidate));
-  if (!absolute) throw new ChangesetTargetError(outsideScope);
-  let info;
-  try {
-    info = await lstat(absolute);
-  } catch {
-    throw new ChangesetTargetError(outsideScope);
-  }
-  if (!info.isFile() || info.isSymbolicLink()) throw new ChangesetTargetError(notAFile);
-  const realTarget = await realpath(absolute);
-  if (!isPathInside(realScope, realTarget)) throw new ChangesetTargetError(notAFile);
-  return relative(realScope, realTarget).replace(/\\/gu, '/');
-}
-
-/** A start refused because another change set already owns the same target. */
-class ChangesetActiveError extends Error {
-  constructor(public readonly sessionId: string, message: string) {
-    super(message);
-  }
-}
-
-/** A file row without its body, for the cheap list endpoint. */
-type ChangesetFileSummary = Omit<ChangesetFile, 'content' | 'patch'>;
-
-interface ChangesetSummaryRecord extends Omit<ChangesetRecord, 'proposals'> {
-  proposals: Array<Omit<ChangesetProposal, 'files'> & { files: ChangesetFileSummary[] }>;
-}
-
-/** Strip every proposed file body: a list of change sets is a list of paths. */
-function changesetListSummary(record: ChangesetRecord): ChangesetSummaryRecord {
-  return {
-    ...record,
-    proposals: record.proposals.map((proposal) => ({
-      ...proposal,
-      files: proposal.files.map(({ content: _content, patch: _patch, ...file }) => file),
-    })),
-  };
-}
-
-/** The model's staged workspace: `<changesetDir>/<id>/`, edit folder included.
- *  `rm` unlinks symlinks instead of descending, so the real project is safe
- *  even though the shadow root under here is mostly links. */
-async function removeChangesetWorkspace(projectRoot: string, sessionId: string): Promise<void> {
-  assertChangesetId(sessionId);
-  await rm(join(changesetDir(projectRoot), sessionId), { recursive: true, force: true });
-}
-
-/**
- * Create the durable record and the workspace the filesystem overlay writes
- * into. The empty base map is written up front so a session that only adds new
- * files still has a well-formed manifest for `submit_changes` to read.
- */
-async function prepareChangesetStart(input: {
-  sessionId: string;
-  projectId: string;
-  projectRoot: string;
-  scopeRoot: string;
-  mode: ChangesetMode;
-  instruction: string;
-  authoringModel: string;
-  target?: { path: string; name: string };
-  originSessionId?: string;
-}): Promise<ChangesetRecord> {
-  if (input.mode === 'revise') {
-    if (!input.target) throw new Error('A revise change set needs a target agent');
-    const conflict = activeChangesetForTarget(
-      await listChangesetRecords(input.projectRoot, { targetPath: input.target.path }),
-      input.target.path,
-    );
-    if (conflict) {
-      throw new ChangesetActiveError(
-        conflict.sessionId,
-        'This agent already has a change set waiting for completion or review',
-      );
-    }
-  }
-  const record = await createChangesetRecord({
-    sessionId: input.sessionId,
-    projectId: input.projectId,
-    projectRoot: input.projectRoot,
-    scopeRoot: input.scopeRoot,
-    mode: input.mode,
-    ...(input.target && { target: input.target }),
-    ...(input.originSessionId && { originSessionId: input.originSessionId }),
-    instruction: input.instruction,
-    authoringModel: input.authoringModel,
-  });
-  await mkdir(changesetEditRoot(input.projectRoot, input.sessionId), { recursive: true });
-  await writeFile(changesetBasePath(input.projectRoot, input.sessionId), '{}\n', { mode: 0o600 });
-  return record;
-}
-
-/** Apply re-runs the same validator `submit_changes` ran, against the stored
- *  proposal, so a project that moved under the review is caught before a
- *  single file is written. */
-function changesetApplyValidator(input: {
-  projectRoot: string;
-  scopeRoot: string;
-  availableModels: readonly string[];
-  availableSkills: readonly string[];
-}): ChangesetValidate {
-  return async (record, proposal) => {
-    if (!proposal.entry) throw new Error('This change set has no entry agent to validate');
-    await validateChangesetFiles({
-      mode: record.mode,
-      scopeRoot: input.scopeRoot,
-      projectRoot: input.projectRoot,
-      ...(record.target && { target: { path: record.target.path } }),
-      entry: proposal.entry,
-      files: proposal.files.map((file) => ({
-        path: file.path,
-        op: file.op,
-        baseHash: file.baseHash,
-        content: file.content,
-      })),
-      availableModels: input.availableModels,
-      availableSkills: input.availableSkills,
-      readProjectFile: changesetProjectFileReader(input.scopeRoot),
-      listProjectAgents: () => listChangesetProjectAgents(input.scopeRoot),
-    });
-  };
-}
-
-/** Apply, then drop the staged workspace: the record carries everything the
- *  review and Restore still need. */
-async function applyProjectChangeset(input: {
-  projectRoot: string;
-  scopeRoot: string;
-  sessionId: string;
-  availableModels: readonly string[];
-  availableSkills: readonly string[];
-}): Promise<ChangesetRecord> {
-  const record = await applyChangeset({
-    projectRoot: input.projectRoot,
-    scopeRoot: input.scopeRoot,
-    sessionId: input.sessionId,
-    validate: changesetApplyValidator(input),
-  });
-  await removeChangesetWorkspace(input.projectRoot, input.sessionId).catch(() => undefined);
-  return record;
-}
-
-async function discardProjectChangeset(projectRoot: string, sessionId: string): Promise<ChangesetRecord> {
-  const record = await discardChangeset(projectRoot, sessionId);
-  await removeChangesetWorkspace(projectRoot, sessionId).catch(() => undefined);
-  return record;
-}
-
-const CHANGESET_NOT_SUBMITTED = {
-  code: 'CHANGESET_NOT_SUBMITTED',
-  message: 'The change set session ended without submitting a validated outcome',
-} as const;
-
-/**
- * Settle a change set whose authoring session reached a terminal turn.
- * Mirrors `settleAgentRevisionExecution`: a successful turn that never called
- * `submit_changes` is an invalid internal outcome, otherwise the review page
- * would poll a record nothing will ever move on. `failChangeset` re-reads and
- * only acts on a still-`running` record, which is what keeps a submission (or
- * a request-changes reopen) landing between the two reads from being
- * overwritten. Returns the error it applied, so the caller can mirror it onto
- * the job envelope.
- */
-async function settleChangesetSession(
-  projectRoot: string,
-  sessionId: string,
-  result: WorkerExecuteResult | WorkerExecuteError,
-): Promise<{ code: string; message: string } | undefined> {
-  const record = await readChangesetRecord(projectRoot, sessionId);
-  if (!record || record.status !== 'running') return undefined;
-  if (!result.success) {
-    await failChangeset(projectRoot, sessionId, result.error);
-    return result.error;
-  }
-  if (result.result.finishReason === 'suspended' || result.result.approvalUrl) return undefined;
-  const error = { ...CHANGESET_NOT_SUBMITTED };
-  await failChangeset(projectRoot, sessionId, error);
-  return error;
-}
 
 
 
@@ -2408,9 +1788,24 @@ async function settleChangesetSession(
 
 
 
-function isEndedSessionStatus(status: string | undefined): boolean {
-  return isTerminalSessionStatus(status);
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -2486,24 +1881,6 @@ function applyBackgroundSessionFailure<T extends { errorMessage?: string; sessio
 
 
 
-/**
- * Whose learnings a session view shows: always THIS session's agent, never the
- * cascade's origin agent.
- *
- * A manager parked on a delegated child ran under its own learnings. They are
- * what the log's "N of M applied" badge counts, and the page is titled with that
- * agent, so they are the rules a reviewer is judging the run against. Reading
- * the leaf's store instead showed nothing at all whenever the leaf had not
- * captured anything yet, which hid the manager's own over-cap warning on the one
- * page where it changes a decision.
- *
- * A `remember` correction left at the gate still belongs to `originAgent`: that
- * note is about the draft on screen, so it goes to whoever wrote it. The two
- * deliberately differ, and the panel names the agent it is showing.
- */
-function sessionLearningTargetAgent<T>(approval: { agent: T; originAgent?: T }): T {
-  return approval.agent;
-}
 
 
 
