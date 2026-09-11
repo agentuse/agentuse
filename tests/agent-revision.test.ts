@@ -13,6 +13,7 @@ import {
   createSubmitAgentRevisionTool,
   discardAgentRevision,
   readAgentRevisionRecord,
+  reopenAgentRevision,
   restoreAgentRevision,
   sourceHash,
 } from '../src/agents/revision';
@@ -182,7 +183,7 @@ describe('internal agent revision', () => {
       recommendedAction: 'Run the agent once and revise from that run if needed.',
     })).resolves.toBeDefined();
     const record = await readAgentRevisionRecord(projectRoot, revisionSessionId);
-    expect(record?.status).toBe('no-change');
+    expect(record?.status).toBe('accepted');
     expect(record?.originSessionId).toBeUndefined();
   });
 
@@ -382,7 +383,7 @@ describe('internal agent revision', () => {
     })).rejects.toThrow('introduced or ungated a structurally unsafe command grant: gh *');
   });
 
-  it('returns a structured no-change diagnosis without touching source', async () => {
+  it('records a no-change diagnosis as accepted without touching source or waiting on the operator', async () => {
     const f = await fixture();
     const tool = createSubmitAgentRevisionTool({}, f.contract);
     await expect((tool.execute as any)({
@@ -391,10 +392,11 @@ describe('internal agent revision', () => {
       recommendedAction: 'Reconnect the provider and retry the existing agent.',
     })).resolves.toContain('no-change diagnosis');
     const record = await readAgentRevisionRecord(f.projectRoot, f.revisionSessionId);
-    expect(record?.status).toBe('no-change');
+    expect(record?.status).toBe('accepted');
     expect(record?.recommendedAction).toContain('Reconnect');
     expect(await readFile(f.targetAgentPath, 'utf8')).toBe(f.currentSource);
-    await expect(discardAgentRevision(f.projectRoot, f.revisionSessionId)).resolves.toMatchObject({ status: 'accepted' });
+    await expect(discardAgentRevision(f.projectRoot, f.revisionSessionId)).rejects.toThrow('cannot be discarded');
+    await expect(reopenAgentRevision(f.projectRoot, f.revisionSessionId, 'Look again')).resolves.toMatchObject({ status: 'running' });
   });
 
   it('surfaces capability changes and can apply a newly loaded available skill', async () => {

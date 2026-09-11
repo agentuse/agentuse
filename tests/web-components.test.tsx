@@ -86,8 +86,8 @@ describe('agent revision entry', () => {
     expect(revisionOriginDescription(revision)).toBe('Review this diagnosis before starting another revision.');
     expect(revisionOriginAction(revision, true)).toBe('Review diagnosis');
     const accepted = { ...revision, status: 'accepted' as const };
-    expect(revisionLabel(accepted)).toBe('Diagnosis accepted');
-    expect(revisionOriginDescription(accepted)).toBe('No agent source change was made. You can start another revision.');
+    expect(revisionLabel(accepted)).toBe('No change needed');
+    expect(revisionOriginDescription(accepted)).toBe('The reviser found nothing to change. Read its diagnosis, or start another revision.');
     expect(revisionOriginAction(accepted, false)).toBe('View revision');
   });
 

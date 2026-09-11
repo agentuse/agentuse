@@ -10072,7 +10072,7 @@ export function createServeCommand(): Command {
                   return;
                 }
                 const latest = await readAgentRevisionRecord(project.root, revisionSessionId);
-                if (latest?.status === 'proposed' || latest?.status === 'no-change') {
+                if (latest?.status === 'proposed' || latest?.status === 'no-change' || latest?.status === 'accepted') {
                   job.status = 'completed';
                   job.result = latest;
                   return;
@@ -10667,7 +10667,7 @@ export function createServeCommand(): Command {
               }
               const { previousSource: _previous, ...visibleRecord } = record;
               const baseSource = record.previousSource
-                ?? (record.status === 'proposed' || record.status === 'no-change' || record.status === 'running'
+                ?? (record.status === 'proposed' || record.status === 'no-change' || record.status === 'accepted' || record.status === 'running'
                   ? await readFile(record.targetAgentPath, 'utf8').catch(() => undefined)
                   : undefined);
               const originHref = (() => {

@@ -447,7 +447,10 @@ export function createSubmitAgentRevisionTool(
       }
       await writeRecord({
         ...record,
-        status: 'no-change',
+        // Nothing to apply, so nothing to approve: the diagnosis is final the
+        // moment it lands. `no-change` survives in the type only for records
+        // written before this, which the discard action still closes out.
+        status: 'accepted',
         proposalCount: (record.proposalCount ?? 0) + 1,
         exchange: withRevisionReply(record.exchange, input.recommendedAction.trim()),
         diagnosis: input.diagnosis.trim(),
@@ -455,7 +458,7 @@ export function createSubmitAgentRevisionTool(
         updatedAt: Date.now(),
       });
       submission.outcome = 'no-agent-change';
-      return 'Accepted: the no-change diagnosis is ready for operator review. Call report_complete with a short headline.';
+      return 'Accepted: the no-change diagnosis is recorded for the operator. Call report_complete with a short headline.';
     },
   };
 }
@@ -728,7 +731,7 @@ export async function reopenAgentRevision(
   request?: string,
 ): Promise<AgentRevisionRecord> {
   const record = await readAgentRevisionRecord(projectRoot, revisionSessionId);
-  if (!record || (record.status !== 'proposed' && record.status !== 'no-change')) {
+  if (!record || (record.status !== 'proposed' && record.status !== 'no-change' && record.status !== 'accepted')) {
     throw new Error('This revision is not waiting for review changes');
   }
   const {

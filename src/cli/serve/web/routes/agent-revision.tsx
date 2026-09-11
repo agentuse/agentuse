@@ -31,6 +31,9 @@ type RevisionView = Omit<AgentRevisionRecord, 'previousSource'> & {
 };
 
 const OPEN_STATUSES = new Set(['running', 'proposed', 'no-change']);
+// An accepted no-change diagnosis needs no decision, but the operator can
+// still push back on it in the same session.
+const REPLYABLE_STATUSES = new Set([...OPEN_STATUSES, 'accepted']);
 
 export default function AgentRevision() {
   const location = useLocation();
@@ -151,7 +154,7 @@ export default function AgentRevision() {
   // latest reply in the thread rather than sitting in a card off to the side.
   const exchangeTurns = (() => {
     const turns = [...(revision.exchange ?? [])];
-    const detail = revision.status === 'no-change' ? revision.recommendedAction : revision.diagnosis;
+    const detail = revision.status === 'no-change' || revision.status === 'accepted' ? revision.recommendedAction : revision.diagnosis;
     if (!detail) return turns;
     const last = turns[turns.length - 1];
     if (last && last.reply !== undefined) {
@@ -195,11 +198,6 @@ export default function AgentRevision() {
         {revision.status === 'proposed' && (
           <button type="button" class="draft-primary" disabled={busy !== null} onClick={() => void act('apply')}>
             {busy === 'apply' ? 'Applying…' : 'Apply revision'}
-          </button>
-        )}
-        {revision.status === 'no-change' && (
-          <button type="button" class="draft-primary" disabled={busy !== null} onClick={() => void act('discard')}>
-            {busy === 'discard' ? 'Accepting…' : 'Accept diagnosis'}
           </button>
         )}
       </>
@@ -268,7 +266,7 @@ export default function AgentRevision() {
         entry={question} sessionId={sessionId} projectId={project} token={token}
         onAnswered={reviserSession.onAnswered}
         onShowContext={() => { setTabPinned(true); setTab('changes'); } }
-      /> : open && (
+      /> : REPLYABLE_STATUSES.has(revision.status) && (
         <DraftComposer
           placeholder="Tell the reviser what to change in this proposal…"
           hint="to send · same revision session, keeps context"

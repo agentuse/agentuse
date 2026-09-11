@@ -56,7 +56,7 @@ export function revisionLabel(revision: Pick<AgentRevisionSummary, 'status'>): s
   if (revision.status === 'running') return 'Revision session is running';
   if (revision.status === 'proposed') return 'Revision ready to review';
   if (revision.status === 'no-change') return 'Revision needs review';
-  if (revision.status === 'accepted') return 'Diagnosis accepted';
+  if (revision.status === 'accepted') return 'No change needed';
   if (revision.status === 'applied') return 'Revision applied';
   if (revision.status === 'restored') return 'Previous source restored';
   if (revision.status === 'discarded') return 'Revision discarded';
@@ -65,7 +65,7 @@ export function revisionLabel(revision: Pick<AgentRevisionSummary, 'status'>): s
 
 export function revisionOriginDescription(revision: Pick<AgentRevisionSummary, 'status' | 'targetAgentName' | 'originSessionId'>): string {
   if (revision.status === 'no-change') return 'Review this diagnosis before starting another revision.';
-  if (revision.status === 'accepted') return 'No agent source change was made. You can start another revision.';
+  if (revision.status === 'accepted') return 'The reviser found nothing to change. Read its diagnosis, or start another revision.';
   return revision.originSessionId
     ? `Revising ${revision.targetAgentName} from this run.`
     : `Revising ${revision.targetAgentName} from its current source.`;
@@ -286,7 +286,7 @@ export function AgentRevisionLauncher(props: {
   const active = Boolean(activeRevision);
   // A finished revision is history, not a task: it collapses to a quiet line so
   // the agent header keeps reading as a row of actions.
-  const showCard = Boolean(latest) && (active || latest!.status === 'no-change');
+  const showCard = Boolean(latest) && (active || latest!.status === 'no-change' || latest!.status === 'accepted');
   if (!agentTarget && ((!props.ended && !props.atGate) || !props.context.agentFilePath)) return null;
 
   return (
@@ -475,7 +475,7 @@ export function AgentRevisionSessionPanel(props: {
   return (
     <section class={`agent-revision-session-panel is-${revision.status}`}>
       <div class="agent-revision-session-head">
-        <span><strong>{revision.status === 'running' ? 'Revision session' : revision.status === 'proposed' ? 'Review proposed revision' : revision.status === 'no-change' ? 'No agent change recommended' : revisionLabel(revision)}</strong><small>{originHref && revision.originSessionId
+        <span><strong>{revision.status === 'running' ? 'Revision session' : revision.status === 'proposed' ? 'Review proposed revision' : revision.status === 'no-change' || revision.status === 'accepted' ? 'No agent change recommended' : revisionLabel(revision)}</strong><small>{originHref && revision.originSessionId
           ? <>Started from <a href={originHref}>session {revision.originSessionId.slice(0, 8)}…</a></>
           : <>Started from the agent page, without a run</>}</small></span>
         <span class="agent-revision-state">{revision.status}</span>
@@ -491,15 +491,15 @@ export function AgentRevisionSessionPanel(props: {
         </div>
       )}
       {revision.diagnosis && <div class="agent-revision-diagnosis"><strong>Diagnosis</strong><p>{revision.diagnosis}</p></div>}
-      {revision.status === 'no-change' && revision.recommendedAction && <div class="agent-revision-diagnosis"><strong>Recommended next action</strong><p>{revision.recommendedAction}</p></div>}
+      {(revision.status === 'no-change' || revision.status === 'accepted') && revision.recommendedAction && <div class="agent-revision-diagnosis"><strong>Recommended next action</strong><p>{revision.recommendedAction}</p></div>}
       {/* The review itself lives on the revision page, which renders the same
           panel the creator's drafts use. Keeping a second copy of the diff and
           the apply actions here is what made them drift apart. */}
-      {(revision.status === 'proposed' || revision.status === 'no-change') && (
+      {(revision.status === 'proposed' || revision.status === 'no-change' || revision.status === 'accepted') && (
         <div class="agent-revision-review-actions">
           {revision.summary && <span class="agent-revision-proposal-title"><strong>{revision.summary}</strong></span>}
           <a class="agent-revision-primary" href={agentRevisionHref(revision.projectId, revision.revisionSessionId, props.token)}>
-            {revision.status === 'proposed' ? 'Review the proposal' : 'Review the diagnosis'}
+            {revision.status === 'proposed' ? 'Review the proposal' : revision.status === 'accepted' ? 'Read the diagnosis' : 'Review the diagnosis'}
           </a>
         </div>
       )}
