@@ -52,6 +52,16 @@ function fuzzyScore(text: string, query: string): { score: number; indices: numb
 
 type PaletteGroup = 'Needs you' | 'Recent' | 'Agents' | 'Sessions' | 'Pages' | 'Actions';
 
+/** Keep search results in the same source sections as the resting palette. */
+const PALETTE_GROUP_ORDER: readonly PaletteGroup[] = [
+  'Needs you',
+  'Recent',
+  'Sessions',
+  'Agents',
+  'Pages',
+  'Actions',
+];
+
 interface PaletteItem {
   key: string;
   group: PaletteGroup;
@@ -74,8 +84,8 @@ interface Ranked {
   titleHits: number[];
 }
 
-/** Rank items against the query. Empty query keeps the caller's order. */
-function rank(items: PaletteItem[], query: string): Ranked[] {
+/** Rank matches within each source group. Empty query keeps the caller's order. */
+export function rankPaletteItems(items: PaletteItem[], query: string): Ranked[] {
   if (!query) return items.map((item) => ({ item, titleHits: [] }));
   const scored: Array<Ranked & { score: number }> = [];
   for (const item of items) {
@@ -89,7 +99,10 @@ function rank(items: PaletteItem[], query: string): Ranked[] {
         : null;
     if (best) scored.push({ item, titleHits: best.titleHits, score: best.score + (item.boost ?? 0) });
   }
-  scored.sort((a, b) => b.score - a.score || a.item.title.localeCompare(b.item.title));
+  scored.sort((a, b) => {
+    const groupOrder = PALETTE_GROUP_ORDER.indexOf(a.item.group) - PALETTE_GROUP_ORDER.indexOf(b.item.group);
+    return groupOrder || b.score - a.score || a.item.title.localeCompare(b.item.title);
+  });
   return scored;
 }
 
@@ -297,7 +310,7 @@ export function AgentPalette() {
       : [...gates, ...rest.slice(0, RECENT_COUNT).map((row) => sessionItem(row, 'Recent')), ...agentItems, ...pages, ...actions];
   }, [pending, sessions, agents, pref, query]);
 
-  const results = useMemo(() => rank(items, query.trim()), [items, query]);
+  const results = useMemo(() => rankPaletteItems(items, query.trim()), [items, query]);
 
   // Keep the active index in range as results change, and scroll it into view.
   useEffect(() => { if (active >= results.length) setActive(0); }, [results.length]);
@@ -347,10 +360,6 @@ export function AgentPalette() {
   if (!open) return null;
 
   const trimmed = query.trim();
-  // Headers label the sections of the resting list. A query ranks every source
-  // together, so groups interleave and a header per row is noise — the rows
-  // carry their own meta there.
-  const showGroups = trimmed === '';
   let lastGroup: PaletteGroup | null = null;
 
   return (
@@ -386,7 +395,7 @@ export function AgentPalette() {
               : results.length === 0
                 ? <div class="palette-empty">{trimmed ? `Nothing matches “${trimmed}”.` : 'Nothing loaded.'}</div>
                 : results.map((r, i) => {
-                  const header = !showGroups || r.item.group === lastGroup ? null : r.item.group;
+                  const header = r.item.group === lastGroup ? null : r.item.group;
                   lastGroup = r.item.group;
                   return (
                     <div class="palette-section" role="presentation" key={r.item.key}>
