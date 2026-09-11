@@ -291,6 +291,13 @@ export async function createSandbox(options: CreateSandboxOptions): Promise<Sand
   if (filesystemMounts && filesystemMounts.length > 0) {
     for (const mount of filesystemMounts) {
       const mode = mount.writable ? 'rw' : 'ro';
+      // Structured mounts refuse a missing source, where the old Binds strings
+      // silently created it. A declared path that does not exist yet (an output
+      // folder the agent is about to fill) keeps working the way it did.
+      if (!existsSync(mount.hostPath)) {
+        mkdirSync(mount.hostPath, { recursive: true });
+        logger.debug(`[Sandbox] Created missing mount source: ${mount.hostPath}`);
+      }
       logger.debug(`[Sandbox] Mount: ${mount.hostPath} (${mode})`);
     }
     const projectCovered = filesystemMounts.some(m =>
