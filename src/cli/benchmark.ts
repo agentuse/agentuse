@@ -7,6 +7,7 @@ import { saveReports, generateMarkdownReport, generateHtmlReport, isRawBenchmark
 import { calculateMetrics } from '../benchmark/calculator.js';
 import type { BenchmarkRunConfig, SuiteResult } from '../benchmark/types.js';
 import { formatCliRow, renderCliTableHeader } from '../utils/cli-table.js';
+import { toErrorMessage } from '../utils/error-message.js';
 
 export function createBenchmarkCommand(): Command {
   const benchmarkCommand = new Command('benchmark')
@@ -115,7 +116,7 @@ export function createBenchmarkCommand(): Command {
         console.log(chalk.bold(`\n✨ Benchmark completed in ${(result.durationMs / 1000).toFixed(1)}s\n`));
 
       } catch (error) {
-        console.error(chalk.red(`\n❌ Benchmark failed: ${error instanceof Error ? error.message : String(error)}\n`));
+        console.error(chalk.red(`\n❌ Benchmark failed: ${toErrorMessage(error)}\n`));
         if (options.verbose && error instanceof Error) {
           console.error(chalk.gray(error.stack));
         }
@@ -199,7 +200,7 @@ export function createBenchmarkCommand(): Command {
         }
         console.log(chalk.gray('\nRun with: agentuse benchmark run <name>\n'));
       } catch (error) {
-        console.error(chalk.red(`Failed to list suites: ${error instanceof Error ? error.message : String(error)}`));
+        console.error(chalk.red(`Failed to list suites: ${toErrorMessage(error)}`));
         process.exit(1);
       }
     });
@@ -507,7 +508,7 @@ export function createBenchmarkCommand(): Command {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
           console.log(chalk.yellow('No benchmark results found'));
         } else {
-          console.error(chalk.red(`Failed to read results: ${error instanceof Error ? error.message : String(error)}`));
+          console.error(chalk.red(`Failed to read results: ${toErrorMessage(error)}`));
         }
         process.exit(1);
       }
