@@ -22,6 +22,7 @@ import { findServerForProject } from "../utils/server-registry";
 import { formatCompactDuration } from "../utils/duration";
 import { isExecutingSessionStatus, sessionOutcome } from "../session/status";
 import { truncate as truncateText } from "../tools/tool-output-limits";
+import { toErrorMessage } from "../utils/error-message";
 
 interface SessionSummary {
   id: string;
@@ -432,7 +433,7 @@ async function runSessionsAction(action: () => Promise<void>): Promise<void> {
   try {
     await action();
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = toErrorMessage(error);
     process.stderr.write(`${message}\n`);
     process.exit(1);
   }

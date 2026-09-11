@@ -3,6 +3,7 @@ import type { WebClient } from '@slack/web-api';
 import { formatShortDuration } from '../utils/duration';
 import { logger } from '../utils/logger';
 import { truncateForMessage as truncate } from '../tools/tool-output-limits';
+import { toErrorMessage } from '../utils/error-message';
 import {
   bestEffortClearSlackThreadStatus,
   bestEffortSlackThreadStatus,
@@ -336,7 +337,7 @@ function buildStatusBlocks(options: {
   ];
 
   if (options.phase === 'failed' && options.error !== undefined) {
-    const message = options.error instanceof Error ? options.error.message : String(options.error);
+    const message = toErrorMessage(options.error);
     blocks.push({
       type: 'section',
       text: {
@@ -615,7 +616,9 @@ function buildReviewStatusBlocks(options: {
       text: `*Expires*\n${options.expiresAt}`
     }] : [])
   ];
-  const error = options.error instanceof Error ? options.error.message : options.error;
+  // Absent stays absent: the error block below is gated on this value, and
+  // toErrorMessage turns null/undefined into a real string.
+  const error = options.error == null ? undefined : toErrorMessage(options.error);
 
   return [
     {
@@ -643,7 +646,7 @@ function buildReviewStatusBlocks(options: {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `*Error*\n\`\`\`${truncate(String(error), 2500)}\`\`\``
+        text: `*Error*\n\`\`\`${truncate(error, 2500)}\`\`\``
       }
     }] : []),
     ...(options.approvalUrl ? [webUiLinkBlock(options.approvalUrl)] : [])
@@ -836,7 +839,7 @@ function resumeFailedBlocks(options: {
   reviewer?: SlackApprovalDecision['toolResult']['reviewer'];
 }): any[] {
   const who = options.reviewer?.id ? `<@${options.reviewer.id}>` : 'A reviewer';
-  const message = options.error instanceof Error ? options.error.message : String(options.error);
+  const message = toErrorMessage(options.error);
   return [
     {
       type: 'section',
