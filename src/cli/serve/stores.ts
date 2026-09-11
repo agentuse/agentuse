@@ -256,3 +256,10 @@ export async function readSessionResults(projectRoot: string): Promise<Map<strin
   for (const list of bySession.values()) list.sort((a, b) => b.at - a.at);
   return bySession;
 }
+
+/** Store browser ordering: most recently updated first, then name, then project. */
+export function compareStoreBrowserSummaries(a: StoreBrowserSummary, b: StoreBrowserSummary): number {
+  return (b.updatedAt ?? 0) - (a.updatedAt ?? 0)
+    || a.name.localeCompare(b.name)
+    || a.projectId.localeCompare(b.projectId);
+}

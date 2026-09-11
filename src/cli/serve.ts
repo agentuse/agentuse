@@ -37,7 +37,7 @@ import {
 } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
 import { getBuildInfo, isDevCheckout } from "../utils/build-info";
-import { getCachedAvailableUpdate, refreshUpdateCacheInBackground } from "../update-check";
+import { refreshUpdateCacheInBackground } from "../update-check";
 import { registerServer, unregisterServer, updateServer, listServers, formatUptime, getDefaultLogFilePath, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { acquireSchedulerLock, releaseSchedulerLock } from "../utils/scheduler-lock";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
@@ -47,7 +47,6 @@ import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprov
 import { getSlackWebClient } from "../slack/lifecycle";
 import { saveManualLearning, LearningStore, effectiveCap, partitionLearnings, consolidateLearnings, undoConsolidation, readTidyRecord, writeTidyRecord, clearTidyRecord, strandedLearningsFile, type LearningConfig, type ConsolidationResult, type TidyProgress } from "../learning";
 import { homedir } from "os";
-import type { StoreItem } from "../store/types";
 import type { ActiveContextUsage, SessionTrigger } from "../session/types";
 import type { DescendantActivity, DescendantBreadcrumb, DescendantReport, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary, VerifyCandidateSummary } from "../session/important-descendants";
 import { ulid } from "ulid";
@@ -72,7 +71,6 @@ import {
   annotateAgentScheduleStates,
   collectAgentDetail,
   collectAgents,
-  collectDirAbouts,
   redactAgentDetailSource,
   type AgentSummary,
 } from "./serve/agents-data";
@@ -87,7 +85,12 @@ import {
   toProjectRelativeAgentPath,
   type Project,
 } from "./serve/project";
-import type { ServeMutableState } from "./serve/context";
+import type { ServeContext, ServeMutableState, ServeRequest } from "./serve/context";
+import { agentRoutes } from "./serve/routes/agents";
+import { homeRoutes } from "./serve/routes/home";
+import { pushRoutes } from "./serve/routes/push";
+import { scheduleRoutes } from "./serve/routes/schedules";
+import { storeRoutes } from "./serve/routes/stores";
 import { FAVICON_SVG, TOUCH_ICON_180_PNG_BASE64, ICON_192_PNG_BASE64, ICON_512_PNG_BASE64, webManifestJson } from "./serve/brand";
 
 // Decoded once; brand.ts itself stays Buffer-free because the web bundle
@@ -99,16 +102,7 @@ import { WebAssets, renderWebAssetsMissingPage } from "./serve/static";
 import { readAbout } from "./serve/about";
 import { PushService, SERVICE_WORKER_JS, type PushCategory, type PushPayload } from "./serve/push";
 import { ApprovalEventHub, ApprovalListEventHub, NotificationEventHub } from "./serve/sse";
-import {
-  findStoreItemRelations,
-  isSafeStoreName,
-  listProjectStores,
-  listStoreRows,
-  readSessionResults,
-  type StoreBrowserRows,
-  type StoreBrowserSummary,
-  type StoreItemRef
-} from "./serve/stores";
+import { readSessionResults } from "./serve/stores";
 // Type-only, so this stays erased at compile and adds nothing to the bundle.
 // The context payload is elaborate enough that a hand-kept local copy (as the
 // older session types above are) would drift from the page that consumes it.
@@ -2824,12 +2818,6 @@ async function serveSessionToolOutputArtifact(
   }
 
   await serveResolvedArtifactFile(res, resolved, theme);
-}
-
-function compareStoreBrowserSummaries(a: StoreBrowserSummary, b: StoreBrowserSummary): number {
-  return (b.updatedAt ?? 0) - (a.updatedAt ?? 0)
-    || a.name.localeCompare(b.name)
-    || a.projectId.localeCompare(b.projectId);
 }
 
 
@@ -6355,6 +6343,95 @@ export function createServeCommand(): Command {
       };
 
       const webUITelemetryGuard = createWebUITelemetryGuard();
+      // Everything the route groups in serve/routes/ need, gathered once.
+      // Same objects and closures the inline route table used to close over.
+      const ctx: ServeContext = {
+        state: serveState,
+        // `wakeListHubs` is assigned after its declaration, so keep it late-bound.
+        wakeListHubs: () => wakeListHubs(),
+        apiKey,
+        serverUrl,
+        effectivePublicUrl,
+        effectiveHost,
+        effectiveHideAgentSource,
+        brandNameCfg,
+        manifestJson,
+        serverStartTime,
+        projects,
+        projectsById,
+        projectSeeds,
+        agentCounts,
+        idSeen,
+        pathSeen,
+        fileWatchers,
+        projectWatchers,
+        attachProject,
+        onboardingProjectInfo,
+        updateRegistryCounts,
+        refreshProjectLists,
+        resolveRequestProject,
+        workers,
+        testRunWorkers,
+        workerReadyAt,
+        resetWorkerProviderPlugins,
+        scheduler,
+        pausedSchedulesByProject,
+        schedulerLocksHeld,
+        scheduleIsEnabled,
+        canArmSchedules,
+        orphanReconcileLoop,
+        staticAssets,
+        pushService,
+        notificationHub,
+        approvalHub,
+        approvalListHub,
+        sessionListHub,
+        deliverNotification,
+        findApprovalInfo,
+        findSessionInfo,
+        findSessionStatusInfo,
+        sessionPurposeFor,
+        buildSessionsPayload,
+        buildApprovalListPayload,
+        activeApprovalResumes,
+        activeSessionContinuations,
+        activeCascadeRecoveries,
+        backgroundSessionFailures,
+        loggedApprovalRequests,
+        notifiedFinishedSessions,
+        approvalActionSessionId,
+        applyResumeError,
+        validateDecisionChoice,
+        startApprovalResume,
+        startSessionContinue,
+        startCascadeRetry,
+        readRememberField,
+        resolveRememberedLearning,
+        persistRememberedLearning,
+        onboardingJobs,
+        agentCreationRecoveryInputs,
+        internalViewCleanups,
+        revisionMutations,
+        draftMutations,
+        changesetMutations,
+        preferredAgentCreationModel,
+        cleanupInternalView,
+        pruneOnboardingJobs,
+        persistOnboardingJob,
+        loadPersistedOnboardingJob,
+        beginInternalAgentJob,
+        recoverAgentCreationJob,
+        recoverProjectDiscoveryJob,
+        resolveAgentCreationRecovery,
+        finishAgentCreation,
+        draftViewPayload,
+        reconcileAgentDraftRecord,
+        reconcileAgentRevisionRecord,
+        startMockTestRun,
+        startChangesetTestRun,
+        settleStaleChangesetTestRuns,
+      };
+
       const server = createServer(async (req, res) => {
         const requestUrl = new URL(req.url || '/', serverUrl);
         // Canonical data/action endpoints live under `/api/*`; HTML pages live at
@@ -6511,6 +6588,9 @@ export function createServeCommand(): Command {
             apiKey,
           });
 
+        // Per-request facts the route groups in serve/routes/ share.
+        const rq: ServeRequest = { req, res, requestUrl, isApi, routePath, requestOrigin, crossOrigin, sessionAuthorized };
+
         // SPA page routes: serve the tiny no-store HTML shell; the client fetches
         // its data from the /api/* and /sessions/:id/* JSON endpoints below. This
         // runs after the auth gate, so operator pages stay header-gated and
@@ -6526,367 +6606,15 @@ export function createServeCommand(): Command {
           return;
         }
 
-        // Web Push subscription management, operator surface (behind the
-        // header gate above). Subscriptions are per browser+device; prefs
-        // pick which event categories that device gets.
-        if (isApi && routePath === "/push/public-key" && req.method === "GET") {
-          sendJSON(res, 200, { publicKey: pushService.publicKey });
-          return;
-        }
-        if (isApi && routePath === "/push/subscription") {
-          if (req.method === "GET") {
-            const endpoint = requestUrl.searchParams.get("endpoint");
-            if (!endpoint) {
-              sendError(res, 400, "INVALID_REQUEST", "Missing endpoint query parameter");
-              return;
-            }
-            const record = pushService.get(endpoint);
-            if (!record) {
-              sendError(res, 404, "NOT_FOUND", "No subscription for this endpoint");
-              return;
-            }
-            sendJSON(res, 200, { prefs: record.prefs });
-            return;
-          }
-          if (req.method === "POST") {
-            try {
-              const body = await parseJSONBody(req);
-              const sub = body.subscription as { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } } | undefined;
-              if (
-                typeof sub?.endpoint !== "string" ||
-                !/^https?:\/\//.test(sub.endpoint) ||
-                typeof sub.keys?.p256dh !== "string" ||
-                typeof sub.keys?.auth !== "string"
-              ) {
-                sendError(res, 400, "INVALID_REQUEST", "subscription must include endpoint and p256dh/auth keys");
-                return;
-              }
-              const prefs: Partial<{ approvals: boolean; sessions: boolean }> = {};
-              if (typeof body.prefs === "object" && body.prefs !== null) {
-                const raw = body.prefs as Record<string, unknown>;
-                if (typeof raw.approvals === "boolean") prefs.approvals = raw.approvals;
-                if (typeof raw.sessions === "boolean") prefs.sessions = raw.sessions;
-              }
-              const record = pushService.upsert(
-                { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth } },
-                prefs,
-                req.headers["user-agent"]
-              );
-              // A device with every category off has no reason to stay registered.
-              if (!record.prefs.approvals && !record.prefs.sessions) {
-                pushService.remove(record.endpoint);
-                sendJSON(res, 200, { subscribed: false });
-                return;
-              }
-              sendJSON(res, 200, { subscribed: true, prefs: record.prefs });
-            } catch (err) {
-              if (sendRequestParseError(res, err)) return;
-              sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
-            }
-            return;
-          }
-        }
-        if (isApi && routePath === "/push/unsubscribe" && req.method === "POST") {
-          try {
-            const body = await parseJSONBody(req);
-            const endpoint = typeof body.endpoint === "string" ? body.endpoint : null;
-            if (!endpoint) {
-              sendError(res, 400, "INVALID_REQUEST", "Missing endpoint");
-              return;
-            }
-            sendJSON(res, 200, { removed: pushService.remove(endpoint) });
-          } catch (err) {
-            if (sendRequestParseError(res, err)) return;
-            sendError(res, 400, "INVALID_REQUEST", toErrorMessage(err));
-          }
-          return;
-        }
+        if (await pushRoutes(ctx, rq)) return;
 
-        // GET /api returns server-info JSON; GET / serves the HTML dashboard.
-        // Both share the same project rollup so the two surfaces never drift.
-        if (req.method === "GET" && routePath === "/") {
-          const defaultProject = serveState.effectiveDefault ?? (projects.length === 1 ? projects[0]!.id : null);
-          // ABOUT.md at the project root names the project for the UI (#156):
-          // display identity only, read per request (mtime-cached) so edits
-          // show up without a restart.
-          const projectInfo = await Promise.all(projects.map(async (p) => ({
-            id: p.id,
-            path: p.root,
-            ...(p.scopeRoot !== p.root && { scope: p.scopeRoot }),
-            agentCount: agentCounts.get(p.id) ?? 0,
-            scheduleCount: scheduler.list().filter((s) => s.projectId === p.id).length,
-            ...await readAbout(p.root).then((about) => (about ? { about } : {})),
-          })));
+        if (await homeRoutes(ctx, rq)) return;
 
-          if (isApi) {
-            // The helper enforces the 24-hour cache interval. Calling it from
-            // the polled info route lets a daemon discover releases that land
-            // weeks after startup without introducing a separate live timer.
-            const build = getBuildInfo();
-            // A dev checkout is ahead of every published release; never offer an "update".
-            if (!build.dev) refreshUpdateCacheInBackground(packageVersion);
-            res.writeHead(200, { "Content-Type": "application/json" });
-            const update = build.dev ? null : getCachedAvailableUpdate(packageVersion);
-            res.end(JSON.stringify({
-              version: build.version,
-              ...(build.dev && { dev: true }),
-              ...(update && { update }),
-              brand: { name: brandNameCfg ?? "AgentUse" },
-              // Externally reachable base for "copy link" in the UI; the Mac
-              // app loads the page from 127.0.0.1, so the page's own origin
-              // is useless off this machine.
-              publicUrl: effectivePublicUrl,
-              capabilities: {
-                projectFolderPicker: canUseHostFolderPicker(effectiveHost, req.socket.remoteAddress, req.headers.host),
-              },
-              default: defaultProject,
-              projects: projectInfo,
-            }));
-            return;
-          }
-        }
+        if (await agentRoutes(ctx, rq)) return;
 
-        if (req.method === "GET" && routePath === '/agents') {
-          const { agents, errors } = await collectAgents(projects);
-          if (isApi) {
-            annotateAgentScheduleStates(agents, projects, scheduleIsEnabled);
-            const dirs = await collectDirAbouts(projects, agents);
-            sendJSON(res, 200, { success: true, agents, errors, ...(dirs.length > 0 && { dirs }) });
-            return;
-          }
-        }
+        if (await scheduleRoutes(ctx, rq)) return;
 
-        // GET /api/agents/detail?project=<id>&path=<runPath>: capabilities
-        // summary + raw `.agentuse` source for the agent hub page. Behind the
-        // same header gate as the rest of the operator surface (not a capability
-        // route), so anyone who can list/run agents can read them, UNLESS
-        // serve.hideAgentSource / --hide-agent-source strips the source from
-        // the payload (capabilities summary still served). The file is
-        // matched against the project's already-loaded `agentFiles` set, so an
-        // arbitrary `path` cannot escape the served scope.
-        if (req.method === "GET" && routePath === '/agents/detail') {
-          const requestedProject = requestUrl.searchParams.get('project') ?? undefined;
-          const requestedPath = requestUrl.searchParams.get('path') ?? undefined;
-          if (!requestedProject || !requestedPath) {
-            sendError(res, 400, "MISSING_PARAMS", "Both project and path query params are required");
-            return;
-          }
-          const project = projects.find((p) => p.id === requestedProject);
-          if (!project) {
-            sendError(res, 404, "PROJECT_NOT_FOUND", `Project not found: ${requestedProject}`);
-            return;
-          }
-          if (!project.agentFiles.includes(requestedPath)) {
-            sendError(res, 404, "AGENT_NOT_FOUND", `Agent not loaded: ${requestedPath}`);
-            return;
-          }
-          try {
-            const detail = await collectAgentDetail(project, requestedPath);
-            const visible = effectiveHideAgentSource ? redactAgentDetailSource(detail) : detail;
-            sendJSON(res, 200, {
-              success: true,
-              ...visible,
-              ...(detail.schedule && { scheduleEnabled: scheduleIsEnabled(project, requestedPath) }),
-            });
-          } catch (err) {
-            sendError(res, 500, "AGENT_READ_FAILED", toErrorMessage(err));
-          }
-          return;
-        }
-
-        // The agent page lists this agent's revision history in its own tab, so
-        // it needs the records keyed by agent rather than by originating run.
-        if (req.method === "GET" && routePath === '/agents/revisions') {
-          const requestedProject = requestUrl.searchParams.get('project') ?? undefined;
-          const requestedPath = requestUrl.searchParams.get('path') ?? undefined;
-          if (!requestedProject || !requestedPath) {
-            sendError(res, 400, "MISSING_PARAMS", "Both project and path query params are required");
-            return;
-          }
-          const project = projects.find((p) => p.id === requestedProject);
-          if (!project || !project.agentFiles.includes(requestedPath)) {
-            sendError(res, 404, "AGENT_NOT_FOUND", `Agent not loaded: ${requestedPath}`);
-            return;
-          }
-          try {
-            const absPath = resolveScopedAgentPath(project, requestedPath);
-            const records = (await Promise.all(
-              (await listAgentRevisionRecords(project.root))
-                .map((revision) => reconcileAgentRevisionRecord(project, revision))
-            ))
-              .filter((record) => record.targetAgentRunPath === requestedPath || record.targetAgentPath === absPath);
-            sendJSON(res, 200, {
-              success: true,
-              revisions: records.map(({ proposedSource: _proposed, previousSource: _previous, ...record }) => {
-                const params = new URLSearchParams({ project: project.id });
-                const revisionToken = sessionViewToken(record.revisionSessionId, apiKey);
-                if (revisionToken) params.set('token', revisionToken);
-                return {
-                  ...record,
-                  href: `/sessions/${encodeURIComponent(record.revisionSessionId)}?${params.toString()}`,
-                };
-              }),
-            });
-          } catch (err) {
-            sendError(res, 400, 'REVISION_LIST_FAILED', toErrorMessage(err));
-          }
-          return;
-        }
-
-        if (req.method === "GET" && routePath === '/schedules') {
-          const schedules = scheduler.listSerialized();
-          if (isApi) {
-            sendJSON(res, 200, { success: true, schedules });
-            return;
-          }
-        }
-
-        if (isApi && req.method === 'POST' && routePath === '/schedules/state') {
-          try {
-            const body = await parseJSONBody(req);
-            if (typeof body.project !== 'string' || typeof body.path !== 'string' || typeof body.paused !== 'boolean') {
-              sendError(res, 400, 'INVALID_SCHEDULE_STATE', 'Project, agent path, and paused state are required');
-              return;
-            }
-            const project = projectsById.get(body.project);
-            if (!project || !project.agentFiles.includes(body.path)) {
-              sendError(res, 404, 'AGENT_NOT_FOUND', 'Scheduled agent not found');
-              return;
-            }
-            const parsed = await parseAgent(resolveScopedAgentPath(project, body.path));
-            if (!parsed.config.schedule) {
-              sendError(res, 409, 'SCHEDULE_NOT_FOUND', 'This agent does not declare a schedule');
-              return;
-            }
-            const statePath = toProjectRelativeAgentPath(project, body.path);
-            const paused = await setSchedulePaused(project.root, statePath, body.paused);
-            pausedSchedulesByProject.set(project.id, paused);
-            scheduler.setEnabled(project.id, body.path, !body.paused);
-            wakeListHubs();
-            sendJSON(res, 200, { success: true, paused: body.paused, scheduleEnabled: !body.paused });
-          } catch (error) {
-            if (sendRequestParseError(res, error)) return;
-            sendError(res, 500, 'SCHEDULE_STATE_FAILED', toErrorMessage(error));
-          }
-          return;
-        }
-
-        if (req.method === "GET" && routePath === '/stores') {
-          const requestedProject = requestUrl.searchParams.get('project') ?? undefined;
-          const selectedProjects = requestedProject
-            ? projects.filter((project) => project.id === requestedProject)
-            : projects;
-          if (requestedProject && selectedProjects.length === 0) {
-            sendError(res, 404, "PROJECT_NOT_FOUND", `Project not found: ${requestedProject}`);
-            return;
-          }
-
-          const stores: StoreBrowserSummary[] = [];
-          const errors: Array<{ projectId: string; storeName?: string; message: string }> = [];
-          for (const project of selectedProjects) {
-            const result = await listProjectStores(project);
-            stores.push(...result.stores);
-            errors.push(...result.errors.map((error) => ({ projectId: project.id, ...error })));
-          }
-          stores.sort(compareStoreBrowserSummaries);
-
-          if (isApi) {
-            sendJSON(res, 200, { success: true, multiProject: projects.length > 1, stores, errors });
-            return;
-          }
-        }
-
-        const storePageMatch = req.method === "GET" ? routePath.match(/^\/stores\/([^/?#]+)$/) : null;
-        if (storePageMatch) {
-          const storeName = decodeURIComponent(storePageMatch[1]);
-          if (!isSafeStoreName(storeName)) {
-            sendError(res, 400, "INVALID_STORE_NAME", "Invalid store name");
-            return;
-          }
-
-          const requestedProject = requestUrl.searchParams.get('project') ?? undefined;
-          const selectedProjects = requestedProject
-            ? projects.filter((project) => project.id === requestedProject)
-            : projects;
-          if (requestedProject && selectedProjects.length === 0) {
-            sendError(res, 404, "PROJECT_NOT_FOUND", `Project not found: ${requestedProject}`);
-            return;
-          }
-
-          const rows: StoreBrowserRows[] = [];
-          const errors: Array<{ projectId: string; message: string }> = [];
-          for (const project of selectedProjects) {
-            try {
-              const row = await listStoreRows(project, storeName);
-              rows.push(row);
-            } catch (err) {
-              const code = (err as NodeJS.ErrnoException).code;
-              if (code !== 'ENOENT') {
-                errors.push({ projectId: project.id, message: toErrorMessage(err) });
-              }
-            }
-          }
-
-          if (rows.length === 0 && errors.length === 0) {
-            sendError(res, 404, "STORE_NOT_FOUND", `Store not found: ${storeName}`);
-            return;
-          }
-
-          if (isApi) {
-            sendJSON(res, 200, { success: true, multiProject: projects.length > 1, store: storeName, rows, errors });
-            return;
-          }
-        }
-
-        const storeItemPageMatch = req.method === "GET" ? routePath.match(/^\/stores\/([^/?#]+)\/([^/?#]+)$/) : null;
-        if (storeItemPageMatch) {
-          const storeName = decodeURIComponent(storeItemPageMatch[1]);
-          const itemId = decodeURIComponent(storeItemPageMatch[2]);
-          if (!isSafeStoreName(storeName)) {
-            sendError(res, 400, "INVALID_STORE_NAME", "Invalid store name");
-            return;
-          }
-
-          const requestedProject = requestUrl.searchParams.get('project') ?? undefined;
-          const selectedProjects = requestedProject
-            ? projects.filter((project) => project.id === requestedProject)
-            : projects;
-          if (requestedProject && selectedProjects.length === 0) {
-            sendError(res, 404, "PROJECT_NOT_FOUND", `Project not found: ${requestedProject}`);
-            return;
-          }
-
-          const errors: Array<{ projectId: string; message: string }> = [];
-          let found: { projectId: string; item: StoreItem; parent: StoreItemRef | null; children: StoreItemRef[] } | undefined;
-          for (const project of selectedProjects) {
-            try {
-              const resolved = await findStoreItemRelations(project, storeName, itemId);
-              if (resolved) {
-                found = { projectId: project.id, ...resolved };
-                break;
-              }
-            } catch (err) {
-              const code = (err as NodeJS.ErrnoException).code;
-              if (code !== 'ENOENT') {
-                errors.push({ projectId: project.id, message: toErrorMessage(err) });
-              }
-            }
-          }
-
-          if (!found) {
-            if (errors.length > 0) {
-              sendError(res, 500, "STORE_ITEM_LOOKUP_FAILED", errors.map((err) => `${err.projectId}: ${err.message}`).join('; '));
-              return;
-            }
-            sendError(res, 404, "STORE_ITEM_NOT_FOUND", `Store item not found: ${itemId}`);
-            return;
-          }
-
-          if (isApi) {
-            sendJSON(res, 200, { success: true, multiProject: projects.length > 1, store: storeName, project: found.projectId, item: found.item, parent: found.parent, children: found.children });
-            return;
-          }
-        }
+        if (await storeRoutes(ctx, rq)) return;
 
         // GET /sessions (+ /api/sessions): operator surface listing every run.
         // API-key gated (not a capability route). Filters: ?agent= ?status=
