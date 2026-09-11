@@ -1005,10 +1005,12 @@ export class SessionManager {
   }
 
   /**
-   * Locate a top-level session by ID without requiring the caller to know the
-   * sanitized agent id. Resume endpoints only have the session id in the URL.
+   * Locate a session by ID without adopting it. Path caches are still filled
+   * (they are advisory and re-validated on use), but this instance's current
+   * session, agent and path are left alone, so a manager that belongs to a
+   * running session can look another one up without being repointed at it.
    */
-  async findSession(sessionID: string): Promise<SessionEntry | null> {
+  private async lookupSession(sessionID: string): Promise<SessionEntry | null> {
     const state = await getStorageState();
     const cachedPath = SessionManager.getFoundSessionPath(sessionID);
     const cachedSession = cachedPath
@@ -1035,12 +1037,28 @@ export class SessionManager {
       ? dirName.slice(prefix.length)
       : sanitizeAgentName(session.agent.id);
 
-    this.sessionID = session.id;
-    this.agentId = agentId;
-    this.fullPath = sessionPath;
     this.rememberSessionPath(session.id, agentId, sessionPath);
 
     return { session, agentId, path: sessionPath };
+  }
+
+  /**
+   * Locate a top-level session by ID without requiring the caller to know the
+   * sanitized agent id. Resume endpoints only have the session id in the URL.
+   *
+   * Adopts the session it finds: this instance's current session, agent and
+   * path point at it afterwards, which is what the resume path wants. Callers
+   * that only need to read another session use lookupSession.
+   */
+  async findSession(sessionID: string): Promise<SessionEntry | null> {
+    const entry = await this.lookupSession(sessionID);
+    if (!entry) return null;
+
+    this.sessionID = entry.session.id;
+    this.agentId = entry.agentId;
+    this.fullPath = entry.path;
+
+    return entry;
   }
 
   // A session's own message lives at `{sessionPath}/{messageID}/message`; each
@@ -1296,7 +1314,7 @@ export class SessionManager {
     // existed to surface a handful of pre-2026-06-05 sessions that a since-fixed
     // resume bug wrote to the top level, and it cost an O(project) session-file
     // scan on every poll of a live session view.
-    const scopePath = parentSessionPath ?? (await this.findSession(parentSessionID))?.path;
+    const scopePath = parentSessionPath ?? (await this.lookupSession(parentSessionID))?.path;
     if (!scopePath) return [];
     const entries = await this.readSessionEntries({ relativeDir: `${scopePath}/subagent` });
     return entries
@@ -1320,7 +1338,7 @@ export class SessionManager {
     rootSessionID: string,
     rootSessionPath?: string
   ): Promise<SessionEntry[]> {
-    const scopePath = rootSessionPath ?? (await this.findSession(rootSessionID))?.path;
+    const scopePath = rootSessionPath ?? (await this.lookupSession(rootSessionID))?.path;
     if (!scopePath) return [];
     const entries = await this.readSessionEntries({ relativeDir: `${scopePath}/subagent` });
     const byParent = new Map<string, SessionEntry[]>();
@@ -1357,7 +1375,7 @@ export class SessionManager {
   async markSessionReviewed(sessionID: string): Promise<{ reviewedAt: number; alreadyReviewed: boolean } | null> {
     // Scoped lookup, not a project-wide scan: findSession walks straight to the
     // one session directory (and answers from the path cache when it is warm).
-    const entry = await this.findSession(sessionID);
+    const entry = await this.lookupSession(sessionID);
     if (!entry) return null;
     if (entry.session.reviewedAt !== undefined) {
       return { reviewedAt: entry.session.reviewedAt, alreadyReviewed: true };
@@ -1375,7 +1393,7 @@ export class SessionManager {
     // descendants live under `{root}/subagent`, so nothing here reads sessions
     // outside the tree. This used to scan every session in the project on each
     // stop, which on a large store dominated the request.
-    const root = await this.findSession(sessionID);
+    const root = await this.lookupSession(sessionID);
     if (!root) return [];
     const ordered: SessionEntry[] = [root, ...(await this.listDescendantSessions(sessionID, root.path))];
 

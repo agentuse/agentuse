@@ -5,6 +5,7 @@ import {
   truncateHeadTail,
   truncateEnd,
   truncate,
+  truncateForMessage,
   getToolOutputLimits,
   DEFAULT_MAX_OUTPUT_BYTES,
   DEFAULT_MAX_LINES,
@@ -35,6 +36,16 @@ describe('truncate', () => {
 
   it('never slices past the start when the budget is under the suffix', () => {
     expect(truncate('abcdef', 1, '…')).toBe('…');
+  });
+
+  it('charges the suffix an explicit reserve when one is given', () => {
+    expect(truncate('x'.repeat(40), 20, '…', 5)).toBe(`${'x'.repeat(15)}…`);
+  });
+
+  it('keeps the message builders on their historical 12-char reserve', () => {
+    // The marker is 15 chars; Slack widths are tuned to only 12 being budgeted.
+    expect(truncateForMessage('x'.repeat(40), 20)).toBe(`${'x'.repeat(8)}\n...(truncated)`);
+    expect(truncateForMessage('short', 20)).toBe('short');
   });
 });
 

@@ -2,7 +2,7 @@ import type { SocketModeClient, LogLevel as SlackSocketLogLevel, Logger as Slack
 import type { WebClient } from '@slack/web-api';
 import { formatShortDuration } from '../utils/duration';
 import { logger } from '../utils/logger';
-import { truncate } from '../tools/tool-output-limits';
+import { truncateForMessage as truncate } from '../tools/tool-output-limits';
 import {
   bestEffortClearSlackThreadStatus,
   bestEffortSlackThreadStatus,

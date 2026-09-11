@@ -61,17 +61,36 @@ export function getToolOutputLimits(): ToolOutputLimits {
   };
 }
 
+export const MESSAGE_TRUNCATION_SUFFIX = '\n...(truncated)';
+
 /**
  * Cap a display string at `maxLength`, appending `suffix` when it had to cut.
- * The suffix is counted inside the budget, so the result never exceeds
- * `maxLength` — which is what the CLI's fixed-width columns rely on.
  *
- * Shared by the Slack/channel message builders (default suffix) and the
- * sessions CLI (ellipsis suffix); each previously kept its own copy.
+ * `reserve` is how much of the budget the suffix is charged for, defaulting to
+ * its own length so the result never exceeds `maxLength` — which is what the
+ * CLI's fixed-width columns rely on. Callers pass it explicitly only to keep a
+ * historical budget (see truncateForMessage).
+ *
+ * Shared by the Slack/channel message builders and the sessions CLI; each
+ * previously kept its own copy.
  */
-export function truncate(value: string, maxLength: number, suffix = '\n...(truncated)'): string {
+export function truncate(
+  value: string,
+  maxLength: number,
+  suffix = MESSAGE_TRUNCATION_SUFFIX,
+  reserve = suffix.length,
+): string {
   if (value.length <= maxLength) return value;
-  return value.slice(0, Math.max(0, maxLength - suffix.length)) + suffix;
+  return value.slice(0, Math.max(0, maxLength - reserve)) + suffix;
+}
+
+/**
+ * Truncation for Slack and channel messages. The marker is 15 characters but
+ * only 12 of the budget are reserved for it, which is what these message
+ * builders have always done; the widths around them are tuned to it.
+ */
+export function truncateForMessage(value: string, maxLength: number): string {
+  return truncate(value, maxLength, MESSAGE_TRUNCATION_SUFFIX, 12);
 }
 
 function truncationMarker(omitted: number, total: number): string {

@@ -3,7 +3,7 @@ import type { RunAgentResult } from '../runner/types';
 import { formatShortDuration } from '../utils/duration';
 import { toErrorMessage } from '../utils/error-message';
 import { logger } from '../utils/logger';
-import { truncate } from '../tools/tool-output-limits';
+import { truncateForMessage as truncate } from '../tools/tool-output-limits';
 import { getSessionUrl } from '../tools/await-human';
 import {
   bestEffortClearSlackThreadStatus,

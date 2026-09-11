@@ -148,6 +148,26 @@ describe('session lookup via the durable index', () => {
     expect(cache.has(sessionId)).toBe(false);
   });
 
+  it('does not repoint a manager at a session it merely stops or reviews', async () => {
+    const manager = new SessionManager();
+    const ownId = await manager.createSession(base('agents/review'));
+    const ownPath = manager.getFullPath();
+
+    const other = new SessionManager();
+    const otherId = await other.createSession(base('agents/triage'));
+
+    await manager.stopSessionTree(otherId);
+    await manager.markSessionReviewed(otherId);
+    await manager.listChildSessions(otherId);
+
+    expect(manager.getCurrentSessionID()).toBe(ownId);
+    expect(manager.getFullPath()).toBe(ownPath);
+
+    // findSession still adopts: the resume path depends on it.
+    expect((await manager.findSession(otherId))?.session.id).toBe(otherId);
+    expect(manager.getCurrentSessionID()).toBe(otherId);
+  });
+
   it('caps the cross-instance path cache instead of growing without bound', async () => {
     const cache = (SessionManager as unknown as { foundSessionPathCache: Map<string, string> })
       .foundSessionPathCache;
