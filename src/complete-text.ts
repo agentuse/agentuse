@@ -114,7 +114,10 @@ export async function completeText(modelString: string, options: CompleteTextOpt
   let text = '';
   try {
     for await (const chunk of result.stream) {
-      watchdog.notify(chunk.type === 'text-delta');
+      // Reasoning is model progress too: a thinking model can reason past the
+      // idle window before its first visible token, exactly as the agent loop
+      // already allows.
+      watchdog.notify(chunk.type === 'text-delta' || chunk.type === 'reasoning-delta');
       if (chunk.type === 'error') {
         if (watchdog.stalled) throw watchdog.failure ?? new ModelStreamStallError(0);
         throw (chunk as { error: unknown }).error;

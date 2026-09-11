@@ -503,6 +503,40 @@ describe('completeText stall handling', () => {
     expect(error).toBeInstanceOf(ModelStreamStallError);
   });
 
+  test('reasoning past the idle window counts as progress, not a stall', async () => {
+    currentModel = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: new ReadableStream<any>({
+          async start(controller) {
+            controller.enqueue({ type: 'stream-start', warnings: [] });
+            controller.enqueue({ type: 'reasoning-start', id: 'r-1' });
+            // Each delta lands inside the window, but the whole think phase
+            // runs well past it: only reasoning-aware progress keeps this alive.
+            for (let step = 0; step < 6; step++) {
+              await Bun.sleep(60);
+              controller.enqueue({ type: 'reasoning-delta', id: 'r-1', delta: 'hmm ' });
+            }
+            controller.enqueue({ type: 'reasoning-end', id: 'r-1' });
+            controller.enqueue({ type: 'text-start', id: 'text-1' });
+            controller.enqueue({ type: 'text-delta', id: 'text-1', delta: 'decided' });
+            controller.enqueue({ type: 'text-end', id: 'text-1' });
+            controller.enqueue({ type: 'finish', finishReason: 'stop', usage: USAGE });
+            controller.close();
+          },
+        }),
+      }),
+    });
+
+    const text = await completeText('anthropic:mock-model', {
+      instructions: 'you are a helper',
+      prompt: 'think first',
+      idleTimeoutMs: 150,
+      maxRetries: 0,
+    });
+
+    expect(text).toBe('decided');
+  });
+
   test('a normal stream still completes', async () => {
     currentModel = new MockLanguageModelV3({
       doStream: async () => ({
