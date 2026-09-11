@@ -13,7 +13,7 @@ import { AgentFilterSelect } from '../components/agent-filter-select';
 import { LogContent } from '../components/content';
 import { ResultChips, isUnseenResultsRow } from '../components/session-results';
 import { writeClipboardText } from '../lib/clipboard';
-import { formatApprovalTime, errorText, displayStatusLabel, humanizeMetric } from '../lib/format';
+import { formatApprovalTime, errorText, displayStatusLabel, humanizeMetric, formatElapsedShort } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
 import { isExecutingSessionStatus, isIncompleteOutcome, isLiveSessionStatus } from '../../../../session/status';
@@ -152,15 +152,6 @@ export function outputPreview(value: string | undefined): string {
   return heading;
 }
 
-export function formatElapsed(ms: number): string {
-  const seconds = Math.max(0, Math.round(ms / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  return minutes % 60 === 0 ? `${hours}h` : `${hours}h ${minutes % 60}m`;
-}
-
 function clockTime(value: number): string {
   return new Date(value).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
@@ -227,7 +218,7 @@ export function SessionListItem(props: {
   let lineClass = 'it-line';
   if (running) {
     lineClass = 'it-line live';
-    line = `Working · ${formatElapsed(now - row.createdAt)}`;
+    line = `Working · ${formatElapsedShort(now - row.createdAt)}`;
   } else if (dot === 'waiting') {
     lineClass = 'it-line live';
     line = 'Waiting on you';
@@ -368,7 +359,7 @@ export function SessionReader(props: {
             {purposeLabel && <span class="chip internal">{purposeLabel}</span>}
             <span class="chip trigger">{row.trigger}</span>
             <span>{formatApprovalTime(row.createdAt)}</span>
-            <span>{formatElapsed(Math.max(0, row.updatedAt - row.createdAt))}</span>
+            <span>{formatElapsedShort(Math.max(0, row.updatedAt - row.createdAt))}</span>
             <code>{row.sessionId}</code>
           </div>
         </div>

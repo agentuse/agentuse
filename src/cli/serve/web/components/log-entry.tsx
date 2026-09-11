@@ -9,6 +9,7 @@ import { extractGateCandidates, fingerprintText } from '../../../../verify/candi
 import { formatLogTime, isJsonLikeContent, logEntrySignature, storeItemPreview, storeItemTitle, valueAsRecord } from '../lib/format';
 import type { StoreItem } from '../../../../store/types';
 import { LogContent, InlineMarkdown } from './content';
+import { useNow } from '../hooks/use-now';
 
 interface StoreEvent {
   store?: string;
@@ -810,18 +811,12 @@ function SubagentActivity(props: { session: LogSubagentSession; projectId?: stri
   const slot = useTailSlot(live);
   const tail = useSessionTail(s.sessionId, props.projectId ?? '', live && slot);
 
-  const [now, setNow] = useState(() => Date.now());
   // Each new tail line restarts the timer, so the elapsed value answers "how
   // long has it been on this step" rather than how long the card has existed.
   const [since, setSince] = useState(() => Date.now());
   useEffect(() => { setSince(Date.now()); }, [tail?.text]);
   const running = tail ? true : activity?.running === true;
-  useEffect(() => {
-    if (!running) return;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [running, since, activity?.startedAt]);
+  const now = useNow(running);
 
   if (!tail && !activity) return null;
   const startedAt = tail ? since : activity!.startedAt;

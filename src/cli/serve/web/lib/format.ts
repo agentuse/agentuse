@@ -297,3 +297,37 @@ export function splitOutcomeHeadline(text: string): { headline?: string; body: s
 export function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
+
+/**
+ * Elapsed time at three grains, because three call sites want three shapes and
+ * each used to carry its own `formatElapsed` with a different answer.
+ */
+
+/** "45s", "6m", "1h 30m" — a duration in a dense list. */
+export function formatElapsedShort(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return minutes % 60 === 0 ? `${hours}h` : `${hours}h ${minutes % 60}m`;
+}
+
+/** "3s", "5m 3s" — a wait the reader is watching tick. */
+export function formatElapsedWithSeconds(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const min = Math.floor(total / 60);
+  const sec = total % 60;
+  return min > 0 ? `${min}m ${sec}s` : `${sec}s`;
+}
+
+/** "5:03", "1h 05m" — a running stopwatch. */
+export function formatElapsedClock(ms: number): string {
+  if (ms < 0) return '0:00';
+  const totalSec = Math.floor(ms / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}

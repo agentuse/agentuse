@@ -17,17 +17,8 @@ import { term } from '../lib/terms';
 import { isIncompleteOutcome } from '../../../../session/status';
 import { consumeUpdatePreview, previewUpdate } from '../lib/update-preview';
 import { InlineError } from '../components/error-banner';
-
-/** Shared 1s clock for the header clock, elapsed timers and the countdown. */
-function useNow(enabled: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!enabled) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [enabled]);
-  return now;
-}
+import { formatElapsedClock } from '../lib/format';
+import { useNow } from '../hooks/use-now';
 
 function formatCountdown(ms: number): string {
   if (ms <= 0) return 'now';
@@ -37,16 +28,6 @@ function formatCountdown(ms: number): string {
   const s = totalSec % 60;
   if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
-
-function formatElapsed(ms: number): string {
-  if (ms < 0) return '0:00';
-  const totalSec = Math.floor(ms / 1000);
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
-  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 const LIVE_STATUSES = new Set(['running', 'resuming', 'continuing']);
@@ -99,7 +80,7 @@ function RunningRow(props: { row: SessionRow; now: number; ticker: boolean }) {
             </div>
           : <div class="now-desc">{row.agent.description || displayStatusLabel(row.status, row.errorCode)}</div>}
       </div>
-      <span class="now-elapsed">{formatElapsed(now - row.createdAt)}</span>
+      <span class="now-elapsed">{formatElapsedClock(now - row.createdAt)}</span>
     </a>
   );
 }

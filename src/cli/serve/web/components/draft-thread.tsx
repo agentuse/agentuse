@@ -6,6 +6,7 @@ import { isDraftApprovalActionable } from './draft-answer-composer';
 import { LogContent } from './content';
 import { isDebugLog } from '../lib/format';
 import type { DraftExchangeTurn } from './draft-panel';
+import { useNow } from '../hooks/use-now';
 
 /**
  * The Changes thread: what was asked for, the steps that ran for it, and what
@@ -76,13 +77,7 @@ function useSilenceSeconds(steps: readonly ApprovalLogEntry[], running: boolean)
     (max, step) => (typeof step.time === 'number' && (max === undefined || step.time > max) ? step.time : max),
     undefined,
   );
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!running) return;
-    setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [running, last]);
+  const now = useNow(running);
   if (!running || last === undefined) return 0;
   return Math.max(0, Math.floor((now - last) / 1000));
 }

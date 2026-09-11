@@ -23,7 +23,8 @@ import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { displayAgentName, isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
 import { aggregateToolStats, hasActionableApproval, headerTokenUsage, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, sessionResumeMode, shouldShowResultNotice, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
 import { tokenUsageMetaItems } from '../src/cli/serve/web/components/token-usage-strip';
-import { dayLabel, formatElapsed, Highlight, outputPreview, sessionPurposeLabel, sessionRepeatRunPath, SessionListItem, statusDot } from '../src/cli/serve/web/routes/sessions-list';
+import { dayLabel, Highlight, outputPreview, sessionPurposeLabel, sessionRepeatRunPath, SessionListItem, statusDot } from '../src/cli/serve/web/routes/sessions-list';
+import { formatElapsedClock, formatElapsedShort, formatElapsedWithSeconds } from '../src/cli/serve/web/lib/format';
 import { labelFor, suspendedGateKinds } from '../src/cli/serve/web/hooks/use-live-home';
 import { formatUntil, scheduleRunFinder } from '../src/cli/serve/web/routes/schedules';
 import type { SerializedSchedule } from '../src/scheduler';
@@ -864,10 +865,18 @@ describe('Session list helpers', () => {
   });
 
   it('reads elapsed time in the largest unit that stays exact enough', () => {
-    expect(formatElapsed(45_000)).toBe('45s');
-    expect(formatElapsed(360_000)).toBe('6m');
-    expect(formatElapsed(3_600_000)).toBe('1h');
-    expect(formatElapsed(5_400_000)).toBe('1h 30m');
+    expect(formatElapsedShort(45_000)).toBe('45s');
+    expect(formatElapsedShort(360_000)).toBe('6m');
+    expect(formatElapsedShort(3_600_000)).toBe('1h');
+    expect(formatElapsedShort(5_400_000)).toBe('1h 30m');
+  });
+
+  it('keeps the seconds a reader is watching tick, and the stopwatch shape', () => {
+    expect(formatElapsedWithSeconds(3_000)).toBe('3s');
+    expect(formatElapsedWithSeconds(303_000)).toBe('5m 3s');
+    expect(formatElapsedClock(303_000)).toBe('5:03');
+    expect(formatElapsedClock(3_900_000)).toBe('1h 05m');
+    expect(formatElapsedClock(-1)).toBe('0:00');
   });
 
   it('names the two days a reader thinks in, and dates the rest', () => {

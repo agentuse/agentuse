@@ -13,19 +13,14 @@ import { TidyResultView } from '../components/learnings-panel';
 import { agentDetailHref, learningsTidyHref } from '../lib/links';
 import { pageTitle } from '../lib/brand';
 import { InlineError } from '../components/error-banner';
+import { formatElapsedWithSeconds } from '../lib/format';
+import { useNow } from '../hooks/use-now';
 
 const POLL_MS = 1500;
 
 /** `agents/x/writer.agentuse` → `writer`, for headings. */
 function agentName(runPath: string): string {
   return (runPath.split('/').pop() ?? runPath).replace(/\.agentuse$/, '');
-}
-
-function formatElapsed(ms: number): string {
-  const total = Math.max(0, Math.round(ms / 1000));
-  const min = Math.floor(total / 60);
-  const sec = total % 60;
-  return min > 0 ? `${min}m ${sec}s` : `${sec}s`;
 }
 
 /**
@@ -73,7 +68,7 @@ export function TidyProgressView(props: {
         <span class="btn-spinner" aria-hidden="true" />
         <span class="tidy-progress-step">{label}</span>
         <span class="tidy-progress-elapsed">
-          {pass ? `${pass} · ` : ''}{formatElapsed(props.elapsedMs)}
+          {pass ? `${pass} · ` : ''}{formatElapsedWithSeconds(props.elapsedMs)}
         </span>
       </div>
       <div
@@ -114,7 +109,6 @@ export default function LearningsTidy() {
   const [startError, setStartError] = useState<string | null>(null);
   const [undoing, setUndoing] = useState(false);
   const [undone, setUndone] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
   const startedRef = useRef(false);
 
   useTitle(pageTitle('Agents', agentName(runPath), 'Tidy up'));
@@ -144,17 +138,12 @@ export default function LearningsTidy() {
 
   const job = data?.job;
   const running = job?.status === 'running';
+  const now = useNow(running);
 
   useEffect(() => setPollMs(POLL_MS), [jobId]);
   useEffect(() => {
     if (data) setPollMs(data.job?.status === 'running' ? POLL_MS : 0);
   }, [data]);
-
-  useEffect(() => {
-    if (!running) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [running]);
 
   const runUndo = async () => {
     if (undoing) return;
