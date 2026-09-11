@@ -118,6 +118,10 @@ describe('internal agent revision', () => {
     expect(source).toContain('derive the smallest ordered set of exact replacements against the current source');
     expect(source).toContain('Leave all unrelated source unmentioned so it remains byte-for-byte unchanged');
     expect(source).toContain('only the ordered exact edits');
+    expect(source).toContain('Resolve routine implementation choices yourself');
+    expect(source).toContain('top-level options array');
+    expect(source).toContain('Tool arguments must be valid JSON objects');
+    expect(source).toContain('a revision review presents completed edits');
     expect(source).toContain('Classification changes the diagnosis, not the authorized edit scope.');
     const preparedInstructions = resolveSafeVariables(parsed.instructions, {
       projectRoot: f.projectRoot,

@@ -333,6 +333,20 @@ tools:
     }))).rejects.toThrow('structurally unsafe command grant: git *');
   });
 
+  it('recognizes an unchanged agent referencing a script-only revision', async () => {
+    const source = agentSource({ name: 'Worker', extra: `tools:
+  bash:
+    commands:
+      - python3 \${root}/shared/collect.py` });
+    const files = await validateChangesetFiles(input({
+      mode: 'revise', target: { path: 'agents/worker.agentuse' }, entry: 'agents/worker.agentuse',
+      projectFiles: { 'agents/worker.agentuse': source, 'shared/collect.py': script },
+      files: [file({ path: 'shared/collect.py', op: 'modify', baseHash: 'b'.repeat(64), content: `${script}\n# updated\n` })],
+    }));
+    expect(files[0]?.flags).toContain('also used by agents/worker.agentuse');
+    expect(files[0]?.flags).not.toContain('not referenced by any agent in this changeset');
+  });
+
   it('flags a modified file that other project agents use and that sits outside the agent folder', async () => {
     const otherAgent = agentSource({
       name: 'Reporter',

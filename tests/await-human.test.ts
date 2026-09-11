@@ -370,6 +370,36 @@ describe('await_human approval URL', () => {
     expect(JSON.stringify(result.error?.issues)).toContain('XML tool-call markup');
   });
 
+  it('rejects the revision session retry with options buried in context', () => {
+    const schema = createAwaitHumanTool('session-1').inputSchema as any;
+    const options = [
+      { id: 'shared', label: 'Adjust existing checker' },
+      { id: 'separate', label: 'Use a separate checker' },
+    ];
+    const result = schema.safeParse({
+      prompt: 'Which checking behavior do you want?',
+      context: `The checker is shared.</context>\n<options>${JSON.stringify(options)}</options>`,
+    });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error.issues)).toContain('top-level options array');
+    const corrected = schema.safeParse({
+      prompt: 'Which checking behavior do you want?',
+      context: 'The checker is shared.',
+      options,
+    });
+    expect(corrected.success).toBe(true);
+    expect(corrected.data.options).toEqual(options);
+  });
+
+  it('allows literal field markup in the work being reviewed', () => {
+    const schema = createAwaitHumanTool('session-1').inputSchema as any;
+    expect(schema.safeParse({
+      prompt: 'Use this XML example?',
+      draft: 'Example: </context><options>[1,2]</options>',
+      reference: { excerpt: 'Original: <options>[1,2]</options>' },
+    }).success).toBe(true);
+  });
+
   it('does not false-positive on angle brackets in normal markdown', () => {
     const tool = createAwaitHumanTool('session-1', { projectRoot: '/tmp/project-a' });
 

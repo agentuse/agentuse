@@ -131,6 +131,30 @@ describe('changeset session prompts', () => {
     expect(parsed.instructions).toContain('untrusted evidence');
     expect(parsed.instructions).toContain('agents/daily.agentuse');
     expect(parsed.instructions).toContain('outcome no-change');
+    expect(parsed.instructions).toContain('Resolve routine implementation choices yourself');
+    expect(parsed.instructions).toContain('top-level options array');
+    expect(parsed.instructions).toContain('Tool arguments must be valid JSON objects');
+    expect(parsed.instructions).toContain('a revision review presents completed edits');
+  });
+
+  it('reviser requests readable review text with paragraphs and accurate change status', () => {
+    const parsed = parseAgentContent(reviser(), 'changeset-reviser');
+    expect(parsed.instructions).toContain('Lead with the practical outcome in plain language');
+    expect(parsed.instructions).toContain('short paragraphs separated by blank lines');
+    expect(parsed.instructions).toContain('user-facing replies, diagnosis, and recommendedAction');
+    expect(parsed.instructions).toContain('Put essential technical details in a separate paragraph');
+    expect(parsed.instructions).toContain('whether edits are prepared, applied, or only recommended');
+    expect(parsed.instructions).toContain('account.\n\nI prepared a fix');
+  });
+
+  it('reviser prepares supporting script repairs without requiring agent source changes', () => {
+    const parsed = parseAgentContent(reviser(), 'changeset-reviser');
+    expect(parsed.instructions).toContain('A supporting-script-only fix is a valid revision');
+    expect(parsed.instructions).toContain('An unchanged target agent alone is not a reason for no-change');
+    expect(parsed.instructions).toContain('the operator explicitly wants explanation only');
+    expect(parsed.instructions).toContain('prepare the smallest supported fix for review');
+    expect(parsed.instructions).toContain('Never execute the repaired outward action');
+    expect(parsed.instructions).not.toContain('If the agent should not change');
   });
 
   it('reviser inlines the origin run transcript as the evidence to diagnose', () => {

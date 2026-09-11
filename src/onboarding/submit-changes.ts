@@ -90,13 +90,13 @@ const changesetSubmissionSchema = z.object({
   outcome: z.enum(['proposed', 'no-change'])
     .describe('proposed when the files you wrote should be reviewed, no-change when the project should stay as it is.'),
   summary: z.string().min(1).max(1000)
-    .describe('One line on what this change set does, or why nothing should change.'),
+    .describe('One plain-language sentence describing the practical outcome, or why nothing should change. Avoid file paths, commands, and internal jargon.'),
   diagnosis: z.string().max(12_000).optional()
-    .describe('What you found and why this is the right change. Required in practice for a no-change outcome.'),
+    .describe('Explain the problem, cause, and practical effect in plain language. Separate ideas with blank lines; put essential technical details in a separate paragraph or code block. Required in practice for a no-change outcome.'),
   entry: z.string().max(400).optional()
     .describe('Required for proposed: project-relative path of the .agentuse file a test run should execute.'),
   recommendedAction: z.string().max(2000).optional()
-    .describe('Required for no-change: what the operator should do instead.'),
+    .describe('Required for no-change: explain what the operator should do next in plain language. Use short paragraphs separated by blank lines, or bullets for multiple steps.'),
 }).strict();
 
 type ChangesetSubmissionInput = z.infer<typeof changesetSubmissionSchema>;

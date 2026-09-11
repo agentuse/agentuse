@@ -534,7 +534,7 @@ export async function validateChangesetFiles(input: ValidateChangesetFilesInput)
 
   for (const file of files) {
     const flags = flagsByPath.get(file.path) ?? [];
-    if (!isAgentPath(file.path) && !referencedSupports.has(file.path)) {
+    if (!isAgentPath(file.path) && !referencedSupports.has(file.path) && !usersByPath.has(file.path)) {
       flags.push('not referenced by any agent in this changeset');
     }
     const fileDir = posix.dirname(file.path) === '.' ? '' : posix.dirname(file.path);
