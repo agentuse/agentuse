@@ -187,6 +187,41 @@ describe('reconcile on read', () => {
     expect(reconciled?.applied).toBeUndefined();
   });
 
+  it('reconciles against the served scope when it is a subdirectory of the project root', async () => {
+    // `agentuse serve <dir>` inside a repo: the record is keyed by the repo
+    // root, but every changeset path is relative to the served scope.
+    const projectRoot = await mkdtemp(join(tmpdir(), 'changeset-apply-root-'));
+    const dataRoot = await mkdtemp(join(tmpdir(), 'changeset-apply-data-'));
+    cleanups.push(
+      () => rm(projectRoot, { recursive: true, force: true }),
+      () => rm(dataRoot, { recursive: true, force: true }),
+    );
+    process.env.AGENTUSE_DATA_DIR = dataRoot;
+    const scopeRoot = join(projectRoot, 'ops');
+    await mkdir(join(scopeRoot, 'agents'), { recursive: true });
+    await writeFile(join(scopeRoot, EXISTING), EXISTING_SOURCE);
+    await createChangesetRecord({
+      sessionId: SESSION_ID,
+      projectId: 'demo',
+      projectRoot,
+      scopeRoot,
+      mode: 'revise',
+      target: { path: EXISTING, name: 'Triage' },
+      instruction: 'Exclude refunded orders.',
+      authoringModel: 'openai:gpt-5.6-luna',
+    });
+    await appendChangesetProposal(projectRoot, SESSION_ID, {
+      reply: 'Excluded refunds.',
+      entry: EXISTING,
+      files: [modifyFile(EXISTING, EXISTING_SOURCE, REVISED_SOURCE), addFile('scripts/collect.py', NEW_SCRIPT)],
+    });
+    await applyChangeset({ projectRoot, scopeRoot, sessionId: SESSION_ID, validate: noopValidate });
+    expect(await readFile(join(scopeRoot, EXISTING), 'utf8')).toBe(REVISED_SOURCE);
+    await stall(projectRoot, 'applying');
+
+    expect((await readChangesetRecord(projectRoot, SESSION_ID))?.status).toBe('applied');
+  });
+
   it('errors when an interrupted apply left the project half-written', async () => {
     const { projectRoot } = await fixture();
     await apply(projectRoot);

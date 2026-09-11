@@ -96,7 +96,9 @@ async function reconcileChangesetMutation(record: ChangesetRecord): Promise<Chan
 
   let hashes: Array<string | undefined>;
   try {
-    hashes = await Promise.all(files.map((file) => currentFileHash(join(record.projectRoot, file.path))));
+    // Changeset paths are scope-relative, the same base apply and restore write
+    // under; projectRoot only locates the record.
+    hashes = await Promise.all(files.map((file) => currentFileHash(join(record.scopeRoot, file.path))));
   } catch (error) {
     return failReconcile(
       record,
