@@ -1,7 +1,8 @@
 import type { ProviderReadiness } from '../plugin/provider-runtime';
-import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { atomicWriteFile } from '../utils/atomic-write';
 import { getAgentuseDataDir } from '../utils/data-dir';
 import { withOwnershipLock } from '../utils/ownership-lock';
 
@@ -65,13 +66,13 @@ export async function recordProviderHealth(
       // or token rotation creates a different identity and starts clean.
       if (previous.state === 'reconnect_required' && (state !== 'reconnect_required' || !options.blockRefresh)) return;
       if (!options.force && state === 'verified' && previous.state === state && !providerHealthNeedsCheck(previous)) return;
-      const temporary = `${file}.${randomUUID()}.tmp`;
-      try {
-        await writeFile(temporary, JSON.stringify({ state, checkedAt: observedAt, ...((options.readiness ?? (previous.state === state ? previous.readiness : undefined)) && { readiness: options.readiness ?? (previous.state === state ? previous.readiness : undefined) }), ...(options.blockRefresh && { blockRefresh: true }) }), { mode: 0o600 });
-        await rename(temporary, file);
-      } finally {
-        await rm(temporary, { force: true }).catch(() => {});
-      }
+      const readiness = options.readiness ?? (previous.state === state ? previous.readiness : undefined);
+      await atomicWriteFile(file, JSON.stringify({
+        state,
+        checkedAt: observedAt,
+        ...(readiness && { readiness }),
+        ...(options.blockRefresh && { blockRefresh: true }),
+      }), { mode: 0o600 });
     }, { maxWaitMs: 1_000 });
   } catch { /* Credential usage is independent of health-cache availability. */ }
 }

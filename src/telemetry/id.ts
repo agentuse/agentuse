@@ -9,6 +9,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
+import { atomicWriteFile } from '../utils/atomic-write';
 import { getAgentuseDataDir } from '../utils/data-dir';
 
 const TELEMETRY_FILE = 'telemetry.json';
@@ -206,17 +207,7 @@ async function withConfigLock<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 async function atomicWriteConfig(config: TelemetryConfig): Promise<void> {
-  const dir = getTelemetryDir();
-  await fs.mkdir(dir, { recursive: true });
-  const target = getConfigPath();
-  const temporary = path.join(dir, `${TELEMETRY_FILE}.${process.pid}.${crypto.randomUUID()}.tmp`);
-  await fs.writeFile(temporary, JSON.stringify(config, null, 2), { encoding: 'utf-8', mode: 0o600 });
-  try {
-    await fs.rename(temporary, target);
-  } catch (error) {
-    await fs.unlink(temporary).catch(() => {});
-    throw error;
-  }
+  await atomicWriteFile(getConfigPath(), JSON.stringify(config, null, 2), { mkdir: true, mode: 0o600 });
 }
 
 function toIdentity(config: TelemetryConfig, overrides: Pick<AnonymousIdentity, 'created' | 'migrated'>): AnonymousIdentity {

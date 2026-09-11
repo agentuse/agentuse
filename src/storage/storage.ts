@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { randomUUID } from 'crypto';
+import { atomicWriteFile } from '../utils/atomic-write';
 import { getSessionStorageDir } from './paths';
 
 export interface StorageState {
@@ -63,35 +63,15 @@ export async function writeJSON<T>(key: string, content: T): Promise<void> {
   const state = await getStorageState();
   const target = path.join(state.dir, key + '.json');
 
-  // Ensure directory exists
-  await fs.mkdir(path.dirname(target), { recursive: true });
-
-  // Atomic write: temp file + rename. The temp name must be unique per *writer*,
-  // not just per millisecond: the serve daemon and the runner are separate
-  // processes that both write the same session keys (e.g. session.json), and
-  // serializedWrite only orders writes within a single SessionManager instance.
-  // A Date.now()-only suffix collides when two processes write the same key in
-  // the same ms, so their writes interleave into one temp file and a shorter
-  // write fails to truncate a longer one, leaving valid JSON + trailing garbage.
-  // pid + randomUUID makes the temp path collision-free across processes.
-  const tmp = `${target}.${process.pid}.${randomUUID()}.tmp`;
-
-  try {
-    // Compact, not pretty-printed: every file written here is machine-read
-    // (session parts, context snapshots, the session index), and indentation is
-    // bytes written and parsed on every session write. `sessions show --json`
-    // and the web UI format for display at read time.
-    await fs.writeFile(tmp, JSON.stringify(content), 'utf-8');
-    await fs.rename(tmp, target);
-  } catch (error) {
-    // Clean up temp file on error
-    try {
-      await fs.unlink(tmp);
-    } catch {
-      // Ignore unlink errors
-    }
-    throw error;
-  }
+  // Compact, not pretty-printed: every file written here is machine-read
+  // (session parts, context snapshots, the session index), and indentation is
+  // bytes written and parsed on every session write. `sessions show --json`
+  // and the web UI format for display at read time.
+  //
+  // No fsync: session parts are written continuously while a run streams, and
+  // a flush per part is the wrong trade here. The rename still keeps readers
+  // from ever seeing a half-written file.
+  await atomicWriteFile(target, JSON.stringify(content), { mkdir: true, fsync: false });
 }
 
 /**

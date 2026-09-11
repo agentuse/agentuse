@@ -3,6 +3,7 @@ import * as path from 'path';
 import type { Tool, ToolSet } from 'ai';
 import { isSuspendSignal } from './suspend';
 import type { EffectAuditSink } from '../tools/types.js';
+import { atomicWriteFileSync } from '../utils/atomic-write';
 import { logger } from '../utils/logger';
 
 export const EFFECT_WAL_FILENAME = 'effect-wal.jsonl';
@@ -67,12 +68,9 @@ export class EffectWAL implements EffectAuditSink {
   checkpoint(name: string, payload: unknown): void {
     if (!this.dir || !/^[a-z0-9-]+$/u.test(name)) return;
     const target = path.join(this.dir, `${name}.json`);
-    const temporary = `${target}.${process.pid}.tmp`;
     try {
-      fs.writeFileSync(temporary, JSON.stringify(payload));
-      fs.renameSync(temporary, target);
+      atomicWriteFileSync(target, JSON.stringify(payload));
     } catch (error) {
-      try { fs.unlinkSync(temporary); } catch { /* best-effort cleanup */ }
       logger.debug(`[EffectWAL] checkpoint failed: ${(error as Error).message}`);
     }
   }

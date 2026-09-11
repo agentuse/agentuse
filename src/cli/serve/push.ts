@@ -20,8 +20,9 @@ import {
   type JsonWebKey,
   type KeyObject,
 } from "crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
+import { existsSync, readFileSync } from "fs";
+import { join } from "path";
+import { atomicWriteFileSync } from "../../utils/atomic-write.js";
 
 export type PushCategory = "approvals" | "sessions";
 
@@ -193,10 +194,12 @@ export class PushService {
   }
 
   private persist(): void {
-    mkdirSync(dirname(this.file), { recursive: true });
-    const tmp = `${this.file}.tmp`;
-    writeFileSync(tmp, JSON.stringify({ vapid: this.vapid, subscriptions: this.subscriptions }, null, 2));
-    renameSync(tmp, this.file);
+    // The VAPID private key lives in this file, so it is written 0600.
+    atomicWriteFileSync(
+      this.file,
+      JSON.stringify({ vapid: this.vapid, subscriptions: this.subscriptions }, null, 2),
+      { mkdir: true, mode: 0o600 },
+    );
   }
 
   get publicKey(): string {

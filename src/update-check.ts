@@ -6,11 +6,11 @@
  * for a later command (or a long-lived serve process).
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { get as httpsGet } from 'https';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { randomUUID } from 'crypto';
+import { atomicWriteFileSync } from './utils/atomic-write';
 import { getAgentuseDataDir } from './utils/data-dir';
 
 export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -60,15 +60,7 @@ function readJson<T>(filePath: string): T | null {
 
 function atomicWriteJson(filePath: string, value: unknown): void {
   try {
-    mkdirSync(dirname(filePath), { recursive: true });
-    const temporary = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-    writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-    try {
-      renameSync(temporary, filePath);
-    } catch (error) {
-      try { unlinkSync(temporary); } catch { /* best-effort cleanup */ }
-      throw error;
-    }
+    atomicWriteFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, { mkdir: true, mode: 0o600 });
   } catch {
     // Update checks must never affect product behavior.
   }

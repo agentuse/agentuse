@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import type { AuthInfo, OAuthTokens, CodexOAuthTokens, ApiKeyAuth, ProviderAuth, CustomProviderAuth } from "./types.js";
+import { atomicWriteFile } from "../utils/atomic-write.js";
 import { getAgentuseDataDir } from "../utils/data-dir.js";
 import type { PluginCredential } from "../plugin/types.js";
 
@@ -37,20 +38,7 @@ export class AuthStorage {
 
   private static async writeAll(data: Record<string, AuthInfo>): Promise<void> {
     await this.ensureDir();
-    const dir = path.dirname(this.AUTH_FILE);
-    const tmpFile = path.join(
-      dir,
-      `.auth.json.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
-    );
-
-    try {
-      await fs.writeFile(tmpFile, JSON.stringify(data, null, 2));
-      await fs.chmod(tmpFile, 0o600);
-      await fs.rename(tmpFile, this.AUTH_FILE);
-    } catch (error) {
-      await fs.rm(tmpFile, { force: true }).catch(() => {});
-      throw error;
-    }
+    await atomicWriteFile(this.AUTH_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
   }
 
   private static lockDir(): string {

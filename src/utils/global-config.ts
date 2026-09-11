@@ -1,8 +1,10 @@
-import { readFileSync, existsSync, statSync, mkdirSync, renameSync, writeFileSync } from 'fs';
+import { readFileSync, existsSync, statSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
 import * as dotenv from 'dotenv';
+import { atomicWriteFileSync } from './atomic-write';
 import { parseDurationMs } from './duration';
+import { expandHome } from './path';
 
 export interface ModelAliasFallbackConfig {
   /** Ordered model ids or aliases. The first available candidate is preferred. */
@@ -232,10 +234,7 @@ export function persistServeProject(
   serve.projects = projects;
   root.serve = serve;
 
-  mkdirSync(path.dirname(configPath), { recursive: true });
-  const temporaryPath = `${configPath}.${process.pid}.tmp`;
-  writeFileSync(temporaryPath, `${JSON.stringify(root, null, 2)}\n`, { mode: 0o600 });
-  renameSync(temporaryPath, configPath);
+  atomicWriteFileSync(configPath, `${JSON.stringify(root, null, 2)}\n`, { mkdir: true, mode: 0o600 });
 }
 
 /** Remove one saved project without disturbing unrelated or newer config fields.
@@ -272,9 +271,7 @@ export function removeServeProject(
   if (serve.default === project.id) delete serve.default;
   root.serve = serve;
 
-  const temporaryPath = `${configPath}.${process.pid}.tmp`;
-  writeFileSync(temporaryPath, `${JSON.stringify(root, null, 2)}\n`, { mode: 0o600 });
-  renameSync(temporaryPath, configPath);
+  atomicWriteFileSync(configPath, `${JSON.stringify(root, null, 2)}\n`, { mkdir: true, mode: 0o600 });
 }
 
 export function getGlobalEnvPath(): string {
@@ -374,11 +371,7 @@ export function resetModelSettingsCache(): void {
   modelSettingsCache = null;
 }
 
-export function expandHome(p: string): string {
-  if (p === '~') return homedir();
-  if (p.startsWith('~/')) return path.join(homedir(), p.slice(2));
-  return p;
-}
+export { expandHome };
 
 function fail(configPath: string, msg: string): never {
   throw new Error(`Invalid config at ${configPath}: ${msg}`);
