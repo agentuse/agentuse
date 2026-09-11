@@ -4,18 +4,18 @@ import { join } from 'path';
 
 describe('internal worker session state ordering', () => {
   it('restores resume state on preflight returns after applying approval result', async () => {
-    const source = await readFile(join(import.meta.dir, '..', 'src', 'index.ts'), 'utf-8');
+    const source = await readFile(join(import.meta.dir, '..', 'src', 'worker', 'run.ts'), 'utf-8');
     const executeAgentStart = source.indexOf('async function executeAgent');
     expect(executeAgentStart).toBeGreaterThanOrEqual(0);
 
     const executeAgent = source.slice(executeAgentStart);
     expect(executeAgent).toContain('const restoreResumeAndReturn = async <T>(response: T): Promise<T> =>');
-    expect(executeAgent).toContain('return restoreResumeAndReturn({\n            id: req.id,\n            success: false,\n            error: { code: \'AGENT_NOT_FOUND\'');
-    expect(executeAgent).toContain('return restoreResumeAndReturn({\n          id: req.id,\n          success: false,\n          error: { code: \'ENV_MISSING\'');
+    expect(executeAgent).toContain('return restoreResumeAndReturn({\n          id: req.id,\n          success: false,\n          error: { code: \'AGENT_NOT_FOUND\'');
+    expect(executeAgent).toContain('return restoreResumeAndReturn({\n        id: req.id,\n        success: false,\n        error: { code: \'ENV_MISSING\'');
   });
 
   it('does not short-circuit rejected approval decisions before agent resume', async () => {
-    const source = await readFile(join(import.meta.dir, '..', 'src', 'index.ts'), 'utf-8');
+    const source = await readFile(join(import.meta.dir, '..', 'src', 'worker', 'run.ts'), 'utf-8');
     const resumeBranch = source.indexOf("if (req.type === 'resume')");
     const continueBranch = source.indexOf("} else if (req.type === 'continue-session')", resumeBranch);
     expect(resumeBranch).toBeGreaterThanOrEqual(0);
@@ -41,7 +41,7 @@ describe('internal worker session state ordering', () => {
   });
 
   it('keeps approval decisions durable when the resumed run fails', async () => {
-    const source = await readFile(join(import.meta.dir, '..', 'src', 'index.ts'), 'utf-8');
+    const source = await readFile(join(import.meta.dir, '..', 'src', 'worker', 'run.ts'), 'utf-8');
     const runAgentCall = source.indexOf('const result = await runAgent(');
     const runAgentCatch = source.indexOf('} catch (err) {', runAgentCall);
     const abortBranch = source.indexOf('if (abortController.signal.aborted)', runAgentCatch);
@@ -78,7 +78,7 @@ describe('internal worker session state ordering', () => {
   });
 
   it('marks continuation sessions running only after parse/env/MCP preflight', async () => {
-    const source = await readFile(join(import.meta.dir, '..', 'src', 'index.ts'), 'utf-8');
+    const source = await readFile(join(import.meta.dir, '..', 'src', 'worker', 'run.ts'), 'utf-8');
     const continueBranch = source.indexOf("} else if (req.type === 'continue-session')");
     expect(continueBranch).toBeGreaterThanOrEqual(0);
 
