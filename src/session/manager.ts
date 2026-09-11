@@ -181,8 +181,35 @@ function toSessionListSummary(session: SessionInfo, sessionPath: string): Sessio
   };
 }
 
+// Bounded so a long-lived serve daemon that has looked up tens of thousands of
+// sessions does not hold a path string for every one of them forever. Entries
+// are evicted least-recently-used; a miss costs one directory resolution.
+const MAX_FOUND_SESSION_PATHS = 2000;
+
 export class SessionManager {
+  /** sessionID -> resolved session directory, for lookups by id alone.
+   *  Advisory only: every hit is re-validated against the file on disk, and a
+   *  stale entry (moved or deleted session) is dropped on the spot. */
   private static foundSessionPathCache: Map<string, string> = new Map();
+
+  private static getFoundSessionPath(sessionID: string): string | undefined {
+    const sessionPath = SessionManager.foundSessionPathCache.get(sessionID);
+    if (sessionPath === undefined) return undefined;
+    // Re-insert so the most recently used entry sorts last for eviction.
+    SessionManager.foundSessionPathCache.delete(sessionID);
+    SessionManager.foundSessionPathCache.set(sessionID, sessionPath);
+    return sessionPath;
+  }
+
+  private static setFoundSessionPath(sessionID: string, sessionPath: string): void {
+    SessionManager.foundSessionPathCache.delete(sessionID);
+    SessionManager.foundSessionPathCache.set(sessionID, sessionPath);
+    if (SessionManager.foundSessionPathCache.size > MAX_FOUND_SESSION_PATHS) {
+      const oldest = SessionManager.foundSessionPathCache.keys().next();
+      if (!oldest.done) SessionManager.foundSessionPathCache.delete(oldest.value);
+    }
+  }
+
   private static sessionIndexCache: Map<string, {
     mtimeMs: number;
     size: number;
@@ -362,7 +389,7 @@ export class SessionManager {
 
   private rememberSessionPath(sessionID: string, agentId: string, sessionPath: string): void {
     this.sessionPathCache.set(this.sessionPathCacheKey(sessionID, agentId), sessionPath);
-    SessionManager.foundSessionPathCache.set(sessionID, sessionPath);
+    SessionManager.setFoundSessionPath(sessionID, sessionPath);
   }
 
   private async touchSessionDirectory(sessionPath: string): Promise<void> {
@@ -983,11 +1010,15 @@ export class SessionManager {
    */
   async findSession(sessionID: string): Promise<SessionEntry | null> {
     const state = await getStorageState();
-    const cachedPath = SessionManager.foundSessionPathCache.get(sessionID);
+    const cachedPath = SessionManager.getFoundSessionPath(sessionID);
     const cachedSession = cachedPath
       ? await readJSON<SessionInfo>(`${cachedPath}/session`)
       : null;
     const cacheHit = cachedSession?.id === sessionID;
+    // The cached path no longer holds this session (moved, deleted, or reused
+    // by another session): drop it rather than leave it to mislead the next
+    // lookup, which would read the wrong file before falling back again.
+    if (cachedPath && !cacheHit) SessionManager.foundSessionPathCache.delete(sessionID);
     const sessionPath = cacheHit
       ? cachedPath!
       : await this.resolveSessionDirById(state.dir, sessionID);

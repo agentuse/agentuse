@@ -131,6 +131,38 @@ describe('session lookup via the durable index', () => {
     expect(scans).toEqual(['01ABSENTSESSIONID0000000AA']);
   });
 
+  it('drops a cached path once it no longer holds the session', async () => {
+    const manager = new SessionManager();
+    const sessionId = await manager.createSession(base('agents/review'));
+    const cache = (SessionManager as unknown as { foundSessionPathCache: Map<string, string> })
+      .foundSessionPathCache;
+
+    expect((await manager.findSession(sessionId))?.session.id).toBe(sessionId);
+    expect(cache.has(sessionId)).toBe(true);
+
+    // The session moves out from under the cached path.
+    const state = await getStorageState();
+    await rm(join(state.dir, cache.get(sessionId)!), { recursive: true, force: true });
+
+    expect(await new SessionManager().findSession(sessionId)).toBeNull();
+    expect(cache.has(sessionId)).toBe(false);
+  });
+
+  it('caps the cross-instance path cache instead of growing without bound', async () => {
+    const cache = (SessionManager as unknown as { foundSessionPathCache: Map<string, string> })
+      .foundSessionPathCache;
+    const remember = (SessionManager as unknown as {
+      setFoundSessionPath: (id: string, path: string) => void;
+    }).setFoundSessionPath;
+
+    for (let i = 0; i < 2400; i++) remember(`session-${i}`, `dir-${i}`);
+
+    expect(cache.size).toBeLessThanOrEqual(2000);
+    // Least-recently-used entries go first; the newest survive.
+    expect(cache.has('session-0')).toBe(false);
+    expect(cache.get('session-2399')).toBe('dir-2399');
+  });
+
   it('rejects a stale index entry rather than resolving the wrong directory', async () => {
     const manager = new SessionManager();
     await manager.createSession(base('agents/review'));

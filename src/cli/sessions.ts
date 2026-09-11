@@ -274,44 +274,34 @@ async function getSessionDetails(
     (e) => e.isDirectory() && /^[0-9A-Z]{26}$/i.test(e.name)
   );
 
-  for (const msgDir of messageDirs) {
+  // Messages, and the parts within each, are read concurrently: a long session
+  // is hundreds of small files, and awaiting them one at a time made `sessions
+  // show` wait out the full round-trip latency per file.
+  const loaded = await Promise.all(messageDirs.map(async (msgDir) => {
     const msgPath = path.join(sessionDir, msgDir.name);
 
-    // Read message.json
-    let message: Message | null = null;
+    let message: Message;
     try {
-      const msgContent = await fs.readFile(
-        path.join(msgPath, "message.json"),
-        "utf-8"
-      );
-      message = JSON.parse(msgContent) as Message;
+      message = JSON.parse(await fs.readFile(path.join(msgPath, "message.json"), "utf-8")) as Message;
     } catch {
-      continue;
+      return null;
     }
 
-    // Read parts
-    const parts: Part[] = [];
     const partDir = path.join(msgPath, "part");
-    try {
-      const partFiles = await fs.readdir(partDir);
-      for (const partFile of partFiles) {
-        if (!partFile.endsWith(".json")) continue;
-        try {
-          const partContent = await fs.readFile(
-            path.join(partDir, partFile),
-            "utf-8"
-          );
-          parts.push(JSON.parse(partContent) as Part);
-        } catch {
-          // Skip invalid part files
-        }
+    const partFiles = (await fs.readdir(partDir).catch(() => [] as string[]))
+      .filter((partFile) => partFile.endsWith(".json"));
+    const parts = (await Promise.all(partFiles.map(async (partFile) => {
+      try {
+        return JSON.parse(await fs.readFile(path.join(partDir, partFile), "utf-8")) as Part;
+      } catch {
+        // Skip invalid part files.
+        return null;
       }
-    } catch {
-      // No parts directory
-    }
+    }))).filter((part): part is Part => part !== null);
 
-    result.messages.push({ message, parts });
-  }
+    return { message, parts };
+  }));
+  result.messages.push(...loaded.filter((entry): entry is { message: Message; parts: Part[] } => entry !== null));
 
   // Sort messages by created time
   result.messages.sort(
