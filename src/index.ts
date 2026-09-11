@@ -36,7 +36,8 @@ import { resolveModelProvider } from './utils/model-utils';
 import { applyRunModelOverride, resolveModelString, type RunModelOverride } from './utils/model-alias';
 import { logger, LogLevel } from './utils/logger';
 import { safeHttpUrl } from './utils/url';
-import { basename, resolve, dirname, join } from 'path';
+import { resolve, dirname, join } from 'path';
+import { hasAgentExtension, agentBaseName } from './utils/agent-name';
 import * as readline from 'readline';
 import { PluginManager } from './plugin';
 import { getProviderPlugin } from './plugin/provider-runtime';
@@ -577,7 +578,7 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
         }
 
         // Validate .agentuse extension
-        if (!file.endsWith('.agentuse')) {
+        if (!hasAgentExtension(file)) {
           throw new Error('Remote agents must have .agentuse extension');
         }
 
@@ -626,13 +627,13 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
         }
         
         // Parse agent from content
-        const agentName = basename(file).replace(/\.agentuse$/, '');
+        const agentName = agentBaseName(file);
         agent = parseAgentContent(content!, agentName);
       } else {
         // Parse agent specification from local markdown file
         // Auto-append .agentuse extension if not specified
         let agentFile = file;
-        if (!file.endsWith('.agentuse') && !existsSync(file)) {
+        if (!hasAgentExtension(file) && !existsSync(file)) {
           const withExt = `${file}.agentuse`;
           if (existsSync(withExt)) {
             agentFile = withExt;

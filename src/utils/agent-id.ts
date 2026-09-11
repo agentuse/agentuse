@@ -1,4 +1,5 @@
 import { relative } from 'path';
+import { stripAgentExtension } from './agent-name';
 
 /**
  * Compute agent ID from file path
@@ -39,15 +40,4 @@ export function computeAgentId(
  * A case-sensitive strip left `AGENT.AGENTUSE` discoverable but unresolvable,
  * and the codebase had plain, `/i` and `/u` variants sitting side by side.
  */
-const AGENT_EXTENSION_PATTERN = /\.agentuse$/iu;
-
-/** Remove a trailing `.agentuse` extension, in any case. Leaves the rest of the path intact. */
-export function stripAgentExtension(agentPath: string): string {
-  return agentPath.replace(AGENT_EXTENSION_PATTERN, '');
-}
-
-/** The final path segment with its `.agentuse` extension removed. Accepts either separator. */
-export function agentBaseName(agentPath: string): string {
-  const segments = agentPath.split(/[\\/]/u);
-  return stripAgentExtension(segments[segments.length - 1] ?? agentPath);
-}
+export { AGENT_EXTENSION_PATTERN, hasAgentExtension, stripAgentExtension, agentBaseName } from './agent-name';

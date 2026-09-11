@@ -23,6 +23,7 @@ import { formatCompactDuration } from "../utils/duration";
 import { isExecutingSessionStatus, sessionOutcome } from "../session/status";
 import { truncate as truncateText } from "../tools/tool-output-limits";
 import { toErrorMessage } from "../utils/error-message";
+import { stripAgentExtension } from "../utils/agent-name";
 
 interface SessionSummary {
   id: string;
@@ -70,7 +71,7 @@ interface ResumeExecutionContext {
  */
 function computeAgentId(filePath: string | undefined, projectRoot: string, agentName: string): string {
   if (filePath) {
-    return path.relative(projectRoot, filePath).replace(/\.agentuse$/, '');
+    return stripAgentExtension(path.relative(projectRoot, filePath));
   }
   return agentName;
 }

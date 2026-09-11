@@ -1,4 +1,5 @@
 import type { AgentRow } from "./api";
+import { agentBaseName } from "../../../../utils/agent-name";
 
 /**
  * Pure graph model + layered layout for the agents Graph view. Edges come
@@ -192,7 +193,7 @@ export function buildAgentGraph(agents: AgentRow[]): AgentGraph {
       nodes.set(instanceId(path, k), {
         id: instanceId(path, k),
         path,
-        name: agent?.name ?? (path.split("/").pop() ?? path).replace(/\.agentuse$/, ""),
+        name: agent?.name ?? agentBaseName(path),
         ...(agent && { agent }),
         ghost: !agent,
         rank: 0,

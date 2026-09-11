@@ -1,4 +1,5 @@
 import type { ApprovalLogEntry, ApprovalLogDetails, ApprovalPageInfo } from "../../types";
+import { hasAgentExtension, agentBaseName } from "../../../../utils/agent-name";
 export {
   looksLikeUlid,
   shortAgentName,
@@ -24,8 +25,8 @@ export function formatApprovalTime(value?: number): string {
  * than an opaque normalized id. */
 export function displayAgentName(name: string | undefined, filePath: string | undefined, id: string): string {
   const human = name?.trim();
-  if (human && human !== id && !human.includes('/') && !human.endsWith('.agentuse')) return human;
-  return filePath?.split(/[\\/]/).pop()?.replace(/\.agentuse$/, '') || human || id;
+  if (human && human !== id && !human.includes('/') && !hasAgentExtension(human)) return human;
+  return (filePath ? agentBaseName(filePath) : '') || human || id;
 }
 
 export function formatLogTime(value?: number): string {

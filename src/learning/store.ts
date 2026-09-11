@@ -6,6 +6,7 @@ import type { Learning, LearningCategory, LearningChannel, LearningDraft, Learni
 import { learningSourceRank, rankLearnings } from './ranking';
 import { getProjectDirSync, sanitizeAgentName } from '../storage/paths';
 import { computeAgentId } from '../utils/agent-id';
+import { agentBaseName } from '../utils/agent-name';
 import { logger } from '../utils/logger';
 import { withOwnershipLock } from '../utils/ownership-lock';
 import { atomicWriteFile } from '../utils/atomic-write';
@@ -82,7 +83,7 @@ function learningKey(agentFilePath: string, stateRoot: string, agentName?: strin
   // the absolute path — the same shape, for the same reason, as the
   // consolidation snapshot directory.
   const digest = createHash('sha256').update(absolute).digest('hex').slice(0, 8);
-  return `${sanitizeAgentName(basename(absolute, '.agentuse'))}-${digest}`;
+  return `${sanitizeAgentName(agentBaseName(absolute))}-${digest}`;
 }
 
 /**
