@@ -118,8 +118,8 @@ export function formatDuration(ms: number): string {
 /**
  * Format cost in USD (returns '—' if undefined)
  */
-export function formatCost(usd: number | undefined): string {
-  if (usd === undefined) return '—';
+export function formatCost(usd: number | undefined | null): string {
+  if (usd === undefined || usd === null) return '—';
   if (usd < 0.01) return `$${usd.toFixed(4)}`;
   if (usd < 1) return `$${usd.toFixed(3)}`;
   return `$${usd.toFixed(2)}`;
@@ -135,11 +135,34 @@ export function formatPercent(value: number): string {
 /**
  * Format token count (K/M suffixes)
  */
-export function formatTokens(count: number): string {
+export function formatTokens(count: number | undefined | null): string {
+  if (count === undefined || count === null) return '—';
   if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`;
   if (count >= 1000) return `${(count / 1000).toFixed(1)}K`;
   return count.toString();
 }
+
+/**
+ * The same four formatters, as source text for the standalone HTML report's
+ * inline <script>. The report has no bundler and no module loader, so the only
+ * way it and the server-side summaries can agree on how a duration or a cost
+ * reads is to ship these exact function bodies to the browser.
+ *
+ * Each is bound to a `const` under its own name rather than emitted as a bare
+ * declaration, so a bundler renaming the function is harmless. Keep all four
+ * self-contained: no imports, no module-level state, and nothing whose runtime
+ * behavior depends on a type annotation.
+ */
+export const BROWSER_FORMATTERS: string = (
+  [
+    ['formatDuration', formatDuration],
+    ['formatCost', formatCost],
+    ['formatTokens', formatTokens],
+    ['formatPercent', formatPercent],
+  ] as const
+)
+  .map(([name, fn]) => `const ${name} = ${fn.toString()};`)
+  .join('\n\n');
 
 /**
  * Generate shared data structure for benchmark reports

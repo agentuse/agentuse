@@ -1,7 +1,9 @@
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import type { SuiteResult } from '../types.js';
+import { escapeHtml } from '../../utils/html.js';
 import {
+  BROWSER_FORMATTERS,
   generateReportData,
   formatDuration,
   formatCost,
@@ -676,31 +678,7 @@ export function generateHtmlReport(result: SuiteResult): string {
   </footer>
 
   <script>
-    function formatPercent(value) {
-      return (value * 100).toFixed(1) + '%';
-    }
-
-    function formatDuration(ms) {
-      if (ms < 1000) return ms + 'ms';
-      if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
-      const minutes = Math.floor(ms / 60000);
-      const seconds = ((ms % 60000) / 1000).toFixed(0);
-      return minutes + 'm ' + seconds + 's';
-    }
-
-    function formatCost(usd) {
-      if (usd === undefined || usd === null) return '—';
-      if (usd < 0.01) return '$' + usd.toFixed(4);
-      if (usd < 1) return '$' + usd.toFixed(3);
-      return '$' + usd.toFixed(2);
-    }
-
-    function formatTokens(count) {
-      if (count === undefined || count === null) return '—';
-      if (count >= 1000000) return (count / 1000000).toFixed(1) + 'M';
-      if (count >= 1000) return (count / 1000).toFixed(1) + 'K';
-      return count.toString();
-    }
+${BROWSER_FORMATTERS}
 
     function getScoreClass(score) {
       if (score >= 90) return 'score-high';  // Green: excellent
@@ -1145,18 +1123,6 @@ export function generateHtmlReport(result: SuiteResult): string {
   </script>
 </body>
 </html>`;
-}
-
-/**
- * Escape HTML special characters
- */
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
 
 /**
