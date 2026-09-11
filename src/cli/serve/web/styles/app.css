@@ -8141,6 +8141,8 @@ a.lastrun.waiting { color: var(--cyan); }
 .agent-revision-models { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 12px; }
 .debug-prompt-button.is-open, .session-action-button.is-open { border-color: var(--cyan-border); color: var(--cyan); }
 .agent-revision-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.agent-revision-actions .hint { margin-right: auto; align-self: center; font-size: var(--font-size-micro); color: var(--muted); letter-spacing: var(--tracking-caps); }
+.agent-revision-actions .hint .kbd { display: inline-block; padding: 1px 6px; margin: 0 2px; font-size: var(--font-size-micro); border: 1px solid var(--line); border-radius: 4px; }
 .agent-revision-cancel {
   display: inline-flex;
   align-items: center;
