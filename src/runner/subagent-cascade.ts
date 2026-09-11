@@ -138,20 +138,24 @@ export const CASCADE_ORPHANED_CODE = 'CASCADE_ORPHANED';
 /** A parked manager whose failed child can be safely continued from durable history. */
 export const CASCADE_RECOVERABLE_CODE = 'CASCADE_RECOVERABLE';
 
+/** Error-message prefixes of the two model-stream failures the runner raises
+ *  after its own retry budget is spent (see `runner/model-stall.ts`). */
+const RECOVERABLE_MODEL_STREAM_PREFIXES = ['Model stream stalled:', 'Model stream connection dropped:'];
+
 /**
  * Only retry failures that happened inside a model response, after the runtime
- * had already persisted every preceding tool result. A model-stream stall can
- * leave partial text/reasoning, but rehydration turns that durable tail into
- * context for a fresh continuation turn. Do not broaden this to generic
- * EXECUTION_ERROR: tool failures and arbitrary provider errors can have
- * ambiguous external effects.
+ * had already persisted every preceding tool result. A model-stream stall or a
+ * dropped connection can leave partial text/reasoning, but rehydration turns
+ * that durable tail into context for a fresh continuation turn. Do not broaden
+ * this to generic EXECUTION_ERROR: tool failures and arbitrary provider errors
+ * can have ambiguous external effects.
  */
 export function isRecoverableCascadeFailure(
   stale: { status: string; error?: { code?: string | undefined; message?: string | undefined } | undefined }
 ): boolean {
-  return stale.status === 'error' &&
-    stale.error?.code === 'EXECUTION_ERROR' &&
-    stale.error.message?.startsWith('Model stream stalled:') === true;
+  if (stale.status !== 'error' || stale.error?.code !== 'EXECUTION_ERROR') return false;
+  const message = stale.error.message ?? '';
+  return RECOVERABLE_MODEL_STREAM_PREFIXES.some((prefix) => message.startsWith(prefix));
 }
 
 /**

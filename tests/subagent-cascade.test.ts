@@ -253,13 +253,23 @@ describe('describeStaleCascade', () => {
     expect(incomplete).not.toContain('re-run');
   });
 
-  it('offers resume only for a model-stream stall', () => {
+  it('offers resume only for a model-stream stall or a dropped model connection', () => {
     const stalled = {
       sessionId: 'leaf', agentName: 'Newsletter Pipeline', status: 'error',
       error: { code: 'EXECUTION_ERROR', message: 'Model stream stalled: no output for 120s (1 attempt)' },
     };
     expect(isRecoverableCascadeFailure(stalled)).toBe(true);
     expect(describeStaleCascade(stalled)).toContain('Resume this run');
+    const dropped = {
+      ...stalled,
+      error: { code: 'EXECUTION_ERROR', message: 'Model stream connection dropped: terminated (3 attempts)' },
+    };
+    expect(isRecoverableCascadeFailure(dropped)).toBe(true);
+    expect(describeStaleCascade(dropped)).toContain('Resume this run');
+    expect(isRecoverableCascadeFailure({
+      ...stalled,
+      error: { code: 'TOOL_ERROR', message: 'Model stream connection dropped: terminated (3 attempts)' },
+    })).toBe(false);
     expect(isRecoverableCascadeFailure({
       ...stalled,
       error: { code: 'EXECUTION_ERROR', message: 'Browser closed unexpectedly' },
