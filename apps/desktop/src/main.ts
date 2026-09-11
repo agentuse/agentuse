@@ -21,7 +21,8 @@ import {
 } from "./onboarding-state";
 import { createDesktopQuitPolicy, deferDesktopQuitAfterDrain, shouldWarnBeforeFullQuit } from "./quit-policy";
 import { shouldHideDashboardWindow } from "./dashboard-presentation";
-import { isAbandonedDesktopServer, isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, reconnectCandidates, selectServer, serverAcquisitionMode, serverUrl, type RegisteredServer } from "./runtime";
+import { isAbandonedDesktopServer, isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, reconnectCandidates, selectServer, serverAcquisitionMode, serverRegistryDirectory, serverUrl, type RegisteredServer } from "./runtime";
+import { readExternalServerTarget, writeExternalServerTarget, type ExternalServerTarget } from "./external-server-state";
 import { createAgentUseTrayIcon } from "./tray-icon";
 import { selectLoopbackPort } from "./port-selection";
 import { defaultCliLinkPath, inspectCliAvailability, loginShellPath, packagedCliLauncherPath, toggleCliLink, type CliLinkState } from "./cli-link";
@@ -74,7 +75,8 @@ let currentServer: RegisteredServer | undefined;
 // Keep external ownership sticky across a restart gap. Without this hint, a
 // one-second failed probe can make Desktop see port 12233 as unowned and bind
 // its own daemon before the external supervisor restarts `agentuse serve`.
-let disconnectedExternalServer: RegisteredServer | undefined;
+let disconnectedExternalServer: ExternalServerTarget | undefined;
+let externalServerStateLoaded = false;
 let ownedServer: ChildProcess | undefined;
 let approvalPollTimer: ReturnType<typeof setInterval> | undefined;
 let notificationStreamController: AbortController | undefined;
@@ -467,7 +469,7 @@ async function waitForServer(pid: number, apiKey?: string): Promise<RegisteredSe
   throw new Error("AgentUse server did not become ready within 15 seconds.");
 }
 
-async function waitForExternalServer(previous: RegisteredServer, apiKey?: string): Promise<RegisteredServer | undefined> {
+async function waitForExternalServer(previous: ExternalServerTarget, apiKey?: string): Promise<RegisteredServer | undefined> {
   const deadline = Date.now() + EXTERNAL_RECONNECT_TIMEOUT_MS;
   while (Date.now() < deadline) {
     for (const candidate of reconnectCandidates(listRegisteredServers(), previous)) {
@@ -523,6 +525,11 @@ async function reconcileAbandonedDesktopServers(): Promise<void> {
 }
 
 async function acquireServer(allowReplacingExternal = false): Promise<void> {
+  const statePath = join(app.getPath("userData"), "external-server.json");
+  if (!externalServerStateLoaded) {
+    disconnectedExternalServer = await readExternalServerTarget(statePath, serverRegistryDirectory());
+    externalServerStateLoaded = true;
+  }
   await reconcileAbandonedDesktopServers();
   const inheritedApiKey = process.env.AGENTUSE_API_KEY;
   if (disconnectedExternalServer && serverAcquisitionMode(disconnectedExternalServer, allowReplacingExternal) === "reconnect-external") {
@@ -539,6 +546,9 @@ async function acquireServer(allowReplacingExternal = false): Promise<void> {
 
   const existing = selectServer(listRegisteredServers());
   if (existing) {
+    // Remember ownership before probing: a registered backend can still be warming up.
+    disconnectedExternalServer = existing;
+    await writeExternalServerTarget(statePath, serverRegistryDirectory(), existing);
     const probe = await probeServer(serverUrl(existing), inheritedApiKey);
     if (probe === "unauthorized") {
       throw new Error("The running AgentUse backend requires a different API key. Set AGENTUSE_API_KEY before opening the desktop app, or restart the backend without operator authentication on loopback.");
@@ -585,7 +595,13 @@ async function acquireServer(allowReplacingExternal = false): Promise<void> {
     }
     refreshMenus();
   });
-  currentServer = await waitForServer(ownedPid);
+  try {
+    currentServer = await waitForServer(ownedPid);
+  } catch (error) {
+    await stopOwnedServerCleanly();
+    throw error;
+  }
+  await writeExternalServerTarget(statePath, serverRegistryDirectory());
   dashboardUrl = serverUrl(currentServer);
   dashboardApiKey = undefined;
   disconnectedExternalServer = undefined;
@@ -1104,8 +1120,8 @@ async function desktopSettingsState() {
   if (serverOperation === "starting") {
     return {
       status: "starting" as const,
-      title: "Starting server…",
-      detail: "Preparing the local AgentUse dashboard.",
+      title: disconnectedExternalServer ? "Waiting for external server…" : "Starting server…",
+      detail: disconnectedExternalServer ? `Waiting for your server at ${serverUrl(disconnectedExternalServer)}.` : "Preparing the local AgentUse dashboard.",
       actionLabel: "Start Server" as const,
       actionDisabled: true,
       ...commonState,
@@ -1127,8 +1143,8 @@ async function desktopSettingsState() {
   if (!activeServer) {
     return {
       status: "stopped" as const,
-      title: "Server stopped",
-      detail: "Start the server to use the local dashboard and schedules.",
+      title: disconnectedExternalServer ? "External server unavailable" : "Server stopped",
+      detail: disconnectedExternalServer ? "Waiting for your external server. Start Server lets Desktop replace it." : "Start the server to use the local dashboard and schedules.",
       actionLabel: "Start Server" as const,
       actionDisabled: false,
       ...commonState,
@@ -1463,7 +1479,19 @@ if (!app.requestSingleInstanceLock()) {
       login_item_enabled: app.getLoginItemSettings().openAtLogin,
     }, "mac_app");
     if (hiddenLaunch && onboardingReady) {
-      await ensureServer();
+      // Login services have no guaranteed startup order. Keep the menu bar app
+      // alive while PM2 (or another supervisor) brings its backend online.
+      while (!isQuitting) {
+        try {
+          await ensureServer();
+          break;
+        } catch (error) {
+          console.warn("Waiting for AgentUse backend at login:", error);
+          refreshMenus();
+          await new Promise((resolve) => setTimeout(resolve, 5_000));
+        }
+      }
+      if (isQuitting) return;
       await flushDesktopTelemetry();
       startApprovalPolling();
       startNotificationStream();
