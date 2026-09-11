@@ -10,6 +10,7 @@
  */
 import { startChangeset, type ChangesetPayload, type ChangesetSummary } from './api';
 import type { ChangesetStatus } from '../../../../agents/changeset-types';
+import type { ReasoningLevel } from '../../../../model-compatibility';
 import { changesetReviewHref } from './changeset-view';
 
 /**
@@ -44,11 +45,13 @@ export function startCreateChangeset(
   projectId: string,
   brief: CreateChangesetBrief,
   model: string,
+  reasoning?: ReasoningLevel,
 ): Promise<ChangesetPayload> {
   return startChangeset(projectId, {
     mode: 'create',
     instruction: buildCreateInstruction(brief),
     model: model.trim(),
+    ...(reasoning && { reasoning }),
   });
 }
 
@@ -58,6 +61,7 @@ export function startReviseChangeset(input: {
   target: string;
   instruction: string;
   model: string;
+  reasoning?: ReasoningLevel | undefined;
   /** The run whose transcript is the evidence, when the revise started from one. */
   originSessionId?: string | undefined;
 }): Promise<ChangesetPayload> {
@@ -65,6 +69,7 @@ export function startReviseChangeset(input: {
     mode: 'revise',
     instruction: input.instruction.trim(),
     model: input.model,
+    ...(input.reasoning && { reasoning: input.reasoning }),
     target: input.target,
     ...(input.originSessionId && { originSessionId: input.originSessionId }),
   });

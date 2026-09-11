@@ -35,6 +35,17 @@ describe('starting a create changeset', () => {
     }]);
   });
 
+  it('forwards the chosen thinking effort, and omits it when none was chosen', async () => {
+    await startCreateChangeset('support', { objective: 'Summarize new tickets' }, 'openai:gpt-5.6', 'high');
+    expect((startChangeset.mock.calls[0] as [string, Record<string, unknown>])[1].reasoning).toBe('high');
+    startChangeset.mockClear();
+    await startReviseChangeset({ projectId: 'support', target: 'agents/triage.agentuse', instruction: 'x', model: 'm', reasoning: 'low' });
+    expect((startChangeset.mock.calls[0] as [string, Record<string, unknown>])[1].reasoning).toBe('low');
+    startChangeset.mockClear();
+    await startReviseChangeset({ projectId: 'support', target: 'agents/triage.agentuse', instruction: 'x', model: 'm' });
+    expect('reasoning' in (startChangeset.mock.calls[0] as [string, Record<string, unknown>])[1]).toBe(false);
+  });
+
   it('folds a discovery idea\'s name, schedule and evidence into the instruction', () => {
     expect(buildCreateInstruction({
       name: 'Ticket triage',

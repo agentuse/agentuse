@@ -939,6 +939,8 @@ export function startChangeset(projectId: string, input: {
   mode: ChangesetMode;
   instruction: string;
   model: string;
+  /** Thinking effort for the authoring session; the server default applies when absent. */
+  reasoning?: ReasoningLevel;
   /** Revise only: the project-relative agent path being changed. */
   target?: string;
   /** Revise from a run: the session whose transcript is the evidence. */
@@ -948,6 +950,7 @@ export function startChangeset(projectId: string, input: {
     mode: input.mode,
     instruction: input.instruction,
     model: input.model,
+    ...(input.reasoning && { reasoning: input.reasoning }),
     ...(input.target && { target: input.target }),
     ...(input.originSessionId && { originSessionId: input.originSessionId }),
   });

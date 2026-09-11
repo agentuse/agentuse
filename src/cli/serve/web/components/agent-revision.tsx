@@ -256,14 +256,13 @@ export function AgentRevisionLauncher(props: {
     setError(null);
     try {
       /* Both branches now start a changeset: revising an agent can touch the
-         scripts beside it, so the review page has to be the multi-file one.
-         `reasoning` stays a local preference; the changeset endpoint has no
-         thinking-effort field yet. */
+         scripts beside it, so the review page has to be the multi-file one. */
       const payload = await startReviseChangeset({
         projectId: changesetProjectId,
         target: changesetTarget,
         instruction: instruction.trim(),
         model,
+        reasoning,
         ...(agentTarget ? {} : { originSessionId: props.context.sessionId }),
       });
       rememberChangesetToken(payload.changeset.sessionId, payload.sessionToken);

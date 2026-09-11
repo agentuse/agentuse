@@ -235,16 +235,12 @@ export function AgentCreateDialog(props: {
   // The dialog's job ends the moment the creator session exists: the review
   // page owns the wait, the log, and the review, so the operator is never held
   // in a modal while a model works.
-  //
-  // `reasoning` is still collected and still shapes the coding-agent handoff
-  // prompt, but the changeset endpoint takes no thinking-effort field yet, so
-  // it does not reach the creator session.
   const submit = async () => {
     if (!canSubmit) return;
     setBusy(true);
     setError(null);
     try {
-      const payload = await startCreateChangeset(projectId, { objective: objective.trim() }, model);
+      const payload = await startCreateChangeset(projectId, { objective: objective.trim() }, model, reasoning);
       rememberChangesetToken(payload.changeset.sessionId, payload.sessionToken);
       props.onStarted(payload.changeset);
     } catch (caught) {
