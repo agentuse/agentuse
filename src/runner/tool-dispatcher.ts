@@ -14,6 +14,7 @@ import type {
   ToolCallEventResult,
   ToolResultEvent,
 } from '../plugin/types';
+import { hasTrustedOutputSchema } from '../tools/tool-contract';
 
 export type ToolOutputArtifactWriter = (
   toolName: string,
@@ -127,9 +128,14 @@ export class ToolDispatcher {
 
   /** Tools with an AI SDK approval requirement must stay on the direct path. */
   codeModeToolNames(): string[] {
-    return [...this.tools.entries()]
+    return Object.keys(this.codeModeTools());
+  }
+
+  /** Effective executable definitions used to build Code Mode contracts. */
+  codeModeTools(): Record<string, Tool> {
+    return Object.fromEntries([...this.tools.entries()]
       .filter(([, tool]) => typeof tool.execute === 'function' && !tool.needsApproval)
-      .map(([name]) => name);
+    );
   }
 
   get(name: string): Tool | undefined {
@@ -168,6 +174,22 @@ export class ToolDispatcher {
           throw new Error(`Invalid input for tool '${toolName}': ${validation.error.message}`);
         }
         validatedInput = validation.value;
+      }
+    }
+
+    const outputContract = hasTrustedOutputSchema(tool)
+      ? aiSdk.asSchema(tool.outputSchema)
+      : undefined;
+    if (outputContract) {
+      try {
+        // Force lazy schema conversion before plugin preflight or tool execution.
+        // A malformed contract must never be discovered after a successful effect.
+        await outputContract.jsonSchema;
+      } catch (error) {
+        throw new Error(`Invalid output schema for tool '${toolName}': ${toErrorMessage(error)}`);
+      }
+      if (!outputContract.validate) {
+        throw new Error(`Trusted output schema for tool '${toolName}' has no runtime validator`);
       }
     }
 
@@ -243,6 +265,15 @@ export class ToolDispatcher {
       isError = next.isError;
     }
     if (isError) throw pluginResultError(output);
+
+    if (outputContract?.validate) {
+      const validation = await outputContract.validate(output);
+      if (!validation.success) {
+        throw new Error(
+          `Tool '${toolName}' returned a value that does not match its output schema: ${validation.error.message}`
+        );
+      }
+    }
 
     if (!options.modelFacing) return output;
     const clamped = clampToolResultForModel(output);

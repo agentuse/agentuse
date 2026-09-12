@@ -884,6 +884,7 @@ async function* executeAgentAttempt(
     dispatcher.register(CODE_EXEC_TOOL, createCodeExecTool({
       dispatcher,
       toolNames: dispatcher.codeModeToolNames(),
+      toolDefinitions: dispatcher.codeModeTools(),
       abortSignal: effectiveAbortSignal,
       ...traceHooks,
     }));

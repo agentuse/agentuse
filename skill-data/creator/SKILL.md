@@ -601,7 +601,11 @@ names like `data` instead of `values`):
   and session tracing. Use a direct tool for one operation. Use `code_exec` for
   loops, filtering, joins, branching, batching, compact aggregation, or bounded
   parallel calls. The model writes that one-off program at run time; the user
-  does not maintain a `control.py` or TypeScript helper.
+  does not maintain a `control.py` or TypeScript helper. The runtime generates
+  TypeScript declarations from effective tool schemas and rejects invalid code
+  before any nested tool starts. Built-in store results have trusted output
+  contracts; external provider and MCP results stay unknown until the model has
+  observed and narrowed their shape with runtime checks.
 
   Commit a persistent script only when logic must be reused outside this one
   agent, depends on project libraries or raw file/network/process access, or

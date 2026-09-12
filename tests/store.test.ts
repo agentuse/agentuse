@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import * as aiSdk from "ai";
 import type { Tool } from "ai";
 import { Store, createStore } from "../src/store/store";
 import { createStoreTools } from "../src/store/tools";
 import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync, symlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { hasTrustedOutputSchema } from "../src/tools/tool-contract";
 
 describe("Store", () => {
   let tempDir: string;
@@ -725,6 +727,43 @@ describe("createStoreTools", () => {
       expect(tools[name].description).toContain("compact workflow record");
       expect(tools[name].description).toContain("8 KiB");
       expect(tools[name].description).toContain("file artifacts");
+    }
+  });
+
+  it("keeps every store result inside its trusted output contract", async () => {
+    const created = await call(tools.store_create, {
+      type: "task",
+      status: "ready",
+      data: { score: 4 },
+    });
+    const id = created.id as string;
+    const cases: Array<[keyof typeof tools, Record<string, unknown>]> = [
+      ["store_create", created],
+      ["store_get", await call(tools.store_get, { id })],
+      ["store_get", await call(tools.store_get, { id: "missing" })],
+      ["store_list", await call(tools.store_list, { status: "ready" })],
+      ["store_list", await call(tools.store_list, { countOnly: true })],
+      ["store_list", await call(tools.store_list, { since: "not-a-window" })],
+      ["store_update", await call(tools.store_update, { id, title: "Updated" })],
+      ["store_update_if", await call(tools.store_update_if, {
+        id,
+        if: { status: "missing" },
+        update: { status: "claimed" },
+      })],
+      ["store_claim", await call(tools.store_claim, {
+        status: "ready",
+        update: { status: "claimed" },
+      })],
+      ["store_delete", await call(tools.store_delete, { id })],
+      ["store_delete", await call(tools.store_delete, { id: "missing" })],
+    ];
+
+    for (const [name, output] of cases) {
+      const tool = tools[name];
+      expect(hasTrustedOutputSchema(tool)).toBe(true);
+      const validate = aiSdk.asSchema(tool.outputSchema).validate;
+      expect(validate).toBeDefined();
+      expect((await validate!(output)).success).toBe(true);
     }
   });
 

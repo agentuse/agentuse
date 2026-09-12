@@ -95,6 +95,9 @@ importers:
       tree-sitter-bash:
         specifier: ^0.25.1
         version: 0.25.1
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.2
       ulid:
         specifier: ^3.0.1
         version: 3.0.1
@@ -129,9 +132,6 @@ importers:
       preact-render-to-string:
         specifier: ^6.7.0
         version: 6.7.0(preact@10.29.2)
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.2
     optionalDependencies:
       '@aws-sdk/credential-providers':
         specifier: 3.1034.0

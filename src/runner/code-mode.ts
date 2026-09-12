@@ -5,6 +5,13 @@ import { z } from 'zod';
 import type { Tool } from 'ai';
 import type { ToolDispatcher } from './tool-dispatcher';
 import { toErrorMessage } from '../utils/error-message';
+import {
+  buildCodeModeToolContracts,
+  buildCodeModeToolContractsSync,
+  codeModeDeclarations,
+  codeModeQuickIndex,
+} from './code-mode-contracts';
+import { typecheckCodeMode } from './code-mode-typecheck';
 
 export const CODE_EXEC_TOOL = 'code_exec';
 export const CODE_MODE_ENV = 'AGENTUSE_CODE_MODE';
@@ -55,6 +62,12 @@ export interface NestedToolTrace {
 export interface CodeModeOptions {
   dispatcher: Pick<ToolDispatcher, 'dispatch'>;
   toolNames: string[];
+  /** Effective tool definitions used to generate run-scoped TypeScript declarations. */
+  toolDefinitions?: Record<string, Tool>;
+  /** Precomputed declarations when the enclosing code_exec tool owns the catalog. */
+  declarations?: string;
+  /** Low-level test escape hatch. The model-facing code_exec tool never disables preflight. */
+  typecheck?: boolean;
   parentCallId: string;
   abortSignal?: AbortSignal;
   limits?: Partial<CodeModeLimits>;
@@ -176,6 +189,12 @@ export async function executeCodeMode(source: string, options: CodeModeOptions):
 
   const eligible = codeModeEligibleToolNames(options.toolNames);
   const eligibleSet = new Set(eligible);
+  if (options.typecheck !== false) {
+    const declarations = options.declarations ?? codeModeDeclarations(
+      await buildCodeModeToolContracts(options.toolDefinitions ?? {}, eligible)
+    );
+    await typecheckCodeMode(source, declarations, limits.memoryBytes);
+  }
   const compiled = await compileTypeScript(source);
   const quickJS = await getQuickJS();
   const runtime = quickJS.newRuntime();
@@ -381,17 +400,21 @@ export async function executeCodeMode(source: string, options: CodeModeOptions):
 export function createCodeExecTool(options: {
   dispatcher: Pick<ToolDispatcher, 'dispatch'>;
   toolNames: string[];
+  toolDefinitions?: Record<string, Tool>;
   abortSignal?: AbortSignal;
   onNestedToolStart?: CodeModeOptions['onNestedToolStart'];
   onNestedToolFinish?: CodeModeOptions['onNestedToolFinish'];
 }): Tool {
   const eligible = codeModeEligibleToolNames(options.toolNames);
+  const promptContracts = buildCodeModeToolContractsSync(options.toolDefinitions ?? {}, eligible);
+  const quickIndex = codeModeQuickIndex(promptContracts);
   return {
     description:
       'Run isolated TypeScript for deterministic loops, filtering, branching, batching, joins, and parallel tool calls. ' +
       'The program has no filesystem, network, environment, process, package, or import access. ' +
       'Call permitted tools as await tools.<name>({ ... }) using the same input object as a direct tool call, then return one JSON-serializable result. ' +
-      `Available nested tools: ${eligible.length > 0 ? eligible.join(', ') : '(none)'}.`,
+      'Code is strictly type-checked before any nested tool starts. For `-> ?` outputs, do not guess fields: return the raw value, observe it, then narrow it with runtime checks in a later code_exec before dependent logic. ' +
+      `Available nested tools: ${eligible.length > 0 ? eligible.join(', ') : '(none)'}.\n\n${quickIndex}`,
     inputSchema: z.object({
       code: z.string().min(1).max(DEFAULT_CODE_MODE_LIMITS.sourceChars)
         .describe('TypeScript function body. Top-level await and return are supported. No imports.'),
@@ -406,6 +429,7 @@ export function createCodeExecTool(options: {
       return executeCodeMode(code, {
         dispatcher: options.dispatcher,
         toolNames: eligible,
+        ...(options.toolDefinitions && { toolDefinitions: options.toolDefinitions }),
         parentCallId: callOptions?.toolCallId ?? CODE_EXEC_TOOL,
         ...(abortSignal && { abortSignal }),
         ...(options.onNestedToolStart && { onNestedToolStart: options.onNestedToolStart }),

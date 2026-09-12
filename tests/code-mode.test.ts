@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
 import { mkdtemp, readFile, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -12,6 +12,7 @@ import {
 } from '../src/runner/code-mode';
 import { ToolDispatcher, ToolDispatchDeniedError } from '../src/runner/tool-dispatcher';
 import { EffectWAL } from '../src/runner/effect-wal';
+import { trustedOutputTool } from '../src/tools/tool-contract';
 
 describe('Code Mode', () => {
   it('is default-on and can be disabled only by runtime policy', () => {
@@ -48,6 +49,13 @@ describe('Code Mode', () => {
     `, {
       dispatcher,
       toolNames: ['double'],
+      toolDefinitions: {
+        double: trustedOutputTool({
+          inputSchema: z.object({ value: z.number() }),
+          outputSchema: z.object({ value: z.number() }),
+          execute: async () => ({ value: 0 }),
+        }),
+      },
       parentCallId: 'parent',
     });
 
@@ -95,6 +103,7 @@ describe('Code Mode', () => {
       dispatcher: { dispatch: async () => null },
       toolNames: [],
       parentCallId: 'isolation',
+      typecheck: false,
     });
 
     expect(output).toEqual({
@@ -251,12 +260,90 @@ describe('Code Mode', () => {
   });
 
   it('is exposed by default and documents the resolved nested catalog', () => {
+    const storeList = trustedOutputTool({
+      inputSchema: z.object({ status: z.string().optional() }),
+      outputSchema: z.object({ success: z.literal(true), items: z.array(z.object({ id: z.string() })) }),
+      execute: async () => ({ success: true as const, items: [] }),
+    });
     const tool = createCodeExecTool({
       dispatcher: { dispatch: async () => null },
       toolNames: ['store_list', 'await_human'],
+      toolDefinitions: { store_list: storeList },
     });
     expect(tool.description).toContain('Available nested tools: store_list');
     expect(tool.description).not.toContain('Available nested tools: await_human');
+    expect(tool.description).toContain('items: Array<{ id: string }>');
+    expect(tool.description).toContain('For `-> ?` outputs, do not guess fields');
+  });
+
+  it('keeps untrusted provider output schemas unknown', () => {
+    const providerTool = {
+      inputSchema: z.object({ query: z.string() }),
+      outputSchema: z.object({ invented: z.string() }),
+      execute: async () => ({ invented: 'provider result' }),
+    };
+    const tool = createCodeExecTool({
+      dispatcher: { dispatch: async () => null },
+      toolNames: ['provider_search'],
+      toolDefinitions: { provider_search: providerTool },
+    });
+
+    expect(tool.description).toContain('provider_search { query: string } -> ?');
+    expect(tool.description).not.toContain('invented: string');
+  });
+
+  it('rejects a wrong trusted output path before any nested tool starts', async () => {
+    const execute = mock(async () => ({
+      success: true as const,
+      item: { data: { performance: 7 } },
+    }));
+    const storeGet = trustedOutputTool({
+      inputSchema: z.object({ id: z.string() }),
+      outputSchema: z.union([
+        z.object({
+          success: z.literal(true),
+          item: z.object({ data: z.record(z.unknown()) }),
+        }),
+        z.object({ success: z.literal(false), error: z.string() }),
+      ]),
+      execute,
+    });
+    const dispatcher = new ToolDispatcher({ store_get: storeGet });
+
+    await expect(executeCodeMode(`
+      const ver = await tools.store_get({ id: "version-1" });
+      if (!ver.success) throw new Error(ver.error);
+      return ver.data.performance;
+    `, {
+      dispatcher,
+      toolNames: ['store_get'],
+      toolDefinitions: { store_get: storeGet },
+      parentCallId: 'typed-store-get',
+    })).rejects.toThrow(/TypeScript preflight.*Property 'data' does not exist/i);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('allows valid composition through a trusted output contract', async () => {
+    const storeGet = trustedOutputTool({
+      inputSchema: z.object({ id: z.string() }),
+      outputSchema: z.object({
+        success: z.literal(true),
+        item: z.object({ data: z.object({ performance: z.number() }) }),
+      }),
+      execute: async () => ({ success: true as const, item: { data: { performance: 7 } } }),
+    });
+    const dispatcher = new ToolDispatcher({ store_get: storeGet });
+
+    const output = await executeCodeMode(`
+      const ver = await tools.store_get({ id: "version-1" });
+      return ver.item.data.performance;
+    `, {
+      dispatcher,
+      toolNames: ['store_get'],
+      toolDefinitions: { store_get: storeGet },
+      parentCallId: 'typed-store-get-valid',
+    });
+    expect(output).toBe(7);
   });
 });
 
@@ -305,5 +392,26 @@ describe('ToolDispatcher', () => {
     await expect(dispatcher.dispatch('add', { value: 1 }, {
       toolCallId: 'blocked',
     })).rejects.toBeInstanceOf(ToolDispatchDeniedError);
+  });
+
+  it('validates trusted output after result hooks', async () => {
+    const execute = mock(async () => ({ count: 1 }));
+    const contract = trustedOutputTool({
+      inputSchema: z.object({}),
+      outputSchema: z.object({ count: z.number() }),
+      execute,
+    });
+    const dispatcher = new ToolDispatcher({ contract }, {
+      pluginEvents: {
+        async toolResult(event) {
+          return { ...event, output: { count: 'wrong' }, isError: false };
+        },
+      },
+    });
+
+    await expect(dispatcher.dispatch('contract', {}, {
+      toolCallId: 'bad-output',
+    })).rejects.toThrow(/does not match its output schema/i);
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 });
