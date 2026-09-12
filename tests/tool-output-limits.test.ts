@@ -237,13 +237,35 @@ describe('clampToolResultForModel', () => {
     expect((result.value as any).metadata.truncated).toBe(true);
   });
 
-  it('replaces oversized structured results with a bounded preview envelope', () => {
+  it('replaces oversized structured results with a bounded shape summary', () => {
     const result = clampToolResultForModel(
-      { items: Array.from({ length: 20 }, (_, i) => ({ i, text: 'z'.repeat(50) })) },
-      { maxBytes: 120, headRatio: 0.5 }
+      { success: true, count: 20, items: Array.from({ length: 20 }, (_, i) => ({ id: `item-${i}`, text: 'z'.repeat(50) })) },
+      { maxBytes: 600, headRatio: 0.5 }
     );
     expect(result.truncated).toBe(true);
-    expect((result.value as any).truncated).toBe(true);
-    expect((result.value as any).preview.length).toBeLessThan(260);
+    const value = result.value as any;
+    expect(value.truncated).toBe(true);
+    expect(value.bytes).toBeGreaterThan(600);
+    expect(value.limitBytes).toBe(600);
+    expect(value.message).toContain('code_exec');
+    expect(value.shape.kind).toBe('object');
+    expect(value.shape.keys.success).toBe(true);
+    expect(value.shape.keys.items.kind).toBe('array');
+    expect(value.shape.keys.items.length).toBe(20);
+    expect(value.shape.keys.items.itemKeys).toEqual(['id', 'text']);
+    expect(value.shape.keys.items.sample).toContain('item-0');
+    expect(JSON.stringify(value).length).toBeLessThan(600);
+  });
+
+  it('keeps the shape summary within the preview budget for wide records', () => {
+    const wide = Array.from({ length: 300 }, (_, i) => ({
+      id: `w-${i}`,
+      data: Object.fromEntries(Array.from({ length: 30 }, (_, k) => [`field${k}`, 'y'.repeat(40)])),
+    }));
+    const result = clampToolResultForModel({ items: wide }, { maxBytes: 30_720, headRatio: 0.5 });
+    expect(result.truncated).toBe(true);
+    const value = result.value as any;
+    expect(JSON.stringify(value).length).toBeLessThan(2_600);
+    expect(value.shape.keys.items.length).toBe(300);
   });
 });

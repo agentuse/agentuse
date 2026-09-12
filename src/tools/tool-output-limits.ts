@@ -281,10 +281,106 @@ export function clampToolResultForModel(
 
   return {
     truncated: true,
-    value: {
-      truncated: true,
-      message: `Tool result exceeded ${maxBytes} byte model-context limit. Use a narrower query or fetch a specific item by ID.`,
-      preview: truncateHeadTail(json, maxBytes, headRatio),
-    },
+    value: summarizeOversizedResult(value, json, maxBytes),
+  };
+}
+
+/** Bytes of the structured summary an oversized result is replaced with. */
+export const DEFAULT_OVERSIZED_PREVIEW_BYTES = 2048;
+const SAMPLE_BYTES = 768;
+const MAX_SUMMARY_KEYS = 40;
+
+export interface OversizedResultSummary {
+  truncated: true;
+  bytes: number;
+  omittedBytes: number;
+  limitBytes: number;
+  message: string;
+  shape: unknown;
+}
+
+function sampleJson(value: unknown, budget: number): string {
+  const json = stableJson(value) ?? String(value);
+  if (json.length <= budget) return json;
+  return `${trimTrailingHighSurrogate(json.slice(0, budget))}...`;
+}
+
+function jsonBytes(value: unknown): number {
+  return stableJson(value)?.length ?? 0;
+}
+
+/**
+ * Describe the shape of a value without shipping its contents: array lengths,
+ * key lists, and one bounded sample element. Depth-limited so the summary is
+ * itself small.
+ */
+function describeShape(value: unknown, depth: number): unknown {
+  if (Array.isArray(value)) {
+    const first = value[0];
+    return {
+      kind: 'array',
+      length: value.length,
+      ...(value.length > 0 && {
+        itemKeys: first && typeof first === 'object' && !Array.isArray(first)
+          ? Object.keys(first as object).slice(0, MAX_SUMMARY_KEYS)
+          : undefined,
+        sample: sampleJson(first, SAMPLE_BYTES),
+      }),
+    };
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>);
+    const keys: Record<string, unknown> = {};
+    for (const [key, child] of entries.slice(0, MAX_SUMMARY_KEYS)) {
+      if (Array.isArray(child)) {
+        keys[key] = depth > 0
+          ? describeShape(child, depth - 1)
+          : { kind: 'array', length: child.length };
+      } else if (child && typeof child === 'object') {
+        keys[key] = { kind: 'object', keys: Object.keys(child).slice(0, MAX_SUMMARY_KEYS), bytes: jsonBytes(child) };
+      } else if (typeof child === 'string' && child.length > 80) {
+        keys[key] = { kind: 'string', length: child.length, head: sampleJson(child, 80) };
+      } else {
+        keys[key] = child;
+      }
+    }
+    return {
+      kind: 'object',
+      ...(entries.length > MAX_SUMMARY_KEYS && { keyCount: entries.length }),
+      keys,
+    };
+  }
+  return sampleJson(value, SAMPLE_BYTES);
+}
+
+/**
+ * Replace an oversized structured result with a bounded description of what
+ * it was, instead of a mid-JSON cut of its first N kilobytes.
+ *
+ * The cut was the worst shape for the model: near the full cap in size,
+ * unparseable, and resent on every later turn. The summary keeps what the
+ * model actually needs to write the next narrower call: counts, keys, one
+ * sample element, and how much was dropped. The full value is still persisted
+ * as a session artifact by the dispatcher for audit.
+ */
+export function summarizeOversizedResult(
+  value: unknown,
+  json: string,
+  limitBytes: number,
+  previewBytes: number = DEFAULT_OVERSIZED_PREVIEW_BYTES,
+): OversizedResultSummary {
+  const budget = Math.min(previewBytes, limitBytes);
+  let shape = describeShape(value, 1);
+  if (jsonBytes(shape) > budget) shape = describeShape(value, 0);
+  if (jsonBytes(shape) > budget) shape = sampleJson(json, Math.max(64, budget - 256));
+  return {
+    truncated: true,
+    bytes: json.length,
+    omittedBytes: json.length,
+    limitBytes,
+    message:
+      `Result was ${json.length.toLocaleString('en-US')} bytes, over the ${limitBytes.toLocaleString('en-US')} byte model-context limit, so only its shape is shown. ` +
+      'Do not retry the same call. Narrow the query, fetch one item by ID, or in code_exec do the filtering and return only the ids, fields, counts, and decisions the next step needs.',
+    shape,
   };
 }

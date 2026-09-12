@@ -427,7 +427,7 @@ export function createCodeExecTool(options: {
       'never do that math in prose or in bash. Date, Math, JSON, and string methods are available and the clock is real. ' +
       'The program has no filesystem, network, environment, process, package, console, or import access. ' +
       'Call permitted tools as await tools.<name>({ ... }) using the same input object as a direct tool call, then return one JSON-serializable result. ' +
-      'Code is strictly type-checked before any nested tool starts. For `-> ?` outputs, do not guess fields: return the raw value, observe it, then narrow it with runtime checks in a later code_exec before dependent logic. ' +
+      'Code is strictly type-checked before any nested tool starts. For `-> ?` outputs, do not guess fields: return one element and its keys, observe, then narrow with runtime checks in a later code_exec before dependent logic. ' +
       `Available nested tools: ${eligible.length > 0 ? eligible.join(', ') : '(none)'}.\n\n${quickIndex}`,
     inputSchema: z.object({
       code: z.string().min(1).max(DEFAULT_CODE_MODE_LIMITS.sourceChars)
