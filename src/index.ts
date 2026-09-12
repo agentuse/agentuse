@@ -907,6 +907,10 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
           logger.warn(`Agent reported the run incomplete: ${result.incomplete.reason}`);
         } else if (!result.hasTextOutput) {
           logger.warn('Agent completed without producing a final response.');
+        } else if (result.complete) {
+          // report_complete is the terminal move: the step loop ends on that
+          // tool call by design, so the provider's last finish reason is
+          // 'tool-calls' even though the run delivered its outcome in full.
         } else if (result.finishReason && result.finishReason !== 'stop') {
           if (result.finishReason === 'unknown') {
             logger.warn('Agent finished without reporting a reason; output may be incomplete.');
