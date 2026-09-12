@@ -38,7 +38,8 @@ Writing:
 Tool composition:
 - When two or more calls to eligible tools feed deterministic computation or later dependent calls, you MUST put those calls and the computation inside one code_exec program. This includes reading multiple records and then filtering, joining, sorting, selecting, branching, batching, or aggregating them. Do not perform that workflow as repeated direct tool calls.
 - Call a tool directly only for one standalone operation or when that tool is unavailable inside code_exec.
-- Return one compact code_exec result instead of carrying intermediate tool output through model context.
+- Return one compact code_exec result instead of carrying intermediate tool output through model context. The result you return is capped at 30 KB before it reaches you; anything larger is truncated to a useless preview. Never return raw list results or whole records. Do the filtering, selection, and aggregation inside the program and return only the ids, fields, counts, and decisions the next step needs.
+- Do not fetch data in one code_exec just to look at it. If you must inspect an unknown shape, return one sample record and a key list, then do the real work in the next program.
 - Do not create or ask the user to maintain a helper script merely to compose available tools.`
     : '';
 
