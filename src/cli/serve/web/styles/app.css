@@ -5208,6 +5208,7 @@ a.metric-row:hover .metric-row-open { opacity: 1; }
 .page-home .runbar-swatch.ok { background: var(--green); opacity: 0.85; }
 .page-home .runbar-swatch.waiting { background: var(--amber); }
 .page-home .runbar-swatch.running { background: var(--cyan); }
+.page-home .runbar-swatch.incomplete { background: var(--amber); }
 .page-home .runbar-swatch.failed { background: var(--red); }
 
 .page-home .runbar-rows { display: flex; flex-direction: column; }
@@ -5240,6 +5241,7 @@ a.metric-row:hover .metric-row-open { opacity: 1; }
 .page-home .runbar-seg.ok { background: var(--green); opacity: 0.85; }
 .page-home .runbar-seg.waiting { background: var(--amber); }
 .page-home .runbar-seg.running { background: var(--cyan); }
+.page-home .runbar-seg.incomplete { background: var(--amber); }
 .page-home .runbar-seg.failed { background: var(--red); }
 .page-home a.runbar-row:hover .runbar-seg { filter: brightness(1.2); }
 .page-home .runbar-count {

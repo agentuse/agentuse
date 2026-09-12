@@ -295,16 +295,17 @@ interface AgentRuns {
   /** Two projects hold an agent by this name, so the row has to say which. */
   ambiguous: boolean;
   total: number;
-  counts: Record<RunTone, number>;
+  counts: Record<RunTone | 'incomplete', number>;
 }
 
 /** Bar segments, left to right. Failures sit last so position — not hue alone —
  *  separates them from the waiting segment, the pair that reads closest in
  *  light mode. Running is wedged between the two for the same reason. */
-const RUN_TONES: Array<{ tone: RunTone; label: string }> = [
+const RUN_TONES: Array<{ tone: RunTone | 'incomplete'; label: string }> = [
   { tone: 'ok', label: 'completed' },
   { tone: 'waiting', label: 'waiting' },
   { tone: 'running', label: 'running' },
+  { tone: 'incomplete', label: 'incomplete' },
   { tone: 'failed', label: 'failed' },
 ];
 
@@ -325,11 +326,11 @@ function tallyRunsByAgent(sessions: SessionRow[]): AgentRuns[] {
         project: s.project,
         ambiguous: false,
         total: 0,
-        counts: { ok: 0, waiting: 0, running: 0, failed: 0 },
+        counts: { ok: 0, waiting: 0, running: 0, incomplete: 0, failed: 0 },
       };
       byAgent.set(key, bar);
     }
-    bar.counts[runTone(s.status)]++;
+    bar.counts[isIncompleteOutcome(s.status, s.errorCode) || s.status === 'incomplete' ? 'incomplete' : runTone(s.status)]++;
     bar.total++;
   }
   const bars = [...byAgent.values()];
