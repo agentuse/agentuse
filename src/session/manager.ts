@@ -11,6 +11,11 @@ import { dehydrateSnapshotMedia, rehydrateSnapshotMedia } from './media-cache';
 import { computeSubagentActiveIds } from './subagent-active';
 import { isExecutingSessionStatus, isLiveSessionStatus } from './status';
 import { isHumanCommentDecision } from './gate-rounds';
+import {
+  parseCodeModeResultId,
+  type CodeModeResultIndexEntry,
+  type CodeModeResultReference,
+} from './code-mode-results';
 import type {
   SessionInfo,
   SessionTrigger,
@@ -77,6 +82,22 @@ interface SessionIndex {
   generation: number;
   approvalGeneration?: number;
   sessions: Record<string, SessionListSummary>;
+}
+
+interface CodeModeResultIndex {
+  version: 1;
+  results: Record<string, CodeModeResultIndexEntry>;
+}
+
+function isCodeModeResultReference(value: unknown): value is CodeModeResultReference {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const ref = value as Record<string, unknown>;
+  return typeof ref.resultId === 'string'
+    && typeof ref.tool === 'string'
+    && typeof ref.inputHash === 'string'
+    && typeof ref.inputPreview === 'string'
+    && typeof ref.bytes === 'number'
+    && typeof ref.completedAt === 'number';
 }
 
 interface ReadSessionEntriesOptions {
@@ -1009,6 +1030,94 @@ export class SessionManager {
     const sessionPath = await this.resolveSessionDir(sessionID, agentId);
     // New path structure: {messageID}/part/{partID}.json
     return readJSON<Part>(`${sessionPath}/${messageID}/part/${partID}`);
+  }
+
+  /**
+   * Add a compact lookup entry for a completed nested call. The payload itself
+   * remains in the existing part file; this index prevents results.list() from
+   * parsing every historical tool output in the session.
+   */
+  async recordCodeModeResult(
+    sessionID: string,
+    agentId: string,
+    messageId: string,
+    partId: string,
+    reference: CodeModeResultReference
+  ): Promise<void> {
+    const sessionPath = await this.resolveSessionDir(sessionID, agentId);
+    const key = `${sessionPath}/code-results.v1`;
+    await this.serializedWrite(key, async () => {
+      const existing = await readJSON<CodeModeResultIndex>(key);
+      const index: CodeModeResultIndex = existing?.version === 1 && existing.results
+        ? existing
+        : { version: 1, results: {} };
+      index.results[reference.resultId] = { ...reference, messageId, partId };
+      await writeJSON(key, index);
+      await this.touchSessionDirectory(sessionPath);
+    });
+  }
+
+  /**
+   * Read one immutable nested Code Mode result from this exact session. The
+   * opaque id contains only ULIDs for a message and part; callers never supply
+   * a path, and every identity field is revalidated before returning bytes.
+   */
+  async readCodeModeResult(sessionID: string, agentId: string, resultId: string): Promise<unknown> {
+    const location = parseCodeModeResultId(resultId);
+    if (!location) throw new Error(`RESULT_NOT_FOUND: invalid result id ${resultId}`);
+
+    let part: Part | null;
+    try {
+      part = await this.getPart(sessionID, agentId, location.messageId, location.partId);
+    } catch (error) {
+      if (error instanceof CorruptStorageError) {
+        throw new Error(`RESULT_CORRUPT: ${resultId} could not be read`);
+      }
+      throw error;
+    }
+    if (!part) throw new Error(`RESULT_EXPIRED: ${resultId} is no longer available`);
+    const storedReference = part.type === 'tool' && part.state.status === 'completed'
+      ? part.state.metadata?.codeModeResult
+      : undefined;
+    if (
+      part.type !== 'tool'
+      || part.sessionID !== sessionID
+      || part.messageID !== location.messageId
+      || part.id !== location.partId
+      || part.state.status !== 'completed'
+      || part.state.metadata?.codeMode !== true
+      || !isCodeModeResultReference(storedReference)
+      || storedReference.resultId !== resultId
+    ) {
+      throw new Error(`RESULT_NOT_FOUND: ${resultId} is not a reusable result in this session`);
+    }
+    return part.state.output;
+  }
+
+  /** Most-recent-first references only; payloads stay on disk until read. */
+  async listCodeModeResults(
+    sessionID: string,
+    agentId: string,
+    limit = 50
+  ): Promise<CodeModeResultReference[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      throw new Error('RESULT_LIST_LIMIT: limit must be an integer from 1 to 100');
+    }
+    const sessionPath = await this.resolveSessionDir(sessionID, agentId);
+    let index: CodeModeResultIndex | null;
+    try {
+      index = await readJSON<CodeModeResultIndex>(`${sessionPath}/code-results.v1`);
+    } catch (error) {
+      if (error instanceof CorruptStorageError) {
+        throw new Error('RESULT_CORRUPT: the session result index could not be read');
+      }
+      throw error;
+    }
+    if (!index || index.version !== 1 || !index.results) return [];
+    return Object.values(index.results)
+      .filter(isCodeModeResultReference)
+      .sort((left, right) => right.completedAt - left.completedAt || right.resultId.localeCompare(left.resultId))
+      .slice(0, limit);
   }
 
   /**

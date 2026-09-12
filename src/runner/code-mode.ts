@@ -15,6 +15,11 @@ import {
 } from './code-mode-contracts';
 import { typecheckCodeMode, type CodeModeSourceLocation } from './code-mode-typecheck';
 import { mapCodeModeStack } from './code-mode-source-map';
+import {
+  describeCodeModeResultFromSerialized,
+  type CodeModeResultMetadata,
+  type CodeModeResultReference,
+} from '../session/code-mode-results';
 
 export const CODE_EXEC_TOOL = 'code_exec';
 export const CODE_MODE_ENV = 'AGENTUSE_CODE_MODE';
@@ -31,6 +36,8 @@ export const DEFAULT_CODE_MODE_LIMITS = {
   sourceChars: 50_000,
   inputCharsPerCall: 256_000,
   resultCharsPerCall: 1_000_000,
+  resultReadBytes: 4_000_000,
+  resultReads: 32,
   outputChars: 1_000_000,
   consoleOutputChars: 4_096,
   timeoutMs: 15_000,
@@ -44,6 +51,8 @@ export interface CodeModeLimits {
   sourceChars: number;
   inputCharsPerCall: number;
   resultCharsPerCall: number;
+  resultReadBytes: number;
+  resultReads: number;
   outputChars: number;
   consoleOutputChars: number;
   timeoutMs: number;
@@ -58,6 +67,7 @@ export type CodeModeErrorCode =
   | 'aborted'
   | 'timeout'
   | 'output_limit_exceeded'
+  | 'result_access'
   | 'tool_execution'
   | 'runtime_error'
   | 'runtime_unavailable'
@@ -74,12 +84,15 @@ export interface CodeModeTelemetry {
   valueBytes: number;
   outputBytes: number;
   outputEntries: number;
+  resultReads: number;
+  resultReadBytes: number;
 }
 
 export interface CodeModeCompletedResult {
   status: 'completed';
   value: unknown;
   output?: CodeModeOutputEntry[];
+  reusableResults?: CodeModeResultReference[];
   telemetry: CodeModeTelemetry;
 }
 
@@ -87,6 +100,7 @@ export interface CodeModeFailedResult {
   status: 'failed';
   error: { code: CodeModeErrorCode; message: string };
   output?: CodeModeOutputEntry[];
+  reusableResults?: CodeModeResultReference[];
   telemetry: CodeModeTelemetry;
 }
 
@@ -110,8 +124,14 @@ export interface NestedToolTrace {
   input: unknown;
   output?: unknown;
   error?: string;
+  reusableResult?: CodeModeResultMetadata;
   startedAt: number;
   endedAt: number;
+}
+
+export interface CodeModeResultAccess {
+  read(resultId: string): Promise<unknown>;
+  list(limit?: number): Promise<CodeModeResultReference[]>;
 }
 
 export interface CodeModeOptions {
@@ -133,7 +153,8 @@ export interface CodeModeOptions {
   /** Shared by sibling code_exec calls created for one agent run. */
   runBudget?: CodeModeRunBudget;
   onNestedToolStart?(trace: Omit<NestedToolTrace, 'output' | 'error' | 'endedAt'>): void | Promise<void>;
-  onNestedToolFinish?(trace: NestedToolTrace): void | Promise<void>;
+  onNestedToolFinish?(trace: NestedToolTrace): CodeModeResultReference | void | Promise<CodeModeResultReference | void>;
+  resultAccess?: CodeModeResultAccess;
 }
 
 /**
@@ -192,6 +213,7 @@ interface CompletedNestedCall {
   toolName: string;
   input: string;
   output: string;
+  result?: CodeModeResultReference;
 }
 
 const COMPLETED_LEDGER_VALUE_CHARS = 256;
@@ -223,7 +245,23 @@ function partialEffectsError(error: unknown, completed: readonly CompletedNested
   }
   // This message is returned to the model as the code_exec failure. Keep the
   // ledger JSON-only so it can be used to decide whether a retry is safe.
-  return new Error(`${message}\nCompleted nested calls before failure (do not repeat these effects): ${jsonStringify(completed, 'Completed nested calls')}`);
+  const ledger = completed.map(call => ({
+    callId: call.callId,
+    toolName: call.toolName,
+    input: call.input,
+    output: call.output,
+    ...(call.result && { resultId: call.result.resultId }),
+  }));
+  return new Error(`${message}\nCompleted nested calls before failure (do not repeat these effects): ${jsonStringify(ledger, 'Completed nested calls')}`);
+}
+
+const RESULT_MANIFEST_LIMIT = 20;
+
+function reusableResults(completed: readonly CompletedNestedCall[]): CodeModeResultReference[] {
+  return completed
+    .flatMap(call => call.result ? [call.result] : [])
+    .sort((left, right) => right.completedAt - left.completedAt || right.resultId.localeCompare(left.resultId))
+    .slice(0, RESULT_MANIFEST_LIMIT);
 }
 
 const DIRECT_ONLY_TOOL_NAMES = new Set([
@@ -252,7 +290,7 @@ interface CompiledCodeModeProgram {
 }
 
 class CodeModeGuestError extends Error {
-  constructor(message: string, readonly code: 'tool_execution' | 'runtime_error') {
+  constructor(message: string, readonly code: 'tool_execution' | 'result_access' | 'runtime_error') {
     super(message);
     this.name = 'CodeModeGuestError';
   }
@@ -401,11 +439,17 @@ function throwGuestError(
   const locationFrame = sourceLocation ? `at <anonymous> (agentuse-code-mode:user.ts:${sourceLocation})` : undefined;
   const trace = locationFrame ?? mappedStack?.trim();
   const toolErrorMarker = '__AGENTUSE_TOOL_ERROR__';
+  const resultErrorMarker = '__AGENTUSE_RESULT_ERROR__';
   const isToolError = message.startsWith(toolErrorMarker);
-  const cleanMessage = isToolError ? message.slice(toolErrorMarker.length) : message;
+  const isResultError = message.startsWith(resultErrorMarker);
+  const cleanMessage = isToolError
+    ? message.slice(toolErrorMarker.length)
+    : isResultError
+      ? message.slice(resultErrorMarker.length)
+      : message;
   throw new CodeModeGuestError(
     `Code Mode failed: ${cleanMessage}${trace ? `\n${trace}` : ''}`,
-    isToolError ? 'tool_execution' : 'runtime_error',
+    isToolError ? 'tool_execution' : isResultError ? 'result_access' : 'runtime_error',
   );
 }
 
@@ -507,6 +551,8 @@ export async function executeCodeModeDetailed(
   const limits: CodeModeLimits = { ...DEFAULT_CODE_MODE_LIMITS, ...options.limits };
   const catalogSize = codeModeEligibleToolNames(options.toolNames).length;
   let callCount = 0;
+  let resultReadCount = 0;
+  let resultReadBytes = 0;
   let capturedOutput: CodeModeOutputEntry[] = [];
   const completedCalls: CompletedNestedCall[] = [];
   // Start the deadline before declaration loading and typechecking. These are
@@ -530,10 +576,12 @@ export async function executeCodeModeDetailed(
     if (error instanceof CodeModeExecutionError) return error;
     const cause = partialEffectsError(error, completedCalls);
     const fitted = fitCodeModeOutput(undefined, capturedOutput, limits.outputChars, false);
+    const reusable = reusableResults(completedCalls);
     return new CodeModeExecutionError({
       status: 'failed',
       error: { code: classifyCodeModeError(error, signal), message: cause.message },
       ...(fitted.output && { output: fitted.output }),
+      ...(reusable.length > 0 && { reusableResults: reusable }),
       telemetry: {
         catalogSize,
         nestedCalls: callCount,
@@ -541,6 +589,8 @@ export async function executeCodeModeDetailed(
         valueBytes: 0,
         outputBytes: fitted.outputBytes,
         outputEntries: fitted.output?.length ?? 0,
+        resultReads: resultReadCount,
+        resultReadBytes,
       },
     }, { cause });
   };
@@ -682,19 +732,20 @@ export async function executeCodeModeDetailed(
         });
       };
       const recordSuccessfulOutput = (output: unknown):
-        | { kind: 'binary' }
-        | { kind: 'serialized'; serialized: string }
+        | { kind: 'binary'; completed: CompletedNestedCall }
+        | { kind: 'serialized'; serialized: string; completed: CompletedNestedCall }
         | { kind: 'unavailable'; error: unknown } => {
         const inspection = inspectBinaryMedia(output);
         if (inspection.binary) {
           markEffectRecorded();
-          completedCalls.push({
+          const completed: CompletedNestedCall = {
             callId,
             toolName,
             input: ledgerPreview(inputJson),
             output: '[binary media omitted]',
-          });
-          return { kind: 'binary' };
+          };
+          completedCalls.push(completed);
+          return { kind: 'binary', completed };
         }
         if ('error' in inspection) {
           const inspectionError = new Error(
@@ -717,23 +768,24 @@ export async function executeCodeModeDetailed(
           serializationError = error;
         }
         markEffectRecorded();
-        completedCalls.push({
+        const completed: CompletedNestedCall = {
           callId,
           toolName,
           input: ledgerPreview(inputJson),
           output: serialized === undefined
             ? `[unavailable: ${safeErrorMessage(serializationError)}]`
             : ledgerPreview(serialized),
-        });
+        };
+        completedCalls.push(completed);
         return serialized === undefined
           ? { kind: 'unavailable', error: serializationError }
-          : { kind: 'serialized', serialized };
+          : { kind: 'serialized', serialized, completed };
       };
-      const notifyFinish = async (trace: NestedToolTrace): Promise<void> => {
-        if (!options.onNestedToolFinish) return;
+      const notifyFinish = async (trace: NestedToolTrace): Promise<CodeModeResultReference | undefined> => {
+        if (!options.onNestedToolFinish) return undefined;
         if (signal.aborted) throw abortError(signal);
         finishAttempted = true;
-        await raceWithAbort(Promise.resolve(options.onNestedToolFinish(trace)), signal);
+        return (await raceWithAbort(Promise.resolve(options.onNestedToolFinish(trace)), signal)) ?? undefined;
       };
       try {
         if (!eligibleSet.has(toolName)) throw new Error(`Tool '${toolName}' is unavailable in Code Mode`);
@@ -788,18 +840,28 @@ export async function executeCodeModeDetailed(
         }
         if (completion.kind === 'unavailable') throw completion.error;
         const { serialized } = completion;
-        if (serialized.length > limits.resultCharsPerCall) {
-          throw new Error(`Result from '${toolName}' exceeds the per-call Code Mode size limit`);
-        }
-        await notifyFinish({
+        const endedAt = Date.now();
+        const resultBytes = Buffer.byteLength(serialized, 'utf8');
+        const reusableResult = serialized.length <= limits.resultCharsPerCall && resultBytes <= limits.resultReadBytes
+          ? describeCodeModeResultFromSerialized({
+              serializedInput: inputJson,
+              serializedOutput: serialized,
+            })
+          : undefined;
+        const resultReference = await notifyFinish({
           parentCallId: options.parentCallId,
           callId,
           toolName,
           input,
           output,
+          ...(reusableResult && { reusableResult }),
           startedAt,
-          endedAt: Date.now(),
+          endedAt,
         });
+        if (resultReference) completion.completed.result = resultReference;
+        if (serialized.length > limits.resultCharsPerCall) {
+          throw new Error(`Result from '${toolName}' exceeds the per-call Code Mode size limit`);
+        }
         settlePromise(deferred, { value: serialized });
       } catch (error) {
         recordPostEffectFailure(error);
@@ -822,6 +884,52 @@ export async function executeCodeModeDetailed(
         settlePromise(deferred, { error: message });
       } finally {
         if (!dispatchStarted) releaseNestedCall?.();
+        if (!disposed) {
+          pendingDeferreds.delete(deferred);
+          deferred.dispose();
+        }
+      }
+    })();
+    inFlight.add(operation);
+    void operation.finally(() => inFlight.delete(operation));
+    return deferred.handle;
+  });
+
+  const resultBridge = context.newFunction('__agentuseResult', (operationHandle, argumentHandle) => {
+    const deferred = context.newPromise();
+    pendingDeferreds.add(deferred);
+    const operationName = context.getString(operationHandle);
+    const argument = context.getString(argumentHandle);
+    const operation = (async () => {
+      try {
+        let value: unknown;
+        if (operationName === 'list') {
+          value = options.resultAccess ? await options.resultAccess.list(50) : [];
+        } else if (operationName === 'read') {
+          if (!options.resultAccess) {
+            throw new Error('RESULTS_UNAVAILABLE: this Code Mode invocation has no durable session');
+          }
+          if (resultReadCount >= limits.resultReads) {
+            throw new Error(`RESULT_TOO_LARGE: Code Mode permits at most ${limits.resultReads} result reads per program`);
+          }
+          value = await options.resultAccess.read(argument);
+        } else {
+          throw new Error(`RESULT_OPERATION_INVALID: unsupported results operation ${operationName}`);
+        }
+
+        const serialized = jsonStringify(value, 'Stored Code Mode result');
+        if (operationName === 'read') {
+          const bytes = Buffer.byteLength(serialized, 'utf8');
+          if (serialized.length > limits.resultCharsPerCall || resultReadBytes + bytes > limits.resultReadBytes) {
+            throw new Error('RESULT_TOO_LARGE: stored result exceeds the Code Mode read budget');
+          }
+          resultReadCount++;
+          resultReadBytes += bytes;
+        }
+        settlePromise(deferred, { value: serialized });
+      } catch (error) {
+        settlePromise(deferred, { error: safeErrorMessage(error) });
+      } finally {
         if (!disposed) {
           pendingDeferreds.delete(deferred);
           deferred.dispose();
@@ -856,6 +964,7 @@ export async function executeCodeModeDetailed(
   try {
   try {
     context.setProp(context.global, '__agentuseCall', bridge);
+    context.setProp(context.global, '__agentuseResult', resultBridge);
     context.setProp(context.global, '__agentuseRecordUnhandled', recordUnhandled);
     context.setProp(context.global, '__agentuseMarkUnhandledObserved', markUnhandledObserved);
     const catalogDefinitions = catalogContracts.map(contract => ({
@@ -868,6 +977,7 @@ export async function executeCodeModeDetailed(
     const preludeResult = context.evalCode(`
       (() => {
         const call = globalThis.__agentuseCall;
+        const resultCall = globalThis.__agentuseResult;
         const recordUnhandled = globalThis.__agentuseRecordUnhandled;
         const markUnhandledObserved = globalThis.__agentuseMarkUnhandledObserved;
         const names = ${JSON.stringify(eligible)};
@@ -1155,7 +1265,31 @@ export async function executeCodeModeDetailed(
           configurable: false,
           enumerable: true,
         });
+        const invokeResult = (operation, argument = '') => new TrackedPromise((resolve, reject) => {
+          resultCall(operation, argument).then((envelope) => {
+            try {
+              const payload = JSON.parse(envelope);
+              if (!payload.ok) { reject(new Error('__AGENTUSE_RESULT_ERROR__' + payload.error)); return; }
+              resolve(JSON.parse(payload.value));
+            } catch (error) { reject(error); }
+          }, reject);
+        });
+        Object.defineProperty(globalThis, 'results', {
+          value: Object.freeze({
+            read: (resultId) => {
+              if (typeof resultId !== 'string' || resultId.length === 0) {
+                return TrackedPromise.reject(new TypeError('results.read resultId must be a non-empty string'));
+              }
+              return invokeResult('read', resultId);
+            },
+            list: () => invokeResult('list'),
+          }),
+          writable: false,
+          configurable: false,
+          enumerable: true,
+        });
         delete globalThis.__agentuseCall;
+        delete globalThis.__agentuseResult;
         delete globalThis.__agentuseRecordUnhandled;
         delete globalThis.__agentuseMarkUnhandledObserved;
         function dynamicCodeUnavailable() {
@@ -1252,10 +1386,12 @@ export async function executeCodeModeDetailed(
     }
     capturedOutput = takeGuestOutput();
     const fitted = fitCodeModeOutput(result, capturedOutput, limits.outputChars);
+    const reusable = reusableResults(completedCalls);
     return {
       status: 'completed',
       value: result,
       ...(fitted.output && { output: fitted.output }),
+      ...(reusable.length > 0 && { reusableResults: reusable }),
       telemetry: {
         catalogSize,
         nestedCalls: callCount,
@@ -1263,6 +1399,8 @@ export async function executeCodeModeDetailed(
         valueBytes: fitted.valueBytes,
         outputBytes: fitted.outputBytes,
         outputEntries: fitted.output?.length ?? 0,
+        resultReads: resultReadCount,
+        resultReadBytes,
       },
     };
   } finally {
@@ -1336,6 +1474,7 @@ export async function executeCodeModeDetailed(
     pendingDeferreds.clear();
     promiseHandle?.dispose();
     bridge.dispose();
+    resultBridge.dispose();
     recordUnhandled.dispose();
     markUnhandledObserved.dispose();
     context.dispose();
@@ -1366,6 +1505,7 @@ export function createCodeExecTool(options: {
   limits?: Partial<CodeModeLimits>;
   onNestedToolStart?: CodeModeOptions['onNestedToolStart'];
   onNestedToolFinish?: CodeModeOptions['onNestedToolFinish'];
+  resultAccess?: CodeModeResultAccess;
 }): Tool {
   const eligible = codeModeEligibleToolNames(options.toolNames);
   const promptContracts = buildCodeModeToolContractsSync(options.toolDefinitions ?? {}, eligible);
@@ -1391,6 +1531,7 @@ export function createCodeExecTool(options: {
       'The program has no filesystem, network, environment, process, package, or import access. Dynamic code construction through eval or Function constructors is unavailable. ' +
       'Call permitted tools as await tools.<name>({ ... }) using the same input object as a direct tool call. Await or return every async operation; detached async work is rejected during preflight. ' +
       'When a needed tool is absent from the quick index, use await catalog.search(query), call handle.describe(), or inspect API.list("tools") and API.read("tools/<name>.d.ts") in a first code_exec. Catalog handles are callable and use the same dispatch policy as tools.<name>. ' +
+      'Completed JSON nested tool calls within the read limits are recorded as same-session immutable results. The response lists recent reusableResults; use await results.read(resultId) in a later code_exec instead of repeating the call, or await results.list() to recover recent references after context compaction. Reuse an earlier read only when its freshness is still valid. ' +
       'Return one JSON-serializable result. You may also emit multiple ordered, bounded progress entries with text(value), json(value), or console.log/info/warn/error/debug. ' +
       'Code is strictly type-checked before any nested tool starts. For `-> ?` outputs, do not guess fields: return one element and its keys, observe, then narrow with runtime checks in a later code_exec before dependent logic. ' +
       `Nested tool catalog: ${catalogSummary}.\n\n${quickIndex}`,
@@ -1417,6 +1558,7 @@ export function createCodeExecTool(options: {
           ...(abortSignal && { abortSignal }),
           ...(options.onNestedToolStart && { onNestedToolStart: options.onNestedToolStart }),
           ...(options.onNestedToolFinish && { onNestedToolFinish: options.onNestedToolFinish }),
+          ...(options.resultAccess && { resultAccess: options.resultAccess }),
         });
       } catch (error) {
         // The model-facing tool contract is always a structured result. Keep

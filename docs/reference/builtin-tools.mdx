@@ -39,7 +39,20 @@ tools can publish trusted output contracts, and the built-in store tools do, so
 misspelled inputs, unhandled result variants, and invalid result paths fail
 before an effect occurs. External provider and MCP output schemas remain
 untrusted and appear as `-> ?`. Inspect an unknown result first, then narrow it
-with runtime checks before using its fields in a later program.
+with runtime checks before using its fields in a later program. Completed JSON
+nested calls within the read limits are also exposed as immutable, same-session
+result references:
+
+```typescript
+const previous = await results.read("result_...");
+const recent = await results.list();
+```
+
+Use these references for immediate retries and continued analysis instead of
+repeating the same tool call. Refresh the tool when current external state is
+required or an intervening mutation may have invalidated the earlier result.
+References never cross session or subagent boundaries and do not replay tools
+or side effects.
 
 Code Mode has no direct filesystem, network, environment, process, package,
 shell, or import access. Approval gates, gated Bash, outcome tools, internal

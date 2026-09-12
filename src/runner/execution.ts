@@ -64,8 +64,10 @@ import {
   codeModeEligibleToolNames,
   createCodeExecTool,
   isCodeModeEnabled,
+  type CodeModeResultAccess,
   type NestedToolTrace,
 } from './code-mode';
+import { codeModeResultId, type CodeModeResultReference } from '../session/code-mode-results';
 import { injectIntentParam } from './tool-intent';
 import { stripInlineMediaData } from '../tools/media.js';
 import { messagesContainInlineMedia } from '../session/media-cache.js';
@@ -585,14 +587,15 @@ function buildToolOutputArtifactWriter(options: {
   };
 }
 
-function buildCodeModeTraceHooks(options: {
+export function buildCodeModeTraceHooks(options: {
   sessionManager?: SessionManager;
   sessionID?: string;
   agentId?: string;
   messageID?: string;
 }): {
   onNestedToolStart?: (trace: Omit<NestedToolTrace, 'output' | 'error' | 'endedAt'>) => Promise<void>;
-  onNestedToolFinish?: (trace: NestedToolTrace) => Promise<void>;
+  onNestedToolFinish?: (trace: NestedToolTrace) => Promise<CodeModeResultReference | void>;
+  resultAccess?: CodeModeResultAccess;
 } {
   if (!options.sessionManager || !options.sessionID || !options.agentId || !options.messageID) return {};
   const partIds = new Map<string, Promise<string | undefined>>();
@@ -624,12 +627,25 @@ function buildCodeModeTraceHooks(options: {
     onNestedToolFinish: async (trace) => {
       const partId = await partIds.get(trace.callId);
       if (!partId) return;
+      const resultId = codeModeResultId(messageID, partId);
+      const resultReference = trace.error === undefined && trace.reusableResult
+        ? {
+            resultId,
+            tool: trace.toolName,
+            ...trace.reusableResult,
+            completedAt: trace.endedAt,
+          }
+        : undefined;
       const state = trace.error === undefined
         ? {
             status: 'completed' as const,
             input: trace.input,
             output: stripInlineMediaData(trace.output),
-            metadata: { parentCallId: trace.parentCallId, codeMode: true },
+            metadata: {
+              parentCallId: trace.parentCallId,
+              codeMode: true,
+              ...(resultReference && { codeModeResult: resultReference }),
+            },
             time: { start: trace.startedAt, end: trace.endedAt },
           }
         : {
@@ -641,11 +657,20 @@ function buildCodeModeTraceHooks(options: {
           };
       try {
         await manager.updatePart(sessionID, agentId, messageID, partId, { state });
+        if (resultReference) {
+          await manager.recordCodeModeResult(sessionID, agentId, messageID, partId, resultReference);
+          return resultReference;
+        }
       } catch (error) {
         logger.debug(`Failed to complete nested Code Mode tool call: ${toErrorMessage(error)}`);
       } finally {
         partIds.delete(trace.callId);
       }
+      return undefined;
+    },
+    resultAccess: {
+      read: (resultId) => manager.readCodeModeResult(sessionID, agentId, resultId),
+      list: (limit) => manager.listCodeModeResults(sessionID, agentId, limit),
     },
   };
 }

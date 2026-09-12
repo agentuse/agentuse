@@ -41,10 +41,14 @@ describe('autonomous agent system prompt', () => {
     expect(enabled).toContain('reading multiple records and then filtering, joining, sorting, selecting, branching, batching, or aggregating them');
     expect(enabled).toContain('Call a tool directly only when it is separately visible');
     expect(enabled).toContain('require suspension, approval, binary handling, provider-side execution, or outcome submission');
-    expect(enabled).toContain('Any result over 30,720 bytes is replaced by a shape summary');
+    expect(enabled).toContain('Any model-facing result over 30,720 bytes is replaced by a shape summary');
     expect(enabled).toContain('never raw lists or whole records');
-    expect(enabled).toContain('return Object.keys(x) and one element, never the raw value');
-    expect(enabled).toContain('A store record is typically 2 to 5 KB');
+    expect(enabled).toContain('Completed JSON nested calls within the read limits are listed as reusableResults');
+    expect(enabled).toContain('use results.read(resultId)');
+    expect(enabled).toContain('results.list() after context compaction');
+    expect(enabled).toContain('call the tool again when current state is required');
+    expect(enabled).toContain('return Object.keys(x) and one element');
+    expect(enabled).toContain("read that call's saved result in the next program instead of repeating the tool");
     expect(enabled).toContain('Do not create or ask the user to maintain a helper script');
     expect(enabled).toContain('shell artifact, commands or scripts may contain the calculations the artifact itself needs');
     expect(disabled).not.toContain('Tool composition:');
@@ -56,7 +60,7 @@ describe('autonomous agent system prompt', () => {
     process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES = '4096';
     try {
       const prompt = buildAutonomousAgentPrompt('Monday, July 29, 2026', false, true);
-      expect(prompt).toContain('Any result over 4,096 bytes is replaced by a shape summary');
+      expect(prompt).toContain('Any model-facing result over 4,096 bytes is replaced by a shape summary');
     } finally {
       if (previous === undefined) delete process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES;
       else process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES = previous;

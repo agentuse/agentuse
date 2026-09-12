@@ -79,6 +79,180 @@ describe('Code Mode', () => {
     ]);
   });
 
+  it('exposes completed nested calls and reads their values in a later program', async () => {
+    const resultId = 'result_01J00000000000000000000000_01J00000000000000000000001';
+    const stored = { items: [{ id: 'a', score: 2 }, { id: 'b', score: 7 }] };
+    const toolDefinitions = {
+      load: trustedOutputTool({
+        inputSchema: z.object({ scope: z.string() }),
+        outputSchema: z.object({
+          items: z.array(z.object({ id: z.string(), score: z.number() })),
+        }),
+        execute: async () => stored,
+      }),
+    };
+
+    const first = await executeCodeModeDetailed(`
+      const loaded = await tools.load({ scope: "ready" });
+      return loaded.items.length;
+    `, {
+      dispatcher: { dispatch: async () => stored },
+      toolNames: ['load'],
+      toolDefinitions,
+      parentCallId: 'first-program',
+      onNestedToolFinish: async trace => trace.error === undefined && trace.reusableResult ? {
+        resultId,
+        tool: trace.toolName,
+        ...trace.reusableResult,
+        completedAt: trace.endedAt,
+      } : undefined,
+    });
+
+    expect(first.reusableResults).toEqual([expect.objectContaining({
+      resultId,
+      tool: 'load',
+      inputPreview: '{"scope":"ready"}',
+      bytes: expect.any(Number),
+    })]);
+
+    const second = await executeCodeModeDetailed(`
+      const previous = await results.read("${resultId}");
+      if (!previous || typeof previous !== "object" || !("items" in previous) || !Array.isArray(previous.items)) {
+        throw new Error("stored result has no items");
+      }
+      return previous.items.filter((row): row is { id: string; score: number } =>
+        !!row && typeof row === "object" && "score" in row && typeof row.score === "number" && row.score >= 5
+      );
+    `, {
+      dispatcher: { dispatch: async () => { throw new Error('tool should not be repeated'); } },
+      toolNames: [],
+      parentCallId: 'second-program',
+      resultAccess: {
+        read: async id => {
+          expect(id).toBe(resultId);
+          return stored;
+        },
+        list: async () => first.reusableResults ?? [],
+      },
+    });
+
+    expect(second.value).toEqual([{ id: 'b', score: 7 }]);
+    expect(second.telemetry.resultReads).toBe(1);
+    expect(second.telemetry.resultReadBytes).toBeGreaterThan(0);
+  });
+
+  it('lists reusable results without loading their payloads', async () => {
+    const reference = {
+      resultId: 'result_01J00000000000000000000000_01J00000000000000000000001',
+      tool: 'load',
+      inputHash: 'abc123',
+      inputPreview: '{}',
+      bytes: 42,
+      completedAt: 1,
+    };
+    const result = await executeCodeModeDetailed(`
+      const available = await results.list();
+      return available.map(item => ({ id: item.resultId, tool: item.tool }));
+    `, {
+      dispatcher: { dispatch: async () => null },
+      toolNames: [],
+      parentCallId: 'list-results',
+      resultAccess: {
+        read: async () => null,
+        list: async () => [reference],
+      },
+    });
+
+    expect(result.value).toEqual([{ id: reference.resultId, tool: 'load' }]);
+    expect(result.telemetry.resultReads).toBe(0);
+  });
+
+  it('classifies missing and oversized stored results as result access failures', async () => {
+    for (const scenario of [
+      {
+        read: async () => { throw new Error('RESULT_EXPIRED: result is no longer available'); },
+        limits: {},
+        message: 'RESULT_EXPIRED',
+      },
+      {
+        read: async () => ({ body: 'x'.repeat(200) }),
+        limits: { resultReadBytes: 100 },
+        message: 'RESULT_TOO_LARGE',
+      },
+    ]) {
+      let caught: unknown;
+      try {
+        await executeCodeModeDetailed('return results.read("result-id");', {
+          dispatcher: { dispatch: async () => null },
+          toolNames: [],
+          parentCallId: 'stored-result-error',
+          resultAccess: { read: scenario.read, list: async () => [] },
+          limits: scenario.limits,
+        });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(CodeModeExecutionError);
+      expect((caught as CodeModeExecutionError).result.error).toEqual(expect.objectContaining({
+        code: 'result_access',
+        message: expect.stringContaining(scenario.message),
+      }));
+    }
+  });
+
+  it('returns recovery handles when a program fails after a completed nested call', async () => {
+    const resultId = 'result_01J00000000000000000000000_01J00000000000000000000001';
+    let caught: unknown;
+    try {
+      await executeCodeModeDetailed(`
+        await tools.load({});
+        throw new Error("later computation failed");
+      `, {
+        dispatcher: { dispatch: async () => ({ rows: [1, 2, 3] }) },
+        toolNames: ['load'],
+        parentCallId: 'partial-failure',
+        onNestedToolFinish: async trace => trace.error === undefined && trace.reusableResult ? {
+          resultId,
+          tool: trace.toolName,
+          ...trace.reusableResult,
+          completedAt: trace.endedAt,
+        } : undefined,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(CodeModeExecutionError);
+    const failure = (caught as CodeModeExecutionError).result;
+    expect(failure.reusableResults).toEqual([
+      expect.objectContaining({ resultId, tool: 'load' }),
+    ]);
+    expect(failure.error.message).toContain(resultId);
+  });
+
+  it('does not advertise results that exceed the reusable read limits', async () => {
+    let reusableResultSeen = false;
+    let caught: unknown;
+    try {
+      await executeCodeModeDetailed('return tools.load({});', {
+        dispatcher: { dispatch: async () => ({ body: 'x'.repeat(200) }) },
+        toolNames: ['load'],
+        parentCallId: 'oversized-result',
+        limits: { resultCharsPerCall: 100 },
+        onNestedToolFinish: async trace => {
+          reusableResultSeen = trace.reusableResult !== undefined;
+        },
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(CodeModeExecutionError);
+    expect((caught as CodeModeExecutionError).result.error.message).toContain('per-call Code Mode size limit');
+    expect((caught as CodeModeExecutionError).result.reusableResults).toBeUndefined();
+    expect(reusableResultSeen).toBe(false);
+  });
+
   it('returns structured status, ordered outputs, and telemetry', async () => {
     const result = await executeCodeModeDetailed(`
       text("started");
@@ -106,6 +280,8 @@ describe('Code Mode', () => {
         valueBytes: 1,
         outputBytes: expect.any(Number),
         outputEntries: 3,
+        resultReads: 0,
+        resultReadBytes: 0,
       },
     });
   });
@@ -173,6 +349,8 @@ describe('Code Mode', () => {
       catalogSize: 0,
       nestedCalls: 0,
       outputEntries: 1,
+      resultReads: 0,
+      resultReadBytes: 0,
     }));
   });
 
@@ -196,6 +374,8 @@ describe('Code Mode', () => {
         catalogSize: 0,
         nestedCalls: 0,
         outputEntries: 1,
+        resultReads: 0,
+        resultReadBytes: 0,
       }),
     }));
   });
