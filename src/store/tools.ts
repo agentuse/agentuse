@@ -387,7 +387,9 @@ export function createStoreTools(store: Store): Record<string, Tool> {
           success: true,
           store: storeName,
           id: item.id,
-          item: fields ? projectItem(item, { fields }) : item,
+          // An empty list means "no projection": return the full payload rather
+          // than an item with no data, which the output contract rejects.
+          item: fields && fields.length > 0 ? projectItem(item, { fields }) : item,
         };
       },
     }),

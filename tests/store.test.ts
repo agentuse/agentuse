@@ -730,6 +730,15 @@ describe("createStoreTools", () => {
     }
   });
 
+  it("returns the full payload from store_get when fields is empty", async () => {
+    const created = await call(tools.store_create, { data: { a: 1, b: 2 } });
+    const id = created.id as string;
+    const full = await call(tools.store_get, { id, fields: [] });
+    expect((full.item as { data: unknown }).data).toEqual({ a: 1, b: 2 });
+    const narrowed = await call(tools.store_get, { id, fields: ["b"] });
+    expect((narrowed.item as { data: unknown }).data).toEqual({ b: 2 });
+  });
+
   it("keeps every store result inside its trusted output contract", async () => {
     const created = await call(tools.store_create, {
       type: "task",
@@ -740,6 +749,8 @@ describe("createStoreTools", () => {
     const cases: Array<[keyof typeof tools, Record<string, unknown>]> = [
       ["store_create", created],
       ["store_get", await call(tools.store_get, { id })],
+      ["store_get", await call(tools.store_get, { id, fields: [] })],
+      ["store_get", await call(tools.store_get, { id, fields: ["score"] })],
       ["store_get", await call(tools.store_get, { id: "missing" })],
       ["store_list", await call(tools.store_list, { status: "ready" })],
       ["store_list", await call(tools.store_list, { countOnly: true })],
