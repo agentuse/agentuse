@@ -226,7 +226,15 @@ export class SessionRecorder {
     this.track(updatePromise);
   }
 
-  toolStarted(options: { callID: string; tool: string; input: unknown; startTime: number }): void {
+  toolStarted(options: {
+    callID: string;
+    tool: string;
+    /** Canonical value passed to execute. */
+    input: unknown;
+    /** Signed post-plugin value shown by approval surfaces. */
+    rawApprovedInput?: unknown;
+    startTime: number;
+  }): void {
     const binding = this.binding;
     const messageID = this.messageID;
     if (!binding || !messageID) return;
@@ -237,6 +245,7 @@ export class SessionRecorder {
       state: {
         status: 'running',
         input: options.input,
+        ...(Object.prototype.hasOwnProperty.call(options, 'rawApprovedInput') && { rawApprovedInput: options.rawApprovedInput }),
         time: { start: options.startTime },
       },
     } as any).catch((error) => {

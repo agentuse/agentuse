@@ -7,6 +7,7 @@ import { join, resolve } from 'path';
 import { createInterface, type Interface as ReadlineInterface } from 'readline';
 import { initStorage, readJSON, writeJSON } from '../src/storage';
 import { SessionManager } from '../src/session';
+import { completeApprovalValueDisplay } from '../src/utils/approval-value';
 
 async function readWorkerJson(rl: ReadlineInterface, timeoutMs = 10_000): Promise<any> {
   return await new Promise((resolve, reject) => {
@@ -92,6 +93,133 @@ describe('approval list worker', () => {
     worker?.rl.close();
     worker?.child.kill();
     worker = undefined;
+  });
+
+  it('surfaces a generic prompt fallback and reviewer after the tool output replaces the decision', async () => {
+    const originalXdgDataHome = process.env.XDG_DATA_HOME;
+    const dataHome = await mkdtemp(join(tmpdir(), 'agentuse-generic-approval-worker-'));
+    const projectRoot = join(dataHome, 'project');
+    process.env.XDG_DATA_HOME = dataHome;
+    try {
+      await initStorage(projectRoot);
+      const manager = new SessionManager();
+      const agentId = 'agents/publisher';
+      const signedRaw = { title: `prefix-${'x'.repeat(20_000)}-review-the-suffix` };
+      const signedRawDisplay = completeApprovalValueDisplay(signedRaw);
+      const canonicalDisplay = completeApprovalValueDisplay(new Map([
+        ['scheduledAt', new Date('2026-09-12T00:00:00.000Z')],
+      ]));
+      const sessionId = await manager.createSession({
+        agent: { id: agentId, name: 'Publisher', isSubAgent: false },
+        model: 'demo:test', version: 'test', config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+      const messageId = await manager.createMessage(sessionId, agentId, {
+        user: { prompt: { task: 'publish' } },
+        assistant: {
+          system: [], modelID: 'demo:test', providerID: 'demo', mode: 'build',
+          path: { cwd: projectRoot, root: projectRoot }, cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+      });
+      const partId = await manager.addPart(sessionId, agentId, messageId, {
+        type: 'tool', callID: 'publish-call', tool: 'publish',
+        state: {
+          status: 'pending',
+          input: { canonical: true },
+          rawApprovedInput: signedRaw,
+          suspendedAt: Date.now(),
+          resumePayload: {
+            kind: 'tool_approval',
+            approvalId: 'approval-publish',
+            toolCallId: 'publish-call',
+            toolName: 'publish',
+            resumeToken: 'generic-token',
+            canonicalInputDisplay: canonicalDisplay.text,
+            canonicalInputDigest: canonicalDisplay.sha256,
+            signedRawInputDisplay: signedRawDisplay.text,
+            signedRawInputDigest: signedRawDisplay.sha256,
+            channelMessage: { type: 'slack-message', channel: 'C123', ts: '1.2' },
+          },
+        },
+      } as any);
+      await manager.setSessionSuspended(sessionId, agentId);
+
+      worker = await startWorker();
+      worker.child.stdin.write(`${JSON.stringify({
+        id: 'generic-info', type: 'approval-info', projectRoot, sessionId, skipTokenCheck: true,
+      })}\n`);
+      const pending = await readWorkerJson(worker.rl);
+      expect(pending.approval).toMatchObject({
+        approvalKind: 'tool_approval',
+        prompt: 'Approve execution of publish?',
+        currentResumeToken: 'generic-token',
+      });
+      expect(pending.approval.toolApproval.canonicalInput).toContain('"__type": "Map"');
+      expect(pending.approval.toolApproval.canonicalInputDigest).toBe(canonicalDisplay.sha256);
+      expect(pending.approval.toolApproval.signedRawInput.length).toBeGreaterThan(20_000);
+      expect(pending.approval.toolApproval.signedRawInput).toContain('review-the-suffix');
+      expect(pending.approval.toolApproval.signedRawInput).not.toContain('[truncated for display]');
+      expect(pending.approval.toolApproval.signedRawInputDigest).toBe(signedRawDisplay.sha256);
+      const pendingLog = pending.approval.logs.find((entry: any) => entry.callId === 'publish-call');
+      expect(pendingLog.details.toolApproval.signedRawInput).toBe(signedRawDisplay.text);
+      expect(pendingLog.details.toolApproval.canonicalInput).toBe(canonicalDisplay.text);
+
+      await manager.updatePart(sessionId, agentId, messageId, partId, {
+        state: {
+          status: 'completed',
+          input: { canonical: true },
+          rawApprovedInput: signedRaw,
+          output: false,
+          metadata: {
+            resumePayload: {
+              kind: 'tool_approval',
+              approvalId: 'approval-publish',
+              toolCallId: 'publish-call',
+              toolName: 'publish',
+              resumeToken: 'generic-token',
+              canonicalInputDisplay: canonicalDisplay.text,
+              canonicalInputDigest: canonicalDisplay.sha256,
+              signedRawInputDisplay: signedRawDisplay.text,
+              signedRawInputDigest: signedRawDisplay.sha256,
+            },
+            approvalResponse: {
+              type: 'tool-approval-response',
+              approvalId: 'approval-publish',
+              approved: true,
+            },
+            approvalReviewer: { username: 'web-reviewer' },
+          },
+          time: { start: Date.now() - 10, end: Date.now() },
+        },
+      } as any);
+      await manager.setSessionCompleted(sessionId, agentId);
+
+      worker.child.stdin.write(`${JSON.stringify({
+        id: 'generic-list', type: 'list-approvals', projectRoot,
+      })}\n`);
+      const list = await readWorkerJson(worker.rl);
+      expect(list.approvals.find((row: any) => row.sessionId === sessionId)).toMatchObject({
+        status: 'approved',
+        prompt: 'Approve execution of publish?',
+        decisionStatus: 'approved',
+        decisionReviewer: 'web-reviewer',
+      });
+
+      worker.child.stdin.write(`${JSON.stringify({
+        id: 'generic-completed-info', type: 'approval-info', projectRoot, sessionId, skipTokenCheck: true,
+      })}\n`);
+      const completed = await readWorkerJson(worker.rl);
+      const approvalLog = completed.approval.logs.find((entry: any) => entry.callId === 'publish-call');
+      expect(approvalLog.details).toMatchObject({
+        decisionStatus: 'approved',
+        decisionReviewer: 'web-reviewer',
+      });
+    } finally {
+      if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdgDataHome;
+      await rm(dataHome, { recursive: true, force: true });
+    }
   });
 
   it('filters the durable approval projection by the session creation window', async () => {

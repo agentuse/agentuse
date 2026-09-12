@@ -40,11 +40,14 @@ export function findPendingSubagentWaitChildId(parts: any[]): string | undefined
   return typeof childId === 'string' && childId.length > 0 ? childId : undefined;
 }
 
-/** The session's pending await_human gate part (the real human gate), if any. */
+/** The session's pending human decision part, whether await_human or an SDK tool approval. */
 export function findPendingAwaitHumanPart(parts: any[]): any | undefined {
   return [...parts].reverse().find((p: any) =>
-    p?.type === 'tool' && p?.tool === 'await_human' && p?.state?.status === 'pending' &&
-    p?.state?.resumePayload?.kind === 'await_human'
+    p?.type === 'tool' && p?.state?.status === 'pending' &&
+    (
+      (p?.tool === 'await_human' && p?.state?.resumePayload?.kind === 'await_human')
+      || p?.state?.resumePayload?.kind === 'tool_approval'
+    )
   );
 }
 

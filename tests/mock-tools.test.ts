@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, mock } from "bun:test";
 import { z } from 'zod';
+import { trustedOutputTool } from '../src/tools/tool-contract';
 
 // Ensure no module mocks leak from other files
 mock.restore();
@@ -131,6 +132,57 @@ describe("wrapToolsWithLLMMock", () => {
     expect(output).toEqual({ success: true, mocked: true });
     expect(realMutation).toHaveBeenCalledTimes(0);
     expect(completeTextMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('repairs trusted mock output against its declared schema', async () => {
+    completeTextMock
+      .mockImplementationOnce(async () => '{"success":true,"mocked":true}')
+      .mockImplementationOnce(async () => '{"success":true,"id":"mock-1"}');
+    const wrapped = mod.wrapToolsWithLLMMock({ create: trustedOutputTool({
+      inputSchema: z.object({}),
+      outputSchema: z.object({ success: z.literal(true), id: z.string() }),
+      execute: async () => ({ success: true as const, id: 'real' }),
+    }) });
+    await expect((wrapped.create as any).execute({}, {}))
+      .resolves.toEqual({ success: true, id: 'mock-1' });
+    expect(completeTextMock).toHaveBeenCalledTimes(2);
+    expect((completeTextMock.mock.calls[0] as any[])[1].prompt).toContain('output schema');
+  });
+
+  it('does not reapply trusted output transforms through the dispatcher', async () => {
+    let transforms = 0;
+    const outputSchema = z.object({ value: z.number() })
+      .transform(value => ({ value: value.value + (++transforms) }));
+    completeTextMock.mockImplementation(async () => '{"value":1}');
+    const wrapped = mod.wrapToolsWithLLMMock({ transformed: trustedOutputTool({
+      inputSchema: z.object({}),
+      outputSchema,
+      execute: async () => ({ value: 1 }),
+    }) });
+    const { ToolDispatcher } = await import('../src/runner/tool-dispatcher');
+    const dispatcher = new ToolDispatcher(wrapped);
+    await expect(dispatcher.dispatch('transformed', {}, { toolCallId: 'mock-transform' }))
+      .resolves.toEqual({ value: 2 });
+    expect(transforms).toBe(1);
+  });
+
+  it('retains a prevalidated mock result through a no-op result hook', async () => {
+    let transforms = 0;
+    const outputSchema = z.object({ value: z.number() })
+      .transform(value => ({ value: value.value + (++transforms) }));
+    completeTextMock.mockImplementation(async () => '{"value":1}');
+    const wrapped = mod.wrapToolsWithLLMMock({ transformed: trustedOutputTool({
+      inputSchema: z.object({}),
+      outputSchema,
+      execute: async () => ({ value: 1 }),
+    }) });
+    const { ToolDispatcher } = await import('../src/runner/tool-dispatcher');
+    const dispatcher = new ToolDispatcher(wrapped, {
+      pluginEvents: { async toolResult(event) { return event; } },
+    });
+    await expect(dispatcher.dispatch('transformed', {}, { toolCallId: 'mock-noop-hook' }))
+      .resolves.toEqual({ value: 2 });
+    expect(transforms).toBe(1);
   });
 
   it("passes tools without an execute through unchanged", () => {

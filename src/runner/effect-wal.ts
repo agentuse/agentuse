@@ -47,11 +47,24 @@ export class EffectWAL implements EffectAuditSink {
   append(record: Record<string, unknown>): void {
     const filePath = this.filePath;
     if (!filePath) {
-      logger.debug(`[EffectWAL] dropped record (no session dir yet): ${String(record.event)}`);
+      try { logger.debug(`[EffectWAL] dropped record (no session dir yet): ${String(record?.event)}`); }
+      catch { /* hostile diagnostic input must remain harmless */ }
       return;
     }
-    const line = `${JSON.stringify({ ts: new Date().toISOString(), ...record })}\n`;
+    let line = '{"ts":"unavailable","event":"audit-serialization-failed"}\n';
     try {
+      // Build the line inside the no-throw boundary: BigInt, cycles and hostile
+      // getters in a diagnostic record must never prevent the effect itself.
+      const audited = sanitizeWALInput(record);
+      // Never spread the caller's record: spread reads accessors before the
+      // JSON boundary and used to let a hostile audit getter escape append().
+      // A JSON round trip copies ordinary small records without changing their
+      // shape; non-JSON values already have a tagged projection above.
+      const fields = audited === record ? JSON.parse(JSON.stringify(record)) : audited;
+      const payload = fields && typeof fields === 'object' && !Array.isArray(fields)
+        ? { ts: new Date().toISOString(), ...(fields as Record<string, unknown>) }
+        : { ts: new Date().toISOString(), event: 'audit-serialization-failed', record: fields };
+      line = `${JSON.stringify(payload)}\n`;
       fs.appendFileSync(filePath, line);
     } catch {
       try {
@@ -79,14 +92,63 @@ export class EffectWAL implements EffectAuditSink {
 
 /** JSON-safe copy of a tool input, capped so the journal stays readable. */
 export function sanitizeWALInput(input: unknown): unknown {
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(input) ?? 'undefined';
-  } catch {
-    serialized = String(input);
+  // Preserve ordinary JSON-compatible inputs exactly for existing consumers,
+  // but only after proving the whole graph is plain data. JSON.stringify turns
+  // nested Map/Set/typed values into `{}`, which would silently erase the very
+  // audit information this function is responsible for retaining.
+  const plainSeen = new WeakSet<object>();
+  let plainNodes = 0;
+  const isPlainJsonGraph = (value: unknown): boolean => {
+    if (++plainNodes > 10_000) return false;
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
+    if (typeof value === 'number') return Number.isFinite(value);
+    if (typeof value !== 'object' || plainSeen.has(value)) return false;
+    plainSeen.add(value);
+    if (Array.isArray(value)) return value.every(isPlainJsonGraph);
+    if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return false;
+    try {
+      return Object.values(Object.getOwnPropertyDescriptors(value)).every(descriptor =>
+        'value' in descriptor && isPlainJsonGraph(descriptor.value)
+      );
+    } catch { return false; }
+  };
+  if (isPlainJsonGraph(input)) {
+    try {
+      const direct = JSON.stringify(input);
+      if (direct !== undefined && direct.length <= MAX_INPUT_CHARS) return input;
+    } catch { /* use the tagged audit projection below */ }
   }
-  if (serialized.length <= MAX_INPUT_CHARS) return input;
-  return { __truncated: true, preview: serialized.slice(0, MAX_INPUT_CHARS) };
+  const seen = new WeakSet<object>();
+  let nodes = 0;
+  const convert = (value: unknown): unknown => {
+    if (++nodes > 10_000) return { __truncated: true, preview: '[audit value exceeded traversal limit]' };
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : { __type: 'Number', value: String(value) };
+    if (typeof value === 'bigint') return { __type: 'BigInt', value: value.toString() };
+    if (typeof value === 'undefined') return { __type: 'Undefined' };
+    if (typeof value === 'symbol' || typeof value === 'function') return { __type: typeof value };
+    if (typeof value !== 'object') return String(value);
+    if (seen.has(value)) return { __type: 'Cycle' };
+    seen.add(value);
+    try {
+      if (value instanceof Date) return { __type: 'Date', value: value.toISOString() };
+      if (value instanceof Map) return { __type: 'Map', entries: [...value].map(([k, v]) => [convert(k), convert(v)]) };
+      if (value instanceof Set) return { __type: 'Set', values: [...value].map(convert) };
+      if (ArrayBuffer.isView(value)) return { __type: value.constructor.name, values: Array.from(value as any).map(convert) };
+      if (value instanceof ArrayBuffer) return { __type: 'ArrayBuffer', bytes: Buffer.from(value).toString('base64') };
+      if (Array.isArray(value)) return value.map(convert);
+      const out: Record<string, unknown> = {};
+      for (const key of Object.keys(value)) {
+        try { out[key] = convert((value as Record<string, unknown>)[key]); }
+        catch { out[key] = { __type: 'Unreadable' }; }
+      }
+      return out;
+    } catch { return { __type: 'Unreadable' }; }
+  };
+  const output = convert(input);
+  let serialized: string;
+  try { serialized = JSON.stringify(output); } catch { return { __truncated: true, preview: '[unserializable audit value]' }; }
+  return serialized.length <= MAX_INPUT_CHARS ? output : { __truncated: true, preview: serialized.slice(0, MAX_INPUT_CHARS) };
 }
 
 /**

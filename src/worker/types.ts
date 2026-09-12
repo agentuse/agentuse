@@ -105,6 +105,15 @@ export interface LogVerifySummary {
 
 export interface ApprovalLogDetails {
   resumeToken?: string;
+  toolApproval?: {
+    approvalId: string;
+    toolName: string;
+    canonicalInput: string;
+    canonicalInputDigest?: string;
+    signedRawInput: string;
+    signedRawInputDigest?: string;
+    signature?: string;
+  };
   prompt?: string;
   /** Model-declared goal of this call (the injected `intent` parameter). */
   intent?: string;

@@ -1991,6 +1991,16 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   gap: 12px;
   align-items: start;
 }
+.log-expand-toggle {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
 .log-item:last-child { border-bottom: 0; }
 /* Align detail content under the desktop title: timestamp + marker + two gaps.
    Keeping it outside the header lets mobile details reclaim the full row. */
@@ -2022,16 +2032,15 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   animation: log-spin 700ms linear infinite;
 }
 @keyframes log-spin { to { transform: rotate(360deg); } }
-.log-item.streaming .log-marker, .log-item.running .log-marker { opacity: 1; }
-.log-item.error .log-marker, .log-item.failed .log-marker { color: var(--red); opacity: 1; }
+.log-item.streaming > .log-head .log-marker, .log-item.running > .log-head .log-marker { opacity: 1; }
+.log-item.error > .log-head .log-marker, .log-item.failed > .log-head .log-marker { color: var(--red); opacity: 1; }
 /* Colour the title too so a failed row is skimmable, not just its marker. */
-.log-item.error .log-title, .log-item.failed .log-title { color: var(--red); }
-.log-item.completed .log-marker, .log-item.approved .log-marker { color: var(--green); }
-.log-item.resuming .log-marker { color: var(--amber); }
-.log-item.expandable { cursor: pointer; }
-.log-item.expandable:hover .log-title { color: var(--cyan); }
-.log-item.expandable:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: -2px; border-radius: 6px; }
-.log-item.expandable:focus-visible .log-title { color: var(--cyan); }
+.log-item.error > .log-head .log-title, .log-item.failed > .log-head .log-title { color: var(--red); }
+.log-item.completed > .log-head .log-marker, .log-item.approved > .log-head .log-marker { color: var(--green); }
+.log-item.resuming > .log-head .log-marker { color: var(--amber); }
+.log-expand-toggle:hover .log-title { color: var(--cyan); }
+.log-expand-toggle:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: -2px; border-radius: 6px; }
+.log-expand-toggle:focus-visible .log-title { color: var(--cyan); }
 /* Pending approval gate: lifted out of the row rhythm into its own cyan-edged
    card at the end of the timeline — the ask, then the evidence, then the
    buttons, read top-down. Scoped through .page-approval-detail so the narrow
@@ -2371,16 +2380,16 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   border-color: var(--line);
   background: transparent;
 }
-.log-item.completed .tool-chip, .log-item.approved .tool-chip { border-color: var(--green-border); background: var(--green-soft); color: var(--green); }
-.log-item.running .tool-chip { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
-.log-item.error .tool-chip, .log-item.failed .tool-chip { border-color: var(--red-border); background: var(--red-soft); color: var(--red); }
+.log-item.completed > .log-head .tool-chip, .log-item.approved > .log-head .tool-chip { border-color: var(--green-border); background: var(--green-soft); color: var(--green); }
+.log-item.running > .log-head .tool-chip { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
+.log-item.error > .log-head .tool-chip, .log-item.failed > .log-head .tool-chip { border-color: var(--red-border); background: var(--red-soft); color: var(--red); }
 /* An executing tool spins amber (acting); streaming text keeps the cyan spinner. */
-.log-item.running .log-spinner { border-color: var(--amber-border); border-top-color: var(--amber); }
+.log-item.running > .log-head .log-spinner { border-color: var(--amber-border); border-top-color: var(--amber); }
 
 /* The actively-streaming entry is the live edge of the run: cyan spine, faint
    wash, and a blinking cursor at the text tail. */
 .log-item.streaming { background: var(--cyan-soft); border-left-color: var(--cyan); border-radius: 0 6px 6px 0; }
-.log-item.streaming .log-content .content-markdown > :last-child::after {
+.log-item.streaming > .log-main > .log-content .content-markdown > :last-child::after {
   content: "▍";
   margin-left: 2px;
   color: var(--cyan);
@@ -2388,17 +2397,17 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 }
 @keyframes cursor-blink { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .log-item.streaming .log-content .content-markdown > :last-child::after { animation: none; }
+  .log-item.streaming > .log-main > .log-content .content-markdown > :last-child::after { animation: none; }
 }
 /* Live thinking gets a signature only while it streams: the ✻ breathes and the
    monologue leans italic; finished reasoning stays as quiet as ever. */
-.log-item.streaming[data-log-type="reasoning"] .log-marker {
+.log-item.streaming[data-log-type="reasoning"] > .log-head .log-marker {
   color: var(--cyan);
   opacity: 1;
   animation: reasoning-breathe 2.4s ease-in-out infinite;
 }
 @keyframes reasoning-breathe { 0%, 100% { transform: scale(1); opacity: 0.7; } 50% { transform: scale(1.25); opacity: 1; } }
-.log-item.streaming[data-log-type="reasoning"] .log-content .content-markdown { font-style: italic; }
+.log-item.streaming[data-log-type="reasoning"] > .log-main > .log-content .content-markdown { font-style: italic; }
 
 /* Entries that arrive over the live stream rise in; the initial snapshot never animates. */
 @keyframes log-in { from { opacity: 0; transform: translateY(6px); } }
@@ -3330,12 +3339,13 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 .log-actions-buttons button.primary { font-weight: var(--weight-bold); }
 /* These approval-flow button styles are intentionally broad (`button`) so the
    class-less dialog buttons pick them up. Exclude the topbar's chrome buttons
-   (search palette, reload, settings) — the fixed-width .icon-btn otherwise gets
-   this rule's `padding: 0 16px` on top of `width: 30px`, crushing its content
-   box (and SVG) to zero. The exclusions sit in :where() so they add no
+   (search palette, reload, settings) and the log expansion header. The
+   fixed-width .icon-btn otherwise gets this rule's `padding: 0 16px` on top of
+   `width: 30px`, crushing its content box (and SVG) to zero; the log header
+   must retain its transparent, borderless row treatment. The exclusions sit in :where() so they add no
    specificity: bare :not() classes would outweigh `button.primary` /
    `button.danger` below and flatten Approve/Reject to the transparent base. */
-.page-approval-detail button:where(:not(.icon-btn):not(.palette-trigger)) {
+.page-approval-detail button:where(:not(.icon-btn):not(.palette-trigger):not(.log-expand-toggle)) {
   font-family: var(--sans);
   font-size: var(--font-size-supporting);
   font-weight: var(--weight-medium);
@@ -3349,8 +3359,8 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
 }
-.page-approval-detail button:hover { background: var(--panel-hover); border-color: var(--line-strong); }
-.page-approval-detail button:active { transform: translateY(1px); }
+.page-approval-detail button:not(.log-expand-toggle):hover { background: var(--panel-hover); border-color: var(--line-strong); }
+.page-approval-detail button:not(.log-expand-toggle):active { transform: translateY(1px); }
 /* Compact copy chip inside a change box; the compound selector out-specifies
    the :where()-weakened base rule above, so this size wins over 40px. */
 .approval-copy,
@@ -8682,8 +8692,8 @@ a.lastrun.waiting { color: var(--cyan); }
   .page-agents .lastrun-dot.running,
   .page-agents .lastrun-dot.waiting,
   .log-item.is-new,
-  .log-item.streaming .log-content .content-markdown > :last-child::after,
-  .log-item.streaming[data-log-type="reasoning"] .log-marker,
+  .log-item.streaming > .log-main > .log-content .content-markdown > :last-child::after,
+  .log-item.streaming[data-log-type="reasoning"] > .log-head .log-marker,
   .approval-toast,
   .approval-toast-dot,
   .live-tag::before,

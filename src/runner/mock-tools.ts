@@ -1,8 +1,14 @@
+import * as aiSdk from 'ai';
 import type { Tool } from 'ai';
 import { completeText } from '../complete-text';
 import { isEffectful } from './approval-lease';
 import { parseBashCommand } from '../tools/bash-parser';
 import { logger } from '../utils/logger';
+import {
+  hasTrustedOutputSchema,
+  isToolDispatchExecution,
+  prevalidatedTrustedOutput,
+} from '../tools/tool-contract';
 
 /**
  * LLM-mocked tool execution for testing agents without external side effects.
@@ -281,7 +287,12 @@ const MOCK_SYSTEM_PROMPT = [
   'Keep it concise but realistic and consistent with the given arguments.',
 ].join(' ');
 
-function buildMockPrompt(toolName: string, description: string, input: unknown): string {
+function buildMockPrompt(
+  toolName: string,
+  description: string,
+  input: unknown,
+  outputSchema?: unknown,
+): string {
   const lines = [`Tool name: ${toolName}`];
   if (description) lines.push(`Tool description: ${description}`);
   let argsJson: string;
@@ -290,7 +301,21 @@ function buildMockPrompt(toolName: string, description: string, input: unknown):
   } catch {
     argsJson = String(input);
   }
-  lines.push('Arguments (JSON):', argsJson, '', "Produce the tool's result now.");
+  lines.push('Arguments (JSON):', argsJson);
+  if (outputSchema !== undefined) {
+    let schemaJson: string;
+    try {
+      schemaJson = JSON.stringify(outputSchema, null, 2);
+    } catch {
+      schemaJson = String(outputSchema);
+    }
+    lines.push(
+      '',
+      'Your result MUST be valid JSON matching this output schema:',
+      schemaJson,
+    );
+  }
+  lines.push('', "Produce the tool's result now.");
   return lines.join('\n');
 }
 
@@ -367,13 +392,52 @@ function llmMockExecute(name: string, tool: Tool, mockModel: string) {
   return async (...args: unknown[]) => {
     const input = args[0];
     const execOptions = args[1] as { abortSignal?: AbortSignal } | undefined;
-    const text = await completeText(mockModel, {
-      instructions: MOCK_SYSTEM_PROMPT,
-      prompt: buildMockPrompt(name, description, input),
-      ...(execOptions?.abortSignal && { abortSignal: execOptions.abortSignal }),
-    });
-    logger.debug(`[Mock] ${name} -> LLM-generated result`);
-    return parseMockResult(text);
+    const outputContract = hasTrustedOutputSchema(tool)
+      ? aiSdk.asSchema(tool.outputSchema)
+      : undefined;
+    let schema: unknown;
+    if (outputContract) {
+      try {
+        schema = await outputContract.jsonSchema;
+      } catch (error) {
+        throw new Error(`Mock cannot use invalid output schema for '${name}': ${error instanceof Error ? error.message : String(error)}`);
+      }
+      if (!outputContract.validate) {
+        throw new Error(`Mock cannot use trusted output schema for '${name}' without a runtime validator`);
+      }
+    }
+
+    // A mock still has to honor trusted contracts. Ask with the schema, then
+    // make one explicit repair attempt before failing closed. This keeps mock
+    // mode useful without teaching callers to accept invented result shapes.
+    let lastError: string | undefined;
+    for (let attempt = 0; attempt < (outputContract ? 2 : 1); attempt += 1) {
+      const repair = lastError
+        ? `\n\nYour previous result was invalid: ${lastError}. Return a corrected JSON result only.`
+        : '';
+      const text = await completeText(mockModel, {
+        instructions: MOCK_SYSTEM_PROMPT,
+        prompt: `${buildMockPrompt(name, description, input, schema)}${repair}`,
+        ...(execOptions?.abortSignal && { abortSignal: execOptions.abortSignal }),
+      });
+      const result = parseMockResult(text);
+      if (!outputContract?.validate) {
+        logger.debug(`[Mock] ${name} -> LLM-generated result`);
+        return result;
+      }
+      const validation = await outputContract.validate(result);
+      if (validation.success) {
+        logger.debug(`[Mock] ${name} -> schema-valid LLM-generated result`);
+        // The dispatcher recognizes this wrapper and avoids applying output
+        // transforms a second time. Direct callers receive the normalized
+        // value too, matching normal AI SDK schema semantics.
+        return isToolDispatchExecution(execOptions)
+          ? prevalidatedTrustedOutput(result, validation.value, tool.outputSchema)
+          : validation.value;
+      }
+      lastError = validation.error.message;
+    }
+    throw new Error(`Mock result for '${name}' does not match its output schema: ${lastError}`);
   };
 }
 

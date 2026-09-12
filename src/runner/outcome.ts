@@ -11,7 +11,7 @@ import { aggregateToolCalls, countSteps } from '../telemetry/metrics.js';
  * `complete.headline` above whatever text the run already produced.
  */
 export const OUTCOME_NUDGE_PROMPT =
-  '[runtime] This run is ending without a declared outcome. The preceding turn ended normally: the runtime did not stop it for a deadline, error, or step limit. ' +
+  '[runtime] This run is ending without a declared outcome. The preceding turn may have reached its normal work-step limit after returning a tool result; this reserved outcome-only turn does not authorize more work. ' +
   'Review the full preceding task and tool trace, and do not invent a blocker or claim work was skipped when the trace shows it was performed. ' +
   'Call report_complete now with a one-line headline if the requested objective was achieved (a successful evaluation that found nothing still counts as complete), ' +
   'or report_incomplete only if the trace shows a required outcome was skipped, blocked, failed, or only partially delivered. ' +
@@ -19,9 +19,12 @@ export const OUTCOME_NUDGE_PROMPT =
 
 /**
  * Whether to spend the run's single outcome nudge. True only when the model has
- * genuinely finished its turn (`stop`, or a provider-specific clean `other`;
- * not a tool-call continuation or a step-budget cutoff), declared neither
- * verdict, and budget remains.
+ * genuinely finished its turn (`stop`, a provider-specific clean `other`, a
+ * tool-calls finish at or beyond the normal work ceiling, or a successful
+ * structured delivery), declared neither verdict, and has not already spent
+ * its reserved outcome-only turn. The final verdict is deliberately allowed
+ * after the normal work budget: a one-step run may use code_exec once, then
+ * needs one constrained turn to read that result and submit its outcome.
  *
  * `outcome: undefined` means the tools were never loaded (hand-built
  * preparations in tests), so there is nothing to observe and nothing to ask for.
@@ -33,14 +36,27 @@ export function shouldRequestOutcome(state: {
   maxSteps: number;
   alreadyAsked: boolean;
   suspended: boolean;
+  /** A source or suggestions delivery completed in the preceding segment. */
+  structuredDeliveryCompleted: boolean;
 }): boolean {
   if (!state.outcome) return false;
   if (state.alreadyAsked || state.suspended) return false;
   if (state.outcome.complete || state.outcome.incomplete) return false;
-  if (state.segmentFinishReason !== 'stop' && state.segmentFinishReason !== 'other') return false;
-  // At the ceiling the extra segment cannot run, and a step-limited run reports
-  // 'stop' too — nudging there would claim a budget the run does not have.
-  return state.stepCount < state.maxSteps;
+  const endedAtOrBeyondWorkCeiling = state.segmentFinishReason === 'tool-calls'
+    && state.stepCount >= state.maxSteps;
+  const endedAfterStructuredDelivery = state.segmentFinishReason === 'tool-calls'
+    && state.structuredDeliveryCompleted;
+  if (
+    state.segmentFinishReason !== 'stop'
+    && state.segmentFinishReason !== 'other'
+    && !endedAtOrBeyondWorkCeiling
+    && !endedAfterStructuredDelivery
+  ) return false;
+  // The execution loop reserves one constrained outcome-only segment. A
+  // parallel tool step can exceed the normal budget before the SDK observes a
+  // stop condition, and providers can describe that cutoff as `stop` or
+  // `other`; both still need the same final verdict turn.
+  return true;
 }
 
 export type RunResultDisposition =

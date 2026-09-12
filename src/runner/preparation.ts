@@ -23,8 +23,11 @@ import { EffectWAL } from './effect-wal';
 import { createLiveToolOutputRelay } from './live-tool-output';
 import {
   buildSystemMessages,
+  ensureAutonomousAgentPrompt,
   ensurePersistentStoreBoundary,
 } from './system-messages';
+import { buildAutonomousAgentPrompt } from './prompt';
+import { isCodeModeEnabled } from './code-mode';
 import { createSessionAndMessage } from './session-helper';
 import { bindToolsToSnapshot, createToolsSnapshot } from './tool-snapshot';
 import { rehydrateMessages, ensureTrailingUserTurn } from '../session';
@@ -151,9 +154,20 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     // to it rather than overwriting it (keeps the session count monotonic).
     priorTokens = message.assistant.tokens;
     const persistedSystemMessages = message.assistant.system.map(content => ({ role: 'system', content }));
-    systemMessages = agent.config.store
+    const todayDate = new Date().toLocaleDateString('en-US', {
+      weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    });
+    const runtimePrompt = buildAutonomousAgentPrompt(
+      todayDate,
+      found.session.agent?.isSubAgent ?? false,
+      isCodeModeEnabled(),
+    );
+    systemMessages = ensureAutonomousAgentPrompt(
+      agent.config.store
       ? ensurePersistentStoreBoundary(persistedSystemMessages)
-      : persistedSystemMessages;
+      : persistedSystemMessages,
+      runtimePrompt,
+    ) as Array<{ role: string; content: string }>;
     const persistedSystemChanged =
       systemMessages.length !== persistedSystemMessages.length
       || systemMessages.some((systemMessage, index) =>
@@ -164,22 +178,34 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       // Upgrade legacy sessions in place. This keeps diagnostics and later
       // resumes aligned with the model-facing history. Compare content as well
       // as length so an older policy version is replaced exactly once.
-      await sessionManager.updateMessage(existingSessionId, found.agentId, message.id, {
-        assistant: { system: systemMessages.map(systemMessage => systemMessage.content) },
-      });
+      if (typeof sessionManager.updateMessage === 'function') {
+        await sessionManager.updateMessage(existingSessionId, found.agentId, message.id, {
+          assistant: { system: systemMessages.map(systemMessage => systemMessage.content) },
+        });
+      } else {
+        // Minimal embedders used for one-shot execution may expose enough of
+        // the session interface to read a continuation but not mutate it. The
+        // provider request is still reconciled below; a full SessionManager
+        // persists the migration for later resumes.
+        logger.debug('Session manager cannot persist runtime prompt reconciliation');
+      }
     }
     userMessage = message.user.prompt.user
       ? `${message.user.prompt.task}\n\n${message.user.prompt.user}`
       : message.user.prompt.task;
-    resumedMessages ??= await rehydrateMessages(sessionManager, existingSessionId, found.agentId);
+    const resumedHistory = resumedMessages ?? await rehydrateMessages(sessionManager, existingSessionId, found.agentId) ?? [];
+    // Context snapshots contain the previous system history. Reconcile their
+    // runtime-owned policy independently so a kill-switch change affects both
+    // the persisted diagnostics and the actual provider request.
+    resumedMessages = ensureAutonomousAgentPrompt(resumedHistory, runtimePrompt) as any;
     if (agent.config.store) {
       // Context snapshots can predate the persisted-message upgrade above, so
       // enforce the same boundary directly in the history sent to the model.
-      resumedMessages = ensurePersistentStoreBoundary(resumedMessages);
+      resumedMessages = ensurePersistentStoreBoundary(resumedMessages ?? []);
     }
     if (userPrompt?.trim()) {
       resumedMessages = [
-        ...resumedMessages,
+        ...(resumedMessages ?? []),
         { role: 'user', content: userPrompt.trim() } as any
       ];
       userMessage = userPrompt.trim();
@@ -189,7 +215,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     // Anthropic reasoning models. Whatever produced it (a rewound attempt whose
     // tail was not fully retired, a hand-edited session), a resume that can run
     // beats a resume that cannot.
-    const guarded = ensureTrailingUserTurn(resumedMessages);
+    const guarded = ensureTrailingUserTurn(resumedMessages ?? []);
     if (guarded !== resumedMessages) {
       logger.debug('Resumed history ended on an assistant turn; appended a continuation user turn');
       resumedMessages = guarded;

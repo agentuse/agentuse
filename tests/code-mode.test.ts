@@ -5,6 +5,8 @@ import { join } from 'path';
 import { z } from 'zod';
 import type { ToolSet } from 'ai';
 import {
+  CodeModeRunBudget,
+  DEFAULT_CODE_MODE_LIMITS,
   codeModeEligibleToolNames,
   createCodeExecTool,
   executeCodeMode,
@@ -69,6 +71,94 @@ describe('Code Mode', () => {
       { name: 'double', input: { value: 2 } },
       { name: 'double', input: { value: 3 } },
     ]);
+  });
+
+  it('preserves ES2022 syntax while routing async work through tracked promises', async () => {
+    await expect(executeCodeMode(`
+      const value = 123n;
+      await Promise.resolve();
+      return Number(value);
+    `, {
+      dispatcher: { dispatch: async () => null },
+      toolNames: [],
+      parentCallId: 'es2022-syntax',
+    })).resolves.toBe(123);
+  });
+
+  it('preserves Promise subclass fields, static constructors, and species', async () => {
+    await expect(executeCodeMode(`
+      class Derived<T> extends Promise<T> { marker = 'derived'; }
+      class Alternate<T> extends Promise<T> { marker = 'alternate'; }
+      class Source<T> extends Promise<T> {
+        static get [Symbol.species]() { return Alternate; }
+      }
+      const resolved = Derived.resolve(2);
+      const chained = resolved.then(value => value + 1);
+      const combined = Derived.all([resolved]);
+      const species = Source.resolve(4).then(value => value + 1);
+      return {
+        resolveSubclass: resolved instanceof Derived,
+        resolveField: (resolved as Derived<number>).marker,
+        thenSubclass: chained instanceof Derived,
+        thenField: (chained as Derived<number>).marker,
+        allSubclass: combined instanceof Derived,
+        speciesSubclass: species instanceof Alternate,
+        speciesField: (species as Alternate<number>).marker,
+        values: [await chained, (await combined)[0], await species],
+      };
+    `, {
+      dispatcher: { dispatch: async () => null },
+      toolNames: [],
+      parentCallId: 'promise-subclass',
+    })).resolves.toEqual({
+      resolveSubclass: true,
+      resolveField: 'derived',
+      thenSubclass: true,
+      thenField: 'derived',
+      allSubclass: true,
+      speciesSubclass: true,
+      speciesField: 'alternate',
+      values: [3, 2, 5],
+    });
+  });
+
+  it('adopts finally results through a species constructor without reading its static resolve', async () => {
+    await expect(executeCodeMode(`
+      class FinalSpecies<T> extends Promise<T> { marker = 'final-species'; }
+      class Source<T> extends Promise<T> {
+        static get [Symbol.species]() { return FinalSpecies; }
+      }
+      Object.defineProperty(FinalSpecies, 'resolve', { value: undefined });
+      const settled = Source.resolve(7).finally(() => Promise.resolve('cleanup'));
+      return {
+        speciesSubclass: settled instanceof FinalSpecies,
+        speciesField: (settled as FinalSpecies<number>).marker,
+        value: await settled,
+      };
+    `, {
+      dispatcher: { dispatch: async () => null },
+      toolNames: [],
+      parentCallId: 'finally-species',
+    })).resolves.toEqual({
+      speciesSubclass: true,
+      speciesField: 'final-species',
+      value: 7,
+    });
+  });
+
+  it('disables eval and Function constructor aliases', async () => {
+    const programs = [
+      'return eval("1 + 1");',
+      'return Function("return 2")();',
+      'return (() => {}).constructor("return 3")();',
+    ];
+    for (const code of programs) {
+      await expect(executeCodeMode(code, {
+        dispatcher: { dispatch: async () => null },
+        toolNames: [],
+        parentCallId: 'dynamic-code',
+      })).rejects.toThrow(/Dynamic code construction is unavailable in Code Mode/i);
+    }
   });
 
   it('allows bounded parallel nested calls', async () => {
@@ -218,14 +308,691 @@ describe('Code Mode', () => {
   });
 
   it('releases the guest heap when a nested tool ignores cancellation', async () => {
+    let markStarted: (() => void) | undefined;
+    const nestedStarted = new Promise<void>(resolve => { markStarted = resolve; });
+    const runBudget = new CodeModeRunBudget({ ...DEFAULT_CODE_MODE_LIMITS, timeoutMs: 100 });
     const startedAt = Date.now();
-    await expect(executeCodeMode(`return tools.stuck({});`, {
-      dispatcher: { dispatch: async () => new Promise(() => {}) },
+    const execution = executeCodeMode(`return tools.stuck({});`, {
+      dispatcher: { dispatch: async () => { markStarted!(); return new Promise(() => {}); } },
       toolNames: ['stuck'],
       parentCallId: 'stuck',
+      typecheck: false,
+      runBudget,
+      limits: { timeoutMs: 100 },
+    });
+    await nestedStarted;
+    await expect(execution).rejects.toThrow(/Code Mode timed out after 100ms/i);
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    await expect(executeCodeMode('return 42;', {
+      dispatcher: { dispatch: async () => null },
+      toolNames: [],
+      parentCallId: 'after-stuck',
+      typecheck: false,
+      runBudget,
+      limits: { timeoutMs: 200 },
+    })).resolves.toBe(42);
+  });
+
+  it('drains nested calls started by floating guest continuations', async () => {
+    let releaseFirst: (() => void) | undefined;
+    let releaseSecond: (() => void) | undefined;
+    let markFirstStarted: (() => void) | undefined;
+    let markSecondStarted: (() => void) | undefined;
+    const firstRelease = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const secondRelease = new Promise<void>(resolve => { releaseSecond = resolve; });
+    const firstStarted = new Promise<void>(resolve => { markFirstStarted = resolve; });
+    const secondStarted = new Promise<void>(resolve => { markSecondStarted = resolve; });
+    let completed = false;
+    const execution = executeCodeMode(`
+      void (async () => {
+        await tools.first({});
+        await tools.second({});
+      })();
+      return "program result";
+    `, {
+      dispatcher: {
+        dispatch: async (name: string) => {
+          if (name === 'first') {
+            markFirstStarted!();
+            await firstRelease;
+          } else {
+            markSecondStarted!();
+            await secondRelease;
+          }
+          return { name };
+        },
+      },
+      toolNames: ['first', 'second'],
+      parentCallId: 'floating-continuation',
+      typecheck: false,
+      limits: { timeoutMs: 1_000 },
+    });
+    void execution.then(() => { completed = true; });
+    await firstStarted;
+    releaseFirst!();
+    await secondStarted;
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(completed).toBe(false);
+    releaseSecond!();
+    await expect(execution).resolves.toBe('program result');
+  });
+
+  it('returns cancellation and the effect ledger after the guest result settles', async () => {
+    const controller = new AbortController();
+    let releaseDispatch: (() => void) | undefined;
+    let markStarted: (() => void) | undefined;
+    const dispatchRelease = new Promise<void>(resolve => { releaseDispatch = resolve; });
+    const nestedStarted = new Promise<void>(resolve => { markStarted = resolve; });
+    const execution = executeCodeMode(`
+      void tools.slow_write({ id: "floating-write" });
+      return "program result";
+    `, {
+      dispatcher: {
+        dispatch: async () => {
+          markStarted!();
+          await dispatchRelease;
+          return { committed: true };
+        },
+      },
+      toolNames: ['slow_write'],
+      parentCallId: 'cancel-after-result',
+      abortSignal: controller.signal,
+      typecheck: false,
+      limits: { timeoutMs: 1_000 },
+    });
+    await nestedStarted;
+    controller.abort(new Error('cancel after guest result'));
+    let message = '';
+    try {
+      await execution;
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain('cancel after guest result');
+    expect(message).toMatch(/Completed nested calls before failure.*floating-write/i);
+    expect(message).toContain('completion unknown, verify before retry');
+    releaseDispatch!();
+  });
+
+  it('records an unavailable completed effect when binary inspection throws', async () => {
+    const hostileResult = new Proxy({}, {
+      get(_target, property) {
+        // Promise resolution reads `then` while adopting returned values.
+        if (property === 'then') return undefined;
+        throw new Error('hostile result getter');
+      },
+    });
+    let message = '';
+    try {
+      await executeCodeMode('return tools.hostile({ id: "written" });', {
+        dispatcher: { dispatch: async () => hostileResult },
+        toolNames: ['hostile'],
+        parentCallId: 'hostile-result',
+        typecheck: false,
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain('could not be inspected for binary media');
+    expect(message).toContain('hostile result getter');
+    expect(message).toMatch(/Completed nested calls before failure.*written/i);
+    expect(message).toContain('[unavailable:');
+  });
+
+  it('retains a nested-call lease until an aborted dispatcher actually settles', async () => {
+    const controller = new AbortController();
+    const runBudget = new CodeModeRunBudget({ ...DEFAULT_CODE_MODE_LIMITS, concurrency: 1 });
+    let releaseFirst: ((value: unknown) => void) | undefined;
+    let markFirstStarted: (() => void) | undefined;
+    const firstStarted = new Promise<void>(resolve => { markFirstStarted = resolve; });
+    const firstDispatch = new Promise<unknown>(resolve => { releaseFirst = resolve; });
+    const dispatcher = {
+      dispatch: async (name: string) => {
+        if (name === 'first') {
+          markFirstStarted!();
+          return firstDispatch;
+        }
+        return { name };
+      },
+    };
+    const firstExecution = executeCodeMode('return tools.first({});', {
+      dispatcher,
+      toolNames: ['first'],
+      parentCallId: 'lease-first',
+      abortSignal: controller.signal,
+      typecheck: false,
+      runBudget,
+      limits: { timeoutMs: 1_000 },
+    });
+    await firstStarted;
+    controller.abort(new Error('cancel first dispatcher'));
+    await expect(firstExecution).rejects.toThrow(/cancel first dispatcher/i);
+
+    await expect(executeCodeMode('return tools.second({});', {
+      dispatcher,
+      toolNames: ['second'],
+      parentCallId: 'lease-second',
+      typecheck: false,
+      runBudget,
+      limits: { timeoutMs: 500 },
+    })).rejects.toThrow(/1-call concurrency limit/i);
+
+    releaseFirst!({ committed: true });
+    await Promise.resolve();
+    await expect(executeCodeMode('return tools.third({});', {
+      dispatcher,
+      toolNames: ['third'],
+      parentCallId: 'lease-third',
+      typecheck: false,
+      runBudget,
+      limits: { timeoutMs: 500 },
+    })).resolves.toEqual({ name: 'third' });
+  });
+
+  it('bounds an aborted start hook and releases its pre-dispatch lease', async () => {
+    const controller = new AbortController();
+    const runBudget = new CodeModeRunBudget({ ...DEFAULT_CODE_MODE_LIMITS, concurrency: 1 });
+    let markHookStarted: (() => void) | undefined;
+    const hookStarted = new Promise<void>(resolve => { markHookStarted = resolve; });
+    const execution = executeCodeMode('return tools.write({});', {
+      dispatcher: { dispatch: async () => ({ committed: true }) },
+      toolNames: ['write'],
+      parentCallId: 'hanging-start-hook',
+      abortSignal: controller.signal,
+      typecheck: false,
+      runBudget,
+      limits: { timeoutMs: 1_000 },
+      onNestedToolStart: async () => {
+        markHookStarted!();
+        await new Promise(() => {});
+      },
+    });
+    await hookStarted;
+    controller.abort(new Error('cancel hanging start hook'));
+    await expect(execution).rejects.toThrow(/cancel hanging start hook/i);
+    await expect(executeCodeMode('return tools.next({});', {
+      dispatcher: { dispatch: async () => ({ available: true }) },
+      toolNames: ['next'],
+      parentCallId: 'after-hanging-start-hook',
+      typecheck: false,
+      runBudget,
+      limits: { timeoutMs: 500 },
+    })).resolves.toEqual({ available: true });
+  });
+
+  it('bounds an aborted finish hook after releasing the dispatcher lease', async () => {
+    const controller = new AbortController();
+    const runBudget = new CodeModeRunBudget({ ...DEFAULT_CODE_MODE_LIMITS, concurrency: 1 });
+    let markHookStarted: (() => void) | undefined;
+    const hookStarted = new Promise<void>(resolve => { markHookStarted = resolve; });
+    const execution = executeCodeMode('return tools.write({});', {
+      dispatcher: { dispatch: async () => ({ committed: true }) },
+      toolNames: ['write'],
+      parentCallId: 'hanging-finish-hook',
+      abortSignal: controller.signal,
+      typecheck: false,
+      runBudget,
+      limits: { timeoutMs: 1_000 },
+      onNestedToolFinish: async () => {
+        markHookStarted!();
+        await new Promise(() => {});
+      },
+    });
+    await hookStarted;
+    controller.abort(new Error('cancel hanging finish hook'));
+    await expect(execution).rejects.toThrow(/cancel hanging finish hook/i);
+    await expect(executeCodeMode('return tools.next({});', {
+      dispatcher: { dispatch: async () => ({ available: true }) },
+      toolNames: ['next'],
+      parentCallId: 'after-hanging-finish-hook',
+      typecheck: false,
+      runBudget,
+      limits: { timeoutMs: 500 },
+    })).resolves.toEqual({ available: true });
+  });
+
+  it('marks completion unknown when a cancelled dispatch remains pending past cleanup', async () => {
+    const controller = new AbortController();
+    let markStarted: (() => void) | undefined;
+    let markCommitted: (() => void) | undefined;
+    const nestedStarted = new Promise<void>(resolve => { markStarted = resolve; });
+    const committed = new Promise<void>(resolve => { markCommitted = resolve; });
+    let didCommit = false;
+    let serializations = 0;
+    const execution = executeCodeMode('return tools.slow_write({ id: "late-commit" });', {
+      dispatcher: {
+        dispatch: async () => {
+          markStarted!();
+          await new Promise(resolve => setTimeout(resolve, 250));
+          didCommit = true;
+          markCommitted!();
+          return {
+            toJSON() {
+              serializations++;
+              return { committed: true };
+            },
+          };
+        },
+      },
+      toolNames: ['slow_write'],
+      parentCallId: 'late-commit',
+      abortSignal: controller.signal,
+      typecheck: false,
+      limits: { timeoutMs: 1_000 },
+    });
+    await nestedStarted;
+    controller.abort(new Error('cancel slow write'));
+    let message = '';
+    try {
+      await execution;
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain('cancel slow write');
+    expect(message).toMatch(/Completed nested calls before failure.*late-commit/i);
+    expect(message).toContain('completion unknown, verify before retry');
+    expect(didCommit).toBe(false);
+    await committed;
+    await Promise.resolve();
+    expect(didCommit).toBe(true);
+    expect(serializations).toBe(0);
+  });
+
+  it('records a dispatch that completes during bounded cancellation cleanup', async () => {
+    const controller = new AbortController();
+    let markStarted: (() => void) | undefined;
+    const nestedStarted = new Promise<void>(resolve => { markStarted = resolve; });
+    const execution = executeCodeMode('return tools.slow_write({ id: "cleanup-commit" });', {
+      dispatcher: {
+        dispatch: async () => {
+          markStarted!();
+          await new Promise(resolve => setTimeout(resolve, 30));
+          return { committed: true };
+        },
+      },
+      toolNames: ['slow_write'],
+      parentCallId: 'cleanup-commit',
+      abortSignal: controller.signal,
+      typecheck: false,
+      limits: { timeoutMs: 1_000 },
+    });
+    await nestedStarted;
+    controller.abort(new Error('cancel during write'));
+    let message = '';
+    try {
+      await execution;
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain('cancel during write');
+    expect(message).toMatch(/Completed nested calls before failure.*cleanup-commit/i);
+    expect(message).toContain('\\"committed\\":true');
+    expect(message).not.toContain('completion unknown');
+  });
+
+  it('preserves completed effects when a result hook hangs until timeout', async () => {
+    const execute = mock(async () => ({ committed: true }));
+    let markHookStarted: (() => void) | undefined;
+    const hookStarted = new Promise<void>(resolve => { markHookStarted = resolve; });
+    const dispatcher = new ToolDispatcher({
+      write: trustedOutputTool({
+        inputSchema: z.object({ id: z.string() }),
+        outputSchema: z.object({ committed: z.boolean() }),
+        execute,
+      }),
+    }, {
+      pluginEvents: {
+        async toolResult() {
+          markHookStarted!();
+          return await new Promise(() => {});
+        },
+      },
+    });
+    const execution = executeCodeMode('return tools.write({ id: "hook-committed" });', {
+      dispatcher,
+      toolNames: ['write'],
+      parentCallId: 'hanging-result-hook',
+      typecheck: false,
+      limits: { timeoutMs: 20 },
+    });
+    await hookStarted;
+    let message = '';
+    try {
+      await execution;
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(message).toMatch(/Code Mode timed out after 20ms/i);
+    expect(message).toMatch(/Completed nested calls before failure.*hook-committed/i);
+  });
+
+  it('fails when a floating nested call fails', async () => {
+    await expect(executeCodeMode(`
+      tools.fail({ effect: "none" });
+      return "program result";
+    `, {
+      dispatcher: { dispatch: async () => { throw new Error('nested failure'); } },
+      toolNames: ['fail'],
+      parentCallId: 'floating-failure',
+    })).rejects.toThrow(/unhandled nested tool failures.*nested failure/i);
+  });
+
+  it('allows guest code to catch a nested failure and return a fallback', async () => {
+    await expect(executeCodeMode(`
+      try {
+        await tools.fail({});
+      } catch {
+        return { fallback: true };
+      }
+    `, {
+      dispatcher: { dispatch: async () => { throw new Error('expected failure'); } },
+      toolNames: ['fail'],
+      parentCallId: 'caught-failure',
+    })).resolves.toEqual({ fallback: true });
+  });
+
+  it('allows a delayed catch after another awaited operation', async () => {
+    await expect(executeCodeMode(`
+      const rejected = tools.fail({});
+      await tools.wait({});
+      return rejected.catch(() => ({ fallback: true }));
+    `, {
+      dispatcher: {
+        dispatch: async (name: string) => {
+          if (name === 'fail') throw new Error('expected failure');
+          await new Promise(resolve => setTimeout(resolve, 15));
+          return { waited: true };
+        },
+      },
+      toolNames: ['fail', 'wait'],
+      parentCallId: 'delayed-catch',
+    })).resolves.toEqual({ fallback: true });
+  });
+
+  it('does not swallow floating rejection chains', async () => {
+    const options = {
+      dispatcher: { dispatch: async () => { throw new Error('chained failure'); } },
+      toolNames: ['fail'],
+      parentCallId: 'floating-chain',
+    };
+    await expect(executeCodeMode('tools.fail({}).then(() => true); return "done";', options))
+      .rejects.toThrow(/unhandled nested tool failures.*chained failure/i);
+    await expect(executeCodeMode('tools.fail({}).finally(() => {}); return "done";', options))
+      .rejects.toThrow(/unhandled nested tool failures.*chained failure/i);
+    await expect(executeCodeMode('tools.fail({}).catch(() => { throw new Error("rethrown"); }); return "done";', options))
+      .rejects.toThrow(/unhandled nested tool failures.*rethrown/i);
+  });
+
+  it('tracks floating failures through native guest promise assimilation', async () => {
+    const programs = [
+      'Promise.resolve(tools.fail({})); return "done";',
+      'Promise.all([tools.fail({})]); return "done";',
+      'new Promise(resolve => resolve(tools.fail({}))); return "done";',
+      'void (async () => { await tools.fail({}); })(); return "done";',
+    ];
+    for (const code of programs) {
+      await expect(executeCodeMode(code, {
+        dispatcher: { dispatch: async () => { throw new Error('assimilated failure'); } },
+        toolNames: ['fail'],
+        parentCallId: 'assimilated-failure',
+      })).rejects.toThrow(/unhandled nested tool failures.*assimilated failure/i);
+    }
+  });
+
+  it('allows assimilated failures to be awaited and caught', async () => {
+    await expect(executeCodeMode(`
+      try {
+        await Promise.all([Promise.resolve(tools.fail({}))]);
+      } catch {
+        return { fallback: true };
+      }
+    `, {
+      dispatcher: { dispatch: async () => { throw new Error('expected failure'); } },
+      toolNames: ['fail'],
+      parentCallId: 'caught-assimilated-failure',
+    })).resolves.toEqual({ fallback: true });
+  });
+
+  it('applies the deadline while declarations are loading', async () => {
+    await expect(executeCodeMode('return true;', {
+      dispatcher: { dispatch: async () => null },
+      toolNames: [],
+      parentCallId: 'declaration-timeout',
+      loadDeclarations: async () => {
+        await new Promise(resolve => setTimeout(resolve, 40));
+        return 'declare const tools: {};';
+      },
+      limits: { timeoutMs: 10 },
+    })).rejects.toThrow(/timed out/i);
+  });
+
+  it('interrupts expensive TypeScript preflight work at the deadline', async () => {
+    const startedAt = Date.now();
+    await expect(executeCodeMode(`
+      type Expand<N extends number, A extends unknown[] = []> =
+        A['length'] extends N ? A : Expand<N, [...A, unknown]>;
+      type TooLarge = Expand<10000>;
+      return true;
+    `, {
+      dispatcher: { dispatch: async () => null },
+      toolNames: [],
+      parentCallId: 'expensive-preflight',
       limits: { timeoutMs: 20 },
     })).rejects.toThrow(/timed out/i);
     expect(Date.now() - startedAt).toBeLessThan(500);
+  });
+
+  it('uses the trusted TypeScript installation when cwd is outside the repository', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agentuse-code-mode-cwd-'));
+    const originalCwd = process.cwd();
+    try {
+      process.chdir(dir);
+      await expect(executeCodeMode('return 42;', {
+        dispatcher: { dispatch: async () => null },
+        toolNames: [],
+        parentCallId: 'external-cwd',
+      })).resolves.toBe(42);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports completed effects when a later nested call fails', async () => {
+    await expect(executeCodeMode(`
+      await tools.write({ id: "already-written" });
+      await tools.fail({});
+      return "never";
+    `, {
+      dispatcher: {
+        dispatch: async (name: string, input: unknown) => {
+          if (name === 'fail') throw new Error('second call failed');
+          return { committed: true, input };
+        },
+      },
+      toolNames: ['write', 'fail'],
+      parentCallId: 'partial-effects',
+    })).rejects.toThrow(/Completed nested calls before failure.*already-written/i);
+  });
+
+  it('reports an effect that completed before trusted output validation failed', async () => {
+    const execute = mock(async () => ({ committed: false as const }));
+    const dispatcher = new ToolDispatcher({
+      write: trustedOutputTool({
+        inputSchema: z.object({ id: z.string() }),
+        outputSchema: z.object({ committed: z.literal(true) }),
+        execute,
+      }),
+    });
+    let message = '';
+    try {
+      await executeCodeMode('return tools.write({ id: "committed-once" });', {
+        dispatcher,
+        toolNames: ['write'],
+        parentCallId: 'post-effect-contract-failure',
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(message).toMatch(/does not match its output schema/i);
+    expect(message).toMatch(/Completed nested calls before failure.*committed-once/i);
+    expect(message).toContain('result unavailable after completed effect');
+  });
+
+  it('records an effect before rejecting an unbridgeable result', async () => {
+    let serializations = 0;
+    let message = '';
+    try {
+      await executeCodeMode('return tools.read_image({});', {
+        dispatcher: {
+          dispatch: async () => ({
+            content: [{ type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }],
+            toJSON() {
+              serializations++;
+              return { unexpected: true };
+            },
+          }),
+        },
+        toolNames: ['read_image'],
+        parentCallId: 'binary-partial-effect',
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(serializations).toBe(0);
+    expect(message).toMatch(/binary media.*directly/i);
+    expect(message).toMatch(/Completed nested calls before failure.*read_image/i);
+    expect(message).toContain('[binary media omitted]');
+  });
+
+  it('records one completed effect when result serialization throws a hostile proxy', async () => {
+    let hostileThrownValue: object;
+    hostileThrownValue = new Proxy({}, {
+      get() { throw hostileThrownValue; },
+      getPrototypeOf() { throw hostileThrownValue; },
+      ownKeys() { throw hostileThrownValue; },
+      getOwnPropertyDescriptor() { throw hostileThrownValue; },
+    });
+    let message = '';
+    try {
+      await executeCodeMode('return tools.write({ id: "hostile-serialization" });', {
+        dispatcher: {
+          dispatch: async () => ({
+            toJSON() {
+              throw hostileThrownValue;
+            },
+          }),
+        },
+        toolNames: ['write'],
+        parentCallId: 'hostile-serialization',
+        typecheck: false,
+        limits: { timeoutMs: 500 },
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    // Let any incorrectly detached rejection surface before the test ends.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(message).toContain('Unformattable thrown value');
+    expect(message).not.toMatch(/timed out/i);
+    expect(message.match(/Completed nested calls before failure/g)).toHaveLength(1);
+    expect(message.match(/"callId":/g)).toHaveLength(1);
+    expect(message).toContain('hostile-serialization:nested:1');
+    expect(message).toContain('[unavailable:');
+  });
+
+  it('bounds large outputs in the completed-effect ledger', async () => {
+    let message = '';
+    try {
+      await executeCodeMode(`
+        await tools.write({ id: "large" });
+        await tools.fail({});
+      `, {
+        dispatcher: {
+          dispatch: async (name: string) => {
+            if (name === 'fail') throw new Error('failed after write');
+            return { payload: 'x'.repeat(500_000) };
+          },
+        },
+        toolNames: ['write', 'fail'],
+        parentCallId: 'bounded-ledger',
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain('Completed nested calls before failure');
+    expect(message).toContain('[truncated]');
+    expect(message.length).toBeLessThan(2_000);
+  });
+
+  it('serializes a successful nested result once for the guest and effect ledger', async () => {
+    let serializations = 0;
+    let message = '';
+    try {
+      await executeCodeMode(`
+        const value = await tools.stateful({});
+        if (JSON.stringify(value) !== '{"version":1}') throw new Error('guest saw a different value');
+        await tools.fail({});
+      `, {
+        dispatcher: {
+          dispatch: async (name: string) => {
+            if (name === 'fail') throw new Error('failure after stateful result');
+            return {
+              toJSON() {
+                serializations++;
+                return { version: serializations };
+              },
+            };
+          },
+        },
+        toolNames: ['stateful', 'fail'],
+        parentCallId: 'stateful-serialization',
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(serializations).toBe(1);
+    expect(message).toContain('failure after stateful result');
+    expect(message).toContain('\\"version\\":1');
+    expect(message).not.toContain('guest saw a different value');
+  });
+
+  it('shares guest heap and nested-call limits across sibling code_exec calls', async () => {
+    let releaseFirst: (() => void) | undefined;
+    let markNestedStarted: (() => void) | undefined;
+    const started = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const nestedStarted = new Promise<void>(resolve => { markNestedStarted = resolve; });
+    const dispatcher = new ToolDispatcher({
+      wait: {
+        description: 'Wait', inputSchema: z.object({}),
+        execute: async () => { markNestedStarted!(); await started; return { done: true }; },
+      },
+    });
+    dispatcher.register('code_exec', createCodeExecTool({ dispatcher, toolNames: dispatcher.names() }));
+    const first = dispatcher.dispatch('code_exec', { code: 'return tools.wait({});' }, { toolCallId: 'first' });
+    // The first guest has retained its heap while its nested effect waits.
+    await nestedStarted;
+    await expect(dispatcher.dispatch('code_exec', { code: 'return 2;' }, { toolCallId: 'second' }))
+      .rejects.toThrow(/run-scoped guest-memory limit/i);
+    releaseFirst!();
+    await expect(first).resolves.toEqual({ done: true });
+  });
+
+  it('charges completed nested calls to the run-wide limit', async () => {
+    const dispatcher = new ToolDispatcher({
+      echo: { description: 'Echo', inputSchema: z.object({ value: z.number() }), execute: async (input: unknown) => input },
+    });
+    dispatcher.register('code_exec', createCodeExecTool({
+      dispatcher,
+      toolNames: dispatcher.names(),
+      limits: { nestedCalls: 1 },
+    }));
+    await expect(dispatcher.dispatch('code_exec', { code: 'return tools.echo({ value: 1 });' }, { toolCallId: 'one' }))
+      .resolves.toEqual({ value: 1 });
+    await expect(dispatcher.dispatch('code_exec', { code: 'return tools.echo({ value: 2 });' }, { toolCallId: 'two' }))
+      .rejects.toThrow(/nested-call limit/i);
   });
 
   it('journals the outer execution and each nested tool call', async () => {
@@ -330,6 +1097,9 @@ describe('Code Mode', () => {
     expect(tool.description).not.toContain('Available nested tools: await_human');
     expect(tool.description).toContain('items: Array<{ id: string }>');
     expect(tool.description).toContain('For `-> ?` outputs, do not guess fields');
+    expect(tool.description).toContain('URL, Intl, locale-aware formatting, and host timezone services are unavailable');
+    expect(tool.description).toContain('Dynamic code construction through eval or Function constructors is unavailable');
+    expect(tool.description).toContain('When the user asks for a shell artifact, commands or scripts may contain the calculations the artifact itself needs');
   });
 
   it('keeps untrusted provider output schemas unknown', () => {

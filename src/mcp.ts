@@ -9,6 +9,7 @@ import { z } from 'zod';
 import type { AgentConfig } from './parser';
 import { resolve, isAbsolute } from 'path';
 import { toErrorMessage } from './utils/error-message';
+import { setApprovalToolContract } from './tools/tool-contract';
 
 // Use the actual type from the parser to avoid mismatches
 // Note: Using mcpServers (the normalized field after transform)
@@ -656,7 +657,7 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
         const timeoutSeconds = resolveToolTimeout(connection.config?.toolTimeout);
 
         // Create wrapped tool with proper result handling and timeout.
-        const wrappedTool = {
+        const wrappedTool = setApprovalToolContract({
           ...tool,
           toModelOutput: mcpResultToModelOutput,
           execute: async (args: any, opts: any) => {
@@ -739,7 +740,7 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
               // AI SDK v6 handles automatic conversion to provider format
               return typeof result === 'string' ? result : JSON.stringify(result);
           }
-        };
+        } as Tool, `mcp:${connection.name}:${toolName}:v1`);
         
         connectionTools[prefixedName] = wrappedTool;
       }

@@ -104,6 +104,8 @@
     "@slack/socket-mode": "2.0.7",
     "@slack/web-api": "7.15.1",
     "ai": "7.0.30",
+    "ajv": "^8.20.0",
+    "ajv-formats": "3.0.1",
     "chalk": "^5.5.0",
     "chokidar": "^5.0.0",
     "commander": "^12.0.0",

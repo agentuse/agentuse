@@ -202,7 +202,12 @@ export function buildDescendantReport(parts: Part[]): DescendantReport | undefin
 
 function approvalParts(parts: Part[]): Array<Extract<Part, { type: 'tool' }>> {
   return parts.filter((part): part is Extract<Part, { type: 'tool' }> =>
-    part.type === 'tool' && part.tool === 'await_human'
+    part.type === 'tool' && (
+      part.tool === 'await_human'
+      || (part.state.status === 'pending' && part.state.resumePayload?.kind === 'tool_approval')
+      || (part.state.status !== 'pending'
+        && (part.state.metadata?.resumePayload as { kind?: unknown } | undefined)?.kind === 'tool_approval')
+    )
   );
 }
 
@@ -212,6 +217,9 @@ function gateLabel(parts: Part[]): string | undefined {
   // it were still waiting on the previous approval round.
   const gate = [...approvalParts(parts)].reverse().find((part) => part.state.status === 'pending');
   if (!gate) return undefined;
+  if (gate.state.status === 'pending' && gate.state.resumePayload?.kind === 'tool_approval') {
+    return `Approve ${gate.tool}`;
+  }
   const input = toolStateInput(gate);
   for (const key of ['summary', 'prompt']) {
     const value = input?.[key];

@@ -146,6 +146,9 @@ export interface AgentChunk {
   reasoningDone?: boolean;
   toolName?: string;
   toolCallId?: string;      // Tool call ID from AI SDK
+  /** Signed post-plugin provider payload for an approved call. `toolInput`
+   * remains the canonical schema value actually handed to execute. */
+  rawApprovedInput?: unknown;
   toolInput?: unknown;
   toolResult?: string;
   toolResultRaw?: unknown;

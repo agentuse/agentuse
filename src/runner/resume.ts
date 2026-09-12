@@ -134,23 +134,70 @@ async function applyClaimedResumeToolResult(options: {
   const resumePayload = pending.part.state.status === 'pending'
     ? pending.part.state.resumePayload
     : undefined;
+  const isGenericToolApproval = resumePayload?.kind === 'tool_approval';
   const now = Date.now();
   const start = pending.part.state.status === 'running'
     ? pending.part.state.time.start
     : pending.part.state.status === 'pending'
       ? (pending.part.state.suspendedAt ?? now)
       : now;
-  await sessionManager.updatePart(sessionId, found.agentId, pending.message.id, pending.part.id, {
-    state: {
-      status: 'completed',
-      input: input ?? {},
-      output: toolResult,
-      ...(resumePayload && { metadata: { resumePayload } }),
-      time: {
-        start,
-        end: now
-      }
+  const hasRawApprovedInput = Object.prototype.hasOwnProperty.call(pending.part.state, 'rawApprovedInput');
+  const rawApprovedInput = hasRawApprovedInput
+    ? (pending.part.state as { rawApprovedInput?: unknown }).rawApprovedInput
+    : undefined;
+  let genericApproved: boolean | undefined;
+  let approvalResponse: Record<string, unknown> | undefined;
+  let approvalReviewer: Record<string, unknown> | undefined;
+  if (isGenericToolApproval) {
+    const status = toolResult && typeof toolResult === 'object'
+      ? (toolResult as { status?: unknown }).status
+      : undefined;
+    if (status === 'approve' || status === 'approved') genericApproved = true;
+    else if (status === 'reject' || status === 'rejected') genericApproved = false;
+    else {
+      throw new Error('TOOL_APPROVAL_DECISION_INVALID: generic tool approvals support only approve or reject');
     }
+    const approvalId = resumePayload.approvalId;
+    if (
+      typeof approvalId !== 'string'
+      || resumePayload.toolCallId !== pending.part.callID
+      || resumePayload.toolName !== pending.part.tool
+    ) {
+      throw new Error('TOOL_APPROVAL_IDENTITY_INVALID: persisted approval request does not match its tool part');
+    }
+    const comment = (toolResult as { comment?: unknown }).comment;
+    const reviewer = (toolResult as { reviewer?: unknown }).reviewer;
+    if (reviewer && typeof reviewer === 'object' && !Array.isArray(reviewer)) {
+      approvalReviewer = reviewer as Record<string, unknown>;
+    }
+    approvalResponse = {
+      type: 'tool-approval-response',
+      approvalId,
+      approved: genericApproved,
+      ...(typeof comment === 'string' && comment.trim().length > 0 && { reason: comment }),
+    };
+  }
+
+  await sessionManager.updatePart(sessionId, found.agentId, pending.message.id, pending.part.id, {
+    state: isGenericToolApproval
+      ? {
+          status: 'running',
+          input,
+          ...(hasRawApprovedInput && { rawApprovedInput }),
+          metadata: { resumePayload, approvalResponse, ...(approvalReviewer && { approvalReviewer }) },
+          time: { start },
+        }
+      : {
+          status: 'completed',
+          input,
+          ...(hasRawApprovedInput && { rawApprovedInput }),
+          output: toolResult,
+          ...(resumePayload && { metadata: { resumePayload } }),
+          time: {
+            start,
+            end: now
+          }
+        }
   } as any);
 
   // Verify the decision actually landed before the run proceeds. A write that
@@ -160,7 +207,8 @@ async function applyClaimedResumeToolResult(options: {
   // already spent their decision. Failing here instead keeps the gate intact
   // and surfaces a diagnosable error to the approval surface.
   const applied = await sessionManager.getPart(sessionId, found.agentId, pending.message.id, pending.part.id);
-  if (!applied || (applied as { state?: { status?: string } }).state?.status !== 'completed') {
+  const expectedAppliedStatus = isGenericToolApproval ? 'running' : 'completed';
+  if (!applied || (applied as { state?: { status?: string } }).state?.status !== expectedAppliedStatus) {
     throw new Error(`DECISION_NOT_PERSISTED: approval decision for session ${sessionId} did not persist to the gate part (${pending.part.id}); resume aborted before the run`);
   }
 
@@ -172,7 +220,7 @@ async function applyClaimedResumeToolResult(options: {
   // reaches here: the verify pre-review rejection is returned inline without
   // suspending, so it never resumes. Best-effort: a lease failure must not
   // block the resume, it just means gated commands stay denied.
-  try {
+  if (!isGenericToolApproval) try {
     const sessionDir = await sessionManager.getSessionDirectory(sessionId, found.agentId);
     const leaseStore = new LeaseStore(sessionDir);
     const gateSealStore = new GateSealStore(sessionDir);

@@ -11,6 +11,9 @@ export { ToolsConfigSchema } from './types.js';
 export type { ToolsConfig, FilesystemPathConfig, BashConfig } from './types.js';
 export { DoomLoopDetector, DoomLoopError, type DoomLoopConfig, type ToolCall } from './doom-loop-detector.js';
 export { resolveSafeVariables, type PathResolverContext } from './path-validator.js';
+/** Attach a stable revision to an author-supplied tool that can request AI SDK
+ * approval. The runtime also binds this revision to tool name and input schema. */
+export { setApprovalToolContract, APPROVAL_TOOL_CONTRACT } from './tool-contract.js';
 
 /**
  * Create all configured tools

@@ -1,6 +1,7 @@
 import { jsonSchema, type ToolSet } from 'ai';
 import type { ToolsSnapshot } from '../session/types';
 import { logger } from '../utils/logger';
+import { APPROVAL_RUNTIME_INPUT_SCHEMA } from '../tools/tool-contract';
 
 type JsonSchema = Record<string, unknown>;
 
@@ -170,6 +171,7 @@ export function bindToolsToSnapshot(currentTools: ToolSet, snapshot: ToolsSnapsh
         })
       }),
       ...(snap.description !== undefined && { description: snap.description }),
+      ...(current?.inputSchema !== undefined && { [APPROVAL_RUNTIME_INPUT_SCHEMA]: current.inputSchema }),
       ...(snapSchema !== undefined && { inputSchema: jsonSchema(snapSchema as any) })
     };
   }

@@ -110,7 +110,7 @@ function partAffectsApprovalIndex(part: Part): boolean {
         ? (state.metadata as { resumePayload?: { kind?: string } }).resumePayload
         : undefined);
   return resumePayload && typeof resumePayload === 'object' && 'kind' in resumePayload
-    ? resumePayload.kind === 'subagent_wait'
+    ? resumePayload.kind === 'subagent_wait' || resumePayload.kind === 'tool_approval'
     : false;
 }
 
@@ -670,6 +670,10 @@ export class SessionManager {
 
         const input = 'input' in state ? state.input : undefined;
         const resumePayload = state.status === 'pending' ? state.resumePayload : undefined;
+        const hasRawApprovedInput = Object.prototype.hasOwnProperty.call(state, 'rawApprovedInput');
+        const rawApprovedInput = hasRawApprovedInput
+          ? (state as { rawApprovedInput?: unknown }).rawApprovedInput
+          : undefined;
         const start = state.status === 'running'
           ? state.time.start
           : state.suspendedAt ?? options.time;
@@ -678,9 +682,12 @@ export class SessionManager {
           ...part,
           state: {
             status: 'error',
-            input: input ?? {},
+            input,
+            ...(hasRawApprovedInput && { rawApprovedInput }),
             error: options.message,
-            ...(resumePayload && { metadata: { resumePayload } }),
+            ...((state.metadata || resumePayload) && {
+              metadata: { ...(state.metadata ?? {}), ...(resumePayload && { resumePayload }) },
+            }),
             time: {
               start,
               end: options.time
@@ -1166,7 +1173,10 @@ export class SessionManager {
 
     // Approval list scans touch many large non-approval tool outputs. A cheap
     // textual gate avoids paying JSON.parse for files that cannot be approvals.
-    if (!/"tool"\s*:\s*"await_human"/.test(content)) return null;
+    if (
+      !/"tool"\s*:\s*"await_human"/.test(content)
+      && !/"kind"\s*:\s*"tool_approval"/.test(content)
+    ) return null;
 
     let part: Part;
     try {
@@ -1175,7 +1185,12 @@ export class SessionManager {
       throw new CorruptStorageError(key, error);
     }
 
-    return part.type === 'tool' && part.tool === 'await_human'
+    return part.type === 'tool' && (
+      part.tool === 'await_human'
+      || (part.state.status === 'pending' && part.state.resumePayload?.kind === 'tool_approval')
+      || (part.state.status !== 'pending' && part.state.metadata?.resumePayload
+        && (part.state.metadata.resumePayload as { kind?: unknown }).kind === 'tool_approval')
+    )
       ? part
       : null;
   }
@@ -1807,4 +1822,3 @@ export class SessionManager {
     return this.fullPath;
   }
 }
-

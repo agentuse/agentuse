@@ -579,6 +579,27 @@ function ApprovalDetailCard(props: {
   onSelectChoice?: ((id: string) => void) | undefined;
 }) {
   const details = props.details;
+  if (details.toolApproval) {
+    const approval = details.toolApproval;
+    return (
+      <div class="approval-card tool-approval-card">
+        <h3 class="approval-question">{details.prompt ?? `Approve execution of ${approval.toolName}?`}</h3>
+        <section class="approval-section approval-primary">
+          <h4 class="approval-section-title">Canonical execution input</h4>
+          <div class="approval-section-body"><LogContent value={approval.canonicalInput} /></div>
+          {approval.canonicalInputDigest && <div class="approval-meta"><code>SHA-256 {approval.canonicalInputDigest}</code></div>}
+        </section>
+        <section class="approval-section approval-secondary">
+          <h4 class="approval-section-title">Signed raw request</h4>
+          <div class="approval-section-body"><LogContent value={approval.signedRawInput} /></div>
+          {approval.signedRawInputDigest && <div class="approval-meta"><code>SHA-256 {approval.signedRawInputDigest}</code></div>}
+        </section>
+        {details.decisionStatus && <section class="approval-section approval-decision"><h4 class="approval-section-title">Decision</h4><div class="approval-section-body">{details.decisionStatus}</div></section>}
+        {details.decisionComment && <section class="approval-section approval-secondary"><h4 class="approval-section-title">Reason</h4><div class="approval-section-body"><LogContent value={details.decisionComment} /></div></section>}
+        {details.errorMessage && <section class="approval-section approval-risk"><h4 class="approval-section-title">Error</h4><div class="approval-section-body">{details.errorMessage}</div></section>}
+      </div>
+    );
+  }
   // Non-alphanumerics out: an entry id ends up in an id/`for` pair and a radio
   // group name, and a stray quote or space breaks the association silently.
   const idBase = `gate-${props.entryId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
@@ -1279,6 +1300,9 @@ export interface LogEntryProps {
   nestedWarnings?: Map<string, ApprovalLogEntry[]> | undefined;
   /** Reviewer expand/collapse state for every row, so nested rows honour theirs. */
   expandOverrides?: Map<string, boolean> | undefined;
+  /** Nested rows that match the active filter or search. They open temporarily
+   * so the reason their parent is visible is present in the rendered row. */
+  forceExpandedNestedCallIds?: ReadonlySet<string> | undefined;
   /** Entry arrived over the live stream after the initial snapshot; animates in. */
   isNew?: boolean | undefined;
   /** Number of consecutive identical operational log lines collapsed into this
@@ -1382,6 +1406,7 @@ function LogEntryImpl(props: LogEntryProps) {
   const awaitingPick = props.showActions
     && (entry.details?.options?.length ?? 0) > 0
     && !props.selectedChoice;
+  const genericToolApproval = Boolean(entry.details?.toolApproval);
 
   const classes = [
     'log-item',
@@ -1398,61 +1423,63 @@ function LogEntryImpl(props: LogEntryProps) {
     if (expandable) props.onToggle(entry.id, !expanded);
   };
 
+  const header = (
+    <>
+      <span class="log-time">{formatLogTime(entry.time)}</span>
+      <span
+        class="log-marker"
+        {...(spinning
+          ? {}
+          : entry.type === 'log'
+            ? { 'aria-label': `${entry.level ?? 'info'} log`, title: entry.level ?? 'info', role: 'img' }
+            : { 'aria-hidden': 'true' })}
+      >{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : entry.type === 'learning' ? '✦' : entry.type === 'corrections' ? '✧' : entry.type === 'verify' ? (entry.status === 'completed' ? '✓' : '⚖') : entry.type === 'error' ? '✗' : entry.type === 'reasoning' ? '✻' : entry.type === 'log' ? logLevelMarker(entry.level) : failed ? '✗' : entry.type === 'tool' && entry.status === 'completed' ? '✓' : '⋮')}</span>
+      <span class="log-title">
+        {corrections
+          ? <CorrectionsSummary counts={corrections} />
+          : entry.type === 'tool' && entry.tool && !isApprovalEntry
+            ? (
+              <>
+                {toolIntent && <span class="log-intent" title={toolIntent}>{toolIntent}</span>}
+                <span class={`tool-chip${toolIntent ? ' has-intent' : ''}`} title={entry.title} aria-label={entry.title}>{toolChipLabel(entry.tool)}</span>
+              </>
+            )
+            : entry.title}
+        {props.repeatCount !== undefined && props.repeatCount > 1 && (
+          <span class="log-count-badge">x{props.repeatCount}</span>
+        )}
+        {warnings.length > 0 && (
+          <span class="log-warn-badge" title={`${warnings.length} warning${warnings.length === 1 ? '' : 's'} about this tool call`}>⚠ {warnings.length}</span>
+        )}
+        {nestedCalls.length > 0 && !expanded && (
+          <span class="log-nested-badge" title={`${nestedCalls.length} tool call${nestedCalls.length === 1 ? '' : 's'} made by this program`}>
+            {nestedCalls.length} {nestedCalls.length === 1 ? 'call' : 'calls'}
+          </span>
+        )}
+      </span>
+    </>
+  );
+
   return (
     <li
       id={`log-${entry.id}`}
       class={classes}
       data-log-id={entry.id}
       data-log-type={entry.type}
-      role={expandable ? 'button' : undefined}
-      aria-expanded={expandable ? expanded : undefined}
-      tabIndex={expandable ? 0 : undefined}
       onClick={(event) => {
+        // The header button supplies the semantic keyboard control. Keep the
+        // existing row-click affordance for pointer users without turning this
+        // list item into an interactive container around nested rows.
         const target = event.target as Element;
         if (target.closest('a') || target.closest('button')) return;
         toggle();
       }}
-      onKeyDown={(event) => {
-        if (event.key !== 'Enter' && event.key !== ' ') return;
-        if (event.target !== event.currentTarget) return;
-        event.preventDefault();
-        toggle();
-      }}
     >
-      <div class="log-head">
-        <span class="log-time">{formatLogTime(entry.time)}</span>
-        <span
-          class="log-marker"
-          {...(spinning
-            ? {}
-            : entry.type === 'log'
-              ? { 'aria-label': `${entry.level ?? 'info'} log`, title: entry.level ?? 'info', role: 'img' }
-              : { 'aria-hidden': 'true' })}
-        >{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : entry.type === 'learning' ? '✦' : entry.type === 'corrections' ? '✧' : entry.type === 'verify' ? (entry.status === 'completed' ? '✓' : '⚖') : entry.type === 'error' ? '✗' : entry.type === 'reasoning' ? '✻' : entry.type === 'log' ? logLevelMarker(entry.level) : failed ? '✗' : entry.type === 'tool' && entry.status === 'completed' ? '✓' : '⋮')}</span>
-        <span class="log-title">
-          {corrections
-            ? <CorrectionsSummary counts={corrections} />
-            : entry.type === 'tool' && entry.tool && !isApprovalEntry
-              ? (
-                <>
-                  {toolIntent && <span class="log-intent" title={toolIntent}>{toolIntent}</span>}
-                  <span class={`tool-chip${toolIntent ? ' has-intent' : ''}`} title={entry.title} aria-label={entry.title}>{toolChipLabel(entry.tool)}</span>
-                </>
-              )
-              : entry.title}
-          {props.repeatCount !== undefined && props.repeatCount > 1 && (
-            <span class="log-count-badge">x{props.repeatCount}</span>
-          )}
-          {warnings.length > 0 && (
-            <span class="log-warn-badge" title={`${warnings.length} warning${warnings.length === 1 ? '' : 's'} about this tool call`}>⚠ {warnings.length}</span>
-          )}
-          {nestedCalls.length > 0 && !expanded && (
-            <span class="log-nested-badge" title={`${nestedCalls.length} tool call${nestedCalls.length === 1 ? '' : 's'} made by this program`}>
-              {nestedCalls.length} {nestedCalls.length === 1 ? 'call' : 'calls'}
-            </span>
-          )}
-        </span>
-      </div>
+      {expandable ? (
+        <button class="log-head log-expand-toggle" type="button" aria-expanded={expanded} onClick={toggle}>
+          {header}
+        </button>
+      ) : <div class="log-head">{header}</div>}
       <div class="log-main">
         {/* The sub-agent card carries status + a link to the child run, so keep
             it visible even when the row is collapsed; only the tool input/output
@@ -1487,7 +1514,7 @@ function LogEntryImpl(props: LogEntryProps) {
                 key={call.id}
                 entry={call}
                 warnings={call.callId ? props.nestedWarnings?.get(call.callId) : undefined}
-                expanded={props.expandOverrides?.get(call.id)}
+                expanded={props.forceExpandedNestedCallIds?.has(call.id) ? true : props.expandOverrides?.get(call.id)}
                 showActions={false}
                 actionsDisabled
                 projectId={props.projectId}
@@ -1518,14 +1545,14 @@ function LogEntryImpl(props: LogEntryProps) {
               </div>
             ) : (
               <div class="log-actions-hint log-actions-hint-kbd">
-                <span class="kbd">⌘⏎</span> approve <span class="kbd">esc</span> reject <span class="kbd">c</span> comment
+                <span class="kbd">⌘⏎</span> approve <span class="kbd">esc</span> reject{!genericToolApproval && <> <span class="kbd">c</span> comment</>}
               </div>
             )}
             {/* Least to most committing, left to right: Approve is the last
                 thing under the cursor and the last thing keyboard focus lands
                 on, so neither reaches it by accident. */}
             <div class="log-actions-buttons">
-              <button disabled={props.actionsDisabled} onClick={() => props.onAction('comment')}>Comment</button>
+              {!genericToolApproval && <button disabled={props.actionsDisabled} onClick={() => props.onAction('comment')}>Comment</button>}
               <button class="danger" disabled={props.actionsDisabled} onClick={() => props.onAction('reject')}>Reject</button>
               <button
                 class="primary"
@@ -1562,10 +1589,12 @@ const warningsSignature = (warnings: ApprovalLogEntry[] | undefined): string =>
  *  toggles one of them; the parent's own expand flag is compared separately. */
 const nestedSignature = (props: LogEntryProps): string =>
   (props.nestedCalls ?? [])
-    .map((call) => `${logEntrySignature(call)}:${props.expandOverrides?.get(call.id) ?? ''}:${warningsSignature(call.callId ? props.nestedWarnings?.get(call.callId) : undefined)}`)
+    .map((call) => `${logEntrySignature(call)}:${props.expandOverrides?.get(call.id) ?? ''}:${props.forceExpandedNestedCallIds?.has(call.id) ?? false}:${warningsSignature(call.callId ? props.nestedWarnings?.get(call.callId) : undefined)}`)
     .join('|');
 
-export const LogEntry = memo(LogEntryImpl, (prev, next) =>
+/** Keep a mounted parent in sync when a nested-only search or error match
+ * changes which child must be temporarily opened. */
+export const logEntryPropsEqual = (prev: LogEntryProps, next: LogEntryProps): boolean =>
   logEntrySignature(prev.entry) === logEntrySignature(next.entry) &&
   warningsSignature(prev.warnings) === warningsSignature(next.warnings) &&
   nestedSignature(prev) === nestedSignature(next) &&
@@ -1582,4 +1611,6 @@ export const LogEntry = memo(LogEntryImpl, (prev, next) =>
   prev.sessionId === next.sessionId &&
   prev.token === next.token &&
   prev.selectedChoice === next.selectedChoice
-);
+;
+
+export const LogEntry = memo(LogEntryImpl, logEntryPropsEqual);

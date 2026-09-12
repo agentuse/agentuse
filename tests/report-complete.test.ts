@@ -169,6 +169,7 @@ describe('shouldRequestOutcome', () => {
     maxSteps: 100,
     alreadyAsked: false,
     suspended: false,
+    structuredDeliveryCompleted: false,
   };
 
   it('asks when a turn ended with no verdict and budget remains', () => {
@@ -187,12 +188,24 @@ describe('shouldRequestOutcome', () => {
 
   it('does not interrupt a run that is still working or suspended', () => {
     expect(shouldRequestOutcome({ ...base, segmentFinishReason: 'tool-calls' })).toBe(false);
+    expect(shouldRequestOutcome({ ...base, segmentFinishReason: 'tool-calls', stepCount: 100, maxSteps: 100 })).toBe(true);
     expect(shouldRequestOutcome({ ...base, segmentFinishReason: 'length' })).toBe(false);
     expect(shouldRequestOutcome({ ...base, suspended: true })).toBe(false);
   });
 
-  it('does not claim a step the run does not have', () => {
-    expect(shouldRequestOutcome({ ...base, stepCount: 100, maxSteps: 100 })).toBe(false);
+  it('uses its reserved outcome turn at the work ceiling', () => {
+    expect(shouldRequestOutcome({ ...base, stepCount: 100, maxSteps: 100 })).toBe(true);
+    expect(shouldRequestOutcome({ ...base, stepCount: 101, maxSteps: 100 })).toBe(true);
+    expect(shouldRequestOutcome({ ...base, segmentFinishReason: 'other', stepCount: 101, maxSteps: 100 })).toBe(true);
+    expect(shouldRequestOutcome({ ...base, segmentFinishReason: 'tool-calls', stepCount: 101, maxSteps: 100 })).toBe(true);
+  });
+
+  it('uses the reserved turn after successful structured delivery below the work ceiling', () => {
+    expect(shouldRequestOutcome({
+      ...base,
+      segmentFinishReason: 'tool-calls',
+      structuredDeliveryCompleted: true,
+    })).toBe(true);
   });
 
   it('is inert when the outcome tools were never loaded', () => {
@@ -202,8 +215,8 @@ describe('shouldRequestOutcome', () => {
   it('asks for the verdict without inviting a second copy of the report', () => {
     expect(OUTCOME_NUDGE_PROMPT).toContain('report_complete');
     expect(OUTCOME_NUDGE_PROMPT).toContain('report_incomplete');
-    expect(OUTCOME_NUDGE_PROMPT).toContain('preceding turn ended normally');
-    expect(OUTCOME_NUDGE_PROMPT).toContain('did not stop it for a deadline, error, or step limit');
+    expect(OUTCOME_NUDGE_PROMPT).toContain('may have reached its normal work-step limit after returning a tool result');
+    expect(OUTCOME_NUDGE_PROMPT).toContain('does not authorize more work');
     expect(OUTCOME_NUDGE_PROMPT).toContain('full preceding task and tool trace');
     expect(OUTCOME_NUDGE_PROMPT).toContain('do not invent a blocker');
     expect(OUTCOME_NUDGE_PROMPT).toContain('successful evaluation that found nothing');

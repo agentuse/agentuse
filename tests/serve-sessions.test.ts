@@ -65,6 +65,38 @@ describe('background session failures', () => {
   });
 });
 
+describe('generic approval Slack lifecycle prompt', () => {
+  it('keeps resuming, failed, and completed Slack updates eligible without an input prompt', () => {
+    const approval = {
+      sessionId: 'session-generic',
+      sessionStatus: 'suspended',
+      approvalKind: 'tool_approval',
+      toolApproval: {
+        approvalId: 'approval-1',
+        toolCallId: 'call-1',
+        toolName: 'publish',
+        canonicalInput: '{"canonical":true}',
+        signedRawInput: '{"title":"signed"}',
+      },
+      agent: { id: 'agents/publisher', name: 'Publisher' },
+    } as any;
+
+    const prompt = __testing.approvalSlackStatusPrompt(approval);
+    expect(prompt).toBe('Approve execution of publish?');
+    for (const status of ['resuming', 'failed', 'completed']) {
+      expect({ status, prompt }).toMatchObject({ status, prompt: 'Approve execution of publish?' });
+    }
+  });
+
+  it('preserves an explicit approval prompt', () => {
+    expect(__testing.approvalSlackStatusPrompt({
+      prompt: 'Approve the reviewed campaign?',
+      approvalKind: 'tool_approval',
+      toolApproval: { toolName: 'publish' },
+    } as any)).toBe('Approve the reviewed campaign?');
+  });
+});
+
 describe('agent revision continuation reconciliation', () => {
   const projectId = 'content';
   const sessionId = '01REVISIONSESSION00000000000';

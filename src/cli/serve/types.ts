@@ -387,6 +387,17 @@ export interface SessionTokenUsage {
 export interface ApprovalPageInfo {
   sessionId: string;
   sessionStatus: string;
+  approvalKind?: 'await_human' | 'tool_approval';
+  toolApproval?: {
+    approvalId: string;
+    toolCallId: string;
+    toolName: string;
+    canonicalInput: string;
+    canonicalInputDigest: string;
+    signedRawInput: string;
+    signedRawInputDigest: string;
+    signature?: string;
+  };
   /** Resolved project id, stamped by the serve daemon on session lookups so
    *  clients without ?project= in the URL can address project-scoped
    *  endpoints (e.g. "Run new session" on a multi-project daemon). */
@@ -597,6 +608,15 @@ export interface ToolTokenUsage {
 
 export interface ApprovalLogDetails {
   resumeToken?: string;
+  toolApproval?: {
+    approvalId: string;
+    toolName: string;
+    canonicalInput: string;
+    canonicalInputDigest?: string;
+    signedRawInput: string;
+    signedRawInputDigest?: string;
+    signature?: string;
+  };
   prompt?: string;
   /** Model-declared goal of this call (the injected `intent` parameter), shown
    *  as the tool row's primary label with the tool chip demoted to metadata. */

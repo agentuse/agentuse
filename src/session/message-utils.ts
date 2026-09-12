@@ -34,10 +34,11 @@ export function stripToolBlocks(
       const kept = content.filter((part: any) => {
         const isCall = part?.type === 'tool-call';
         const isResult = part?.type === 'tool-result';
-        if ((isCall || isResult) && ids.has(part.toolCallId)) {
+        const isApprovalRequest = part?.type === 'tool-approval-request';
+        if ((isCall || isResult || isApprovalRequest) && ids.has(part.toolCallId)) {
           // In results-only mode, keep tool-CALL blocks (they live in a signed
           // thinking turn that must survive verbatim); drop only the tool-result.
-          if (resultsOnly && isCall) return true;
+          if (resultsOnly && (isCall || isApprovalRequest)) return true;
           return false;
         }
         return true;

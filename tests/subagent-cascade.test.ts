@@ -39,6 +39,27 @@ function awaitHumanPart(resumeToken = 'leaf-token', status: 'pending' | 'complet
   };
 }
 
+function genericApprovalPart(resumeToken = 'generic-token', status: 'pending' | 'completed' = 'pending') {
+  return {
+    type: 'tool',
+    tool: 'publish',
+    callID: 'publish-call',
+    state: {
+      status,
+      input: { title: 'Approved title' },
+      ...(status === 'pending'
+        ? { resumePayload: {
+            kind: 'tool_approval',
+            approvalId: 'approval-publish',
+            toolCallId: 'publish-call',
+            toolName: 'publish',
+            resumeToken,
+          } }
+        : { output: { ok: true } }),
+    },
+  };
+}
+
 type Node = {
   status: 'preparing' | 'suspended' | 'completed' | 'running' | 'error';
   parentSessionID?: string;
@@ -104,6 +125,12 @@ describe('findPendingAwaitHumanPart', () => {
   it('ignores a completed (already-decided) gate', () => {
     expect(findPendingAwaitHumanPart([awaitHumanPart('tk', 'completed')])).toBeUndefined();
   });
+
+  it('finds a pending generic SDK tool approval', () => {
+    const part = findPendingAwaitHumanPart([genericApprovalPart('sdk-token')]);
+    expect(part?.tool).toBe('publish');
+    expect(part?.state?.resumePayload).toMatchObject({ kind: 'tool_approval', resumeToken: 'sdk-token' });
+  });
 });
 
 describe('descendToLeafGate', () => {
@@ -127,6 +154,20 @@ describe('descendToLeafGate', () => {
     expect(gate!.session.id).toBe('leaf');
     expect(gate!.session.agent.name).toBe('reply-to-post');
     expect(gate!.approvalPart.state.resumePayload.resumeToken).toBe('leaf-token');
+  });
+
+  it('descends through a parent bookmark to a generic SDK approval leaf', async () => {
+    const reader = makeReader({
+      mid: { status: 'suspended', parts: [subagentWaitPart('leaf')] },
+      leaf: { status: 'suspended', parts: [genericApprovalPart('generic-leaf-token')], agentName: 'publisher' },
+    });
+    const gate = await descendToLeafGate(reader, 'mid');
+    expect(gate?.session.id).toBe('leaf');
+    expect(gate?.session.agent.name).toBe('publisher');
+    expect(gate?.approvalPart.state.resumePayload).toMatchObject({
+      kind: 'tool_approval',
+      resumeToken: 'generic-leaf-token',
+    });
   });
 
   it('returns null for a stale chain (child no longer suspended)', async () => {

@@ -1429,6 +1429,18 @@ function canContinueApprovalSession(options: {
     Boolean(approval.agent.filePath);
 }
 
+function approvalSlackStatusPrompt(approval: ApprovalPageInfo): string | undefined {
+  if (typeof approval.prompt === 'string' && approval.prompt.trim().length > 0) {
+    return approval.prompt;
+  }
+  const toolName = approval.approvalKind === 'tool_approval'
+    && typeof approval.toolApproval?.toolName === 'string'
+    && approval.toolApproval.toolName.trim().length > 0
+    ? approval.toolApproval.toolName
+    : undefined;
+  return toolName ? `Approve execution of ${toolName}?` : undefined;
+}
+
 function isAgentRevisionContinuationInFlight(
   projectId: string,
   revisionSessionId: string,
@@ -3128,6 +3140,9 @@ export function createServeCommand(): Command {
       ): Promise<{ agentFilePath: string; stateRoot: string; instruction: string; model?: string | undefined; agentInstructions?: string | undefined; sessionTranscript?: string | undefined; sessionId?: string | undefined; cap?: number | undefined } | null> => {
         const instruction = remember?.trim();
         if (!instruction) return null;
+        if (info.approval.approvalKind === 'tool_approval') {
+          throw new Error('Remembered learnings are not supported for generic tool approvals');
+        }
         const targetAgent = info.approval.originAgent ?? info.approval.agent;
         if (!targetAgent.filePath) {
           throw new Error("Cannot remember a learning because this approval does not record an agent file path");
@@ -3172,6 +3187,17 @@ export function createServeCommand(): Command {
         status: string,
         choice: string | undefined
       ): { code: string; message: string } | null => {
+        if (info.approval.approvalKind === 'tool_approval') {
+          const supported = status === 'approve' || status === 'approved'
+            || status === 'reject' || status === 'rejected';
+          if (!supported) {
+            return { code: 'TOOL_APPROVAL_DECISION_INVALID', message: 'Generic tool approvals support only approve or reject' };
+          }
+          if (choice !== undefined) {
+            return { code: 'CHOICE_INVALID', message: 'Generic tool approvals do not accept option choices' };
+          }
+          return null;
+        }
         const gateOptions = info.approval.options;
         // Both spellings reach the worker as an approval ('approve' and
         // 'approved' normalize to the same decision in src/index.ts), so both
@@ -3357,13 +3383,14 @@ export function createServeCommand(): Command {
             approvalUrl: info.approval.channelMessage.url
           }
           : undefined;
-        if (slackChannelMessage && info.approval.prompt) {
+        const slackStatusPrompt = approvalSlackStatusPrompt(info.approval);
+        if (slackChannelMessage && slackStatusPrompt) {
           void updateSlackApprovalRequestStatus({
             botToken: slackBotToken!,
             channelId: slackChannelMessage.channelId,
             ts: slackChannelMessage.ts,
             ...(slackChannelMessage.actionTs && { actionTs: slackChannelMessage.actionTs }),
-            prompt: info.approval.prompt,
+            prompt: slackStatusPrompt,
             sessionId: targetSessionId,
             projectId: project.id,
             agentName: info.approval.agent.name,
@@ -3404,13 +3431,13 @@ export function createServeCommand(): Command {
             } catch (hookErr) {
               logger.warn(`Approval resume failure hook for ${targetSessionId} failed: ${toErrorMessage(hookErr)}`);
             }
-            if (slackChannelMessage && info.approval.prompt) {
+            if (slackChannelMessage && slackStatusPrompt) {
               void updateSlackApprovalRequestStatus({
                 botToken: slackBotToken!,
                 channelId: slackChannelMessage.channelId,
                 ts: slackChannelMessage.ts,
                 ...(slackChannelMessage.actionTs && { actionTs: slackChannelMessage.actionTs }),
-                prompt: info.approval.prompt,
+                prompt: slackStatusPrompt,
                 sessionId: targetSessionId,
                 projectId: project.id,
                 agentName: info.approval.agent.name,
@@ -3424,13 +3451,13 @@ export function createServeCommand(): Command {
           } else {
             backgroundSessionFailures.delete(activeKey);
             approvalLog.resumeCompleted(targetSessionId, Date.now() - resumeStart);
-            if (slackChannelMessage && info.approval.prompt) {
+            if (slackChannelMessage && slackStatusPrompt) {
               void updateSlackApprovalRequestStatus({
                 botToken: slackBotToken!,
                 channelId: slackChannelMessage.channelId,
                 ts: slackChannelMessage.ts,
                 ...(slackChannelMessage.actionTs && { actionTs: slackChannelMessage.actionTs }),
-                prompt: info.approval.prompt,
+                prompt: slackStatusPrompt,
                 sessionId: targetSessionId,
                 projectId: project.id,
                 agentName: info.approval.agent.name,
@@ -5344,6 +5371,7 @@ export const __testing = {
   formatSchedulesTable,
   bareServeMigrationWarning,
   canContinueApprovalSession,
+  approvalSlackStatusPrompt,
   applyBackgroundSessionFailure,
   isAgentRevisionContinuationInFlight,
   isAgentDraftContinuationInFlight,

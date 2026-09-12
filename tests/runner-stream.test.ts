@@ -210,6 +210,38 @@ describe('processAgentStream session logging', () => {
     expect(pendingState.suspendedAt).toBeGreaterThan(1_000);
   });
 
+  it('preserves falsy canonical inputs and raw approved input through running, terminal, and pending states', async () => {
+    const added: any[] = [];
+    const updates: any[] = [];
+    let part = 0;
+    const sessionManager = {
+      addPart: async (...args: any[]) => { added.push(args); return `part-${++part}`; },
+      updatePart: async (...args: any[]) => { updates.push(args); },
+      updateMessage: async () => {},
+      writeContextSnapshot: async () => {},
+    };
+    async function* chunks(): AsyncGenerator<AgentChunk> {
+      for (const [id, input] of [['null', null], ['false', false], ['zero', 0], ['empty', '']] as const) {
+        yield { type: 'tool-call', toolName: 'publish', toolCallId: id, toolInput: input, rawApprovedInput: false, toolStartTime: 1 };
+        yield { type: 'tool-result', toolName: 'publish', toolCallId: id, toolResult: 'ok', toolDuration: 1, toolSuccess: true };
+      }
+      yield { type: 'tool-call', toolName: 'publish', toolCallId: 'error', toolInput: 0, rawApprovedInput: '', toolStartTime: 1 };
+      yield { type: 'tool-result', toolName: 'publish', toolCallId: 'error', toolResult: 'bad', toolDuration: 1, toolSuccess: false };
+      yield { type: 'tool-call', toolName: 'await_human', toolCallId: 'pending', toolInput: '', rawApprovedInput: null, toolStartTime: 1 };
+      yield { type: 'suspended', toolName: 'await_human', toolCallId: 'pending', toolResultRaw: { kind: 'await_human' } };
+    }
+    await processAgentStream(chunks(), {
+      sessionManager: sessionManager as any, sessionID: 'session-1', agentId: 'agent-1', messageID: 'message-1', quiet: true,
+    });
+    const running = added.map(args => args[3]?.state).filter(Boolean);
+    expect(running.map(state => state.input)).toEqual([null, false, 0, '', 0, '']);
+    expect(running.map(state => state.rawApprovedInput)).toEqual([false, false, false, false, '', null]);
+    const terminal = updates.map(args => args[4]?.state).filter((state: any) => ['completed', 'error', 'pending'].includes(state?.status));
+    expect(terminal).toContainEqual(expect.objectContaining({ status: 'completed', input: false, rawApprovedInput: false }));
+    expect(terminal).toContainEqual(expect.objectContaining({ status: 'error', input: 0, rawApprovedInput: '' }));
+    expect(terminal).toContainEqual(expect.objectContaining({ status: 'pending', input: '', rawApprovedInput: null }));
+  });
+
   it('persists step usage before a session suspends for approval', async () => {
     const messageUpdates: any[] = [];
     const partUpdates: any[] = [];

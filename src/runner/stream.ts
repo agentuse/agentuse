@@ -18,6 +18,7 @@ import { LIVE_OUTPUT_INTERVAL_MS, LIVE_OUTPUT_METADATA_KEY } from '../tools/type
 import { withoutToolIntent } from './tool-intent';
 import { defaultTerminalPresenter, type TerminalPresenter } from './terminal-presenter';
 import { formatOutcomeLine, mergeReportBodies, stripLeadingOutcomeLine, REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL } from '../tools/report-outcome.js';
+import { sanitizeWALInput } from './effect-wal';
 
 type SlackRunChannelHandle = {
   channel: string;
@@ -210,7 +211,14 @@ export async function processAgentStream(
   const toolCalls: Array<{ tool: string; args: unknown }> = [];
   let subAgentTokens = 0;
   const toolCallTraces: ToolCallTrace[] = [];
-  const pendingToolCalls = new Map<string, { name: string; startTime: number; input?: unknown }>();
+  const pendingToolCalls = new Map<string, {
+    name: string;
+    startTime: number;
+    /** Canonical schema value executed by the tool. */
+    input?: unknown;
+    /** Post-plugin raw value covered by the approval signature. */
+    rawApprovedInput?: unknown;
+  }>();
   const toolStates = new Map<string, ToolState>();
   const currentStepToolCallIds = new Set<string>();
   let currentLlmCall: { model: string; startTime: number; firstTokenTime?: number } | null = null;
@@ -422,7 +430,7 @@ export async function processAgentStream(
         parts.push({
           type: 'tool-call',
           tool: chunk.toolName!,
-          args: chunk.toolInput,
+          args: sanitizeWALInput(chunk.toolInput),
           timestamp: Date.now()
         });
         // The outcome tools carry the run's answer, not a step of the work, so
@@ -460,22 +468,30 @@ export async function processAgentStream(
         }
         // Store info for this tool call using toolCallId as key
         if (chunk.toolCallId && chunk.toolName) {
-          const startTime = chunk.toolStartTime || Date.now();
+          const startTime = chunk.toolStartTime ?? Date.now();
+          const persistedInput = sanitizeWALInput(chunk.toolInput);
+          const hasRawApprovedInput = Object.prototype.hasOwnProperty.call(chunk, 'rawApprovedInput');
+          const persistedRawApprovedInput = hasRawApprovedInput
+            ? sanitizeWALInput(chunk.rawApprovedInput)
+            : undefined;
           pendingToolCalls.set(chunk.toolCallId, {
             name: chunk.toolName,
             startTime,
-            input: chunk.toolInput  // Store input for later use in completed state
+            input: persistedInput,
+            ...(hasRawApprovedInput && { rawApprovedInput: persistedRawApprovedInput }),
           });
           toolStates.set(chunk.toolCallId, {
             status: 'running',
-            input: chunk.toolInput,
+            input: persistedInput,
+            ...(hasRawApprovedInput && { rawApprovedInput: persistedRawApprovedInput }),
             time: { start: startTime },
           });
           currentStepToolCallIds.add(chunk.toolCallId);
           recorder.toolStarted({
             callID: chunk.toolCallId,
             tool: chunk.toolName!,
-            input: chunk.toolInput,
+            input: persistedInput,
+            rawApprovedInput: persistedRawApprovedInput,
             startTime,
           });
         }
@@ -617,9 +633,14 @@ export async function processAgentStream(
         }
 
         // Find and complete the tool call trace using toolCallId
-        if (chunk.toolCallId && chunk.toolDuration !== undefined) {
+        // Approved-history execution is resumed by the SDK as a tool-result
+        // without replaying its prior tool-call, so it has no fresh duration.
+        // A pending persisted call still must become terminal rather than
+        // remaining `running` forever after the resumed effect completed.
+        if (chunk.toolCallId) {
           const pending = pendingToolCalls.get(chunk.toolCallId);
           if (pending) {
+            const resolvedDuration = chunk.toolDuration ?? Math.max(0, Date.now() - pending.startTime);
             // Add tokens to subagent total if applicable
             if (tokens) {
               subAgentTokens += tokens;
@@ -630,7 +651,7 @@ export async function processAgentStream(
               name: pending.name,
               type: isSubAgent ? 'subagent' : 'tool',
               startTime: pending.startTime,
-              duration: chunk.toolDuration,
+              duration: resolvedDuration,
               ...(tokens && { tokens }),
               success: toolSuccess,
               input: pending.input,
@@ -641,14 +662,18 @@ export async function processAgentStream(
             const toolState: ToolStateCompleted | ToolStateError = toolSuccess
               ? {
                   status: 'completed',
-                  input: pending.input || {},
-                  output: chunk.toolResultRaw || chunk.toolResult,
+                  input: pending.input,
+                  ...(Object.prototype.hasOwnProperty.call(pending, 'rawApprovedInput') && { rawApprovedInput: pending.rawApprovedInput }),
+                  output: Object.prototype.hasOwnProperty.call(chunk, 'toolResultRaw')
+                    ? chunk.toolResultRaw
+                    : chunk.toolResult,
                   time: { start: pending.startTime, end: endTime },
                   ...(tokens && { metadata: { tokens } })
                 }
               : {
                   status: 'error',
-                  input: pending.input || {},
+                  input: pending.input,
+                  ...(Object.prototype.hasOwnProperty.call(pending, 'rawApprovedInput') && { rawApprovedInput: pending.rawApprovedInput }),
                   error: rawResult?.error
                     ? formatToolResultForDisplay(rawResult.error, { preferError: true })
                     : formatToolResultForDisplay(chunk.toolResult ?? chunk.toolResultRaw ?? 'Unknown error', { preferError: true }),
@@ -658,6 +683,18 @@ export async function processAgentStream(
             await persistToolState(chunk.toolCallId, toolState);
 
             pendingToolCalls.delete(chunk.toolCallId);
+          } else if (options?.sessionManager && options.sessionID && options.agentId) {
+            // A resumed SDK invocation may emit only the historical result.
+            // Reconcile the durable pending part created by the prior process.
+            const previous = await options.sessionManager.findPendingTool?.(options.sessionID, options.agentId);
+            if (previous?.part && (previous.part as any).callID === chunk.toolCallId) {
+              const prior = (previous.part as any).state;
+              const endTime = Date.now();
+              const state = toolSuccess
+                ? { status: 'completed' as const, input: prior.input, ...(Object.prototype.hasOwnProperty.call(prior, 'rawApprovedInput') && { rawApprovedInput: prior.rawApprovedInput }), ...(prior.metadata && { metadata: prior.metadata }), output: Object.prototype.hasOwnProperty.call(chunk, 'toolResultRaw') ? chunk.toolResultRaw : chunk.toolResult, time: { start: prior.time?.start ?? endTime, end: endTime } }
+                : { status: 'error' as const, input: prior.input, ...(Object.prototype.hasOwnProperty.call(prior, 'rawApprovedInput') && { rawApprovedInput: prior.rawApprovedInput }), ...(prior.metadata && { metadata: prior.metadata }), error: formatToolResultForDisplay(chunk.toolResult ?? chunk.toolResultRaw ?? 'Unknown error', { preferError: true }), time: { start: prior.time?.start ?? endTime, end: endTime } };
+              await options.sessionManager.updatePart(options.sessionID, options.agentId, previous.message.id, previous.part.id, { state } as any);
+            }
           }
         }
         break;
@@ -708,6 +745,11 @@ export async function processAgentStream(
             const buildPendingState = (activeChannelMessage?: any) => ({
               status: 'pending',
               input: pending.input,
+              ...(payload.kind === 'tool_approval' && Object.prototype.hasOwnProperty.call(payload, 'signedRawInput')
+                ? { rawApprovedInput: payload.signedRawInput }
+                : Object.prototype.hasOwnProperty.call(pending, 'rawApprovedInput')
+                  ? { rawApprovedInput: pending.rawApprovedInput }
+                  : {}),
               suspendedAt,
               resumePayload: payload.kind === 'subagent_wait'
                 ? {
@@ -715,6 +757,24 @@ export async function processAgentStream(
                     ...(typeof payload.childSessionID === 'string' && { childSessionID: payload.childSessionID }),
                     ...(typeof payload.childAgentName === 'string' && { childAgentName: payload.childAgentName }),
                   }
+                : payload.kind === 'tool_approval'
+                  ? {
+                      kind: 'tool_approval',
+                      ...(typeof payload.approvalId === 'string' && { approvalId: payload.approvalId }),
+                      ...(typeof payload.toolCallId === 'string' && { toolCallId: payload.toolCallId }),
+                      ...(typeof payload.toolName === 'string' && { toolName: payload.toolName }),
+                      ...(typeof payload.signature === 'string' && { signature: payload.signature }),
+                      ...(typeof payload.canonicalInputDisplay === 'string' && { canonicalInputDisplay: payload.canonicalInputDisplay }),
+                      ...(typeof payload.canonicalInputDigest === 'string' && { canonicalInputDigest: payload.canonicalInputDigest }),
+                      ...(typeof payload.signedRawInputDisplay === 'string' && { signedRawInputDisplay: payload.signedRawInputDisplay }),
+                      ...(typeof payload.signedRawInputDigest === 'string' && { signedRawInputDigest: payload.signedRawInputDigest }),
+                      ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
+                      ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
+                      ...(payload.approvalRequest && typeof payload.approvalRequest === 'object'
+                        ? { approvalRequest: payload.approvalRequest as any }
+                        : {}),
+                      ...(activeChannelMessage ? { channelMessage: activeChannelMessage } : {}),
+                    }
                 : {
                     kind: 'await_human',
                     ...(typeof payload.prompt === 'string' && { prompt: payload.prompt }),
@@ -727,16 +787,25 @@ export async function processAgentStream(
                   }
             });
             const persisted = await persistToolState(chunk.toolCallId, buildPendingState(channelMessage) as ToolState);
-            if (persisted && payload.kind === 'await_human') {
+            if (persisted && (payload.kind === 'await_human' || payload.kind === 'tool_approval')) {
+              const approvalPrompt = typeof payload.prompt === 'string'
+                ? payload.prompt
+                : payload.kind === 'tool_approval'
+                  ? `Approve execution of ${pending.name}?`
+                  : undefined;
+              const channelRequest = payload.channelRequest
+                ?? (payload.kind === 'tool_approval' && process.env.SLACK_APPROVAL_CHANNEL
+                  ? { type: 'slack-message', channel: process.env.SLACK_APPROVAL_CHANNEL }
+                  : undefined);
               const sentChannelMessage = await sendPersistedSlackApproval({
                 ...(options?.sessionID && { sessionId: options.sessionID }),
                 ...(options?.agentName && { agentName: options.agentName }),
                 ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
                 ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
-                ...(typeof payload.prompt === 'string' && { prompt: payload.prompt }),
+                ...(approvalPrompt && { prompt: approvalPrompt }),
                 ...(typeof payload.expiresAt === 'number' && { expiresAt: payload.expiresAt }),
                 input: pending.input,
-                channelRequest: payload.channelRequest,
+                channelRequest,
                 ...(options?.slackRunChannelHandles && { slackRunChannelHandles: options.slackRunChannelHandles })
               });
               if (sentChannelMessage) {
@@ -746,7 +815,7 @@ export async function processAgentStream(
                 ...(options?.sessionID && { sessionId: options.sessionID }),
                 ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
                 ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
-                ...(typeof payload.prompt === 'string' && { prompt: payload.prompt })
+                ...(approvalPrompt && { prompt: approvalPrompt })
               });
             }
           }

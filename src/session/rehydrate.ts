@@ -282,10 +282,19 @@ function appendPartMessages(messages: ModelMessage[], part: Part): void {
 
 function toolResultMessage(part: ToolPart): ModelMessage | undefined {
   const state = part.state;
+  const metadata = state.status === 'pending' ? state.metadata : state.metadata;
+  const resumePayload = metadata?.resumePayload as Record<string, unknown> | undefined;
+  const approvalResponse = metadata?.approvalResponse as Record<string, unknown> | undefined;
+  const isGenericApproval = resumePayload?.kind === 'tool_approval'
+    && approvalResponse?.type === 'tool-approval-response';
+  const approvalContent = isGenericApproval ? [approvalResponse] : [];
+  if (state.status === 'running' && isGenericApproval) {
+    return { role: 'tool', content: approvalContent } as unknown as ModelMessage;
+  }
   if (state.status === 'completed') {
     return {
       role: 'tool',
-      content: [{
+      content: [...approvalContent, {
         type: 'tool-result',
         toolCallId: part.callID,
         toolName: part.tool,
@@ -296,7 +305,7 @@ function toolResultMessage(part: ToolPart): ModelMessage | undefined {
   if (state.status === 'error') {
     return {
       role: 'tool',
-      content: [{
+      content: [...approvalContent, {
         type: 'tool-result',
         toolCallId: part.callID,
         toolName: part.tool,
@@ -312,7 +321,20 @@ function toolResultMessage(part: ToolPart): ModelMessage | undefined {
 
 function appendToolMessages(messages: ModelMessage[], part: ToolPart): void {
   const state = part.state;
-  const input = 'input' in state ? state.input : undefined;
+  const metadata = state.status === 'pending' ? state.metadata : state.metadata;
+  const resumePayload = (state.status === 'pending' ? state.resumePayload : metadata?.resumePayload) as Record<string, unknown> | undefined;
+  const isGenericApproval = resumePayload?.kind === 'tool_approval';
+  const input = isGenericApproval && Object.prototype.hasOwnProperty.call(state, 'rawApprovedInput')
+    ? state.rawApprovedInput
+    : 'input' in state ? state.input : undefined;
+  const request = isGenericApproval
+    ? (resumePayload?.approvalRequest as Record<string, unknown> | undefined) ?? {
+        type: 'tool-approval-request',
+        approvalId: resumePayload?.approvalId,
+        toolCallId: part.callID,
+        ...(typeof resumePayload?.signature === 'string' && { signature: resumePayload.signature }),
+      }
+    : undefined;
 
   messages.push({
     role: 'assistant',
@@ -321,7 +343,7 @@ function appendToolMessages(messages: ModelMessage[], part: ToolPart): void {
       toolCallId: part.callID,
       toolName: part.tool,
       input
-    }]
+    }, ...(request ? [request] : [])]
   } as unknown as ModelMessage);
 
   const result = toolResultMessage(part);
@@ -354,11 +376,25 @@ function backfillMissingToolResults(
   const content = (assistantTurn as { content?: unknown }).content;
   if (!Array.isArray(content)) return;
   const resolved = new Set<string>();
+  const approvalCallById = new Map<string, string>();
+  for (const message of knownMessages) {
+    const mc = (message as { content?: unknown }).content;
+    if (message.role !== 'assistant' || !Array.isArray(mc)) continue;
+    for (const part of mc as any[]) {
+      if (part?.type === 'tool-approval-request' && typeof part.approvalId === 'string' && typeof part.toolCallId === 'string') {
+        approvalCallById.set(part.approvalId, part.toolCallId);
+      }
+    }
+  }
   for (const message of knownMessages) {
     const mc = (message as { content?: unknown }).content;
     if (message.role === 'tool' && Array.isArray(mc)) {
       for (const part of mc as any[]) {
         if (part?.type === 'tool-result') resolved.add(part.toolCallId);
+        if (part?.type === 'tool-approval-response') {
+          const callId = approvalCallById.get(part.approvalId);
+          if (callId) resolved.add(callId);
+        }
       }
     }
   }

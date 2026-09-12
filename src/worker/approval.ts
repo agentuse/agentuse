@@ -5,6 +5,7 @@ import { descendToLeafGate, findPendingSubagentWaitChildId, findRootSessionId, f
 import { repairEscapedText } from '../utils/display-text';
 import { safeHttpUrl } from '../utils/url';
 import { logger } from '../utils/logger';
+import { completeApprovalValueDisplay } from '../utils/approval-value';
 import { SessionManager } from '../session/index.js';
 import { initStorage, CorruptStorageError } from '../storage/index.js';
 import type { Part, SessionInfo } from '../session';
@@ -118,16 +119,13 @@ export async function getApprovalInfoUncached(req: ExecuteRequest) {
       { session: found.session, parts: parts as Part[] },
       ...descendantEvidence,
     ]);
-    const approvalParts = parts.filter((part: any) =>
-      part?.type === 'tool' &&
-      part?.tool === 'await_human' &&
-      (
-        part?.state?.resumePayload?.kind === 'await_human' ||
-        part?.state?.status === 'completed' ||
-        part?.state?.status === 'running' ||
-        part?.state?.metadata?.resumePayload?.kind === 'await_human'
-      )
-    ) as any;
+    const approvalParts = parts.filter((part: any) => {
+      if (part?.type !== 'tool') return false;
+      const kind = part?.state?.status === 'pending'
+        ? part?.state?.resumePayload?.kind
+        : part?.state?.metadata?.resumePayload?.kind;
+      return part?.tool === 'await_human' || kind === 'await_human' || kind === 'tool_approval';
+    }) as any;
     const pendingApprovalPart = [...approvalParts].reverse().find((part: any) =>
       part?.state?.status === 'pending'
     );
@@ -258,6 +256,7 @@ export async function getApprovalInfoUncached(req: ExecuteRequest) {
     const resumePayload = state.status === 'pending'
       ? valueAsRecord(state.resumePayload)
       : valueAsRecord(metadata.resumePayload);
+    const isGenericToolApproval = resumePayload.kind === 'tool_approval';
     const expectedToken = typeof resumePayload.resumeToken === 'string' ? resumePayload.resumeToken : undefined;
     // For read-only views (e.g. /status polling, page render via an old Slack
     // link), accept any resumeToken that was issued for any await_human gate
@@ -335,7 +334,9 @@ export async function getApprovalInfoUncached(req: ExecuteRequest) {
       );
       if (bookmarkPart) {
         const bookmarkId = String(bookmarkPart.id);
-        const leafGateDetails = buildAwaitHumanDetails(state);
+        const leafGateDetails = isGenericToolApproval
+          ? buildApprovalLogs(cascadeLeaf.parts).find((entry) => entry.id === String(effectiveApprovalPart.id))?.details
+          : buildAwaitHumanDetails(state);
         if (leafGateDetails) {
           // The gate is the leaf's, and so is the verdict that produced it:
           // the manager's own parts carry neither.
@@ -378,12 +379,69 @@ export async function getApprovalInfoUncached(req: ExecuteRequest) {
     const payloadChanges = normalizeApprovalChanges(input.changes);
     const payloadReference = normalizeApprovalReference(input.reference);
     const payloadOptions = normalizeApprovalOptions(input.options);
+    const genericToolName = typeof resumePayload.toolName === 'string'
+      ? resumePayload.toolName
+      : String(effectiveApprovalPart.tool);
+    const approvalPrompt = typeof input.prompt === 'string' && input.prompt.trim().length > 0
+      ? repairEscapedText(input.prompt)
+      : isGenericToolApproval
+        ? `Approve execution of ${genericToolName}?`
+        : undefined;
+    const fullToolApproval = (() => {
+      if (!isGenericToolApproval || typeof resumePayload.approvalId !== 'string') return undefined;
+      const canonicalFallback = completeApprovalValueDisplay(state.input);
+      const signedRawValue = Object.prototype.hasOwnProperty.call(state, 'rawApprovedInput')
+        ? state.rawApprovedInput
+        : state.input;
+      const signedRawFallback = completeApprovalValueDisplay(signedRawValue);
+      return {
+        approvalId: resumePayload.approvalId,
+        toolCallId: typeof resumePayload.toolCallId === 'string'
+          ? resumePayload.toolCallId
+          : String(effectiveApprovalPart.callID),
+        toolName: genericToolName,
+        canonicalInput: typeof resumePayload.canonicalInputDisplay === 'string'
+          ? resumePayload.canonicalInputDisplay
+          : canonicalFallback.text,
+        canonicalInputDigest: typeof resumePayload.canonicalInputDigest === 'string'
+          ? resumePayload.canonicalInputDigest
+          : canonicalFallback.sha256,
+        signedRawInput: typeof resumePayload.signedRawInputDisplay === 'string'
+          ? resumePayload.signedRawInputDisplay
+          : signedRawFallback.text,
+        signedRawInputDigest: typeof resumePayload.signedRawInputDigest === 'string'
+          ? resumePayload.signedRawInputDigest
+          : signedRawFallback.sha256,
+        ...(typeof resumePayload.signature === 'string' && { signature: resumePayload.signature }),
+      };
+    })();
+    if (fullToolApproval && state.status === 'pending') {
+      // The ordinary log projection stays bounded. Replace only the actionable
+      // gate card with the complete reviewer representation captured before
+      // session JSON persistence could truncate or coerce the canonical value.
+      logs = logs.map((entry) => {
+        if (
+          entry.id !== String(effectiveApprovalPart.id)
+          && entry.details?.resumeToken !== expectedToken
+        ) return entry;
+        const { toolCallId: _toolCallId, ...logToolApproval } = fullToolApproval;
+        return {
+          ...entry,
+          details: {
+            ...(entry.details ?? {}),
+            ...(approvalPrompt && { prompt: approvalPrompt }),
+            toolApproval: logToolApproval,
+          },
+        };
+      });
+    }
     return {
       id: req.id,
       success: true,
       approval: {
         sessionId: req.sessionId,
         sessionStatus,
+        approvalKind: isGenericToolApproval ? 'tool_approval' : 'await_human',
         ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
         model: found.session.model,
         ...mockField(found.session),
@@ -400,7 +458,8 @@ export async function getApprovalInfoUncached(req: ExecuteRequest) {
         ...originAgentFields,
         ...viewOnlyFields,
         ...(additionalInstruction && { additionalInstruction }),
-        ...(typeof input.prompt === 'string' && { prompt: repairEscapedText(input.prompt) }),
+        ...(fullToolApproval && { toolApproval: fullToolApproval }),
+        ...(approvalPrompt && { prompt: approvalPrompt }),
         ...(typeof input.summary === 'string' && { summary: repairEscapedText(input.summary) }),
         ...(typeof input.draft === 'string' && { draft: repairEscapedText(input.draft) }),
         ...(payloadChanges && { changes: payloadChanges }),

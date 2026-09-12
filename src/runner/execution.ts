@@ -1,6 +1,6 @@
-import { streamText, isStepCount, type ModelMessage, type ToolSet } from 'ai';
+import { streamText, isStepCount, asSchema, type ModelMessage, type ToolSet } from 'ai';
 import { repairSmuggledXmlToolCall } from './tool-call-repair';
-import { createHash } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import type { ParsedAgent } from '../parser';
 import { createModel } from '../models';
 import { resolveModelInfo, resolveModelProvider } from '../utils/model-utils';
@@ -36,6 +36,13 @@ import { isSuspendSignal } from './suspend';
 import { sanitizeWALInput, type EffectWAL } from './effect-wal';
 import { LeaseStore, isEffectful } from './approval-lease';
 import { GateSealStore } from './gate-seal';
+import {
+  ApprovalInputLedger,
+  ApprovalInputLedgerError,
+  approvalInputDigest,
+  isDuplicateApprovalInputLedgerError,
+} from './approval-input-ledger';
+import { approvalToolContract, ApprovalToolContractError } from '../tools/tool-contract';
 import { applyGateDecisionEffects } from './gate-decision';
 import { attachCommandToPendingGate, withGatePlanPreflight } from './gate-preflight';
 import { isMockMode, resolveMockApprovalDecision, mockGateDecisionResult } from './mock-tools';
@@ -43,8 +50,10 @@ import { registerSDKTelemetryOnce } from '../telemetry/sdk-telemetry';
 import { recordErrorMarker } from './session-helper';
 import { extractApiErrorDetail } from './api-error';
 import { toErrorMessage } from '../utils/error-message';
+import { completeApprovalValueDisplay, type CompleteApprovalValueDisplay } from '../utils/approval-value';
+import { getSessionUrl } from '../tools/await-human';
 import type { CompactionReason, SessionManager } from '../session';
-import { ToolDispatcher, type ToolOutputArtifactWriter } from './tool-dispatcher';
+import { ToolDispatchDeniedError, ToolDispatcher, type ToolOutputArtifactWriter } from './tool-dispatcher';
 import { CODE_EXEC_TOOL, createCodeExecTool, isCodeModeEnabled, type NestedToolTrace } from './code-mode';
 import { injectIntentParam } from './tool-intent';
 import { stripInlineMediaData } from '../tools/media.js';
@@ -175,6 +184,144 @@ export function resolveMaxOutputTokens(agent: ParsedAgent): number | undefined {
 function isAnthropicModel(model: string): boolean {
   const provider = resolveModelProvider(model);
   return provider === 'anthropic' || loadedPluginProtocol(provider) === 'anthropic';
+}
+
+/**
+ * Gate attachment needs the provider's streamed object to remain shared with
+ * the approval card. Schema transforms may instead deliberately produce a
+ * Date, array, Map, or application instance. Only reconcile identities when
+ * both values are ordinary records; mutating an arbitrary normalized value
+ * into the provider object would silently destroy that root transform.
+ */
+function areCompatiblePlainRecords(raw: unknown, normalized: unknown): raw is Record<string, unknown> {
+  const isPlainRecord = (value: unknown): value is Record<string, unknown> => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  };
+  return isPlainRecord(raw) && isPlainRecord(normalized);
+}
+
+async function awaitToolApprovalAbortable<T>(
+  operation: () => PromiseLike<T> | T,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (signal?.aborted) throw signal.reason ?? new Error('Tool approval aborted');
+  if (!signal) return await operation();
+  return await new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason ?? new Error('Tool approval aborted'));
+    signal.addEventListener('abort', abort, { once: true });
+    Promise.resolve().then(() => {
+      if (signal.aborted) throw signal.reason ?? new Error('Tool approval aborted');
+      return operation();
+    }).then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  });
+}
+
+/** Match the SDK's per-tool context contract when our generic approval wrapper
+ * takes precedence over its normal needsApproval path. */
+async function validateToolApprovalContext(
+  toolName: string,
+  tool: any,
+  context: unknown,
+  signal: AbortSignal | undefined,
+): Promise<unknown> {
+  if (tool?.contextSchema == null) return context;
+  const schema = asSchema(tool.contextSchema);
+  if (!schema.validate) return context;
+  const result = await awaitToolApprovalAbortable(() => schema.validate!(context), signal);
+  if (!result.success) {
+    throw new Error(`Invalid tool context for '${toolName}': ${result.error.message}`);
+  }
+  return result.value;
+}
+
+function approvalStatusType(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object') return (value as { type?: string }).type;
+  return undefined;
+}
+
+function isApprovedHistoricalToolCall(opts: {
+  toolCall: { toolName: string; toolCallId?: string; input?: unknown };
+  messages?: ModelMessage[];
+}): boolean {
+  const callId = opts.toolCall.toolCallId;
+  if (!callId || !Array.isArray(opts.messages)) return false;
+  const last = opts.messages.at(-1) as any;
+  if (last?.role !== 'tool' || !Array.isArray(last.content)) return false;
+  const approvedIds = new Set(last.content
+    .filter((part: any) => part?.type === 'tool-approval-response' && part.approved === true)
+    .map((part: any) => part.approvalId)
+    .filter((id: unknown): id is string => typeof id === 'string'));
+  if (approvedIds.size === 0) return false;
+  return opts.messages.some((message: any) => (
+    message?.role === 'assistant'
+    && Array.isArray(message.content)
+    && message.content.some((part: any) => (
+      part?.type === 'tool-approval-request'
+      && part.toolCallId === callId
+      && approvedIds.has(part.approvalId)
+    ))
+  ));
+}
+
+function rejectedHistoricalToolCalls(messages: ModelMessage[] | undefined): Array<{
+  toolCallId: string;
+  toolName: string;
+  reason?: string;
+}> {
+  if (!Array.isArray(messages) || messages.at(-1)?.role !== 'tool') return [];
+  const rejectedApprovalIds = new Set<string>();
+  const reasonByApprovalId = new Map<string, string>();
+  for (const part of ((messages.at(-1) as any)?.content ?? [])) {
+    if (part?.type === 'tool-approval-response' && part.approved === false && typeof part.approvalId === 'string') {
+      rejectedApprovalIds.add(part.approvalId);
+      if (typeof part.reason === 'string') reasonByApprovalId.set(part.approvalId, part.reason);
+    }
+  }
+  if (rejectedApprovalIds.size === 0) return [];
+  const rejectedCallIds = new Set<string>();
+  const reasonByCallId = new Map<string, string>();
+  for (const message of messages as any[]) {
+    if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (part?.type === 'tool-approval-request' && rejectedApprovalIds.has(part.approvalId) && typeof part.toolCallId === 'string') {
+        rejectedCallIds.add(part.toolCallId);
+        const reason = reasonByApprovalId.get(part.approvalId);
+        if (reason) reasonByCallId.set(part.toolCallId, reason);
+      }
+    }
+  }
+  const result: Array<{ toolCallId: string; toolName: string; reason?: string }> = [];
+  for (const message of messages as any[]) {
+    if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      if (
+        part?.type === 'tool-call'
+        && rejectedCallIds.has(part.toolCallId)
+        && typeof part.toolName === 'string'
+      ) {
+        const reason = reasonByCallId.get(part.toolCallId);
+        result.push({
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          ...(reason !== undefined && { reason }),
+        });
+      }
+    }
+  }
+  return result;
+}
+
+function cloneProviderInput(input: unknown): unknown {
+  try {
+    return structuredClone(input);
+  } catch (error) {
+    throw new ApprovalInputLedgerError(
+      `Approval input restoration failed: provider input cannot be safely copied: ${toErrorMessage(error)}`
+    );
+  }
 }
 
 function defaultOpenAIPromptCacheKey(agent: ParsedAgent): string {
@@ -778,6 +925,7 @@ async function* executeAgentAttempt(
   // resume time, possibly by another process) and read per call.
   const effectPatterns = agent.config.tools?.bash?.gated ?? [];
   const leaseStore = options.approvalLeaseStore;
+  const approvalInputLedger = new ApprovalInputLedger(options.sessionID, options.agentId);
   // Gate seal (reject-is-terminal): bound whenever the run has a session, since
   // any approval-enabled agent can carry an await_human gate regardless of
   // whether it also declares gated bash commands.
@@ -787,11 +935,17 @@ async function* executeAgentAttempt(
       const sessionDir = await options.sessionManager.getSessionDirectory(options.sessionID, options.agentId);
       if (effectPatterns.length > 0) leaseStore.bind(sessionDir);
       gateSealStore.bind(sessionDir);
+      approvalInputLedger.bind(sessionDir);
     } catch (error) {
       logger.debug(`[Lease] failed to bind session-dir stores: ${(error as Error).message}`);
     }
   }
 
+  // A rejected manual approval never enters toolApproval or execute in this
+  // SDK invocation. Retire its canonical ledger record only after the resumed
+  // run has completed preparation and entered executeAgentCore, beyond the
+  // worker's rollback boundary. This keeps a pre-run failure retryable while
+  // ensuring a started rejection can never later be changed into execution.
   // Declared outside the run's try so the exit path below can flush a pending
   // context snapshot.
   let contextManager: ContextManager | null = null;
@@ -880,6 +1034,13 @@ async function* executeAgentAttempt(
     ...(writeToolOutputArtifact && { writeToolOutputArtifact }),
     onPluginTerminate: () => { pluginTerminateRequested = true; },
   });
+  for (const rejected of rejectedHistoricalToolCalls(options.messages)) {
+    if (typeof dispatcher.get(rejected.toolName)?.execute !== 'function' || !approvalInputLedger.isBound) continue;
+    approvalInputLedger.invalidate(
+      rejected.toolName,
+      rejected.toolCallId,
+    );
+  }
   if (isCodeModeEnabled() && !options.replay && dispatcher.get(CODE_EXEC_TOOL) === undefined) {
     const traceHooks = buildCodeModeTraceHooks(options);
     const codeExecTool = createCodeExecTool({
@@ -1075,6 +1236,17 @@ async function* executeAgentAttempt(
   // executeAgentCore, so it never leaks past the suspend.
   let gateBarrierActive = false;
   let gateBarrierCallId: string | undefined;
+  // The session resume API addresses one pending decision at a time and the AI
+  // SDK requires all approval responses to occupy the same trailing tool
+  // message. Claim one ordinary manual approval per stream segment so a model
+  // cannot create two durable records that the current protocol cannot resolve
+  // atomically. The first callback to claim wins synchronously.
+  let manualGenericApprovalCallId: string | undefined;
+  let genericApprovalState: {
+    toolCallId: string;
+    toolName: string;
+    payload: Record<string, unknown>;
+  } | undefined;
 
   // `streamText` may run several model/tool steps inside one stream. Keep the
   // canonical input for each model step so a later silent provider call can be
@@ -1318,11 +1490,24 @@ async function* executeAgentAttempt(
       if ((toolsForStream as any).await_human) {
         (toolsForStream as any).await_human = withGatePlanPreflight(
           (toolsForStream as any).await_human,
-          { effectPatterns, onInlineResolution: clearInlineGateState },
+          {
+            effectPatterns,
+            onInlineResolution: clearInlineGateState,
+            // await_human is a host-owned schema with no user transforms.
+            // Validate its final shared object after an internal command gets
+            // attached, so card readability/refinement rules still hold.
+            validateAttachedInput: async (input) => {
+              const schema = asSchema(dispatcher.get('await_human')?.inputSchema);
+              if (!schema.validate) return undefined;
+              const result = await schema.validate(input);
+              return result.success ? undefined : result.error.message;
+            },
+            resolveAttachedInput: () => pendingGateInput,
+          },
         );
       }
 
-      coreToolApproval = (opts: { toolCall: { toolName: string; toolCallId?: string; input?: any } }) => {
+      coreToolApproval = async (opts: { toolCall: { toolName: string; toolCallId?: string; input?: any } }) => {
         const { toolName, toolCallId: callId, input } = opts.toolCall;
 
         // The gate itself: mark the step gated, then run and suspend. Returning
@@ -1396,6 +1581,16 @@ async function* executeAgentAttempt(
               const attached = pendingGateInput
                 ? attachCommandToPendingGate(pendingGateInput, command)
                 : false;
+              if (attached && pendingGateInput && gateBarrierCallId) {
+                dispatcher.replaceLatestPreparedDirectCall(
+                  'await_human',
+                  gateBarrierCallId,
+                  pendingGateInput,
+                );
+                approvedToolInputOverrides.set(gateBarrierCallId, { executedInput: pendingGateInput });
+                const emittedGate = emittedToolCalls.get(gateBarrierCallId);
+                if (emittedGate) emittedGate.toolInput = pendingGateInput;
+              }
               if (attached && pendingMockDecision) {
                 // The mock decision was provisionally applied when the gate
                 // streamed. Re-grant from the final, auto-attached payload.
@@ -1476,15 +1671,127 @@ async function* executeAgentAttempt(
       };
     }
 
-    if (options.pluginEvents?.toolCall || coreToolApproval) {
+    if (
+      dispatcher.names().some(name => typeof dispatcher.get(name)?.execute === 'function')
+      || options.pluginEvents?.toolCall
+    ) {
       streamConfig.toolApproval = async (opts: {
-        toolCall: { toolName: string; toolCallId?: string; input?: any };
+        toolCall: { toolName: string; toolCallId?: string; input?: any; providerExecuted?: boolean };
+        messages?: ModelMessage[];
       }) => {
-        if (options.pluginEvents?.toolCall) {
+        const toolCallId = opts.toolCall.toolCallId ?? 'unknown';
+        const executable = typeof dispatcher.get(opts.toolCall.toolName)?.execute === 'function';
+        const tool = dispatcher.get(opts.toolCall.toolName);
+        const historicalApproval = executable && isApprovedHistoricalToolCall(opts);
+        let toolContract: string | undefined;
+        let reservation: ReturnType<ApprovalInputLedger['reserve']> | undefined;
+        // Do not make sessionless execution depend on durable approval storage.
+        // A bound session reserves every executable identity before policy so a
+        // changed tool that removed needsApproval cannot bypass an older
+        // pending approval with the same call id.
+        if (executable && approvalInputLedger.isBound && !historicalApproval) {
+          try {
+            reservation = approvalInputLedger.reserve(opts.toolCall.toolName, toolCallId);
+          } catch (error) {
+            if (error instanceof ApprovalInputLedgerError || error instanceof ApprovalToolContractError) {
+              return { type: 'denied' as const, reason: error.message };
+            }
+            throw error;
+          }
+        }
+        let effectiveRawInput = opts.toolCall.input;
+        let preparedInput = opts.toolCall.input;
+        if (historicalApproval) {
+          try {
+            try {
+              toolContract = await approvalToolContract(tool, opts.toolCall.toolName, effectiveAbortSignal);
+            } catch (contractError) {
+              // Claiming the record is one-shot even when the current tool is
+              // incompatible. Otherwise a downgraded/missing contract could be
+              // fixed later and execute a value the current run rejected.
+              try {
+                approvalInputLedger.consume(
+                  opts.toolCall.toolName, toolCallId, opts.toolCall.input,
+                  Date.now(), '__incompatible-approval-contract__',
+                );
+              } catch { /* consumption is best effort; the contract error wins */ }
+              throw contractError;
+            }
+            // Re-run current plugin policy against an isolated copy of the
+            // signed provider input. A mutation would authorize bytes the human
+            // did not approve, so require a new approval instead of accepting it.
+            if (options.pluginEvents?.toolCall) {
+              const policyInput = cloneProviderInput(opts.toolCall.input);
+              const policy = await dispatcher.preflightWithInput({
+                toolCallId,
+                toolName: opts.toolCall.toolName,
+                input: policyInput,
+                abortSignal: effectiveAbortSignal,
+              });
+              if (policy.decision.block) {
+                approvalInputLedger.invalidate(opts.toolCall.toolName, toolCallId);
+                return {
+                  type: 'denied' as const,
+                  reason: policy.decision.reason ?? `Tool '${opts.toolCall.toolName}' was blocked by a plugin`,
+                };
+              }
+              if (approvalInputDigest(policy.input) !== approvalInputDigest(opts.toolCall.input)) {
+                approvalInputLedger.invalidate(opts.toolCall.toolName, toolCallId);
+                return {
+                  type: 'denied' as const,
+                  reason: 'Tool policy changed the approved input. The call was not executed; request a new approval for the updated input.',
+                };
+              }
+            }
+            preparedInput = approvalInputLedger.consume(
+              opts.toolCall.toolName,
+              toolCallId,
+              opts.toolCall.input,
+              Date.now(),
+              toolContract,
+            );
+            dispatcher.seedPreparedDirectCall(opts.toolCall.toolName, toolCallId, preparedInput);
+          } catch (error) {
+            dispatcher.discardPreparedDirectCall(toolCallId);
+            // Policy rejection above already performs atomic invalidation. A
+            // failed consume (for example an absent record) must preserve its
+            // own denial reason instead of attempting a second invalidation.
+            if (!historicalApproval) approvalInputLedger.discard(opts.toolCall.toolName, toolCallId, reservation);
+            if (error instanceof ApprovalInputLedgerError || error instanceof ApprovalToolContractError) {
+              return { type: 'denied' as const, reason: error.message };
+            }
+            throw error;
+          }
+        } else if (executable) {
+          try {
+            const prepared = await dispatcher.prepareDirectCall({
+              toolCallId,
+              toolName: opts.toolCall.toolName,
+              // Plugins and schema transforms receive their own copy. The
+              // post-plugin raw value becomes the SDK approval/signature input;
+              // the transformed canonical value remains dispatcher-only.
+              input: cloneProviderInput(opts.toolCall.input),
+              abortSignal: effectiveAbortSignal,
+            });
+            preparedInput = prepared.normalizedInput;
+            effectiveRawInput = prepared.effectiveRawInput;
+          } catch (error) {
+            dispatcher.discardPreparedDirectCall(toolCallId);
+            approvalInputLedger.discard(opts.toolCall.toolName, toolCallId, reservation);
+            if (error instanceof ToolDispatchDeniedError || error instanceof ApprovalInputLedgerError) {
+              return { type: 'denied' as const, reason: error.message };
+            }
+            throw error;
+          }
+        } else if (options.pluginEvents?.toolCall) {
+          // Provider/client tools never reach the dispatcher execution path,
+          // but plugins still own their policy decision. Keep this preflight
+          // deliberately normalization-free: the provider retains the tool's
+          // native schema and execution contract.
           const decision = await dispatcher.preflight({
-            toolCallId: opts.toolCall.toolCallId ?? 'unknown',
+            toolCallId,
             toolName: opts.toolCall.toolName,
-            input: opts.toolCall.input,
+            input: cloneProviderInput(opts.toolCall.input),
             abortSignal: effectiveAbortSignal,
           });
           if (decision.block) {
@@ -1494,7 +1801,171 @@ async function* executeAgentAttempt(
             };
           }
         }
-        return await coreToolApproval?.(opts);
+        try {
+          if (
+            executable
+            && opts.toolCall.toolName === 'await_human'
+            && areCompatiblePlainRecords(opts.toolCall.input, preparedInput)
+          ) {
+            // The model-facing gate preflight wraps execute outside the
+            // dispatcher and already captured this parsed object. Reconcile
+            // canonical input into that identity so later sibling attachment
+            // and gate validation observe one shared payload.
+            const rawInput = opts.toolCall.input as Record<string, unknown>;
+            for (const key of Object.keys(rawInput)) delete rawInput[key];
+            Object.assign(rawInput, preparedInput as Record<string, unknown>);
+            preparedInput = rawInput;
+          }
+          const approvalOptions = {
+            ...opts,
+            toolCall: { ...opts.toolCall, input: preparedInput },
+          };
+          if (executable) {
+            // Keep the canonical queued input as the same copied object handed
+            // to core approval. Gate attachment can happen while sibling
+            // approvals are still resolving, before this callback returns.
+            dispatcher.replaceLatestPreparedDirectCall(
+              opts.toolCall.toolName,
+              toolCallId,
+              approvalOptions.toolCall.input,
+            );
+          }
+          // A generic callback has precedence in AI SDK. When this wrapper is
+          // installed only to prepare canonical inputs, reproduce the SDK's
+          // per-tool needsApproval fallback instead of silently bypassing it.
+          let approval = coreToolApproval
+            ? await coreToolApproval(approvalOptions)
+            : undefined;
+          if (approvalStatusType(approval) === undefined || approvalStatusType(approval) === 'not-applicable') {
+            if (typeof tool?.needsApproval === 'function') {
+              const context = await validateToolApprovalContext(
+                opts.toolCall.toolName,
+                tool,
+                // Tool names are user-controlled identifiers. Looking them up
+                // through Object.prototype would give a tool named
+                // "constructor" (or "toString") an unrelated inherited value
+                // as its execution context.
+                (opts as any).toolsContext != null
+                  && Object.prototype.hasOwnProperty.call((opts as any).toolsContext, opts.toolCall.toolName)
+                  ? (opts as any).toolsContext[opts.toolCall.toolName]
+                  : undefined,
+                effectiveAbortSignal,
+              );
+              const required = await awaitToolApprovalAbortable(
+                () => (tool.needsApproval as any)(preparedInput, {
+                  toolCallId,
+                  messages: (opts as any).messages ?? [],
+                  context,
+                }),
+                effectiveAbortSignal,
+              );
+              approval = required ? 'user-approval' : undefined;
+            } else {
+              approval = tool?.needsApproval ? 'user-approval' : undefined;
+            }
+          }
+          if (executable) {
+            const approvedInput = approvalOptions.toolCall.input;
+            if (
+              opts.toolCall.toolName === 'await_human'
+              && areCompatiblePlainRecords(opts.toolCall.input, approvedInput)
+            ) {
+              // The streamed tool-call event already holds this object by
+              // reference. Apply gate attachment edits in place so the log,
+              // approval signature, and eventual execute observe one payload.
+              Object.assign(opts.toolCall.input, approvedInput);
+            }
+            dispatcher.replaceLatestPreparedDirectCall(
+              opts.toolCall.toolName,
+              toolCallId,
+              approvedInput,
+            );
+            const emitted = emittedToolCalls.get(toolCallId);
+            if (emitted) emitted.toolInput = approvedInput;
+            approvedToolInputOverrides.set(toolCallId, { executedInput: approvedInput });
+          }
+          if (effectiveAbortSignal?.aborted) {
+            throw effectiveAbortSignal.reason ?? new Error('Tool approval aborted');
+          }
+          const status = approvalStatusType(approval);
+          if (
+            !historicalApproval
+            && status === 'user-approval'
+            && executable
+            && opts.toolCall.toolName !== 'await_human'
+          ) {
+            if (manualGenericApprovalCallId && manualGenericApprovalCallId !== toolCallId) {
+              const reason =
+                `Tool '${opts.toolCall.toolName}' was denied because another tool call in this step ` +
+                'already requires manual approval. Request this action again after that decision is resolved.';
+              dispatcher.discardPreparedDirectCall(toolCallId);
+              approvalInputLedger.discard(opts.toolCall.toolName, toolCallId, reservation);
+              return { type: 'denied' as const, reason };
+            }
+            manualGenericApprovalCallId = toolCallId;
+          }
+          if (historicalApproval || status === 'user-approval' || status === 'approved') {
+            // The provider/SDK approval signature is deliberately bound to the
+            // post-plugin raw payload, while execute receives the canonical
+            // schema result. Preserve both on AgentUse's audit projection;
+            // `toolInput` stays the canonical value for existing consumers.
+            const auditInput = approvedToolInputOverrides.get(toolCallId);
+            if (auditInput) {
+              auditInput.rawApprovedInput = effectiveRawInput;
+              const emitted = emittedToolCalls.get(toolCallId);
+              if (emitted) emitted.rawApprovedInput = effectiveRawInput;
+            }
+          }
+          if (!historicalApproval && status === 'user-approval' && executable) {
+            try {
+              toolContract = await approvalToolContract(tool, opts.toolCall.toolName, effectiveAbortSignal);
+              const canonicalDisplay = completeApprovalValueDisplay(preparedInput);
+              const signedRawDisplay = completeApprovalValueDisplay(effectiveRawInput);
+              approvalInputLedger.store(
+                opts.toolCall.toolName,
+                toolCallId,
+                effectiveRawInput,
+                preparedInput,
+                Date.now(),
+                toolContract,
+                reservation,
+              );
+              const auditInput = approvedToolInputOverrides.get(toolCallId);
+              if (auditInput) {
+                auditInput.canonicalDisplay = canonicalDisplay;
+                auditInput.signedRawDisplay = signedRawDisplay;
+              }
+            } catch (error) {
+              dispatcher.discardPreparedDirectCall(toolCallId);
+              // A duplicate call identity is denied, but its existing durable
+              // record belongs to the first suspended approval and must remain
+              // available for that approval's resume.
+              if (!isDuplicateApprovalInputLedgerError(error)) approvalInputLedger.discard(opts.toolCall.toolName, toolCallId, reservation);
+              if (error instanceof ApprovalInputLedgerError || error instanceof ApprovalToolContractError) {
+                return { type: 'denied' as const, reason: error.message };
+              }
+              throw error;
+            }
+            if (opts.toolCall.toolName !== 'await_human') {
+              opts.toolCall.input = effectiveRawInput;
+            }
+            // The initial SDK invocation will emit an approval request and stop.
+            // A fresh invocation restores this value from the durable ledger.
+            dispatcher.discardPreparedDirectCall(toolCallId);
+            approvalInputLedger.release(reservation);
+          } else if (status === 'denied') {
+            dispatcher.discardPreparedDirectCall(toolCallId);
+            approvalInputLedger.discard(opts.toolCall.toolName, toolCallId, reservation);
+          } else if (!historicalApproval) {
+            if (opts.toolCall.toolName !== 'await_human') opts.toolCall.input = effectiveRawInput;
+            approvalInputLedger.release(reservation);
+          }
+          return approval;
+        } catch (error) {
+          dispatcher.discardPreparedDirectCall(toolCallId);
+          approvalInputLedger.discard(opts.toolCall.toolName, toolCallId, reservation);
+          throw error;
+        }
       };
     }
 
@@ -1532,6 +2003,19 @@ async function* executeAgentAttempt(
   // assistant turn that the stripped resume snapshot does not keep. `resolved`
   // flips when the call's result/error lands.
   const segmentToolCalls = new Map<string, { tool: string; input: unknown; resolved: boolean }>();
+  const emittedToolCalls = new Map<string, {
+    toolInput: unknown;
+    rawApprovedInput?: unknown;
+  }>();
+  const approvedToolInputOverrides = new Map<string, {
+    /** Canonical schema value passed to execute and retained as `toolInput`. */
+    executedInput: unknown;
+    /** Signed post-plugin provider value, present only for approved calls. */
+    rawApprovedInput?: unknown;
+    /** Complete, tagged reviewer displays computed before JSON persistence. */
+    canonicalDisplay?: CompleteApprovalValueDisplay;
+    signedRawDisplay?: CompleteApprovalValueDisplay;
+  }>();
   let lastToolCall: { id: string; name?: string } | null = null;
   let llmGenerationStartTime: number | undefined;
   let llmFirstTokenTime: number | undefined;
@@ -1644,9 +2128,14 @@ async function* executeAgentAttempt(
     return { retry: false, error: failure };
   };
   while (runAnotherSegment) {
+    // Some retry paths continue directly from stream handling. This backstop
+    // makes the terminal plugin policy apply to every prospective segment.
+    if (pluginTerminateRequested) break;
   runAnotherSegment = false;
   let segmentFinishReason: string | undefined;
   segmentToolCalls.clear();
+  emittedToolCalls.clear();
+  approvedToolInputOverrides.clear();
   preparedStepInputs.length = 0;
   activeStepInput = undefined;
   activeStepProducedCommittedOutput = false;
@@ -1834,23 +2323,40 @@ Error: ${errorMessage}`);
 
           const startTime = Date.now();
           const toolCallId = (chunk as any).toolCallId || 'unknown';
+          const hasInputAudit = approvedToolInputOverrides.has(toolCallId);
+          const inputAudit = approvedToolInputOverrides.get(toolCallId);
+          // Map presence is significant: canonical transforms may deliberately
+          // yield null, undefined, false, 0, or an empty string.
+          const loggedInput = hasInputAudit
+            ? inputAudit!.executedInput
+            : Object.prototype.hasOwnProperty.call(chunk, 'input')
+              ? (chunk as any).input
+              : (chunk as any).args;
           toolStartTimes.set(toolCallId, startTime);
           lastToolCall = { id: toolCallId, name: chunk.toolName };
           segmentToolCalls.set(toolCallId, {
             tool: chunk.toolName ?? 'unknown',
-            input: (chunk as any).input || (chunk as any).args,
+            input: loggedInput,
             resolved: false,
           });
 
-          yield {
+          const emittedToolCall = {
             type: 'tool-call',
             toolName: chunk.toolName,
             toolCallId,  // Add toolCallId to the chunk
-            toolInput: (chunk as any).input || (chunk as any).args,
+            toolInput: loggedInput,
+            ...(inputAudit && Object.prototype.hasOwnProperty.call(inputAudit, 'rawApprovedInput') && {
+              rawApprovedInput: inputAudit.rawApprovedInput,
+            }),
             toolStartTime: startTime,
             ...(options.subAgentNames?.has(chunk.toolName!) && { isSubAgent: true }),
             ...((suspendState || (gateBarrierActive && toolCallId !== gateBarrierCallId)) && { postSuspend: true })
           };
+          emittedToolCalls.set(toolCallId, emittedToolCall as {
+            toolInput: unknown;
+            rawApprovedInput?: unknown;
+          });
+          yield emittedToolCall as any;
           break;
         }
 
@@ -2183,7 +2689,8 @@ Current step: ${stepCount}/${options.maxSteps}`);
           const toolName = toolCall.toolName || (chunk as any).toolName;
           const reason = typeof (chunk as any).reason === 'string'
             ? (chunk as any).reason
-            : 'Execution denied: effectful command not covered by an approved plan (await_human re-gate required).';
+            : rejectedHistoricalToolCalls(messages).find((call) => call.toolCallId === toolCallId)?.reason
+              ?? 'Execution denied by the reviewer.';
           const startTime = toolStartTimes.get(toolCallId);
           const duration = startTime ? Date.now() - startTime : undefined;
           const deniedCall = segmentToolCalls.get(toolCallId);
@@ -2193,7 +2700,8 @@ Current step: ${stepCount}/${options.maxSteps}`);
             toolName,
             toolCallId,
             toolResult: JSON.stringify({ success: false, denied: true, error: reason }),
-            toolResultRaw: { denied: true, reason },
+            toolResultRaw: { success: false, denied: true, reason },
+            toolSuccess: false,
             ...(startTime && { toolStartTime: startTime }),
             ...(duration !== undefined && { toolDuration: duration }),
             ...((suspendState || (gateBarrierActive && toolCallId !== gateBarrierCallId)) && { postSuspend: true })
@@ -2206,10 +2714,66 @@ Current step: ${stepCount}/${options.maxSteps}`);
 
         case 'start':
         case 'start-step':
+        case 'tool-approval-request': {
+          const requested = (chunk as any).toolCall ?? chunk;
+          const toolCallId = requested.toolCallId ?? (chunk as any).toolCallId;
+          const toolName = requested.toolName ?? (chunk as any).toolName;
+          // The SDK also emits this event for callback decisions (`approved`
+          // and `denied`). Those are automatic terminal paths, never a human
+          // suspension.
+          if (!(chunk as any).isAutomatic && toolCallId && toolName) {
+            const approvalId = (chunk as any).approvalId;
+            if (typeof approvalId !== 'string' || approvalId.length === 0) {
+              yield { type: 'error', error: new Error(`Tool approval request for '${toolName}' is missing approvalId`) };
+              break;
+            }
+            const signature = typeof (chunk as any).signature === 'string'
+              ? (chunk as any).signature
+              : undefined;
+            const resumeToken = randomBytes(24).toString('base64url');
+            const approvalUrl = getSessionUrl(options.sessionID);
+            const signedRawInput = approvedToolInputOverrides.get(toolCallId)?.rawApprovedInput;
+            const canonicalDisplay = approvedToolInputOverrides.get(toolCallId)?.canonicalDisplay;
+            const signedRawDisplay = approvedToolInputOverrides.get(toolCallId)?.signedRawDisplay;
+            // Generic SDK approvals do not throw our await_human suspend
+            // signal. Surface an explicit transition so the consumer writes a
+            // durable pending part before this stream ends.
+            genericApprovalState = {
+              toolCallId,
+              toolName,
+              payload: {
+                kind: 'tool_approval',
+                approvalId,
+                toolCallId,
+                toolName,
+                ...(signature && { signature }),
+                resumeToken,
+                ...(approvalUrl && { approvalUrl }),
+                ...(approvedToolInputOverrides.get(toolCallId)
+                  && Object.prototype.hasOwnProperty.call(approvedToolInputOverrides.get(toolCallId)!, 'rawApprovedInput')
+                  && { signedRawInput }),
+                ...(canonicalDisplay && {
+                  canonicalInputDisplay: canonicalDisplay.text,
+                  canonicalInputDigest: canonicalDisplay.sha256,
+                }),
+                ...(signedRawDisplay && {
+                  signedRawInputDisplay: signedRawDisplay.text,
+                  signedRawInputDigest: signedRawDisplay.sha256,
+                }),
+                approvalRequest: {
+                  type: 'tool-approval-request',
+                  approvalId,
+                  toolCallId,
+                  ...(signature && { signature }),
+                },
+              },
+            };
+          }
+          break;
+        }
         case 'tool-input-start':
         case 'tool-input-delta':
         case 'tool-input-end':
-        case 'tool-approval-request':
         case 'text-start':
         case 'text-end':
           // AI SDK streaming events for text generation boundaries (not tool-related)
@@ -2240,6 +2804,43 @@ Current step: ${stepCount}/${options.maxSteps}`);
     }
 
     if (options.replay?.stopped()) return;
+
+    // Unlike await_human, a generic AI SDK approval does not throw from tool
+    // execution. Let the SDK close the segment so responseMessages contains the
+    // exact assistant tool-call + approval-request turn, then snapshot that
+    // unmodified turn and stop before compaction or any recovery segment.
+    if (genericApprovalState) {
+      try {
+        messages = [...segmentInput, ...await accumulatedResponseMessages(stream)];
+        contextManager?.setMessages(messages);
+      } catch (error) {
+        logger.debug(`Could not capture generic tool approval history: ${toErrorMessage(error)}`);
+      }
+      options.effectWal?.append({
+        event: 'suspended',
+        gateCallId: genericApprovalState.toolCallId,
+        gateTool: genericApprovalState.toolName,
+        turnToolCalls: [...segmentToolCalls.entries()].map(([id, call]) => ({
+          callId: id,
+          tool: call.tool,
+          input: sanitizeWALInput(call.input),
+          resolved: call.resolved,
+        })),
+      });
+      const contextSnapshot = buildContextSnapshot();
+      yield {
+        type: 'suspended',
+        toolName: genericApprovalState.toolName,
+        toolCallId: genericApprovalState.toolCallId,
+        suspend: { toolCallId: genericApprovalState.toolCallId },
+        toolResultRaw: genericApprovalState.payload,
+        ...(contextSnapshot && {
+          contextUsage: contextSnapshot.usage,
+          contextSnapshot,
+        }),
+      };
+      return;
+    }
 
     // A gate registered during this segment: finalize the suspension now that
     // the stream is fully drained (or the drain timed out). Every sibling tool
@@ -2324,6 +2925,12 @@ Current step: ${stepCount}/${options.maxSteps}`);
         logger.debug(`Segment compaction check failed: ${(reconcileError as Error).message}`);
       }
     }
+
+    // `terminate` is a run-level policy decision, not merely a stop condition
+    // for the SDK's current step. Reconciliation above still records the
+    // completed turn, but no compaction or structured-delivery recovery may
+    // start another model segment afterward.
+    if (pluginTerminateRequested) break;
 
     // A replay measures the first completed generation, not a synthesized
     // outcome or revision. Compaction may continue a still-active turn, but a
@@ -2420,6 +3027,10 @@ Current step: ${stepCount}/${options.maxSteps}`);
     // behavior: free text, no headline.
     if (
       !runAnotherSegment &&
+      // A plugin's terminal policy ends the run after the current SDK step.
+      // Do not spend the reserved outcome-only segment afterward: it would
+      // invoke the model again despite the explicit termination request.
+      !stopOnPluginTerminate() &&
       shouldRequestOutcome({
         outcome: options.runOutcome,
         segmentFinishReason,
@@ -2427,6 +3038,10 @@ Current step: ${stepCount}/${options.maxSteps}`);
         maxSteps: options.maxSteps,
         alreadyAsked: outcomeNudgeSpent,
         suspended: Boolean(suspendState),
+        structuredDeliveryCompleted: Boolean(
+          options.agentSourceSubmission?.source
+          || options.projectSuggestionsSubmission?.result
+        ),
       })
     ) {
       try {

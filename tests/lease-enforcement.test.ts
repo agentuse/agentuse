@@ -254,6 +254,50 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
     expect(records.some((r) => r.event === 'bash-spawn')).toBe(false);
   });
 
+  test('rejects an attached response command that makes the final gate card invalid', async () => {
+    const responsePayload = 'reply body '.repeat(30);
+    const attachedCommand = `node -e ${JSON.stringify(responsePayload)}`;
+    const priorGatedPatterns = agent.config.tools.bash.gated;
+    agent.config.tools.bash.gated = [...priorGatedPatterns, 'node *'];
+    const { model, calls, promptAt } = makeModel([
+      turn([
+        toolCallPart('gate-1', 'await_human', {
+          prompt: 'Approve this reply?',
+          reference: { author: '@someone', excerpt: 'The complete original message.' },
+        }),
+        toolCallPart('bash-1', 'tools__bash', { command: attachedCommand }),
+      ]),
+      turn([
+        { type: 'text-start', id: 't1' },
+        { type: 'text-delta', id: 't1', delta: 'I need the original before requesting approval.' },
+        { type: 'text-end', id: 't1' },
+      ], 'stop'),
+    ]);
+    currentModel = model;
+
+    try {
+      const chunks = await runCore(makeTools());
+
+      expect(chunks.some((chunk) => chunk.type === 'suspended')).toBe(false);
+      expect(calls()).toBe(2);
+      const preflight = chunks.find(
+        (chunk) => chunk.type === 'tool-result' && chunk.toolName === 'await_human'
+      );
+      expect((preflight as any)?.toolResultRaw?.source).toBe('gate-preflight');
+      expect((preflight as any)?.toolResultRaw?.comment).toContain('displayContent is required');
+      expect(fs.existsSync(path.join(sessionDir, LEASE_FILENAME))).toBe(false);
+      const followUpPrompt = JSON.stringify(promptAt(1));
+      expect(followUpPrompt).toContain('await_human');
+      expect(followUpPrompt).toContain('gate-1');
+      expect(followUpPrompt).toContain('gate-preflight');
+      const records = readWAL();
+      expect(records.some((record) => record.event === 'gate-registered')).toBe(false);
+      expect(records.some((record) => record.event === 'suspended')).toBe(false);
+    } finally {
+      agent.config.tools.bash.gated = priorGatedPatterns;
+    }
+  });
+
   test('content-only authorization is rejected inline before waking the human', async () => {
     const { model, calls } = makeModel([
       turn([toolCallPart('gate-1', 'await_human', {

@@ -62,14 +62,33 @@ export function sessionLogSearchTerms(query: string): string[] {
 
 /** Match the text carried by a rendered session-log entry. Multiple words use
  * AND semantics so a specific query narrows rather than broadens the feed. */
-export function sessionLogMatches(entry: ApprovalLogEntry, query: string): boolean {
+export function sessionLogMatches(
+  entry: ApprovalLogEntry,
+  query: string,
+  nestedEntries: readonly ApprovalLogEntry[] = [],
+): boolean {
   const terms = sessionLogSearchTerms(query);
   if (terms.length === 0) return true;
   // Sub-agent cards and their important descendants live on top-level fields
   // such as subagentSession, not only in details. Index the complete durable
   // entry so every piece of transcript text the row can render is searchable.
-  const haystack = JSON.stringify(entry).toLocaleLowerCase();
+  const haystack = JSON.stringify([entry, ...nestedEntries]).toLocaleLowerCase();
   return terms.every((term) => haystack.includes(term));
+}
+
+/** A nested Code Mode call remains grouped under its program row. Open that row
+ * while a query names content inside a child, otherwise the kept search result
+ * would not actually contain the matching DOM for a reader to inspect. */
+export function shouldExpandForNestedSearch(
+  query: string,
+  nestedEntries: readonly ApprovalLogEntry[] | undefined,
+): boolean {
+  const terms = sessionLogSearchTerms(query);
+  if (terms.length === 0 || !nestedEntries?.length) return false;
+  return nestedEntries.some((entry) => {
+    const text = JSON.stringify(entry).toLocaleLowerCase();
+    return terms.some((term) => text.includes(term));
+  });
 }
 
 /** Entry-type filter for the session log. 'agent' = the model's own spine
@@ -79,11 +98,35 @@ export type LogFilter = 'all' | 'agent' | 'tools' | 'errors';
 /** Does an entry survive the type filter? The pending approval gate always
  *  does — filtering the decision you're here to make off the page is never
  *  what the reviewer meant. */
-export function matchesLogFilter(entry: ApprovalLogEntry, filter: LogFilter): boolean {
+export function matchesLogFilter(
+  entry: ApprovalLogEntry,
+  filter: LogFilter,
+  nestedEntries: readonly ApprovalLogEntry[] = [],
+): boolean {
+  const entries = [entry, ...nestedEntries];
   if (filter === 'all' || entry.type === 'approval') return true;
-  if (filter === 'agent') return entry.type === 'text' || entry.type === 'reasoning';
-  if (filter === 'tools') return entry.type === 'tool';
-  return entry.type === 'error' || entry.status === 'error' || entry.level === 'error';
+  if (filter === 'agent') return entries.some((candidate) => candidate.type === 'text' || candidate.type === 'reasoning');
+  if (filter === 'tools') return entries.some((candidate) => candidate.type === 'tool');
+  return entries.some((candidate) =>
+    candidate.type === 'error' || candidate.status === 'error' || candidate.status === 'failed' || candidate.level === 'error');
+}
+
+/** Nested calls remain grouped, but a matching child must open with its parent
+ * so the filtered error or searched text is visible rather than only counted. */
+export function nestedCallIdsToExpand(
+  query: string,
+  filter: LogFilter,
+  nestedEntries: readonly ApprovalLogEntry[] | undefined,
+): ReadonlySet<string> {
+  const terms = sessionLogSearchTerms(query);
+  const ids = new Set<string>();
+  for (const entry of nestedEntries ?? []) {
+    const text = terms.length > 0 ? JSON.stringify(entry).toLocaleLowerCase() : '';
+    const matchesSearch = terms.some((term) => text.includes(term));
+    const matchesErrorFilter = filter === 'errors' && matchesLogFilter(entry, 'errors');
+    if (matchesSearch || matchesErrorFilter) ids.add(entry.id);
+  }
+  return ids;
 }
 
 /** Per-session view state, kept across in-app navigations so stepping into a
@@ -775,9 +818,9 @@ export default function SessionDetail() {
       && !nestedToolIds.has(e.id)
       && (showDebug || !isDebugLog(e))
       && !(e.type === 'learning' && e.status !== 'error')
-      && matchesLogFilter(e, logFilter)
+      && matchesLogFilter(e, logFilter, nestedToolCalls.get(e.callId ?? ''))
     ),
-    [orderedLogs, showDebug, nestedLogIds, nestedToolIds, logFilter]
+    [orderedLogs, showDebug, nestedLogIds, nestedToolIds, nestedToolCalls, logFilter]
   );
   // Operational log lines (type 'log') can repeat identically many times in a row
   // (e.g. "Calling model: ..." or repeated MCP chatter). Collapse consecutive
@@ -1062,7 +1105,9 @@ export default function SessionDetail() {
   // is the opt-in), so the affordance shows whenever there's an agent file to
   // attach it to. Whether the rule is injected into future runs is a separate
   // question, governed by learning.apply — surfaced as a hint in the dialog.
-  const canRememberLearning = Boolean(approval?.agent.filePath) && !isRevisionSession;
+  const canRememberLearning = Boolean(approval?.agent.filePath)
+    && !isRevisionSession
+    && approval?.approvalKind !== 'tool_approval';
   const rememberApplies = approval?.learning?.apply === true;
   const resumeMode = sessionResumeMode({
     ended,
@@ -1108,8 +1153,8 @@ export default function SessionDetail() {
     return [...collapsedLogs.slice(0, idx), ...collapsedLogs.slice(idx + 1), collapsedLogs[idx]];
   }, [collapsedLogs, actionable]);
   const matchingFeedLogs = useMemo(
-    () => feedLogs.filter((entry) => sessionLogMatches(entry, logQuery)),
-    [feedLogs, logQuery]
+    () => feedLogs.filter((entry) => sessionLogMatches(entry, logQuery, nestedToolCalls.get(entry.callId ?? ''))),
+    [feedLogs, logQuery, nestedToolCalls]
   );
 
   // Chromium's Custom Highlight API emphasizes matches without rewriting the
@@ -1424,12 +1469,13 @@ export default function SessionDetail() {
   }, [sessionId, token, projectId, approval?.project, submittingStop, pendingQueue, globalApprovals]);
 
   const onAction = useCallback((action: 'approve' | 'reject' | 'comment') => {
+    if (action === 'comment' && approval?.approvalKind === 'tool_approval') return;
     if (action === 'comment' || action === 'reject') {
       setDecisionDialog(action);
       return;
     }
     void submitDecision(action);
-  }, [submitDecision]);
+  }, [approval?.approvalKind, submitDecision]);
 
   // Keyboard shortcuts: cmd/ctrl+Enter approve, Esc opens reject, C comment.
   useEffect(() => {
@@ -1472,14 +1518,14 @@ export default function SessionDetail() {
         if (!canAct) return;
         setDecisionDialog('reject');
       } else if ((event.key === 'c' || event.key === 'C') && !inField && !inTypeAhead && !anyDialogOpen && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        if (!canAct) return;
+        if (!canAct || approval?.approvalKind === 'tool_approval') return;
         event.preventDefault();
         setDecisionDialog('comment');
       }
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [decisionDialog, actionable, submittingDecision, submitDecision, awaitingPick]);
+  }, [decisionDialog, actionable, submittingDecision, submitDecision, awaitingPick, approval?.approvalKind]);
 
   if (fatalError) {
     return (
@@ -1750,6 +1796,10 @@ export default function SessionDetail() {
         {matchingFeedLogs.map((entry) => {
           const entryActionable = actionable && entry.status === 'pending' && Boolean(entry.details) &&
             (!currentResumeTokenRef.current || entry.details?.resumeToken === currentResumeTokenRef.current);
+          const nestedCalls = entry.callId ? nestedToolCalls.get(entry.callId) : undefined;
+          // This is deliberately derived instead of writing an expansion override:
+          // clearing the search restores the reviewer's normal collapsed state.
+          const expandedNestedCallIds = nestedCallIdsToExpand(logQuery, logFilter, nestedCalls);
           return (
             <LogEntry
               key={entry.id}
@@ -1757,10 +1807,11 @@ export default function SessionDetail() {
               isNew={isNewLog(entry.id)}
               repeatCount={entry.repeatCount}
               warnings={entry.callId ? toolWarnings.get(entry.callId) : undefined}
-              nestedCalls={entry.callId ? nestedToolCalls.get(entry.callId) : undefined}
+              nestedCalls={nestedCalls}
               nestedWarnings={toolWarnings}
-              expanded={expandOverrides.get(entry.id)}
+              expanded={expandedNestedCallIds.size > 0 ? true : expandOverrides.get(entry.id)}
               expandOverrides={expandOverrides}
+              forceExpandedNestedCallIds={expandedNestedCallIds}
               showActions={entryActionable}
               parentApproveHref={showParentApproveCta ? parentLink : undefined}
               parentApproveLabel={parentLabel}

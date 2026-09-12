@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { fingerprintText } from '../src/verify/candidates';
 import { renderToString } from 'preact-render-to-string';
-import { LogEntry } from '../src/cli/serve/web/components/log-entry';
+import { LogEntry, logEntryPropsEqual, type LogEntryProps } from '../src/cli/serve/web/components/log-entry';
 import {
   DEFAULT_SIDEBAR_WIDTH,
   MAX_SIDEBAR_WIDTH,
@@ -21,7 +21,7 @@ import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/c
 import { parseChartSpec } from '../src/cli/serve/web/lib/chart-svg';
 import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { displayAgentName, isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
-import { aggregateToolStats, hasActionableApproval, headerTokenUsage, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, sessionResumeMode, shouldShowResultNotice, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
+import { aggregateToolStats, hasActionableApproval, headerTokenUsage, matchesLogFilter, nestedCallIdsToExpand, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, sessionResumeMode, shouldExpandForNestedSearch, shouldShowResultNotice, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
 import { tokenUsageMetaItems } from '../src/cli/serve/web/components/token-usage-strip';
 import { dayLabel, Highlight, outputPreview, sessionPurposeLabel, sessionRepeatRunPath, SessionListItem, statusDot } from '../src/cli/serve/web/routes/sessions-list';
 import { formatElapsedClock, formatElapsedShort, formatElapsedWithSeconds } from '../src/cli/serve/web/lib/format';
@@ -385,6 +385,101 @@ describe('session log search', () => {
     expect(sessionLogMatches(delegated, 'reply judge')).toBe(true);
   });
 
+  it('keeps a Code Mode parent visible when only a nested call matches the search or error filter', () => {
+    const nested: ApprovalLogEntry = {
+      id: 'nested-write', type: 'tool', tool: 'store_create', title: 'Create private note',
+      status: 'error', message: 'Duplicate key: nested-only-token', parentCallId: 'code-exec-1',
+    };
+
+    expect(sessionLogMatches(entry, 'nested-only-token', [nested])).toBe(true);
+    expect(matchesLogFilter(entry, 'errors', [nested])).toBe(true);
+    expect(matchesLogFilter(entry, 'errors')).toBe(false);
+  });
+
+  it('opens a matching Code Mode parent so the nested search result is rendered', () => {
+    const nested: ApprovalLogEntry = {
+      id: 'nested-result', type: 'tool', tool: 'store_create', title: 'Create note',
+      status: 'completed', message: 'Saved nested-only-token', parentCallId: 'code-exec-1',
+    };
+    const parent: ApprovalLogEntry = {
+      id: 'code-exec-1', callId: 'code-exec-1', type: 'tool', tool: 'code_exec', title: 'Run program', status: 'completed',
+    };
+    const expanded = shouldExpandForNestedSearch('nested-only-token', [nested]);
+    const expandedChildren = nestedCallIdsToExpand('nested-only-token', 'all', [nested]);
+    const html = renderToString(<LogEntry
+      entry={parent}
+      nestedCalls={[nested]}
+      expanded={expanded}
+      forceExpandedNestedCallIds={expandedChildren}
+      showActions={false}
+      actionsDisabled={false}
+      onToggle={noop}
+      onAction={noop}
+    />);
+
+    expect(expanded).toBe(true);
+    expect(html).toContain('log-nested-calls');
+    expect(html).toContain('nested-only-token');
+    expect(html.match(/aria-expanded="true"/g)).toHaveLength(2);
+    expect(shouldExpandForNestedSearch('', [nested])).toBe(false);
+  });
+
+  it('opens a failed nested call when the Errors filter keeps its parent', () => {
+    const failed: ApprovalLogEntry = {
+      id: 'nested-failure', type: 'tool', tool: 'store_create', title: 'Create note',
+      status: 'failed', message: 'Write failed', parentCallId: 'code-exec-2', details: { input: '{}', output: 'failure' },
+    };
+    const parent: ApprovalLogEntry = {
+      id: 'code-exec-2', callId: 'code-exec-2', type: 'tool', tool: 'code_exec', title: 'Run program', status: 'completed',
+    };
+    const expandedChildren = nestedCallIdsToExpand('', 'errors', [failed]);
+    const html = renderToString(<LogEntry
+      entry={parent}
+      nestedCalls={[failed]}
+      expanded={expandedChildren.size > 0}
+      forceExpandedNestedCallIds={expandedChildren}
+      showActions={false}
+      actionsDisabled={false}
+      onToggle={noop}
+      onAction={noop}
+    />);
+
+    expect(matchesLogFilter(parent, 'errors', [failed])).toBe(true);
+    expect(expandedChildren).toEqual(new Set(['nested-failure']));
+    expect(html).toContain('Write failed');
+    expect(html.match(/aria-expanded="true"/g)).toHaveLength(2);
+  });
+
+  it('rerenders an expanded Code Mode parent when forced nested expansion clears', () => {
+    const nested: ApprovalLogEntry = {
+      id: 'nested-result', type: 'tool', tool: 'store_create', title: 'Create note',
+      status: 'completed', message: 'Saved nested-only-token', parentCallId: 'code-exec-3',
+    };
+    const parent: ApprovalLogEntry = {
+      id: 'code-exec-3', callId: 'code-exec-3', type: 'tool', tool: 'code_exec', title: 'Run program', status: 'completed',
+    };
+    const base = {
+      entry: parent,
+      nestedCalls: [nested],
+      expanded: true,
+      showActions: false,
+      actionsDisabled: false,
+      projectId: undefined,
+      sessionId: 'session-1',
+      token: undefined,
+      onToggle: noop,
+      onAction: noop,
+    } satisfies LogEntryProps;
+
+    const matching = { ...base, forceExpandedNestedCallIds: new Set(['nested-result']) };
+    const cleared = { ...base, forceExpandedNestedCallIds: new Set<string>() };
+
+    // The parent is already open in both states. Its memo comparison still has
+    // to detect the child transition or the nested row remains stale and open.
+    expect(logEntryPropsEqual(matching, cleared)).toBe(false);
+    expect(renderToString(<LogEntry {...cleared} />).match(/aria-expanded="true"/g)).toHaveLength(1);
+  });
+
   it('requires every word and treats a blank query as unfiltered', () => {
     expect(sessionLogMatches(entry, 'substack missing')).toBe(false);
     expect(sessionLogMatches(entry, '   ')).toBe(true);
@@ -392,6 +487,33 @@ describe('session log search', () => {
 
   it('normalizes and de-duplicates highlight terms', () => {
     expect(sessionLogSearchTerms('  Judge JUDGE reply  ')).toEqual(['judge', 'reply']);
+  });
+});
+
+describe('nested Code Mode log styling', () => {
+  it('scopes parent status and interaction styling to each row', async () => {
+    const css = await Bun.file(new URL('../src/cli/serve/web/styles/app.css', import.meta.url)).text();
+
+    expect(css).toContain('.log-item.error > .log-head .log-marker');
+    expect(css).toContain('.log-item.completed > .log-head .log-marker');
+    expect(css).toContain('.log-item.resuming > .log-head .log-marker');
+    expect(css).toContain('.log-item.running > .log-head .tool-chip');
+    expect(css).toContain('.log-item.streaming > .log-main > .log-content .content-markdown');
+    expect(css).toContain('.log-expand-toggle:hover .log-title');
+    expect(css).toContain('.log-expand-toggle:focus-visible .log-title');
+    expect(css).not.toContain('.log-item.completed .log-marker, .log-item.approved .log-marker');
+    expect(css).not.toContain('.log-item.resuming .log-marker');
+    expect(css).not.toContain('.log-item.running .tool-chip');
+    expect(css).not.toContain('.log-item.streaming .log-content .content-markdown');
+  });
+
+  it('keeps expandable log headers out of approval button styling at every interaction state', async () => {
+    const css = await Bun.file(new URL('../src/cli/serve/web/styles/app.css', import.meta.url)).text();
+
+    expect(css).toContain('button:where(:not(.icon-btn):not(.palette-trigger):not(.log-expand-toggle))');
+    expect(css).toContain('button:not(.log-expand-toggle):hover');
+    expect(css).toContain('button:not(.log-expand-toggle):active');
+    expect(css).toContain('.log-expand-toggle:focus-visible');
   });
 });
 
@@ -920,7 +1042,7 @@ describe('LogEntry component', () => {
       status: 'completed',
       time: Date.now(),
     });
-    const headerStart = html.indexOf('<div class="log-head">');
+    const headerStart = html.indexOf('<button type="button"');
     const bodyStart = html.indexOf('<div class="log-main">');
     const header = html.slice(headerStart, bodyStart);
 
@@ -930,6 +1052,25 @@ describe('LogEntry component', () => {
     expect(header).toContain('class="log-marker"');
     expect(header).toContain('class="log-title"');
     expect(header).toContain('filesystem_read');
+  });
+
+  it('keeps nested Code Mode rows outside the parent expansion button', () => {
+    const parent: ApprovalLogEntry = {
+      id: 'code-parent', callId: 'code-parent', type: 'tool', tool: 'code_exec',
+      title: 'Run program', status: 'completed', time: Date.now(),
+    };
+    const child: ApprovalLogEntry = {
+      id: 'code-child', parentCallId: 'code-parent', type: 'tool', tool: 'store_list',
+      title: 'Read store', status: 'completed', time: Date.now(),
+    };
+    const html = renderEntry(parent, { nestedCalls: [child], expanded: true });
+    const parentButtonEnd = html.indexOf('</button>');
+    const nestedListStart = html.indexOf('<ul role="list" class="log-nested-calls"');
+
+    expect(html).toContain('class="log-head log-expand-toggle"');
+    expect(html).toContain('aria-expanded="true"');
+    expect(nestedListStart).toBeGreaterThan(parentButtonEnd);
+    expect(html.slice(0, parentButtonEnd)).not.toContain('is-nested-tool');
   });
 
   it('renders a context compaction event with its summary, not expandable', () => {
@@ -1109,6 +1250,39 @@ describe('LogEntry component', () => {
     expect(html).toContain('Approve');
     expect(html).toContain('Reject');
     expect(html).toContain('Comment');
+  });
+
+  it('renders the complete long generic approval request and integrity digests', () => {
+    const longSuffix = `prefix-${'x'.repeat(20_000)}-security-relevant-suffix`;
+    const html = renderEntry({
+      id: 'generic-approval',
+      type: 'tool',
+      tool: 'publish',
+      title: 'Approval required for publish',
+      status: 'pending',
+      details: {
+        resumeToken: 'generic-token',
+        prompt: 'Approve execution of publish?',
+        toolApproval: {
+          approvalId: 'approval-publish',
+          toolName: 'publish',
+          canonicalInput: '{\n  "__type": "Map",\n  "entries": []\n}',
+          canonicalInputDigest: 'a'.repeat(64),
+          signedRawInput: JSON.stringify({ title: longSuffix }, null, 2),
+          signedRawInputDigest: 'b'.repeat(64),
+        },
+      },
+    }, { showActions: true });
+
+    expect(html).toContain('Canonical execution input');
+    expect(html).toContain('Signed raw request');
+    expect(html).toContain('security-relevant-suffix');
+    expect(html).not.toContain('[truncated for display]');
+    expect(html).toContain(`SHA-256 ${'a'.repeat(64)}`);
+    expect(html).toContain(`SHA-256 ${'b'.repeat(64)}`);
+    expect(html).toContain('<button class="primary">Approve');
+    expect(html).toContain('<button class="danger">Reject');
+    expect(html).not.toContain('<button>Comment');
   });
 
   it('renders option-scoped business content with its command de-emphasized in the selectable option', () => {

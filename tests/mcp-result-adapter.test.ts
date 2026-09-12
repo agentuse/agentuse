@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { getMCPTools, mcpResultToModelOutput, type MCPConnection } from '../src/mcp';
+import { APPROVAL_TOOL_CONTRACT } from '../src/tools/tool-contract';
 
 describe('MCP result model output', () => {
   test('preserves text and structured content', () => {
@@ -122,6 +123,7 @@ describe('MCP result model output', () => {
 
     const tools = await getMCPTools([connection]);
     const wrapped = tools.mcp__demo__inspect as any;
+    expect(wrapped[APPROVAL_TOOL_CONTRACT]).toBe('mcp:demo:inspect:v1');
     const rawOutput = await wrapped.execute({}, {});
 
     expect(rawOutput).toBe(result);

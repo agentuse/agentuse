@@ -1,16 +1,97 @@
 import { readFile } from 'fs/promises';
 import { createRequire } from 'module';
 import { dirname, join } from 'path';
+import { spawn } from 'child_process';
+import { toErrorMessage } from '../utils/error-message';
 
 let typeScriptPromise: Promise<typeof import('typescript')> | undefined;
 // Standard library sources never change within a process; read each once.
 const libSourceCache = new Map<string, Promise<string>>();
+
+// Deliberately self-contained: the production bundle has no separate source
+// file beside it that a child process could import.
+const TYPECHECK_CHILD_SOURCE = String.raw`
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+let payload = ''; for await (const chunk of process.stdin) payload += chunk;
+const { source, declarations, maxBytes, typeScriptPath, libDir } = JSON.parse(payload);
+try {
+  const ts = await import(pathToFileURL(typeScriptPath).href);
+  const files = new Map(); let bytes = 0;
+  const add = (name, text) => { bytes += Buffer.byteLength(text, 'utf8'); if (bytes > maxBytes) throw new Error('Code Mode TypeScript preflight exceeds the memory allowance'); files.set(name, text); };
+  add('user.ts', 'async function __agentusePreflight() {\n' + source + '\n}'); add('guest.d.ts', declarations);
+  const loadLib = async (name) => { if (files.has(name)) return; if (!/^lib\.[a-z0-9.]+\.d\.ts$/.test(name)) throw new Error('Invalid TypeScript preflight standard library'); const text = await readFile(join(libDir, name), 'utf8'); add(name, text); for (const reference of ts.preProcessFile(text).libReferenceDirectives) await loadLib('lib.' + reference.fileName + '.d.ts'); };
+  await loadLib('lib.es2022.d.ts');
+  const host = { getSourceFile: (name, target) => { const text = files.get(name); return text === undefined ? undefined : ts.createSourceFile(name, text, target, true); }, getDefaultLibFileName: () => 'lib.es2022.d.ts', writeFile: () => {}, getCurrentDirectory: () => '', getDirectories: () => [], fileExists: name => files.has(name), readFile: name => files.get(name), getCanonicalFileName: name => name, useCaseSensitiveFileNames: () => true, getNewLine: () => '\n' };
+  const program = ts.createProgram([...files.keys()], { strict: true, noEmit: true, noLib: true, noResolve: true, types: [], target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, skipLibCheck: true }, host);
+  const failure = ts.getPreEmitDiagnostics(program).find(diagnostic => diagnostic.category === ts.DiagnosticCategory.Error);
+  if (failure) { const point = failure.file && failure.start !== undefined ? failure.file.getLineAndCharacterOfPosition(failure.start) : undefined; const location = failure.file?.fileName === 'user.ts' && point ? 'agentuse-code-mode:user.ts:' + Math.max(1, point.line) + ':' + (point.character + 1) + ': ' : ''; throw new Error('Code Mode TypeScript preflight failed: ' + location + ts.flattenDiagnosticMessageText(failure.messageText, '\n')); }
+  process.stdout.write('{}');
+} catch (error) { process.stdout.write(JSON.stringify({ error: error instanceof Error ? error.message : String(error) })); }
+`;
 
 /**
  * Type-check one Code Mode body entirely in memory before QuickJS or any nested
  * tool starts. Module and filesystem resolution are deliberately unavailable.
  */
 export async function typecheckCodeMode(
+  source: string,
+  declarations: string,
+  maxBytes: number,
+  abortSignal?: AbortSignal
+): Promise<void> {
+  if (abortSignal?.aborted) {
+    throw abortSignal.reason instanceof Error ? abortSignal.reason : new Error('Code Mode execution aborted');
+  }
+  const memoryMb = Math.max(16, Math.ceil(maxBytes / (1024 * 1024)));
+  const typeScriptPath = createRequire(import.meta.url).resolve('typescript');
+  const libDir = dirname(typeScriptPath);
+  const child = spawn(process.execPath, [`--max-old-space-size=${memoryMb}`, '--input-type=module', '--eval', TYPECHECK_CHILD_SOURCE], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let stdout = '';
+    let stderr = '';
+    const cleanup = (): void => {
+      abortSignal?.removeEventListener('abort', onAbort);
+    };
+    const onAbort = (): void => {
+      child.kill();
+      finish(abortSignal?.reason instanceof Error ? abortSignal.reason : new Error('Code Mode execution aborted'));
+    };
+    const finish = (error?: Error): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve();
+    };
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.once('error', finish);
+    child.once('close', code => {
+      if (code !== 0) {
+        finish(new Error(`Code Mode TypeScript preflight worker exited with code ${code}${stderr ? `: ${stderr.trim()}` : ''}`));
+        return;
+      }
+      try {
+        const message = JSON.parse(stdout) as { error?: string };
+        finish(message.error ? new Error(message.error) : undefined);
+      } catch (error) {
+        finish(new Error(`Code Mode TypeScript preflight worker returned invalid output: ${toErrorMessage(error)}`));
+      }
+    });
+    abortSignal?.addEventListener('abort', onAbort, { once: true });
+    child.stdin.end(JSON.stringify({ source, declarations, maxBytes, typeScriptPath, libDir }));
+  });
+}
+
+/** Runs inside the bounded worker. */
+export async function typecheckCodeModeLocal(
   source: string,
   declarations: string,
   maxBytes: number

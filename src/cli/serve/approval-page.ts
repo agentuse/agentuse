@@ -9,6 +9,17 @@ import { ApprovalLogEntry, ChildSessionSummary } from "./session-log";
 export interface ApprovalPageInfo {
   sessionId: string;
   sessionStatus: string;
+  approvalKind?: 'await_human' | 'tool_approval';
+  toolApproval?: {
+    approvalId: string;
+    toolCallId: string;
+    toolName: string;
+    canonicalInput: string;
+    canonicalInputDigest: string;
+    signedRawInput: string;
+    signedRawInputDigest: string;
+    signature?: string;
+  };
   /** Resolved project id, stamped by the serve daemon (see findApprovalInfo). */
   project?: string;
   /** Absolute directory watched for agent files, stamped by the serve daemon. */

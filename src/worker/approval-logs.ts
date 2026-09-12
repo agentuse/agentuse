@@ -278,8 +278,13 @@ export function buildApprovalLogs(parts: any[]): Array<{ id: string; type: strin
     if (part?.type === 'tool') {
       const state = part.state ?? {};
       const isAwaitHuman = part.tool === 'await_human';
+      const genericApprovalDetails = typeof part.tool === 'string'
+        ? buildGenericToolApprovalDetails(state, part.tool)
+        : undefined;
       const runOutcome = outcomeByPartId.get(String(part.id));
-      const built = isAwaitHuman ? buildAwaitHumanDetails(state) : buildToolDetails(state, part.tool);
+      const built = isAwaitHuman
+        ? buildAwaitHumanDetails(state)
+        : genericApprovalDetails ?? buildToolDetails(state, part.tool);
       const details = runOutcome ? { ...(built ?? {}), runOutcome } : built;
       const message = details
         ? undefined
@@ -292,6 +297,14 @@ export function buildApprovalLogs(parts: any[]): Array<{ id: string; type: strin
               : undefined;
       const title = isAwaitHuman
         ? approvalLogTitle(state)
+        : genericApprovalDetails
+          ? state.status === 'pending'
+            ? `Approval required for ${part.tool}`
+            : genericApprovalDetails.decisionStatus === 'rejected'
+              ? `${part.tool} rejected`
+              : state.status === 'completed'
+                ? `${part.tool} approved and completed`
+                : `${part.tool} approved`
         : `${part.tool ?? 'tool'} ${state.status ?? ''}`.trim();
       return {
         id: String(part.id),
@@ -655,6 +668,52 @@ export function buildToolDetails(state: any, tool?: string): ApprovalLogDetails 
   }
 
   return Object.keys(fields).length > 0 ? fields : undefined;
+}
+
+export function formatGenericToolApprovalValue(value: unknown): string {
+  let rendered: string;
+  if (value === undefined) rendered = 'undefined';
+  else if (typeof value === 'string') rendered = value;
+  else {
+    try { rendered = JSON.stringify(value, null, 2); }
+    catch { rendered = String(value); }
+  }
+  const limit = 16_384;
+  return rendered.length <= limit ? rendered : `${rendered.slice(0, limit)}\n… [truncated for display]`;
+}
+
+function buildGenericToolApprovalDetails(state: any, tool: string): ApprovalLogDetails | undefined {
+  const metadata = valueAsRecord(state?.metadata);
+  const resumePayload = state?.status === 'pending'
+    ? valueAsRecord(state?.resumePayload)
+    : valueAsRecord(metadata.resumePayload);
+  if (resumePayload.kind !== 'tool_approval' || typeof resumePayload.approvalId !== 'string') return undefined;
+  const canonicalInput = formatGenericToolApprovalValue(state?.input);
+  const signedRawInput = Object.prototype.hasOwnProperty.call(state ?? {}, 'rawApprovedInput')
+    ? formatGenericToolApprovalValue(state.rawApprovedInput)
+    : canonicalInput;
+  const response = valueAsRecord(metadata.approvalResponse);
+  const reviewer = valueAsRecord(metadata.approvalReviewer);
+  const approved = response.type === 'tool-approval-response' && typeof response.approved === 'boolean'
+    ? response.approved
+    : undefined;
+  return {
+    ...(state?.status === 'pending' && typeof resumePayload.resumeToken === 'string'
+      ? { resumeToken: resumePayload.resumeToken }
+      : {}),
+    prompt: `Approve execution of ${tool}?`,
+    toolApproval: {
+      approvalId: resumePayload.approvalId,
+      toolName: tool,
+      canonicalInput,
+      signedRawInput,
+      ...(typeof resumePayload.signature === 'string' && { signature: resumePayload.signature }),
+    },
+    ...(approved !== undefined && { decisionStatus: approved ? 'approved' : 'rejected' }),
+    ...(typeof response.reason === 'string' && { decisionComment: response.reason }),
+    ...(typeof reviewer.username === 'string' && { decisionReviewer: reviewer.username }),
+    ...(state?.status === 'error' && { errorMessage: formatApprovalLogValue(state.error) ?? 'Tool execution failed' }),
+  };
 }
 
 export function toolPartStartedAt(part: any): number | undefined {

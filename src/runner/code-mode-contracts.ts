@@ -147,9 +147,15 @@ function jsonSchemaForSync(
   schema: Tool['inputSchema'] | Tool['outputSchema']
 ): unknown | undefined {
   const value = aiSdk.asSchema(schema).jsonSchema;
-  return value && typeof (value as PromiseLike<unknown>).then === 'function'
-    ? undefined
-    : value;
+  if (value && typeof (value as PromiseLike<unknown>).then === 'function') {
+    // This is a best-effort synchronous index. Deferred schemas are rendered
+    // asynchronously for execution, but their rejection must still be
+    // observed here so a malformed lazy schema cannot become an unhandled
+    // rejection while constructing the prompt.
+    void Promise.resolve(value).catch(() => undefined);
+    return undefined;
+  }
+  return value;
 }
 
 function boundedDeclaration(schema: unknown): string {
@@ -189,6 +195,7 @@ export async function buildCodeModeToolContracts(
     if (outputKnown) {
       for (const overload of codeModeOverloads(tool)) {
         try {
+          if (!aiSdk.asSchema(overload.inputSchema).validate || !aiSdk.asSchema(overload.outputSchema).validate) continue;
           const signature = {
             input: boundedDeclaration(await jsonSchemaFor(overload.inputSchema)),
             output: boundedDeclaration(await jsonSchemaFor(overload.outputSchema)),
@@ -232,6 +239,7 @@ export function buildCodeModeToolContractsSync(
     if (outputKnown) {
       for (const overload of codeModeOverloads(tool)) {
         try {
+          if (!aiSdk.asSchema(overload.inputSchema).validate || !aiSdk.asSchema(overload.outputSchema).validate) continue;
           const signature = {
             input: boundedDeclaration(jsonSchemaForSync(overload.inputSchema)),
             output: boundedDeclaration(jsonSchemaForSync(overload.outputSchema)),

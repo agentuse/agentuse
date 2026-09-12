@@ -18,12 +18,12 @@ import { sectionFor } from './lib/changelog.ts';
 const root = resolve(import.meta.dir, '..');
 
 /** Paths the published tarball is allowed to contain, from package.json "files". */
-const ALLOWED_ROOTS = ['bin/', 'dist/', 'skills/', 'skill-data/', 'README.md', 'LICENSE', 'package.json'];
+export const ALLOWED_ROOTS = ['bin/', 'dist/', 'skills/', 'skill-data/', 'src/plugin/types.ts', 'README.md', 'THIRD_PARTY_NOTICES.md', 'LICENSE', 'package.json'];
 
 /** Tarball growth beyond this fraction gets called out rather than stated quietly. */
 const SIZE_ALERT = 0.2;
 
-interface PackFile {
+export interface PackFile {
   path: string;
   size: number;
 }
@@ -80,8 +80,10 @@ function publishedBaseline(): { version: string; unpackedSize: number; entryCoun
 }
 
 /** Anything the tarball carries that package.json "files" does not explain. */
-function unexpectedPaths(files: PackFile[]): PackFile[] {
-  return files.filter((f) => !ALLOWED_ROOTS.some((root) => f.path === root || f.path.startsWith(root)));
+export function unexpectedPaths(files: PackFile[]): PackFile[] {
+  return files.filter((f) => !ALLOWED_ROOTS.some((root) =>
+    root.endsWith('/') ? f.path.startsWith(root) : f.path === root
+  ));
 }
 
 /** Largest contributors by extension, so a size jump has an immediate suspect. */
@@ -274,4 +276,4 @@ function main(): void {
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${brief}\n`);
 }
 
-main();
+if (import.meta.main) main();

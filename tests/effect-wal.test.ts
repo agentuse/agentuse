@@ -63,6 +63,18 @@ describe('EffectWAL', () => {
     expect(() => wal.append({ event: 'tool-start' })).not.toThrow();
   });
 
+  test('turns hostile audit records into parseable JSONL without breaking effects', () => {
+    const wal = new EffectWAL(dir);
+    const cyclic: Record<string, unknown> = { count: 1n };
+    cyclic.self = cyclic;
+    const hostile: Record<string, unknown> = { event: 'hostile', cyclic };
+    Object.defineProperty(hostile, 'boom', { enumerable: true, get: () => { throw new Error('no read'); } });
+    expect(() => wal.append(hostile)).not.toThrow();
+    const lines = fs.readFileSync(path.join(dir, EFFECT_WAL_FILENAME), 'utf8').trim().split('\n');
+    expect(lines).toHaveLength(1);
+    expect(() => JSON.parse(lines[0]!)).not.toThrow();
+  });
+
   test('atomically checkpoints an untruncated structured delivery', () => {
     const wal = new EffectWAL(dir);
     const payload = { kind: 'agent-source', source: 'x'.repeat(20_000) };
@@ -88,6 +100,22 @@ describe('sanitizeWALInput', () => {
     const circular: Record<string, unknown> = {};
     circular.self = circular;
     expect(() => sanitizeWALInput(circular)).not.toThrow();
+  });
+
+  test('tags nested special values instead of letting JSON erase them', () => {
+    const input = {
+      nested: {
+        map: new Map([['answer', 42]]),
+        set: new Set(['a']),
+        bytes: new Uint8Array([1, 2]),
+      },
+    };
+    const result = sanitizeWALInput(input) as any;
+    expect(result).not.toBe(input);
+    expect(result.nested.map).toEqual({ __type: 'Map', entries: [['answer', 42]] });
+    expect(result.nested.set).toEqual({ __type: 'Set', values: ['a'] });
+    expect(result.nested.bytes).toEqual({ __type: 'Uint8Array', values: [1, 2] });
+    expect(JSON.stringify(result)).not.toContain('{}');
   });
 });
 

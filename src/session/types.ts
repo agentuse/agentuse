@@ -284,18 +284,37 @@ export interface PartBase {
 export type ToolStatePending = {
   status: 'pending';
   input?: unknown;
+  /** Signed post-plugin approval value retained while a gate is suspended. */
+  rawApprovedInput?: unknown;
   metadata?: Record<string, unknown>;
   suspendedAt?: number;
   resumePayload?: {
     // 'await_human': a real human gate (the leaf's await_human tool part).
+    // 'tool_approval': an AI SDK user-approval request for an ordinary tool.
     // 'subagent_wait': a parent's subagent__* step parked on a delegated child's
     // gate — no human-facing fields, just childSessionID for the cascade descent.
-    kind: 'await_human' | 'subagent_wait';
+    kind: 'await_human' | 'tool_approval' | 'subagent_wait';
     prompt?: string;
     channel?: string;
     approvalUrl?: string;
     expiresAt?: number;
     resumeToken?: string;
+    /** tool_approval only: the immutable SDK request replayed on resume. */
+    approvalId?: string;
+    toolCallId?: string;
+    toolName?: string;
+    signature?: string;
+    /** Complete tagged displays used by the actionable approval surface. */
+    canonicalInputDisplay?: string;
+    canonicalInputDigest?: string;
+    signedRawInputDisplay?: string;
+    signedRawInputDigest?: string;
+    approvalRequest?: {
+      type: 'tool-approval-request';
+      approvalId: string;
+      toolCallId: string;
+      signature?: string;
+    };
     channelMessage?: {
       type: 'slack-message';
       ts?: string;
@@ -313,7 +332,12 @@ export type ToolStatePending = {
 
 export type ToolStateRunning = {
   status: 'running';
+  /** The canonical schema value actually handed to the tool. */
   input: unknown;
+  /** The post-plugin provider value bound to an approval signature. Present
+   * only when this call required approval; kept separate from `input` so
+   * session audit history does not imply a transform was executed raw. */
+  rawApprovedInput?: unknown;
   title?: string;
   metadata?: Record<string, unknown>;
   time: {
@@ -339,7 +363,10 @@ export type ToolOutputArtifactStream = {
 
 export type ToolStateCompleted = {
   status: 'completed';
+  /** The canonical schema value actually handed to the tool. */
   input: unknown;
+  /** The signed raw approval value, if this call required approval. */
+  rawApprovedInput?: unknown;
   output: unknown;
   title?: string;
   metadata?: Record<string, unknown>;
@@ -351,7 +378,10 @@ export type ToolStateCompleted = {
 
 export type ToolStateError = {
   status: 'error';
+  /** The canonical schema value actually handed to the tool. */
   input: unknown;
+  /** The signed raw approval value, if this call required approval. */
+  rawApprovedInput?: unknown;
   error: string;
   metadata?: Record<string, unknown>;
   time: {

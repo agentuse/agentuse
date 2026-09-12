@@ -161,7 +161,11 @@ export async function listAllApprovals(ctx: WorkerContext, req: ExecuteRequest) 
         : valueAsRecord(metadata.resumePayload);
       const channelMessage = valueAsRecord(resumePayload.channelMessage);
       const output = state.status === 'completed' ? valueAsRecord(state.output) : {};
-      const reviewer = valueAsRecord(output.reviewer);
+      const approvalResponse = valueAsRecord(metadata.approvalResponse);
+      const isGenericToolApproval = resumePayload.kind === 'tool_approval';
+      const reviewer = isGenericToolApproval
+        ? valueAsRecord(metadata.approvalReviewer)
+        : valueAsRecord(output.reviewer);
       const suspendedAt = state.status === 'pending' && typeof state.suspendedAt === 'number'
         ? state.suspendedAt
         : undefined;
@@ -169,7 +173,11 @@ export async function listAllApprovals(ctx: WorkerContext, req: ExecuteRequest) 
       let status: ApprovalSummaryStatus;
       let errorMessage: string | undefined;
       const sessionError = sessionErrorFields(session) as { errorCode?: string; errorMessage?: string };
-      if (state.status === 'pending' && session.error?.code === 'USER_STOPPED') {
+      if (isGenericToolApproval && approvalResponse.type === 'tool-approval-response' && approvalResponse.approved === false) {
+        status = 'rejected';
+      } else if (isGenericToolApproval && approvalResponse.type === 'tool-approval-response' && approvalResponse.approved === true) {
+        status = 'approved';
+      } else if (state.status === 'pending' && session.error?.code === 'USER_STOPPED') {
         status = 'errored';
         errorMessage = session.error.message || 'Session stopped by user';
       } else if (state.status === 'pending' && session.error?.code === 'TIMEOUT') {
@@ -218,7 +226,11 @@ export async function listAllApprovals(ctx: WorkerContext, req: ExecuteRequest) 
         ...((originAgentFilePath ?? session.agent.filePath) && { agentFilePath: originAgentFilePath ?? session.agent.filePath }),
         status,
         sessionStatus: session.status,
-        ...(typeof input.prompt === 'string' && { prompt: input.prompt }),
+        ...(typeof input.prompt === 'string'
+          ? { prompt: input.prompt }
+          : isGenericToolApproval
+            ? { prompt: `Approve execution of ${approvalPart.tool}?` }
+            : {}),
         ...(typeof input.summary === 'string' && { summary: input.summary }),
         ...(typeof input.risk === 'string' && { risk: input.risk }),
         ...(normalizeApprovalOptions(input.options) && { hasOptions: true }),
@@ -227,8 +239,16 @@ export async function listAllApprovals(ctx: WorkerContext, req: ExecuteRequest) 
         ...(typeof resumePayload.expiresAt === 'number' && { expiresAt: resumePayload.expiresAt }),
         ...(typeof session.time?.created === 'number' && { createdAt: session.time.created }),
         ...(decisionAt !== undefined && { decisionAt }),
-        ...(typeof output.status === 'string' && { decisionStatus: output.status }),
-        ...(typeof output.comment === 'string' && { decisionComment: output.comment }),
+        ...(isGenericToolApproval && typeof approvalResponse.approved === 'boolean'
+          ? { decisionStatus: approvalResponse.approved ? 'approved' : 'rejected' }
+          : typeof output.status === 'string'
+            ? { decisionStatus: output.status }
+            : {}),
+        ...(isGenericToolApproval && typeof approvalResponse.reason === 'string'
+          ? { decisionComment: approvalResponse.reason }
+          : typeof output.comment === 'string'
+            ? { decisionComment: output.comment }
+            : {}),
         ...(typeof reviewer.username === 'string' && { decisionReviewer: reviewer.username }),
         ...(typeof resumePayload.resumeToken === 'string' && { resumeToken: resumePayload.resumeToken }),
         ...(sessionError.errorCode && { errorCode: sessionError.errorCode }),

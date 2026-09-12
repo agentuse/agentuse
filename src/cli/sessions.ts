@@ -1522,7 +1522,7 @@ async function rejectGateLocally(
     process.stdout.write(`Warning: session ${summary.id} is parked on a delegated sub-agent's approval gate, and no serve daemon owns this project, so the reject cascade cannot run. Hard-stopping discards the gate WITHOUT informing the agent; state the leaf agent manages may be left dangling. Start \`agentuse serve\` and stop it there to deliver a rejection instead.\n`);
     return false;
   }
-  if (pendingKind !== 'await_human' && pending.part.tool !== 'await_human') {
+  if (pendingKind !== 'await_human' && pendingKind !== 'tool_approval' && pending.part.tool !== 'await_human') {
     return false;
   }
 
@@ -1632,6 +1632,15 @@ async function resumeSession(
       );
     }
 
+    if (pendingKind === 'tool_approval') {
+      if (options.comment !== undefined || options.remember !== undefined || options.toolResult !== undefined) {
+        throw new Error('Generic tool approvals support --approve or --reject only');
+      }
+      if (options.approve === undefined && options.reject === undefined) {
+        throw new Error(`Session ${summary.id} is waiting for approval to execute ${pending.part.tool}. Use --approve or --reject.`);
+      }
+    }
+
     const approvalResult = buildApprovalToolResult(options);
     const toolResult = approvalResult ?? (options.toolResult ? parseToolResult(options.toolResult) : undefined);
 
@@ -1642,6 +1651,9 @@ async function resumeSession(
           ? `\nPrompt: ${(input as Record<string, unknown>).prompt}`
           : "";
         throw new Error(`Session ${summary.id} is waiting for approval.${prompt}\nUse --approve, --reject, or --comment.`);
+      }
+      if (pendingKind === 'tool_approval') {
+        throw new Error(`Session ${summary.id} is waiting for approval to execute ${pending.part.tool}. Use --approve or --reject.`);
       }
       throw new Error(`Session ${summary.id} is waiting on ${pending.part.tool}. Use --tool-result <json>.`);
     }

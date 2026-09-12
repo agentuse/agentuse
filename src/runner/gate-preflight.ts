@@ -167,6 +167,11 @@ export function withGatePlanPreflight<T extends Tool>(
   options: {
     effectPatterns: string[];
     onInlineResolution?: (result: unknown) => void;
+    /** Built-in await_human structural/refinement validation after attachment. */
+    validateAttachedInput?: (input: Record<string, unknown>) => Promise<string | undefined>;
+    /** The shared pending payload may receive a sibling command after the SDK
+     * has captured the gate call's original object. */
+    resolveAttachedInput?: () => Record<string, unknown> | undefined;
   },
 ): T {
   const innerExecute = tool.execute;
@@ -175,8 +180,10 @@ export function withGatePlanPreflight<T extends Tool>(
   return {
     ...tool,
     execute: async (input: Record<string, unknown>, callOptions: unknown) => {
-      const failure = validateEffectfulGatePlan(input, options.effectPatterns)
-        ?? await validateEffectfulGateCommandSyntax(input, options.effectPatterns);
+      const finalInput = options.resolveAttachedInput?.() ?? input;
+      const failure = await options.validateAttachedInput?.(finalInput)
+        ?? validateEffectfulGatePlan(finalInput, options.effectPatterns)
+        ?? await validateEffectfulGateCommandSyntax(finalInput, options.effectPatterns);
       if (failure) {
         const result = {
           status: 'rejected',
@@ -189,7 +196,7 @@ export function withGatePlanPreflight<T extends Tool>(
       }
 
       try {
-        const result = await innerExecute(input as never, callOptions as never);
+        const result = await innerExecute(finalInput as never, callOptions as never);
         // A real gate throws SuspendSignal. Any returned value is an inline
         // machine decision (verify bounce, mock decision, or tool result), so
         // stream-scoped gate/barrier state must be cleared before the next step.

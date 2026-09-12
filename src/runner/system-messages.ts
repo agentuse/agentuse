@@ -1,6 +1,9 @@
 import { dirname, resolve } from 'path';
 import { agentBaseName, computeAgentId } from '../utils/agent-id';
-import { buildAutonomousAgentPrompt } from './prompt';
+import {
+  buildAutonomousAgentPrompt,
+  isAutonomousAgentPrompt,
+} from './prompt';
 import { buildManagerPrompt, type SubagentInfo, type ScheduleInfo } from '../manager/index.js';
 import { parseScheduleExpression, formatScheduleHuman } from '../scheduler/parser.js';
 import { parseAgent, type ParsedAgent } from '../parser';
@@ -41,6 +44,35 @@ export interface BuildSystemMessagesResult {
 export const PERSISTENT_STORE_BOUNDARY_HEADING = '## Persistent Store Trust and Temporal Boundary';
 
 type StoreBoundaryMessage = { role: 'system'; content: string };
+
+/**
+ * Replace the runtime-owned autonomous-policy message on resume. The toolset
+ * is decided for each run, so preserving an older Code Mode policy can order a
+ * resumed model to call a tool that its current kill-switch has removed.
+ *
+ * The legacy prefix is recognized too, allowing already persisted v0.22
+ * sessions to migrate without growing duplicate system messages.
+ */
+export function ensureAutonomousAgentPrompt<T extends { role: string; content: unknown }>(
+  messages: readonly T[],
+  prompt: string,
+): Array<T | StoreBoundaryMessage> {
+  let policy: T | StoreBoundaryMessage | undefined;
+  const reconciled: Array<T | StoreBoundaryMessage> = [];
+  for (const message of messages) {
+    if (message.role !== 'system' || !isAutonomousAgentPrompt(message.content)) {
+      reconciled.push(message);
+      continue;
+    }
+    if (policy) continue;
+    policy = message.content === prompt ? message : { role: 'system', content: prompt };
+  }
+
+  // Providers such as Codex OAuth treat the first system message specially.
+  // Always put the canonical runtime policy first, including when migrating a
+  // recognized older policy that was originally stored after agent additions.
+  return [policy ?? { role: 'system', content: prompt }, ...reconciled];
+}
 
 /**
  * Add the canonical persistent-store boundary before the first non-system turn.

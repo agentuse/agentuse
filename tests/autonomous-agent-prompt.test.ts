@@ -32,8 +32,12 @@ describe('autonomous agent system prompt', () => {
     const disabled = buildAutonomousAgentPrompt('Monday, July 29, 2026', false, false);
 
     expect(enabled).toContain('you MUST put those calls and the computation inside one code_exec program');
-    expect(enabled).toContain('code_exec is a general-purpose calculator');
-    expect(enabled).toContain('Never compute numbers, dates, or derived values in prose, in your head, or in bash');
+    expect(enabled).toContain('It is a general-purpose calculator');
+    expect(enabled).toContain('Use code_exec only when it is included in the tools for the current turn');
+    expect(enabled).toContain('Never compute derived values in prose, in your head, or in bash');
+    expect(enabled).toContain('do not claim exact integer precision beyond Number.MAX_SAFE_INTEGER');
+    expect(enabled).toContain('Treat date-only values as UTC');
+    expect(enabled).toContain('do not rely on locale, timezone, Intl, URL');
     expect(enabled).toContain('reading multiple records and then filtering, joining, sorting, selecting, branching, batching, or aggregating them');
     expect(enabled).toContain('Call a tool directly only for one standalone operation');
     expect(enabled).toContain('Any result over 30,720 bytes is replaced by a shape summary');
@@ -41,6 +45,7 @@ describe('autonomous agent system prompt', () => {
     expect(enabled).toContain('return Object.keys(x) and one element, never the raw value');
     expect(enabled).toContain('A store record is typically 2 to 5 KB');
     expect(enabled).toContain('Do not create or ask the user to maintain a helper script');
+    expect(enabled).toContain('shell artifact, commands or scripts may contain the calculations the artifact itself needs');
     expect(disabled).not.toContain('Tool composition:');
     expect(disabled).not.toContain('code_exec');
   });
