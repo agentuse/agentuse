@@ -91,7 +91,10 @@ const DANGEROUS_ENV_VARS = [
  * Create a sanitized environment for command execution
  * Removes dangerous environment variables that could be used for attacks
  */
-function createSafeEnvironment(projectRoot: string): NodeJS.ProcessEnv {
+function createSafeEnvironment(
+  projectRoot: string,
+  sessionId?: string,
+): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
 
   // Clear all dangerous environment variables
@@ -102,6 +105,16 @@ function createSafeEnvironment(projectRoot: string): NodeJS.ProcessEnv {
   // Set safe defaults
   env['SHELL'] = '/bin/sh';
   env['PWD'] = projectRoot;
+
+  // A child command may need a stable, non-secret execution identity to scope
+  // external resources such as browser task spaces. The tool context already
+  // owns the authoritative session id, so replace any inherited value instead
+  // of letting a parent process spoof or leak another run's identity.
+  if (sessionId) {
+    env['AGENTUSE_SESSION_ID'] = sessionId;
+  } else {
+    delete env['AGENTUSE_SESSION_ID'];
+  }
 
   // Drop every non-absolute PATH entry (PATH injection). Filtering only '.'
   // and '' left relative entries like 'bin' or './tools', which still let a
@@ -449,14 +462,14 @@ Commands not matching these patterns will be rejected.`;
             // is a handle that never reaches EOF. Any CLI that reads stdin then
             // blocks forever and the call dies at its timeout with zero output.
             stdio: ['ignore', 'pipe', 'pipe'],
-            env: createSafeEnvironment(cwd),
+            env: createSafeEnvironment(cwd, resolverContext.sessionId),
           })
           : spawn(command, {
             shell: true,
             cwd,
             detached: true, // Create new process group for cleanup
             stdio: ['ignore', 'pipe', 'pipe'],
-            env: createSafeEnvironment(cwd),
+            env: createSafeEnvironment(cwd, resolverContext.sessionId),
           });
         activeChild = child;
         // Abort may have won between the last synchronous check and listener
