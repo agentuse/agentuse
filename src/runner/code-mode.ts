@@ -408,6 +408,18 @@ export function createCodeExecTool(options: {
   const eligible = codeModeEligibleToolNames(options.toolNames);
   const promptContracts = buildCodeModeToolContractsSync(options.toolDefinitions ?? {}, eligible);
   const quickIndex = codeModeQuickIndex(promptContracts);
+  // The catalog is fixed for the life of this tool, so the preflight declarations
+  // are resolved once and shared by every code_exec call in the run.
+  let declarationsPromise: Promise<string> | undefined;
+  const loadDeclarations = (): Promise<string> => {
+    declarationsPromise ??= buildCodeModeToolContracts(options.toolDefinitions ?? {}, eligible)
+      .then(codeModeDeclarations)
+      .catch(error => {
+        declarationsPromise = undefined;
+        throw error;
+      });
+    return declarationsPromise;
+  };
   return {
     description:
       'Run isolated TypeScript for deterministic loops, filtering, branching, batching, joins, and parallel tool calls. ' +
@@ -430,6 +442,7 @@ export function createCodeExecTool(options: {
         dispatcher: options.dispatcher,
         toolNames: eligible,
         ...(options.toolDefinitions && { toolDefinitions: options.toolDefinitions }),
+        declarations: await loadDeclarations(),
         parentCallId: callOptions?.toolCallId ?? CODE_EXEC_TOOL,
         ...(abortSignal && { abortSignal }),
         ...(options.onNestedToolStart && { onNestedToolStart: options.onNestedToolStart }),

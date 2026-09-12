@@ -3,6 +3,8 @@ import { createRequire } from 'module';
 import { dirname, join } from 'path';
 
 let typeScriptPromise: Promise<typeof import('typescript')> | undefined;
+// Standard library sources never change within a process; read each once.
+const libSourceCache = new Map<string, Promise<string>>();
 
 /**
  * Type-check one Code Mode body entirely in memory before QuickJS or any nested
@@ -34,7 +36,13 @@ export async function typecheckCodeMode(
     if (!/^lib\.[a-z0-9.]+\.d\.ts$/.test(name)) {
       throw new Error('Invalid TypeScript preflight standard library');
     }
-    const text = await readFile(join(libDir, name), 'utf8');
+    let pending = libSourceCache.get(name);
+    if (!pending) {
+      pending = readFile(join(libDir, name), 'utf8');
+      libSourceCache.set(name, pending);
+      pending.catch(() => libSourceCache.delete(name));
+    }
+    const text = await pending;
     add(name, text);
     for (const reference of ts.preProcessFile(text).libReferenceDirectives) {
       await loadLib(`lib.${reference.fileName}.d.ts`);

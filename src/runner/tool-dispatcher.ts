@@ -269,6 +269,15 @@ export class ToolDispatcher {
     if (outputContract?.validate) {
       const validation = await outputContract.validate(output);
       if (!validation.success) {
+        // The effect already ran and `tool-end` truthfully says so. Record the
+        // contract failure as its own event so audit and replay can tell "the
+        // tool executed" apart from "the caller received a valid result".
+        this.options.effectWal?.append({
+          event: 'tool-contract-error',
+          callId: options.toolCallId,
+          tool: toolName,
+          error: validation.error.message,
+        });
         throw new Error(
           `Tool '${toolName}' returned a value that does not match its output schema: ${validation.error.message}`
         );

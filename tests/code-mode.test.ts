@@ -259,6 +259,37 @@ describe('Code Mode', () => {
     }
   });
 
+  it('resolves preflight declarations once per tool instance', async () => {
+    let resolved = 0;
+    const counted = {
+      description: 'Counted',
+      get inputSchema() {
+        resolved += 1;
+        return z.object({ value: z.number() });
+      },
+      execute: async ({ value }: { value: number }) => ({ value }),
+    };
+    const dispatcher = new ToolDispatcher({ counted });
+    dispatcher.register('code_exec', createCodeExecTool({
+      dispatcher,
+      toolNames: dispatcher.names(),
+      toolDefinitions: { counted },
+    }));
+    const before = resolved;
+
+    await dispatcher.dispatch('code_exec', { code: 'return tools.counted({ value: 1 });' }, { toolCallId: 'a' });
+    const first = resolved - before;
+    await dispatcher.dispatch('code_exec', { code: 'return tools.counted({ value: 2 });' }, { toolCallId: 'b' });
+    const second = resolved - before - first;
+    await dispatcher.dispatch('code_exec', { code: 'return tools.counted({ value: 3 });' }, { toolCallId: 'c' });
+    const third = resolved - before - first - second;
+
+    // The first call resolves the declarations; later calls only pay for
+    // nested input validation, so the steady state is strictly cheaper.
+    expect(first).toBeGreaterThan(second);
+    expect(third).toBe(second);
+  });
+
   it('is exposed by default and documents the resolved nested catalog', () => {
     const storeList = trustedOutputTool({
       inputSchema: z.object({ status: z.string().optional() }),
@@ -413,5 +444,32 @@ describe('ToolDispatcher', () => {
       toolCallId: 'bad-output',
     })).rejects.toThrow(/does not match its output schema/i);
     expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('journals a trusted output contract failure after the effect ran', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agentuse-contract-wal-'));
+    try {
+      const wal = new EffectWAL(dir);
+      const contract = trustedOutputTool({
+        inputSchema: z.object({}),
+        outputSchema: z.object({ count: z.number() }),
+        execute: async () => ({ count: 'drifted' as unknown as number }),
+      });
+      const dispatcher = new ToolDispatcher({ contract }, { effectWal: wal });
+
+      await expect(dispatcher.dispatch('contract', {}, {
+        toolCallId: 'drift',
+      })).rejects.toThrow(/does not match its output schema/i);
+
+      const events = (await readFile(wal.filePath!, 'utf8'))
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line))
+        .filter(record => record.callId === 'drift')
+        .map(record => record.event);
+      expect(events).toEqual(['tool-start', 'tool-end', 'tool-contract-error']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
