@@ -633,7 +633,8 @@ export default function Agents({ project }: { project?: string } = {}) {
   const { isPinned, toggle, keys } = usePins();
   const pins: PinApi = { isPinned, toggle };
   const { columns, addColumn, removeColumn } = useAgentColumns();
-  const narrow = useMediaQuery('(max-width: 700px)');
+  // Matches the .page-agents 900px breakpoint in app.css (sidebar-docked tablets).
+  const narrow = useMediaQuery('(max-width: 900px)');
   // Recent sessions power the "Last run" column (and the live pulse on rows).
   // 30d keeps rarely-run agents from reading as "never ran". Prefer the shared
   // sessions stream over polling, like Home: the hub pushes on a ~2s cadence

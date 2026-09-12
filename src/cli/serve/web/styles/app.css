@@ -4453,9 +4453,15 @@ th[aria-sort="descending"] .sort-indicator::before { content: "↓"; }
 @media (max-width: 640px) {
   .page-stores header:not(.topbar) { flex-direction: column; align-items: stretch; gap: 12px; }
   .page-stores .stores-toolbar { gap: 10px; }
-  .page-stores .stores-toolbar .segments { display: flex; overflow-x: auto; max-width: 100%; }
+  .page-stores .stores-toolbar .segments { display: flex; overflow-x: auto; max-width: 100%; scrollbar-width: none; }
+  .page-stores .stores-toolbar .segments::-webkit-scrollbar { display: none; }
+  .page-stores .segment { flex-shrink: 0; white-space: nowrap; }
   .page-stores .stores-toolbar .view-filter { margin-left: 0; }
   .page-stores-index .store-row { padding: 12px 14px; }
+  /* Phone: tighter count/updated tracks so the name keeps ~140px instead of
+     ~75px and stops breaking "leon-substack-growth" over three lines. */
+  .page-stores-index .stores-table { --store-columns: minmax(0, 1fr) 56px 72px 16px; }
+  .page-stores-index .stores-head, .page-stores-index .store-row { gap: 10px; }
   .page-stores .store-table-scroll { overflow-x: visible; }
   .page-stores .store-table { min-width: 0; width: 100%; display: block; }
   .page-stores .store-table thead { display: none; }
@@ -5353,11 +5359,12 @@ a.metric-row:hover .metric-row-open { opacity: 1; }
 }
 
 /* Coming up + Recent activity share one two-column band. */
-.page-home .home-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; align-items: start; }
+/* minmax(0, …): a long agent name must shrink the column, never widen the page. */
+.page-home .home-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; align-items: start; }
 .page-home .home-cols .up-cadence { display: none; }
 .page-home .home-cols .feed-project { display: none; }
 @media (max-width: 720px) {
-  .page-home .home-cols { grid-template-columns: 1fr; }
+  .page-home .home-cols { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Projects: real navigation cards rather than a footer roll-call. */
@@ -5595,7 +5602,7 @@ a.metric-row:hover .metric-row-open { opacity: 1; }
 .page-home .feed-dot.failed { background: var(--red); }
 /* Agent-declared non-delivery: amber, matching the sessions list. */
 .page-home .feed-dot.incomplete { background: var(--amber); }
-.page-home .feed-agent { font-family: var(--sans); font-size: var(--font-size-supporting); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-home .feed-agent { font-family: var(--sans); font-size: var(--font-size-supporting); color: var(--fg); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .page-home .feed-label { font-size: var(--font-size-caption); white-space: nowrap; }
 .page-home .feed-label.running { color: var(--green); }
 .page-home .feed-label.waiting { color: var(--cyan); }
@@ -5734,7 +5741,7 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-agents .agents-controls .agents-filter { margin-top: 0; flex: 1 1 220px; min-width: 0; }
 /* Phones: the filter and the Tree/Cards/Graph switch cannot share one row
    without the switch running off the right edge, so stack them full width. */
-@media (max-width: 700px) {
+@media (max-width: 900px) {
   .page-agents .agents-controls { flex-wrap: wrap; gap: 10px; }
   .page-agents .agents-controls .agents-filter { flex-basis: 100%; }
   .page-agents .agents-controls .view-toggle { display: flex; width: 100%; }
@@ -7137,8 +7144,11 @@ a.lastrun.waiting { color: var(--cyan); }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 /* Narrow screens: drop the Schedule column (still reachable in the ⋯ menu) so
-   only the Tree, Run, and ⋯ remain, readable without a horizontal scroll. */
-@media (max-width: 700px) {
+   only the Tree, Run, and ⋯ remain, readable without a horizontal scroll.
+   900px, not 700: the sidebar stays docked down to 721px, so a tablet has
+   ~500px of content and squashes names to "bye-b…" under the desktop set.
+   Keep in step with the `narrow` media query in routes/agents.tsx. */
+@media (max-width: 900px) {
   .page-agents .tree-head { display: none; }
   /* Column management is a desktop affordance. On narrow screens the grid keeps
      only Run (set inline via JS); everything else stays in the ⋯ menu. */
@@ -7335,8 +7345,16 @@ a.lastrun.waiting { color: var(--cyan); }
 }
 @media (max-width: 640px) {
   .page-schedules header:not(.topbar) { flex-direction: column; align-items: stretch; gap: 12px; }
-  .page-schedules .segments { display: flex; overflow-x: auto; }
+  .page-schedules .segments { display: flex; overflow-x: auto; scrollbar-width: none; }
+  .page-schedules .segments::-webkit-scrollbar { display: none; }
+  /* Scroll the pill strip sideways; a label never wraps or gets crushed. */
+  .page-schedules .segment { flex-shrink: 0; white-space: nowrap; }
   .page-schedules .slot { padding: 12px 14px; }
+  /* Phone: time · name · actions. The spark went from 60px of bars to the
+     one thing that kept the agent name from breaking mid-word. */
+  .page-schedules .timetable { --slot-columns: 72px minmax(0, 1fr) 66px; }
+  .page-schedules .slot { gap: 12px; }
+  .page-schedules .slot-runs { display: none; }
 }
 
 /* --- sessions list --- */
