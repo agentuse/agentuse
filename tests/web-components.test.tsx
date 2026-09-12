@@ -1439,6 +1439,52 @@ describe('LogEntry component', () => {
     expect(html).toContain('notes.txt');
   });
 
+  it('renders delegated document snapshots as open tiles without broken image previews', () => {
+    const paths = ['draft/index.md', 'draft/meta.yaml', 'draft/research-brief.yaml', 'notes.txt', 'data.json'];
+    const html = renderEntry({
+      id: 'log-delegated-documents',
+      type: 'approval',
+      title: 'Subagent approval requested',
+      status: 'pending',
+      details: {
+        resumeToken: 'tok-documents',
+        artifactSnapshots: paths.map((path, i) => ({ path, hash: `snapshot${i}`, ext: `.${path.split('.').pop()}` })),
+      },
+    }, { showActions: true });
+
+    expect(html.match(/class="artifact-open"/g)).toHaveLength(paths.length);
+    for (const [i, path] of paths.entries()) {
+      expect(html).toContain(`/artifacts/${path}?snap=snapshot${i}`);
+    }
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('<iframe');
+    expect(html).not.toContain('<video');
+    expect(html).not.toContain('<audio');
+  });
+
+  it('uses the matching preview for each delegated media snapshot', () => {
+    const paths = ['screen.png', 'report.html', 'report.pdf', 'clip.mp4', 'voice.mp3'];
+    const html = renderEntry({
+      id: 'log-delegated-media',
+      type: 'approval',
+      title: 'Subagent approval requested',
+      status: 'pending',
+      details: {
+        artifactSnapshots: paths.map((path, i) => ({ path, hash: `snapshot${i}`, ext: `.${path.split('.').pop()}` })),
+      },
+    });
+
+    expect(html.match(/class="artifact-open"/g)).toHaveLength(paths.length);
+    expect(html.match(/<img /g)).toHaveLength(1);
+    expect(html.match(/<iframe /g)).toHaveLength(2);
+    expect(html.match(/<video /g)).toHaveLength(1);
+    expect(html.match(/<audio /g)).toHaveLength(1);
+    expect(html).toContain('sandbox="allow-scripts"');
+    for (const [i, path] of paths.entries()) {
+      expect(html).toContain(`/artifacts/${path}?snap=snapshot${i}`);
+    }
+  });
+
   it('renders resolved approval details after the resume token is removed', () => {
     const html = renderEntry({
       id: 'log-approved',

@@ -303,14 +303,16 @@ function detectPayloadImagePaths(details: ApprovalLogDetails, explicit: string[]
  * Artifact tile + inline media preview for a payload-detected path. Unlike
  * explicit artifact_paths, a detected mention may be stale or a false
  * positive, so the whole item removes itself when the media fails to load.
- * Snapshot-backed items (`snapped`) reviewed the frozen gate-time bytes and
- * keep their tile even if the live file is gone.
+ * Snapshot-backed items (`snapped`) can also be documents from a delegated
+ * gate. Use the explicit artifact preview rules and keep their open tile.
  */
 function DetectedMediaItem(props: { path: string; href: string; snapped?: boolean }) {
   const [hidden, setHidden] = useState(false);
   if (hidden) return null;
   const hide = props.snapped ? undefined : () => setHidden(true);
-  const preview = VIDEO_ARTIFACT_RE.test(props.path)
+  const preview = props.snapped
+    ? <ArtifactPreview path={props.path} href={props.href} />
+    : VIDEO_ARTIFACT_RE.test(props.path)
     ? <video class="artifact-preview-video" src={props.href} controls preload="metadata" onError={hide} />
     : AUDIO_ARTIFACT_RE.test(props.path)
       ? <audio class="artifact-preview-audio" src={props.href} controls preload="metadata" onError={hide} />
