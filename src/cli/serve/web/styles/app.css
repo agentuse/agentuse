@@ -5106,7 +5106,7 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 }
 
 /* Home Results as one row per agent: name, metric chips, lead-metric bars. */
-.metric-rows { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--surface-shadow); overflow: hidden; }
+.metric-rows { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--surface-shadow); overflow: hidden; container-type: inline-size; }
 .metric-row {
   display: grid;
   grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) 96px 16px;
@@ -5131,6 +5131,7 @@ a.metric-row:hover .metric-row-open { opacity: 1; }
   padding: 4px 10px; border-radius: 999px;
   border: 1px solid var(--line); background: none;
   font: inherit; color: inherit; text-align: left;
+  white-space: nowrap;
 }
 .metric-chip-pill strong { font-family: var(--mono); font-size: var(--font-size-supporting); font-weight: var(--weight-bold); color: var(--fg); font-variant-numeric: tabular-nums; }
 .metric-chip-pill > span { font-family: var(--sans); font-size: 13px; color: var(--muted-3); }
@@ -5141,10 +5142,18 @@ a.metric-row:hover .metric-row-open { opacity: 1; }
 .metric-row.is-editing .metric-chip-pill { cursor: pointer; }
 .metric-row.is-editing .metric-chip-pill:hover { border-color: var(--line-strong); }
 .metric-row.is-editing .metric-chip-pill.is-hidden { opacity: 0.35; text-decoration: line-through; }
-@media (max-width: 640px) {
-  .metric-row { grid-template-columns: minmax(0, 1fr) 16px; }
+/* Layout keys off the card's own width (sidebar + tablet = narrow content
+   even at a wide viewport): mid widths drop the spark and let the chip
+   column breathe; narrow widths stack chips under the agent name. */
+@container (max-width: 720px) {
+  .metric-row { grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) 16px; gap: 12px; padding: 12px 16px; }
   .metric-row .metric-spark { display: none; }
+}
+@container (max-width: 480px) {
+  .metric-row { grid-template-columns: minmax(0, 1fr); gap: 10px; }
   .metric-row-chips { grid-column: 1 / -1; }
+  /* Hover-only chevron would otherwise claim an empty third row. */
+  .metric-row-open { display: none; }
 }
 
 /* Inline tile charts (bars = per-bucket, line = cumulative). */
