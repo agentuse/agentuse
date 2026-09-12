@@ -23,7 +23,7 @@ function model(turns: unknown[][], finalReason = 'tool-calls') {
   return { calls: () => count, prompts };
 }
 function dispatcher() {
-  const recording: ReplayRecording = { sessionId: 'old', model: 'demo:test', createdAt: 1, cwd: '/project', original: { text: 'OLD DRAFT' },
+  const recording: ReplayRecording = { sessionId: 'old', model: 'demo:test', createdAt: 1, cwd: '/project', sourceTask: 'OLD INSTRUCTIONS', original: { text: 'OLD DRAFT' },
     calls: [{ id: 'old-read', type: 'tool', tool: 'tools__bash', state: { status: 'completed', input: { command: 'read source' }, output: { output: 'fixed external source' }, time: { start: 1, end: 2 } } } as any],
     tools: { tools: ['tools__bash', 'await_human', 'report_complete'].map(name => ({ name, inputSchema: { type: 'object', additionalProperties: true } })) } };
   return new ReplayDispatcher(recording, [], '/project');

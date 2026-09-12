@@ -31,7 +31,7 @@ mock.module('../src/runner/execution', () => ({
 let runResultTest: typeof import('../src/testing/result').runResultTest;
 beforeAll(async () => { ({ runResultTest } = await import('../src/testing/result')); });
 
-async function fixture() {
+async function fixture(options: { sourceTask?: string; userPrompt?: string } = { userPrompt: 'ORIGINAL TASK' }) {
   const root = await mkdtemp(join(tmpdir(), 'agentuse-result-'));
   const oldXdg = process.env.XDG_DATA_HOME;
   process.env.XDG_DATA_HOME = join(root, 'state');
@@ -45,7 +45,8 @@ async function fixture() {
   const agent = { name: 'reply', instructions: 'CURRENT INSTRUCTIONS', config: { model: 'demo:test', skills: { auto: false }, tools: { filesystem: [{ path: './brief.md', permissions: ['read'] }] } } } as any;
   const context = { projectRoot: root, stateRoot: root, cwd: root };
   const source = await createSessionAndMessage({ sessionManager: manager, agent, agentFilePath: path,
-    systemMessages: ['OLD SYSTEM'], task: 'OLD INSTRUCTIONS', userPrompt: 'ORIGINAL TASK', projectContext: context, version: 'test', mock: false });
+    systemMessages: ['OLD SYSTEM'], task: options.sourceTask ?? 'OLD INSTRUCTIONS',
+    ...(options.userPrompt && { userPrompt: options.userPrompt }), projectContext: context, version: 'test', mock: false });
   await manager.writeToolsSnapshot(source.sessionID, 'reply', { tools: [{ name: 'tools__bash', inputSchema: { type: 'object' } }] });
   await manager.addPart(source.sessionID, 'reply', source.messageID, { type: 'tool', tool: 'tools__bash', callID: 'read', state: { status: 'completed', input: { command: 'read source' }, output: 'REAL EVIDENCE', time: { start: 1, end: 2 } } } as any);
   await manager.addPart(source.sessionID, 'reply', source.messageID, { type: 'tool', tool: 'await_human', callID: 'gate', state: { status: 'completed', input: { draft: 'OLD DRAFT' }, output: { comment: 'OLD FEEDBACK' }, time: { start: 3, end: 4 } } } as any);
@@ -87,6 +88,21 @@ describe('result tests', () => {
         projectContext: f.context, existingSessionId: second.sessionId })).rejects.toThrow('cannot be resumed as live');
       expect(await readFile(f.sourceFile, 'utf8')).toBe(f.before);
       expect(JSON.parse(await readFile(second.reportPath, 'utf8')).status).toBe('generated');
+    } finally { await f.cleanup(); }
+  });
+  it('gives the selector the source task when the run had no additional prompt', async () => {
+    const f = await fixture({ sourceTask: 'SOURCE TASK WITHOUT EXTRA PROMPT' });
+    try {
+      const result = await f.run();
+      expect(result.status).toBe('generated');
+      expect(requests).toHaveLength(2);
+      const selectorPrompt = JSON.parse(requests[0]!.options.userMessage);
+      expect(selectorPrompt.sourceTask).toBe('SOURCE TASK WITHOUT EXTRA PROMPT');
+      expect(selectorPrompt.originalUserPrompt).toBeUndefined();
+      const writerPrompt = JSON.parse(requests[1]!.options.userMessage);
+      expect(writerPrompt.currentInstructions).toContain('CURRENT INSTRUCTIONS');
+      expect(writerPrompt.originalTask).toBe('');
+      expect(requests[1]!.options.userMessage).not.toContain('SOURCE TASK WITHOUT EXTRA PROMPT');
     } finally { await f.cleanup(); }
   });
   for (const state of ['passed', 'failed', 'incomplete', 'provider-error', 'selector-error', 'invalid-evidence', 'malformed', 'truncated', 'judge-error']) {

@@ -4,7 +4,7 @@ import { parseAgent, parseAgentContent, ConfigError } from './parser';
 import { connectMCP } from './mcp';
 import { runAgent, prepareAgentExecution, classifyRunResult, executionOutcomeFields, runResultJson, type PreparedAgentExecution } from './runner';
 import { isApprovalEnabled } from './runner/approval';
-import { isMockMode, resolveMockApprovalDecision } from './runner/mock-tools';
+import { enableMockMode, isMockMode, resolveMockApprovalDecision } from './runner/mock-tools';
 import { Command } from 'commander';
 import { createProviderCommand, createAuthCommand } from './cli/auth';
 import { AuthStorage } from './auth/storage';
@@ -359,9 +359,10 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
             'reach (e.g. anthropic:claude-haiku-4-5 or openai:gpt-5.4-nano).',
         );
       }
-      if (options.mock || options.mockGated) process.env.AGENTUSE_MOCK_MODE = '1';
+      if (options.mock || options.mockGated) {
+        enableMockMode(options.mockGated ? 'gated' : 'all');
+      }
       if (options.mockGated) {
-        process.env.AGENTUSE_MOCK_SCOPE = 'gated';
         // Gated scope exists for unattended closed-loop runs, so default the
         // gate decision to approve; an explicit --mock-approval (or env) wins.
         if (!options.mockApproval && !process.env.AGENTUSE_MOCK_APPROVAL) {

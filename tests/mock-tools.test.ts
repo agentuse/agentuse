@@ -326,6 +326,17 @@ describe("mockScope", () => {
     process.env.AGENTUSE_MOCK_SCOPE = "bogus";
     expect(mod.mockScope()).toBe("all");
   });
+
+  it("applies an explicit CLI scope over inherited environment state", () => {
+    process.env.AGENTUSE_MOCK_SCOPE = "gated";
+    mod.enableMockMode("all");
+    expect(process.env.AGENTUSE_MOCK_MODE).toBe("1");
+    expect(mod.mockScope()).toBe("all");
+
+    process.env.AGENTUSE_MOCK_SCOPE = "all";
+    mod.enableMockMode("gated");
+    expect(mod.mockScope()).toBe("gated");
+  });
 });
 
 describe("wrapToolsWithGatedMock", () => {

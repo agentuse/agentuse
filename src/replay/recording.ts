@@ -14,6 +14,7 @@ export interface ReplayRecording {
   model: string;
   createdAt: number;
   cwd: string;
+  sourceTask: string;
   userPrompt?: string;
   tools: ToolsSnapshot;
   calls: ToolPart[];
@@ -42,7 +43,7 @@ export function selectReplayRecording(options: {
   }
   return {
     sessionId: options.sessionId, model: options.model, createdAt: options.createdAt,
-    cwd: options.cwd,
+    cwd: options.cwd, sourceTask: options.message.user.prompt.task,
     ...(options.message.user.prompt.user && { userPrompt: options.message.user.prompt.user }),
     tools: options.tools, calls, original: { ...(proposal !== undefined && { proposal }), text },
   };
@@ -129,12 +130,15 @@ function referenceOutput(reference: ReplayReference, input: Record<string, unkno
   return { output: (end < lines.length ? `[Reading lines ${offset}-${end} of ${lines.length} total]\n\n` : '') + output };
 }
 
-function containsMedia(value: unknown): boolean {
+/** Detect recorded media recursively across legacy wrappers and current AI SDK
+ * content-part variants. Media bytes and cache references are not portable
+ * evidence, so replay and result selection must reject the whole output. */
+export function containsMedia(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(containsMedia);
   if (!value || typeof value !== 'object') return false;
   const object = value as Record<string, unknown>;
   if ('_media' in object || '__mediaCacheRef' in object) return true;
-  if ((object.type === 'image' || object.type === 'audio') && ('data' in object || 'source' in object)) return true;
+  if (typeof object.type === 'string' && ['image', 'audio', 'image-data', 'file-data'].includes(object.type)) return true;
   return Object.values(object).some(containsMedia);
 }
 

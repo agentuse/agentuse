@@ -59,14 +59,16 @@ async function evidence(options: {
 }) {
   const { recording, path, selector, signal } = options;
   const candidates = inputCandidates(recording);
-  const sourceHash = hash(JSON.stringify({ prompt: recording.userPrompt, candidates }));
+  const sourceHash = hash(JSON.stringify({ sourceTask: recording.sourceTask,
+    userPrompt: recording.userPrompt, candidates }));
   const read = async () => {
     const saved = JSON.parse(await readFile(path, 'utf8'));
     if (saved.version !== 1 || saved.sourceHash !== sourceHash) throw new Error(`Saved evidence no longer matches the source recording: ${path}`);
     return { ...buildFixedInputPack(recording, candidates, saved.selection), selectorModel: saved.selectorModel as string, reused: true };
   };
   try { return await read(); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-  const prompt = JSON.stringify({ originalUserPrompt: recording.userPrompt, records: candidates });
+  const prompt = JSON.stringify({ sourceTask: recording.sourceTask,
+    originalUserPrompt: recording.userPrompt, records: candidates });
   const text = await generate(selector, [{ role: 'system', content: SELECT_INPUTS_PROMPT }], prompt, signal);
   const selected = buildFixedInputPack(recording, candidates, JSON.parse(text));
   signal.throwIfAborted();

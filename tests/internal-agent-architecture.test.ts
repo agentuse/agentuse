@@ -70,8 +70,9 @@ describe('internal AgentUse architecture', () => {
   });
 
   it('runs a draft test the way `agentuse test` does, from one shared rule', async () => {
-    const [serve, cli, mockTools] = await Promise.all([
+    const [serve, testCli, runCli, mockTools] = await Promise.all([
       source('cli/serve.ts'),
+      source('cli/test.ts'),
       source('index.ts'),
       source('runner/mock-tools.ts'),
     ]);
@@ -81,7 +82,7 @@ describe('internal AgentUse architecture', () => {
     // ground it.
     expect(mockTools).toContain('export function resolveMockScope(');
     expect(serve).toContain('resolveMockScope(');
-    expect(cli).toContain('resolveMockScope(');
+    expect(testCli).toContain('resolveMockScope(');
     // Scoped to the test-run helper: an unrelated metadata builder elsewhere in
     // serve legitimately reads the same field.
     const mockRunner = serve.slice(serve.indexOf('const startMockTestRun'), serve.indexOf('const recoverAgentCreationJob'));
@@ -91,6 +92,8 @@ describe('internal AgentUse architecture', () => {
     // copy omitted AGENTUSE_MOCK_SCOPE entirely.
     expect(serve).toContain('mockRunEnv({ scope, model: mockModel })');
     expect(serve).not.toContain("AGENTUSE_MOCK_MODE: '1'");
+    expect(runCli).toContain('enableMockMode(');
+    expect(runCli).not.toContain('process.env.AGENTUSE_MOCK_SCOPE =');
 
     // No silent fallback onto the agent's own premium model.
     expect(serve).toContain('configuredMockModel()');

@@ -45,6 +45,14 @@ export function mockScope(): 'all' | 'gated' {
   return process.env.AGENTUSE_MOCK_SCOPE === 'gated' ? 'gated' : 'all';
 }
 
+/** Enable mock mode for an explicit CLI scope. Command-line intent must replace
+ * any scope inherited from the shell or global config; otherwise `--mock` and
+ * `--scope all` can silently retain an earlier `gated` setting. */
+export function enableMockMode(scope: 'all' | 'gated'): void {
+  process.env.AGENTUSE_MOCK_MODE = '1';
+  process.env.AGENTUSE_MOCK_SCOPE = scope;
+}
+
 /**
  * The scope `agentuse test` picks when the operator does not name one, and the
  * only place that rule lives.

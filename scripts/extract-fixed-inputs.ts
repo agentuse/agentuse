@@ -19,7 +19,8 @@ dotenv.config({ path: context.envFile, quiet: true });
 await initStorage(context.stateRoot);
 const recording = await loadReplayRecording(new SessionManager(), sessionId);
 const candidates = inputCandidates(recording);
-const prompt = JSON.stringify({ originalUserPrompt: recording.userPrompt, records: candidates });
+const prompt = JSON.stringify({ sourceTask: recording.sourceTask,
+  originalUserPrompt: recording.userPrompt, records: candidates });
 if (prompt.length > 240_000) throw new Error('Session exceeds selection context budget; split into explicit segments before extraction. Nothing was truncated.');
 const result = streamText({ model: await createModel(model), system: SELECT_INPUTS_PROMPT, prompt,
   ...(model.startsWith('openai:') ? { providerOptions: { openai: { store: false, instructions: SELECT_INPUTS_PROMPT, reasoningEffort: 'medium' } } } : { maxOutputTokens: 16000 }),

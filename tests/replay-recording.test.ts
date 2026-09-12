@@ -9,7 +9,7 @@ const toolPart = (id: string, tool: string, input: unknown, output: unknown): an
   id, type: 'tool', callID: id, state: { status: 'completed', input, output, time: { start: 1, end: 2 } }, tool,
 });
 function recording(calls: any[] = []): ReplayRecording {
-  return { sessionId: 'source', model: 'demo:old', createdAt: 1000, cwd: '/project', calls,
+  return { sessionId: 'source', model: 'demo:old', createdAt: 1000, cwd: '/project', sourceTask: 'OLD INSTRUCTIONS', calls,
     original: { text: 'OLD DRAFT MUST NOT BE IN MODEL INPUT', proposal: { draft: 'OLD' } },
     tools: { tools: ['tools__bash', 'await_human', 'report_complete', 'report_incomplete', 'subagent__research', 'tools__filesystem_read']
       .map(name => ({ name, inputSchema: schema })) } };
@@ -25,9 +25,9 @@ describe('recorded-input replay', () => {
         toolPart('3', 'tools__bash', { command: 'read after gate' }, 'must not be replayed'),
         toolPart('4', 'await_human', { draft: 'REVISED' }, {})] });
     expect(selected.calls).toEqual([first]);
+    expect(selected.sourceTask).toBe('OLD INSTRUCTIONS');
     expect(selected.userPrompt).toBe('Original user request');
     expect(selected.original.proposal).toEqual({ draft: 'FIRST' });
-    expect(JSON.stringify(selected)).not.toContain('OLD INSTRUCTIONS');
   });
 
   it('does not incorporate a later follow-up into an initially ungated run', () => {
@@ -61,7 +61,10 @@ describe('recorded-input replay', () => {
 
   it('stops when recorded media cannot be reproduced as text/JSON', () => {
     for (const output of [{ _media: [] }, { __mediaCacheRef: 'cached-image' },
-      { content: [{ type: 'image', data: 'bytes' }] }]) {
+      { content: [{ type: 'image', data: 'bytes' }] },
+      { content: [{ type: 'audio', data: 'bytes' }] },
+      { content: [{ type: 'image-data', data: 'bytes' }] },
+      { content: [{ type: 'file-data', data: 'bytes' }] }]) {
       const replay = new ReplayDispatcher(recording([toolPart('media', 'tools__bash', { command: 'capture' }, output)]), [], '/project');
       expect(replay.execute('tools__bash', { command: 'capture' })).toMatchObject({ error: 'REPLAY_INPUT_MISSING' });
       expect(replay.stop?.kind).toBe('missing');
