@@ -46,6 +46,7 @@ import { toErrorMessage } from '../utils/error-message';
 import type { CompactionReason, SessionManager } from '../session';
 import { ToolDispatcher, type ToolOutputArtifactWriter } from './tool-dispatcher';
 import { CODE_EXEC_TOOL, createCodeExecTool, isCodeModeEnabled, type NestedToolTrace } from './code-mode';
+import { injectIntentParam } from './tool-intent';
 import { stripInlineMediaData } from '../tools/media.js';
 import { messagesContainInlineMedia } from '../session/media-cache.js';
 import { stripToolBlocks, hasReasoningParts, lastAssistantMessage } from '../session/message-utils';
@@ -881,13 +882,19 @@ async function* executeAgentAttempt(
   });
   if (isCodeModeEnabled() && !options.replay && dispatcher.get(CODE_EXEC_TOOL) === undefined) {
     const traceHooks = buildCodeModeTraceHooks(options);
-    dispatcher.register(CODE_EXEC_TOOL, createCodeExecTool({
+    const codeExecTool = createCodeExecTool({
       dispatcher,
       toolNames: dispatcher.codeModeToolNames(),
       toolDefinitions: dispatcher.codeModeTools(),
       abortSignal: effectiveAbortSignal,
       ...traceHooks,
-    }));
+    });
+    // Registered after the loader's intent pass, so label it here; otherwise a
+    // program row shows only "code_exec" beside the described calls it made.
+    dispatcher.register(
+      CODE_EXEC_TOOL,
+      agent.config.intent === false ? codeExecTool : injectIntentParam(CODE_EXEC_TOOL, codeExecTool)
+    );
   }
   const dispatchingTools = dispatcher.modelTools();
   const modelFacingTools = usesAnthropicCacheControl

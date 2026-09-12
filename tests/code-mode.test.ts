@@ -13,6 +13,7 @@ import {
 import { ToolDispatcher, ToolDispatchDeniedError } from '../src/runner/tool-dispatcher';
 import { EffectWAL } from '../src/runner/effect-wal';
 import { trustedOutputTool } from '../src/tools/tool-contract';
+import { extractToolIntent, injectIntentParam } from '../src/runner/tool-intent';
 
 describe('Code Mode', () => {
   it('is default-on and can be disabled only by runtime policy', () => {
@@ -288,6 +289,27 @@ describe('Code Mode', () => {
     // nested input validation, so the steady state is strictly cheaper.
     expect(first).toBeGreaterThan(second);
     expect(third).toBe(second);
+  });
+
+  it('accepts an intent label without leaking it into the program', async () => {
+    const dispatcher = new ToolDispatcher({
+      add: {
+        description: 'Add one',
+        inputSchema: z.object({ value: z.number() }),
+        execute: async ({ value }: { value: number }) => ({ value: value + 1 }),
+      },
+    });
+    const tool = injectIntentParam('code_exec', createCodeExecTool({
+      dispatcher,
+      toolNames: dispatcher.names(),
+    }));
+    dispatcher.register('code_exec', tool);
+    const schema = (tool.inputSchema as z.ZodObject<z.ZodRawShape>).shape;
+    expect(Object.keys(schema)[0]).toBe('intent');
+    const input = { intent: 'Adding one to a number', code: 'return tools.add({ value: 1 });' };
+    expect(extractToolIntent(input)).toBe('Adding one to a number');
+    await expect(dispatcher.dispatch('code_exec', input, { toolCallId: 'labelled' }))
+      .resolves.toEqual({ value: 2 });
   });
 
   it('is exposed by default and documents the resolved nested catalog', () => {

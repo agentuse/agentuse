@@ -77,7 +77,12 @@ function extendInputSchema(schema: unknown): unknown | undefined {
   return undefined;
 }
 
-function injectIntentParam(name: string, tool: Tool): Tool {
+/**
+ * Add the intent parameter to one tool registered after the loader ran (the
+ * runtime code_exec tool), so it is labelled in the session views like the
+ * rest of the catalog.
+ */
+export function injectIntentParam(name: string, tool: Tool): Tool {
   if (shouldSkip(name)) return tool;
   const originalExecute = (tool as { execute?: (input: unknown, opts: unknown) => unknown }).execute;
   // Without an execute there is nothing to strip the parameter before, so the
