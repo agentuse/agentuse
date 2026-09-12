@@ -32,6 +32,8 @@ describe('autonomous agent system prompt', () => {
     const disabled = buildAutonomousAgentPrompt('Monday, July 29, 2026', false, false);
 
     expect(enabled).toContain('you MUST put those calls and the computation inside one code_exec program');
+    expect(enabled).toContain('code_exec is a general-purpose calculator');
+    expect(enabled).toContain('Never compute numbers, dates, or derived values in prose, in your head, or in bash');
     expect(enabled).toContain('reading multiple records and then filtering, joining, sorting, selecting, branching, batching, or aggregating them');
     expect(enabled).toContain('Call a tool directly only for one standalone operation');
     expect(enabled).toContain('Return one compact code_exec result instead of carrying intermediate tool output through model context');

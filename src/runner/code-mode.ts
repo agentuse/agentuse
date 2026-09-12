@@ -422,8 +422,10 @@ export function createCodeExecTool(options: {
   };
   return {
     description:
-      'Run isolated TypeScript for deterministic loops, filtering, branching, batching, joins, and parallel tool calls. ' +
-      'The program has no filesystem, network, environment, process, package, or import access. ' +
+      'Run isolated TypeScript for any computation: arithmetic, date and duration math, percentages, string formatting, ID or URL parsing, ' +
+      'plus deterministic loops, filtering, branching, batching, joins, and parallel tool calls. Use it even when the program needs zero or one tool call; ' +
+      'never do that math in prose or in bash. Date, Math, JSON, and string methods are available and the clock is real. ' +
+      'The program has no filesystem, network, environment, process, package, console, or import access. ' +
       'Call permitted tools as await tools.<name>({ ... }) using the same input object as a direct tool call, then return one JSON-serializable result. ' +
       'Code is strictly type-checked before any nested tool starts. For `-> ?` outputs, do not guess fields: return the raw value, observe it, then narrow it with runtime checks in a later code_exec before dependent logic. ' +
       `Available nested tools: ${eligible.length > 0 ? eligible.join(', ') : '(none)'}.\n\n${quickIndex}`,
