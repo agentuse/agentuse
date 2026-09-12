@@ -1742,6 +1742,7 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 }
 .page-approval-detail .result-verdict {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   margin-bottom: 12px;
@@ -1784,12 +1785,17 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   color: var(--green);
 }
 .page-approval-detail .result-error {
-  color: var(--red);
+  color: var(--fg);
   font-size: var(--font-size-supporting);
-  line-height: var(--lh-snug);
+  line-height: var(--lh-loose);
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.page-approval-detail .result-error + .result-body { margin-top: 12px; }
+.page-approval-detail .result-error + :is(.result-body, .result-headline) {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
 .page-approval-detail .result-body {
   color: var(--fg);
   font-size: var(--font-size-supporting);

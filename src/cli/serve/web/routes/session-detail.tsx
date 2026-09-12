@@ -517,6 +517,9 @@ export default function SessionDetail() {
   const [showDebug, setShowDebug] = useState<boolean>(() => {
     try { return localStorage.getItem('agentuse:session:showDebug') === '1'; } catch { return false; }
   });
+  const [showReasoning, setShowReasoning] = useState<boolean>(() => {
+    try { return localStorage.getItem('agentuse:session:showReasoning') !== '0'; } catch { return true; }
+  });
   // Latest per-session view state, read by the [sessionId] cleanup below (which
   // closes over the *outgoing* id) to bank what the reader had open.
   const uiStateRef = useRef({ expandOverrides, logQuery, showLogSearch, logsLimit, transcriptOpen });
@@ -809,6 +812,10 @@ export default function SessionDetail() {
     () => orderedLogs.reduce((n, e) => n + (!nestedLogIds.has(e.id) && isDebugLog(e) ? 1 : 0), 0),
     [orderedLogs, nestedLogIds]
   );
+  const reasoningCount = useMemo(
+    () => orderedLogs.reduce((n, e) => n + (e.type === 'reasoning' ? 1 : 0), 0),
+    [orderedLogs]
+  );
   const visibleLogs = useMemo(
     // Routine learning captures (captured/none) live in the Learnings panel now,
     // so keep them out of the work log; a failed capture (status 'error') still
@@ -817,10 +824,11 @@ export default function SessionDetail() {
       !nestedLogIds.has(e.id)
       && !nestedToolIds.has(e.id)
       && (showDebug || !isDebugLog(e))
+      && (showReasoning || e.type !== 'reasoning')
       && !(e.type === 'learning' && e.status !== 'error')
       && matchesLogFilter(e, logFilter, nestedToolCalls.get(e.callId ?? ''))
     ),
-    [orderedLogs, showDebug, nestedLogIds, nestedToolIds, nestedToolCalls, logFilter]
+    [orderedLogs, showDebug, showReasoning, nestedLogIds, nestedToolIds, nestedToolCalls, logFilter]
   );
   // Operational log lines (type 'log') can repeat identically many times in a row
   // (e.g. "Calling model: ..." or repeated MCP chatter). Collapse consecutive
@@ -903,6 +911,10 @@ export default function SessionDetail() {
   useEffect(() => {
     try { localStorage.setItem('agentuse:session:showDebug', showDebug ? '1' : '0'); } catch { /* ignore */ }
   }, [showDebug]);
+
+  useEffect(() => {
+    try { localStorage.setItem('agentuse:session:showReasoning', showReasoning ? '1' : '0'); } catch { /* ignore */ }
+  }, [showReasoning]);
 
   useEffect(() => {
     try { localStorage.setItem('agentuse:session:logFilter', logFilter); } catch { /* ignore */ }
@@ -1647,6 +1659,11 @@ export default function SessionDetail() {
   // '' unless the session ended in error; leads the result card so a failed
   // run's outcome is the failure, not a mid-thought final message.
   const resultErrorText = sessionErrorText(approval);
+  // Older outcome records can contain an ellipsized copy of the full error.
+  // Keep distinct headlines, but avoid repeating the failure as a large title.
+  const errorHeadline = finalOutcome.headline?.replace(/(?:\.{3}|…)$/, '').trim();
+  const showOutcomeHeadline = Boolean(finalOutcome.headline)
+    && !(resultErrorText && errorHeadline && resultErrorText.includes(errorHeadline));
 
   // Shared between the feed-first artifacts panel and the summary-first result
   // card, so the tile markup stays single-sourced.
@@ -1680,6 +1697,18 @@ export default function SessionDetail() {
     </div>
   ) : null;
 
+  const reasoningToggle = reasoningCount > 0 ? (
+    <label class="log-debug-toggle" title="Show agent reasoning">
+      <input
+        type="checkbox"
+        checked={showReasoning}
+        onChange={(e) => setShowReasoning((e.target as HTMLInputElement).checked)}
+      />
+      <span>reasoning</span>
+      <span class="log-debug-count">{reasoningCount}</span>
+    </label>
+  ) : null;
+
   const debugToggle = debugCount > 0 ? (
     <label class="log-debug-toggle" title="Show debug-level operational logs">
       <input
@@ -1708,8 +1737,8 @@ export default function SessionDetail() {
     </div>
   ) : null;
 
-  const logTools = logFilterControl || debugToggle ? (
-    <div class="log-tools">{logFilterControl}{debugToggle}</div>
+  const logTools = logFilterControl || reasoningToggle || debugToggle ? (
+    <div class="log-tools">{logFilterControl}{reasoningToggle}{debugToggle}</div>
   ) : null;
 
   // The run's outcome: verdict, timings, recorded metrics, final response and
@@ -1750,7 +1779,7 @@ export default function SessionDetail() {
               {resultErrorText && <div class="result-error">{resultErrorText}</div>}
               {hasFinalOutcome ? (
                 <>
-                  {finalOutcome.headline && (
+                  {showOutcomeHeadline && finalOutcome.headline && (
                     <p class="result-headline"><InlineMarkdown value={finalOutcome.headline} /></p>
                   )}
                   {finalOutcome.body && (
