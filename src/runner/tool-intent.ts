@@ -1,5 +1,6 @@
 import { jsonSchema, type Tool } from 'ai';
 import { z } from 'zod';
+import { CODE_MODE_OVERLOADS, type CodeModeOverload } from '../tools/tool-contract';
 
 /**
  * Tool-call intent phrases (agentuse-lab: intent labels).
@@ -91,8 +92,18 @@ export function injectIntentParam(name: string, tool: Tool): Tool {
   const extended = extendInputSchema((tool as { inputSchema?: unknown }).inputSchema);
   if (extended === undefined) return tool;
 
+  // Code Mode overloads describe the same call surface, so they must accept
+  // the intent key too or a labelled nested call would miss every narrowed
+  // signature and fall through to the full union.
+  const overloads = (tool as { [CODE_MODE_OVERLOADS]?: readonly CodeModeOverload[] })[CODE_MODE_OVERLOADS];
+  const extendedOverloads = overloads?.map(overload => {
+    const input = extendInputSchema(overload.inputSchema);
+    return input === undefined ? overload : { ...overload, inputSchema: input as CodeModeOverload['inputSchema'] };
+  });
+
   return {
     ...tool,
+    ...(extendedOverloads && { [CODE_MODE_OVERLOADS]: extendedOverloads }),
     inputSchema: extended,
     execute: async (input: unknown, opts: unknown) => {
       if (input && typeof input === 'object' && !Array.isArray(input) && INTENT_PARAM in input) {

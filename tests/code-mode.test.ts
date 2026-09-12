@@ -13,6 +13,9 @@ import {
 import { ToolDispatcher, ToolDispatchDeniedError } from '../src/runner/tool-dispatcher';
 import { EffectWAL } from '../src/runner/effect-wal';
 import { trustedOutputTool } from '../src/tools/tool-contract';
+import { buildCodeModeToolContracts, codeModeDeclarations } from '../src/runner/code-mode-contracts';
+import { Store } from '../src/store/store';
+import { createStoreTools } from '../src/store/tools';
 import { extractToolIntent, injectIntentParam } from '../src/runner/tool-intent';
 
 describe('Code Mode', () => {
@@ -374,6 +377,63 @@ describe('Code Mode', () => {
       parentCallId: 'typed-store-get',
     })).rejects.toThrow(/TypeScript preflight.*Property 'data' does not exist/i);
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('emits Code Mode overloads ahead of the full signature', async () => {
+    const countOutput = z.object({ success: z.literal(true), total: z.number() });
+    const rowsOutput = z.object({ success: z.literal(true), items: z.array(z.object({ id: z.string() })) });
+    const listTool = trustedOutputTool({
+      inputSchema: z.object({ countOnly: z.boolean().optional() }),
+      outputSchema: z.union([countOutput, rowsOutput]),
+      execute: async () => ({ success: true as const, items: [] }),
+    }, {
+      overloads: [
+        { inputSchema: z.object({ countOnly: z.literal(true) }), outputSchema: countOutput },
+        { inputSchema: z.object({ countOnly: z.literal(false).optional() }), outputSchema: rowsOutput },
+      ],
+    });
+    const contracts = await buildCodeModeToolContracts({ list: listTool }, ['list']);
+    expect(contracts[0].overloads).toHaveLength(2);
+    const declarations = codeModeDeclarations(contracts);
+    const lines = declarations.split('\n').filter(line => line.includes('"list"('));
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toContain('countOnly: true');
+    expect(lines[0]).toContain('total: number');
+    expect(lines[1]).toContain('items: Array<');
+    expect(lines[2]).toContain('total: number');
+    expect(lines[2]).toContain('items: Array<');
+  });
+
+  it('lets guest code read store_list rows without guarding the countOnly variant', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'agentuse-code-mode-store-'));
+    try {
+      const store = new Store(dir, 'overload-store', 'overload-agent');
+      await store.create({ type: 'task', title: 'one', status: 'ready', data: { posted_at: '2026-01-01T00:00:00Z' } });
+      const storeTools = createStoreTools(store);
+      const storeList = injectIntentParam('store_list', storeTools.store_list);
+      const dispatcher = new ToolDispatcher({ store_list: storeList });
+      const program = `
+        const r = await tools.store_list({ intent: 'Load rows', type: 'task', limit: 10, fields: ['posted_at'] });
+        if (!r.success) throw new Error(r.error);
+        const ids = [];
+        for (const it of r.items) ids.push(it.id + ':' + String(it.data?.posted_at));
+        const c = await tools.store_list({ countOnly: true });
+        if (!c.success) throw new Error(c.error);
+        return { ids, total: c.total, byStatus: c.byStatus };
+      `;
+      const result = await executeCodeMode(program, {
+        dispatcher,
+        toolNames: ['store_list'],
+        toolDefinitions: { store_list: storeList },
+        parentCallId: 'store-list-overload',
+      }) as { ids: string[]; total: number; byStatus: Record<string, number> };
+      expect(result.ids).toHaveLength(1);
+      expect(result.ids[0]).toEndWith(':2026-01-01T00:00:00Z');
+      expect(result.total).toBe(1);
+      expect(result.byStatus).toEqual({ ready: 1 });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('allows valid composition through a trusted output contract', async () => {

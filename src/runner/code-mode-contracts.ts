@@ -1,6 +1,6 @@
 import * as aiSdk from 'ai';
 import type { Tool } from 'ai';
-import { hasTrustedOutputSchema } from '../tools/tool-contract';
+import { codeModeOverloads, hasTrustedOutputSchema } from '../tools/tool-contract';
 
 const MAX_DECLARATION_CHARS = 32_768;
 const MAX_SCHEMA_DEPTH = 12;
@@ -15,11 +15,22 @@ interface RenderState {
   nodes: number;
 }
 
+export interface CodeModeSignature {
+  input: string;
+  output: string;
+}
+
 export interface CodeModeToolContract {
   name: string;
   input: string;
   output: string;
   outputKnown: boolean;
+  /**
+   * Narrowed signatures emitted ahead of the full one, so the compiler can
+   * resolve input-dependent result shapes at the call site (see
+   * CODE_MODE_OVERLOADS). Only present when the full output is known.
+   */
+  overloads?: CodeModeSignature[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -174,7 +185,21 @@ export async function buildCodeModeToolContracts(
         // Invalid contracts are rejected by ToolDispatcher before execution.
       }
     }
-    contracts.push({ name, input, output, outputKnown });
+    const overloads: CodeModeSignature[] = [];
+    if (outputKnown) {
+      for (const overload of codeModeOverloads(tool)) {
+        try {
+          const signature = {
+            input: boundedDeclaration(await jsonSchemaFor(overload.inputSchema)),
+            output: boundedDeclaration(await jsonSchemaFor(overload.outputSchema)),
+          };
+          if (signature.input !== 'unknown' && signature.output !== 'unknown') overloads.push(signature);
+        } catch {
+          // An overload that cannot be rendered is dropped; the full signature still applies.
+        }
+      }
+    }
+    contracts.push({ name, input, output, outputKnown, ...(overloads.length > 0 ? { overloads } : {}) });
   }
   return contracts;
 }
@@ -203,15 +228,39 @@ export function buildCodeModeToolContractsSync(
         // Runtime validation owns malformed trusted contracts.
       }
     }
-    return { name, input, output, outputKnown };
+    const overloads: CodeModeSignature[] = [];
+    if (outputKnown) {
+      for (const overload of codeModeOverloads(tool)) {
+        try {
+          const signature = {
+            input: boundedDeclaration(jsonSchemaForSync(overload.inputSchema)),
+            output: boundedDeclaration(jsonSchemaForSync(overload.outputSchema)),
+          };
+          if (signature.input !== 'unknown' && signature.output !== 'unknown') overloads.push(signature);
+        } catch {
+          // Prompt index tolerates a missing overload; the full signature still applies.
+        }
+      }
+    }
+    return { name, input, output, outputKnown, ...(overloads.length > 0 ? { overloads } : {}) };
   });
 }
 
 /** Full declarations used by the in-memory TypeScript compiler. */
 export function codeModeDeclarations(contracts: readonly CodeModeToolContract[]): string {
-  const fields = contracts.map(contract =>
-    `  ${JSON.stringify(contract.name)}: (input: ${contract.input}) => Promise<${contract.output}>;`
-  );
+  const fields = contracts.map(contract => {
+    const name = JSON.stringify(contract.name);
+    // Overloads resolve in declaration order, so the narrowed signatures go
+    // first and the full union stays as the catch-all. TypeScript only applies
+    // overload resolution to call signatures, hence the method form here.
+    const signatures = [
+      ...(contract.overloads ?? []),
+      { input: contract.input, output: contract.output },
+    ];
+    return signatures
+      .map(signature => `  ${name}(input: ${signature.input}): Promise<${signature.output}>;`)
+      .join('\n');
+  });
   return `declare const tools: {\n${fields.join('\n')}\n};`;
 }
 
