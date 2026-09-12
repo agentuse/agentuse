@@ -272,6 +272,24 @@ model: anthropic:claude-sonnet-5:dev  # Uses ANTHROPIC_API_KEY_DEV
   **Precedence:** A server's `toolTimeout` in agent YAML overrides this variable; this variable overrides the built-in 60-second default.
 </ParamField>
 
+## Code Mode
+
+<ParamField path="AGENTUSE_CODE_MODE" type="boolean">
+  Code Mode is enabled by default. Set this to `0` to omit `code_exec` from
+  normal runs. The policy is inherited by recursive subagents and serve worker
+  processes, which makes it suitable for controlled before-and-after tests or
+  emergency rollback. This is a runtime switch only; do not add it to an
+  agent's frontmatter.
+
+  ```bash
+  AGENTUSE_CODE_MODE=0 agentuse run agent.agentuse
+  AGENTUSE_CODE_MODE=0 agentuse serve
+  ```
+
+  The CLI equivalents are `agentuse run --no-code-mode` and
+  `agentuse serve --no-code-mode`.
+</ParamField>
+
 ## Mock Mode (Testing)
 
 Mock all tool outputs with the LLM instead of executing them. Mirror the `--mock` flags on

@@ -55,6 +55,13 @@ executes). Override with `--scope gated|all`.
   approval. Env equivalents: `AGENTUSE_MOCK_MODE`, `AGENTUSE_MOCK_SCOPE`,
   `AGENTUSE_MOCK_APPROVAL`, `AGENTUSE_MOCK_MODEL`.
 
+To evaluate Code Mode itself, keep the agent file unchanged and compare the
+same fixture twice: default-on, then `--no-code-mode`. The switch applies to
+the full run tree. Reset or clone mutable store fixtures between arms, and
+compare completion, model turns, tokens, tool calls, duration, duplicate
+claims, final store state, and session trace readability. Use
+`AGENTUSE_CODE_MODE=0` when the test harness launches AgentUse indirectly.
+
 ## Approval Gates Under Test
 
 `agentuse test` resolves every gate deterministically (never an LLM playing

@@ -53,6 +53,7 @@ export async function runReplay(options: {
   const { messages: systemMessages } = await buildSystemMessages({
     agent, agentFilePath, projectRoot: projectContext.projectRoot, stateRoot: projectContext.stateRoot,
     now: new Date(recording.createdAt),
+    codeModeEnabled: false,
   });
   const referencePaths = references.map(r => r.path);
   systemMessages.push({ role: 'system', content: `This is a recorded-input replay of a real run from ${new Date(recording.createdAt).toISOString()}. Use that date for relative time. The original task prompt follows your CURRENT instructions. Tool schemas and external results are frozen from the source run. All calls are replay-only: no external operation, command, store mutation, or child agent executes. Call the tools you need normally. A call without a matching recording stops the test; do not invent its result. Explicit read-only reference files are snapshotted from the current workspace: ${JSON.stringify(referencePaths)}. Draft normally and submit your first proposal with await_human; the test captures it before verification or human approval and stops. If no approval is needed, finish normally. No publishing permission is granted. The original draft and human verdict are withheld.` });

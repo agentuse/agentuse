@@ -555,13 +555,15 @@ Additional instructions or context.
 ## Tools Configuration
 
 Tools are available to agents through:
-1. **Built-in Tools** - Filesystem, Bash, and artifact tools with configurable permissions
+1. **Built-in Tools** - Sandboxed Code Mode plus filesystem, Bash, and artifact tools with configurable permissions
 2. **MCP Servers** - Connect to any Model Context Protocol server
 3. **Sub-Agents** - Delegate tasks to other agents
 
 ### Built-in Tools
 
-Configure filesystem, bash, and artifact tools via the `tools` field:
+`code_exec` is available automatically and can compose only the tools resolved
+for the current agent. Configure filesystem, bash, and artifact capabilities via
+the `tools` field:
 
 ```yaml
 tools:

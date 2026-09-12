@@ -1,9 +1,64 @@
 ---
 title: Built-in Tools
-description: Configuration reference for built-in filesystem, bash, and artifact tools
+description: Configuration reference for Code Mode, filesystem, bash, and artifact tools
 ---
 
 AgentUse provides built-in tools for file operations, command execution, and session-linked artifacts. This reference documents their configuration options and path matching behavior.
+
+## Code Mode
+
+Every normal agent run receives `code_exec` automatically. It executes a
+TypeScript function body in an isolated QuickJS-WASM heap so the model can use
+ordinary code for loops, filtering, joins, branching, batching, aggregation,
+and bounded parallel tool calls.
+
+```typescript
+const rows = await tools.store_list({
+  status: "ready",
+  includeData: true
+});
+
+return {
+  highPriority: rows.items
+    .filter(item => item.data.priority === "high")
+    .map(item => item.id)
+};
+```
+
+There is no frontmatter switch. The guest receives functions only for tools
+already resolved from the agent's `.agentuse` configuration. Each call uses the
+same input object as the direct tool and passes through the runtime dispatcher,
+including schema validation, plugin policy, mock isolation, effect WAL, and
+session tracing.
+
+Code Mode has no direct filesystem, network, environment, process, package,
+shell, or import access. Approval gates, gated Bash, outcome tools, internal
+creator tools, subagents, and any tool marked as approval-required remain
+direct-only. Binary media results also stay on the direct path because the guest
+bridge is JSON-only. Programs are bounded by source, memory, stack, time,
+output, nested-call, and concurrency limits.
+
+Use a direct tool call for one operation. Use Code Mode when intermediate data
+or mechanical control flow would otherwise consume repeated model turns. Code
+Mode does not make several store calls atomic; use `store_claim` or
+`store_update_if` for concurrent state transitions.
+
+### Controlled comparison and rollback
+
+Code Mode is part of the runtime, not `.agentuse` syntax. To compare the same
+agent with and without deterministic tool composition, run it once normally
+and once with the runtime-only kill switch:
+
+```bash
+agentuse run agents/example.agentuse "process the ready jobs"
+agentuse run agents/example.agentuse "process the ready jobs" --no-code-mode
+```
+
+`--no-code-mode` applies to the whole run tree, including delegated agents.
+Use `AGENTUSE_CODE_MODE=0` for test harnesses or to disable Code Mode for every
+run launched by a serve daemon. `agentuse serve --no-code-mode` is the CLI
+equivalent for one daemon process. These switches are for evaluation,
+debugging, and emergency rollback, not permanent per-agent configuration.
 
 ## Path Matching Behavior
 

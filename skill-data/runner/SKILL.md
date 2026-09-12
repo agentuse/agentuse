@@ -22,6 +22,7 @@ agentuse agents [--verbose|--json]
 agentuse run <file>                  # append "text" for one-off instructions
 agentuse run <file> --model <provider:model>
 agentuse run <file> --timeout <seconds>
+agentuse run <file> --no-code-mode          # runtime-only A/B or rollback switch
 agentuse run <file> --json --no-tty -C /path/to/project
 
 agentuse sessions [-n 20|--json]
@@ -29,6 +30,7 @@ agentuse sessions show <session-id> --full
 
 agentuse serve [-p 8080]             # dashboard; create/load saved projects
 agentuse serve -C /path/to/project   # explicitly serve an existing folder
+agentuse serve --no-code-mode        # disable code_exec for this daemon's runs
 agentuse serve ps                    # daemon status + counts
 agentuse serve agents                # agents the daemon actually loaded (live)
 agentuse serve schedules             # schedules the daemon actually loaded (live)

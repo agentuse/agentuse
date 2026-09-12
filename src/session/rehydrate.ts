@@ -3,6 +3,11 @@ import type { SessionManager } from './manager';
 import type { Part, ToolPart } from './types';
 import { stripToolBlocks, hasReasoningParts, lastAssistantMessage } from './message-utils';
 
+/** Code Mode nested calls are trace-only; the model sees their parent result. */
+function isModelToolPart(part: Part): part is ToolPart {
+  return part.type === 'tool' && part.parentCallID === undefined;
+}
+
 function getPartOrder(part: Part): number {
   if (part.type === 'text') return part.time?.start ?? Number.MAX_SAFE_INTEGER;
   if (part.type === 'reasoning') return part.time.start;
@@ -64,7 +69,9 @@ function assistantTurnTexts(message: ModelMessage): Set<string> {
 // tool-call. This is the symmetric counterpart to backfillMissingToolResults
 // (which heals the inverse: a tool-call with no result).
 function normalizeRehydratedMessages(messages: ModelMessage[], parts: Part[] = []): ModelMessage[] {
-  const pendingIds = new Set(parts.filter((part): part is ToolPart => part.type === 'tool' && part.state.status === 'pending').map(part => part.callID));
+  const pendingIds = new Set(
+    parts.filter(isModelToolPart).filter(part => part.state.status === 'pending').map(part => part.callID)
+  );
   const calledIds = new Set<string>();
   for (const message of messages) {
     const content = (message as { content?: unknown }).content;
@@ -157,7 +164,7 @@ export async function rehydrateMessages(
     // part is the single source of truth for that call. Heals sessions already
     // suspended before this fix, so they can resume on upgrade.
     const reappendedToolIds = new Set(
-      fresh.filter((part): part is ToolPart => part.type === 'tool').map((part) => part.callID)
+      fresh.filter(isModelToolPart).map((part) => part.callID)
     );
     const snapshotMessages = snapshot.messages as ModelMessage[];
 
@@ -194,7 +201,7 @@ export async function rehydrateMessages(
       }
       const uncapturedToolParts: ToolPart[] = [];
       for (const part of fresh) {
-        if (part.type === 'tool') {
+        if (isModelToolPart(part)) {
           if (snapshotCallIds.has(part.callID)) {
             appendToolResult(messages, part);
           } else {
@@ -266,7 +273,7 @@ function appendPartMessages(messages: ModelMessage[], part: Part): void {
       }
       break;
     case 'tool':
-      appendToolMessages(messages, part);
+      if (isModelToolPart(part)) appendToolMessages(messages, part);
       break;
     default:
       break;

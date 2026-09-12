@@ -27,6 +27,19 @@ describe('autonomous agent system prompt', () => {
     expect(prompt).not.toContain('corrections captured from prior runs; these OVERRIDE skill defaults');
   });
 
+  it('adds tool-composition guidance only when Code Mode is available', () => {
+    const enabled = buildAutonomousAgentPrompt('Monday, July 29, 2026', false, true);
+    const disabled = buildAutonomousAgentPrompt('Monday, July 29, 2026', false, false);
+
+    expect(enabled).toContain('you MUST put those calls and the computation inside one code_exec program');
+    expect(enabled).toContain('reading multiple records and then filtering, joining, sorting, selecting, branching, batching, or aggregating them');
+    expect(enabled).toContain('Call a tool directly only for one standalone operation');
+    expect(enabled).toContain('Return one compact code_exec result instead of carrying intermediate tool output through model context');
+    expect(enabled).toContain('Do not create or ask the user to maintain a helper script');
+    expect(disabled).not.toContain('Tool composition:');
+    expect(disabled).not.toContain('code_exec');
+  });
+
   // Final responses should be direct without turning the system prompt into a
   // formatting manual. The cap still needs an escape hatch for runs whose
   // requested result is itself a complete document.

@@ -132,7 +132,7 @@ export function withPreviousVerdict(
   return latest;
 }
 
-export function buildApprovalLogs(parts: any[]): Array<{ id: string; type: string; tool?: string; callId?: string; toolId?: string; status?: string; level?: LogPartLevel; title: string; message?: string; time?: number; details?: ApprovalLogDetails; verify?: LogVerifySummary }> {
+export function buildApprovalLogs(parts: any[]): Array<{ id: string; type: string; tool?: string; callId?: string; parentCallId?: string; toolId?: string; status?: string; level?: LogPartLevel; title: string; message?: string; time?: number; details?: ApprovalLogDetails; verify?: LogVerifySummary }> {
   const { outcomeByPartId, deliveredTextIds } = collectRunOutcomes(parts);
   // The runtime records an outcome tool's delivered report as an assistant
   // text part as well, so `sessions show`, a resumed run and a sub-agent's
@@ -298,6 +298,7 @@ export function buildApprovalLogs(parts: any[]): Array<{ id: string; type: strin
         type: 'tool',
         ...(part.tool && { tool: String(part.tool) }),
         ...(part.callID && { callId: String(part.callID) }),
+        ...(part.parentCallID && { parentCallId: String(part.parentCallID) }),
         ...(typeof state.status === 'string' && { status: state.status }),
         title,
         ...(message !== undefined && { message }),

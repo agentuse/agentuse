@@ -35,6 +35,7 @@ export interface ApprovalLogEntry {
   type: string;
   tool?: string;
   callId?: string;
+  parentCallId?: string;
   status?: string;
   /** Severity for `type: 'log'` entries; carried through the worker IPC. */
   level?: 'debug' | 'info' | 'warn' | 'error' | 'system';

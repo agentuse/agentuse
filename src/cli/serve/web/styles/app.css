@@ -1956,6 +1956,11 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   /* Per-type accent spine, colored by the data-log-type rules below. */
   border-left: 2px solid transparent;
 }
+.log-item.is-nested-tool {
+  margin-left: 28px;
+  border-left-style: dashed;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+}
 .log-head {
   display: grid;
   /* 84px fits a locale timestamp ("12:41:38 PM") at 11px on one line; the rail
@@ -6886,6 +6891,7 @@ a.lastrun.waiting { color: var(--cyan); }
 .agent-create-field textarea:focus { outline: 2px solid var(--cyan-border); outline-offset: 1px; border-color: transparent; }
 .agent-create-creator-row { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(150px, 0.8fr); gap: 11px; }
 .agent-create-model-hint { margin-top: -5px; color: var(--muted); font-size: var(--font-size-micro); line-height: var(--lh-snug); }
+.agent-create-code-hint { margin-top: -5px; color: var(--muted-3); font-size: var(--font-size-micro); line-height: var(--lh-snug); }
 .agent-create-project {
   display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: baseline; gap: 4px 10px;
   padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
@@ -10821,4 +10827,3 @@ html[data-page="draft-panel"] .app-route {
   font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted); text-decoration: none; white-space: nowrap;
 }
 .page-sessions .sessions-scope-clear:hover { color: var(--fg); }
-

@@ -329,6 +329,128 @@ export function createStoreTools(store: Store): Record<string, Tool> {
     },
 
     /**
+     * Conditionally update one item as an atomic compare-and-set operation.
+     */
+    store_update_if: {
+      description:
+        `Update an item in the "${storeName}" store only if its current status, updatedAt version, ` +
+        `and/or selected data fields still match. The check and update are atomic. Use this instead ` +
+        `of store_get followed by store_update when another agent may modify the same item.`,
+      inputSchema: z.object({
+        id: z.string().describe('The item ID to update'),
+        if: z.object({
+          status: z.string().optional().describe('Required current status'),
+          updatedAt: z.string().optional().describe('Required current updatedAt value for compare-and-set'),
+          where: z.record(z.union([z.string(), z.number(), z.boolean()]))
+            .refine(where => Object.keys(where).length > 0, 'where must contain at least one field')
+            .optional()
+            .describe('Required exact-match values inside the current item data'),
+        }).refine(
+          condition => condition.status !== undefined || condition.updatedAt !== undefined || condition.where !== undefined,
+          'At least one condition is required'
+        ),
+        update: z.object({
+          type: z.string().optional(),
+          title: z.string().optional(),
+          status: z.string().optional(),
+          data: z.record(z.unknown()).optional(),
+          parentId: z.string().optional(),
+          tags: z.array(z.string()).optional(),
+        }).refine(update => Object.keys(update).length > 0, 'At least one update field is required'),
+      }),
+      execute: async ({ id, if: condition, update }: {
+        id: string;
+        if: { status?: string; updatedAt?: string; where?: Record<string, string | number | boolean> };
+        update: StoreUpdateOptions;
+      }) => {
+        try {
+          const result = await store.updateIf(id, condition, update);
+          if (!result.found) {
+            return { success: false, store: storeName, id, matched: false, error: `Item not found: ${id}` };
+          }
+          if (!result.matched || !result.item) {
+            return {
+              success: false,
+              store: storeName,
+              id,
+              matched: false,
+              error: 'Conditional update was not applied because the item no longer matches the expected values.',
+            };
+          }
+          const warning = largeDataWarning(result.item.data);
+          return {
+            success: true,
+            store: storeName,
+            id,
+            matched: true,
+            item: projectItem(result.item),
+            ...(warning ? { warning } : {}),
+          };
+        } catch (error) {
+          return { success: false, store: storeName, id, matched: false, error: (error as Error).message };
+        }
+      },
+    },
+
+    /**
+     * Claim one matching item using a single locked selection-and-update.
+     */
+    store_claim: {
+      description:
+        `Atomically claim one matching item from the "${storeName}" store by selecting it and applying ` +
+        `a status transition in one locked operation. Defaults to the oldest match. Concurrent agents ` +
+        `cannot claim the same row when the filter excludes the new status.`,
+      inputSchema: z.object({
+        type: z.string().optional().describe('Filter by current item type'),
+        status: z.string().optional().describe('Filter by current status, usually "ready" or "pending"'),
+        parentId: z.string().optional().describe('Filter by parent ID'),
+        tag: z.string().optional().describe('Filter by tag'),
+        where: z.record(z.union([z.string(), z.number(), z.boolean()])).optional()
+          .describe('Exact-match filters on current item data'),
+        order: z.enum(['oldest', 'newest']).optional().describe('Which matching item to claim; defaults to oldest'),
+        update: z.object({
+          status: z.string().describe('New claimed status, e.g. "in_progress"'),
+          type: z.string().optional(),
+          title: z.string().optional(),
+          data: z.record(z.unknown()).optional()
+            .describe('Data fields to merge, e.g. claimedBy or claimSessionId'),
+          parentId: z.string().optional(),
+          tags: z.array(z.string()).optional(),
+        }),
+      }),
+      execute: async ({ type, status, parentId, tag, where, order, update }: {
+        type?: string;
+        status?: string;
+        parentId?: string;
+        tag?: string;
+        where?: Record<string, string | number | boolean>;
+        order?: 'oldest' | 'newest';
+        update: StoreUpdateOptions & { status: string };
+      }) => {
+        try {
+          const item = await store.claim({
+            ...filterUndefined({ type, status, parentId, tag, where, order }),
+            update,
+          });
+          if (!item) {
+            return { success: true, store: storeName, claimed: false, item: null };
+          }
+          const warning = largeDataWarning(item.data);
+          return {
+            success: true,
+            store: storeName,
+            claimed: true,
+            id: item.id,
+            item: projectItem(item),
+            ...(warning ? { warning } : {}),
+          };
+        } catch (error) {
+          return { success: false, store: storeName, claimed: false, error: (error as Error).message };
+        }
+      },
+    },
+
+    /**
      * Delete an item by ID
      */
     store_delete: {

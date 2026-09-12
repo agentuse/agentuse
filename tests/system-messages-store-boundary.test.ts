@@ -56,3 +56,34 @@ describe('persistent store system boundary', () => {
     expect(messages.some(message => message.content.startsWith(PERSISTENT_STORE_BOUNDARY_HEADING))).toBe(false);
   });
 });
+
+describe('Code Mode system guidance', () => {
+  it('honors an explicit capability override', async () => {
+    const agent = agentWithStore();
+    const enabled = await buildSystemMessages({ agent, codeModeEnabled: true });
+    const disabled = await buildSystemMessages({ agent, codeModeEnabled: false });
+
+    expect(enabled.messages[0]?.content).toContain('you MUST put those calls and the computation inside one code_exec program');
+    expect(disabled.messages[0]?.content).not.toContain('Tool composition:');
+    expect(disabled.messages[0]?.content).not.toContain('code_exec');
+  });
+
+  it('follows the default-on runtime policy without agent configuration', async () => {
+    const original = process.env.AGENTUSE_CODE_MODE;
+
+    try {
+      delete process.env.AGENTUSE_CODE_MODE;
+      const enabled = await buildSystemMessages({ agent: agentWithStore() });
+
+      process.env.AGENTUSE_CODE_MODE = '0';
+      const disabled = await buildSystemMessages({ agent: agentWithStore() });
+
+      expect(enabled.messages[0]?.content).toContain('you MUST put those calls and the computation inside one code_exec program');
+      expect(disabled.messages[0]?.content).not.toContain('Tool composition:');
+      expect(disabled.messages[0]?.content).not.toContain('code_exec');
+    } finally {
+      if (original === undefined) delete process.env.AGENTUSE_CODE_MODE;
+      else process.env.AGENTUSE_CODE_MODE = original;
+    }
+  });
+});

@@ -11,6 +11,8 @@ export type {
   StoreConfig,
   StoreCreateOptions,
   StoreUpdateOptions,
+  StoreUpdateCondition,
+  StoreClaimOptions,
   StoreListOptions,
   StoreFile,
 } from './types';

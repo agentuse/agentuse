@@ -16,6 +16,8 @@ import type {
   StoreFile,
   StoreCreateOptions,
   StoreUpdateOptions,
+  StoreUpdateCondition,
+  StoreClaimOptions,
   StoreListOptions,
   StoreQueryResult,
 } from './types';
@@ -192,6 +194,13 @@ function cloneStoreItem(item: StoreItem): StoreItem {
 
 function cloneStoreItems(items: StoreItem[]): StoreItem[] {
   return items.map(cloneStoreItem);
+}
+
+/** Return an ISO timestamp that always advances an item's compare-and-set version. */
+function nextUpdatedAt(previous: string): string {
+  const now = Date.now();
+  const previousMs = Date.parse(previous);
+  return new Date(Number.isFinite(previousMs) ? Math.max(now, previousMs + 1) : now).toISOString();
 }
 
 /**
@@ -537,7 +546,7 @@ export class Store {
       const existing = items[index];
       const updated: StoreItem = {
         ...existing,
-        updatedAt: new Date().toISOString(),
+        updatedAt: nextUpdatedAt(existing.updatedAt),
         ...(options.type !== undefined && { type: options.type }),
         ...(options.title !== undefined && { title: options.title }),
         ...(options.status !== undefined && { status: options.status }),
@@ -551,6 +560,105 @@ export class Store {
       items[index] = updated;
       return { items, result: updated, changed: [updated] };
     });
+    return result ? cloneStoreItem(result) : null;
+  }
+
+  /**
+   * Update an item only when all supplied conditions still match. The lookup,
+   * condition check, and write are one locked transaction, so callers can use
+   * updatedAt as a compare-and-set version without a read/write race.
+   */
+  async updateIf(
+    id: string,
+    condition: StoreUpdateCondition,
+    options: StoreUpdateOptions
+  ): Promise<{ item: StoreItem | null; matched: boolean; found: boolean }> {
+    const normalizedData = options.data !== undefined ? normalizeStoreData(options.data) : undefined;
+    const expectedData = Object.entries(condition.where ?? {});
+
+    const result = await this.withWriteLock<{
+      item: StoreItem | null;
+      matched: boolean;
+      found: boolean;
+    }>((items) => {
+      const index = items.findIndex(item => item.id === id);
+      if (index === -1) {
+        return { items, result: { item: null, matched: false, found: false } };
+      }
+
+      const existing = items[index]!;
+      const matched =
+        (condition.status === undefined || existing.status === condition.status) &&
+        (condition.updatedAt === undefined || existing.updatedAt === condition.updatedAt) &&
+        expectedData.every(([key, value]) => looseEquals(existing.data[key], value));
+      if (!matched) {
+        return { items, result: { item: null, matched: false, found: true } };
+      }
+
+      const updated: StoreItem = {
+        ...existing,
+        updatedAt: nextUpdatedAt(existing.updatedAt),
+        ...(options.type !== undefined && { type: options.type }),
+        ...(options.title !== undefined && { title: options.title }),
+        ...(options.status !== undefined && { status: options.status }),
+        ...(options.parentId !== undefined && { parentId: options.parentId }),
+        ...(options.tags !== undefined && { tags: [...options.tags] }),
+        ...(normalizedData !== undefined && { data: { ...existing.data, ...normalizedData } }),
+      };
+      items[index] = updated;
+      return {
+        items,
+        result: { item: updated, matched: true, found: true },
+        changed: [updated],
+      };
+    });
+
+    return { ...result, item: result.item ? cloneStoreItem(result.item) : null };
+  }
+
+  /**
+   * Select and update one matching row under the same lock. This is the store
+   * primitive for work claiming: concurrent runners cannot observe and claim
+   * the same item between a list call and a later update call.
+   */
+  async claim(options: StoreClaimOptions): Promise<StoreItem | null> {
+    const normalizedData = options.update.data !== undefined
+      ? normalizeStoreData(options.update.data)
+      : undefined;
+
+    const result = await this.withWriteLock((items) => {
+      const matches = this.filterAndSort(items, {
+        ...(options.type !== undefined && { type: options.type }),
+        ...(options.status !== undefined && { status: options.status }),
+        ...(options.parentId !== undefined && { parentId: options.parentId }),
+        ...(options.tag !== undefined && { tag: options.tag }),
+        ...(options.where !== undefined && { where: options.where }),
+      });
+      const ordered = matches.sort((a, b) =>
+        a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id)
+      );
+      const selected = options.order === 'newest'
+        ? ordered[ordered.length - 1]
+        : ordered[0];
+      if (!selected) return { items, result: null };
+
+      const index = items.findIndex(item => item.id === selected.id);
+      const existing = items[index]!;
+      const update = options.update;
+      const claimed: StoreItem = {
+        ...existing,
+        updatedAt: nextUpdatedAt(existing.updatedAt),
+        ...(update.type !== undefined && { type: update.type }),
+        ...(update.title !== undefined && { title: update.title }),
+        ...(update.status !== undefined && { status: update.status }),
+        ...(update.parentId !== undefined && { parentId: update.parentId }),
+        ...(update.tags !== undefined && { tags: [...update.tags] }),
+        ...(normalizedData !== undefined && { data: { ...existing.data, ...normalizedData } }),
+      };
+      items[index] = claimed;
+      return { items, result: claimed, changed: [claimed] };
+    });
+
     return result ? cloneStoreItem(result) : null;
   }
 
@@ -598,7 +706,7 @@ export class Store {
       const existing = items[index]!;
       const updated: StoreItem = {
         ...existing,
-        updatedAt: now,
+        updatedAt: nextUpdatedAt(existing.updatedAt),
         ...(options.type !== undefined && { type: options.type }),
         ...(options.title !== undefined && { title: options.title }),
         ...(options.status !== undefined && { status: options.status }),

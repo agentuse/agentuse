@@ -1382,6 +1382,7 @@ function LogEntryImpl(props: LogEntryProps) {
     expandable ? 'expandable' : '',
     expanded ? 'expanded' : '',
     props.isNew ? 'is-new' : '',
+    entry.parentCallId ? 'is-nested-tool' : '',
   ].filter(Boolean).join(' ');
 
   const toggle = () => {

@@ -489,6 +489,8 @@ export interface ApprovalLogEntry {
   tool?: string;
   /** Tool-call id of a `type: 'tool'` entry (matches a log entry's `toolId`). */
   callId?: string;
+  /** Parent code_exec call id for a tool invoked inside Code Mode. */
+  parentCallId?: string;
   /** On a `type: 'log'` entry: the tool call this line is about, so the session
    *  view can nest it under the matching tool entry instead of the flat stream. */
   toolId?: string;

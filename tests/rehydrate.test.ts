@@ -7,6 +7,34 @@ import { initStorage } from '../src/storage';
 import { SessionManager, rehydrateMessages, ensureTrailingUserTurn, RESUME_CONTINUATION_PROMPT } from '../src/session';
 
 describe('rehydrateMessages', () => {
+  it('excludes nested Code Mode trace parts from model history', async () => {
+    const manager = {
+      getPrimaryMessage: async () => ({
+        id: 'message',
+        assistant: { system: [] },
+        user: { prompt: { task: 'Process jobs' } },
+      }),
+      readContextSnapshot: async () => null,
+      getMessageParts: async () => [
+        {
+          type: 'tool', callID: 'outer', tool: 'code_exec',
+          state: { status: 'completed', input: { code: 'return tools.store_list({});' }, output: { count: 1 }, time: { start: 1, end: 3 } },
+        },
+        {
+          type: 'tool', callID: 'outer:nested:1', parentCallID: 'outer', tool: 'store_list',
+          state: { status: 'completed', input: {}, output: { items: [{ id: 'job-1' }] }, time: { start: 2, end: 2 } },
+        },
+      ],
+    };
+
+    const messages = await rehydrateMessages(manager as any, 'session', 'agent');
+    const serialized = JSON.stringify(messages);
+    expect(serialized).toContain('outer');
+    expect(serialized).toContain('code_exec');
+    expect(serialized).not.toContain('outer:nested:1');
+    expect(serialized).not.toContain('job-1');
+  });
+
   for (const snapshotMode of ['none', 'captured', 'fresh'] as const) {
     it(`repairs interrupted unsigned tool calls before continuation (${snapshotMode})`, async () => {
       const call = { role: 'assistant', content: [{ type: 'tool-call', toolCallId: 'interrupted', toolName: 'subagent__creator', input: { task: 'create' } }] };

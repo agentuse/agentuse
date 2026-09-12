@@ -587,6 +587,49 @@ describe("Store Locking", () => {
     expect(existsSync(lockPath)).toBe(false);
   });
 
+  it("atomically claims each matching item at most once across concurrent runners", async () => {
+    const seed = new Store(tempDir, "claims", "seed");
+    const created = await Promise.all(
+      Array.from({ length: 12 }, (_, i) => seed.create({
+        type: "job",
+        status: "ready",
+        title: `Job ${i}`,
+        data: { sequence: i },
+      }))
+    );
+
+    const runners = Array.from({ length: 20 }, (_, i) =>
+      new Store(tempDir, "claims", `runner-${i}`)
+    );
+    const claimed = await Promise.all(runners.map((runner, i) => runner.claim({
+      type: "job",
+      status: "ready",
+      order: "oldest",
+      update: { status: "in_progress", data: { claimedBy: `runner-${i}` } },
+    })));
+
+    const ids = claimed.filter(Boolean).map(item => item!.id);
+    expect(ids).toHaveLength(created.length);
+    expect(new Set(ids).size).toBe(created.length);
+    expect((await seed.list({ status: "ready" }))).toHaveLength(0);
+    expect((await seed.list({ status: "in_progress" }))).toHaveLength(created.length);
+  });
+
+  it("applies only one concurrent compare-and-set for the same version", async () => {
+    const first = new Store(tempDir, "cas", "first");
+    const second = new Store(tempDir, "cas", "second");
+    const created = await first.create({ status: "ready", data: { attempts: 0 } });
+
+    const results = await Promise.all([
+      first.updateIf(created.id, { updatedAt: created.updatedAt }, { status: "claimed", data: { owner: "first" } }),
+      second.updateIf(created.id, { updatedAt: created.updatedAt }, { status: "claimed", data: { owner: "second" } }),
+    ]);
+
+    expect(results.filter(result => result.matched)).toHaveLength(1);
+    expect(results.filter(result => !result.matched && result.found)).toHaveLength(1);
+    expect((await first.get(created.id))?.status).toBe("claimed");
+  });
+
   // Regression: the serve worker handles requests concurrently, so multiple
   // Store instances acquire/release the same lock at the same time. The old
   // ref-count logic drifted under these interleavings and left the lock file
@@ -897,6 +940,43 @@ describe("createStoreTools", () => {
       first: "x".repeat(5 * 1024),
       second: "y".repeat(4 * 1024),
     });
+  });
+
+  it("store_update_if reports a stale condition without changing the item", async () => {
+    const created = await store.create({ status: "ready", data: { owner: "none" } });
+    const first = await call(tools.store_update_if, {
+      id: created.id,
+      if: { status: "ready", updatedAt: created.updatedAt },
+      update: { status: "claimed", data: { owner: "runner-a" } },
+    });
+    const stale = await call(tools.store_update_if, {
+      id: created.id,
+      if: { status: "ready", updatedAt: created.updatedAt },
+      update: { status: "claimed", data: { owner: "runner-b" } },
+    });
+
+    expect(first).toMatchObject({ success: true, matched: true });
+    expect(stale).toMatchObject({ success: false, matched: false });
+    expect((await store.get(created.id))?.data.owner).toBe("runner-a");
+  });
+
+  it("store_claim selects and transitions one matching item", async () => {
+    const res = await call(tools.store_claim, {
+      type: "task",
+      status: "open",
+      order: "oldest",
+      update: { status: "in_progress", data: { claimedBy: "agent" } },
+    });
+
+    expect(res).toMatchObject({ success: true, claimed: true });
+    const claimed = await store.get(res.id as string);
+    expect(claimed).toMatchObject({ status: "in_progress", data: { claimedBy: "agent" } });
+    const none = await call(tools.store_claim, {
+      type: "task",
+      status: "open",
+      update: { status: "in_progress" },
+    });
+    expect(none).toMatchObject({ success: true, claimed: false, item: null });
   });
 
   it("store_get returns full data, or only requested fields", async () => {

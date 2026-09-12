@@ -58,6 +58,24 @@ export interface StoreUpdateOptions {
   tags?: string[] | undefined;
 }
 
+/** Exact conditions checked while holding the store write lock. */
+export interface StoreUpdateCondition {
+  status?: string | undefined;
+  updatedAt?: string | undefined;
+  where?: Record<string, string | number | boolean> | undefined;
+}
+
+/** Selection and transition for an atomic single-item claim. */
+export interface StoreClaimOptions {
+  type?: string | undefined;
+  status?: string | undefined;
+  parentId?: string | undefined;
+  tag?: string | undefined;
+  where?: Record<string, string | number | boolean> | undefined;
+  order?: 'oldest' | 'newest' | undefined;
+  update: StoreUpdateOptions & { status: string };
+}
+
 /**
  * Options for listing/querying store items
  */

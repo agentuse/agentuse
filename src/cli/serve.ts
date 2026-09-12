@@ -1499,11 +1499,12 @@ export function createServeCommand(): Command {
     .option("-C, --directory <path>", "Serve agent files from this directory; project state is detected upward (repeat for multi-project). Overrides config.serve.projects.", collectDir, [] as string[])
     .option("--default <id>", "In multi-project mode, the project id to route POST /run when no `project` field is supplied")
     .option("-d, --debug", "Enable debug mode")
+    .option("--no-code-mode", "Disable the default code_exec tool for controlled comparison and debugging")
     .option("--no-auth", "Disable API key requirement for exposed hosts (dangerous)")
     .option("--no-log-file", "Disable the per-server log file (stdout/stderr tee)")
     .option("--open", "Open the Web UI in the default browser after startup")
     .option("--hide-agent-source", "Hide raw agent source in the dashboard and /api/agents/detail; capability summaries stay visible (or config.serve.hideAgentSource)")
-    .action(async (options: { port?: string; host?: string; publicUrl?: string; directory: string[]; default?: string; debug?: boolean; auth: boolean; logFile: boolean; open?: boolean; hideAgentSource?: boolean }) => {
+    .action(async (options: { port?: string; host?: string; publicUrl?: string; directory: string[]; default?: string; debug?: boolean; codeMode?: boolean; auth: boolean; logFile: boolean; open?: boolean; hideAgentSource?: boolean }) => {
       const desktopSupervisor = parseDesktopServerSupervisor(process.env[DESKTOP_SUPERVISOR_ENV]);
       const desktopLifetimeFd = parseDesktopLifetimeFd(process.env[DESKTOP_LIFETIME_FD_ENV]);
       // These describe only this daemon. Do not leak the parent's ownership
@@ -1534,6 +1535,9 @@ export function createServeCommand(): Command {
       if (appliedConfigEnv.length > 0 && options.debug) {
         logger.debug(`Applied env from global config: ${appliedConfigEnv.join(', ')}`);
       }
+      // Keep the whole daemon, its workers, and recursive subagents in one A/B
+      // arm. Project dotenv loading does not override this inherited value.
+      if (options.codeMode === false) process.env.AGENTUSE_CODE_MODE = '0';
       let preferredAgentCreationModel: string | undefined;
       try {
         preferredAgentCreationModel = resolveAgentModel(undefined)?.model;

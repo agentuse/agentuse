@@ -42,6 +42,7 @@ describe('replay execution boundary', () => {
       expect(configs[0].stopWhen.some((p: unknown) => typeof p === 'function' && (p as Function)({ steps: [] }))).toBe(true);
       expect(JSON.stringify(configs[0].messages)).not.toContain('OLD');
       expect(configs[0].toolChoice).toBe('auto');
+      expect(configs[0].tools.code_exec).toBeUndefined();
     });
   }
 });

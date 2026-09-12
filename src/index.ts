@@ -243,6 +243,7 @@ program
   .description('Run an AI agent from a markdown file or URL, optionally appending a prompt')
   .option('-q, --quiet', 'Suppress info messages (only show warnings and errors)')
   .option('-d, --debug', 'Enable debug mode with detailed logging and full error messages')
+  .option('--no-code-mode', 'Disable the default code_exec tool for controlled comparison and debugging')
   .option('--no-tty', 'Disable TUI output (spinners, badges) for non-interactive use')
   .option('--compact', 'Use compact single-line header instead of ASCII logo')
   .option('--timeout <seconds>', 'Maximum execution time in seconds (default: 300)', '300')
@@ -268,6 +269,7 @@ program
   .option('--mock-model <model>', 'Model that fabricates mock results (or set AGENTUSE_MOCK_MODEL once, e.g. in ~/.agentuse/.env)')
   .option('-q, --quiet', 'Suppress info messages (only show warnings and errors)')
   .option('-d, --debug', 'Enable debug mode with detailed logging and full error messages')
+  .option('--no-code-mode', 'Disable the default code_exec tool for controlled comparison and debugging')
   .option('--no-tty', 'Disable TUI output (spinners, badges) for non-interactive use')
   .option('--compact', 'Use compact single-line header instead of ASCII logo')
   .option('--timeout <seconds>', 'Maximum execution time in seconds (default: 300)', '300')
@@ -277,7 +279,7 @@ program
   .option('--json', 'Output result as JSON (implies --quiet --no-tty)')
   .action(async (file: string, promptArgs: string[], options: {
     scope?: string; approval?: string; mockModel?: string; replay?: string;
-    quiet: boolean; debug: boolean; tty?: boolean; noTty?: boolean; compact: boolean;
+    quiet: boolean; debug: boolean; codeMode?: boolean; tty?: boolean; noTty?: boolean; compact: boolean;
     timeout: string; directory?: string; envFile?: string; model?: string; json?: boolean;
   }) => {
     if (options.replay) {
@@ -312,7 +314,7 @@ program
   });
 
 interface RunCommandOptions {
-  quiet: boolean; debug: boolean; tty?: boolean; noTty?: boolean; compact: boolean;
+  quiet: boolean; debug: boolean; codeMode?: boolean; tty?: boolean; noTty?: boolean; compact: boolean;
   timeout: string; directory?: string; envFile?: string; model?: string; sessionId?: string;
   json?: boolean; mock?: boolean; mockModel?: string; mockApproval?: boolean | string; mockGated?: boolean; replay?: string;
 }
@@ -392,6 +394,10 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
       if (configEnvKeys.length > 0) {
         logger.debug(`Applied env from global config: ${configEnvKeys.join(', ')}`);
       }
+
+      // Runtime-only evaluation switch. Environment policy is intentional:
+      // recursive subagents and child processes must see the same A/B arm.
+      if (options.codeMode === false) process.env.AGENTUSE_CODE_MODE = '0';
 
       // Mock mode: tool outputs are LLM-generated, no real tools execute. Env so
       // the runner (loadAgentTools) and recursive sub-agents pick it up. A mock

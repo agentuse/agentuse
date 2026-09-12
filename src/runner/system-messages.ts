@@ -8,6 +8,7 @@ import { resolveFilesystemMounts, type ResolvedMount } from '../tools/path-valid
 import { logger } from '../utils/logger';
 import { LearningStore, effectiveCap, hashInstructions, isStaleAgainst, partitionLearnings } from '../learning/index.js';
 import { applyProviderSystemMessages } from '../plugin/provider-behavior';
+import { isCodeModeEnabled } from './code-mode';
 
 /**
  * Options for building system messages
@@ -25,6 +26,8 @@ export interface BuildSystemMessagesOptions {
   projectRoot?: string | undefined;
   /** State root (agent-file-derived). Used for computing agentId. */
   stateRoot?: string | undefined;
+  /** Override the runtime Code Mode policy, primarily for replay and tests. */
+  codeModeEnabled?: boolean | undefined;
 }
 
 /**
@@ -104,7 +107,11 @@ export async function buildSystemMessages(options: BuildSystemMessagesOptions): 
   // Add main system prompt
   systemMessages.push({
     role: 'system',
-    content: buildAutonomousAgentPrompt(todayDate, isSubAgent)
+    content: buildAutonomousAgentPrompt(
+      todayDate,
+      isSubAgent,
+      options.codeModeEnabled ?? isCodeModeEnabled(),
+    )
   });
 
   // Persistent store reads cross a trust and temporal boundary. Keep this in a

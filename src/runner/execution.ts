@@ -1,4 +1,4 @@
-import { streamText, isStepCount, type ModelMessage, type Tool, type ToolSet } from 'ai';
+import { streamText, isStepCount, type ModelMessage, type ToolSet } from 'ai';
 import { repairSmuggledXmlToolCall } from './tool-call-repair';
 import { createHash } from 'crypto';
 import type { ParsedAgent } from '../parser';
@@ -33,7 +33,7 @@ import { compactMessages } from '../compactor';
 import { addLanguageModelUsage } from '../session/usage';
 import type { AgentChunk } from './types';
 import { isSuspendSignal } from './suspend';
-import { wrapToolsWithWAL, sanitizeWALInput, type EffectWAL } from './effect-wal';
+import { sanitizeWALInput, type EffectWAL } from './effect-wal';
 import { LeaseStore, isEffectful } from './approval-lease';
 import { GateSealStore } from './gate-seal';
 import { applyGateDecisionEffects } from './gate-decision';
@@ -43,8 +43,9 @@ import { registerSDKTelemetryOnce } from '../telemetry/sdk-telemetry';
 import { recordErrorMarker } from './session-helper';
 import { extractApiErrorDetail } from './api-error';
 import { toErrorMessage } from '../utils/error-message';
-import type { CompactionReason, ModelToolOutputArtifactRef, SessionManager, ToolOutputArtifactRef } from '../session';
-import { clampToolResultForModel } from '../tools/tool-output-limits.js';
+import type { CompactionReason, SessionManager } from '../session';
+import { ToolDispatcher, type ToolOutputArtifactWriter } from './tool-dispatcher';
+import { CODE_EXEC_TOOL, createCodeExecTool, isCodeModeEnabled, type NestedToolTrace } from './code-mode';
 import { stripInlineMediaData } from '../tools/media.js';
 import { messagesContainInlineMedia } from '../session/media-cache.js';
 import { stripToolBlocks, hasReasoningParts, lastAssistantMessage } from '../session/message-utils';
@@ -393,45 +394,6 @@ function applyAnthropicCacheControlToTools(tools: ToolSet): ToolSet {
   ])) as ToolSet;
 }
 
-type ToolOutputArtifactWriter = (toolName: string, result: unknown) => Promise<ToolOutputArtifactRef | undefined>;
-
-function modelToolOutputArtifactRef(artifact: ToolOutputArtifactRef): ModelToolOutputArtifactRef {
-  return {
-    kind: artifact.kind,
-    path: artifact.path,
-    bytes: artifact.bytes,
-    originalChars: artifact.originalChars,
-  };
-}
-
-function attachToolOutputArtifact(value: unknown, artifact: ToolOutputArtifactRef): unknown {
-  const modelArtifact = modelToolOutputArtifactRef(artifact);
-  if (typeof value === 'string') {
-    return `${value}\n\n[Full tool output saved to session artifact: ${modelArtifact.path} (${modelArtifact.bytes} bytes).]`;
-  }
-
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const objectValue = value as Record<string, unknown>;
-    const metadata = objectValue.metadata && typeof objectValue.metadata === 'object' && !Array.isArray(objectValue.metadata)
-      ? objectValue.metadata as Record<string, unknown>
-      : {};
-    return {
-      ...objectValue,
-      metadata: {
-        ...metadata,
-        fullOutputArtifact: modelArtifact,
-      },
-    };
-  }
-
-  return {
-    value,
-    metadata: {
-      fullOutputArtifact: modelArtifact,
-    },
-  };
-}
-
 function buildToolOutputArtifactWriter(options: {
   sessionManager?: SessionManager;
   sessionID?: string;
@@ -453,33 +415,69 @@ function buildToolOutputArtifactWriter(options: {
   };
 }
 
-function limitModelFacingToolOutputs(tools: ToolSet, writeToolOutputArtifact?: ToolOutputArtifactWriter): ToolSet {
-  return Object.fromEntries(Object.entries(tools).map(([name, tool]) => {
-    const originalExecute = (tool as any).execute;
-    if (typeof originalExecute !== 'function') return [name, tool];
+function buildCodeModeTraceHooks(options: {
+  sessionManager?: SessionManager;
+  sessionID?: string;
+  agentId?: string;
+  messageID?: string;
+}): {
+  onNestedToolStart?: (trace: Omit<NestedToolTrace, 'output' | 'error' | 'endedAt'>) => Promise<void>;
+  onNestedToolFinish?: (trace: NestedToolTrace) => Promise<void>;
+} {
+  if (!options.sessionManager || !options.sessionID || !options.agentId || !options.messageID) return {};
+  const partIds = new Map<string, Promise<string | undefined>>();
+  const manager = options.sessionManager;
+  const sessionID = options.sessionID;
+  const agentId = options.agentId;
+  const messageID = options.messageID;
 
-    return [name, {
-      ...tool,
-      execute: async (...args: unknown[]) => {
-        const result = await originalExecute(...args);
-        const clamped = clampToolResultForModel(result);
-        if (clamped.truncated) {
-          logger.debug(`[ToolOutput] Truncated model-facing result for ${name}`);
-          if (writeToolOutputArtifact) {
-            try {
-              const artifact = await writeToolOutputArtifact(name, result);
-              if (artifact) {
-                return attachToolOutputArtifact(clamped.value, artifact);
-              }
-            } catch (error) {
-              logger.debug(`[ToolOutput] Failed to persist full result for ${name}: ${(error as Error).message}`);
-            }
+  return {
+    onNestedToolStart: async (trace) => {
+      const part = manager.addPart(sessionID, agentId, messageID, {
+        type: 'tool',
+        callID: trace.callId,
+        parentCallID: trace.parentCallId,
+        tool: trace.toolName,
+        state: {
+          status: 'running',
+          input: trace.input,
+          metadata: { parentCallId: trace.parentCallId, codeMode: true },
+          time: { start: trace.startedAt },
+        },
+      } as any).catch((error) => {
+        logger.debug(`Failed to log nested Code Mode tool call: ${toErrorMessage(error)}`);
+        return undefined;
+      });
+      partIds.set(trace.callId, part);
+      await part;
+    },
+    onNestedToolFinish: async (trace) => {
+      const partId = await partIds.get(trace.callId);
+      if (!partId) return;
+      const state = trace.error === undefined
+        ? {
+            status: 'completed' as const,
+            input: trace.input,
+            output: stripInlineMediaData(trace.output),
+            metadata: { parentCallId: trace.parentCallId, codeMode: true },
+            time: { start: trace.startedAt, end: trace.endedAt },
           }
-        }
-        return clamped.value;
+        : {
+            status: 'error' as const,
+            input: trace.input,
+            error: trace.error,
+            metadata: { parentCallId: trace.parentCallId, codeMode: true },
+            time: { start: trace.startedAt, end: trace.endedAt },
+          };
+      try {
+        await manager.updatePart(sessionID, agentId, messageID, partId, { state });
+      } catch (error) {
+        logger.debug(`Failed to complete nested Code Mode tool call: ${toErrorMessage(error)}`);
+      } finally {
+        partIds.delete(trace.callId);
       }
-    }];
-  })) as ToolSet;
+    },
+  };
 }
 
 function isContextLimitError(error: unknown): boolean {
@@ -615,60 +613,6 @@ function isMeaningfulModelChunk(chunk: AgentChunk): boolean {
     || chunk.type === 'tool-call'
     || chunk.type === 'tool-result'
     || chunk.type === 'suspended';
-}
-
-function recordInput(input: unknown): Record<string, unknown> {
-  return input && typeof input === 'object' && !Array.isArray(input)
-    ? input as Record<string, unknown>
-    : { value: input };
-}
-
-function pluginResultError(output: unknown): Error {
-  if (output instanceof Error) return output;
-  if (typeof output === 'string') return new Error(output);
-  try {
-    return new Error(JSON.stringify(output));
-  } catch {
-    return new Error(String(output));
-  }
-}
-
-/** Transform the actual model-facing result after core clamping/artifact handling. */
-function withPluginToolResults(
-  tools: ToolSet,
-  transform?: ExecuteAgentCoreOptions['pluginEvents'] extends infer P
-    ? P extends { toolResult?: infer T } ? T : never
-    : never,
-): ToolSet {
-  if (!transform) return tools;
-  return Object.fromEntries(Object.entries(tools).map(([name, tool]) => {
-    const originalExecute = (tool as Tool).execute;
-    if (typeof originalExecute !== 'function') return [name, tool];
-    return [name, {
-      ...tool,
-      execute: async (input: unknown, callOptions?: { toolCallId?: string; abortSignal?: AbortSignal }) => {
-        const eventBase = {
-          toolCallId: callOptions?.toolCallId ?? 'unknown',
-          toolName: name,
-          input: recordInput(input),
-        };
-        let output: unknown;
-        let isError = false;
-        try {
-          output = await (originalExecute as (...args: any[]) => unknown)(input, callOptions);
-        } catch (error) {
-          if (isSuspendSignal(error)) throw error;
-          output = error;
-          isError = true;
-        }
-        const next = await transform({ ...eventBase, output, isError }, callOptions?.abortSignal);
-        if (!next.isError) return next.output;
-        throw next.output === output && output instanceof Error
-          ? output
-          : pluginResultError(next.output);
-      },
-    }];
-  })) as ToolSet;
 }
 
 async function persistSelectedModel(
@@ -912,6 +856,8 @@ async function* executeAgentAttempt(
     await queueContextSnapshotWrite();
   };
 
+  let pluginTerminateRequested = false;
+
   try {
   // Initialize context manager if enabled
   const usesAnthropicCacheControl = isAnthropicModel(agent.config.model)
@@ -925,21 +871,27 @@ async function* executeAgentAttempt(
   let messages = usesAnthropicCacheControl
     ? applyAnthropicCacheControlToMessages(initialMessages)
     : initialMessages;
-  const streamTools = usesAnthropicCacheControl
-    ? applyAnthropicCacheControlToTools(tools)
-    : tools;
-  // WAL wraps innermost so execute entry/exit is journaled at the effect layer,
-  // independent of the stream consumer (which a suspension abandons mid-step).
-  const walledTools = options.effectWal
-    ? wrapToolsWithWAL(streamTools, options.effectWal)
-    : streamTools;
-  const modelFacingTools = withPluginToolResults(
-    limitModelFacingToolOutputs(
-      walledTools,
-      buildToolOutputArtifactWriter(options)
-    ),
-    options.pluginEvents?.toolResult,
-  );
+  const writeToolOutputArtifact = buildToolOutputArtifactWriter(options);
+  const dispatcher = new ToolDispatcher(tools, {
+    ...(options.effectWal && { effectWal: options.effectWal }),
+    ...(options.pluginEvents && { pluginEvents: options.pluginEvents }),
+    abortSignal: effectiveAbortSignal,
+    ...(writeToolOutputArtifact && { writeToolOutputArtifact }),
+    onPluginTerminate: () => { pluginTerminateRequested = true; },
+  });
+  if (isCodeModeEnabled() && !options.replay && dispatcher.get(CODE_EXEC_TOOL) === undefined) {
+    const traceHooks = buildCodeModeTraceHooks(options);
+    dispatcher.register(CODE_EXEC_TOOL, createCodeExecTool({
+      dispatcher,
+      toolNames: dispatcher.codeModeToolNames(),
+      abortSignal: effectiveAbortSignal,
+      ...traceHooks,
+    }));
+  }
+  const dispatchingTools = dispatcher.modelTools();
+  const modelFacingTools = usesAnthropicCacheControl
+    ? applyAnthropicCacheControlToTools(dispatchingTools)
+    : dispatchingTools;
 
   if (ContextManager.isEnabled()) {
     contextManager = new ContextManager(
@@ -1032,8 +984,6 @@ async function* executeAgentAttempt(
       await recordCompactionFailure(error);
     }
   };
-
-  let pluginTerminateRequested = false;
 
   // `stopWhen` predicate: stop after the current step when a plugin explicitly
   // asks to terminate. A blocking interceptor normally sets both `block` and
@@ -1523,19 +1473,12 @@ async function* executeAgentAttempt(
         toolCall: { toolName: string; toolCallId?: string; input?: any };
       }) => {
         if (options.pluginEvents?.toolCall) {
-          const input = recordInput(opts.toolCall.input);
-          // Tool inputs are object schemas throughout AgentUse. Keep the exact
-          // object reference so Pi-style in-place mutations reach core policy
-          // checks and the eventual execute call.
-          if (opts.toolCall.input !== input && opts.toolCall.input && typeof opts.toolCall.input === 'object' && !Array.isArray(opts.toolCall.input)) {
-            opts.toolCall.input = input;
-          }
-          const decision = await options.pluginEvents.toolCall({
+          const decision = await dispatcher.preflight({
             toolCallId: opts.toolCall.toolCallId ?? 'unknown',
             toolName: opts.toolCall.toolName,
-            input,
-          }, effectiveAbortSignal);
-          if (decision.terminate) pluginTerminateRequested = true;
+            input: opts.toolCall.input,
+            abortSignal: effectiveAbortSignal,
+          });
           if (decision.block) {
             return {
               type: 'denied' as const,

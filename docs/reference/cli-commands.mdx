@@ -28,6 +28,7 @@ agentuse run <agent-file> [prompt...] [options]
 ```bash
 -q, --quiet             Suppress info messages (only show warnings/errors)
 -d, --debug             Enable verbose debug logging
+--no-code-mode          Disable the default code_exec tool for controlled comparison and debugging
 --no-tty                Disable TUI output (plain logs for piping/automation)
 -v, --verbose           Show detailed execution information
 --timeout <seconds>     Maximum execution time in seconds (default: 300)
@@ -159,7 +160,7 @@ Options:
 --mock-model <model>    Model that fabricates mock results (or set AGENTUSE_MOCK_MODEL once)
 ```
 
-Plus the common run options (`--quiet`, `--debug`, `--no-tty`, `--compact`, `--timeout`, `-C`, `--env-file`, `-m/--model`, `--json`).
+Plus the common run options (`--quiet`, `--debug`, `--no-code-mode`, `--no-tty`, `--compact`, `--timeout`, `-C`, `--env-file`, `-m/--model`, `--json`).
 
 ```bash
 agentuse test my-agent.agentuse                          # adaptive scope, auto-approve
@@ -460,6 +461,7 @@ agentuse serve [options]
 -C, --directory <path>  Directory to serve agents from; project state is detected upward
 --default <id>          Default project for POST /api/run when `project` is omitted
 -d, --debug             Enable debug mode
+--no-code-mode          Disable the default code_exec tool for every run launched by this daemon
 --no-auth               Disable API key requirement for exposed hosts (dangerous)
 --no-log-file           Disable writing serve logs to a file
 --hide-agent-source     Hide raw agent source in the dashboard and /api/agents/detail

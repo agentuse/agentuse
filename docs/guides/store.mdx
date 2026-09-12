@@ -82,6 +82,8 @@ When `store` is configured, your agent can:
 | **Create** | Add new items with type, title, status, data, and tags |
 | **Get** | Retrieve a single item by ID (full data, or only selected `fields`) |
 | **Update** | Modify existing items (merges changes, doesn't replace) |
+| **Conditional update** | Compare current status, data fields, or `updatedAt` and update only on a match |
+| **Claim** | Atomically select and transition one matching item |
 | **Delete** | Remove items by ID |
 | **List** | Query and search items with filters, full-text search, and projection |
 
@@ -134,6 +136,35 @@ This matters because `store_list` has **no default limit**: an unfiltered call r
 </Tip>
 
 The same projection applies to `store_get`: pass `fields: ["url", "score"]` to return only those keys from a large item instead of the whole payload.
+
+## Atomic coordination
+
+Use `store_claim` for a shared work queue. Selection and transition happen
+under one store lock, so two concurrent runs cannot claim the same matching row:
+
+```typescript
+const claim = await tools.store_claim({
+  type: "job",
+  status: "ready",
+  order: "oldest",
+  update: {
+    status: "in_progress",
+    data: { claimedBy: "worker" }
+  }
+});
+```
+
+An empty queue returns `{ success: true, claimed: false, item: null }`.
+
+Use `store_update_if` for compare-and-set updates. Conditions can include the
+current `status`, exact values inside `data` through `where`, and the prior
+`updatedAt` value. A stale condition returns `matched: false` without modifying
+the item.
+
+Do not implement claiming as `store_list` followed by `store_update`. Another
+run can select the same item between those calls. Code Mode makes control flow
+deterministic, but only atomic store primitives make concurrent transitions
+atomic.
 
 ## Writing Instructions
 

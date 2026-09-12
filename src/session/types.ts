@@ -557,6 +557,8 @@ export interface ReasoningPart extends PartBase {
 export interface ToolPart extends PartBase {
   type: 'tool';
   callID: string;    // Tool call ID from AI SDK
+  /** Outer code_exec call when this tool was dispatched from Code Mode. */
+  parentCallID?: string;
   tool: string;      // Tool name (renamed from 'name')
   state: ToolState;  // Discriminated union
 }

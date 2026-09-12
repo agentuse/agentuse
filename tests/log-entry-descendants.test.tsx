@@ -307,6 +307,10 @@ describe('delegated call expansion', () => {
     expect(renderTool(toolEntry({ tool: 'subagent__research' }))).toContain('aria-expanded="false"');
   });
 
+  it('marks a Code Mode child tool as nested', () => {
+    expect(renderTool(toolEntry({ parentCallId: 'outer-code-call' }))).toContain('is-nested-tool');
+  });
+
   it('keeps completed descendant cards and report headlines visible while collapsing verbose details', () => {
     const child = row({
       id: 'writer', name: 'LifeHack Blog Writer', href: '/sessions/writer', createdAt: 2_000,

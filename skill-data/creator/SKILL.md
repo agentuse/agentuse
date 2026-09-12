@@ -592,11 +592,21 @@ names like `data` instead of `values`):
 
 ## Patterns
 
-- **Inline script vs persistent.** For a one-off (verify a deploy, audit a
-  metric), have the agent write its script to `tmp/` at runtime and run it - one
-  file, the spec lives in the agent body. Commit a persistent `agents/<name>.py`
-  only when a caller other than this single agent will reuse it (a repeated
-  workflow, CI, a scheduled job). Default to inline.
+- **Use runtime Code Mode before writing helper scripts.** Every normal run can
+  use the sandboxed `code_exec` tool automatically; there is no frontmatter key
+  to enable it. Code Mode runs TypeScript with no filesystem, network,
+  environment, process, package, shell, or import access. It receives only the
+  tools already permitted by the `.agentuse` file, and every nested call still
+  passes through runtime validation, plugin policy, mock isolation, effect WAL,
+  and session tracing. Use a direct tool for one operation. Use `code_exec` for
+  loops, filtering, joins, branching, batching, compact aggregation, or bounded
+  parallel calls. The model writes that one-off program at run time; the user
+  does not maintain a `control.py` or TypeScript helper.
+
+  Commit a persistent script only when logic must be reused outside this one
+  agent, depends on project libraries or raw file/network/process access, or
+  forms a separately reviewed permission boundary. Do not write a script merely
+  to compose AgentUse tools.
 
   **Reuse is not the only reason to commit one.** The other test is what the
   allowlist can see. When a tool is driven through a single command shape whose
@@ -637,15 +647,19 @@ names like `data` instead of `values`):
   as proof that a run or gate is live. Give managers a runtime read path before
   selecting work; verify external results before retrying an uncertain action.
 
-- **Aggregating over a store: read the file via a script, don't slurp.** The
-  store is a local JSON file (`.agentuse/store/<name>/items.json`). An agent that
-  filters or aggregates over dozens of items must NOT do it via `store_list` +
-  in-context reasoning: a field-projected list over ~20 wordy items can exceed
-  the ~30KB tool-result limit and come back truncated, and re-deriving the filter
-  in prose can hit the model's output-token cap mid-run. Grant the store file as
-  a read-only filesystem path, have the agent write a stdlib script to `tmp/`
-  that reads it and prints ONE compact JSON result (the queue, the aggregate, the
-  exact `store_update` payload). All store WRITES still go through the store tools.
+- **Aggregating over a store: use Code Mode, never the store file.** An agent
+  that filters or aggregates over dozens of items must not repeatedly feed
+  `store_list` results back through model context. Have it call `code_exec`, use
+  `tools.store_list({ ..., includeData: true })` inside the sandbox, perform the
+  mechanical filter or aggregate in TypeScript, and return one compact JSON
+  result. Do not grant filesystem access to `.agentuse/store`; the runtime owns
+  store selection, mock isolation, locking, and writes.
+
+- **Concurrent work queues use atomic store tools.** Use `store_claim` to select
+  and transition one matching item in a single locked operation. Use
+  `store_update_if` when an update must apply only if status, data conditions,
+  or the prior `updatedAt` version still match. A `store_list` followed by
+  `store_update` is not a claim and races with other agent runs.
 
 - **Discovery/harvest agents write keepers as they go.** An agent that sweeps
   many surfaces and only writes its store items at the end loses everything if it

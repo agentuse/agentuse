@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import { SuspendSignal } from '../src/runner/suspend';
 import { aiSdkErrorMocks } from './helpers/ai-sdk-mock';
 
@@ -38,17 +38,24 @@ mock.module('../src/models', () => ({
 }));
 
 let executeAgentCore: typeof import('../src/runner/execution').executeAgentCore;
+const originalCodeModeEnv = process.env.AGENTUSE_CODE_MODE;
 
 beforeAll(async () => {
   ({ executeAgentCore } = await import('../src/runner/execution'));
 });
 
 beforeEach(() => {
+  delete process.env.AGENTUSE_CODE_MODE;
   streamTextMock.mockClear();
   stepCountIsMock.mockClear();
   createModelMock.mockClear();
   generateTextMock.mockClear();
   codexAccessMock.mockImplementation(async () => null);
+});
+
+afterAll(() => {
+  if (originalCodeModeEnv === undefined) delete process.env.AGENTUSE_CODE_MODE;
+  else process.env.AGENTUSE_CODE_MODE = originalCodeModeEnv;
 });
 
 describe('executeAgentCore Anthropic cache control', () => {
@@ -91,7 +98,9 @@ describe('executeAgentCore Anthropic cache control', () => {
       },
     });
     expect(streamConfig.tools.read_file.providerOptions).toBeUndefined();
-    expect(streamConfig.tools.bash.providerOptions).toEqual({
+    expect(streamConfig.tools.bash.providerOptions).toBeUndefined();
+    expect(streamConfig.tools.code_exec).toBeDefined();
+    expect(streamConfig.tools.code_exec.providerOptions).toEqual({
       anthropic: {
         cacheControl: { type: 'ephemeral' },
       },
@@ -114,6 +123,29 @@ describe('executeAgentCore Anthropic cache control', () => {
         cacheControl: { type: 'ephemeral' },
       },
     });
+  });
+
+  it('omits code_exec when runtime policy disables Code Mode', async () => {
+    process.env.AGENTUSE_CODE_MODE = '0';
+
+    for await (const _ of executeAgentCore(
+      {
+        name: 'no-code-mode',
+        config: { model: 'anthropic:claude-haiku-4-5' },
+      } as any,
+      { read_file: { description: 'Read a file' } as any },
+      {
+        userMessage: 'Run without Code Mode',
+        systemMessages: [{ role: 'system', content: 'static instructions' }],
+        maxSteps: 3,
+      },
+    )) {
+      // Consume the stream.
+    }
+
+    const streamConfig = streamTextMock.mock.calls[0][0] as any;
+    expect(streamConfig.tools.read_file).toBeDefined();
+    expect(streamConfig.tools.code_exec).toBeUndefined();
   });
 
   it('does not accumulate cache breakpoints when stamped messages are fed back through prepareStep', async () => {

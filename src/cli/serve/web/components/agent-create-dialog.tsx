@@ -98,7 +98,7 @@ export function buildAgentCreationPrompt(draft: AgentCreationDraft, providerStat
     'agentuse skills get tester --full',
     '```',
     '',
-    '2. Create the narrowest useful `.agentuse` file in this project. Do not overwrite an existing agent.',
+    '2. Create the narrowest useful `.agentuse` file in this project. Do not overwrite an existing agent. AgentUse Code Mode is available automatically for deterministic composition of configured tools; do not create a helper script merely for loops, filtering, batching, or branching.',
     '',
     '3. Validate it with `agentuse doctor <agent-file>` and `agentuse test <agent-file>`.',
     '',
@@ -263,6 +263,7 @@ export function AgentCreateDialog(props: {
             ) : null}
             {payload.skills && <AgentCreationSkills pool={payload.skills} />}
             <label class="agent-create-field"><span>What should this agent do?</span><textarea value={objective} placeholder="Summarize new support tickets and highlight urgent replies." disabled={busy} {...noAutofill} onInput={(event) => setObjective((event.target as HTMLTextAreaElement).value)} /><small>One or two sentences is enough. You can ask for changes after the first draft.</small></label>
+            <span class="agent-create-code-hint">Loops, filtering, batching, and tool orchestration run in an isolated TypeScript sandbox automatically. You do not need to request a helper script.</span>
             <div class="agent-create-creator-row">
               <div class="agent-create-field"><span>Creator provider model</span><DashboardSelect value={model} options={modelOptions} disabled={busy || modelOptions.length === 0} onChange={setModel} ariaLabel="Creator provider model" placeholder="Choose a provider and model…" /></div>
               <div class="agent-create-field"><span>Thinking effort</span><DashboardSelect value={reasoning} options={CREATOR_THINKING_OPTIONS} disabled={busy} onChange={(value) => setReasoning(value as ReasoningLevel)} ariaLabel="Thinking effort" /></div>
@@ -274,7 +275,7 @@ export function AgentCreateDialog(props: {
             </div>
             {props.onCodingAgent && (
               <div class="agent-create-handoff">
-                <span class="agent-create-handoff-copy"><strong>Need code or custom integrations?</strong><span>Use your coding agent when the setup needs scripts, dependencies, or project-specific code.</span></span>
+                <span class="agent-create-handoff-copy"><strong>Need project-specific code or a custom integration?</strong><span>Use your coding agent for new dependencies, reusable project code, or capabilities beyond the configured AgentUse tools.</span></span>
                 <button type="button" class="agent-create-escape" disabled={busy || !projectId} onClick={() => props.onCodingAgent?.(draft)}>Copy prompt to coding agent</button>
               </div>
             )}

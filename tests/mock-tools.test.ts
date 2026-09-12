@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, mock } from "bun:test";
+import { z } from 'zod';
 
 // Ensure no module mocks leak from other files
 mock.restore();
@@ -102,6 +103,34 @@ describe("wrapToolsWithLLMMock", () => {
     const wrapped = mod.wrapToolsWithLLMMock({ x: fakeTool(() => "real") });
     await (wrapped.x as any).execute({}, {});
     expect((completeTextMock.mock.calls[0] as any[])[0]).toBe("demo:default");
+  });
+
+  it("keeps nested Code Mode calls on the mock wrapper", async () => {
+    completeTextMock.mockImplementation(async () => '{"success":true,"mocked":true}');
+    const realMutation = mock(() => {
+      throw new Error("real store mutation must not run in mock mode");
+    });
+    const storeUpdate = fakeTool(realMutation);
+    storeUpdate.inputSchema = z.object({
+      id: z.string(),
+      update: z.object({ status: z.string() }),
+    });
+    const wrapped = mod.wrapToolsWithLLMMock({ store_update: storeUpdate });
+    const { ToolDispatcher } = await import('../src/runner/tool-dispatcher');
+    const { createCodeExecTool } = await import('../src/runner/code-mode');
+    const dispatcher = new ToolDispatcher(wrapped);
+    dispatcher.register('code_exec', createCodeExecTool({
+      dispatcher,
+      toolNames: dispatcher.names(),
+    }));
+
+    const output = await dispatcher.dispatch('code_exec', {
+      code: 'return tools.store_update({ id: "job-1", update: { status: "done" } });',
+    }, { toolCallId: 'mock-code' });
+
+    expect(output).toEqual({ success: true, mocked: true });
+    expect(realMutation).toHaveBeenCalledTimes(0);
+    expect(completeTextMock).toHaveBeenCalledTimes(1);
   });
 
   it("passes tools without an execute through unchanged", () => {
