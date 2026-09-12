@@ -62,6 +62,16 @@ export class ToolDispatchDeniedError extends Error {
   }
 }
 
+/** Pre-effect input failed the tool's canonical runtime schema. */
+export class ToolInputValidationError extends Error {
+  readonly code = 'TOOL_INPUT_VALIDATION_ERROR';
+
+  constructor(readonly toolName: string, validationMessage: string) {
+    super(`Invalid input for tool '${toolName}': ${validationMessage}`);
+    this.name = 'ToolInputValidationError';
+  }
+}
+
 /** A tool effect completed, but dispatch could not safely return its result. */
 export class ToolDispatchPostEffectError extends Error {
   readonly code = 'TOOL_DISPATCH_POST_EFFECT_ERROR';
@@ -312,7 +322,7 @@ export class ToolDispatcher {
     if (!schema.validate) return input;
     const validation = await awaitAbortable(schema.validate(input), signal);
     if (!validation.success) {
-      throw new Error(`Invalid input for tool '${toolName}': ${validation.error.message}`);
+      throw new ToolInputValidationError(toolName, validation.error.message);
     }
     return validation.value;
   }

@@ -47,6 +47,7 @@
 
 ### Fixed
 
+- **Semantic tool-input validation failures recover inside the active run.** Refinements that cannot be represented in provider-facing JSON Schema now return their exact validation reason to the model before approval or execution, allowing a corrected tool call instead of terminating the session with an execution error.
 - **Creator drafts can read official builtin guidance and are checked for missing capabilities.** Creator sessions can load version-matched core, creator, and tester references without shell access. Before accepting a draft, a separate read-only model review checks its promised operations against declared tools, returning concrete gaps for correction. This catches claims such as exact parser diagnostics with only filesystem access; it does not replace testing the finished agent.
 
 - **Onboarding includes community CLI providers when their required executable is available on the server.** After installation, provider readiness checks must pass before setup continues, with actionable CLI setup errors shown in place of browser sign-in.

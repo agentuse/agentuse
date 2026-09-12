@@ -53,7 +53,12 @@ import { toErrorMessage } from '../utils/error-message';
 import { completeApprovalValueDisplay, type CompleteApprovalValueDisplay } from '../utils/approval-value';
 import { getSessionUrl } from '../tools/await-human';
 import type { CompactionReason, SessionManager } from '../session';
-import { ToolDispatchDeniedError, ToolDispatcher, type ToolOutputArtifactWriter } from './tool-dispatcher';
+import {
+  ToolDispatchDeniedError,
+  ToolDispatcher,
+  ToolInputValidationError,
+  type ToolOutputArtifactWriter,
+} from './tool-dispatcher';
 import {
   CODE_EXEC_TOOL,
   codeModeEligibleToolNames,
@@ -1789,7 +1794,11 @@ async function* executeAgentAttempt(
           } catch (error) {
             dispatcher.discardPreparedDirectCall(toolCallId);
             approvalInputLedger.discard(opts.toolCall.toolName, toolCallId, reservation);
-            if (error instanceof ToolDispatchDeniedError || error instanceof ApprovalInputLedgerError) {
+            if (
+              error instanceof ToolDispatchDeniedError
+              || error instanceof ToolInputValidationError
+              || error instanceof ApprovalInputLedgerError
+            ) {
               return { type: 'denied' as const, reason: error.message };
             }
             throw error;
@@ -2688,12 +2697,13 @@ Current step: ${stepCount}/${options.maxSteps}`);
         }
         case 'tool-approval-response':
         case 'tool-output-denied': {
-          // Lease enforcement blocked an effectful call before execute ran
-          // (agentuse-lab#165, Phase 2). The v7 stream carries the outcome as a
-          // 'tool-approval-response' with approved:false (plus the redirect
-          // reason); journal it as a failed tool result so the session shows
-          // what was attempted. Approved responses need no journaling - the
-          // normal tool-call/-result path covers the execution itself.
+          // A pre-dispatch decision blocked the call before execute ran. This
+          // includes policy/lease denials and recoverable canonical-input
+          // validation failures. The v7 stream carries the outcome as a
+          // 'tool-approval-response' with approved:false and the reason;
+          // journal it as a failed tool result so the session and next model
+          // step both see what must change. Approved responses need no
+          // journaling; the normal tool-call/-result path covers execution.
           if (chunk.type === 'tool-approval-response' && (chunk as any).approved !== false) break;
           const toolCall = (chunk as any).toolCall ?? chunk;
           const toolCallId = toolCall.toolCallId || (chunk as any).toolCallId || 'unknown';
@@ -2701,7 +2711,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
           const reason = typeof (chunk as any).reason === 'string'
             ? (chunk as any).reason
             : rejectedHistoricalToolCalls(messages).find((call) => call.toolCallId === toolCallId)?.reason
-              ?? 'Execution denied by the reviewer.';
+              ?? 'Execution denied before dispatch.';
           const startTime = toolStartTimes.get(toolCallId);
           const duration = startTime ? Date.now() - startTime : undefined;
           const deniedCall = segmentToolCalls.get(toolCallId);
@@ -2789,9 +2799,9 @@ Current step: ${stepCount}/${options.maxSteps}`);
         case 'text-end':
           // AI SDK streaming events for text generation boundaries (not tool-related)
           // These indicate when the LLM starts/stops generating text content.
-          // tool-approval-request precedes the lease toolApproval decision; the
-          // outcome is journaled via the denied tool-approval-response above or
-          // the normal tool-call/-result path. Safe to ignore.
+          // tool-approval-request precedes the toolApproval decision; the
+          // outcome is journaled via the denied response above or the normal
+          // tool-call/-result path. Safe to ignore.
           break;
 
         default:
