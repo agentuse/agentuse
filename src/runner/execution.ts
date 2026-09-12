@@ -100,6 +100,17 @@ import {
 
 // Constants
 const MAX_RETRIES = 3;
+const MAX_CONSECUTIVE_GATE_MACHINE_REJECTIONS = 3;
+
+class GateMachineRejectionLoopError extends Error {
+  constructor(count: number, reason: string) {
+    super(
+      `await_human stopped after ${count} consecutive runtime rejections. ` +
+      `The request is not converging on a valid approval contract. Last rejection: ${reason}`
+    );
+    this.name = 'GateMachineRejectionLoopError';
+  }
+}
 // Chunk types that commit externally visible output or begin a tool call in the
 // current step. Their presence makes that step unsafe to retry. Reasoning is
 // deliberately excluded: it is diagnostic-only and has no external effect, so
@@ -2097,6 +2108,19 @@ async function* executeAgentAttempt(
   // report). See the text-delta case.
   let sawText = false;
   let suppressTextAfterNudge = false;
+  // Unlike the general doom-loop detector, this tracks outcomes rather than
+  // exact call arguments. Models often vary option ids and prose while retrying
+  // the same invalid gate, so argument equality cannot recognize the loop.
+  let consecutiveGateMachineRejections = 0;
+  const recordGateMachineRejection = (reason: string): GateMachineRejectionLoopError | undefined => {
+    consecutiveGateMachineRejections++;
+    return consecutiveGateMachineRejections >= MAX_CONSECUTIVE_GATE_MACHINE_REJECTIONS
+      ? new GateMachineRejectionLoopError(consecutiveGateMachineRejections, reason)
+      : undefined;
+  };
+  const resetGateMachineRejections = () => {
+    consecutiveGateMachineRejections = 0;
+  };
   // Stall retries across model steps. Reset as soon as the active step produces
   // output, so the budget covers one stall episode rather than the whole run.
   let stallAttempt = 0;
@@ -2391,6 +2415,14 @@ Error: ${errorMessage}`);
           // on whether this lifecycle completed or failed.
           const toolResultStr = parseToolResult(chunk);
           const toolSuccess = !isSoftToolError(chunk, toolResultStr);
+          const rawToolResult = stripInlineMediaData((chunk as any).result || (chunk as any).output);
+          const machineGateSource = toolResultObject(rawToolResult)?.source;
+          const gateLoopError = chunk.toolName === 'await_human' && machineGateSource === 'gate-preflight'
+            ? recordGateMachineRejection(toolResultObject(rawToolResult)?.comment ?? toolResultStr)
+            : undefined;
+          if (!gateLoopError && machineGateSource !== 'gate-preflight' && toolSuccess) {
+            resetGateMachineRejections();
+          }
 
           // Note: we intentionally do NOT add the tool result to contextManager
           // here. `prepareStep` (createStream) is the single source of truth for
@@ -2416,11 +2448,17 @@ Error: ${errorMessage}`);
             // the session store / traces (stream.ts). stripInlineMediaData returns
             // a copy, so the AI SDK's own reference (used by toModelOutput to send
             // the real bytes to the model) keeps its data.
-            toolResultRaw: stripInlineMediaData((chunk as any).result || (chunk as any).output),
+            toolResultRaw: rawToolResult,
             ...(startTime && { toolStartTime: startTime }),
             ...(duration !== undefined && { toolDuration: duration }),
             ...((suspendState || (gateBarrierActive && toolCallId !== gateBarrierCallId)) && { postSuspend: true })
           };
+
+          if (gateLoopError) {
+            runAbort.abort(gateLoopError);
+            yield { type: 'error', error: gateLoopError };
+            return;
+          }
 
           // Clean up
           if (startTime) {
@@ -2712,6 +2750,10 @@ Current step: ${stepCount}/${options.maxSteps}`);
             ? (chunk as any).reason
             : rejectedHistoricalToolCalls(messages).find((call) => call.toolCallId === toolCallId)?.reason
               ?? 'Execution denied before dispatch.';
+          const gateLoopError = toolName === 'await_human'
+            && reason.startsWith("Invalid input for tool 'await_human'")
+            ? recordGateMachineRejection(reason)
+            : undefined;
           const startTime = toolStartTimes.get(toolCallId);
           const duration = startTime ? Date.now() - startTime : undefined;
           const deniedCall = segmentToolCalls.get(toolCallId);
@@ -2727,6 +2769,11 @@ Current step: ${stepCount}/${options.maxSteps}`);
             ...(duration !== undefined && { toolDuration: duration }),
             ...((suspendState || (gateBarrierActive && toolCallId !== gateBarrierCallId)) && { postSuspend: true })
           };
+          if (gateLoopError) {
+            runAbort.abort(gateLoopError);
+            yield { type: 'error', error: gateLoopError };
+            return;
+          }
           if (startTime) {
             toolStartTimes.delete(toolCallId);
           }
@@ -3362,6 +3409,18 @@ function parseToolResult(chunk: any): string {
   }
 
   return typeof output === 'string' ? output : JSON.stringify(output);
+}
+
+function toolResultObject(output: unknown): { source?: string; comment?: string } | undefined {
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return undefined;
+  const record = output as Record<string, unknown>;
+  const value = record.type === 'json' && record.value && typeof record.value === 'object' && !Array.isArray(record.value)
+    ? record.value as Record<string, unknown>
+    : record;
+  return {
+    ...(typeof value.source === 'string' && { source: value.source }),
+    ...(typeof value.comment === 'string' && { comment: value.comment }),
+  };
 }
 
 /**

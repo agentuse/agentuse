@@ -34,6 +34,11 @@ export const APPROVAL_TOOL_CONTRACT = Symbol.for('agentuse.tool.approval-contrac
  * snapshot schema. Approval compatibility must follow current execution
  * semantics, while the provider still receives the historical transport shape. */
 export const APPROVAL_RUNTIME_INPUT_SCHEMA = Symbol.for('agentuse.tool.approval-runtime-input-schema');
+/** Optional idempotent cleanup applied before provider-facing structural
+ * validation. This is reserved for host-owned normalizers that remove values
+ * which are semantically equivalent to omission; arbitrary schema transforms
+ * remain dispatcher-owned and run exactly once after plugin preflight. */
+export const TRANSPORT_INPUT_NORMALIZER = Symbol.for('agentuse.tool.transport-input-normalizer');
 
 /** A tool is executable but cannot safely create or resume a durable approval. */
 export class ApprovalToolContractError extends Error {
@@ -56,6 +61,7 @@ type ToolWithTrustedOutput = Tool & {
   [CODE_MODE_OVERLOADS]?: readonly CodeModeOverload[];
   [APPROVAL_TOOL_CONTRACT]?: string;
   [APPROVAL_RUNTIME_INPUT_SCHEMA]?: unknown;
+  [TRANSPORT_INPUT_NORMALIZER]?: (input: unknown) => unknown;
 };
 
 export interface TrustedOutputOptions {
@@ -155,6 +161,18 @@ export function setApprovalToolContract<T extends Tool>(tool: T, version: string
   if (!version.trim()) throw new Error('Approval tool contract version must not be blank');
   (tool as ToolWithTrustedOutput)[APPROVAL_TOOL_CONTRACT] = version;
   return tool;
+}
+
+export function setTransportInputNormalizer<T extends Tool>(
+  tool: T,
+  normalizer: (input: unknown) => unknown,
+): T {
+  (tool as ToolWithTrustedOutput)[TRANSPORT_INPUT_NORMALIZER] = normalizer;
+  return tool;
+}
+
+export function transportInputNormalizer(tool: Tool): ((input: unknown) => unknown) | undefined {
+  return (tool as ToolWithTrustedOutput)[TRANSPORT_INPUT_NORMALIZER];
 }
 
 /** Mark an internal wrapper that validates its trusted result before return. */

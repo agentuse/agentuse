@@ -8,6 +8,7 @@ import { loadGlobalConfig } from '../utils/global-config';
 import { isHttpUrl } from '../utils/url';
 import { parseDurationMs } from '../utils/duration';
 import { findXmlToolMarkup } from '../runner/tool-call-repair';
+import { setTransportInputNormalizer } from './tool-contract';
 import { snapshotGateArtifacts } from '../session/gate-artifacts';
 
 /**
@@ -125,10 +126,66 @@ export interface AwaitHumanDefaults {
   projectRoot?: string;
 }
 
+const EMPTY_OPTIONAL_STRING_FIELDS = [
+  'summary',
+  'draft',
+  'draft_url',
+  'artifact_url',
+  'artifact_path',
+  'context',
+  'risk',
+] as const;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function omitBlankString(record: Record<string, unknown>, key: string): void {
+  if (typeof record[key] === 'string' && !record[key].trim()) delete record[key];
+}
+
+/**
+ * Some providers fill every optional tool field after a resumed turn, using
+ * empty strings, empty objects and empty arrays as placeholders. Those values
+ * mean "not supplied" in an approval request, but validating them literally
+ * creates misleading errors such as "options needs at least two items". That
+ * error can push the model into inventing an Approve/Reject pick gate.
+ *
+ * Normalize only semantically empty optional values. Non-empty malformed data
+ * remains untouched and is rejected by the canonical schema as before.
+ */
+export function normalizeAwaitHumanInput(input: unknown): unknown {
+  if (!isRecord(input)) return input;
+  const normalized: Record<string, unknown> = { ...input };
+
+  for (const field of EMPTY_OPTIONAL_STRING_FIELDS) omitBlankString(normalized, field);
+  for (const field of ['options', 'artifact_paths', 'changes'] as const) {
+    if (Array.isArray(normalized[field]) && normalized[field].length === 0) delete normalized[field];
+  }
+
+  if (Array.isArray(normalized.changes)) {
+    normalized.changes = normalized.changes.map((change) => {
+      if (!isRecord(change)) return change;
+      const next = { ...change };
+      for (const field of ['label', 'displayContent', 'optionId']) omitBlankString(next, field);
+      return next;
+    });
+  }
+
+  if (isRecord(normalized.reference)) {
+    const reference = { ...normalized.reference };
+    for (const field of ['label', 'author', 'title', 'url', 'excerpt']) omitBlankString(reference, field);
+    if (Object.keys(reference).length === 0) delete normalized.reference;
+    else normalized.reference = reference;
+  }
+
+  return normalized;
+}
+
 export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDefaults): Tool {
-  return {
+  return setTransportInputNormalizer({
     description: 'Send arguments as a valid JSON object, never XML tool syntax. Put options and reference in their own top-level JSON fields, never serialized inside context. Use plain language about the outcome and the decision needed; do not make the reviewer choose routine implementation details. Suspend the current run while waiting for a reviewer decision or comment. The run resumes when a decision is submitted from the approval page or Approval API. Decide the SHAPE of the request first: a plain yes/no on one proposed action, or a pick among alternatives. A pick MUST carry its alternatives in `options` - that field is what renders the selector, so without it the reviewer gets an approve/reject card and no way to choose. Never present alternatives as prose, numbered blocks, or several `changes` entries and ask the reviewer to name their pick in a comment; that is a defect, not a formatting preference. The tool result carries the decision: `status` (approved/rejected/commented), optional `comment`, and (when you supplied `options`) `choice`, the id of the option the reviewer selected. Always branch on `choice` when present instead of parsing the comment. A human Comment is the revise-and-re-gate branch and takes precedence over missing-choice ambiguity: when its text supplies an actionable edit or replacement, apply it even if it names no option, then request approval again. Only an explicit request to cancel, abandon, or stop is terminal. A result with `source: "pre-review"` or `source: "gate-preflight"` is machine feedback, not a human rejection: revise the request and call await_human again. When the action responds to something someone else wrote - a reply, comment, answer, or response - `reference` is mandatory and its `excerpt` must hold the COMPLETE verbatim original, because the reviewer judges the response against it and must never have to open the link to read it.',
-    inputSchema: z.object({
+    inputSchema: z.preprocess(normalizeAwaitHumanInput, z.object({
       prompt: z.string().max(300, 'prompt must be one short line (max 300 characters); put the content in draft and the alternatives in options').describe('One short line: a direct yes/no question for the reviewer, or on a pick gate the single question the options answer. Do not put the content, headings, or lists here; use draft for that, and options for alternatives - never spell the choices out here.'),
       summary: z.string().max(600, 'summary must be one sentence (max 600 characters); the card already shows the candidates, the reference and the reviewer actions').optional().describe('ONE sentence: what is being decided, or on a pick gate what separates the alternatives. Rendered under "Why this request". Do NOT restate the candidate content, the reference, or the actions available to the reviewer - the card already shows all three, so repeating them just adds reading. Do not open with praise for the reviewer\'s earlier feedback. Omit entirely when the options and their descriptions already make the choice clear.'),
       draft: z.string().optional().describe('The full reviewable work itself, written in Markdown (headings, bullet lists, tables, fenced code). This is the primary artifact the reviewer reads, so make it complete, not a one-line summary. When the approved action is a short submission (a comment, an email, a post), put the verbatim content in changes instead and use draft for the supporting detail.'),
@@ -255,7 +312,7 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
             'must be its own JSON property, with no XML tags inside string values. Put choices in the top-level options array, not in context.'
         });
       }
-    }),
+    })),
     execute: async (input: {
       prompt: string;
       summary?: string;
@@ -313,5 +370,5 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
         ...(artifactSnapshots.length > 0 && { artifactSnapshots })
       });
     }
-  };
+  }, normalizeAwaitHumanInput);
 }

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { createAwaitHumanTool, getSessionUrl } from '../src/tools/await-human';
+import { createAwaitHumanTool, getSessionUrl, normalizeAwaitHumanInput } from '../src/tools/await-human';
 import { isSuspendSignal } from '../src/runner/suspend';
 import { registerServer, unregisterServer } from '../src/utils/server-registry';
 import { sessionViewToken } from '../src/utils/session-token';
@@ -37,6 +37,37 @@ describe('await_human approval URL', () => {
     if (originalXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
     else process.env.XDG_DATA_HOME = originalXdgDataHome;
     if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('treats resumed empty optional placeholders as omitted', async () => {
+    const input = {
+      prompt: 'Approve publishing this revised note?',
+      changes: [{
+        label: 'Publish Note',
+        content: 'A useful note.',
+        displayContent: '',
+        optionId: '',
+      }],
+      reference: { label: '', author: '', title: '', url: '', excerpt: '' },
+      draft_url: '',
+      artifact_url: '',
+      artifact_path: '',
+      artifact_paths: [],
+      options: [],
+      context: '',
+    };
+    expect(normalizeAwaitHumanInput(input)).toEqual({
+      prompt: 'Approve publishing this revised note?',
+      changes: [{ label: 'Publish Note', content: 'A useful note.' }],
+    });
+
+    const schema = createAwaitHumanTool().inputSchema as any;
+    const result = await schema.safeParseAsync(input);
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual({
+      prompt: 'Approve publishing this revised note?',
+      changes: [{ label: 'Publish Note', content: 'A useful note.' }],
+    });
   });
 
   it('points the reviewer link at the unified session page (no token when local/no api key)', () => {

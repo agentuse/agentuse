@@ -22,6 +22,7 @@ import {
   markToolDispatchExecution,
   readPrevalidatedTrustedOutput,
   APPROVAL_RUNTIME_INPUT_SCHEMA,
+  transportInputNormalizer,
 } from '../tools/tool-contract';
 
 export type ToolOutputArtifactWriter = (
@@ -200,7 +201,10 @@ function attachToolOutputArtifact(value: unknown, artifact: ToolOutputArtifactRe
 }
 
 /** Keep provider-facing JSON Schema while deferring normalization to the dispatcher. */
-function rawInputTransportSchema(inputSchema: Tool['inputSchema']): Tool['inputSchema'] {
+function rawInputTransportSchema(
+  inputSchema: Tool['inputSchema'],
+  normalizeInput?: (input: unknown) => unknown,
+): Tool['inputSchema'] {
   const original = aiSdk.asSchema(inputSchema);
   // JSON Schema describes the provider-facing input shape without running a
   // Zod/Standard transform. Ajv therefore preserves AI SDK repair behavior
@@ -209,6 +213,7 @@ function rawInputTransportSchema(inputSchema: Tool['inputSchema']): Tool['inputS
   let validator: Promise<(value: unknown) => boolean> | undefined;
   return aiSdk.jsonSchema(jsonSchema, {
     validate: async value => {
+      const transportInput = normalizeInput ? normalizeInput(value) : value;
       validator ??= Promise.resolve(jsonSchema).then((schema) => {
         // Ajv 8 intentionally ships without format validators. Keep the
         // provider-facing contract structural, but retain standard JSON Schema
@@ -219,7 +224,7 @@ function rawInputTransportSchema(inputSchema: Tool['inputSchema']): Tool['inputS
         return ajv.compile(schema as object) as (value: unknown) => boolean;
       });
       const validate = await validator;
-      if (validate(value)) return { success: true as const, value };
+      if (validate(transportInput)) return { success: true as const, value: transportInput };
       return {
         success: false as const,
         error: new Error(ajvErrorMessage((validate as any).errors)),
@@ -627,7 +632,7 @@ export class ToolDispatcher {
       // Non-executable tools never reach dispatcher preparation, so retain
       // their original schema and AI SDK validation/repair behavior verbatim.
       inputSchema: typeof tool.execute === 'function'
-        ? rawInputTransportSchema(tool.inputSchema)
+        ? rawInputTransportSchema(tool.inputSchema, transportInputNormalizer(tool))
         : tool.inputSchema,
       execute: typeof tool.execute !== 'function'
         ? tool.execute

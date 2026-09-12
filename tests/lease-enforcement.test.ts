@@ -358,6 +358,40 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
     expect(records.some((r) => r.event === 'tool-start' && r.callId === 'bash-1')).toBe(false);
   });
 
+  test('resumed empty placeholders open one plain approval instead of an option loop', async () => {
+    const marker = path.join(projectRoot, 'approved-later.txt');
+    const { model, calls } = makeModel([
+      turn([toolCallPart('gate-placeholder', 'await_human', {
+        prompt: 'Approve publishing this revised note?',
+        changes: [{
+          label: 'Publish note',
+          content: `touch ${marker}`,
+          optionId: '',
+        }],
+        reference: { label: '', author: '', title: '', url: '', excerpt: '' },
+        draft_url: '',
+        artifact_url: '',
+        artifact_paths: [],
+        options: [],
+      })]),
+    ]);
+    currentModel = model;
+
+    const chunks = await runCore(makeTools());
+
+    expect(calls()).toBe(1);
+    expect(fs.existsSync(marker)).toBe(false);
+    expect(chunks.some(chunk => chunk.type === 'error')).toBe(false);
+    const suspended = chunks.find(chunk => chunk.type === 'suspended');
+    expect(suspended).toBeDefined();
+    const gateCall = chunks.find(chunk => (
+      chunk.type === 'tool-call' && (chunk as any).toolCallId === 'gate-placeholder'
+    ));
+    expect((gateCall as any).toolInput.options).toBeUndefined();
+    expect((gateCall as any).toolInput.reference).toBeUndefined();
+    expect((gateCall as any).toolInput.changes[0].optionId).toBeUndefined();
+  });
+
   test('covered command runs straight through (approved plan, zero interruptions)', async () => {
     const marker = path.join(projectRoot, 'approved-marker.txt');
     const command = `touch ${marker}`;
@@ -508,6 +542,42 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
       (c) => c.type === 'tool-result' && typeof c.toolResult === 'string' && c.toolResult.includes('denied')
     );
     expect(denied).toBeDefined();
+  });
+
+  test('stops varied option-gate preflight retries after three machine rejections', async () => {
+    const marker = path.join(projectRoot, 'never-created.txt');
+    const invalidGate = (index: number) => toolCallPart(`gate-${index}`, 'await_human', {
+      prompt: 'Approve publishing?',
+      changes: [{
+        label: 'Publish',
+        content: `touch ${marker}`,
+        optionId: `publish-${index}`,
+      }],
+      options: [
+        { id: `publish-${index}`, label: 'Publish' },
+        { id: `hold-${index}`, label: 'Hold' },
+      ],
+    });
+    const { model, calls } = makeModel([
+      turn([invalidGate(1)]),
+      turn([invalidGate(2)]),
+      turn([invalidGate(3)]),
+      turn([invalidGate(4)]),
+    ]);
+    currentModel = model;
+
+    const chunks = await runCore(makeTools());
+
+    expect(calls()).toBe(3);
+    expect(fs.existsSync(marker)).toBe(false);
+    const errors = chunks.filter(chunk => chunk.type === 'error');
+    expect(errors).toHaveLength(1);
+    expect((errors[0] as any).error?.name).toBe('GateMachineRejectionLoopError');
+    expect((errors[0] as any).error?.message).toContain('3 consecutive runtime rejections');
+    const preflightResults = chunks.filter(chunk => (
+      chunk.type === 'tool-result' && String(chunk.toolResult).includes('gate-preflight')
+    ));
+    expect(preflightResults).toHaveLength(3);
   });
 
   test('non-effectful commands are untouched by lease enforcement', async () => {

@@ -226,14 +226,9 @@ describe('pre-effect failure recovery', () => {
     expectNoApprovalResidue();
   });
 
-  test('recovers the empty await_human placeholders emitted after a resumed comment', async () => {
+  test('normalizes empty await_human placeholders emitted after a resumed comment', async () => {
     const inputSchema = deferredRuntimeSchema(createAwaitHumanTool().inputSchema);
     const execute = mock(async (input: unknown) => input);
-    const corrected = {
-      prompt: 'Approve publishing this revised note?',
-      changes: [{ label: 'Publish Note', content: 'A useful note.' }],
-      risk: 'This posts publicly.',
-    };
     const { model, calls, promptAt } = makeModel([
       turn([toolCallPart('placeholders-invalid', 'review', {
         prompt: 'Approve publishing this revised note?',
@@ -243,7 +238,6 @@ describe('pre-effect failure recovery', () => {
         artifact_url: '',
         options: [],
       })]),
-      turn([toolCallPart('placeholders-valid', 'review', corrected)]),
       stopTurn(),
     ]);
     currentModel = model;
@@ -253,24 +247,42 @@ describe('pre-effect failure recovery', () => {
       { messages: priorCommentHistory() },
     );
 
-    expect(calls()).toBe(3);
+    expect(calls()).toBe(2);
     expect(execute).toHaveBeenCalledTimes(1);
-    expect(execute.mock.calls[0]?.[0]).toEqual(corrected);
-    const denied = deniedResult(chunks, 'placeholders-invalid');
-    expect(denied).toMatchObject({
-      toolSuccess: false,
-      toolResultRaw: { success: false, denied: true },
+    expect(execute.mock.calls[0]?.[0]).toEqual({
+      prompt: 'Approve publishing this revised note?',
+      changes: [{ label: 'Publish Note', content: 'A useful note.' }],
     });
-    expect(denied?.toolResultRaw.reason).toContain('String must contain at least 1 character');
-    expect(denied?.toolResultRaw.reason).toContain('Invalid url');
-    expect(denied?.toolResultRaw.reason).toContain('Array must contain at least 2 element');
-    expect(denied?.toolResultRaw.reason)
-      .toContain('reference.excerpt is required whenever reference is present');
-    expect(JSON.stringify(promptAt(1)))
-      .toContain('reference.excerpt is required whenever reference is present');
+    expect(deniedResult(chunks, 'placeholders-invalid')?.toolSuccess).not.toBe(false);
+    expect(JSON.stringify(promptAt(1))).not.toContain('Array must contain at least 2 element');
     expect(chunks.some(chunk => chunk.type === 'error')).toBe(false);
-    expect(records().some(record => record.event === 'tool-start' && record.callId === 'placeholders-invalid')).toBe(false);
-    expect(records().some(record => record.event === 'tool-start' && record.callId === 'placeholders-valid')).toBe(true);
+    expect(records().some(record => record.event === 'tool-start' && record.callId === 'placeholders-invalid')).toBe(true);
+    expectNoApprovalResidue();
+  });
+
+  test('stops varied await_human validation retries after three machine rejections', async () => {
+    const inputSchema = deferredRuntimeSchema(z.object({
+      prompt: z.string(),
+      options: z.array(z.object({ id: z.string().min(1) })).min(2).optional(),
+    }));
+    const execute = mock(async (input: unknown) => input);
+    const invalidTurns = ['approve', 'publish', 'yes', 'a'].map((id, index) => turn([
+      toolCallPart(`invalid-gate-${index}`, 'await_human', {
+        prompt: 'Approve publishing?',
+        options: [{ id }, { id: '' }],
+      }),
+    ]));
+    const { model, calls } = makeModel([...invalidTurns, stopTurn()]);
+    currentModel = model;
+
+    const chunks = await runCore({ await_human: { inputSchema, execute } });
+
+    expect(calls()).toBe(3);
+    expect(execute).not.toHaveBeenCalled();
+    const error = chunks.find(chunk => chunk.type === 'error')?.error as Error | undefined;
+    expect(error?.name).toBe('GateMachineRejectionLoopError');
+    expect(error?.message).toContain('3 consecutive runtime rejections');
+    expect(error?.message).toContain("Invalid input for tool 'await_human'");
     expectNoApprovalResidue();
   });
 

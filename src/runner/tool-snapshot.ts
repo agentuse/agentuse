@@ -13,10 +13,37 @@ function zodToJsonSchema(schema: any): JsonSchema | undefined {
     description ? { ...base, description } : base;
 
   switch (schema._def.typeName) {
-    case 'ZodString':
-      return withDescription({ type: 'string' });
-    case 'ZodNumber':
-      return withDescription({ type: 'number' });
+    case 'ZodString': {
+      const result: JsonSchema = { type: 'string' };
+      for (const check of schema._def.checks ?? []) {
+        if (check.kind === 'min') result.minLength = check.value;
+        else if (check.kind === 'max') result.maxLength = check.value;
+        else if (check.kind === 'length') {
+          result.minLength = check.value;
+          result.maxLength = check.value;
+        } else if (check.kind === 'url') result.format = 'uri';
+        else if (check.kind === 'email') result.format = 'email';
+        else if (check.kind === 'uuid') result.format = 'uuid';
+        else if (check.kind === 'datetime') result.format = 'date-time';
+        else if (check.kind === 'date') result.format = 'date';
+        else if (check.kind === 'time') result.format = 'time';
+      }
+      return withDescription(result);
+    }
+    case 'ZodNumber': {
+      const result: JsonSchema = { type: 'number' };
+      for (const check of schema._def.checks ?? []) {
+        if (check.kind === 'int') result.type = 'integer';
+        else if (check.kind === 'min') {
+          if (check.inclusive === false) result.exclusiveMinimum = check.value;
+          else result.minimum = check.value;
+        } else if (check.kind === 'max') {
+          if (check.inclusive === false) result.exclusiveMaximum = check.value;
+          else result.maximum = check.value;
+        } else if (check.kind === 'multipleOf') result.multipleOf = check.value;
+      }
+      return withDescription(result);
+    }
     case 'ZodBoolean':
       return withDescription({ type: 'boolean' });
     case 'ZodLiteral':
@@ -25,14 +52,21 @@ function zodToJsonSchema(schema: any): JsonSchema | undefined {
       return withDescription({ type: 'string', enum: schema._def.values });
     case 'ZodArray': {
       const items = zodToJsonSchema(schema._def.type) ?? {};
-      return withDescription({ type: 'array', items });
+      const result: JsonSchema = { type: 'array', items };
+      if (schema._def.minLength?.value !== undefined) result.minItems = schema._def.minLength.value;
+      if (schema._def.maxLength?.value !== undefined) result.maxItems = schema._def.maxLength.value;
+      if (schema._def.exactLength?.value !== undefined) {
+        result.minItems = schema._def.exactLength.value;
+        result.maxItems = schema._def.exactLength.value;
+      }
+      return withDescription(result);
     }
     case 'ZodOptional':
     case 'ZodNullable':
     case 'ZodDefault':
     case 'ZodReadonly':
     case 'ZodCatch':
-      return zodToJsonSchema(schema._def.innerType);
+      return withDescription(zodToJsonSchema(schema._def.innerType) ?? {});
     // Wrappers that decorate an inner schema under a different key than
     // `innerType`. Without these, a tool whose inputSchema is refined /
     // transformed / branded / piped falls through to the `default` below,
@@ -41,11 +75,11 @@ function zodToJsonSchema(schema: any): JsonSchema | undefined {
     // loses its real shape on resume. `record_metric`'s top-level `.refine()`
     // and `await_human`'s `.refine()`d url fields both hit this.
     case 'ZodEffects': // .refine() / .superRefine() / .transform() / .preprocess()
-      return zodToJsonSchema(schema._def.schema);
+      return withDescription(zodToJsonSchema(schema._def.schema) ?? {});
     case 'ZodBranded': // .brand()
-      return zodToJsonSchema(schema._def.type);
+      return withDescription(zodToJsonSchema(schema._def.type) ?? {});
     case 'ZodPipeline': // .pipe() - the input side is what validates tool args
-      return zodToJsonSchema(schema._def.in);
+      return withDescription(zodToJsonSchema(schema._def.in) ?? {});
     case 'ZodRecord':
       return withDescription({ type: 'object', additionalProperties: true });
     case 'ZodUnknown':

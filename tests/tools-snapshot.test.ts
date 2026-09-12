@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { asSchema, jsonSchema } from 'ai';
 import { z } from 'zod';
 import { bindToolsToSnapshot, createToolsSnapshot } from '../src/runner/tool-snapshot';
+import { createAwaitHumanTool } from '../src/tools/await-human';
 
 describe('tools snapshot', () => {
   it('captures tool names and binds snapshot schemas to current implementations', () => {
@@ -74,11 +75,27 @@ describe('tools snapshot', () => {
       type: 'object',
       properties: {
         metric: { type: 'string' },
-        count: { type: 'number' },
-        link: { type: 'string' }
+        count: { type: 'integer' },
+        link: { type: 'string', format: 'uri' }
       },
       required: ['metric']
     });
+  });
+
+  it('preserves optional-field guidance and constraints across resume', () => {
+    const current = { await_human: createAwaitHumanTool() } as any;
+    const snapshot = createToolsSnapshot(current);
+    const schema = snapshot.tools[0].inputSchema as any;
+
+    expect(schema.required).toEqual(['prompt']);
+    expect(schema.properties.prompt.maxLength).toBe(300);
+    expect(schema.properties.options.minItems).toBe(2);
+    expect(schema.properties.options.description).toContain('pick among alternatives');
+    expect(schema.properties.options.description).toContain('do not add "reject all"');
+    expect(schema.properties.changes.items.properties.optionId.minLength).toBe(1);
+    expect(schema.properties.changes.items.properties.optionId.description).toContain('Omit for an action');
+    expect(schema.properties.reference.properties.url.format).toBe('uri');
+    expect(schema.properties.reference.description).toContain('REQUIRED whenever');
   });
 
   it('stubs a snapshotted tool that was removed from the config instead of failing the resume', async () => {
