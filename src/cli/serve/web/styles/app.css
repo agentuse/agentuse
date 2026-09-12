@@ -10421,19 +10421,16 @@ html[data-page="draft-panel"] .app-route {
 }
 .draft-steps-list .log-time { color: var(--muted-2); font-size: var(--font-size-micro); }
 .draft-steps-list .log-intent { color: var(--muted); }
-/* Thinking and prose are headlines here: the thread is a record of what the
-   author did, and its full transcript is one link away at the end of it. Line
-   clamping cannot be used because these bodies are nested blocks, so the height
-   is capped and faded instead. */
-.draft-steps-list .log-item[data-log-type="reasoning"] .log-content,
-.draft-steps-list .log-item[data-log-type="text"] .log-content {
+/* Keep thinking compact. Assistant responses remain fully readable because
+   these rows have no expand control. Nested reasoning blocks use a height cap
+   and fade rather than line clamping. */
+.draft-steps-list .log-item[data-log-type="reasoning"] .log-content {
   position: relative;
   max-height: 3.2em;
   overflow: hidden;
   color: var(--muted);
 }
-.draft-steps-list .log-item[data-log-type="reasoning"] .log-content::after,
-.draft-steps-list .log-item[data-log-type="text"] .log-content::after {
+.draft-steps-list .log-item[data-log-type="reasoning"] .log-content::after {
   content: "";
   position: absolute;
   inset: auto 0 0;
