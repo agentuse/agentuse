@@ -20,6 +20,7 @@ export interface SessionConfigOptions {
   timeout?: number;
   maxSteps?: number;
   replaySourceSessionId?: string;
+  resultSourceSessionId?: string;
   mcpServers?: string[];
   subagents?: Array<{ path: string; name?: string }>;
   modelOverride?: RunModelOverride;
@@ -93,6 +94,7 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
     config: {
       ...(config.timeout !== undefined && { timeout: config.timeout }),
       ...(config.maxSteps !== undefined && { maxSteps: config.maxSteps }),
+      ...(config.resultSourceSessionId && { resultSourceSessionId: config.resultSourceSessionId }),
       ...(config.replaySourceSessionId && { replaySourceSessionId: config.replaySourceSessionId }),
       ...(config.mcpServers && { mcpServers: config.mcpServers }),
       ...(config.subagents && { subagents: config.subagents }),

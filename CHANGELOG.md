@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Testing now asks whether you want to check a workflow or a result.** `agentuse test workflow <agent>` exercises steps and approval branches with all tool responses mocked by default; `--scope gated` explicitly leaves other tools live. `agentuse test result <agent> --session <id>` uses current instructions with saved evidence from a past job, keeps the original draft out of generation, and reports the comparison. An optional `--judge <agent>` evaluates the new result against criteria without tools. Evidence is selected once and reused; incomplete, failed, and error outcomes are distinct. Legacy adaptive tests and strict `--replay` remain available.
+
 ### Changed
 
 - **Mac releases now build separate signed and notarized Apple Silicon and Intel artifacts in GitHub Actions.** Architecture-specific downloads remain close to the existing app size, while one merged updater manifest routes each installation to the correct ZIP.

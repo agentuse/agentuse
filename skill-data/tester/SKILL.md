@@ -5,9 +5,8 @@ description: Test and validate AgentUse agents without real side effects. Use wh
 
 # AgentUse Tester
 
-Validate a `.agentuse` agent end-to-end before a real run. All mock flags
-belong to `agentuse run`; a mocked session is stored and inspectable like any
-other, and is visibly marked: `agentuse sessions` shows a `· mock` status
+Use `test workflow` to check steps or `test result` to compare a deliverable.
+Test sessions are stored and inspectable like any other, and is visibly marked: `agentuse sessions` shows a `· mock` status
 suffix, `sessions show` prints a `Mock:` line, and the JSON API carries
 `mock: true`.
 
@@ -19,28 +18,37 @@ agentuse doctor <file>   # ~1s static validation, no tokens
 
 Catches frontmatter/config errors before any token-heavy run.
 
-## Replay Real Inputs After an Instruction Edit
+## Choose Workflow or Result
 
-Use `agentuse test <file> --replay <session-id>` to regenerate against recorded
-external results with current instructions and explicit read-only reference
-files. It captures the first proposal before review, or final output, and stops
-on any unmatched tool input. No mock model, live tool execution or fabrication.
-The source must be a real, non-running session; old drafts and human feedback
-are held out of generation. Read `docs/guides/replay.mdx` for the precise
-matching contract. Use ordinary mock tests below for effects and approval-flow
-branches; replay does not test those branches.
+- `agentuse test workflow <file>` checks steps and approval branches with
+  simulated tool responses. Completion alone is not a quality verdict.
+- `agentuse test result <file> --session <id>` generates a fresh deliverable from
+  a past real job's evidence, using current instructions and explicit read-only
+  reference files. No workflow tools, Code Mode, approvals or publishing run.
+  The first model-selected evidence pack is saved and reused on later tests.
+  Inspect the selection audit: exact excerpts prevent fabrication but do not
+  guarantee the selector chose the right evidence. Old drafts and feedback are
+  withheld from the writer and judge.
+- Result options: `--selector-model <model>` selects the extractor on first use
+  (default: agent model); `--judge <local-agent>` evaluates the new result against
+  criteria without tools; `--model` overrides the writer; `--json` gives a report.
+  `generated` is not passed. `passed` is not proof of improvement. `failed`,
+  `incomplete`, and `error` exit 1. Reports link evidence and reference hashes.
+- Result sources need supported recorded tool evidence and must have finished
+  or reached approval. These test sessions cannot resume as live runs.
+- Advanced compatibility: `agentuse test <file> --replay <id>` strictly matches
+  recorded tool calls and stops on missing input. Use it to debug tool behavior,
+  not as the default result-improvement workflow.
 
 ## Run the Test
 
 ```bash
-agentuse test agent.agentuse --mock-model anthropic:claude-haiku-4-5
+agentuse test workflow agent.agentuse --mock-model anthropic:claude-haiku-4-5
 ```
 
-Scope is adaptive: agents declaring `tools.bash.gated` get **gated scope**
-(only those commands are fabricated; reads, non-gated bash, MCP, and skills
-run for REAL, so the run grounds itself in real project state); agents without
-gated patterns get **full mock** (every tool result fabricated, nothing
-executes). Override with `--scope gated|all`.
+`test workflow` defaults to full mock. Explicit `--scope gated` fabricates only
+matching gated bash commands; other tools run live. Legacy `test <file>` retains
+adaptive scope (gated when the agent declares gated bash, otherwise all).
 
 - `--mock-model` is required (fabrication runs on it; use the cheapest
   reachable model, e.g. `anthropic:claude-haiku-4-5`). Set `AGENTUSE_MOCK_MODEL`
@@ -64,19 +72,19 @@ claims, final store state, and session trace readability. Use
 
 ## Approval Gates Under Test
 
-`agentuse test` resolves every gate deterministically (never an LLM playing
+`agentuse test workflow` resolves every gate deterministically (never an LLM playing
 reviewer) and needs no `agentuse serve` daemon:
 
 ```bash
-agentuse test a.agentuse                      # approve (default): grants the
+agentuse test workflow a.agentuse                      # approve (default): grants the
                                               # gated-command lease from the
                                               # gate's changes[], exactly like
                                               # a real reviewer approval; pick
                                               # gates auto-select the
                                               # recommended option -> `choice`
-agentuse test a.agentuse --approval reject    # terminal reject branch (gate
+agentuse test workflow a.agentuse --approval reject    # terminal reject branch (gate
                                               # seals); tests the cleanup path
-agentuse test a.agentuse --approval comment:"tighten the summary"   # forces
+agentuse test workflow a.agentuse --approval comment:"tighten the summary"   # forces
                                               # the revise-and-re-gate branch
                                               # on gate 1, then approves the
                                               # re-gate so the run finishes
@@ -88,7 +96,7 @@ approved gate is still denied pre-dispatch with the re-gate redirect.
 ## The Closed Loop
 
 1. `agentuse doctor <file>`.
-2. `agentuse test <file> --no-tty` (with `--mock-model <cheap-model>` unless
+2. `agentuse test workflow <file> --no-tty` (with `--mock-model <cheap-model>` unless
    `AGENTUSE_MOCK_MODEL` is set globally).
 3. Inspect: `agentuse sessions show <session-id> --full` (or the serve UI
    `/sessions/<id>`). Judge: did the agent gate the right commands, with the

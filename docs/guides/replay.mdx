@@ -3,6 +3,11 @@ title: "Replay recorded inputs"
 description: "Test current instructions against a real session's recorded tool results, without live tool operations."
 ---
 
+For instruction improvement, start with
+`agentuse test result <agent> --session <id>`: it supplies source evidence directly
+without depending on matching tool calls. See [Testing agents](/guides/testing-agents).
+This page documents the advanced strict-replay compatibility command.
+
 Use replay when you are changing an agent's instructions and want to hold its
 external inputs fixed:
 
@@ -134,7 +139,7 @@ and a separate `baseline.json`. The pack contains exact excerpts, hashes, and UT
 old assistant output and classifier explanations are not copied into it.
 Reference instructions should be supplied fresh to the output-generation step.
 Large sessions currently fail an explicit size limit instead of silently
-truncating evidence. This is a prototype script, not a new `agentuse test` mode.
+truncating evidence. The public `agentuse test result` command now uses this validated selection primitive and caches evidence for reuse. The standalone script remains useful for inspecting extraction separately.
 
 
 ## Experimental output loop

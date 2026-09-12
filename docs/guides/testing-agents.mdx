@@ -1,30 +1,90 @@
 ---
 title: Testing Agents
-description: Validate an agent end to end in mock mode before it touches anything real
+description: Test workflow steps or compare a new result using evidence from a past job
 ---
 
-## Why Test First
+## Choose what to test
+
+| Command | Question | What runs |
+| --- | --- | --- |
+| `agentuse test workflow <agent>` | Does the agent carry out its steps correctly? | The agent with simulated tool responses and approval decisions. |
+| `agentuse test result <agent> --session <id>` | What result do updated instructions produce from the same evidence? | Fresh generation from saved source evidence, without workflow tools. |
+
+Run `agentuse test --help` to see both choices. Put options after `workflow`
+or `result`. Both commands use real model calls and can incur provider costs.
+
+## Compare a result from a past job
+
+```bash
+agentuse test result reply.agentuse --session <source-session-id>
+agentuse test result reply.agentuse --session <source-session-id> --judge quality.agentuse
+```
+
+On first use, a selector model extracts external evidence from the original
+session before its first approval gate. Exact excerpts and a selection audit
+are saved under `<stateRoot>/.agentuse/test-evidence/`. Later tests of that
+source reuse the selection, even after you edit the instructions or change the
+writer model. `--selector-model <model>` chooses the extractor on first use;
+otherwise it uses the agent model. It does not replace already saved evidence.
+
+The writer receives current agent instructions, explicit preloaded skills,
+applicable learnings, the original additional prompt, and the selected evidence.
+Explicit read-only file grants are loaded as current references and their hashes
+appear in the report. Directory and wildcard grants are not expanded into fresh
+references. A changed reference can change the result even with fixed evidence.
+Relative dates use the original session date. The original output and human
+feedback stay out of the writer and judge context and appear only in the report.
+
+This tests the deliverable, not research, delegation, tool behavior, approval,
+or publishing. No workflow tool or Code Mode executes. If required evidence or
+capabilities are missing, the writer should report `incomplete`. Model-assisted
+selection can make mistakes; inspect the saved audit before relying on a test.
+Sources must be real sessions that have finished or reached approval and contain
+recorded tool evidence. Unsupported/media-only evidence, invalid selections,
+and inputs exceeding the context budget fail explicitly without truncation.
+
+`--judge <local-agent>` supplies quality criteria from a separate agent. Its
+current explicit skills, learnings and read-only file references are available,
+but it has no tools. It evaluates the new result against the task and evidence;
+a pass is not a claim of improvement over the original. Use `--model` to change
+the writer model; the judge uses its own configured model.
+
+| Status | Meaning | Exit code |
+| --- | --- | --- |
+| `generated` | A new result is available; no quality verdict | 0 |
+| `passed` | The judge accepted the new result against its criteria | 0 |
+| `failed` | The judge rejected it | 1 |
+| `incomplete` | The writer could not produce the deliverable | 1 |
+| `error` | Extraction, generation, validation, or judging failed | 1 |
+
+`--json` emits the structured report. The printed report path contains the
+comparison, evidence provenance, current reference hashes, and any judgment.
+Each invocation creates a test session excluded from operational views; it
+cannot be resumed as a live run. `--timeout` bounds selection, generation and
+judging together. `-C` and `--env-file` work as on `run`.
+
+## Test workflow steps
+
 
 An agent that sends email, pushes commits, posts to Slack, or deletes rows is
 hard to debug by running it. The first real run is also the first irreversible
 one, and reading the agent file only tells you what you wrote, not what the model
 does with it.
 
-`agentuse test` closes that gap. It runs the agent all the way through, on its
+`agentuse test workflow` closes that gap. It runs the agent all the way through, on its
 own model, with its own instructions and its own tools, but fabricates the side
 effects instead of performing them. You get a full session log of a complete run
-and nothing outside the project changed.
+with simulated external tool responses and isolated store writes by default.
 
-## The One Command
+## Run a workflow test
 
 ```bash
-agentuse test my-agent.agentuse
-agentuse test my-agent.agentuse "focus on the March invoices"
+agentuse test workflow my-agent.agentuse
+agentuse test workflow my-agent.agentuse "focus on the March invoices"
 ```
 
 It takes the same run options you already know (`--quiet`, `--debug`, `--no-tty`,
-`--compact`, `--timeout`, `-C`, `--env-file`, `-m/--model`, `--json`) plus three
-of its own, covered below.
+`--compact`, `--timeout`, `-C`, `--env-file`, `-m/--model`, `--json`) plus the workflow options below.
 
 ### A Mock Model Is Required
 
@@ -32,7 +92,7 @@ Mock mode fires an LLM call for **every** tool result, so it needs a model it ca
 reach:
 
 ```bash
-agentuse test my-agent.agentuse --mock-model anthropic:claude-haiku-4-5
+agentuse test workflow my-agent.agentuse --mock-model anthropic:claude-haiku-4-5
 ```
 
 Set it once instead of per run via `AGENTUSE_MOCK_MODEL` in your shell,
@@ -49,22 +109,16 @@ The flag wins over all of them.
   `429`s.
 </Tip>
 
-## Scope Adapts to the Agent
+## Choose which tools to simulate
 
-How much gets faked depends on what the agent declares.
-
-- An agent with [`tools.bash.gated`](/guides/approval-gates) patterns gets
-  **gated scope**: only the bash commands matching those patterns, the
-  irreversible subset you already fenced off, are fabricated. Everything else,
-  reads, non-gated bash, MCP calls, skills, runs **for real**, so the agent
-  grounds itself in genuine project state.
-- Any other agent gets **full mock**: every tool result is fabricated.
-
-Override with `--scope gated|all`, or set `AGENTUSE_MOCK_SCOPE` once.
+New `test workflow` invocations default to **all**: external tool results are
+simulated. `--scope gated` explicitly simulates only matching gated bash
+commands; other tools execute for real. Approval decisions are simulated in both
+modes, and stores are isolated.
 
 ```bash
-agentuse test my-agent.agentuse --scope all      # fabricate everything
-agentuse test my-agent.agentuse --scope gated    # fabricate only the gated commands
+agentuse test workflow my-agent.agentuse --scope all
+agentuse test workflow my-agent.agentuse --scope gated
 ```
 
 <Warning>
@@ -84,9 +138,9 @@ A test run must finish without a human, so the gate resolves deterministically
 instead of suspending. No model plays the reviewer.
 
 ```bash
-agentuse test my-agent.agentuse --approval approve            # default
-agentuse test my-agent.agentuse --approval reject
-agentuse test my-agent.agentuse --approval comment:"tighten the subject line"
+agentuse test workflow my-agent.agentuse --approval approve            # default
+agentuse test workflow my-agent.agentuse --approval reject
+agentuse test workflow my-agent.agentuse --approval comment:"tighten the subject line"
 ```
 
 | Decision | What it exercises |
@@ -116,13 +170,13 @@ it on every gate would loop an obedient agent until it gave up.
 Testing is meant to be iterated, not performed once:
 
 1. Edit the agent file.
-2. `agentuse test my-agent.agentuse`.
+2. `agentuse test workflow my-agent.agentuse`.
 3. Read the session log: what the agent actually did, in order, with what
    arguments.
 4. Repeat.
 
 ```bash
-agentuse test my-agent.agentuse
+agentuse test workflow my-agent.agentuse
 agentuse sessions show <id> --full
 ```
 
@@ -144,15 +198,15 @@ that it never executed.
   agent copes with variation, and useless as a regression assertion.
 - **Mocked approval decisions are deterministic.** The branch you asked for is
   the branch you get, every time.
-- **MCP servers still connect at startup** for tool discovery, but no tool
-  executes and nothing mutates.
+- **MCP servers still connect at startup** for tool discovery. Under full mock,
+  their tool calls are simulated; gated scope leaves MCP calls live.
 - **Gate enforcement is still real.** Mock mode does not relax the permission
   model: a gated command the agent tries to run without a lease is still denied,
   exactly as in production.
 
 ## Lower-Level Plumbing
 
-`agentuse test` is the front door. The same machinery is exposed on `run` for
+`agentuse test workflow` is the front door. The same machinery is exposed on `run` for
 scripts and unusual cases:
 
 ```bash
@@ -161,7 +215,7 @@ agentuse run agent.agentuse --mock --mock-model anthropic:claude-haiku-4-5
 
 Note that `run --mock` keeps the approval gate **real**: `await_human` still
 suspends, which is useful when you specifically want to verify the agent pauses.
-Add `--mock-approval` for the unattended behaviour `agentuse test` defaults to.
+Add `--mock-approval` for the unattended behaviour `agentuse test workflow` defaults to.
 See [CLI Commands](/reference/cli-commands#agentuse-test) for the full flag
 reference and [Environment Variables](/reference/environment-variables#mock-mode-testing)
 for the `AGENTUSE_MOCK_*` equivalents.
@@ -187,3 +241,16 @@ for the `AGENTUSE_MOCK_*` equivalents.
     Writing the agent you are about to test
   </Card>
 </CardGroup>
+
+## Compatibility and advanced debugging
+
+`agentuse test <agent>` retains the older adaptive scope: gated when the agent
+has gated bash patterns, otherwise all. Existing scripts keep that behavior.
+The new `test workflow` command defaults to all even when gated patterns exist.
+For an agent file literally named `workflow` or `result`, use an explicit path
+such as `./workflow` with the compatibility form.
+
+`agentuse test <agent> --replay <session-id>` remains an advanced strict
+recorded-call debugger. A changed tool argument without a matching recording
+stops it. It is not the same as `test result`, which supplies evidence directly.
+See [Replay recorded inputs](/guides/replay).

@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
+import { registerTestCommands, type RunCommandOptions } from './cli/test';
 import { parseAgent, parseAgentContent, ConfigError } from './parser';
 import { connectMCP } from './mcp';
 import { runAgent, prepareAgentExecution, classifyRunResult, executionOutcomeFields, runResultJson, type PreparedAgentExecution } from './runner';
 import { isApprovalEnabled } from './runner/approval';
-import { isMockMode, resolveMockApprovalDecision, resolveMockScope } from './runner/mock-tools';
+import { isMockMode, resolveMockApprovalDecision } from './runner/mock-tools';
 import { Command } from 'commander';
 import { createProviderCommand, createAuthCommand } from './cli/auth';
 import { AuthStorage } from './auth/storage';
@@ -257,67 +258,7 @@ program
   .option('--mock-approval [decision]', 'Resolve the await_human approval gate deterministically instead of suspending (for fully-unattended mock runs): approve (default), reject, or comment:<text> (commented on the first gate, approved after). An approve grants the gated-command lease exactly like a real approval.')
   .action((file: string, promptArgs: string[], options: RunCommandOptions) => runCommandAction(file, promptArgs, options));
 
-// `agentuse test`: sugar over the run pipeline for mock/test runs. Maps to the
-// same option shape (mock/mockGated/mockApproval), so validation, env setup,
-// banner, and execution are shared with `run`.
-program
-  .command('test <file> [prompt...]')
-  .description('Test an agent with mocked tools, or use --replay to generate from recorded inputs without live tool operations.')
-  .option('--replay <session-id>', 'Generate with current instructions and recorded tool results; stop at the first proposal or missing input, without live tools or review')
-  .option('--scope <scope>', 'What to mock: "gated" (only tools.bash.gated commands; everything else real) or "all" (every tool result). Default: adaptive.')
-  .option('--approval <decision>', 'Gate decision: approve (default), reject, or comment:<text> (comments the first gate, approves the re-gate)')
-  .option('--mock-model <model>', 'Model that fabricates mock results (or set AGENTUSE_MOCK_MODEL once, e.g. in ~/.agentuse/.env)')
-  .option('-q, --quiet', 'Suppress info messages (only show warnings and errors)')
-  .option('-d, --debug', 'Enable debug mode with detailed logging and full error messages')
-  .option('--no-code-mode', 'Disable the default code_exec tool for controlled comparison and debugging')
-  .option('--no-tty', 'Disable TUI output (spinners, badges) for non-interactive use')
-  .option('--compact', 'Use compact single-line header instead of ASCII logo')
-  .option('--timeout <seconds>', 'Maximum execution time in seconds (default: 300)', '300')
-  .option('-C, --directory <path>', 'Run as if agentuse was started in <path> instead of the current directory')
-  .option('--env-file <path>', 'Path to custom .env file')
-  .option('-m, --model <model>', 'Override the model specified in the agent file')
-  .option('--json', 'Output result as JSON (implies --quiet --no-tty)')
-  .action(async (file: string, promptArgs: string[], options: {
-    scope?: string; approval?: string; mockModel?: string; replay?: string;
-    quiet: boolean; debug: boolean; codeMode?: boolean; tty?: boolean; noTty?: boolean; compact: boolean;
-    timeout: string; directory?: string; envFile?: string; model?: string; json?: boolean;
-  }) => {
-    if (options.replay) {
-      if (options.scope || options.approval || options.mockModel || promptArgs.length || isURL(file)) {
-        logger.error('--replay requires a local agent and the original recorded prompt; it cannot be combined with --scope, --approval, --mock-model, or a new prompt.');
-        process.exit(1);
-      }
-      await runCommandAction(file, [], options);
-      return;
-    }
-    let scope = options.scope;
-    if (scope !== undefined && scope !== 'all' && scope !== 'gated') {
-      logger.error(`Invalid --scope "${scope}". Use "gated" or "all".`);
-      process.exit(1);
-    }
-    if (!scope) {
-      // Adaptive default, decided by the one shared rule. Parse failures fall
-      // back to "all" and surface properly inside the run.
-      scope = 'all';
-      try {
-        const probePath = options.directory ? resolve(options.directory, file) : file;
-        const probe = await parseAgent(probePath);
-        scope = resolveMockScope(probe.config);
-      } catch { /* remote URL or invalid file: let the run pipeline report it */ }
-    }
-    const { scope: _scope, approval, ...passthrough } = options;
-    await runCommandAction(file, promptArgs, {
-      ...passthrough,
-      ...(scope === 'all' ? { mock: true } : { mockGated: true }),
-      mockApproval: approval ?? 'approve',
-    });
-  });
-
-interface RunCommandOptions {
-  quiet: boolean; debug: boolean; codeMode?: boolean; tty?: boolean; noTty?: boolean; compact: boolean;
-  timeout: string; directory?: string; envFile?: string; model?: string; sessionId?: string;
-  json?: boolean; mock?: boolean; mockModel?: string; mockApproval?: boolean | string; mockGated?: boolean; replay?: string;
-}
+registerTestCommands(program, runCommandAction);
 
 async function runCommandAction(file: string, promptArgs: string[], options: RunCommandOptions): Promise<void> {
     const startTime = Date.now();
@@ -680,6 +621,33 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
         }
       }
 
+      if (options.resultSession) {
+        if (!agentFilePath || !sessionManager) throw new Error('Result tests require a local agent and session storage.');
+        const { runResultTest, formatResultTest } = await import('./testing/result');
+        const abort = new AbortController();
+        const cancel = () => abort.abort(new Error('Result test interrupted'));
+        process.on('SIGINT', cancel);
+        process.on('SIGTERM', cancel);
+        try {
+          const result = await runResultTest({
+            agent, agentFilePath, sourceSessionId: options.resultSession, sessionManager,
+            projectContext: { ...projectContext, cwd: process.cwd() },
+            timeoutSeconds: resolveTimeout(cliTimeoutSeconds, timeoutWasExplicit, agent.config.timeout),
+            ...(options.selectorModel && { selectorModel: options.selectorModel }),
+            ...(options.judge && { judgePath: resolve(options.judge) }),
+            abortSignal: abort.signal,
+          });
+          if (options.directory && originalCwd) process.chdir(originalCwd);
+          await telemetry.shutdown();
+          console.log(options.json ? JSON.stringify(result) : formatResultTest(result));
+          process.exitCode = result.success ? 0 : 1;
+          return;
+        } finally {
+          process.off('SIGINT', cancel);
+          process.off('SIGTERM', cancel);
+        }
+      }
+
       if (options.replay) {
         if (!agentFilePath || !sessionManager) throw new Error('Replay requires a local agent and session storage.');
         const { runReplay, formatReplayResult } = await import('./replay/run');
@@ -1031,8 +999,8 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
         config: {
           timeoutCustom: timeoutWasExplicit || (agent.config.timeout !== undefined),
           maxStepsCustom: cliMaxSteps !== undefined || (agent.config.maxSteps !== undefined),
-          quietMode: options.quiet,
-          debugMode: options.debug,
+          quietMode: options.quiet ?? false,
+          debugMode: options.debug ?? false,
         },
       });
 

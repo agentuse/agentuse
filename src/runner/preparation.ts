@@ -104,6 +104,9 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     if (!found) {
       throw new Error(`Session not found: ${existingSessionId}`);
     }
+    if (found.session.config.resultSourceSessionId) {
+      throw new Error('Result test sessions cannot be resumed as live runs. Start another test result --session using the original source.');
+    }
     if (found.session.config.replaySourceSessionId) {
       throw new Error('Replay sessions cannot be resumed as live runs. Start another test --replay instead.');
     }

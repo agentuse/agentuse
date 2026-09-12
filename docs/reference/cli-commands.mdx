@@ -146,38 +146,54 @@ agentuse run agent.agentuse --model anthropic:claude-sonnet-5:ANTHROPIC_API_KEY_
 
 ## agentuse test
 
-Test an agent in mock mode: side effects fabricated, approval gates auto-resolved, stores isolated. This is the recommended way to validate a new or changed agent before letting it run for real.
+Choose what you want to check:
 
-```bash
-agentuse test <file> [prompt...]
+| Command | Description |
+| --- | --- |
+| `agentuse test workflow <agent> [prompt...]` | Check the agent's steps and approval branches using simulated tool responses. |
+| `agentuse test result <agent> --session <id>` | Generate from a past job's evidence and compare the new result with the original. |
 
-Options:
---scope <scope>         What to mock: "gated" (only tools.bash.gated commands; everything else real)
-                        or "all" (every tool result). Default: adaptive, "gated" when the agent
-                        declares tools.bash.gated patterns, else "all".
---approval <decision>   Gate decision: approve (default), reject, or comment:<text>
-                        (comments the first gate, approves the re-gate)
---mock-model <model>    Model that fabricates mock results (or set AGENTUSE_MOCK_MODEL once)
+### Workflow options
+
+```text
+--scope all|gated       Default: all. Gated simulates only gated bash; other tools run live.
+--approval <decision>  approve (default), reject, or comment:<text>
+--mock-model <model>   Model fabricating responses; or set AGENTUSE_MOCK_MODEL
+--no-code-mode         Disable code_exec for comparison
 ```
 
-Plus the common run options (`--quiet`, `--debug`, `--no-code-mode`, `--no-tty`, `--compact`, `--timeout`, `-C`, `--env-file`, `-m/--model`, `--json`).
+### Result options
 
-```bash
-agentuse test my-agent.agentuse                          # adaptive scope, auto-approve
-agentuse test my-agent.agentuse --approval reject        # exercise the cleanup branch
-agentuse test my-agent.agentuse --scope all              # fabricate everything
+```text
+--session <id>          Required real source session; finished or awaiting approval
+--selector-model <m>    Evidence selector on first use; defaults to the agent model
+--judge <agent>         Optional local agent defining quality criteria, run without tools
 ```
 
-**Gated scope is the closed-loop testing mode**: only the bash commands matching the agent's [`tools.bash.gated`](/guides/approval-gates) patterns (the irreversible subset the author already fenced off) are fabricated, and the gates guarding them auto-approve. Every other tool (reads, non-gated bash, MCP, skills) runs **for real**, so the agent grounds itself in real project state. The run completes end-to-end, unattended, with zero irreversible side effects, and the session log shows the full gate flow (the `await_human` call with its `changes[]`, the deterministic approval, the fabricated command result) for review.
+Result tests reuse the first validated evidence selection for the source session.
+They load current instructions and explicit read-only reference files. They do
+not execute workflow tools or expose the old draft to the writer or judge.
+Without a judge, `generated` means comparison available, not quality passed.
+With a judge, `passed` means the new result meets its criteria, not proof of
+improvement. `failed`, `incomplete`, and `error` return exit code 1; `generated`
+and `passed` return 0. Reports include the evidence path and reference hashes.
 
-- **Stores are isolated under mock**: reads are seeded by copying the real store, writes land in `<projectRoot>/.agentuse/store-mock/<timestamp>-<pid>/` (kept for inspection), and the real store, including the reserved `metrics` store behind dashboards, is never touched.
-- **Test runs stay out of the ops views**: mock sessions are excluded from the serve home dashboard (latest results, failure triage), agent health/sparklines, and the sessions list by default, and they never fire push notifications. Flip the sessions view's "mock runs" filter to `shown`/`only mock` (API: `?mock=include|only`) to see them; a mock session's detail page is always reachable by id.
-- In the effect WAL, a fabricated gated command has a `lease-approved` entry but **no** `bash-spawn` entry; that absence is the audit signal it never executed.
-- An agent with no `tools.bash.gated` patterns under gated scope gets a warning: nothing is mocked, everything runs real (with gates auto-resolved).
+Both modes accept `--quiet`, `--debug`, `--no-tty`, `--compact`, `--timeout`,
+`-C`, `--env-file`, `--model`, and `--json`. Put options after the mode.
 
-<Warning>
-  Only gated **bash** commands are fabricated under gated scope. Effectful MCP tools or channel posts still run for real; pair with a scratch copy of the project when the agent writes through those. And a fabricated command changes nothing on disk, so a later real command that checks its effect (e.g. `git log` after a fabricated `git push`) will see the unchanged state.
-</Warning>
+```bash
+agentuse test workflow reply.agentuse --approval reject
+agentuse test result reply.agentuse --session <id>
+agentuse test result reply.agentuse --session <id> --judge quality.agentuse --json
+```
+
+Compatibility: `test <agent> [prompt...]` retains adaptive mocking, and
+`test <agent> --replay <id>` retains strict recorded-call replay. Use `./workflow`
+or `./result` to refer to files whose names collide with the new subcommands.
+
+See [Testing agents](/guides/testing-agents) for evidence selection, isolation,
+limitations, approval simulation, and the complete workflow.
+
 
 ### Full mock (`--scope all`, or `run --mock`)
 
@@ -1485,7 +1501,8 @@ AgentUse currently supports these commands:
 
 ```bash
 agentuse run <file> [prompt...]          # Run an agent with optional prompt
-agentuse test <file> [prompt...]         # Validate an agent in mock mode (no real side effects)
+agentuse test workflow <file>           # Check steps with simulated tool responses
+agentuse test result <file> --session <id> # Compare results using a past job’s evidence
 agentuse serve [options]                 # Start the HTTP daemon to run agents via API
 agentuse serve ps [--json]               # Show the running serve daemon
 agentuse serve schedules [pid] [--json]  # List schedules the running daemon is tracking

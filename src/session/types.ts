@@ -40,6 +40,8 @@ export interface SessionInfo {
   config: {
     /** Recorded-input test provenance. Never a resumable production session. */
     replaySourceSessionId?: string;
+    /** Fixed-evidence result test; never resumable as a live run. */
+    resultSourceSessionId?: string;
     timeout?: number;                // Timeout in seconds
     maxSteps?: number;               // Max steps configured
     mcpServers?: string[];           // MCP server names (keys from mcpServers object)
