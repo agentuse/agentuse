@@ -35,11 +35,24 @@ describe('autonomous agent system prompt', () => {
     expect(enabled).toContain('reading multiple records and then filtering, joining, sorting, selecting, branching, batching, or aggregating them');
     expect(enabled).toContain('Call a tool directly only for one standalone operation');
     expect(enabled).toContain('Return one compact code_exec result instead of carrying intermediate tool output through model context');
+    expect(enabled).toContain('capped at 30,720 bytes before it reaches you');
     expect(enabled).toContain('Never return raw list results or whole records');
     expect(enabled).toContain('return one sample record and a key list');
     expect(enabled).toContain('Do not create or ask the user to maintain a helper script');
     expect(disabled).not.toContain('Tool composition:');
     expect(disabled).not.toContain('code_exec');
+  });
+
+  it('quotes the configured tool output cap in the Code Mode guidance', () => {
+    const previous = process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES;
+    process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES = '4096';
+    try {
+      const prompt = buildAutonomousAgentPrompt('Monday, July 29, 2026', false, true);
+      expect(prompt).toContain('capped at 4,096 bytes before it reaches you');
+    } finally {
+      if (previous === undefined) delete process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES;
+      else process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES = previous;
+    }
   });
 
   // Final responses should be direct without turning the system prompt into a
