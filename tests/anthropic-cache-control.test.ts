@@ -167,6 +167,11 @@ describe('executeAgentCore Anthropic cache control', () => {
         passive_reference: {
           description: 'Provider-owned passive tool',
         } as any,
+        transport_sensitive: {
+          description: 'Return provider-native content',
+          execute: async () => ({ output: 'text' }),
+          toModelOutput: ({ output }: any) => ({ type: 'json', value: output }),
+        } as any,
         await_human: {
           description: 'Wait for a human',
           execute: async () => ({ approved: true }),
@@ -187,10 +192,12 @@ describe('executeAgentCore Anthropic cache control', () => {
       'code_exec',
       'passive_reference',
       'requires_approval',
+      'transport_sensitive',
     ]);
     expect(streamConfig.tools.code_exec.description).toContain('inventory_read');
     expect(streamConfig.tools.code_exec.description).not.toContain('Read inventory');
     expect(streamConfig.tools.code_exec.description).not.toContain('requires_approval');
+    expect(streamConfig.tools.code_exec.description).toContain('transport_sensitive');
   });
 
   it('does not accumulate cache breakpoints when stamped messages are fed back through prepareStep', async () => {

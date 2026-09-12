@@ -1541,6 +1541,8 @@ describe('Code Mode', () => {
     expect(tool.description).toContain('URL, Intl, locale-aware formatting, and host timezone services are unavailable');
     expect(tool.description).toContain('Dynamic code construction through eval or Function constructors is unavailable');
     expect(tool.description).toContain('When the user asks for a shell artifact, commands or scripts may contain the calculations the artifact itself needs');
+    expect(tool.description).toContain('including when the program needs only one JSON tool call');
+    expect(tool.description).toContain('transport-sensitive tool may also remain separately visible');
   });
 
   it('keeps untrusted provider output schemas unknown', () => {

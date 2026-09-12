@@ -28,10 +28,12 @@ return {
 ```
 
 There is no frontmatter switch. The guest receives functions only for tools
-already resolved from the agent's `.agentuse` configuration. Each call uses the
-same input object as the direct tool and passes through the runtime dispatcher,
-including schema validation, plugin policy, mock isolation, effect WAL, and
-session tracing.
+already resolved from the agent's `.agentuse` configuration. Eligible JSON
+tools are normally hidden from the top-level tool list and called through
+`code_exec`, including when the program needs only one tool call. Each nested
+call uses the same input object as the direct tool and passes through the
+runtime dispatcher, including schema validation, plugin policy, mock isolation,
+effect WAL, and session tracing.
 
 Before any nested tool starts, the runtime strictly type-checks the program
 against declarations generated from the effective tool schemas. AgentUse-owned
@@ -61,10 +63,13 @@ direct-only. Binary media results also stay on the direct path because the guest
 bridge is JSON-only. Programs are bounded by source, memory, stack, time,
 output, nested-call, and concurrency limits.
 
-Use a direct tool call for one operation. Use Code Mode when intermediate data
-or mechanical control flow would otherwise consume repeated model turns. Code
-Mode does not make several store calls atomic; use `store_claim` or
-`store_update_if` for concurrent state transitions.
+Use Code Mode for eligible JSON tools, including a single call. Call a
+separately visible tool directly when it requires suspension, approval, process
+execution, subagent delegation, binary or provider-native result delivery, or
+outcome submission. A transport-sensitive tool can appear on both paths: use
+its Code Mode form for JSON/text composition and its direct form only for the
+special result delivery. Code Mode does not make several store calls atomic;
+use `store_claim` or `store_update_if` for concurrent state transitions.
 
 ### Controlled comparison and rollback
 

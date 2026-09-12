@@ -1106,7 +1106,13 @@ async function* executeAgentAttempt(
       CODE_EXEC_TOOL,
       agent.config.intent === false ? codeExecTool : injectIntentParam(CODE_EXEC_TOOL, codeExecTool)
     );
-    codeModeHiddenTools = new Set(codeModeToolNames);
+    // Keep transport-sensitive tools visible on the direct path as well. Their
+    // JSON/text results can still participate in Code Mode, but toModelOutput
+    // may be required to deliver binary media or provider-native content that
+    // cannot cross the QuickJS JSON bridge.
+    codeModeHiddenTools = new Set(codeModeToolNames.filter(
+      name => typeof codeModeTools[name]?.toModelOutput !== 'function'
+    ));
   }
   const dispatchingTools = dispatcher.modelTools();
   for (const name of codeModeHiddenTools) delete dispatchingTools[name];

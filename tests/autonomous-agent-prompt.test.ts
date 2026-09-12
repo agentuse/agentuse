@@ -32,15 +32,18 @@ describe('autonomous agent system prompt', () => {
     const disabled = buildAutonomousAgentPrompt('Monday, July 29, 2026', false, false);
 
     expect(enabled).toContain('you MUST put those calls and the computation inside one code_exec program');
-    expect(enabled).toContain('It is a general-purpose calculator');
-    expect(enabled).toContain('Use code_exec only when it is included in the tools for the current turn');
+    expect(enabled).toContain('It is also a general-purpose calculator');
+    expect(enabled).toContain('Use code_exec whenever it is included in the tools for the current turn');
+    expect(enabled).toContain('including a single JSON call');
+    expect(enabled).toContain('most are deliberately hidden as top-level tools');
     expect(enabled).toContain('Never compute derived values in prose, in your head, or in bash');
     expect(enabled).toContain('do not claim exact integer precision beyond Number.MAX_SAFE_INTEGER');
     expect(enabled).toContain('Treat date-only values as UTC');
     expect(enabled).toContain('do not rely on locale, timezone, Intl, URL');
     expect(enabled).toContain('reading multiple records and then filtering, joining, sorting, selecting, branching, batching, or aggregating them');
     expect(enabled).toContain('Call a tool directly only when it is separately visible');
-    expect(enabled).toContain('require suspension, approval, binary handling, provider-side execution, or outcome submission');
+    expect(enabled).toContain('process execution, subagent delegation, binary or provider-native result delivery');
+    expect(enabled).toContain('transport-sensitive tool may also appear in the Code Mode catalog');
     expect(enabled).toContain('Any model-facing result over 30,720 bytes is replaced by a shape summary');
     expect(enabled).toContain('never raw lists or whole records');
     expect(enabled).toContain('Completed JSON nested calls within the read limits are listed as reusableResults');
