@@ -225,6 +225,9 @@ describe('agent loop transport-drop handling', () => {
   });
 
   test('a drop in a later step resumes from its checkpoint without replaying a settled tool', async () => {
+    const previousCodeMode = process.env.AGENTUSE_CODE_MODE;
+    process.env.AGENTUSE_CODE_MODE = '0';
+    try {
     let modelCalls = 0;
     let toolCalls = 0;
     const prompts: unknown[] = [];
@@ -262,6 +265,10 @@ describe('agent loop transport-drop handling', () => {
     expect(errorMessages(chunks)).toEqual([]);
     expect(JSON.stringify(prompts[2])).toContain('settled result');
     expect(textOf(chunks)).toBe('recovered');
+    } finally {
+      if (previousCodeMode === undefined) delete process.env.AGENTUSE_CODE_MODE;
+      else process.env.AGENTUSE_CODE_MODE = previousCodeMode;
+    }
   });
 
   test('a cancelled run still reports cancellation, not a transport retry', async () => {

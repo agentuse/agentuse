@@ -54,7 +54,13 @@ import { completeApprovalValueDisplay, type CompleteApprovalValueDisplay } from 
 import { getSessionUrl } from '../tools/await-human';
 import type { CompactionReason, SessionManager } from '../session';
 import { ToolDispatchDeniedError, ToolDispatcher, type ToolOutputArtifactWriter } from './tool-dispatcher';
-import { CODE_EXEC_TOOL, createCodeExecTool, isCodeModeEnabled, type NestedToolTrace } from './code-mode';
+import {
+  CODE_EXEC_TOOL,
+  codeModeEligibleToolNames,
+  createCodeExecTool,
+  isCodeModeEnabled,
+  type NestedToolTrace,
+} from './code-mode';
 import { injectIntentParam } from './tool-intent';
 import { stripInlineMediaData } from '../tools/media.js';
 import { messagesContainInlineMedia } from '../session/media-cache.js';
@@ -1041,12 +1047,15 @@ async function* executeAgentAttempt(
       rejected.toolCallId,
     );
   }
+  let codeModeHiddenTools = new Set<string>();
   if (isCodeModeEnabled() && !options.replay && dispatcher.get(CODE_EXEC_TOOL) === undefined) {
     const traceHooks = buildCodeModeTraceHooks(options);
+    const codeModeTools = dispatcher.codeModeTools();
+    const codeModeToolNames = codeModeEligibleToolNames(Object.keys(codeModeTools));
     const codeExecTool = createCodeExecTool({
       dispatcher,
-      toolNames: dispatcher.codeModeToolNames(),
-      toolDefinitions: dispatcher.codeModeTools(),
+      toolNames: codeModeToolNames,
+      toolDefinitions: codeModeTools,
       abortSignal: effectiveAbortSignal,
       ...traceHooks,
     });
@@ -1056,8 +1065,10 @@ async function* executeAgentAttempt(
       CODE_EXEC_TOOL,
       agent.config.intent === false ? codeExecTool : injectIntentParam(CODE_EXEC_TOOL, codeExecTool)
     );
+    codeModeHiddenTools = new Set(codeModeToolNames);
   }
   const dispatchingTools = dispatcher.modelTools();
+  for (const name of codeModeHiddenTools) delete dispatchingTools[name];
   const modelFacingTools = usesAnthropicCacheControl
     ? applyAnthropicCacheControlToTools(dispatchingTools)
     : dispatchingTools;

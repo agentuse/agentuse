@@ -275,6 +275,9 @@ describe('agent loop stall handling', () => {
   });
 
   test('a silent later model step retries from its checkpoint without replaying completed tools', async () => {
+    const previousCodeMode = process.env.AGENTUSE_CODE_MODE;
+    process.env.AGENTUSE_CODE_MODE = '0';
+    try {
     process.env[ENV_VAR] = '0.15';
     let modelCalls = 0;
     let toolCalls = 0;
@@ -332,6 +335,10 @@ describe('agent loop stall handling', () => {
     const finalUsage = chunks.filter((chunk) => chunk.type === 'finish').at(-1)?.usage;
     expect(finalUsage?.inputTokens).toBe(20);
     expect(finalUsage?.outputTokens).toBe(10);
+    } finally {
+      if (previousCodeMode === undefined) delete process.env.AGENTUSE_CODE_MODE;
+      else process.env.AGENTUSE_CODE_MODE = previousCodeMode;
+    }
   });
 
   test('a silent stream is retried, then fails naming the stall', async () => {

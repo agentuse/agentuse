@@ -8,6 +8,17 @@ let typeScriptPromise: Promise<typeof import('typescript')> | undefined;
 // Standard library sources never change within a process; read each once.
 const libSourceCache = new Map<string, Promise<string>>();
 
+export interface CodeModeSourceLocation {
+  start: number;
+  end: number;
+  line: number;
+  column: number;
+}
+
+export interface CodeModePreflightResult {
+  locations: CodeModeSourceLocation[];
+}
+
 // Deliberately self-contained: the production bundle has no separate source
 // file beside it that a child process could import.
 const TYPECHECK_CHILD_SOURCE = String.raw`
@@ -20,14 +31,24 @@ try {
   const ts = await import(pathToFileURL(typeScriptPath).href);
   const files = new Map(); let bytes = 0;
   const add = (name, text) => { bytes += Buffer.byteLength(text, 'utf8'); if (bytes > maxBytes) throw new Error('Code Mode TypeScript preflight exceeds the memory allowance'); files.set(name, text); };
-  add('user.ts', 'async function __agentusePreflight() {\n' + source + '\n}'); add('guest.d.ts', declarations);
+  const sourcePrefix = 'async function __agentusePreflight() {\n';
+  add('user.ts', sourcePrefix + source + '\n}'); add('guest.d.ts', declarations);
   const loadLib = async (name) => { if (files.has(name)) return; if (!/^lib\.[a-z0-9.]+\.d\.ts$/.test(name)) throw new Error('Invalid TypeScript preflight standard library'); const text = await readFile(join(libDir, name), 'utf8'); add(name, text); for (const reference of ts.preProcessFile(text).libReferenceDirectives) await loadLib('lib.' + reference.fileName + '.d.ts'); };
   await loadLib('lib.es2022.d.ts');
   const host = { getSourceFile: (name, target) => { const text = files.get(name); return text === undefined ? undefined : ts.createSourceFile(name, text, target, true); }, getDefaultLibFileName: () => 'lib.es2022.d.ts', writeFile: () => {}, getCurrentDirectory: () => '', getDirectories: () => [], fileExists: name => files.has(name), readFile: name => files.get(name), getCanonicalFileName: name => name, useCaseSensitiveFileNames: () => true, getNewLine: () => '\n' };
   const program = ts.createProgram([...files.keys()], { strict: true, noEmit: true, noLib: true, noResolve: true, types: [], target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, skipLibCheck: true }, host);
+  const userFile = program.getSourceFile('user.ts'); let detachedAsyncIife;
+  const unwrap = node => { while (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isTypeAssertionExpression(node) || ts.isNonNullExpression(node) || (ts.isSatisfiesExpression && ts.isSatisfiesExpression(node))) node = node.expression; return node; };
+  const visit = node => { if (detachedAsyncIife) return; if (ts.isCallExpression(node)) { const callee = unwrap(node.expression); if ((ts.isArrowFunction(callee) || ts.isFunctionExpression(callee)) && callee.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword)) { let current = node; let parent = current.parent; while (parent && (ts.isParenthesizedExpression(parent) || ts.isAsExpression(parent) || ts.isTypeAssertionExpression(parent) || ts.isNonNullExpression(parent) || (ts.isSatisfiesExpression && ts.isSatisfiesExpression(parent)))) { current = parent; parent = parent.parent; } if (parent && (ts.isVoidExpression(parent) || ts.isExpressionStatement(parent))) detachedAsyncIife = node; } } ts.forEachChild(node, visit); };
+  if (userFile) visit(userFile);
+  if (detachedAsyncIife && userFile) { const point = userFile.getLineAndCharacterOfPosition(detachedAsyncIife.getStart(userFile)); throw new Error('Code Mode TypeScript preflight failed: agentuse-code-mode:user.ts:' + Math.max(1, point.line) + ':' + (point.character + 1) + ': Detached async work can hide tool failures; await or return this async call.'); }
   const failure = ts.getPreEmitDiagnostics(program).find(diagnostic => diagnostic.category === ts.DiagnosticCategory.Error);
   if (failure) { const point = failure.file && failure.start !== undefined ? failure.file.getLineAndCharacterOfPosition(failure.start) : undefined; const location = failure.file?.fileName === 'user.ts' && point ? 'agentuse-code-mode:user.ts:' + Math.max(1, point.line) + ':' + (point.character + 1) + ': ' : ''; throw new Error('Code Mode TypeScript preflight failed: ' + location + ts.flattenDiagnosticMessageText(failure.messageText, '\n')); }
-  process.stdout.write('{}');
+  const locations = []; const seenLocations = new Set();
+  const addLocation = expression => { if (!userFile || !expression) return; const start = expression.getStart(userFile) - sourcePrefix.length; const end = expression.end - sourcePrefix.length; if (start < 0 || end > source.length || start >= end) return; const key = start + ':' + end; if (seenLocations.has(key)) return; seenLocations.add(key); const point = userFile.getLineAndCharacterOfPosition(expression.getStart(userFile)); locations.push({ start, end, line: Math.max(1, point.line), column: point.character + 1 }); };
+  const collectLocations = node => { if (ts.isExpressionStatement(node) || ts.isReturnStatement(node) || ts.isThrowStatement(node) || ts.isIfStatement(node) || ts.isWhileStatement(node) || ts.isDoStatement(node) || ts.isSwitchStatement(node)) addLocation(node.expression); else if (ts.isVariableDeclaration(node) || ts.isPropertyDeclaration(node) || ts.isPropertyAssignment(node) || ts.isParameter(node)) addLocation(node.initializer); else if (ts.isForStatement(node)) { if (node.initializer && ts.isExpression(node.initializer)) addLocation(node.initializer); addLocation(node.condition); addLocation(node.incrementor); } else if (ts.isForInStatement(node) || ts.isForOfStatement(node)) addLocation(node.expression); else if (ts.isArrowFunction(node) && !ts.isBlock(node.body)) addLocation(node.body); ts.forEachChild(node, collectLocations); };
+  if (userFile) collectLocations(userFile);
+  process.stdout.write(JSON.stringify({ locations }));
 } catch (error) { process.stdout.write(JSON.stringify({ error: error instanceof Error ? error.message : String(error) })); }
 `;
 
@@ -40,7 +61,7 @@ export async function typecheckCodeMode(
   declarations: string,
   maxBytes: number,
   abortSignal?: AbortSignal
-): Promise<void> {
+): Promise<CodeModePreflightResult> {
   if (abortSignal?.aborted) {
     throw abortSignal.reason instanceof Error ? abortSignal.reason : new Error('Code Mode execution aborted');
   }
@@ -50,7 +71,7 @@ export async function typecheckCodeMode(
   const child = spawn(process.execPath, [`--max-old-space-size=${memoryMb}`, '--input-type=module', '--eval', TYPECHECK_CHILD_SOURCE], {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<CodeModePreflightResult>((resolve, reject) => {
     let settled = false;
     let stdout = '';
     let stderr = '';
@@ -61,12 +82,12 @@ export async function typecheckCodeMode(
       child.kill();
       finish(abortSignal?.reason instanceof Error ? abortSignal.reason : new Error('Code Mode execution aborted'));
     };
-    const finish = (error?: Error): void => {
+    const finish = (error?: Error, result?: CodeModePreflightResult): void => {
       if (settled) return;
       settled = true;
       cleanup();
       if (error) reject(error);
-      else resolve();
+      else resolve(result ?? { locations: [] });
     };
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
@@ -79,8 +100,10 @@ export async function typecheckCodeMode(
         return;
       }
       try {
-        const message = JSON.parse(stdout) as { error?: string };
-        finish(message.error ? new Error(message.error) : undefined);
+        const message = JSON.parse(stdout) as { error?: string; locations?: CodeModeSourceLocation[] };
+        finish(message.error ? new Error(message.error) : undefined, {
+          locations: Array.isArray(message.locations) ? message.locations : [],
+        });
       } catch (error) {
         finish(new Error(`Code Mode TypeScript preflight worker returned invalid output: ${toErrorMessage(error)}`));
       }
@@ -161,6 +184,57 @@ export async function typecheckCodeModeLocal(
     },
     host
   );
+  const userFile = program.getSourceFile('user.ts');
+  let detachedAsyncIife: import('typescript').CallExpression | undefined;
+  const unwrapExpression = (node: import('typescript').Expression): import('typescript').Expression => {
+    while (
+      ts.isParenthesizedExpression(node)
+      || ts.isAsExpression(node)
+      || ts.isTypeAssertionExpression(node)
+      || ts.isNonNullExpression(node)
+      || ts.isSatisfiesExpression(node)
+    ) node = node.expression;
+    return node;
+  };
+  const findDetachedAsyncIife = (node: import('typescript').Node): void => {
+    if (detachedAsyncIife) return;
+    if (ts.isCallExpression(node)) {
+      const callee = unwrapExpression(node.expression);
+      if (
+        (ts.isArrowFunction(callee) || ts.isFunctionExpression(callee))
+        && callee.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+      ) {
+        let current: import('typescript').Node = node;
+        let parent = current.parent;
+        while (
+          parent
+          && (
+            ts.isParenthesizedExpression(parent)
+            || ts.isAsExpression(parent)
+            || ts.isTypeAssertionExpression(parent)
+            || ts.isNonNullExpression(parent)
+            || ts.isSatisfiesExpression(parent)
+          )
+        ) {
+          current = parent;
+          parent = parent.parent;
+        }
+        if (parent && (ts.isVoidExpression(parent) || ts.isExpressionStatement(parent))) {
+          detachedAsyncIife = node;
+          return;
+        }
+      }
+    }
+    ts.forEachChild(node, findDetachedAsyncIife);
+  };
+  if (userFile) findDetachedAsyncIife(userFile);
+  if (detachedAsyncIife && userFile) {
+    const point = userFile.getLineAndCharacterOfPosition(detachedAsyncIife.getStart(userFile));
+    throw new Error(
+      `Code Mode TypeScript preflight failed: agentuse-code-mode:user.ts:${Math.max(1, point.line)}:${point.character + 1}: `
+      + 'Detached async work can hide tool failures; await or return this async call.'
+    );
+  }
   const failure = ts.getPreEmitDiagnostics(program)
     .find(diagnostic => diagnostic.category === ts.DiagnosticCategory.Error);
   if (!failure) return;

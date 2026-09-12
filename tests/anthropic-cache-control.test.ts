@@ -133,7 +133,7 @@ describe('executeAgentCore Anthropic cache control', () => {
         name: 'no-code-mode',
         config: { model: 'anthropic:claude-haiku-4-5' },
       } as any,
-      { read_file: { description: 'Read a file' } as any },
+      { read_file: { description: 'Read a file', execute: async () => ({ ok: true }) } as any },
       {
         userMessage: 'Run without Code Mode',
         systemMessages: [{ role: 'system', content: 'static instructions' }],
@@ -146,6 +146,51 @@ describe('executeAgentCore Anthropic cache control', () => {
     const streamConfig = streamTextMock.mock.calls[0][0] as any;
     expect(streamConfig.tools.read_file).toBeDefined();
     expect(streamConfig.tools.code_exec).toBeUndefined();
+  });
+
+  it('hides executable catalog tools while retaining direct-only tools', async () => {
+    for await (const _ of executeAgentCore(
+      {
+        name: 'deferred-code-mode-catalog',
+        config: { model: 'anthropic:claude-haiku-4-5' },
+      } as any,
+      {
+        inventory_read: {
+          description: 'Read inventory',
+          execute: async () => ({ count: 1 }),
+        } as any,
+        requires_approval: {
+          description: 'Change inventory',
+          needsApproval: true,
+          execute: async () => ({ changed: true }),
+        } as any,
+        passive_reference: {
+          description: 'Provider-owned passive tool',
+        } as any,
+        await_human: {
+          description: 'Wait for a human',
+          execute: async () => ({ approved: true }),
+        } as any,
+      },
+      {
+        userMessage: 'Check inventory',
+        systemMessages: [{ role: 'system', content: 'static instructions' }],
+        maxSteps: 3,
+      },
+    )) {
+      // Consume the stream.
+    }
+
+    const streamConfig = streamTextMock.mock.calls[0][0] as any;
+    expect(Object.keys(streamConfig.tools).sort()).toEqual([
+      'await_human',
+      'code_exec',
+      'passive_reference',
+      'requires_approval',
+    ]);
+    expect(streamConfig.tools.code_exec.description).toContain('inventory_read');
+    expect(streamConfig.tools.code_exec.description).not.toContain('Read inventory');
+    expect(streamConfig.tools.code_exec.description).not.toContain('requires_approval');
   });
 
   it('does not accumulate cache breakpoints when stamped messages are fed back through prepareStep', async () => {
@@ -658,6 +703,7 @@ describe('executeAgentCore Anthropic cache control', () => {
   });
 
   it('persists oversized tool results while returning a bounded model-facing preview', async () => {
+    process.env.AGENTUSE_CODE_MODE = '0';
     process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES = '60';
     const fullOutput = `head-${'x'.repeat(2000)}-tail`;
     const rawResult = { output: fullOutput, metadata: { exitCode: 0 } };
@@ -719,6 +765,7 @@ describe('executeAgentCore Anthropic cache control', () => {
       expect(JSON.stringify(result)).not.toContain('/tmp/tool-output-verbose.json');
       expect(result.output.length).toBeLessThan(fullOutput.length);
     } finally {
+      delete process.env.AGENTUSE_CODE_MODE;
       delete process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES;
     }
   });

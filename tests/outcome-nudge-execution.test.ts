@@ -314,6 +314,9 @@ describe('missing-outcome recovery segment', () => {
 
 describe('direct tool approval contracts', () => {
   it('preserves a root transform that changes an object into a Date', async () => {
+    const previousCodeMode = process.env.AGENTUSE_CODE_MODE;
+    process.env.AGENTUSE_CODE_MODE = '0';
+    try {
     let executedInput: unknown;
     const rawInput = { iso: '2026-09-12T00:00:00.000Z' };
     streamTextMock.mockImplementation((config: any) => {
@@ -354,6 +357,10 @@ describe('direct tool approval contracts', () => {
     expect(executedInput).toBeInstanceOf(Date);
     expect((executedInput as Date).toISOString()).toBe(rawInput.iso);
     expect(rawInput).toEqual({ iso: '2026-09-12T00:00:00.000Z' });
+    } finally {
+      if (previousCodeMode === undefined) delete process.env.AGENTUSE_CODE_MODE;
+      else process.env.AGENTUSE_CODE_MODE = previousCodeMode;
+    }
   });
 
   it('applies plugin tool-call policy to a non-executable provider tool', async () => {

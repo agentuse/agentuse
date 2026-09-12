@@ -10,8 +10,11 @@ import {
   buildCodeModeToolContractsSync,
   codeModeDeclarations,
   codeModeQuickIndex,
+  codeModeVirtualDeclaration,
+  type CodeModeToolContract,
 } from './code-mode-contracts';
-import { typecheckCodeMode } from './code-mode-typecheck';
+import { typecheckCodeMode, type CodeModeSourceLocation } from './code-mode-typecheck';
+import { mapCodeModeStack } from './code-mode-source-map';
 
 export const CODE_EXEC_TOOL = 'code_exec';
 export const CODE_MODE_ENV = 'AGENTUSE_CODE_MODE';
@@ -29,6 +32,7 @@ export const DEFAULT_CODE_MODE_LIMITS = {
   inputCharsPerCall: 256_000,
   resultCharsPerCall: 1_000_000,
   outputChars: 1_000_000,
+  consoleOutputChars: 4_096,
   timeoutMs: 15_000,
   memoryBytes: 32 * 1024 * 1024,
   maxStackBytes: 512 * 1024,
@@ -41,11 +45,62 @@ export interface CodeModeLimits {
   inputCharsPerCall: number;
   resultCharsPerCall: number;
   outputChars: number;
+  consoleOutputChars: number;
   timeoutMs: number;
   memoryBytes: number;
   maxStackBytes: number;
   nestedCalls: number;
   concurrency: number;
+}
+
+export type CodeModeErrorCode =
+  | 'invalid_input'
+  | 'aborted'
+  | 'timeout'
+  | 'output_limit_exceeded'
+  | 'tool_execution'
+  | 'runtime_error'
+  | 'runtime_unavailable'
+  | 'internal_error';
+
+export type CodeModeOutputEntry =
+  | { type: 'text'; text: string }
+  | { type: 'json'; value: unknown };
+
+export interface CodeModeTelemetry {
+  catalogSize: number;
+  nestedCalls: number;
+  durationMs: number;
+  valueBytes: number;
+  outputBytes: number;
+  outputEntries: number;
+}
+
+export interface CodeModeCompletedResult {
+  status: 'completed';
+  value: unknown;
+  output?: CodeModeOutputEntry[];
+  telemetry: CodeModeTelemetry;
+}
+
+export interface CodeModeFailedResult {
+  status: 'failed';
+  error: { code: CodeModeErrorCode; message: string };
+  output?: CodeModeOutputEntry[];
+  telemetry: CodeModeTelemetry;
+}
+
+export class CodeModeExecutionError extends Error {
+  readonly code: CodeModeErrorCode;
+
+  constructor(readonly result: CodeModeFailedResult, options: { cause?: unknown } = {}) {
+    const trace = result.output?.length
+      ? `\nOutput before failure: ${JSON.stringify(result.output)}`
+      : '';
+    super(`Code Mode ${result.error.code}: ${result.error.message}${trace}`, options);
+    this.name = 'CodeModeExecutionError';
+    this.code = result.error.code;
+  }
 }
 
 export interface NestedToolTrace {
@@ -68,6 +123,8 @@ export interface CodeModeOptions {
   declarations?: string;
   /** Deferred catalog loading, kept inside the code_exec deadline. */
   loadDeclarations?: () => Promise<string>;
+  /** Deferred tool contracts used by preflight and the guest discovery API. */
+  loadContracts?: () => Promise<CodeModeToolContract[]>;
   /** Low-level test escape hatch. The model-facing code_exec tool never disables preflight. */
   typecheck?: boolean;
   parentCallId: string;
@@ -189,11 +246,45 @@ export function codeModeEligibleToolNames(names: Iterable<string>): string[] {
     .sort();
 }
 
-const compiledCodeCache = new Map<string, string>();
+interface CompiledCodeModeProgram {
+  code: string;
+  sourceMap: string;
+}
+
+class CodeModeGuestError extends Error {
+  constructor(message: string, readonly code: 'tool_execution' | 'runtime_error') {
+    super(message);
+    this.name = 'CodeModeGuestError';
+  }
+}
+
+const compiledCodeCache = new Map<string, CompiledCodeModeProgram>();
 const MAX_COMPILED_CACHE_ENTRIES = 128;
 
-async function compileTypeScript(source: string): Promise<string> {
-  const key = createHash('sha256').update(source).digest('hex');
+function instrumentCodeModeSource(
+  source: string,
+  locations: readonly CodeModeSourceLocation[],
+  locationVariable: string,
+): string {
+  const edits = locations.flatMap(location => [
+    { position: location.start, text: `(${locationVariable} = "${location.line}:${location.column}", (` },
+    { position: location.end, text: '))' },
+  ]).sort((left, right) => right.position - left.position || right.text.length - left.text.length);
+  let instrumented = source;
+  for (const edit of edits) {
+    instrumented = instrumented.slice(0, edit.position) + edit.text + instrumented.slice(edit.position);
+  }
+  return instrumented;
+}
+
+async function compileTypeScript(
+  source: string,
+  locations: readonly CodeModeSourceLocation[],
+): Promise<CompiledCodeModeProgram> {
+  let locationVariable = '__agentuseLocation';
+  while (source.includes(locationVariable)) locationVariable += '_';
+  const instrumented = instrumentCodeModeSource(source, locations, locationVariable);
+  const key = createHash('sha256').update(instrumented).digest('hex');
   const cached = compiledCodeCache.get(key);
   if (cached) {
     compiledCodeCache.delete(key);
@@ -201,25 +292,32 @@ async function compileTypeScript(source: string): Promise<string> {
     return cached;
   }
 
-  const wrapped = `(async function () {\n${source}\n})()`;
+  // QuickJS native async errors report the enclosing function rather than the
+  // throwing expression. Preflight therefore instruments expression roots and
+  // the wrapper carries that submitted-source location into the error.
+  const wrapped = `(async function () { let ${locationVariable} = "1:1"; try {\n${instrumented}\n} catch (__agentuseError) {\n` +
+    `  if (__agentuseError && (typeof __agentuseError === "object" || typeof __agentuseError === "function")) {\n` +
+    `    const __agentuseMessage = String(__agentuseError.message || __agentuseError);\n` +
+    `    throw new Error("__AGENTUSE_ERROR_ENVELOPE__" + JSON.stringify({ message: __agentuseMessage, location: ${locationVariable}, stack: String(__agentuseError.stack || "") }));\n` +
+    `  }\n  throw __agentuseError;\n} })()`;
   const compiled = await transform(wrapped, {
     loader: 'ts',
     target: 'es2022',
-    // Lower only async functions to esbuild's Promise-based generator helper.
-    // This keeps every guest async continuation on the instrumented Promise
-    // below without rejecting ES2022 syntax such as BigInt literals. QuickJS
-    // does not expose its host rejection tracker through this binding.
-    supported: { 'async-await': false },
+    // Keep native async frames so runtime failures map back to the submitted
+    // TypeScript line. Nested tool promises still use TrackedPromise below,
+    // which owns unhandled nested-call detection independently.
     format: 'esm',
-    sourcemap: false,
+    sourcemap: 'external',
+    sourcefile: 'agentuse-code-mode:wrapped.ts',
     legalComments: 'none',
   });
-  compiledCodeCache.set(key, compiled.code);
+  const program = { code: compiled.code, sourceMap: compiled.map };
+  compiledCodeCache.set(key, program);
   if (compiledCodeCache.size > MAX_COMPILED_CACHE_ENTRIES) {
     const oldest = compiledCodeCache.keys().next();
     if (!oldest.done) compiledCodeCache.delete(oldest.value);
   }
-  return compiled.code;
+  return program;
 }
 
 function jsonStringify(value: unknown, label: string): string {
@@ -268,10 +366,116 @@ function inspectBinaryMedia(value: unknown): BinaryInspection {
   }
 }
 
-function throwGuestError(context: QuickJSContext, errorHandle: QuickJSHandle): never {
+function throwGuestError(
+  context: QuickJSContext,
+  errorHandle: QuickJSHandle,
+  sourceMap?: string,
+): never {
   const dumped = context.dump(errorHandle);
-  const message = safeErrorMessage(dumped);
-  throw new Error(`Code Mode failed: ${message}`);
+  const rawMessage = safeErrorMessage(dumped);
+  const envelopeMarker = '__AGENTUSE_ERROR_ENVELOPE__';
+  let message = rawMessage;
+  let parsedSourceLocation: string | undefined;
+  let stack: string | undefined;
+  if (rawMessage.startsWith(envelopeMarker)) {
+    try {
+      const envelope = JSON.parse(rawMessage.slice(envelopeMarker.length)) as {
+        message?: unknown;
+        location?: unknown;
+        stack?: unknown;
+      };
+      if (typeof envelope.message === 'string') message = envelope.message;
+      if (typeof envelope.location === 'string') parsedSourceLocation = envelope.location;
+      if (typeof envelope.stack === 'string') stack = envelope.stack;
+    } catch {
+      // Preserve the raw QuickJS diagnostic if the envelope is malformed.
+    }
+  }
+  const sourceLocation = parsedSourceLocation && /^\d+:\d+$/.test(parsedSourceLocation)
+    ? parsedSourceLocation
+    : undefined;
+  stack ??= dumped && typeof dumped === 'object' && typeof (dumped as { stack?: unknown }).stack === 'string'
+    ? (dumped as { stack: string }).stack
+    : undefined;
+  const mappedStack = stack && sourceMap ? mapCodeModeStack(stack, sourceMap) : stack;
+  const locationFrame = sourceLocation ? `at <anonymous> (agentuse-code-mode:user.ts:${sourceLocation})` : undefined;
+  const trace = locationFrame ?? mappedStack?.trim();
+  const toolErrorMarker = '__AGENTUSE_TOOL_ERROR__';
+  const isToolError = message.startsWith(toolErrorMarker);
+  const cleanMessage = isToolError ? message.slice(toolErrorMarker.length) : message;
+  throw new CodeModeGuestError(
+    `Code Mode failed: ${cleanMessage}${trace ? `\n${trace}` : ''}`,
+    isToolError ? 'tool_execution' : 'runtime_error',
+  );
+}
+
+function classifyCodeModeError(error: unknown, signal: AbortSignal): CodeModeErrorCode {
+  if (error instanceof CodeModeExecutionError) return error.code;
+  if (error instanceof CodeModeGuestError) return error.code;
+  const message = safeErrorMessage(error).toLowerCase();
+  if (message.includes('timed out')) return 'timeout';
+  if (message.includes('output exceeds') || message.includes('size limit')) return 'output_limit_exceeded';
+  if (message.includes('typescript preflight') || message.includes('source exceeds') || message.includes('dynamic code')) return 'invalid_input';
+  if (message.includes('nested tool') || message.includes("result from '") || error instanceof ToolDispatchPostEffectError) return 'tool_execution';
+  if (message.startsWith('code mode failed:')) return 'runtime_error';
+  if (signal.aborted && !safeErrorMessage(signal.reason).includes('execution finished')) return 'aborted';
+  if (message.includes('quickjs') || message.includes('guest heap')) return 'runtime_unavailable';
+  return 'internal_error';
+}
+
+function serializedSize(value: unknown, label: string): { chars: number; bytes: number } {
+  const serialized = jsonStringify(value, label);
+  return { chars: serialized.length, bytes: Buffer.byteLength(serialized, 'utf8') };
+}
+
+function fitCodeModeOutput(
+  value: unknown,
+  output: readonly CodeModeOutputEntry[],
+  limit: number,
+  valuePresent = true,
+): { output?: CodeModeOutputEntry[]; valueBytes: number; outputBytes: number } {
+  const valueSize = valuePresent ? serializedSize(value, 'Code Mode output') : { chars: 0, bytes: 0 };
+  if (valueSize.chars > limit) {
+    throw new Error(`Code Mode output exceeds ${limit.toLocaleString('en-US')} characters`);
+  }
+  let remaining = Math.max(0, limit - valueSize.chars - 256);
+  let outputBytes = 0;
+  const kept: CodeModeOutputEntry[] = [];
+  let omittedEntries = 0;
+  let omittedBytes = 0;
+  for (const entry of output) {
+    const size = serializedSize(entry, 'Code Mode emitted output');
+    if (size.chars <= remaining) {
+      kept.push(entry);
+      remaining -= size.chars;
+      outputBytes += size.bytes;
+    } else {
+      omittedEntries++;
+      omittedBytes += size.bytes;
+    }
+  }
+  if (omittedEntries > 0) {
+    while (true) {
+      const marker: CodeModeOutputEntry = {
+        type: 'text',
+        text: `[output truncated: ${omittedEntries} entries, ${omittedBytes} bytes omitted]`,
+      };
+      const markerSize = serializedSize(marker, 'Code Mode truncation marker');
+      if (markerSize.chars <= remaining) {
+        kept.push(marker);
+        outputBytes += markerSize.bytes;
+        break;
+      }
+      const removed = kept.pop();
+      if (!removed) break;
+      const removedSize = serializedSize(removed, 'Code Mode emitted output');
+      remaining += removedSize.chars;
+      outputBytes -= removedSize.bytes;
+      omittedEntries++;
+      omittedBytes += removedSize.bytes;
+    }
+  }
+  return { ...(kept.length > 0 && { output: kept }), valueBytes: valueSize.bytes, outputBytes };
 }
 
 function abortError(signal: AbortSignal): Error {
@@ -294,13 +498,17 @@ function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> 
   });
 }
 
-/** Execute model-authored TypeScript in a fresh QuickJS heap. */
-export async function executeCodeMode(source: string, options: CodeModeOptions): Promise<unknown> {
+/** Execute model-authored TypeScript and retain its structured diagnostics. */
+export async function executeCodeModeDetailed(
+  source: string,
+  options: CodeModeOptions,
+): Promise<CodeModeCompletedResult> {
+  const executionStartedAt = Date.now();
   const limits: CodeModeLimits = { ...DEFAULT_CODE_MODE_LIMITS, ...options.limits };
-  if (source.length > limits.sourceChars) {
-    throw new Error(`Code Mode source exceeds ${limits.sourceChars.toLocaleString('en-US')} characters`);
-  }
-
+  const catalogSize = codeModeEligibleToolNames(options.toolNames).length;
+  let callCount = 0;
+  let capturedOutput: CodeModeOutputEntry[] = [];
+  const completedCalls: CompletedNestedCall[] = [];
   // Start the deadline before declaration loading and typechecking. These are
   // host-side work, but they are still part of a code_exec invocation.
   const timeoutController = new AbortController();
@@ -318,28 +526,56 @@ export async function executeCodeMode(source: string, options: CodeModeOptions):
       throw abortError(signal);
     }
   };
+  const asExecutionError = (error: unknown): CodeModeExecutionError => {
+    if (error instanceof CodeModeExecutionError) return error;
+    const cause = partialEffectsError(error, completedCalls);
+    const fitted = fitCodeModeOutput(undefined, capturedOutput, limits.outputChars, false);
+    return new CodeModeExecutionError({
+      status: 'failed',
+      error: { code: classifyCodeModeError(error, signal), message: cause.message },
+      ...(fitted.output && { output: fitted.output }),
+      telemetry: {
+        catalogSize,
+        nestedCalls: callCount,
+        durationMs: Date.now() - executionStartedAt,
+        valueBytes: 0,
+        outputBytes: fitted.outputBytes,
+        outputEntries: fitted.output?.length ?? 0,
+      },
+    }, { cause });
+  };
 
   let runtime: ReturnType<Awaited<ReturnType<typeof getQuickJS>>['newRuntime']>;
   let context: QuickJSContext;
   let releaseRuntime: (() => void) | undefined;
   const runBudget = options.runBudget ?? new CodeModeRunBudget(limits);
   try {
+    if (source.length > limits.sourceChars) {
+      throw new Error(`Code Mode source exceeds ${limits.sourceChars.toLocaleString('en-US')} characters`);
+    }
     // Reserve before any host-side preflight so sibling code_exec calls cannot
     // multiply TypeScript/compiler work while waiting for a guest heap.
     releaseRuntime = runBudget.acquireRuntime(limits.memoryBytes);
     const eligible = codeModeEligibleToolNames(options.toolNames);
     const eligibleSet = new Set(eligible);
+    const catalogContracts = await raceWithAbort(
+      options.loadContracts?.()
+        ?? buildCodeModeToolContracts(options.toolDefinitions ?? {}, eligible),
+      signal,
+    );
+    throwIfAborted();
+    let sourceLocations: CodeModeSourceLocation[] = [];
     if (options.typecheck !== false) {
       const declarations: string = options.declarations
         ?? await raceWithAbort(
-          options.loadDeclarations?.() ?? buildCodeModeToolContracts(options.toolDefinitions ?? {}, eligible).then(codeModeDeclarations),
+          options.loadDeclarations?.() ?? Promise.resolve(codeModeDeclarations(catalogContracts)),
           signal
         );
       throwIfAborted();
-      await typecheckCodeMode(source, declarations, limits.memoryBytes, signal);
+      sourceLocations = (await typecheckCodeMode(source, declarations, limits.memoryBytes, signal)).locations;
       throwIfAborted();
     }
-    const compiled = await raceWithAbort(compileTypeScript(source), signal);
+    const compiled = await raceWithAbort(compileTypeScript(source, sourceLocations), signal);
     throwIfAborted();
     const quickJS = await raceWithAbort(getQuickJS(), signal);
     throwIfAborted();
@@ -348,7 +584,6 @@ export async function executeCodeMode(source: string, options: CodeModeOptions):
     runtime.setMaxStackSize(limits.maxStackBytes);
     runtime.setInterruptHandler(() => signal.aborted || Date.now() >= deadline);
     context = runtime.newContext();
-  let callCount = 0;
   let disposed = false;
   let promiseHandle: QuickJSHandle | undefined;
   let settling: ReturnType<QuickJSContext['resolvePromise']> | undefined;
@@ -361,7 +596,6 @@ export async function executeCodeMode(source: string, options: CodeModeOptions):
     effectRecorded: boolean;
   }>();
   const pendingDeferreds = new Set<ReturnType<QuickJSContext['newPromise']>>();
-  const completedCalls: CompletedNestedCall[] = [];
   const unhandledNestedFailures = new Map<number, string>();
   let nextUnhandledFailureId = 0;
 
@@ -624,6 +858,13 @@ export async function executeCodeMode(source: string, options: CodeModeOptions):
     context.setProp(context.global, '__agentuseCall', bridge);
     context.setProp(context.global, '__agentuseRecordUnhandled', recordUnhandled);
     context.setProp(context.global, '__agentuseMarkUnhandledObserved', markUnhandledObserved);
+    const catalogDefinitions = catalogContracts.map(contract => ({
+      name: contract.name,
+      description: contract.description ?? '',
+      input: contract.input,
+      ...(contract.outputKnown && { output: contract.output }),
+      declaration: codeModeVirtualDeclaration(contract),
+    }));
     const preludeResult = context.evalCode(`
       (() => {
         const call = globalThis.__agentuseCall;
@@ -638,6 +879,76 @@ export async function executeCodeMode(source: string, options: CodeModeOptions):
           Object.getPrototypeOf(async function* () {}),
         ];
         const NativePromise = globalThis.Promise;
+        const catalogDefinitions = ${JSON.stringify(catalogDefinitions)};
+        const output = [];
+        let consoleUnits = 0;
+        let consoleClosed = false;
+        const consoleLimit = ${limits.consoleOutputChars};
+        const inspect = (value, depth = 0, seen = new Set()) => {
+          if (value === null || typeof value === 'number' || typeof value === 'boolean') return String(value);
+          if (typeof value === 'string') return value.length <= 512 ? value : value.slice(0, 512) + '…';
+          if (typeof value === 'undefined') return 'undefined';
+          if (typeof value === 'function') return '[Function]';
+          if (typeof value !== 'object') return String(value);
+          if (seen.has(value)) return '[Circular]';
+          if (depth >= 3) return Array.isArray(value) ? '[Array(' + value.length + ')]' : '[Object]';
+          seen.add(value);
+          try {
+            if (value instanceof Error) return value.name + ': ' + value.message;
+            const descriptors = Object.getOwnPropertyDescriptors(value);
+            const keys = Object.keys(descriptors).slice(0, 50);
+            const parts = keys.map((key) => {
+              const descriptor = descriptors[key];
+              return descriptor && 'value' in descriptor
+                ? JSON.stringify(key) + ':' + inspect(descriptor.value, depth + 1, seen)
+                : JSON.stringify(key) + ':[Accessor]';
+            });
+            const omitted = Object.keys(descriptors).length - keys.length;
+            const body = parts.join(',') + (omitted > 0 ? ',… ' + omitted + ' more' : '');
+            return Array.isArray(value) ? '[' + body + ']' : '{' + body + '}';
+          } catch {
+            return '[Uninspectable]';
+          } finally {
+            seen.delete(value);
+          }
+        };
+        const emitText = (value) => { output.push({ type: 'text', text: inspect(value) }); };
+        const emitJson = (value) => {
+          const serialized = JSON.stringify(value);
+          if (serialized === undefined) throw new TypeError('json() value must be JSON-serializable');
+          output.push({ type: 'json', value: JSON.parse(serialized) });
+        };
+        const consoleWrite = (level, values) => {
+          if (consoleClosed) return;
+          let message = values.map((value) => inspect(value)).join(' ');
+          if (level) message = '[' + level + '] ' + message;
+          if (message.length > consoleLimit) message = message.slice(0, consoleLimit) + '…';
+          if (consoleUnits + message.length > consoleLimit) {
+            output.push({ type: 'text', text: '[console output truncated]' });
+            consoleClosed = true;
+            return;
+          }
+          consoleUnits += message.length;
+          emitText(message);
+        };
+        Object.defineProperty(globalThis, 'text', { value: emitText, writable: false, configurable: false });
+        Object.defineProperty(globalThis, 'json', { value: emitJson, writable: false, configurable: false });
+        Object.defineProperty(globalThis, 'console', {
+          value: Object.freeze({
+            log: (...values) => consoleWrite('', values),
+            info: (...values) => consoleWrite('info', values),
+            warn: (...values) => consoleWrite('warn', values),
+            error: (...values) => consoleWrite('error', values),
+            debug: (...values) => consoleWrite('debug', values),
+          }),
+          writable: false,
+          configurable: false,
+        });
+        Object.defineProperty(globalThis, '__agentuseTakeOutput', {
+          value: () => output.slice(),
+          writable: false,
+          configurable: false,
+        });
         const promiseStates = new WeakMap();
         const speciesConstructor = (promise) => {
           const constructor = promise.constructor;
@@ -762,19 +1073,84 @@ export async function executeCodeMode(source: string, options: CodeModeOptions):
           writable: false,
           configurable: false,
         });
-        const entries = names.map((name) => [name, (input = {}) =>
-          new TrackedPromise((resolve, reject) => {
+        const catalogDefinitionByName = new Map(catalogDefinitions.map((definition) => [definition.name, definition]));
+        const entries = names.map((name) => {
+          const definition = catalogDefinitionByName.get(name) || {
+            name,
+            description: '',
+            input: 'unknown',
+            declaration: '/** AgentUse tool: ' + name + ' */\\ndeclare const tool: (input?: unknown) => Promise<unknown>;',
+          };
+          const invoke = (input = {}) => new TrackedPromise((resolve, reject) => {
             call(name, JSON.stringify(input)).then((envelope) => {
               try {
                 const payload = JSON.parse(envelope);
-                if (!payload.ok) { reject(new Error(payload.error)); return; }
+                if (!payload.ok) { reject(new Error('__AGENTUSE_TOOL_ERROR__' + payload.error)); return; }
                 resolve(JSON.parse(payload.value));
               } catch (error) { reject(error); }
             }, reject);
-          })
-        ]);
+          });
+          const metadata = Object.freeze({
+            name,
+            description: definition.description,
+            input: definition.input,
+            ...(definition.output !== undefined ? { output: definition.output } : {}),
+          });
+          Object.defineProperties(invoke, {
+            name: { value: name, writable: false, configurable: false },
+            description: { value: definition.description, writable: false, configurable: false },
+            input: { value: definition.input, writable: false, configurable: false },
+            output: { value: definition.output, writable: false, configurable: false },
+            describe: {
+              value: () => TrackedPromise.resolve(Object.freeze({ ...metadata, declaration: definition.declaration })),
+              writable: false,
+              configurable: false,
+            },
+            toJSON: { value: () => metadata, writable: false, configurable: false },
+          });
+          Object.freeze(invoke);
+          return [name, invoke];
+        });
+        const handles = Object.freeze(entries.map(([, handle]) => handle));
         Object.defineProperty(globalThis, 'tools', {
           value: Object.freeze(Object.fromEntries(entries)),
+          writable: false,
+          configurable: false,
+          enumerable: true,
+        });
+        Object.defineProperty(globalThis, 'catalog', {
+          value: Object.freeze({
+            search: (query, options = {}) => {
+              if (typeof query !== 'string') return TrackedPromise.reject(new TypeError('catalog.search query must be a string'));
+              const requestedLimit = options && options.limit !== undefined ? options.limit : 10;
+              if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 50) {
+                return TrackedPromise.reject(new RangeError('catalog.search limit must be an integer from 1 to 50'));
+              }
+              const terms = query.trim().toLowerCase().split(/\\s+/).filter(Boolean);
+              const matches = handles.filter((handle) => {
+                const haystack = (handle.name + ' ' + handle.description).toLowerCase();
+                return terms.every((term) => haystack.includes(term));
+              }).slice(0, requestedLimit);
+              return TrackedPromise.resolve(Object.freeze(matches));
+            },
+            all: () => handles,
+          }),
+          writable: false,
+          configurable: false,
+          enumerable: true,
+        });
+        const virtualDeclarations = new Map(catalogDefinitions.map((definition) => [
+          'tools/' + definition.name + '.d.ts',
+          definition.declaration,
+        ]));
+        Object.defineProperty(globalThis, 'API', {
+          value: Object.freeze({
+            list: (scope) => {
+              if (scope !== 'tools') throw new Error('API.list supports only "tools"');
+              return Array.from(virtualDeclarations.keys());
+            },
+            read: (path) => virtualDeclarations.get(path),
+          }),
           writable: false,
           configurable: false,
           enumerable: true,
@@ -810,27 +1186,49 @@ export async function executeCodeMode(source: string, options: CodeModeOptions):
     }
     preludeResult.value.dispose();
 
-    const evaluation = context.evalCode(compiled, 'agentuse-code-mode.js');
+    const takeGuestOutput = (): CodeModeOutputEntry[] => {
+      const taken = context.evalCode('globalThis.__agentuseTakeOutput()', 'agentuse-code-mode-output.js');
+      if (taken.error) {
+        taken.error.dispose();
+        return [];
+      }
+      try {
+        const value = context.dump(taken.value);
+        return Array.isArray(value) ? value as CodeModeOutputEntry[] : [];
+      } catch {
+        return [];
+      } finally {
+        taken.value.dispose();
+      }
+    };
+
+    const evaluation = context.evalCode(compiled.code, 'agentuse-code-mode:generated.js');
     if (evaluation.error) {
-      try { throwGuestError(context, evaluation.error); }
+      capturedOutput = takeGuestOutput();
+      try { throwGuestError(context, evaluation.error, compiled.sourceMap); }
       finally { evaluation.error.dispose(); }
     }
     promiseHandle = evaluation.value;
     settling = context.resolvePromise(promiseHandle);
     const initialJobs = runtime.executePendingJobs();
+    let initialGuestJobFailure: string | undefined;
     if (initialJobs.error) {
-      promiseHandle.dispose();
-      promiseHandle = undefined;
       if (signal.aborted || Date.now() >= deadline) {
+        promiseHandle.dispose();
+        promiseHandle = undefined;
         initialJobs.error.dispose();
         throwIfAborted();
       }
-      try { throwGuestError(context, initialJobs.error); }
-      finally { initialJobs.error.dispose(); }
+      // QuickJS reports a rejected async job here before resolvePromise hands
+      // us the program's final rejection. Keep it as a fallback; the settled
+      // error includes the inner user frame retained by our wrapper.
+      const dumped = context.dump(initialJobs.error);
+      initialGuestJobFailure = safeErrorMessage(dumped);
+      initialJobs.error.dispose();
     }
     const settled = await raceWithAbort(settling, signal);
     settling = undefined;
-    promiseHandle.dispose();
+    promiseHandle?.dispose();
     promiseHandle = undefined;
     if (signal.aborted || Date.now() >= deadline) {
       if (settled.error) settled.error.dispose();
@@ -838,8 +1236,12 @@ export async function executeCodeMode(source: string, options: CodeModeOptions):
       throwIfAborted();
     }
     if (settled.error) {
-      try { throwGuestError(context, settled.error); }
+      capturedOutput = takeGuestOutput();
+      try { throwGuestError(context, settled.error, compiled.sourceMap); }
       finally { settled.error.dispose(); }
+    }
+    if (initialGuestJobFailure) {
+      throw new Error(`Code Mode failed: ${initialGuestJobFailure}`);
     }
     const result = context.dump(settled.value);
     settled.value.dispose();
@@ -848,11 +1250,21 @@ export async function executeCodeMode(source: string, options: CodeModeOptions):
     if (unhandledNestedFailures.size > 0) {
       throw new Error(`Code Mode has unhandled nested tool failures: ${[...unhandledNestedFailures.values()].join('; ')}`);
     }
-    const serialized = jsonStringify(result, 'Code Mode output');
-    if (serialized.length > limits.outputChars) {
-      throw new Error(`Code Mode output exceeds ${limits.outputChars.toLocaleString('en-US')} characters`);
-    }
-    return result;
+    capturedOutput = takeGuestOutput();
+    const fitted = fitCodeModeOutput(result, capturedOutput, limits.outputChars);
+    return {
+      status: 'completed',
+      value: result,
+      ...(fitted.output && { output: fitted.output }),
+      telemetry: {
+        catalogSize,
+        nestedCalls: callCount,
+        durationMs: Date.now() - executionStartedAt,
+        valueBytes: fitted.valueBytes,
+        outputBytes: fitted.outputBytes,
+        outputEntries: fitted.output?.length ?? 0,
+      },
+    };
   } finally {
     if (!signal.aborted) timeoutController.abort(new Error('Code Mode execution finished'));
     // Reject unresolved bridge promises before disposing the guest. This lets
@@ -930,12 +1342,19 @@ export async function executeCodeMode(source: string, options: CodeModeOptions):
     runtime.dispose();
   }
   } catch (error) {
-    throw partialEffectsError(error, completedCalls);
+    throw asExecutionError(error);
   }
+  } catch (error) {
+    throw asExecutionError(error);
   } finally {
     clearTimeout(timer);
     releaseRuntime?.();
   }
+}
+
+/** Backward-compatible low-level API used by tests and internal callers. */
+export async function executeCodeMode(source: string, options: CodeModeOptions): Promise<unknown> {
+  return (await executeCodeModeDetailed(source, options)).value;
 }
 
 export function createCodeExecTool(options: {
@@ -951,28 +1370,30 @@ export function createCodeExecTool(options: {
   const eligible = codeModeEligibleToolNames(options.toolNames);
   const promptContracts = buildCodeModeToolContractsSync(options.toolDefinitions ?? {}, eligible);
   const quickIndex = codeModeQuickIndex(promptContracts);
+  const catalogSummary = `${eligible.length} ${eligible.length === 1 ? 'tool' : 'tools'}`;
   const runLimits: CodeModeLimits = { ...DEFAULT_CODE_MODE_LIMITS, ...options.limits };
   const runBudget = new CodeModeRunBudget(runLimits);
-  // The catalog is fixed for the life of this tool, so the preflight declarations
-  // are resolved once and shared by every code_exec call in the run.
-  let declarationsPromise: Promise<string> | undefined;
-  const loadDeclarations = (): Promise<string> => {
-    declarationsPromise ??= buildCodeModeToolContracts(options.toolDefinitions ?? {}, eligible)
-      .then(codeModeDeclarations)
+  // The catalog is fixed for the life of this tool, so resolve lazy schemas once
+  // and share the contracts across preflight and guest discovery.
+  let contractsPromise: Promise<CodeModeToolContract[]> | undefined;
+  const loadContracts = (): Promise<CodeModeToolContract[]> => {
+    contractsPromise ??= buildCodeModeToolContracts(options.toolDefinitions ?? {}, eligible)
       .catch(error => {
-        declarationsPromise = undefined;
+        contractsPromise = undefined;
         throw error;
       });
-    return declarationsPromise;
+    return contractsPromise;
   };
   return {
     description:
       'Run isolated TypeScript for arithmetic, timestamps and duration math, percentages, basic string operations, deterministic loops, filtering, branching, batching, joins, and parallel tool calls. Use it even when the program needs zero or one tool call; ' +
       'never do that math in prose, in your head, or in bash. When the user asks for a shell artifact, commands or scripts may contain the calculations the artifact itself needs; bash is forbidden only as private scratch space for working out an answer. Date, Math, JSON, and standard string methods are available and the clock is real. URL, Intl, locale-aware formatting, and host timezone services are unavailable. ' +
-      'The program has no filesystem, network, environment, process, package, console, or import access. Dynamic code construction through eval or Function constructors is unavailable. ' +
-      'Call permitted tools as await tools.<name>({ ... }) using the same input object as a direct tool call, then return one JSON-serializable result. ' +
+      'The program has no filesystem, network, environment, process, package, or import access. Dynamic code construction through eval or Function constructors is unavailable. ' +
+      'Call permitted tools as await tools.<name>({ ... }) using the same input object as a direct tool call. Await or return every async operation; detached async work is rejected during preflight. ' +
+      'When a needed tool is absent from the quick index, use await catalog.search(query), call handle.describe(), or inspect API.list("tools") and API.read("tools/<name>.d.ts") in a first code_exec. Catalog handles are callable and use the same dispatch policy as tools.<name>. ' +
+      'Return one JSON-serializable result. You may also emit multiple ordered, bounded progress entries with text(value), json(value), or console.log/info/warn/error/debug. ' +
       'Code is strictly type-checked before any nested tool starts. For `-> ?` outputs, do not guess fields: return one element and its keys, observe, then narrow with runtime checks in a later code_exec before dependent logic. ' +
-      `Available nested tools: ${eligible.length > 0 ? eligible.join(', ') : '(none)'}.\n\n${quickIndex}`,
+      `Nested tool catalog: ${catalogSummary}.\n\n${quickIndex}`,
     inputSchema: z.object({
       code: z.string().min(1).max(DEFAULT_CODE_MODE_LIMITS.sourceChars)
         .describe('TypeScript function body. Top-level await and return are supported. No imports.'),
@@ -984,18 +1405,26 @@ export function createCodeExecTool(options: {
       const abortSignal = options.abortSignal && callOptions?.abortSignal
         ? AbortSignal.any([options.abortSignal, callOptions.abortSignal])
         : options.abortSignal ?? callOptions?.abortSignal;
-      return executeCodeMode(code, {
-        dispatcher: options.dispatcher,
-        toolNames: eligible,
-        ...(options.toolDefinitions && { toolDefinitions: options.toolDefinitions }),
-        loadDeclarations,
-        parentCallId: callOptions?.toolCallId ?? CODE_EXEC_TOOL,
-        runBudget,
-        limits: runLimits,
-        ...(abortSignal && { abortSignal }),
-        ...(options.onNestedToolStart && { onNestedToolStart: options.onNestedToolStart }),
-        ...(options.onNestedToolFinish && { onNestedToolFinish: options.onNestedToolFinish }),
-      });
+      try {
+        return await executeCodeModeDetailed(code, {
+          dispatcher: options.dispatcher,
+          toolNames: eligible,
+          ...(options.toolDefinitions && { toolDefinitions: options.toolDefinitions }),
+          loadContracts,
+          parentCallId: callOptions?.toolCallId ?? CODE_EXEC_TOOL,
+          runBudget,
+          limits: runLimits,
+          ...(abortSignal && { abortSignal }),
+          ...(options.onNestedToolStart && { onNestedToolStart: options.onNestedToolStart }),
+          ...(options.onNestedToolFinish && { onNestedToolFinish: options.onNestedToolFinish }),
+        });
+      } catch (error) {
+        // The model-facing tool contract is always a structured result. Keep
+        // executeCodeModeDetailed throwing for internal callers that need a
+        // causal Error and the completed-effect ledger on its cause.
+        if (error instanceof CodeModeExecutionError) return error.result;
+        throw error;
+      }
     },
   };
 }

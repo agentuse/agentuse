@@ -14,7 +14,7 @@
  *  3. abort-respecting tools (bash) are actually killed before their effect,
  *  4. the suspension still surfaces (last chunk, with the gate's payload).
  */
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, afterAll, mock } from 'bun:test';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -23,6 +23,17 @@ import { z } from 'zod';
 // Disable the context manager: these tests exercise the suspend/drain path,
 // not compaction (buildContextSnapshot is exercised by compaction tests).
 process.env.CONTEXT_COMPACTION = 'false';
+
+// These tests intentionally simulate legacy direct provider tool calls so they
+// can exercise sibling ordering around an approval gate. Code Mode hides normal
+// executable tools from the provider by design, so keep it out of this fixture.
+const previousCodeMode = process.env.AGENTUSE_CODE_MODE;
+process.env.AGENTUSE_CODE_MODE = '0';
+
+afterAll(() => {
+  if (previousCodeMode === undefined) delete process.env.AGENTUSE_CODE_MODE;
+  else process.env.AGENTUSE_CODE_MODE = previousCodeMode;
+});
 
 import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
 

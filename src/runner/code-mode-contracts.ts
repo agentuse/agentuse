@@ -9,6 +9,7 @@ const MAX_SCHEMA_PROPERTIES = 256;
 const MAX_QUICK_INDEX_CHARS = 8_000;
 const MAX_QUICK_INPUT_CHARS = 300;
 const MAX_QUICK_OUTPUT_CHARS = 800;
+const MAX_TOOL_DESCRIPTION_CHARS = 1_000;
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
 interface RenderState {
@@ -22,6 +23,7 @@ export interface CodeModeSignature {
 
 export interface CodeModeToolContract {
   name: string;
+  description?: string;
   input: string;
   output: string;
   outputKnown: boolean;
@@ -31,6 +33,14 @@ export interface CodeModeToolContract {
    * CODE_MODE_OVERLOADS). Only present when the full output is known.
    */
   overloads?: CodeModeSignature[];
+}
+
+function boundedDescription(tool: Tool | undefined): string | undefined {
+  const description = typeof tool?.description === 'string' ? tool.description.trim() : '';
+  if (!description) return undefined;
+  return description.length <= MAX_TOOL_DESCRIPTION_CHARS
+    ? description
+    : `${description.slice(0, MAX_TOOL_DESCRIPTION_CHARS)}…`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -206,7 +216,15 @@ export async function buildCodeModeToolContracts(
         }
       }
     }
-    contracts.push({ name, input, output, outputKnown, ...(overloads.length > 0 ? { overloads } : {}) });
+    const description = boundedDescription(tool);
+    contracts.push({
+      name,
+      ...(description && { description }),
+      input,
+      output,
+      outputKnown,
+      ...(overloads.length > 0 ? { overloads } : {}),
+    });
   }
   return contracts;
 }
@@ -250,8 +268,32 @@ export function buildCodeModeToolContractsSync(
         }
       }
     }
-    return { name, input, output, outputKnown, ...(overloads.length > 0 ? { overloads } : {}) };
+    const description = boundedDescription(tool);
+    return {
+      name,
+      ...(description && { description }),
+      input,
+      output,
+      outputKnown,
+      ...(overloads.length > 0 ? { overloads } : {}),
+    };
   });
+}
+
+function codeModeToolSignatures(contract: CodeModeToolContract): CodeModeSignature[] {
+  return [
+    ...(contract.overloads ?? []),
+    { input: contract.input, output: contract.output },
+  ];
+}
+
+/** One exact virtual declaration returned by API.read inside the guest. */
+export function codeModeVirtualDeclaration(contract: CodeModeToolContract): string {
+  const signatures = codeModeToolSignatures(contract)
+    .map(signature => `  (input: ${signature.input}): Promise<${signature.output}>;`)
+    .join('\n');
+  const safeName = contract.name.replaceAll('*/', '* /').replace(/[\r\n]+/g, ' ');
+  return `/** AgentUse tool: ${safeName} */\ndeclare const tool: {\n${signatures}\n};`;
 }
 
 /** Full declarations used by the in-memory TypeScript compiler. */
@@ -261,15 +303,40 @@ export function codeModeDeclarations(contracts: readonly CodeModeToolContract[])
     // Overloads resolve in declaration order, so the narrowed signatures go
     // first and the full union stays as the catch-all. TypeScript only applies
     // overload resolution to call signatures, hence the method form here.
-    const signatures = [
-      ...(contract.overloads ?? []),
-      { input: contract.input, output: contract.output },
-    ];
-    return signatures
+    return codeModeToolSignatures(contract)
       .map(signature => `  ${name}(input: ${signature.input}): Promise<${signature.output}>;`)
       .join('\n');
   });
-  return `declare const tools: {\n${fields.join('\n')}\n};`;
+  return `type CodeModeOutput = { type: "text"; text: string } | { type: "json"; value: unknown };\n` +
+    `type CodeModeToolMetadata = { name: string; description: string; input: string; output?: string };\n` +
+    `type CodeModeToolDescription = CodeModeToolMetadata & { declaration: string };\n` +
+    `interface CodeModeToolHandle {\n` +
+    `  (input?: Record<string, unknown>): Promise<unknown>;\n` +
+    `  readonly name: string;\n` +
+    `  readonly description: string;\n` +
+    `  readonly input: string;\n` +
+    `  readonly output?: string;\n` +
+    `  describe(): Promise<CodeModeToolDescription>;\n` +
+    `  toJSON(): CodeModeToolMetadata;\n` +
+    `}\n` +
+    `declare const catalog: {\n` +
+    `  search(query: string, options?: { limit?: number }): Promise<readonly CodeModeToolHandle[]>;\n` +
+    `  all(): readonly CodeModeToolHandle[];\n` +
+    `};\n` +
+    `declare const API: {\n` +
+    `  list(scope: "tools"): string[];\n` +
+    `  read(path: string): string | undefined;\n` +
+    `};\n` +
+    `declare function text(value: unknown): void;\n` +
+    `declare function json(value: unknown): void;\n` +
+    `declare const console: {\n` +
+    `  log(...values: unknown[]): void;\n` +
+    `  info(...values: unknown[]): void;\n` +
+    `  warn(...values: unknown[]): void;\n` +
+    `  error(...values: unknown[]): void;\n` +
+    `  debug(...values: unknown[]): void;\n` +
+    `};\n` +
+    `declare const tools: {\n${fields.join('\n')}\n};`;
 }
 
 /** Bounded model-facing index. Unknown outputs stay explicit instead of inviting field guesses. */

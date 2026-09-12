@@ -129,7 +129,10 @@ describe("wrapToolsWithLLMMock", () => {
       code: 'return tools.store_update({ id: "job-1", update: { status: "done" } });',
     }, { toolCallId: 'mock-code' });
 
-    expect(output).toEqual({ success: true, mocked: true });
+    expect(output).toEqual(expect.objectContaining({
+      status: 'completed',
+      value: { success: true, mocked: true },
+    }));
     expect(realMutation).toHaveBeenCalledTimes(0);
     expect(completeTextMock).toHaveBeenCalledTimes(1);
   });

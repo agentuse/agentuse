@@ -5,17 +5,23 @@ import { join } from 'path';
 import { z } from 'zod';
 import type { ToolSet } from 'ai';
 import {
+  CodeModeExecutionError,
   CodeModeRunBudget,
   DEFAULT_CODE_MODE_LIMITS,
   codeModeEligibleToolNames,
   createCodeExecTool,
   executeCodeMode,
+  executeCodeModeDetailed,
   isCodeModeEnabled,
 } from '../src/runner/code-mode';
 import { ToolDispatcher, ToolDispatchDeniedError } from '../src/runner/tool-dispatcher';
 import { EffectWAL } from '../src/runner/effect-wal';
 import { trustedOutputTool } from '../src/tools/tool-contract';
-import { buildCodeModeToolContracts, codeModeDeclarations } from '../src/runner/code-mode-contracts';
+import {
+  buildCodeModeToolContracts,
+  codeModeDeclarations,
+  codeModeQuickIndex,
+} from '../src/runner/code-mode-contracts';
 import { Store } from '../src/store/store';
 import { createStoreTools } from '../src/store/tools';
 import { extractToolIntent, injectIntentParam } from '../src/runner/tool-intent';
@@ -71,6 +77,237 @@ describe('Code Mode', () => {
       { name: 'double', input: { value: 2 } },
       { name: 'double', input: { value: 3 } },
     ]);
+  });
+
+  it('returns structured status, ordered outputs, and telemetry', async () => {
+    const result = await executeCodeModeDetailed(`
+      text("started");
+      json({ phase: 1 });
+      console.warn("skipped", { count: 2 });
+      return 7;
+    `, {
+      dispatcher: { dispatch: async () => null },
+      toolNames: [],
+      parentCallId: 'structured-result',
+    });
+
+    expect(result).toEqual({
+      status: 'completed',
+      value: 7,
+      output: [
+        { type: 'text', text: 'started' },
+        { type: 'json', value: { phase: 1 } },
+        { type: 'text', text: '[warn] skipped {"count":2}' },
+      ],
+      telemetry: {
+        catalogSize: 0,
+        nestedCalls: 0,
+        durationMs: expect.any(Number),
+        valueBytes: 1,
+        outputBytes: expect.any(Number),
+        outputEntries: 3,
+      },
+    });
+  });
+
+  it('bounds console output without failing the program', async () => {
+    const result = await executeCodeModeDetailed(`
+      console.log("123456789012345");
+      console.warn("123456789012345");
+      console.error("ignored");
+      return true;
+    `, {
+      dispatcher: { dispatch: async () => null },
+      toolNames: [],
+      parentCallId: 'bounded-console',
+      limits: { consoleOutputChars: 20 },
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.value).toBe(true);
+    expect(result.output).toEqual([
+      { type: 'text', text: '123456789012345' },
+      { type: 'text', text: '[console output truncated]' },
+    ]);
+  });
+
+  it('truncates emitted entries while preserving the final value', async () => {
+    const result = await executeCodeModeDetailed(`
+      for (let index = 0; index < 12; index++) text("x".repeat(80));
+      return "ok";
+    `, {
+      dispatcher: { dispatch: async () => null },
+      toolNames: [],
+      parentCallId: 'bounded-emitted-output',
+      limits: { outputChars: 500 },
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.value).toBe('ok');
+    expect(result.output?.at(-1)).toEqual(expect.objectContaining({
+      type: 'text',
+      text: expect.stringMatching(/^\[output truncated: \d+ entries, \d+ bytes omitted\]$/),
+    }));
+    expect(result.telemetry.outputEntries).toBeLessThan(12);
+  });
+
+  it('returns typed failures with prior output and submitted-source locations', async () => {
+    let caught: unknown;
+    try {
+      await executeCodeModeDetailed('text("before");\nconst value: any = null;\nreturn value.missing;', {
+        dispatcher: { dispatch: async () => null },
+        toolNames: [],
+        parentCallId: 'mapped-runtime-error',
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(CodeModeExecutionError);
+    const failure = (caught as CodeModeExecutionError).result;
+    expect(failure.status).toBe('failed');
+    expect(failure.error.code).toBe('runtime_error');
+    expect(failure.error.message).toContain('agentuse-code-mode:user.ts:3:8');
+    expect(failure.output).toEqual([{ type: 'text', text: 'before' }]);
+    expect(failure.telemetry).toEqual(expect.objectContaining({
+      catalogSize: 0,
+      nestedCalls: 0,
+      outputEntries: 1,
+    }));
+  });
+
+  it('returns the typed failure envelope from the model-facing tool boundary', async () => {
+    const dispatcher = new ToolDispatcher({});
+    dispatcher.register('code_exec', createCodeExecTool({
+      dispatcher,
+      toolNames: [],
+    }));
+
+    await expect(dispatcher.dispatch('code_exec', {
+      code: 'text("before");\nconst value: any = null;\nreturn value.missing;',
+    }, { toolCallId: 'model-facing-failure' })).resolves.toEqual(expect.objectContaining({
+      status: 'failed',
+      error: {
+        code: 'runtime_error',
+        message: expect.stringContaining('agentuse-code-mode:user.ts:3:8'),
+      },
+      output: [{ type: 'text', text: 'before' }],
+      telemetry: expect.objectContaining({
+        catalogSize: 0,
+        nestedCalls: 0,
+        outputEntries: 1,
+      }),
+    }));
+  });
+
+  it('classifies awaited nested tool failures separately from guest runtime errors', async () => {
+    let caught: unknown;
+    try {
+      await executeCodeModeDetailed('return tools.fail({});', {
+        dispatcher: { dispatch: async () => { throw new Error('expected nested failure'); } },
+        toolNames: ['fail'],
+        parentCallId: 'typed-tool-error',
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(CodeModeExecutionError);
+    expect((caught as CodeModeExecutionError).result.error).toEqual(expect.objectContaining({
+      code: 'tool_execution',
+      message: expect.stringContaining('expected nested failure'),
+    }));
+  });
+
+  it('classifies invalid source and oversized final values in structured failures', async () => {
+    const resultFor = async (source: string, limits: Parameters<typeof executeCodeModeDetailed>[1]['limits']) => {
+      try {
+        await executeCodeModeDetailed(source, {
+          dispatcher: { dispatch: async () => null },
+          toolNames: [],
+          parentCallId: 'typed-limit-error',
+          limits,
+        });
+      } catch (error) {
+        expect(error).toBeInstanceOf(CodeModeExecutionError);
+        return (error as CodeModeExecutionError).result;
+      }
+      throw new Error('Expected Code Mode to fail');
+    };
+
+    expect((await resultFor('return true;', { sourceChars: 4 })).error.code).toBe('invalid_input');
+    expect((await resultFor('return "x".repeat(100);', { outputChars: 20 })).error.code)
+      .toBe('output_limit_exceeded');
+  });
+
+  it('discovers hidden tools through callable catalog handles and virtual declarations', async () => {
+    const calls: unknown[] = [];
+    const inventory = trustedOutputTool({
+      description: 'Read the current inventory count',
+      inputSchema: z.object({ sku: z.string() }),
+      outputSchema: z.object({ sku: z.string(), count: z.number() }),
+      execute: async () => ({ sku: '', count: 0 }),
+    });
+    const result = await executeCodeModeDetailed(`
+      const [inventory] = await catalog.search("inventory", { limit: 1 });
+      if (!inventory) throw new Error("inventory tool missing");
+      const description = await inventory.describe();
+      const paths = API.list("tools");
+      const declaration = API.read(paths[0]);
+      const value = await inventory({ sku: "sku-1" });
+      return {
+        names: catalog.all().map(handle => handle.name),
+        metadata: JSON.parse(JSON.stringify(inventory)),
+        description,
+        paths,
+        declaration,
+        value,
+      };
+    `, {
+      dispatcher: {
+        dispatch: async (_name: string, input: unknown) => {
+          calls.push(input);
+          return { sku: 'sku-1', count: 4 };
+        },
+      },
+      toolNames: ['inventory_read', 'await_human'],
+      toolDefinitions: { inventory_read: inventory },
+      parentCallId: 'catalog-discovery',
+    });
+
+    expect(result.value).toEqual(expect.objectContaining({
+      names: ['inventory_read'],
+      metadata: {
+        name: 'inventory_read',
+        description: 'Read the current inventory count',
+        input: '{ sku: string }',
+        output: '{ count: number; sku: string }',
+      },
+      description: expect.objectContaining({
+        name: 'inventory_read',
+        declaration: expect.stringContaining('Promise<{ count: number; sku: string }>'),
+      }),
+      paths: ['tools/inventory_read.d.ts'],
+      declaration: expect.stringContaining('declare const tool'),
+      value: { sku: 'sku-1', count: 4 },
+    }));
+    expect(result.telemetry).toEqual(expect.objectContaining({ catalogSize: 1, nestedCalls: 1 }));
+    expect(calls).toEqual([{ sku: 'sku-1' }]);
+  });
+
+  it('keeps the provider quick index bounded and leaves long descriptions in the guest catalog', () => {
+    const contracts = Array.from({ length: 200 }, (_, index) => ({
+      name: `inventory_tool_${index}`,
+      description: `Guest-only inventory description ${index} ${'d'.repeat(200)}`,
+      input: `{ query: string; page: number; fields: Array<string> }`,
+      output: `{ success: true; items: Array<{ id: string; value: number }> }`,
+      outputKnown: true,
+    }));
+
+    const quickIndex = codeModeQuickIndex(contracts);
+    expect(quickIndex.length).toBeLessThanOrEqual(8_000);
+    expect(quickIndex).toContain('additional tools omitted');
+    expect(quickIndex).not.toContain('Guest-only inventory description');
   });
 
   it('preserves ES2022 syntax while routing async work through tracked promises', async () => {
@@ -729,7 +966,6 @@ describe('Code Mode', () => {
       'Promise.resolve(tools.fail({})); return "done";',
       'Promise.all([tools.fail({})]); return "done";',
       'new Promise(resolve => resolve(tools.fail({}))); return "done";',
-      'void (async () => { await tools.fail({}); })(); return "done";',
     ];
     for (const code of programs) {
       await expect(executeCodeMode(code, {
@@ -738,6 +974,14 @@ describe('Code Mode', () => {
         parentCallId: 'assimilated-failure',
       })).rejects.toThrow(/unhandled nested tool failures.*assimilated failure/i);
     }
+    await expect(executeCodeMode(
+      'void (async () => { await tools.fail({}); })(); return "done";',
+      {
+        dispatcher: { dispatch: async () => { throw new Error('assimilated failure'); } },
+        toolNames: ['fail'],
+        parentCallId: 'detached-async-failure',
+      },
+    )).rejects.toThrow(/TypeScript preflight.*Detached async work.*await or return/i);
   });
 
   it('allows assimilated failures to be awaited and caught', async () => {
@@ -975,9 +1219,15 @@ describe('Code Mode', () => {
     // The first guest has retained its heap while its nested effect waits.
     await nestedStarted;
     await expect(dispatcher.dispatch('code_exec', { code: 'return 2;' }, { toolCallId: 'second' }))
-      .rejects.toThrow(/run-scoped guest-memory limit/i);
+      .resolves.toEqual(expect.objectContaining({
+        status: 'failed',
+        error: expect.objectContaining({ message: expect.stringMatching(/run-scoped guest-memory limit/i) }),
+      }));
     releaseFirst!();
-    await expect(first).resolves.toEqual({ done: true });
+    await expect(first).resolves.toEqual(expect.objectContaining({
+      status: 'completed',
+      value: { done: true },
+    }));
   });
 
   it('charges completed nested calls to the run-wide limit', async () => {
@@ -990,9 +1240,15 @@ describe('Code Mode', () => {
       limits: { nestedCalls: 1 },
     }));
     await expect(dispatcher.dispatch('code_exec', { code: 'return tools.echo({ value: 1 });' }, { toolCallId: 'one' }))
-      .resolves.toEqual({ value: 1 });
+      .resolves.toEqual(expect.objectContaining({
+        status: 'completed',
+        value: { value: 1 },
+    }));
     await expect(dispatcher.dispatch('code_exec', { code: 'return tools.echo({ value: 2 });' }, { toolCallId: 'two' }))
-      .rejects.toThrow(/nested-call limit/i);
+      .resolves.toEqual(expect.objectContaining({
+        status: 'failed',
+        error: expect.objectContaining({ message: expect.stringMatching(/nested-call limit/i) }),
+      }));
   });
 
   it('journals the outer execution and each nested tool call', async () => {
@@ -1079,7 +1335,10 @@ describe('Code Mode', () => {
     const input = { intent: 'Adding one to a number', code: 'return tools.add({ value: 1 });' };
     expect(extractToolIntent(input)).toBe('Adding one to a number');
     await expect(dispatcher.dispatch('code_exec', input, { toolCallId: 'labelled' }))
-      .resolves.toEqual({ value: 2 });
+      .resolves.toEqual(expect.objectContaining({
+        status: 'completed',
+        value: { value: 2 },
+      }));
   });
 
   it('is exposed by default and documents the resolved nested catalog', () => {
@@ -1093,10 +1352,12 @@ describe('Code Mode', () => {
       toolNames: ['store_list', 'await_human'],
       toolDefinitions: { store_list: storeList },
     });
-    expect(tool.description).toContain('Available nested tools: store_list');
-    expect(tool.description).not.toContain('Available nested tools: await_human');
+    expect(tool.description).toContain('Nested tool catalog: 1 tool');
+    expect(tool.description).not.toContain('await_human');
     expect(tool.description).toContain('items: Array<{ id: string }>');
     expect(tool.description).toContain('For `-> ?` outputs, do not guess fields');
+    expect(tool.description).toContain('catalog.search(query)');
+    expect(tool.description).toContain('API.read("tools/<name>.d.ts")');
     expect(tool.description).toContain('URL, Intl, locale-aware formatting, and host timezone services are unavailable');
     expect(tool.description).toContain('Dynamic code construction through eval or Function constructors is unavailable');
     expect(tool.description).toContain('When the user asks for a shell artifact, commands or scripts may contain the calculations the artifact itself needs');

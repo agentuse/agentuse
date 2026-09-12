@@ -39,7 +39,8 @@ describe('autonomous agent system prompt', () => {
     expect(enabled).toContain('Treat date-only values as UTC');
     expect(enabled).toContain('do not rely on locale, timezone, Intl, URL');
     expect(enabled).toContain('reading multiple records and then filtering, joining, sorting, selecting, branching, batching, or aggregating them');
-    expect(enabled).toContain('Call a tool directly only for one standalone operation');
+    expect(enabled).toContain('Call a tool directly only when it is separately visible');
+    expect(enabled).toContain('require suspension, approval, binary handling, provider-side execution, or outcome submission');
     expect(enabled).toContain('Any result over 30,720 bytes is replaced by a shape summary');
     expect(enabled).toContain('never raw lists or whole records');
     expect(enabled).toContain('return Object.keys(x) and one element, never the raw value');
