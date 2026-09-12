@@ -1271,6 +1271,14 @@ export interface LogEntryProps {
   /** Operational warnings about this tool call, nested under it instead of
    *  shown as standalone "failed" lines in the flat stream. */
   warnings?: ApprovalLogEntry[] | undefined;
+  /** Tool calls a code_exec program made through the sandbox bridge. They render
+   *  inside this row and only when it is expanded; collapsed, the row carries a
+   *  count so the fan-out is visible without the noise. */
+  nestedCalls?: ApprovalLogEntry[] | undefined;
+  /** Warnings keyed by call id, so nested rows can show their own badges. */
+  nestedWarnings?: Map<string, ApprovalLogEntry[]> | undefined;
+  /** Reviewer expand/collapse state for every row, so nested rows honour theirs. */
+  expandOverrides?: Map<string, boolean> | undefined;
   /** Entry arrived over the live stream after the initial snapshot; animates in. */
   isNew?: boolean | undefined;
   /** Number of consecutive identical operational log lines collapsed into this
@@ -1330,6 +1338,7 @@ export function toolChipLabel(tool: string): string {
 function LogEntryImpl(props: LogEntryProps) {
   const { entry } = props;
   const warnings = props.warnings ?? [];
+  const nestedCalls = props.nestedCalls ?? [];
   const isApprovalEntry = isApprovalDetails(entry);
   const savedArtifact = entry.details?.savedArtifact;
   const runOutcome = entry.details?.runOutcome;
@@ -1437,6 +1446,11 @@ function LogEntryImpl(props: LogEntryProps) {
           {warnings.length > 0 && (
             <span class="log-warn-badge" title={`${warnings.length} warning${warnings.length === 1 ? '' : 's'} about this tool call`}>⚠ {warnings.length}</span>
           )}
+          {nestedCalls.length > 0 && !expanded && (
+            <span class="log-nested-badge" title={`${nestedCalls.length} tool call${nestedCalls.length === 1 ? '' : 's'} made by this program`}>
+              {nestedCalls.length} {nestedCalls.length === 1 ? 'call' : 'calls'}
+            </span>
+          )}
         </span>
       </div>
       <div class="log-main">
@@ -1466,6 +1480,25 @@ function LogEntryImpl(props: LogEntryProps) {
             : message && !corrections && !storeEvent && !entry.subagentSession && <LogContent value={message} forceMarkdown={prose} streaming={typing} />}
           {warnings.length > 0 && <LogWarnings warnings={warnings} />}
         </div>
+        {nestedCalls.length > 0 && expanded && (
+          <ul class="log-nested-calls" role="list" onClick={(event) => event.stopPropagation()}>
+            {nestedCalls.map((call) => (
+              <LogEntry
+                key={call.id}
+                entry={call}
+                warnings={call.callId ? props.nestedWarnings?.get(call.callId) : undefined}
+                expanded={props.expandOverrides?.get(call.id)}
+                showActions={false}
+                actionsDisabled
+                projectId={props.projectId}
+                sessionId={props.sessionId}
+                token={props.token}
+                onToggle={props.onToggle}
+                onAction={() => undefined}
+              />
+            ))}
+          </ul>
+        )}
         {props.showActions && (
           <div class="log-actions" data-actions-row>
             {props.actionsDisabled ? (
@@ -1525,10 +1558,17 @@ function LogEntryImpl(props: LogEntryProps) {
 /** Re-render only when the entry content or interactive surface changes. */
 const warningsSignature = (warnings: ApprovalLogEntry[] | undefined): string =>
   (warnings ?? []).map(logEntrySignature).join('|');
+/** Nested rows re-render when any of them changes, or when the reviewer
+ *  toggles one of them; the parent's own expand flag is compared separately. */
+const nestedSignature = (props: LogEntryProps): string =>
+  (props.nestedCalls ?? [])
+    .map((call) => `${logEntrySignature(call)}:${props.expandOverrides?.get(call.id) ?? ''}:${warningsSignature(call.callId ? props.nestedWarnings?.get(call.callId) : undefined)}`)
+    .join('|');
 
 export const LogEntry = memo(LogEntryImpl, (prev, next) =>
   logEntrySignature(prev.entry) === logEntrySignature(next.entry) &&
   warningsSignature(prev.warnings) === warningsSignature(next.warnings) &&
+  nestedSignature(prev) === nestedSignature(next) &&
   prev.isNew === next.isNew &&
   prev.repeatCount === next.repeatCount &&
   prev.expanded === next.expanded &&

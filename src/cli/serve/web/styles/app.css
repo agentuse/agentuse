@@ -1957,9 +1957,30 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   border-left: 2px solid transparent;
 }
 .log-item.is-nested-tool {
-  margin-left: 28px;
   border-left-style: dashed;
   background: color-mix(in srgb, var(--surface) 72%, transparent);
+}
+/* Calls a code_exec program made through the sandbox: listed inside the parent
+   row, indented once, and only while the parent is open. */
+.log-nested-calls {
+  list-style: none;
+  margin: 8px 0 0 28px;
+  padding: 0;
+  border-left: 1px dashed var(--line-strong);
+}
+.log-nested-calls > .log-item:last-child {
+  border-bottom: 0;
+}
+.log-nested-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
 .log-head {
   display: grid;
@@ -2038,7 +2059,9 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 .page-approval-detail .log-item.is-actionable .log-main { margin-left: 0; }
 .page-approval-detail .log-item.is-actionable .log-content { margin-top: 0; }
 .page-approval-detail .log-item.is-actionable .approval-card { margin-top: 0; }
-.log-item.expandable .log-title::after {
+/* `>` scoping: a nested Code Mode row lives inside its parent's .log-item, so
+   an unscoped descendant selector would read the parent's expanded state. */
+.log-item.expandable > .log-head .log-title::after {
   content: "show";
   display: inline-flex;
   margin-left: 8px;
@@ -2054,7 +2077,7 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   text-transform: uppercase;
   vertical-align: 1px;
 }
-.log-item.expandable.expanded .log-title::after { content: "hide"; color: var(--muted); }
+.log-item.expandable.expanded > .log-head .log-title::after { content: "hide"; color: var(--muted); }
 .log-title { font-weight: var(--weight-medium); color: var(--fg); }
 /* Context compaction is a housekeeping event: subtle amber accent, understated. */
 .log-item[data-log-type="compaction"] .log-marker { color: var(--amber); opacity: 0.9; }

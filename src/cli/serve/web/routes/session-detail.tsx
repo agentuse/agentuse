@@ -741,6 +741,25 @@ export default function SessionDetail() {
     }
     return { toolWarnings: byCallId, nestedLogIds: nested };
   }, [orderedLogs]);
+  // Tool calls made from inside a code_exec program carry the parent call id.
+  // They fold under the parent row and open with it, so a program that fans out
+  // into twenty store reads reads as one step until the reviewer asks for more.
+  // Orphans (parent row not loaded) stay in the flat stream so nothing is lost.
+  const { nestedToolCalls, nestedToolIds } = useMemo(() => {
+    const callIds = new Set(
+      orderedLogs.filter((e) => e.type === 'tool' && e.callId).map((e) => e.callId as string)
+    );
+    const byParent = new Map<string, ApprovalLogEntry[]>();
+    const nested = new Set<string>();
+    for (const e of orderedLogs) {
+      if (e.type !== 'tool' || !e.parentCallId || !callIds.has(e.parentCallId)) continue;
+      nested.add(e.id);
+      const list = byParent.get(e.parentCallId) ?? [];
+      list.push(e);
+      byParent.set(e.parentCallId, list);
+    }
+    return { nestedToolCalls: byParent, nestedToolIds: nested };
+  }, [orderedLogs]);
   // Nested warnings are surfaced inside their tool entry, so exclude them from
   // the debug-toggle count too (they aren't free-floating noise anymore).
   const debugCount = useMemo(
@@ -753,11 +772,12 @@ export default function SessionDetail() {
     // surfaces inline since it's a real problem worth seeing in the timeline.
     () => orderedLogs.filter((e) =>
       !nestedLogIds.has(e.id)
+      && !nestedToolIds.has(e.id)
       && (showDebug || !isDebugLog(e))
       && !(e.type === 'learning' && e.status !== 'error')
       && matchesLogFilter(e, logFilter)
     ),
-    [orderedLogs, showDebug, nestedLogIds, logFilter]
+    [orderedLogs, showDebug, nestedLogIds, nestedToolIds, logFilter]
   );
   // Operational log lines (type 'log') can repeat identically many times in a row
   // (e.g. "Calling model: ..." or repeated MCP chatter). Collapse consecutive
@@ -1737,7 +1757,10 @@ export default function SessionDetail() {
               isNew={isNewLog(entry.id)}
               repeatCount={entry.repeatCount}
               warnings={entry.callId ? toolWarnings.get(entry.callId) : undefined}
+              nestedCalls={entry.callId ? nestedToolCalls.get(entry.callId) : undefined}
+              nestedWarnings={toolWarnings}
               expanded={expandOverrides.get(entry.id)}
+              expandOverrides={expandOverrides}
               showActions={entryActionable}
               parentApproveHref={showParentApproveCta ? parentLink : undefined}
               parentApproveLabel={parentLabel}

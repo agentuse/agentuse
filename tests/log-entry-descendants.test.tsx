@@ -445,3 +445,58 @@ describe('judge child verdicts on the descendant card', () => {
     expect(html).not.toContain('is-judge-fail');
   });
 });
+
+describe('code mode nested calls', () => {
+  const parent: ApprovalLogEntry = {
+    id: 'outer',
+    type: 'tool',
+    tool: 'code_exec',
+    callId: 'outer',
+    status: 'completed',
+    title: 'code_exec',
+    time: Date.UTC(2026, 8, 12, 4, 40),
+    details: { input: '{"code":"return 1"}', output: '1' },
+  };
+  const nested: ApprovalLogEntry[] = ['a', 'b', 'c'].map((suffix, index) => ({
+    id: `outer:nested:${index + 1}`,
+    type: 'tool',
+    tool: 'store_list',
+    callId: `outer:nested:${index + 1}`,
+    parentCallId: 'outer',
+    status: 'completed',
+    title: 'store_list',
+    time: Date.UTC(2026, 8, 12, 4, 40, index + 1),
+    details: { intent: `Reading projection ${suffix}`, input: '{}', output: '{}' },
+  }));
+
+  function renderParent(expanded: boolean | undefined): string {
+    return render(<LogEntry
+      entry={parent}
+      nestedCalls={nested}
+      expanded={expanded}
+      showActions={false}
+      actionsDisabled={false}
+      projectId="project"
+      sessionId="run"
+      token={undefined}
+      onToggle={() => undefined}
+      onAction={() => undefined}
+    />);
+  }
+
+  it('collapses nested calls behind a count until the program row is opened', () => {
+    const html = renderParent(undefined);
+    expect(html).toContain('log-nested-badge');
+    expect(html).toContain('3 calls');
+    expect(html).not.toContain('log-nested-calls');
+    expect(html).not.toContain('Reading projection a');
+  });
+
+  it('lists every nested call inside the opened program row', () => {
+    const html = renderParent(true);
+    expect(html).toContain('log-nested-calls');
+    expect(html).not.toContain('log-nested-badge');
+    for (const suffix of ['a', 'b', 'c']) expect(html).toContain(`Reading projection ${suffix}`);
+    expect(html.match(/is-nested-tool/g)?.length).toBe(3);
+  });
+});
