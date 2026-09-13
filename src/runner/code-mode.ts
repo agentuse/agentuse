@@ -20,6 +20,12 @@ import {
   type CodeModeResultMetadata,
   type CodeModeResultReference,
 } from '../session/code-mode-results';
+import type {
+  CodeModeGrepOptions,
+  CodeModeGrepResult,
+  CodeModeJqOptions,
+  CodeModeJqResult,
+} from '../session/code-mode-result-query';
 
 export const CODE_EXEC_TOOL = 'code_exec';
 export const CODE_MODE_ENV = 'AGENTUSE_CODE_MODE';
@@ -86,6 +92,9 @@ export interface CodeModeTelemetry {
   outputEntries: number;
   resultReads: number;
   resultReadBytes: number;
+  resultGreps: number;
+  resultJqQueries: number;
+  resultQueryBytes: number;
 }
 
 export interface CodeModeCompletedResult {
@@ -132,6 +141,13 @@ export interface NestedToolTrace {
 export interface CodeModeResultAccess {
   read(resultId: string): Promise<unknown>;
   list(limit?: number): Promise<CodeModeResultReference[]>;
+  grep?(resultId: string, options: CodeModeGrepOptions): Promise<CodeModeGrepResult>;
+  jq?(
+    resultId: string,
+    expression: string,
+    options?: CodeModeJqOptions,
+    signal?: AbortSignal
+  ): Promise<CodeModeJqResult>;
 }
 
 export interface CodeModeOptions {
@@ -553,6 +569,9 @@ export async function executeCodeModeDetailed(
   let callCount = 0;
   let resultReadCount = 0;
   let resultReadBytes = 0;
+  let resultGrepCount = 0;
+  let resultJqCount = 0;
+  let resultQueryBytes = 0;
   let capturedOutput: CodeModeOutputEntry[] = [];
   const completedCalls: CompletedNestedCall[] = [];
   // Start the deadline before declaration loading and typechecking. These are
@@ -591,6 +610,9 @@ export async function executeCodeModeDetailed(
         outputEntries: fitted.output?.length ?? 0,
         resultReads: resultReadCount,
         resultReadBytes,
+        resultGreps: resultGrepCount,
+        resultJqQueries: resultJqCount,
+        resultQueryBytes,
       },
     }, { cause });
   };
@@ -842,12 +864,12 @@ export async function executeCodeModeDetailed(
         const { serialized } = completion;
         const endedAt = Date.now();
         const resultBytes = Buffer.byteLength(serialized, 'utf8');
-        const reusableResult = serialized.length <= limits.resultCharsPerCall && resultBytes <= limits.resultReadBytes
-          ? describeCodeModeResultFromSerialized({
-              serializedInput: inputJson,
-              serializedOutput: serialized,
-            })
-          : undefined;
+        const reusableResult = describeCodeModeResultFromSerialized({
+          serializedInput: inputJson,
+          serializedOutput: serialized,
+          output,
+          readable: serialized.length <= limits.resultCharsPerCall && resultBytes <= limits.resultReadBytes,
+        });
         const resultReference = await notifyFinish({
           parentCallId: options.parentCallId,
           callId,
@@ -903,28 +925,60 @@ export async function executeCodeModeDetailed(
     const operation = (async () => {
       try {
         let value: unknown;
+        const isDataAccess = operationName === 'read' || operationName === 'grep' || operationName === 'jq';
+        if (isDataAccess && resultReadCount + resultGrepCount + resultJqCount >= limits.resultReads) {
+          throw new Error(`RESULT_TOO_LARGE: Code Mode permits at most ${limits.resultReads} result operations per program`);
+        }
         if (operationName === 'list') {
           value = options.resultAccess ? await options.resultAccess.list(50) : [];
         } else if (operationName === 'read') {
           if (!options.resultAccess) {
             throw new Error('RESULTS_UNAVAILABLE: this Code Mode invocation has no durable session');
           }
-          if (resultReadCount >= limits.resultReads) {
-            throw new Error(`RESULT_TOO_LARGE: Code Mode permits at most ${limits.resultReads} result reads per program`);
-          }
           value = await options.resultAccess.read(argument);
+        } else if (operationName === 'grep') {
+          if (!options.resultAccess?.grep) {
+            throw new Error('RESULTS_UNAVAILABLE: text result search is unavailable for this Code Mode invocation');
+          }
+          const request = JSON.parse(argument) as { resultId?: unknown; options?: unknown };
+          if (typeof request.resultId !== 'string') throw new Error('RESULT_GREP_INPUT: resultId must be a string');
+          value = await options.resultAccess.grep(request.resultId, request.options as CodeModeGrepOptions);
+        } else if (operationName === 'jq') {
+          if (!options.resultAccess?.jq) {
+            throw new Error('RESULTS_UNAVAILABLE: JSON result querying is unavailable for this Code Mode invocation');
+          }
+          const request = JSON.parse(argument) as { resultId?: unknown; expression?: unknown; options?: unknown };
+          if (typeof request.resultId !== 'string') throw new Error('RESULT_JQ_INPUT: resultId must be a string');
+          if (typeof request.expression !== 'string') throw new Error('RESULT_JQ_INPUT: expression must be a string');
+          value = await options.resultAccess.jq(
+            request.resultId,
+            request.expression,
+            request.options as CodeModeJqOptions,
+            signal
+          );
         } else {
           throw new Error(`RESULT_OPERATION_INVALID: unsupported results operation ${operationName}`);
         }
 
         const serialized = jsonStringify(value, 'Stored Code Mode result');
-        if (operationName === 'read') {
+        if (isDataAccess) {
           const bytes = Buffer.byteLength(serialized, 'utf8');
-          if (serialized.length > limits.resultCharsPerCall || resultReadBytes + bytes > limits.resultReadBytes) {
-            throw new Error('RESULT_TOO_LARGE: stored result exceeds the Code Mode read budget');
+          if (
+            serialized.length > limits.resultCharsPerCall
+            || resultReadBytes + resultQueryBytes + bytes > limits.resultReadBytes
+          ) {
+            throw new Error('RESULT_TOO_LARGE: stored result operation exceeds the Code Mode read budget');
           }
-          resultReadCount++;
-          resultReadBytes += bytes;
+          if (operationName === 'read') {
+            resultReadCount++;
+            resultReadBytes += bytes;
+          } else if (operationName === 'grep') {
+            resultGrepCount++;
+            resultQueryBytes += bytes;
+          } else {
+            resultJqCount++;
+            resultQueryBytes += bytes;
+          }
         }
         settlePromise(deferred, { value: serialized });
       } catch (error) {
@@ -1283,6 +1337,27 @@ export async function executeCodeModeDetailed(
               return invokeResult('read', resultId);
             },
             list: () => invokeResult('list'),
+            grep: (resultId, options) => {
+              if (typeof resultId !== 'string' || resultId.length === 0) {
+                return TrackedPromise.reject(new TypeError('results.grep resultId must be a non-empty string'));
+              }
+              if (!options || typeof options !== 'object') {
+                return TrackedPromise.reject(new TypeError('results.grep options must be an object'));
+              }
+              return invokeResult('grep', JSON.stringify({ resultId, options }));
+            },
+            jq: (resultId, expression, options = {}) => {
+              if (typeof resultId !== 'string' || resultId.length === 0) {
+                return TrackedPromise.reject(new TypeError('results.jq resultId must be a non-empty string'));
+              }
+              if (typeof expression !== 'string' || expression.length === 0) {
+                return TrackedPromise.reject(new TypeError('results.jq expression must be a non-empty string'));
+              }
+              if (!options || typeof options !== 'object') {
+                return TrackedPromise.reject(new TypeError('results.jq options must be an object'));
+              }
+              return invokeResult('jq', JSON.stringify({ resultId, expression, options }));
+            },
           }),
           writable: false,
           configurable: false,
@@ -1401,6 +1476,9 @@ export async function executeCodeModeDetailed(
         outputEntries: fitted.output?.length ?? 0,
         resultReads: resultReadCount,
         resultReadBytes,
+        resultGreps: resultGrepCount,
+        resultJqQueries: resultJqCount,
+        resultQueryBytes,
       },
     };
   } finally {
@@ -1531,7 +1609,7 @@ export function createCodeExecTool(options: {
       'The program has no filesystem, network, environment, process, package, or import access. Dynamic code construction through eval or Function constructors is unavailable. ' +
       'Call permitted tools as await tools.<name>({ ... }) using the same input object as a direct tool call. A transport-sensitive tool may also remain separately visible for binary or provider-native result delivery. Await or return every async operation; detached async work is rejected during preflight. ' +
       'When a needed tool is absent from the quick index, use await catalog.search(query), call handle.describe(), or inspect API.list("tools") and API.read("tools/<name>.d.ts") in a first code_exec. Catalog handles are callable and use the same dispatch policy as tools.<name>. ' +
-      'Completed JSON nested tool calls within the read limits are recorded as same-session immutable results. The response lists recent reusableResults; use await results.read(resultId) in a later code_exec instead of repeating the call, or await results.list() to recover recent references after context compaction. Reuse an earlier read only when its freshness is still valid. ' +
+      'Completed JSON-serializable nested tool calls are recorded as same-session immutable results. The response lists recent reusableResults; use await results.list() to inspect each result kind and capabilities. Use await results.read(resultId) for bounded payloads, await results.grep(resultId, { pattern, limit, contextLines }) for literal text search, or await results.jq(resultId, expression, { limit }) for real jq queries over JSON, including oversized results. Reuse an earlier result only when its freshness is still valid. ' +
       'Return one JSON-serializable result. You may also emit multiple ordered, bounded progress entries with text(value), json(value), or console.log/info/warn/error/debug. ' +
       'Code is strictly type-checked before any nested tool starts. For `-> ?` outputs, do not guess fields: return one element and its keys, observe, then narrow with runtime checks in a later code_exec before dependent logic. ' +
       `Nested tool catalog: ${catalogSummary}.\n\n${quickIndex}`,

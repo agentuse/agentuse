@@ -148,6 +148,8 @@ describe('Code Mode', () => {
       inputHash: 'abc123',
       inputPreview: '{}',
       bytes: 42,
+      kind: 'json' as const,
+      capabilities: { read: true, grep: false, jq: true },
       completedAt: 1,
     };
     const result = await executeCodeModeDetailed(`
@@ -165,6 +167,70 @@ describe('Code Mode', () => {
 
     expect(result.value).toEqual([{ id: reference.resultId, tool: 'load' }]);
     expect(result.telemetry.resultReads).toBe(0);
+  });
+
+  it('searches text and queries JSON results through separate typed operations', async () => {
+    const textId = 'result_01J00000000000000000000000_01J00000000000000000000001';
+    const jsonId = 'result_01J00000000000000000000000_01J00000000000000000000002';
+    const grep = mock(async (id: string, options: { pattern: string; limit?: number }) => ({
+      matches: [{ line: 2, column: 1, excerpt: options.pattern, before: [], after: [] }],
+      truncated: false,
+    }));
+    const jq = mock(async (id: string, expression: string, options?: { limit?: number }) => ({
+      values: [{ id, expression, limit: options?.limit }],
+      truncated: false,
+    }));
+    const result = await executeCodeModeDetailed(`
+      const textMatches = await results.grep(${JSON.stringify(textId)}, {
+        pattern: "timeout",
+        limit: 5,
+        contextLines: 1,
+      });
+      const selected = await results.jq(
+        ${JSON.stringify(jsonId)},
+        '.items[] | select(.status == "ready")',
+        { limit: 10 },
+      );
+      return { textMatches, selected };
+    `, {
+      dispatcher: { dispatch: async () => null },
+      toolNames: [],
+      parentCallId: 'query-results',
+      resultAccess: {
+        read: async () => null,
+        list: async () => [],
+        grep,
+        jq,
+      },
+    });
+
+    expect(grep).toHaveBeenCalledWith(textId, {
+      pattern: 'timeout',
+      limit: 5,
+      contextLines: 1,
+    });
+    expect(jq).toHaveBeenCalledWith(
+      jsonId,
+      '.items[] | select(.status == "ready")',
+      { limit: 10 },
+      expect.any(AbortSignal)
+    );
+    expect(result.value).toEqual({
+      textMatches: {
+        matches: [{ line: 2, column: 1, excerpt: 'timeout', before: [], after: [] }],
+        truncated: false,
+      },
+      selected: {
+        values: [{ id: jsonId, expression: '.items[] | select(.status == "ready")', limit: 10 }],
+        truncated: false,
+      },
+    });
+    expect(result.telemetry).toEqual(expect.objectContaining({
+      resultReads: 0,
+      resultGreps: 1,
+      resultJqQueries: 1,
+      resultQueryBytes: expect.any(Number),
+    }));
   });
 
   it('classifies missing and oversized stored results as result access failures', async () => {
@@ -230,8 +296,8 @@ describe('Code Mode', () => {
     expect(failure.error.message).toContain(resultId);
   });
 
-  it('does not advertise results that exceed the reusable read limits', async () => {
-    let reusableResultSeen = false;
+  it('marks oversized results as queryable but not directly readable', async () => {
+    let reusableResultSeen: unknown;
     let caught: unknown;
     try {
       await executeCodeModeDetailed('return tools.load({});', {
@@ -240,7 +306,7 @@ describe('Code Mode', () => {
         parentCallId: 'oversized-result',
         limits: { resultCharsPerCall: 100 },
         onNestedToolFinish: async trace => {
-          reusableResultSeen = trace.reusableResult !== undefined;
+          reusableResultSeen = trace.reusableResult;
         },
       });
     } catch (error) {
@@ -250,7 +316,10 @@ describe('Code Mode', () => {
     expect(caught).toBeInstanceOf(CodeModeExecutionError);
     expect((caught as CodeModeExecutionError).result.error.message).toContain('per-call Code Mode size limit');
     expect((caught as CodeModeExecutionError).result.reusableResults).toBeUndefined();
-    expect(reusableResultSeen).toBe(false);
+    expect(reusableResultSeen).toEqual(expect.objectContaining({
+      kind: 'json',
+      capabilities: { read: false, grep: false, jq: true },
+    }));
   });
 
   it('returns structured status, ordered outputs, and telemetry', async () => {
@@ -282,6 +351,9 @@ describe('Code Mode', () => {
         outputEntries: 3,
         resultReads: 0,
         resultReadBytes: 0,
+        resultGreps: 0,
+        resultJqQueries: 0,
+        resultQueryBytes: 0,
       },
     });
   });
@@ -1608,6 +1680,8 @@ describe('Code Mode', () => {
     const contracts = await buildCodeModeToolContracts({ list: listTool }, ['list']);
     expect(contracts[0].overloads).toHaveLength(2);
     const declarations = codeModeDeclarations(contracts);
+    expect(declarations).toContain('grep(resultId: string');
+    expect(declarations).toContain('jq(resultId: string, expression: string');
     const lines = declarations.split('\n').filter(line => line.includes('"list"('));
     expect(lines).toHaveLength(3);
     expect(lines[0]).toContain('countOnly: true');

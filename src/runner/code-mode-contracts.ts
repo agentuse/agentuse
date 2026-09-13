@@ -308,7 +308,9 @@ export function codeModeDeclarations(contracts: readonly CodeModeToolContract[])
       .join('\n');
   });
   return `type CodeModeOutput = { type: "text"; text: string } | { type: "json"; value: unknown };\n` +
-    `type CodeModeResultReference = { resultId: string; tool: string; inputHash: string; inputPreview: string; bytes: number; completedAt: number };\n` +
+    `type CodeModeResultReference = { resultId: string; tool: string; inputHash: string; inputPreview: string; bytes: number; kind: "text" | "json" | "unknown"; capabilities: { read: boolean; grep: boolean; jq: boolean }; completedAt: number };\n` +
+    `type CodeModeGrepResult = { matches: Array<{ line: number; column: number; excerpt: string; before: string[]; after: string[] }>; truncated: boolean };\n` +
+    `type CodeModeJqResult = { values: unknown[]; truncated: boolean };\n` +
     `type CodeModeToolMetadata = { name: string; description: string; input: string; output?: string };\n` +
     `type CodeModeToolDescription = CodeModeToolMetadata & { declaration: string };\n` +
     `interface CodeModeToolHandle {\n` +
@@ -331,6 +333,8 @@ export function codeModeDeclarations(contracts: readonly CodeModeToolContract[])
     `declare const results: {\n` +
     `  read(resultId: string): Promise<unknown>;\n` +
     `  list(): Promise<readonly CodeModeResultReference[]>;\n` +
+    `  grep(resultId: string, options: { pattern: string; caseSensitive?: boolean; limit?: number; contextLines?: number }): Promise<CodeModeGrepResult>;\n` +
+    `  jq(resultId: string, expression: string, options?: { limit?: number }): Promise<CodeModeJqResult>;\n` +
     `};\n` +
     `declare function text(value: unknown): void;\n` +
     `declare function json(value: unknown): void;\n` +

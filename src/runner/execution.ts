@@ -671,6 +671,15 @@ export function buildCodeModeTraceHooks(options: {
     resultAccess: {
       read: (resultId) => manager.readCodeModeResult(sessionID, agentId, resultId),
       list: (limit) => manager.listCodeModeResults(sessionID, agentId, limit),
+      grep: (resultId, options) => manager.grepCodeModeResult(sessionID, agentId, resultId, options),
+      jq: (resultId, expression, options, signal) => manager.jqCodeModeResult(
+        sessionID,
+        agentId,
+        resultId,
+        expression,
+        options,
+        signal
+      ),
     },
   };
 }

@@ -16,6 +16,14 @@ import {
   type CodeModeResultIndexEntry,
   type CodeModeResultReference,
 } from './code-mode-results';
+import {
+  grepCodeModeText,
+  queryCodeModeJson,
+  type CodeModeGrepOptions,
+  type CodeModeGrepResult,
+  type CodeModeJqOptions,
+  type CodeModeJqResult,
+} from './code-mode-result-query';
 import type {
   SessionInfo,
   SessionTrigger,
@@ -89,15 +97,38 @@ interface CodeModeResultIndex {
   results: Record<string, CodeModeResultIndexEntry>;
 }
 
-function isCodeModeResultReference(value: unknown): value is CodeModeResultReference {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+function normalizeCodeModeResultReference(value: unknown): CodeModeResultReference | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const ref = value as Record<string, unknown>;
-  return typeof ref.resultId === 'string'
+  const validBase = typeof ref.resultId === 'string'
     && typeof ref.tool === 'string'
     && typeof ref.inputHash === 'string'
     && typeof ref.inputPreview === 'string'
     && typeof ref.bytes === 'number'
     && typeof ref.completedAt === 'number';
+  if (!validBase) return undefined;
+  const capabilities = ref.capabilities;
+  const validCapabilities = capabilities !== null
+    && typeof capabilities === 'object'
+    && !Array.isArray(capabilities)
+    && typeof (capabilities as Record<string, unknown>).read === 'boolean'
+    && typeof (capabilities as Record<string, unknown>).grep === 'boolean'
+    && typeof (capabilities as Record<string, unknown>).jq === 'boolean';
+  if ((ref.kind === 'text' || ref.kind === 'json' || ref.kind === 'unknown') && validCapabilities) {
+    return ref as unknown as CodeModeResultReference;
+  }
+  // Results recorded before query capabilities were introduced remain
+  // readable, but are never guessed to be text or JSON from their preview.
+  return {
+    resultId: ref.resultId as string,
+    tool: ref.tool as string,
+    inputHash: ref.inputHash as string,
+    inputPreview: ref.inputPreview as string,
+    bytes: ref.bytes as number,
+    kind: 'unknown',
+    capabilities: { read: true, grep: false, jq: false },
+    completedAt: ref.completedAt as number,
+  };
 }
 
 interface ReadSessionEntriesOptions {
@@ -1062,7 +1093,11 @@ export class SessionManager {
    * opaque id contains only ULIDs for a message and part; callers never supply
    * a path, and every identity field is revalidated before returning bytes.
    */
-  async readCodeModeResult(sessionID: string, agentId: string, resultId: string): Promise<unknown> {
+  private async resolveCodeModeResult(
+    sessionID: string,
+    agentId: string,
+    resultId: string
+  ): Promise<{ output: unknown; reference: CodeModeResultReference }> {
     const location = parseCodeModeResultId(resultId);
     if (!location) throw new Error(`RESULT_NOT_FOUND: invalid result id ${resultId}`);
 
@@ -1079,6 +1114,7 @@ export class SessionManager {
     const storedReference = part.type === 'tool' && part.state.status === 'completed'
       ? part.state.metadata?.codeModeResult
       : undefined;
+    const reference = normalizeCodeModeResultReference(storedReference);
     if (
       part.type !== 'tool'
       || part.sessionID !== sessionID
@@ -1086,12 +1122,55 @@ export class SessionManager {
       || part.id !== location.partId
       || part.state.status !== 'completed'
       || part.state.metadata?.codeMode !== true
-      || !isCodeModeResultReference(storedReference)
-      || storedReference.resultId !== resultId
+      || !reference
+      || reference.resultId !== resultId
     ) {
       throw new Error(`RESULT_NOT_FOUND: ${resultId} is not a reusable result in this session`);
     }
-    return part.state.output;
+    return { output: part.state.output, reference };
+  }
+
+  async readCodeModeResult(sessionID: string, agentId: string, resultId: string): Promise<unknown> {
+    const result = await this.resolveCodeModeResult(sessionID, agentId, resultId);
+    if (!result.reference.capabilities.read) {
+      const suggested = result.reference.kind === 'text' ? 'results.grep()' : 'results.jq()';
+      throw new Error(`RESULT_TOO_LARGE: ${resultId} is not readable; use ${suggested}`);
+    }
+    return result.output;
+  }
+
+  async grepCodeModeResult(
+    sessionID: string,
+    agentId: string,
+    resultId: string,
+    options: CodeModeGrepOptions
+  ): Promise<CodeModeGrepResult> {
+    const result = await this.resolveCodeModeResult(sessionID, agentId, resultId);
+    if (!result.reference.capabilities.grep || typeof result.output !== 'string') {
+      const suggestion = result.reference.kind === 'json'
+        ? 'use results.jq() for JSON results'
+        : 'this legacy result has no text-search capability';
+      throw new Error(`RESULT_KIND_MISMATCH: ${resultId} is ${result.reference.kind}; ${suggestion}`);
+    }
+    return grepCodeModeText(result.output, options);
+  }
+
+  async jqCodeModeResult(
+    sessionID: string,
+    agentId: string,
+    resultId: string,
+    expression: string,
+    options?: CodeModeJqOptions,
+    signal?: AbortSignal
+  ): Promise<CodeModeJqResult> {
+    const result = await this.resolveCodeModeResult(sessionID, agentId, resultId);
+    if (!result.reference.capabilities.jq || typeof result.output === 'string') {
+      const suggestion = result.reference.kind === 'text'
+        ? 'use results.grep() for text results'
+        : 'this legacy result has no JSON-query capability';
+      throw new Error(`RESULT_KIND_MISMATCH: ${resultId} is ${result.reference.kind}; ${suggestion}`);
+    }
+    return queryCodeModeJson(result.output, expression, options, signal);
   }
 
   /** Most-recent-first references only; payloads stay on disk until read. */
@@ -1115,7 +1194,8 @@ export class SessionManager {
     }
     if (!index || index.version !== 1 || !index.results) return [];
     return Object.values(index.results)
-      .filter(isCodeModeResultReference)
+      .map(normalizeCodeModeResultReference)
+      .filter((reference): reference is CodeModeResultReference => reference !== undefined)
       .sort((left, right) => right.completedAt - left.completedAt || right.resultId.localeCompare(left.resultId))
       .slice(0, limit);
   }

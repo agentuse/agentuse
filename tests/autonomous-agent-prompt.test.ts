@@ -46,12 +46,13 @@ describe('autonomous agent system prompt', () => {
     expect(enabled).toContain('transport-sensitive tool may also appear in the Code Mode catalog');
     expect(enabled).toContain('Any model-facing result over 30,720 bytes is replaced by a shape summary');
     expect(enabled).toContain('never raw lists or whole records');
-    expect(enabled).toContain('Completed JSON nested calls within the read limits are listed as reusableResults');
-    expect(enabled).toContain('use results.read(resultId)');
-    expect(enabled).toContain('results.list() after context compaction');
+    expect(enabled).toContain('Completed JSON-serializable nested calls are listed as reusableResults, including oversized results');
+    expect(enabled).toContain('inspect results.list() for the result kind and capabilities');
+    expect(enabled).toContain('Use results.read(resultId)');
+    expect(enabled).toContain('results.grep(resultId');
+    expect(enabled).toContain('results.jq(resultId');
     expect(enabled).toContain('call the tool again when current state is required');
-    expect(enabled).toContain('return Object.keys(x) and one element');
-    expect(enabled).toContain("read that call's saved result in the next program instead of repeating the tool");
+    expect(enabled).toContain('query its keys and one element with results.jq() instead of repeating the tool');
     expect(enabled).toContain('Do not create or ask the user to maintain a helper script');
     expect(enabled).toContain('shell artifact, commands or scripts may contain the calculations the artifact itself needs');
     expect(disabled).not.toContain('Tool composition:');

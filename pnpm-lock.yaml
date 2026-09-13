@@ -83,6 +83,9 @@ importers:
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3
+      jq-wasm:
+        specifier: 3.0.0-jq-1.8.2
+        version: 3.0.0-jq-1.8.2
       lucide-preact:
         specifier: ^1.38.0
         version: 1.38.0(preact@10.29.2)
@@ -2344,6 +2347,10 @@ packages:
   jiti@2.7.0:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
+
+  jq-wasm@3.0.0-jq-1.8.2:
+    resolution: {integrity: sha512-jgWSEBJSd0lYR4Q5Fw8333MxQS5jCRI+g9KwAGL7yK1spwzTJy8C5uOS08wbpKE0Gz8oQYLlRpNLE/W70Ksp2g==}
+    engines: {node: '>=20'}
 
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
@@ -6444,6 +6451,8 @@ snapshots:
       picocolors: 1.1.1
 
   jiti@2.7.0: {}
+
+  jq-wasm@3.0.0-jq-1.8.2: {}
 
   js-tokens@4.0.0: {}
 

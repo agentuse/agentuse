@@ -4,6 +4,7 @@
 
 ### Added
 
+- **Code Mode gives agents a typed, sandboxed TypeScript workspace for tool-heavy work.** The runtime exposes one generated catalog of the tools available to the session, including input-dependent output types, so agents can filter, join, calculate, and orchestrate calls without moving large intermediate payloads through the model. Nested calls remain subject to their normal approval and execution policies, appear under the Code Mode program in the session log, and return narrowed results. Declarations and successful results are reused within a session, oversized outputs receive queryable handles, text results support bounded literal search, JSON results support bundled jq queries, and contract failures are journaled with actionable recovery guidance.
 - **Testing now asks whether you want to check a workflow or a result.** `agentuse test workflow <agent>` exercises steps and approval branches with all tool responses mocked by default; `--scope gated` explicitly leaves other tools live. `agentuse test result <agent> --session <id>` uses current instructions with saved evidence from a past job, keeps the original draft out of generation, and reports the comparison. An optional `--judge <agent>` evaluates the new result against criteria without tools. Evidence is selected once and reused; incomplete, failed, and error outcomes are distinct. Legacy adaptive tests and strict `--replay` remain available.
 
 ### Changed

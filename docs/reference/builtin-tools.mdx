@@ -41,20 +41,44 @@ tools can publish trusted output contracts, and the built-in store tools do, so
 misspelled inputs, unhandled result variants, and invalid result paths fail
 before an effect occurs. External provider and MCP output schemas remain
 untrusted and appear as `-> ?`. Inspect an unknown result first, then narrow it
-with runtime checks before using its fields in a later program. Completed JSON
-nested calls within the read limits are also exposed as immutable, same-session
-result references:
+with runtime checks before using its fields in a later program. Completed
+JSON-serializable nested calls are also exposed as immutable, same-session
+result references, including results too large to read directly into Code Mode:
 
 ```typescript
-const previous = await results.read("result_...");
 const recent = await results.list();
+const reference = recent[0];
+
+if (reference.capabilities.read) {
+  const previous = await results.read(reference.resultId);
+}
+
+if (reference.kind === "text") {
+  const matches = await results.grep(reference.resultId, {
+    pattern: "timeout",
+    limit: 20,
+    contextLines: 2,
+  });
+}
+
+if (reference.kind === "json") {
+  const selected = await results.jq(
+    reference.resultId,
+    '.items[] | select(.status == "ready") | { id, status }',
+    { limit: 100 },
+  );
+}
 ```
 
 Use these references for immediate retries and continued analysis instead of
 repeating the same tool call. Refresh the tool when current external state is
 required or an intervening mutation may have invalidated the earlier result.
 References never cross session or subagent boundaries and do not replay tools
-or side effects.
+or side effects. `results.grep()` performs bounded literal, line-oriented text
+search. `results.jq()` uses real jq syntax and returns jq's ordered output stream
+as `{ values, truncated }`. AgentUse runs bundled jq 1.8.2 WebAssembly in a
+resource-limited worker, without a shell, host environment access, jq modules,
+or a machine-level jq installation.
 
 Code Mode has no direct filesystem, network, environment, process, package,
 shell, or import access. Approval gates, gated Bash, outcome tools, internal

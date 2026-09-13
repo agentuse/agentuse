@@ -209,4 +209,98 @@ describe('session Code Mode results', () => {
       manager.readCodeModeResult(sessionId, agentId, codeModeResultId(messageId, partId))
     ).rejects.toThrow('RESULT_NOT_FOUND');
   });
+
+  it('enforces stored result kinds and queries oversized JSON without reading it into Code Mode', async () => {
+    originalXdg = process.env.XDG_DATA_HOME;
+    testRoot = await mkdtemp(join(tmpdir(), 'agentuse-code-results-'));
+    process.env.XDG_DATA_HOME = testRoot;
+    await initStorage(testRoot);
+
+    const manager = new SessionManager();
+    const agentId = 'agents/review';
+    const { sessionId, messageId } = await createSession(manager, testRoot, agentId);
+    const record = async (tool: string, output: unknown, readable: boolean) => {
+      const startedAt = Date.now();
+      const partId = await manager.addPart(sessionId, agentId, messageId, {
+        type: 'tool',
+        callID: `outer:nested:${tool}`,
+        parentCallID: 'outer',
+        tool,
+        state: {
+          status: 'running',
+          input: {},
+          metadata: { parentCallId: 'outer', codeMode: true },
+          time: { start: startedAt },
+        },
+      });
+      const resultId = codeModeResultId(messageId, partId);
+      const described = describeCodeModeResult({
+        resultId,
+        tool,
+        toolInput: {},
+        output,
+        completedAt: startedAt + 1,
+      });
+      const reference = {
+        ...described,
+        capabilities: { ...described.capabilities, read: readable },
+      };
+      await manager.updatePart(sessionId, agentId, messageId, partId, {
+        state: {
+          status: 'completed',
+          input: {},
+          output,
+          metadata: { parentCallId: 'outer', codeMode: true, codeModeResult: reference },
+          time: { start: startedAt, end: startedAt + 1 },
+        },
+      });
+      await manager.recordCodeModeResult(sessionId, agentId, messageId, partId, reference);
+      return { resultId, reference };
+    };
+
+    const text = await record('logs', 'started\ntimeout while loading\nrecovered', true);
+    const json = await record('records', {
+      items: [{ id: 'one', status: 'ready' }, { id: 'two', status: 'done' }],
+      padding: 'x'.repeat(500),
+    }, false);
+
+    await expect(manager.grepCodeModeResult(sessionId, agentId, text.resultId, {
+      pattern: 'timeout',
+      contextLines: 1,
+    })).resolves.toEqual({
+      matches: [{
+        line: 2,
+        column: 1,
+        excerpt: 'timeout while loading',
+        before: ['started'],
+        after: ['recovered'],
+      }],
+      truncated: false,
+    });
+    await expect(manager.readCodeModeResult(sessionId, agentId, json.resultId))
+      .rejects.toThrow('use results.jq()');
+    await expect(manager.grepCodeModeResult(sessionId, agentId, json.resultId, { pattern: 'ready' }))
+      .rejects.toThrow('use results.jq()');
+    await expect(manager.jqCodeModeResult(sessionId, agentId, text.resultId, '.'))
+      .rejects.toThrow('use results.grep()');
+    await expect(manager.jqCodeModeResult(
+      sessionId,
+      agentId,
+      json.resultId,
+      '.items[] | select(.status == "ready") | .id'
+    )).resolves.toEqual({ values: ['one'], truncated: false });
+
+    expect(await manager.listCodeModeResults(sessionId, agentId)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        resultId: text.resultId,
+        kind: 'text',
+        capabilities: { read: true, grep: true, jq: false },
+      }),
+      expect.objectContaining({
+        resultId: json.resultId,
+        kind: 'json',
+        capabilities: { read: false, grep: false, jq: true },
+      }),
+    ]));
+  });
 });

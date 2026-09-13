@@ -9,12 +9,18 @@ export interface CodeModeResultReference {
   inputHash: string;
   inputPreview: string;
   bytes: number;
+  kind: 'text' | 'json' | 'unknown';
+  capabilities: {
+    read: boolean;
+    grep: boolean;
+    jq: boolean;
+  };
   completedAt: number;
 }
 
 export type CodeModeResultMetadata = Pick<
   CodeModeResultReference,
-  'inputHash' | 'inputPreview' | 'bytes'
+  'inputHash' | 'inputPreview' | 'bytes' | 'kind' | 'capabilities'
 >;
 
 export interface CodeModeResultIndexEntry extends CodeModeResultReference {
@@ -61,7 +67,12 @@ export function describeCodeModeResult(input: {
   return {
     resultId: input.resultId,
     tool: input.tool,
-    ...describeCodeModeResultFromSerialized({ serializedInput, serializedOutput }),
+    ...describeCodeModeResultFromSerialized({
+      serializedInput,
+      serializedOutput,
+      output: input.output,
+      readable: true,
+    }),
     completedAt: input.completedAt,
   };
 }
@@ -69,6 +80,8 @@ export function describeCodeModeResult(input: {
 export function describeCodeModeResultFromSerialized(input: {
   serializedInput: string;
   serializedOutput: string;
+  output: unknown;
+  readable: boolean;
 }): CodeModeResultMetadata {
   let canonicalInput = input.serializedInput;
   try {
@@ -83,5 +96,11 @@ export function describeCodeModeResultFromSerialized(input: {
       ? canonicalInput
       : `${canonicalInput.slice(0, INPUT_PREVIEW_CHARS)}…`,
     bytes: Buffer.byteLength(input.serializedOutput, 'utf8'),
+    kind: typeof input.output === 'string' ? 'text' : 'json',
+    capabilities: {
+      read: input.readable,
+      grep: typeof input.output === 'string',
+      jq: typeof input.output !== 'string',
+    },
   };
 }
