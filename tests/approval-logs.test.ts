@@ -104,4 +104,176 @@ describe('buildApprovalLogs', () => {
     expect(display.text).toContain('"__type": "Reference"');
     expect(display.sha256).toMatch(/^[a-f0-9]{64}$/);
   });
+
+  it('marks an earlier failed call recovered only after its declared recovery succeeds', () => {
+    const logs = buildApprovalLogs([
+      {
+        id: 'part-failed',
+        type: 'tool',
+        callID: 'call-failed',
+        tool: 'results',
+        state: {
+          status: 'error',
+          input: { expression: '.missing' },
+          error: 'Path not found',
+          time: { start: 1, end: 2 },
+        },
+      },
+      {
+        id: 'part-recovery',
+        type: 'tool',
+        callID: 'call-recovery',
+        tool: 'results',
+        state: {
+          status: 'completed',
+          input: {
+            intent: 'Narrowing the previous result query',
+            recovers: 'call-failed',
+            expression: '.output',
+          },
+          output: 'found',
+          time: { start: 3, end: 4 },
+        },
+      },
+    ]);
+
+    expect(logs[0]?.details).toMatchObject({ recoveredByCallId: 'call-recovery' });
+    expect(logs[1]?.details).toMatchObject({
+      recoversCallId: 'call-failed',
+      intent: 'Narrowing the previous result query',
+      input: expect.stringContaining('.output'),
+    });
+    expect(String(logs[1]?.details?.input)).not.toContain('recovers');
+  });
+
+  it('infers an immediate corrected same-tool recovery when the model omits metadata', () => {
+    const logs = buildApprovalLogs([
+      {
+        id: 'part-failed',
+        type: 'tool',
+        callID: 'call-failed',
+        tool: 'results',
+        state: {
+          status: 'error',
+          input: { action: 'jq', resultId: 'result-1', expression: 'fromjson' },
+          error: 'only strings can be parsed',
+          time: { start: 1, end: 2 },
+        },
+      },
+      {
+        id: 'part-recovery',
+        type: 'tool',
+        callID: 'call-recovery',
+        tool: 'results',
+        state: {
+          status: 'completed',
+          input: { action: 'jq', resultId: 'result-1', expression: '.output | fromjson' },
+          output: { values: [] },
+          time: { start: 3, end: 4 },
+        },
+      },
+    ]);
+
+    expect(logs[0]?.details).toMatchObject({
+      recoveredByCallId: 'call-recovery',
+      recoveryInferred: true,
+    });
+    expect(logs[1]?.details).toMatchObject({
+      recoversCallId: 'call-failed',
+      recoveryInferred: true,
+    });
+  });
+
+  it('projects every failed attempt in an inferred cross-tool result recovery chain', () => {
+    const resultId = 'result_01J00000000000000000000000_01J00000000000000000000001';
+    const logs = buildApprovalLogs([
+      {
+        id: 'part-code-first', type: 'tool', callID: 'call-code-first', tool: 'code_exec',
+        state: {
+          status: 'error',
+          input: { code: `return results.read(${JSON.stringify(resultId)}, { offset: 0 });` },
+          error: 'Expected one argument', time: { start: 1, end: 2 },
+        },
+      },
+      {
+        id: 'part-direct', type: 'tool', callID: 'call-direct', tool: 'results',
+        state: {
+          status: 'error', input: { action: 'read', resultId, pattern: '.' },
+          error: 'Invalid input', time: { start: 3, end: 4 },
+        },
+      },
+      {
+        id: 'part-code-final', type: 'tool', callID: 'call-code-final', tool: 'code_exec',
+        state: {
+          status: 'completed', input: { code: `return results.read(${JSON.stringify(resultId)});` },
+          output: { status: 'completed' }, time: { start: 5, end: 6 },
+        },
+      },
+    ]);
+
+    expect(logs[0]?.details).toMatchObject({
+      recoveredByCallId: 'call-code-final',
+      recoveryInferred: true,
+    });
+    expect(logs[1]?.details).toMatchObject({
+      recoversCallId: 'call-code-first',
+      recoveredByCallId: 'call-code-final',
+      recoveryInferred: true,
+    });
+    expect(logs[2]?.details).toMatchObject({
+      recoversCallId: 'call-direct',
+      recoveryInferred: true,
+    });
+  });
+
+  it('keeps a valid failed recovery attempt visible without clearing the original failure', () => {
+    const logs = buildApprovalLogs([
+      {
+        id: 'part-original', type: 'tool', callID: 'call-original', tool: 'results',
+        state: { status: 'error', input: {}, error: 'First failure', time: { start: 1, end: 2 } },
+      },
+      {
+        id: 'part-attempt', type: 'tool', callID: 'call-attempt', tool: 'results',
+        state: {
+          status: 'error',
+          input: { recovers: 'call-original', expression: '.stillMissing' },
+          error: 'Second failure',
+          time: { start: 3, end: 4 },
+        },
+      },
+    ]);
+
+    expect(logs[0]?.details?.recoveredByCallId).toBeUndefined();
+    expect(logs[1]?.details?.recoversCallId).toBe('call-original');
+  });
+
+  it('rejects recovery links to missing, later, or non-failed calls', () => {
+    const logs = buildApprovalLogs([
+      {
+        id: 'missing-target', type: 'tool', callID: 'call-missing-attempt', tool: 'results',
+        state: { status: 'completed', input: { recovers: 'does-not-exist' }, output: 'ok', time: { start: 1, end: 2 } },
+      },
+      {
+        id: 'future-target-attempt', type: 'tool', callID: 'call-future-attempt', tool: 'results',
+        state: { status: 'completed', input: { recovers: 'call-future-error' }, output: 'ok', time: { start: 3, end: 4 } },
+      },
+      {
+        id: 'future-target', type: 'tool', callID: 'call-future-error', tool: 'results',
+        state: { status: 'error', input: {}, error: 'Too late', time: { start: 5, end: 6 } },
+      },
+      {
+        id: 'successful-target', type: 'tool', callID: 'call-success', tool: 'results',
+        state: { status: 'completed', input: {}, output: 'ok', time: { start: 7, end: 8 } },
+      },
+      {
+        id: 'successful-target-attempt', type: 'tool', callID: 'call-success-attempt', tool: 'results',
+        state: { status: 'completed', input: { recovers: 'call-success' }, output: 'ok', time: { start: 9, end: 10 } },
+      },
+    ]);
+
+    expect(logs[0]?.details?.recoversCallId).toBeUndefined();
+    expect(logs[1]?.details?.recoversCallId).toBeUndefined();
+    expect(logs[2]?.details?.recoveredByCallId).toBeUndefined();
+    expect(logs[4]?.details?.recoversCallId).toBeUndefined();
+  });
 });

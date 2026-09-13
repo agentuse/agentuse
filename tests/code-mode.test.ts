@@ -24,7 +24,7 @@ import {
 } from '../src/runner/code-mode-contracts';
 import { Store } from '../src/store/store';
 import { createStoreTools } from '../src/store/tools';
-import { extractToolIntent, injectIntentParam } from '../src/runner/tool-intent';
+import { extractToolIntent, extractToolRecovery, injectIntentParam } from '../src/runner/tool-intent';
 import { BashPermissionController } from '../src/runner/approval-lease';
 import { createBashTool } from '../src/tools/bash';
 
@@ -1767,7 +1767,7 @@ describe('Code Mode', () => {
     expect(third).toBe(second);
   });
 
-  it('accepts an intent label without leaking it into the program', async () => {
+  it('accepts runtime labels without leaking them into the program', async () => {
     const dispatcher = new ToolDispatcher({
       add: {
         description: 'Add one',
@@ -1782,8 +1782,14 @@ describe('Code Mode', () => {
     dispatcher.register('code_exec', tool);
     const schema = (tool.inputSchema as z.ZodObject<z.ZodRawShape>).shape;
     expect(Object.keys(schema)[0]).toBe('intent');
-    const input = { intent: 'Adding one to a number', code: 'return tools.add({ value: 1 });' };
+    expect(Object.keys(schema)[1]).toBe('recovers');
+    const input = {
+      intent: 'Adding one to a number',
+      recovers: 'failed-code-call',
+      code: 'return tools.add({ value: 1 });',
+    };
     expect(extractToolIntent(input)).toBe('Adding one to a number');
+    expect(extractToolRecovery(input)).toBe('failed-code-call');
     await expect(dispatcher.dispatch('code_exec', input, { toolCallId: 'labelled' }))
       .resolves.toEqual(expect.objectContaining({
         status: 'completed',

@@ -1,6 +1,7 @@
 import { describeErrorPart, describeLogPart } from '../runner';
 import { describeLearningOutcome } from '../learning';
-import { extractToolIntent, withoutToolIntent } from '../runner/tool-intent';
+import { extractToolIntent, extractToolRecovery, withoutToolIntent } from '../runner/tool-intent';
+import { resolveToolRecoveryLinks } from '../runner/tool-recovery';
 import { LIVE_OUTPUT_METADATA_KEY } from '../tools/types';
 import { formatOutcomeLine, normalizeHeadline, stripLeadingOutcomeLine, REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL } from '../tools/report-outcome';
 import { repairEscapedText } from '../utils/display-text';
@@ -344,6 +345,61 @@ export function buildApprovalLogs(parts: any[]): Array<{ id: string; type: strin
     const withJudge = entry as { details?: ApprovalLogDetails };
     withJudge.details = { ...(withJudge.details ?? {}), judge: withPreviousVerdict(latestVerify, lastJudged)! };
   }
+
+  // Explicit model metadata is authoritative. If the model omitted it, the
+  // resolver recognizes a contiguous retry chain over the same stored result,
+  // plus an immediate successful same-tool call with corrected arguments.
+  const toolInputByPartId = new Map<string, unknown>();
+  for (const part of parts) {
+    if (part?.type === 'tool') toolInputByPartId.set(String(part.id), part.state?.input);
+  }
+  const toolEntries = entries as Array<{
+    id: string;
+    type: string;
+    tool?: string;
+    callId?: string;
+    status?: string;
+    details?: ApprovalLogDetails;
+  }>;
+  const recoveryLinks = resolveToolRecoveryLinks(toolEntries.flatMap((entry) => {
+    if (entry.type !== 'tool' || !entry.tool || !entry.callId || !entry.status) return [];
+    return [{
+      callId: entry.callId,
+      tool: entry.tool,
+      status: entry.status,
+      input: toolInputByPartId.get(entry.id),
+      ...(entry.details?.recoversCallId && { recoversCallId: entry.details.recoversCallId }),
+    }];
+  }));
+
+  for (const entry of toolEntries) {
+    if (entry.type !== 'tool' || !entry.callId) continue;
+    const target = recoveryLinks.recoveryTargetByCallId.get(entry.callId);
+    if (target) {
+      entry.details = {
+        ...(entry.details ?? {}),
+        recoversCallId: target.failedCallId,
+        ...(target.inferred && { recoveryInferred: true }),
+      };
+    } else if (entry.details?.recoversCallId) {
+      const {
+        recoversCallId: _invalidRecovery,
+        recoveryInferred: _invalidInference,
+        ...remainingDetails
+      } = entry.details;
+      if (Object.keys(remainingDetails).length > 0) entry.details = remainingDetails;
+      else delete entry.details;
+    }
+
+    const recoveredBy = recoveryLinks.recoveryByFailedCallId.get(entry.callId);
+    if (recoveredBy) {
+      entry.details = {
+        ...(entry.details ?? {}),
+        recoveredByCallId: recoveredBy.recoveryCallId,
+        ...(recoveredBy.inferred && { recoveryInferred: true }),
+      };
+    }
+  }
   return entries;
 }
 
@@ -632,12 +688,14 @@ export function buildToolDetails(state: any, tool?: string): ApprovalLogDetails 
   // shows the real args without it (an intent-only input renders no dump).
   const intent = extractToolIntent(state?.input);
   if (intent !== undefined) fields.intent = intent;
-  const inputWithoutIntent = withoutToolIntent(state?.input);
-  const inputIsEmpty = inputWithoutIntent !== null
-    && typeof inputWithoutIntent === 'object'
-    && Object.keys(inputWithoutIntent).length === 0
-    && intent !== undefined;
-  const input = inputIsEmpty ? undefined : formatApprovalLogValue(inputWithoutIntent);
+  const recoversCallId = extractToolRecovery(state?.input);
+  if (recoversCallId !== undefined) fields.recoversCallId = recoversCallId;
+  const inputWithoutMetadata = withoutToolIntent(state?.input);
+  const inputIsEmpty = inputWithoutMetadata !== null
+    && typeof inputWithoutMetadata === 'object'
+    && Object.keys(inputWithoutMetadata).length === 0
+    && (intent !== undefined || recoversCallId !== undefined);
+  const input = inputIsEmpty ? undefined : formatApprovalLogValue(inputWithoutMetadata);
   if (input !== undefined) fields.input = input;
 
   if (state?.status === 'running') {
@@ -694,6 +752,8 @@ function buildGenericToolApprovalDetails(state: any, tool: string): ApprovalLogD
     : canonicalInput;
   const response = valueAsRecord(metadata.approvalResponse);
   const reviewer = valueAsRecord(metadata.approvalReviewer);
+  const intent = extractToolIntent(state?.input);
+  const recoversCallId = extractToolRecovery(state?.input);
   const approved = response.type === 'tool-approval-response' && typeof response.approved === 'boolean'
     ? response.approved
     : undefined;
@@ -702,6 +762,8 @@ function buildGenericToolApprovalDetails(state: any, tool: string): ApprovalLogD
       ? { resumeToken: resumePayload.resumeToken }
       : {}),
     prompt: `Approve execution of ${tool}?`,
+    ...(intent && { intent }),
+    ...(recoversCallId && { recoversCallId }),
     toolApproval: {
       approvalId: resumePayload.approvalId,
       toolName: tool,

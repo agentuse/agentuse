@@ -1,0 +1,20 @@
+---
+model: openai:gpt-5.6-terra
+description: "Exercise inferred recovery links across Code Mode and direct results"
+timeout: 2m
+maxSteps: 8
+skills:
+  auto: false
+tools:
+  bash:
+    commands:
+      - bash benchmarks/fixtures/results-recovery-output.sh
+---
+
+Run this results-recovery regression exactly once and report PASS or FAIL.
+
+1. Run `bash benchmarks/fixtures/results-recovery-output.sh` as one direct `tools__bash` call. Its oversized response must provide a reusable `resultId`.
+2. In a separate turn, call `code_exec` with `results.read(resultId, { offset: 0, maxBytes: 6000 })`. This call is expected to fail TypeScript preflight because Code Mode accepts only one argument.
+3. Immediately call the direct `results` tool with the same result ID and this input shape: `action: "read"`, `offset: 0`, `maxBytes: 6000`, `limit: 20`, `pattern: "."`, `caseSensitive: false`, `contextLines: 0`, and `expression: "."`. Deliberately omit `recovers` so the runtime must infer the relationship.
+
+PASS only when step 1 returned a reusable result ID, step 2 failed, and step 3 returned a non-empty page beginning at offset 0. Include the result ID and page byte count in the final report.

@@ -3,7 +3,9 @@ import { jsonSchema } from 'ai';
 import { z } from 'zod';
 import {
   INTENT_PARAM,
+  RECOVERS_PARAM,
   extractToolIntent,
+  extractToolRecovery,
   withIntentParam,
   withoutToolIntent,
 } from '../src/runner/tool-intent';
@@ -26,14 +28,16 @@ describe('withIntentParam', () => {
     // assertion covers what actually reaches the provider on resume too.
     const snapshot = createToolsSnapshot(tools as any);
     const serialized = snapshot.tools[0].inputSchema as any;
-    expect(Object.keys(serialized.properties)).toEqual([INTENT_PARAM, 'command', 'timeout']);
+    expect(Object.keys(serialized.properties)).toEqual([INTENT_PARAM, RECOVERS_PARAM, 'command', 'timeout']);
     expect(serialized.required).toEqual(['command']);
     expect(serialized.properties[INTENT_PARAM].type).toBe('string');
     expect(serialized.properties[INTENT_PARAM].description).toContain('trying to achieve');
+    expect(serialized.properties[RECOVERS_PARAM].description).toContain('failed tool-call ID');
     // The extended schema still validates real args.
-    expect(schema.parse({ command: 'ls', intent: 'listing files' })).toEqual({
+    expect(schema.parse({ command: 'ls', intent: 'listing files', recovers: 'call-failed' })).toEqual({
       command: 'ls',
       intent: 'listing files',
+      recovers: 'call-failed',
     });
   });
 
@@ -48,12 +52,16 @@ describe('withIntentParam', () => {
     expect(() => schema.parse({ a: 'x', bogus: 1 })).toThrow();
   });
 
-  it('strips intent from args before the real execute runs', async () => {
+  it('strips intent and recovery metadata before the real execute runs', async () => {
     let seen: unknown;
     const tools = withIntentParam({
       tools__bash: zodTool(async (input: unknown) => { seen = input; return 'ok'; }),
     });
-    await (tools.tools__bash as any).execute({ command: 'ls', intent: 'listing files' }, {});
+    await (tools.tools__bash as any).execute({
+      command: 'ls',
+      intent: 'listing files',
+      recovers: 'call-failed',
+    }, {});
     expect(seen).toEqual({ command: 'ls' });
   });
 
@@ -80,10 +88,14 @@ describe('withIntentParam', () => {
     } as any;
     const tools = withIntentParam({ mcp__ctx__search: mcpTool });
     const wrapped = (tools.mcp__ctx__search as any).inputSchema;
-    expect(Object.keys(wrapped.jsonSchema.properties)).toEqual([INTENT_PARAM, 'query']);
+    expect(Object.keys(wrapped.jsonSchema.properties)).toEqual([INTENT_PARAM, RECOVERS_PARAM, 'query']);
     expect(wrapped.jsonSchema.required).toEqual(['query']);
     expect(wrapped.jsonSchema.additionalProperties).toBe(false);
-    await (tools.mcp__ctx__search as any).execute({ query: 'x', intent: 'searching docs' }, {});
+    await (tools.mcp__ctx__search as any).execute({
+      query: 'x',
+      intent: 'searching docs',
+      recovers: 'call-failed',
+    }, {});
     expect(seen).toEqual({ query: 'x' });
   });
 
@@ -98,6 +110,18 @@ describe('withIntentParam', () => {
     await (tools.custom as any).execute({ intent: 'domain value', other: 'x' }, {});
     // The tool owns the param; its value must reach execute unstripped.
     expect(seen).toEqual({ intent: 'domain value', other: 'x' });
+  });
+
+  it('leaves a tool that already declares its own recovers param untouched', async () => {
+    let seen: unknown;
+    const tool = {
+      inputSchema: z.object({ recovers: z.string(), other: z.string() }),
+      execute: async (input: unknown) => { seen = input; return 'ok'; },
+    } as any;
+    const tools = withIntentParam({ custom: tool });
+    expect((tools.custom as any).inputSchema).toBe(tool.inputSchema);
+    await (tools.custom as any).execute({ recovers: 'domain value', other: 'x' }, {});
+    expect(seen).toEqual({ recovers: 'domain value', other: 'x' });
   });
 
   it('skips await_human, report_incomplete, and subagent tools', () => {
@@ -121,7 +145,7 @@ describe('withIntentParam', () => {
   });
 });
 
-describe('extractToolIntent / withoutToolIntent', () => {
+describe('runtime tool metadata helpers', () => {
   it('extracts a trimmed phrase and ignores empty/non-string values', () => {
     expect(extractToolIntent({ intent: '  reading config  ', a: 1 })).toBe('reading config');
     expect(extractToolIntent({ intent: '   ' })).toBeUndefined();
@@ -131,10 +155,17 @@ describe('extractToolIntent / withoutToolIntent', () => {
     expect(extractToolIntent('string input')).toBeUndefined();
   });
 
+  it('extracts a trimmed recovery call id and ignores empty/non-string values', () => {
+    expect(extractToolRecovery({ recovers: '  call-failed  ', a: 1 })).toBe('call-failed');
+    expect(extractToolRecovery({ recovers: '   ' })).toBeUndefined();
+    expect(extractToolRecovery({ recovers: 42 })).toBeUndefined();
+    expect(extractToolRecovery({ a: 1 })).toBeUndefined();
+  });
+
   it('strips the key whenever present, so varied phrasing cannot defeat doom-loop comparison', () => {
     expect(withoutToolIntent({ intent: 'first wording', command: 'ls' }))
       .toEqual(withoutToolIntent({ intent: 'second wording', command: 'ls' }));
-    expect(withoutToolIntent({ intent: '', command: 'ls' })).toEqual({ command: 'ls' });
+    expect(withoutToolIntent({ intent: '', recovers: 'call-failed', command: 'ls' })).toEqual({ command: 'ls' });
     const untouched = { command: 'ls' };
     expect(withoutToolIntent(untouched)).toBe(untouched);
     expect(withoutToolIntent(null)).toBeNull();

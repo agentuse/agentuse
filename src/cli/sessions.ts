@@ -24,6 +24,8 @@ import { isExecutingSessionStatus, sessionOutcome } from "../session/status";
 import { truncate as truncateText } from "../tools/tool-output-limits";
 import { toErrorMessage } from "../utils/error-message";
 import { stripAgentExtension } from "../utils/agent-name";
+import { extractToolIntent, extractToolRecovery, withoutToolIntent } from "../runner/tool-intent";
+import { resolveToolRecoveryLinks } from "../runner/tool-recovery";
 
 interface SessionSummary {
   id: string;
@@ -1045,6 +1047,30 @@ async function showSession(
   if (details.messages.length > 0) {
     process.stdout.write(`\n${"─".repeat(60)}\n`);
 
+    const chronologicalParts = details.messages
+      .flatMap(({ parts }) => parts)
+      .sort((a, b) => a.id.localeCompare(b.id));
+    const toolByCallId = new Map<string, string>();
+    const recoveryCandidates = chronologicalParts.flatMap((candidate) => {
+      if (candidate.type !== "tool") return [];
+      const tool = candidate as Part & {
+        type: "tool";
+        callID: string;
+        tool: string;
+        state: { status: string; input?: unknown };
+      };
+      const targetCallId = extractToolRecovery(tool.state.input);
+      toolByCallId.set(tool.callID, tool.tool);
+      return [{
+        callId: tool.callID,
+        tool: tool.tool,
+        status: tool.state.status,
+        input: tool.state.input,
+        ...(targetCallId && { recoversCallId: targetCallId }),
+      }];
+    });
+    const recoveryLinks = resolveToolRecoveryLinks(recoveryCandidates);
+
     for (const { message, parts } of details.messages) {
       // Show message header only if multiple messages
       if (details.messages.length > 1) {
@@ -1152,6 +1178,7 @@ async function showSession(
           } else if (part.type === "tool") {
             const tool = part as Part & {
               type: "tool";
+              callID: string;
               tool: string;
               state: {
                 status: string;
@@ -1169,18 +1196,21 @@ async function showSession(
               }
             };
 
+            const recoveredBy = recoveryLinks.recoveryByFailedCallId.get(tool.callID);
+            const recoveryTarget = recoveryLinks.recoveryTargetByCallId.get(tool.callID);
             const status =
               tool.state.status === "completed"
                 ? "✓"
                 : tool.state.status === "error"
-                  ? "✗"
+                  ? recoveredBy ? "↻" : "✗"
                   : "…";
 
             // Format tool name: mcp__bash__run_bash -> Bash{run_bash}
             const toolName = formatToolName(tool.tool);
 
             // Extract main input for inline display
-            const mainInput = extractMainInput(tool.state.input);
+            const realInput = withoutToolIntent(tool.state.input);
+            const mainInput = extractMainInput(realInput);
             const inputDisplay = mainInput ? ` (${truncate(mainInput, 60)})` : "";
 
             // Show duration if available
@@ -1197,10 +1227,27 @@ async function showSession(
             const padding = Math.max(0, 60 - header.length);
             process.stdout.write(`\n${header}${"─".repeat(padding)}\n`);
 
+            const intent = extractToolIntent(tool.state.input);
+            if (intent) process.stdout.write(`Intent: ${intent}\n`);
+            if (recoveryTarget) {
+              const recoveryLabel = tool.state.status === "completed"
+                ? "recovered failed call"
+                : tool.state.status === "error"
+                  ? "attempt failed for call"
+                  : "recovering failed call";
+              const inferred = recoveryTarget.inferred ? " (inferred from recovery chain)" : "";
+              process.stdout.write(`Recovery: ${recoveryLabel} ${recoveryTarget.failedCallId}${inferred}\n`);
+            }
+            if (recoveredBy) {
+              const recoveryTool = toolByCallId.get(recoveredBy.recoveryCallId) ?? "tool";
+              const inferred = recoveredBy.inferred ? " · inferred from recovery chain" : "";
+              process.stdout.write(`Recovered by: ${formatToolName(recoveryTool)} (${recoveredBy.recoveryCallId})${inferred}\n`);
+            }
+
             // Show full input in --full mode
             if (showFull && tool.state.input !== undefined) {
               process.stdout.write(`Input:\n`);
-              process.stdout.write(formatValueFull(tool.state.input, "  ") + "\n");
+              process.stdout.write(formatValueFull(realInput, "  ") + "\n");
             }
 
             const approvalUrl = tool.state.resumePayload?.approvalUrl ?? tool.state.resumePayload?.channelMessage?.url;

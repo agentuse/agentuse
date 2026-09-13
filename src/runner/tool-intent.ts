@@ -7,25 +7,29 @@ import { CODE_MODE_OVERLOADS, type CodeModeOverload } from '../tools/tool-contra
  *
  * Every tool schema gets an optional `intent` parameter injected as its FIRST
  * property: one short phrase from the model stating what this specific call is
- * trying to achieve ("Locating where approval URLs are generated"). The CLI and
- * web session views surface it as the call's activity label; the phrase also
- * lands in the recorded tool input, so it survives resume and is available to
- * the verify judge as a declared-intent-vs-args signal.
+ * trying to achieve ("Locating where approval URLs are generated"). An optional
+ * `recovers` parameter can identify an earlier failed tool-call id when this
+ * call is an explicit recovery attempt. The CLI and web session views surface
+ * both fields, and the values survive resume in the recorded tool input.
  *
  * First property on purpose: tool-call arguments stream in schema order, so the
  * intent arrives before the (possibly large) real args and the UI can label the
  * call while it is still running.
  *
- * The parameter is presentation-only: execute() strips it before dispatch, so
- * the real tool (bash, MCP server, ...) never sees it.
+ * Both parameters are runtime-only metadata: execute() strips them before
+ * dispatch, so the real tool (bash, MCP server, ...) never sees them.
  */
 export const INTENT_PARAM = 'intent';
+export const RECOVERS_PARAM = 'recovers';
 
 const INTENT_DESCRIPTION =
   'One short phrase (under 12 words) stating what this specific call is trying to achieve, ' +
   'e.g. "Running runner tests to verify the resume fix". ' +
   'Shown to the user as the live activity label for this call. ' +
   'State the goal, not the mechanics.';
+
+const RECOVERS_DESCRIPTION =
+  'Earlier failed tool-call ID this call is intended to recover. Omit otherwise.';
 
 // Tools whose own schema already carries the human-facing story: await_human
 // has `prompt`/`summary` (and a second headline would compete with the approval
@@ -37,9 +41,9 @@ function shouldSkip(name: string): boolean {
 }
 
 /**
- * Extend a tool input schema with the intent property, or return undefined when
+ * Extend a tool input schema with the runtime metadata, or return undefined when
  * the schema cannot be extended safely (non-object, refined/branded Zod
- * wrappers, or an existing `intent` property the tool owns).
+ * wrappers, or a same-named property the tool owns).
  */
 function extendInputSchema(schema: unknown): unknown | undefined {
   // Builtin tools: plain Zod object. Duck-typed like tool-snapshot.ts so a
@@ -49,9 +53,10 @@ function extendInputSchema(schema: unknown): unknown | undefined {
   const def = (schema as { _def?: { typeName?: string } } | null | undefined)?._def;
   if (def?.typeName === 'ZodObject') {
     const zodObj = schema as z.ZodObject<z.ZodRawShape>;
-    if (INTENT_PARAM in zodObj.shape) return undefined;
+    if (INTENT_PARAM in zodObj.shape || RECOVERS_PARAM in zodObj.shape) return undefined;
     return z.object({
       [INTENT_PARAM]: z.string().describe(INTENT_DESCRIPTION).optional(),
+      [RECOVERS_PARAM]: z.string().describe(RECOVERS_DESCRIPTION).optional(),
     }).merge(zodObj);
   }
 
@@ -62,11 +67,12 @@ function extendInputSchema(schema: unknown): unknown | undefined {
   if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
     const innerObj = inner as Record<string, unknown> & { properties?: Record<string, unknown> };
     if (innerObj.type !== 'object') return undefined;
-    if (innerObj.properties && INTENT_PARAM in innerObj.properties) return undefined;
+    if (innerObj.properties && (INTENT_PARAM in innerObj.properties || RECOVERS_PARAM in innerObj.properties)) return undefined;
     return jsonSchema({
       ...innerObj,
       properties: {
         [INTENT_PARAM]: { type: 'string', description: INTENT_DESCRIPTION },
+        [RECOVERS_PARAM]: { type: 'string', description: RECOVERS_DESCRIPTION },
         ...(innerObj.properties ?? {}),
       },
     });
@@ -79,9 +85,9 @@ function extendInputSchema(schema: unknown): unknown | undefined {
 }
 
 /**
- * Add the intent parameter to one tool registered after the loader ran (the
+ * Add runtime metadata to one tool registered after the loader ran (the
  * runtime code_exec tool), so it is labelled in the session views like the
- * rest of the catalog.
+ * rest of the catalog. The function name is retained for compatibility.
  */
 export function injectIntentParam(name: string, tool: Tool): Tool {
   if (shouldSkip(name)) return tool;
@@ -93,7 +99,7 @@ export function injectIntentParam(name: string, tool: Tool): Tool {
   if (extended === undefined) return tool;
 
   // Code Mode overloads describe the same call surface, so they must accept
-  // the intent key too or a labelled nested call would miss every narrowed
+  // the runtime keys too or a labelled nested call would miss every narrowed
   // signature and fall through to the full union.
   const overloads = (tool as { [CODE_MODE_OVERLOADS]?: readonly CodeModeOverload[] })[CODE_MODE_OVERLOADS];
   const extendedOverloads = overloads?.map(overload => {
@@ -105,20 +111,15 @@ export function injectIntentParam(name: string, tool: Tool): Tool {
     ...tool,
     ...(extendedOverloads && { [CODE_MODE_OVERLOADS]: extendedOverloads }),
     inputSchema: extended,
-    execute: async (input: unknown, opts: unknown) => {
-      if (input && typeof input === 'object' && !Array.isArray(input) && INTENT_PARAM in input) {
-        const { [INTENT_PARAM]: _intent, ...rest } = input as Record<string, unknown>;
-        return originalExecute.call(tool, rest, opts);
-      }
-      return originalExecute.call(tool, input, opts);
-    },
+    execute: async (input: unknown, opts: unknown) =>
+      originalExecute.call(tool, withoutToolIntent(input), opts),
   } as Tool;
 }
 
 /**
- * Wrap every tool in the set with intent injection. Applied at the tool merge
- * point (tools-loader), after mock wrapping, so the strip-execute always wraps
- * whatever execute actually runs.
+ * Wrap every tool in the set with runtime metadata injection. Applied at the
+ * tool merge point (tools-loader), after mock wrapping, so the strip-execute
+ * always wraps whatever execute actually runs.
  */
 export function withIntentParam(tools: Record<string, Tool>): Record<string, Tool> {
   const out: Record<string, Tool> = {};
@@ -135,16 +136,34 @@ export function extractToolIntent(input: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
+/** Failed tool-call id this call declared it was intended to recover. */
+export function extractToolRecovery(input: unknown): string | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+  const value = (input as Record<string, unknown>)[RECOVERS_PARAM];
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
 /**
- * Tool input without the injected intent key. Used wherever args are compared
- * or displayed as "the real input": the doom-loop detector (a varying phrase
- * must not make identical calls look distinct) and the input dumps in the
- * session views (the phrase is already the row label).
+ * Tool input without runtime-owned presentation metadata. Used wherever args
+ * are dispatched, compared, or displayed as "the real input": neither a
+ * varying intent nor a recovery link may alter the underlying tool call.
+ *
+ * The established name is retained for compatibility even though this now
+ * strips both injected keys.
  */
 export function withoutToolIntent(input: unknown): unknown {
-  if (!input || typeof input !== 'object' || Array.isArray(input) || !(INTENT_PARAM in input)) {
+  if (
+    !input ||
+    typeof input !== 'object' ||
+    Array.isArray(input) ||
+    (!(INTENT_PARAM in input) && !(RECOVERS_PARAM in input))
+  ) {
     return input;
   }
-  const { [INTENT_PARAM]: _intent, ...rest } = input as Record<string, unknown>;
+  const {
+    [INTENT_PARAM]: _intent,
+    [RECOVERS_PARAM]: _recovers,
+    ...rest
+  } = input as Record<string, unknown>;
   return rest;
 }

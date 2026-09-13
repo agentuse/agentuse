@@ -621,6 +621,12 @@ export interface ApprovalLogDetails {
   /** Model-declared goal of this call (the injected `intent` parameter), shown
    *  as the tool row's primary label with the tool chip demoted to metadata. */
   intent?: string;
+  /** Earlier failed call this tool call declares it is trying to recover. */
+  recoversCallId?: string;
+  /** Later successful call that recovered this failed call. */
+  recoveredByCallId?: string;
+  /** Relationship was inferred from an immediate corrected retry. */
+  recoveryInferred?: boolean;
   input?: string;
   output?: string;
   /**
