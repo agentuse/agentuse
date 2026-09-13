@@ -42,7 +42,9 @@ describe('autonomous agent system prompt', () => {
     expect(enabled).toContain('do not rely on locale, timezone, Intl, URL');
     expect(enabled).toContain('reading multiple records and then filtering, joining, sorting, selecting, branching, batching, or aggregating them');
     expect(enabled).toContain('Call a tool directly only when it is separately visible');
-    expect(enabled).toContain('process execution, subagent delegation, binary or provider-native result delivery');
+    expect(enabled).toContain('Bash is available through code_exec only for commands already granted');
+    expect(enabled).toContain('command matching tools.bash.gated is rejected inside Code Mode');
+    expect(enabled).toContain('subagent delegation, binary or provider-native result delivery');
     expect(enabled).toContain('transport-sensitive tool may also appear in the Code Mode catalog');
     expect(enabled).toContain('Any model-facing result over 30,720 bytes is replaced by a shape summary');
     expect(enabled).toContain('never raw lists or whole records');

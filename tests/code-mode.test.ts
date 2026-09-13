@@ -25,6 +25,8 @@ import {
 import { Store } from '../src/store/store';
 import { createStoreTools } from '../src/store/tools';
 import { extractToolIntent, injectIntentParam } from '../src/runner/tool-intent';
+import { BashPermissionController } from '../src/runner/approval-lease';
+import { createBashTool } from '../src/tools/bash';
 
 describe('Code Mode', () => {
   it('is default-on and can be disabled only by runtime policy', () => {
@@ -706,7 +708,93 @@ describe('Code Mode', () => {
     })).rejects.toThrow(/timed out|interrupted/i);
   });
 
-  it('keeps suspending and recursive tools direct-only', () => {
+  it('uses the Bash timeout while a nested process is running', async () => {
+    const startedAt = Date.now();
+    const dispatcher = new ToolDispatcher({
+      tools__bash: {
+        inputSchema: z.object({ command: z.string() }),
+        execute: async () => {
+          await new Promise(resolve => setTimeout(resolve, 150));
+          return { output: 'finished', metadata: { exitCode: 0 } };
+        },
+      },
+    });
+    const output = await executeCodeMode(`
+      const result = await tools.tools__bash({ command: "slow read" });
+      return { output: result.output, exitCode: result.metadata.exitCode };
+    `, {
+      dispatcher,
+      toolNames: ['tools__bash'],
+      parentCallId: 'bash-own-timeout',
+      typecheck: false,
+      limits: { timeoutMs: 100 },
+    });
+
+    expect(output).toEqual({ output: 'finished', exitCode: 0 });
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(140);
+  });
+
+  it('resumes the guest computation deadline after Bash finishes', async () => {
+    let bashStarted = false;
+    const dispatcher = new ToolDispatcher({
+      tools__bash: {
+        inputSchema: z.object({ command: z.string() }),
+        execute: async () => {
+          bashStarted = true;
+          await new Promise(resolve => setTimeout(resolve, 250));
+          return { output: 'finished' };
+        },
+      },
+    });
+    const startedAt = Date.now();
+
+    await expect(executeCodeMode(`
+      await tools.tools__bash({ command: "slow read" });
+      while (true) {}
+    `, {
+      dispatcher,
+      toolNames: ['tools__bash'],
+      parentCallId: 'bash-then-runaway-guest',
+      typecheck: false,
+      limits: { timeoutMs: 200 },
+    })).rejects.toThrow(/Code Mode timed out after 200ms/i);
+
+    expect(bashStarted).toBe(true);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(240);
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+
+  it('runs an agent-allowlisted Bash command through the shared dispatcher', async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-code-mode-bash-'));
+    try {
+      const dispatcher = new ToolDispatcher({
+        tools__bash: createBashTool(
+          { commands: ['printf *'] },
+          projectRoot,
+          { projectRoot }
+        ),
+      }, { bashPermission: new BashPermissionController([]) });
+      const output = await executeCodeMode(`
+        const result = await tools.tools__bash({ command: "printf code-mode-bash" });
+        if (!result || typeof result !== "object" || !("output" in result)
+          || typeof result.output !== "string") {
+          throw new Error("Unexpected Bash result");
+        }
+        return result.output;
+      `, {
+        dispatcher,
+        toolNames: dispatcher.codeModeToolNames(),
+        toolDefinitions: dispatcher.codeModeTools(),
+        parentCallId: 'allowlisted-bash',
+      });
+
+      expect(output).toBe('code-mode-bash');
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps suspending and recursive tools direct-only while exposing Bash', () => {
     expect(codeModeEligibleToolNames([
       'store_list',
       'await_human',
@@ -716,7 +804,48 @@ describe('Code Mode', () => {
       'submit_agent_revision',
       'submit_changes',
       'report_complete',
-    ])).toEqual(['store_list']);
+    ])).toEqual(['store_list', 'tools__bash']);
+  });
+
+  it('uses one Bash permission controller for direct and Code Mode dispatch', async () => {
+    const execute = mock(async (input: unknown) => input);
+    const bashPermission = new BashPermissionController(['publish *']);
+    const dispatcher = new ToolDispatcher({
+      tools__bash: {
+        inputSchema: z.object({ command: z.string() }),
+        execute,
+      },
+    }, {
+      bashPermission,
+      pluginEvents: {
+        async toolCall(event) {
+          if (event.input.command === 'inspect release') event.input.command = 'publish release';
+          return {};
+        },
+      },
+    });
+
+    await expect(executeCodeMode(`
+      return tools.tools__bash({ command: "inspect release" });
+    `, {
+      dispatcher,
+      toolNames: dispatcher.codeModeToolNames(),
+      parentCallId: 'nested-gated-bash',
+      typecheck: false,
+    })).rejects.toThrow(/APPROVAL_REQUIRED.*cannot run inside Code Mode/i);
+    expect(execute).not.toHaveBeenCalled();
+
+    bashPermission.grantApprovedDirectCall('approved-bash', 'publish release');
+    const directBash = dispatcher.modelTools().tools__bash as any;
+    await expect(directBash.execute(
+      { command: 'publish release' },
+      { toolCallId: 'approved-bash' }
+    )).resolves.toEqual({ command: 'publish release' });
+    await expect(directBash.execute(
+      { command: 'publish release' },
+      { toolCallId: 'approved-bash' }
+    )).rejects.toThrow(/APPROVAL_REQUIRED.*no approved one-shot execution permit/i);
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 
   it('fails closed for static and dynamic imports', async () => {
@@ -1648,6 +1777,8 @@ describe('Code Mode', () => {
     expect(tool.description).toContain('When the user asks for a shell artifact, commands or scripts may contain the calculations the artifact itself needs');
     expect(tool.description).toContain('including when the program needs only one JSON tool call');
     expect(tool.description).toContain('transport-sensitive tool may also remain separately visible');
+    expect(tool.description).toContain('tools.tools__bash runs only commands from the agent auto-run allowlist');
+    expect(tool.description).toContain('Bash timeout instead of consuming the guest computation timeout');
     expect(tool.description).toContain('prefer tools__filesystem_search with an exact file or glob and bounded context');
     expect(tool.description).toContain('Do not return several raw file bodies from one program');
   });

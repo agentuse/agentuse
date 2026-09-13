@@ -330,7 +330,6 @@ function reusableResults(completed: readonly CompletedNestedCall[]): CodeModeRes
 const DIRECT_ONLY_TOOL_NAMES = new Set([
   CODE_EXEC_TOOL,
   'await_human',
-  'tools__bash',
   'report_complete',
   'report_incomplete',
   'submit_agent_source',
@@ -622,19 +621,83 @@ export async function executeCodeModeDetailed(
   let capturedOutput: CodeModeOutputEntry[] = [];
   const completedCalls: CompletedNestedCall[] = [];
   // Start the deadline before declaration loading and typechecking. These are
-  // host-side work, but they are still part of a code_exec invocation.
+  // host-side work, but they are still part of a code_exec invocation. The
+  // deadline pauses only while an authorized Bash process is running: Bash has
+  // its own author-configured timeout, while synchronous guest work performed
+  // by continuations remains charged against this budget.
   const timeoutController = new AbortController();
   const signal = options.abortSignal
     ? AbortSignal.any([options.abortSignal, timeoutController.signal])
     : timeoutController.signal;
-  const deadline = Date.now() + limits.timeoutMs;
-  const timer = setTimeout(() => {
-    timeoutController.abort(new Error(`Code Mode timed out after ${limits.timeoutMs}ms`));
-  }, limits.timeoutMs);
-  timer.unref?.();
+  let deadline = Date.now() + limits.timeoutMs;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timeoutPauseDepth = 0;
+  let timeoutPausedAt: number | undefined;
+  let pausedRemainingMs = limits.timeoutMs;
+  let activeGuestDeadline = Number.POSITIVE_INFINITY;
+  const timeoutError = (): Error => new Error(`Code Mode timed out after ${limits.timeoutMs}ms`);
+  const abortForTimeout = (): void => {
+    if (!timeoutController.signal.aborted) timeoutController.abort(timeoutError());
+  };
+  const armTimeout = (): void => {
+    if (signal.aborted || timeoutPauseDepth > 0) return;
+    if (timer) clearTimeout(timer);
+    const remaining = Math.max(0, deadline - Date.now());
+    timer = setTimeout(abortForTimeout, remaining);
+    timer.unref?.();
+  };
+  const pauseTimeoutForBash = (): (() => void) => {
+    if (timeoutPauseDepth++ === 0) {
+      const now = Date.now();
+      pausedRemainingMs = Math.max(0, deadline - now);
+      timeoutPausedAt = now;
+      if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+      if (pausedRemainingMs <= 0) abortForTimeout();
+    }
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      timeoutPauseDepth = Math.max(0, timeoutPauseDepth - 1);
+      if (timeoutPauseDepth > 0) return;
+      timeoutPausedAt = undefined;
+      if (signal.aborted) return;
+      if (pausedRemainingMs <= 0) {
+        abortForTimeout();
+        return;
+      }
+      deadline = Date.now() + pausedRemainingMs;
+      armTimeout();
+    };
+  };
+  const runGuestWork = <T>(operation: () => T): T => {
+    const startedAt = Date.now();
+    const previousGuestDeadline = activeGuestDeadline;
+    activeGuestDeadline = timeoutPauseDepth > 0
+      ? startedAt + pausedRemainingMs
+      : deadline;
+    try {
+      return operation();
+    } finally {
+      const endedAt = Date.now();
+      if (timeoutPauseDepth > 0 && timeoutPausedAt !== undefined) {
+        const chargeFrom = Math.max(startedAt, timeoutPausedAt);
+        pausedRemainingMs = Math.max(0, pausedRemainingMs - Math.max(0, endedAt - chargeFrom));
+      }
+      activeGuestDeadline = previousGuestDeadline;
+      if (timeoutPauseDepth > 0 && pausedRemainingMs <= 0) abortForTimeout();
+    }
+  };
+  armTimeout();
   const throwIfAborted = (): void => {
-    if (signal.aborted || Date.now() >= deadline) {
-      if (!signal.aborted) timeoutController.abort(new Error(`Code Mode timed out after ${limits.timeoutMs}ms`));
+    const expired = timeoutPauseDepth > 0
+      ? pausedRemainingMs <= 0
+      : Date.now() >= deadline;
+    if (signal.aborted || expired) {
+      if (!signal.aborted) abortForTimeout();
       throw abortError(signal);
     }
   };
@@ -701,7 +764,7 @@ export async function executeCodeModeDetailed(
     runtime = quickJS.newRuntime();
     runtime.setMemoryLimit(limits.memoryBytes);
     runtime.setMaxStackSize(limits.maxStackBytes);
-    runtime.setInterruptHandler(() => signal.aborted || Date.now() >= deadline);
+    runtime.setInterruptHandler(() => signal.aborted || Date.now() >= activeGuestDeadline);
     context = runtime.newContext();
   let disposed = false;
   let promiseHandle: QuickJSHandle | undefined;
@@ -737,7 +800,7 @@ export async function executeCodeModeDetailed(
     } finally {
       handle.dispose();
     }
-    const jobs = runtime.executePendingJobs();
+    const jobs = runGuestWork(() => runtime.executePendingJobs());
     if (jobs.error) {
       const dumped = context.dump(jobs.error);
       unhandledNestedFailures.set(++nextUnhandledFailureId,
@@ -876,6 +939,8 @@ export async function executeCodeModeDetailed(
         const dispatchPromise = options.dispatcher.dispatch(toolName, input, {
           toolCallId: callId,
           abortSignal: signal,
+          origin: 'code-mode',
+          pauseCodeModeTimeout: pauseTimeoutForBash,
           modelFacing: false,
         });
         dispatchStarted = true;
@@ -1052,7 +1117,7 @@ export async function executeCodeModeDetailed(
         continue;
       }
 
-      const jobs = runtime.executePendingJobs();
+      const jobs = runGuestWork(() => runtime.executePendingJobs());
       if (jobs.error) {
         try { throwGuestError(context, jobs.error); }
         finally { jobs.error.dispose(); }
@@ -1075,7 +1140,7 @@ export async function executeCodeModeDetailed(
       ...(contract.outputKnown && { output: contract.output }),
       declaration: codeModeVirtualDeclaration(contract),
     }));
-    const preludeResult = context.evalCode(`
+    const preludeResult = runGuestWork(() => context.evalCode(`
       (() => {
         const call = globalThis.__agentuseCall;
         const resultCall = globalThis.__agentuseResult;
@@ -1435,7 +1500,7 @@ export async function executeCodeModeDetailed(
           configurable: false,
         });
       })();
-    `, 'agentuse-code-mode-prelude.js');
+    `, 'agentuse-code-mode-prelude.js'));
     if (preludeResult.error) {
       try { throwGuestError(context, preludeResult.error); }
       finally { preludeResult.error.dispose(); }
@@ -1443,7 +1508,10 @@ export async function executeCodeModeDetailed(
     preludeResult.value.dispose();
 
     const takeGuestOutput = (): CodeModeOutputEntry[] => {
-      const taken = context.evalCode('globalThis.__agentuseTakeOutput()', 'agentuse-code-mode-output.js');
+      const taken = runGuestWork(() => context.evalCode(
+        'globalThis.__agentuseTakeOutput()',
+        'agentuse-code-mode-output.js'
+      ));
       if (taken.error) {
         taken.error.dispose();
         return [];
@@ -1458,7 +1526,10 @@ export async function executeCodeModeDetailed(
       }
     };
 
-    const evaluation = context.evalCode(compiled.code, 'agentuse-code-mode:generated.js');
+    const evaluation = runGuestWork(() => context.evalCode(
+      compiled.code,
+      'agentuse-code-mode:generated.js'
+    ));
     if (evaluation.error) {
       capturedOutput = takeGuestOutput();
       try { throwGuestError(context, evaluation.error, compiled.sourceMap); }
@@ -1466,10 +1537,10 @@ export async function executeCodeModeDetailed(
     }
     promiseHandle = evaluation.value;
     settling = context.resolvePromise(promiseHandle);
-    const initialJobs = runtime.executePendingJobs();
+    const initialJobs = runGuestWork(() => runtime.executePendingJobs());
     let initialGuestJobFailure: string | undefined;
     if (initialJobs.error) {
-      if (signal.aborted || Date.now() >= deadline) {
+      if (signal.aborted || (timeoutPauseDepth === 0 && Date.now() >= deadline)) {
         promiseHandle.dispose();
         promiseHandle = undefined;
         initialJobs.error.dispose();
@@ -1486,7 +1557,7 @@ export async function executeCodeModeDetailed(
     settling = undefined;
     promiseHandle?.dispose();
     promiseHandle = undefined;
-    if (signal.aborted || Date.now() >= deadline) {
+    if (signal.aborted || (timeoutPauseDepth === 0 && Date.now() >= deadline)) {
       if (settled.error) settled.error.dispose();
       else settled.value.dispose();
       throwIfAborted();
@@ -1611,7 +1682,7 @@ export async function executeCodeModeDetailed(
   } catch (error) {
     throw asExecutionError(error);
   } finally {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
     releaseRuntime?.();
   }
 }
@@ -1653,8 +1724,9 @@ export function createCodeExecTool(options: {
     description:
       'Run isolated TypeScript for arithmetic, timestamps and duration math, percentages, basic string operations, deterministic loops, filtering, branching, batching, joins, and parallel tool calls. Call tools exposed under tools.<name> here, including when the program needs only one JSON tool call; most are deliberately hidden as top-level tools. Use it with zero tool calls for deterministic computation too; ' +
       'never do that math in prose, in your head, or in bash. When the user asks for a shell artifact, commands or scripts may contain the calculations the artifact itself needs; bash is forbidden only as private scratch space for working out an answer. Date, Math, JSON, and standard string methods are available and the clock is real. URL, Intl, locale-aware formatting, and host timezone services are unavailable. ' +
-      'The program has no filesystem, network, environment, process, package, or import access. Dynamic code construction through eval or Function constructors is unavailable. ' +
+      'The program has no direct filesystem, network, environment, process, package, or import access; it can reach only host capabilities exposed as permitted tools. Dynamic code construction through eval or Function constructors is unavailable. ' +
       'Call permitted tools as await tools.<name>({ ... }) using the same input object as a direct tool call. A transport-sensitive tool may also remain separately visible for binary or provider-native result delivery. Await or return every async operation; detached async work is rejected during preflight. ' +
+      'tools.tools__bash runs only commands from the agent auto-run allowlist and returns structured output for composition. Gated commands are rejected here and must use the separately visible direct Bash tool after approval. Time awaiting an authorized Bash process is governed by the Bash timeout instead of consuming the guest computation timeout. ' +
       'When a needed tool is absent from the quick index, use await catalog.search(query), call handle.describe(), or inspect API.list("tools") and API.read("tools/<name>.d.ts") in a first code_exec. Catalog handles are callable and use the same dispatch policy as tools.<name>. ' +
       'For targeted file discovery, prefer tools__filesystem_search with an exact file or glob and bounded context, then use tools__filesystem_read with line offset/limit for any additional excerpt. The read limit is lines, not characters. Do not return several raw file bodies from one program; return only the matches, excerpts, fields, or decisions the next step needs. When complete reading is required, retrieve bounded chunks across later calls. ' +
       'Completed JSON-serializable nested tool calls are recorded as same-session immutable results. The response lists recent reusableResults; use await results.list() to inspect each result kind and capabilities. Use await results.read(resultId) for bounded payloads, await results.grep(resultId, { pattern, limit, contextLines }) for literal text search, or await results.jq(resultId, expression, { limit }) for real jq queries over JSON, including oversized results. Reuse an earlier result only when its freshness is still valid. ' +

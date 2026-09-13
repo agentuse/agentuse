@@ -81,19 +81,28 @@ resource-limited worker, without a shell, host environment access, jq modules,
 or a machine-level jq installation.
 
 Code Mode has no direct filesystem, network, environment, process, package,
-shell, or import access. Approval gates, gated Bash, outcome tools, internal
+shell, or import access. It can invoke only capabilities exposed through the
+host tool bridge. This includes Bash commands from the agent's effective
+auto-run allowlist; the same command validator, path policy, safe environment,
+plugin policy, mocks, cancellation, and effect journal apply on both paths.
+Commands matching `tools.bash.gated` are rejected in Code Mode and must use the
+direct Bash tool after human approval. Approval gates, outcome tools, internal
 creator tools, subagents, and any tool marked as approval-required remain
 direct-only. Binary media results also stay on the direct path because the guest
-bridge is JSON-only. Programs are bounded by source, memory, stack, time,
-output, nested-call, and concurrency limits.
+bridge is JSON-only. Programs are bounded by source, memory, stack, computation,
+output, nested-call, and concurrency limits. Time awaiting Bash is governed by
+the Bash timeout and does not consume the guest computation timeout.
 
-Use Code Mode for eligible JSON tools, including a single call. Call a
-separately visible tool directly when it requires suspension, approval, process
-execution, subagent delegation, binary or provider-native result delivery, or
-outcome submission. A transport-sensitive tool can appear on both paths: use
-its Code Mode form for JSON/text composition and its direct form only for the
-special result delivery. Code Mode does not make several store calls atomic;
-use `store_claim` or `store_update_if` for concurrent state transitions.
+Use Code Mode for eligible JSON tools, including a single call, and for an
+auto-run Bash command whose output feeds parsing, filtering, branching,
+batching, or another tool. Bash remains separately visible for gated commands
+and simple standalone process execution. Call other tools directly when they
+require suspension, approval, subagent delegation, binary or provider-native
+result delivery, or outcome submission. A transport-sensitive tool can appear
+on both paths: use its Code Mode form for JSON/text composition and its direct
+form only for the special result delivery. Code Mode does not make several
+store calls atomic; use `store_claim` or `store_update_if` for concurrent state
+transitions.
 
 ### Controlled comparison and rollback
 

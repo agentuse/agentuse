@@ -13,6 +13,7 @@
 
 ### Changed
 
+- **Code Mode can compose agent-authorized Bash commands without gaining shell access.** Commands from the effective auto-run allowlist cross the same host dispatcher, command and path validator, plugin policy, mock boundary, cancellation path, and effect journal as direct Bash. Gated commands remain direct-only and require their existing one-shot human approval lease. Bash stays visible on the direct path for approval and standalone execution, returns its structured result in Code Mode, and keeps its own command timeout without spending the guest computation budget while the process runs.
 - **The dashboard and session reader are more resilient and usable across screen sizes.** Changeset review, session results, approval navigation, agent creation, menus, dialogs, and Home results now adapt to phone and tablet widths while preserving keyboard focus, tab semantics, live status, and complete assistant drafts.
 - **Mac releases now build separate signed and notarized Apple Silicon and Intel artifacts in GitHub Actions.** Architecture-specific downloads remain close to the existing app size, while one merged updater manifest routes each installation to the correct ZIP.
 

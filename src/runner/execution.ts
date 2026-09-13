@@ -34,7 +34,7 @@ import { addLanguageModelUsage } from '../session/usage';
 import type { AgentChunk } from './types';
 import { isSuspendSignal } from './suspend';
 import { sanitizeWALInput, type EffectWAL } from './effect-wal';
-import { LeaseStore, isEffectful } from './approval-lease';
+import { BashPermissionController, LeaseStore } from './approval-lease';
 import { GateSealStore } from './gate-seal';
 import {
   ApprovalInputLedger,
@@ -980,6 +980,7 @@ async function* executeAgentAttempt(
   // changes[]. The store is file-based in the session directory (granted at
   // resume time, possibly by another process) and read per call.
   const effectPatterns = agent.config.tools?.bash?.gated ?? [];
+  const bashPermission = new BashPermissionController(effectPatterns);
   const leaseStore = options.approvalLeaseStore;
   const approvalInputLedger = new ApprovalInputLedger(options.sessionID, options.agentId);
   // Gate seal (reject-is-terminal): bound whenever the run has a session, since
@@ -1088,6 +1089,7 @@ async function* executeAgentAttempt(
     ...(options.pluginEvents && { pluginEvents: options.pluginEvents }),
     abortSignal: effectiveAbortSignal,
     ...(writeToolOutputArtifact && { writeToolOutputArtifact }),
+    bashPermission,
     onPluginTerminate: () => { pluginTerminateRequested = true; },
   });
   for (const rejected of rejectedHistoricalToolCalls(options.messages)) {
@@ -1115,12 +1117,14 @@ async function* executeAgentAttempt(
       CODE_EXEC_TOOL,
       agent.config.intent === false ? codeExecTool : injectIntentParam(CODE_EXEC_TOOL, codeExecTool)
     );
-    // Keep transport-sensitive tools visible on the direct path as well. Their
-    // JSON/text results can still participate in Code Mode, but toModelOutput
-    // may be required to deliver binary media or provider-native content that
-    // cannot cross the QuickJS JSON bridge.
+    // Keep transport-sensitive tools and Bash visible on the direct path as
+    // well. Bash needs that path for gated commands and remains useful for a
+    // standalone process whose output does not need programmatic composition.
+    // Other dual-path tools may require direct binary or provider-native
+    // delivery that cannot cross the QuickJS JSON bridge.
     codeModeHiddenTools = new Set(codeModeToolNames.filter(
-      name => typeof codeModeTools[name]?.toModelOutput !== 'function'
+      name => name !== 'tools__bash'
+        && typeof codeModeTools[name]?.toModelOutput !== 'function'
     ));
   }
   const dispatchingTools = dispatcher.modelTools();
@@ -1643,7 +1647,7 @@ async function* executeAgentAttempt(
         // lease entry runs and every uncovered/reused command is denied.
         if (toolName === 'tools__bash') {
           const command = typeof input?.command === 'string' ? input.command : '';
-          if (command && isEffectful(command, effectPatterns)) {
+          if (command && bashPermission.isGated(command)) {
             if (gatePendingThisStep) {
               const attached = pendingGateInput
                 ? attachCommandToPendingGate(pendingGateInput, command)
@@ -1687,6 +1691,7 @@ async function* executeAgentAttempt(
 
             const leaseDecision = leaseStore.consume(command);
             if (leaseDecision === 'approved') {
+              bashPermission.grantApprovedDirectCall(callId ?? 'unknown', command);
               options.effectWal?.append({
                 event: 'lease-approved',
                 ...(callId && { callId }),

@@ -564,12 +564,15 @@ Tools are available to agents through:
 `code_exec` is available automatically and can compose only the tools resolved
 for the current agent. Eligible JSON tools are normally called through its
 `tools.<name>` catalog, including for a single call, and hidden from the
-top-level tool list. Tools that require approval, suspension, process execution,
-subagent delegation, binary or provider-native result delivery, or outcome
-submission stay on the direct path. A transport-sensitive tool may appear on
-both paths so its JSON/text result can be composed in Code Mode while its
-special result is delivered directly. Configure filesystem, bash, and artifact
-capabilities via the `tools` field:
+top-level tool list. Tools that require approval, suspension, subagent
+delegation, binary or provider-native result delivery, or outcome submission
+stay on the direct path. Bash is available on both paths: Code Mode
+can compose structured results from commands in the effective auto-run
+allowlist, while commands matching `tools.bash.gated` are rejected there and
+must use direct Bash after approval. A transport-sensitive tool may likewise
+appear on both paths so its JSON/text result can be composed in Code Mode while
+its special result is delivered directly. Configure filesystem, bash, and
+artifact capabilities via the `tools` field:
 
 ```yaml
 tools:

@@ -24,6 +24,7 @@ import {
   APPROVAL_RUNTIME_INPUT_SCHEMA,
   transportInputNormalizer,
 } from '../tools/tool-contract';
+import type { BashPermissionController } from './approval-lease';
 
 export type ToolOutputArtifactWriter = (
   toolName: string,
@@ -38,6 +39,10 @@ export interface ToolDispatcherPluginEvents {
 export interface ToolDispatchOptions {
   toolCallId: string;
   abortSignal?: AbortSignal;
+  /** Identifies calls crossing the sandbox bridge so host policy can apply. */
+  origin?: 'direct' | 'code-mode';
+  /** Host wait whose own tool timeout should not spend guest compute time. */
+  pauseCodeModeTimeout?: () => () => void;
   /** Direct calls are clamped for model context; nested Code Mode calls are not. */
   modelFacing?: boolean;
   /** Execute the canonical input prepared by toolApproval. */
@@ -51,6 +56,7 @@ export interface ToolDispatcherOptions {
   pluginEvents?: ToolDispatcherPluginEvents;
   abortSignal?: AbortSignal;
   writeToolOutputArtifact?: ToolOutputArtifactWriter;
+  bashPermission?: BashPermissionController;
   onPluginTerminate?(): void;
 }
 
@@ -424,6 +430,27 @@ export class ToolDispatcher {
       validatedInput = await this.normalizeInput(toolName, preflight.input, signal);
     }
 
+    if (this.options.bashPermission) {
+      const decision = this.options.bashPermission.authorizeDispatch({
+        toolName,
+        toolCallId: options.toolCallId,
+        origin: options.origin,
+        input: validatedInput,
+      });
+      if (decision.block) {
+        this.options.effectWal?.append({
+          event: 'bash-permission-denied',
+          callId: options.toolCallId,
+          tool: toolName,
+          input: sanitizeWALInput(validatedInput),
+          ...(decision.reason && { reason: decision.reason }),
+        });
+        throw new ToolDispatchDeniedError(
+          decision.reason ?? `Tool '${toolName}' is not permitted through Code Mode`
+        );
+      }
+    }
+
     const outputContract = hasTrustedOutputSchema(tool)
       ? aiSdk.asSchema(tool.outputSchema)
       : undefined;
@@ -491,7 +518,14 @@ export class ToolDispatcher {
         toolCallId: options.toolCallId,
         ...(signal && { abortSignal: signal }),
       });
-      output = await (tool.execute as (...args: any[]) => unknown)(validatedInput, executionOptions);
+      const releaseCodeModeTimeout = toolName === 'tools__bash'
+        ? options.pauseCodeModeTimeout?.()
+        : undefined;
+      try {
+        output = await (tool.execute as (...args: any[]) => unknown)(validatedInput, executionOptions);
+      } finally {
+        releaseCodeModeTimeout?.();
+      }
       const prevalidated = readPrevalidatedTrustedOutput(output);
       if (prevalidated && prevalidated.schema === tool.outputSchema) {
         rawOutput = prevalidated.raw;
@@ -641,6 +675,7 @@ export class ToolDispatcher {
               toolCallId: callOptions?.toolCallId ?? 'unknown',
               ...(callOptions?.abortSignal && { abortSignal: callOptions.abortSignal }),
               ...(callOptions && { executionOptions: callOptions }),
+              origin: 'direct',
               modelFacing: true,
               preparedDirect: true,
             }),

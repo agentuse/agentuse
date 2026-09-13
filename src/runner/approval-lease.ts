@@ -70,6 +70,66 @@ export function isEffectful(command: string, effectPatterns: string[]): boolean 
   return effectPatterns.some((pattern) => wildcardMatch(command, pattern));
 }
 
+export type BashDispatchOrigin = 'direct' | 'code-mode' | undefined;
+
+export interface BashDispatchPermission {
+  block?: boolean;
+  reason?: string;
+}
+
+/**
+ * One permission boundary for direct and Code Mode Bash calls.
+ *
+ * The command validator still owns the authored allowlist and path policy.
+ * This controller owns the stricter `gated` precedence at the final dispatcher
+ * boundary. Direct calls receive a one-shot permit only after their approval
+ * lease is consumed; Code Mode calls can never consume or bypass that lease.
+ */
+export class BashPermissionController {
+  private readonly gatedPatterns: string[];
+  private readonly directPermits = new Map<string, string>();
+
+  constructor(gatedPatterns: readonly string[]) {
+    this.gatedPatterns = [...gatedPatterns];
+  }
+
+  isGated(command: string): boolean {
+    return isEffectful(command, this.gatedPatterns);
+  }
+
+  grantApprovedDirectCall(toolCallId: string, command: string): void {
+    if (!this.isGated(command)) return;
+    this.directPermits.set(toolCallId, normalizeForLeaseMatch(command));
+  }
+
+  authorizeDispatch(event: {
+    toolName: string;
+    toolCallId: string;
+    origin: BashDispatchOrigin;
+    input: unknown;
+  }): BashDispatchPermission {
+    if (event.toolName !== 'tools__bash' || this.gatedPatterns.length === 0) return {};
+    const command = event.input && typeof event.input === 'object'
+      && typeof (event.input as { command?: unknown }).command === 'string'
+      ? (event.input as { command: string }).command
+      : '';
+    if (!command || !this.isGated(command)) return {};
+
+    if (event.origin === 'direct') {
+      const permit = this.directPermits.get(event.toolCallId);
+      this.directPermits.delete(event.toolCallId);
+      if (permit === normalizeForLeaseMatch(command)) return {};
+    }
+
+    return {
+      block: true,
+      reason: event.origin === 'code-mode'
+        ? 'APPROVAL_REQUIRED: This Bash command matches tools.bash.gated and cannot run inside Code Mode. Request human approval and issue the exact command through the direct tools__bash call.'
+        : 'APPROVAL_REQUIRED: This Bash command matches tools.bash.gated but has no approved one-shot execution permit. Request human approval before running it.',
+    };
+  }
+}
+
 /**
  * Whether a command is covered by a lease. Authorization is an exact match
  * against a complete command shown in `changes[]`; payload-only entries grant
