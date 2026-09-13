@@ -697,3 +697,223 @@ describe('synchronous Code Mode contract index', () => {
     expect(contracts[0].overloads).toBeUndefined();
   });
 });
+
+describe('direct reusable results', () => {
+  it('returns a larger results query inline without creating another handle', async () => {
+    const previousInline = process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+    const previousQuery = process.env.AGENTUSE_RESULT_QUERY_BYTES;
+    process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = '512';
+    process.env.AGENTUSE_RESULT_QUERY_BYTES = '2048';
+    const output = { values: ['x'.repeat(1_000)], truncated: false };
+    const writeReusableResult = mock(async () => {
+      throw new Error('results queries must not create recursive handles');
+    });
+    const dispatcher = new ToolDispatcher({
+      results: { inputSchema: z.object({}), execute: async () => output },
+    }, { writeReusableResult });
+
+    try {
+      await expect(dispatcher.dispatch('results', {}, {
+        toolCallId: 'direct-result-query',
+        origin: 'direct',
+        modelFacing: true,
+      })).resolves.toEqual(output);
+      expect(Buffer.byteLength(JSON.stringify(output), 'utf8')).toBeGreaterThan(512);
+      expect(writeReusableResult).not.toHaveBeenCalled();
+    } finally {
+      if (previousInline === undefined) delete process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+      else process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = previousInline;
+      if (previousQuery === undefined) delete process.env.AGENTUSE_RESULT_QUERY_BYTES;
+      else process.env.AGENTUSE_RESULT_QUERY_BYTES = previousQuery;
+    }
+  });
+
+  it('returns a compact handle for output above the inline limit', async () => {
+    const previous = process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+    process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = '512';
+    const fullOutput = { items: Array.from({ length: 20 }, (_, index) => ({ id: index, text: 'x'.repeat(20) })) };
+    const writeReusableResult = mock(async () => ({
+      resultId: 'result_01J00000000000000000000000_01J00000000000000000000001',
+      tool: 'load',
+      inputHash: 'abc123',
+      inputPreview: '{"scope":"all"}',
+      bytes: JSON.stringify(fullOutput).length,
+      kind: 'json' as const,
+      capabilities: { read: false, grep: false, jq: true },
+      completedAt: Date.now(),
+    }));
+    const dispatcher = new ToolDispatcher({
+      load: {
+        inputSchema: z.object({ scope: z.string() }),
+        execute: async () => fullOutput,
+      },
+    }, { writeReusableResult });
+
+    try {
+      const result = await dispatcher.dispatch('load', { scope: 'all' }, {
+        toolCallId: 'direct-large',
+        origin: 'direct',
+        modelFacing: true,
+      }) as Record<string, unknown>;
+
+      expect(writeReusableResult).toHaveBeenCalledTimes(1);
+      expect(writeReusableResult.mock.calls[0]?.slice(0, 3)).toEqual([
+        'load',
+        { scope: 'all' },
+        fullOutput,
+      ]);
+      expect(result).toMatchObject({
+        resultId: 'result_01J00000000000000000000000_01J00000000000000000000001',
+        kind: 'json',
+        truncated: true,
+        capabilities: { read: false, grep: false, jq: true },
+      });
+      expect(result).not.toHaveProperty('hint');
+      expect(result.preview).toEqual({
+        items: [{ id: 0, text: 'x'.repeat(20) }],
+      });
+      expect(result.omitted).toEqual({ '.items': '19 items' });
+      expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBeLessThanOrEqual(512);
+    } finally {
+      if (previous === undefined) delete process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+      else process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = previous;
+    }
+  });
+
+  it('uses the available inline budget for the beginning of a text result', async () => {
+    const previous = process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+    process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = '512';
+    const fullOutput = `first-line\n${'x'.repeat(1_000)}\nlast-line`;
+    const writeReusableResult = mock(async () => ({
+      resultId: 'result_01J00000000000000000000000_01J00000000000000000000001',
+      tool: 'load',
+      inputHash: 'abc123',
+      inputPreview: '{}',
+      bytes: Buffer.byteLength(JSON.stringify(fullOutput), 'utf8'),
+      kind: 'text' as const,
+      capabilities: { read: false, grep: true, jq: false },
+      completedAt: Date.now(),
+    }));
+    const dispatcher = new ToolDispatcher({
+      load: { inputSchema: z.object({}), execute: async () => fullOutput },
+    }, { writeReusableResult });
+
+    try {
+      const result = await dispatcher.dispatch('load', {}, {
+        toolCallId: 'direct-large-text',
+        origin: 'direct',
+        modelFacing: true,
+      }) as Record<string, unknown>;
+
+      expect(result.truncated).toBe(true);
+      expect(result.preview).toBeTypeOf('string');
+      expect(result.preview as string).toStartWith('first-line\n');
+      expect(result.preview as string).toEndWith('…');
+      expect(result.preview as string).not.toContain('last-line');
+      expect((result.preview as string).length).toBeGreaterThan(200);
+      expect(result.omitted).toEqual({
+        '.': `${Buffer.byteLength(fullOutput, 'utf8') - Buffer.byteLength((result.preview as string).slice(0, -1), 'utf8')} bytes`,
+      });
+      expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBeLessThanOrEqual(512);
+    } finally {
+      if (previous === undefined) delete process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+      else process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = previous;
+    }
+  });
+
+  it('keeps output at the inline limit unchanged', async () => {
+    const previous = process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+    const output = '1234567890';
+    process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = String(Buffer.byteLength(JSON.stringify(output), 'utf8'));
+    const writeReusableResult = mock(async () => undefined);
+    const dispatcher = new ToolDispatcher({
+      load: { inputSchema: z.object({}), execute: async () => output },
+    }, { writeReusableResult });
+
+    try {
+      await expect(dispatcher.dispatch('load', {}, {
+        toolCallId: 'direct-boundary',
+        origin: 'direct',
+        modelFacing: true,
+      })).resolves.toBe(output);
+      expect(writeReusableResult).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+      else process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = previous;
+    }
+  });
+
+  it('leaves provider-native output on its direct delivery path', async () => {
+    const previous = process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+    process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = '64';
+    const fullOutput = { content: 'x'.repeat(1_000) };
+    const writeReusableResult = mock(async () => undefined);
+    const dispatcher = new ToolDispatcher({
+      image: {
+        inputSchema: z.object({}),
+        execute: async () => fullOutput,
+        toModelOutput: () => ({ type: 'content', value: [] }),
+      } as any,
+    }, { writeReusableResult });
+
+    try {
+      await expect(dispatcher.dispatch('image', {}, {
+        toolCallId: 'direct-native',
+        origin: 'direct',
+        modelFacing: true,
+      })).resolves.toBe(fullOutput);
+      expect(writeReusableResult).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+      else process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = previous;
+    }
+  });
+
+  it('guides structured output text to a bounded grep', async () => {
+    const previous = process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+    process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = '7168';
+    const fullOutput = {
+      output: `header\n${'x'.repeat(8_000)}\nTotal cost: $1.14`,
+      metadata: { exitCode: 0 },
+    };
+    const writeReusableResult = mock(async () => ({
+      resultId: 'result_01J00000000000000000000000_01J00000000000000000000001',
+      tool: 'tools__bash',
+      inputHash: 'abc123',
+      inputPreview: '{"command":"check-cost"}',
+      bytes: JSON.stringify(fullOutput).length,
+      kind: 'json' as const,
+      capabilities: { read: false, grep: true, jq: true },
+      completedAt: Date.now(),
+    }));
+    const dispatcher = new ToolDispatcher({
+      tools__bash: { inputSchema: z.object({ command: z.string() }), execute: async () => fullOutput },
+    }, { writeReusableResult });
+
+    try {
+      const result = await dispatcher.dispatch('tools__bash', { command: 'check-cost' }, {
+        toolCallId: 'direct-output-wrapper',
+        origin: 'direct',
+        modelFacing: true,
+      }) as Record<string, unknown>;
+      expect(result.capabilities).toEqual({ read: false, grep: true, jq: true });
+      expect(result).not.toHaveProperty('hint');
+      expect(result.preview).toMatchObject({
+        metadata: {
+          exitCode: 0,
+        },
+      });
+      const outputHead = (result.preview as any).output as string;
+      expect(outputHead).toStartWith('header\n');
+      expect(outputHead).not.toContain('Total cost: $1.14');
+      expect(outputHead.length).toBeGreaterThan(6_000);
+      expect(result.omitted).toEqual({
+        '.output': `${Buffer.byteLength(fullOutput.output, 'utf8') - Buffer.byteLength(outputHead.slice(0, -1), 'utf8')} bytes`,
+      });
+      expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBeLessThanOrEqual(7_168);
+    } finally {
+      if (previous === undefined) delete process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+      else process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = previous;
+    }
+  });
+});

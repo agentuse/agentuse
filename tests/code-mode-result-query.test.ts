@@ -44,6 +44,19 @@ describe('Code Mode result queries', () => {
     });
   });
 
+  it('defaults literal grep to case-insensitive matching', () => {
+    expect(grepCodeModeText('TOTAL COST: $31.16', { pattern: 'Total' })).toEqual({
+      matches: [{
+        line: 1,
+        column: 1,
+        excerpt: 'TOTAL COST: $31.16',
+        before: [],
+        after: [],
+      }],
+      truncated: false,
+    });
+  });
+
   it('runs bundled jq filters and preserves jq output-stream order', async () => {
     await expect(queryCodeModeJson({
       items: [

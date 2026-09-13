@@ -12,9 +12,13 @@ import { computeSubagentActiveIds } from './subagent-active';
 import { isExecutingSessionStatus, isLiveSessionStatus } from './status';
 import { isHumanCommentDecision } from './gate-rounds';
 import {
+  codeModeResultId,
+  describeCodeModeResult,
   parseCodeModeResultId,
+  reusableResultText,
   type CodeModeResultIndexEntry,
   type CodeModeResultReference,
+  type StoredReusableToolResult,
 } from './code-mode-results';
 import {
   grepCodeModeText,
@@ -1063,17 +1067,26 @@ export class SessionManager {
     return readJSON<Part>(`${sessionPath}/${messageID}/part/${partID}`);
   }
 
-  /**
-   * Add a compact lookup entry for a completed nested call. The payload itself
-   * remains in the existing part file; this index prevents results.list() from
-   * parsing every historical tool output in the session.
-   */
+  /** Add a compact lookup entry for a completed nested call. */
   async recordCodeModeResult(
     sessionID: string,
     agentId: string,
     messageId: string,
     partId: string,
     reference: CodeModeResultReference
+  ): Promise<void> {
+    await this.recordReusableResultIndex(sessionID, agentId, {
+      ...reference,
+      messageId,
+      partId,
+      storage: 'part',
+    });
+  }
+
+  private async recordReusableResultIndex(
+    sessionID: string,
+    agentId: string,
+    entry: CodeModeResultIndexEntry,
   ): Promise<void> {
     const sessionPath = await this.resolveSessionDir(sessionID, agentId);
     const key = `${sessionPath}/code-results.v1`;
@@ -1082,16 +1095,71 @@ export class SessionManager {
       const index: CodeModeResultIndex = existing?.version === 1 && existing.results
         ? existing
         : { version: 1, results: {} };
-      index.results[reference.resultId] = { ...reference, messageId, partId };
+      index.results[entry.resultId] = entry;
       await writeJSON(key, index);
       await this.touchSessionDirectory(sessionPath);
     });
   }
 
+  /** Persist one successful direct result outside model history. */
+  async recordDirectToolResult(
+    sessionID: string,
+    agentId: string,
+    messageId: string,
+    input: {
+      tool: string;
+      toolInput: unknown;
+      output: unknown;
+      completedAt: number;
+    },
+  ): Promise<CodeModeResultReference> {
+    const serialized = JSON.stringify(input.output);
+    if (serialized === undefined) {
+      throw new Error('RESULT_UNSERIALIZABLE: direct tool result is not JSON-serializable');
+    }
+
+    const sessionPath = await this.resolveSessionDir(sessionID, agentId);
+    const payloadId = ulid();
+    const resultId = codeModeResultId(messageId, payloadId);
+    const described = describeCodeModeResult({
+      resultId,
+      tool: input.tool,
+      toolInput: input.toolInput,
+      output: input.output,
+      completedAt: input.completedAt,
+    });
+    const reference: CodeModeResultReference = {
+      ...described,
+      // Direct results reach this path only after exceeding the inline budget.
+      // Force callers to select a bounded text/JSON slice instead of loading the
+      // original payload back into model context wholesale.
+      capabilities: { ...described.capabilities, read: false },
+    };
+    const stored: StoredReusableToolResult = {
+      version: 1,
+      resultId,
+      sessionId: sessionID,
+      agentId,
+      messageId,
+      payloadId,
+      reference,
+      output: input.output,
+    };
+
+    await writeJSON(`${sessionPath}/${messageId}/result/${payloadId}`, stored);
+    await this.recordReusableResultIndex(sessionID, agentId, {
+      ...reference,
+      messageId,
+      partId: payloadId,
+      storage: 'payload',
+    });
+    return reference;
+  }
+
   /**
-   * Read one immutable nested Code Mode result from this exact session. The
-   * opaque id contains only ULIDs for a message and part; callers never supply
-   * a path, and every identity field is revalidated before returning bytes.
+   * Read one immutable result from this exact session. The opaque id contains
+   * only ULIDs; callers never supply a path, and every identity field is
+   * revalidated before returning bytes.
    */
   private async resolveCodeModeResult(
     sessionID: string,
@@ -1110,24 +1178,52 @@ export class SessionManager {
       }
       throw error;
     }
-    if (!part) throw new Error(`RESULT_EXPIRED: ${resultId} is no longer available`);
-    const storedReference = part.type === 'tool' && part.state.status === 'completed'
+    const storedReference = part?.type === 'tool' && part.state.status === 'completed'
       ? part.state.metadata?.codeModeResult
       : undefined;
     const reference = normalizeCodeModeResultReference(storedReference);
     if (
-      part.type !== 'tool'
-      || part.sessionID !== sessionID
-      || part.messageID !== location.messageId
-      || part.id !== location.partId
-      || part.state.status !== 'completed'
-      || part.state.metadata?.codeMode !== true
-      || !reference
-      || reference.resultId !== resultId
+      part?.type === 'tool'
+      && part.sessionID === sessionID
+      && part.messageID === location.messageId
+      && part.id === location.partId
+      && part.state.status === 'completed'
+      && part.state.metadata?.codeMode === true
+      && reference
+      && reference.resultId === resultId
     ) {
+      return { output: part.state.output, reference };
+    }
+
+    let stored: StoredReusableToolResult | null;
+    try {
+      const sessionPath = await this.resolveSessionDir(sessionID, agentId);
+      stored = await readJSON<StoredReusableToolResult>(
+        `${sessionPath}/${location.messageId}/result/${location.partId}`,
+      );
+    } catch (error) {
+      if (error instanceof CorruptStorageError) {
+        throw new Error(`RESULT_CORRUPT: ${resultId} could not be read`);
+      }
+      throw error;
+    }
+    const payloadReference = normalizeCodeModeResultReference(stored?.reference);
+    if (
+      stored?.version !== 1
+      || stored.resultId !== resultId
+      || stored.sessionId !== sessionID
+      || stored.agentId !== agentId
+      || stored.messageId !== location.messageId
+      || stored.payloadId !== location.partId
+      || !payloadReference
+      || payloadReference.resultId !== resultId
+    ) {
+      if (!part && !stored) {
+        throw new Error(`RESULT_EXPIRED: ${resultId} is no longer available`);
+      }
       throw new Error(`RESULT_NOT_FOUND: ${resultId} is not a reusable result in this session`);
     }
-    return { output: part.state.output, reference };
+    return { output: stored.output, reference: payloadReference };
   }
 
   async readCodeModeResult(sessionID: string, agentId: string, resultId: string): Promise<unknown> {
@@ -1146,13 +1242,14 @@ export class SessionManager {
     options: CodeModeGrepOptions
   ): Promise<CodeModeGrepResult> {
     const result = await this.resolveCodeModeResult(sessionID, agentId, resultId);
-    if (!result.reference.capabilities.grep || typeof result.output !== 'string') {
+    const text = reusableResultText(result.output);
+    if (!result.reference.capabilities.grep || text === undefined) {
       const suggestion = result.reference.kind === 'json'
         ? 'use results.jq() for JSON results'
         : 'this legacy result has no text-search capability';
       throw new Error(`RESULT_KIND_MISMATCH: ${resultId} is ${result.reference.kind}; ${suggestion}`);
     }
-    return grepCodeModeText(result.output, options);
+    return grepCodeModeText(text, options);
   }
 
   async jqCodeModeResult(

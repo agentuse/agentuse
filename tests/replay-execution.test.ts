@@ -4,12 +4,14 @@ import { aiSdkErrorMocks } from './helpers/ai-sdk-mock';
 mock.module('../src/models', () => ({ createModel: mock(async () => ({ modelId: 'mock-model' })), AuthenticationError: class extends Error {} }));
 const configs: any[] = [];
 let toolName = 'await_human';
+let lastToolOutput: unknown;
 const streamMock = mock((config: any) => {
   configs.push(config);
   return {
     stream: (async function* () {
       const input = toolName === 'await_human' ? { changes: [{ content: 'malformed "command', displayContent: 'NEW' }] } : { command: 'unrecorded read' };
       const output = await config.tools[toolName].execute(input);
+      lastToolOutput = output;
       yield { type: 'tool-call', toolName, toolCallId: 'call-1', input };
       yield { type: 'tool-result', toolName, toolCallId: 'call-1', output };
       yield { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } };
@@ -24,7 +26,7 @@ beforeAll(async () => {
   ({ executeAgentCore } = await import('../src/runner/execution'));
   ({ ReplayDispatcher } = await import('../src/replay/recording'));
 });
-beforeEach(() => { configs.length = 0; streamMock.mockClear(); });
+beforeEach(() => { configs.length = 0; lastToolOutput = undefined; streamMock.mockClear(); });
 
 describe('replay execution boundary', () => {
   for (const name of ['await_human', 'tools__bash']) {
@@ -45,4 +47,39 @@ describe('replay execution boundary', () => {
       expect(configs[0].tools.code_exec).toBeUndefined();
     });
   }
+
+  it('keeps oversized replay outputs in the replay path without storing reusable results', async () => {
+    const previous = process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+    process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = '64';
+    toolName = 'load';
+    const fullOutput = { items: Array.from({ length: 20 }, (_, index) => ({ id: index, body: 'x'.repeat(20) })) };
+    const recordDirectToolResult = mock(async () => {
+      throw new Error('replay must not persist a reusable result');
+    });
+    const agent = { name: 'replay', instructions: 'CURRENT', config: { model: 'demo:test' } } as any;
+
+    try {
+      for await (const _ of executeAgentCore(agent, {
+        load: {
+          inputSchema: { type: 'object', additionalProperties: true },
+          execute: async () => fullOutput,
+        },
+      } as any, {
+        userMessage: 'CURRENT',
+        systemMessages: [{ role: 'system', content: 'Test' }],
+        maxSteps: 1,
+        replay: { stopped: () => false },
+        sessionManager: { recordDirectToolResult } as any,
+        sessionID: '01J00000000000000000000000',
+        agentId: 'replay',
+        messageID: '01J00000000000000000000001',
+      })) { /* drain */ }
+
+      expect(recordDirectToolResult).not.toHaveBeenCalled();
+      expect(lastToolOutput).not.toHaveProperty('resultId');
+    } finally {
+      if (previous === undefined) delete process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+      else process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = previous;
+    }
+  });
 });

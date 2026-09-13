@@ -46,19 +46,22 @@ describe('autonomous agent system prompt', () => {
     expect(enabled).toContain('command matching tools.bash.gated is rejected inside Code Mode');
     expect(enabled).toContain('subagent delegation, binary or provider-native result delivery');
     expect(enabled).toContain('transport-sensitive tool may also appear in the Code Mode catalog');
-    expect(enabled).toContain('Any model-facing result over 30,720 bytes is replaced by a shape summary');
+    expect(enabled).toContain('Direct JSON/text results over 10,240 bytes are stored outside model context');
+    expect(enabled).toContain('Use the results tool for one bounded lookup');
+    expect(enabled).toContain('up to 20,480 bytes');
     expect(enabled).toContain('never raw lists or whole records');
     expect(enabled).toContain('Completed JSON-serializable nested calls are listed as reusableResults, including oversized results');
     expect(enabled).toContain('inspect results.list() for the result kind and capabilities');
     expect(enabled).toContain('Use results.read(resultId)');
     expect(enabled).toContain('results.grep(resultId');
     expect(enabled).toContain('results.jq(resultId');
-    expect(enabled).toContain('call the tool again when current state is required');
+    expect(enabled).toContain('Refresh it only when current external state is required');
     expect(enabled).toContain('query its keys and one element with results.jq() instead of repeating the tool');
     expect(enabled).toContain('Do not create or ask the user to maintain a helper script');
     expect(enabled).toContain('shell artifact, commands or scripts may contain the calculations the artifact itself needs');
     expect(disabled).not.toContain('Tool composition:');
     expect(disabled).not.toContain('code_exec');
+    expect(disabled).toContain('Use the results tool for one bounded lookup');
   });
 
   it('quotes the configured tool output cap in the Code Mode guidance', () => {
@@ -66,7 +69,7 @@ describe('autonomous agent system prompt', () => {
     process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES = '4096';
     try {
       const prompt = buildAutonomousAgentPrompt('Monday, July 29, 2026', false, true);
-      expect(prompt).toContain('Any model-facing result over 4,096 bytes is replaced by a shape summary');
+      expect(prompt).toContain('Direct JSON/text results over 4,096 bytes are stored outside model context');
     } finally {
       if (previous === undefined) delete process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES;
       else process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES = previous;

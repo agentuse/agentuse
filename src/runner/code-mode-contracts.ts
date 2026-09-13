@@ -334,6 +334,7 @@ export function codeModeDeclarations(contracts: readonly CodeModeToolContract[])
     `  read(resultId: string): Promise<unknown>;\n` +
     `  list(): Promise<readonly CodeModeResultReference[]>;\n` +
     `  grep(resultId: string, options: { pattern: string; caseSensitive?: boolean; limit?: number; contextLines?: number }): Promise<CodeModeGrepResult>;\n` +
+    `  jq(resultId: string, query: { expression: string; limit?: number }): Promise<CodeModeJqResult>;\n` +
     `  jq(resultId: string, expression: string, options?: { limit?: number }): Promise<CodeModeJqResult>;\n` +
     `};\n` +
     `declare function text(value: unknown): void;\n` +

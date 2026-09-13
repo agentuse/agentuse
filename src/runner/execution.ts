@@ -57,6 +57,7 @@ import {
   ToolDispatchDeniedError,
   ToolDispatcher,
   ToolInputValidationError,
+  type ReusableResultWriter,
   type ToolOutputArtifactWriter,
 } from './tool-dispatcher';
 import {
@@ -70,6 +71,7 @@ import {
 import { codeModeResultId, type CodeModeResultReference } from '../session/code-mode-results';
 import { injectIntentParam } from './tool-intent';
 import { stripInlineMediaData } from '../tools/media.js';
+import { createResultsTool, RESULTS_TOOL } from '../tools/results.js';
 import { messagesContainInlineMedia } from '../session/media-cache.js';
 import { stripToolBlocks, hasReasoningParts, lastAssistantMessage } from '../session/message-utils';
 import { OUTCOME_NUDGE_PROMPT, shouldRequestOutcome } from './outcome';
@@ -587,6 +589,32 @@ function buildToolOutputArtifactWriter(options: {
   };
 }
 
+function buildReusableResultWriter(options: {
+  sessionManager?: SessionManager;
+  sessionID?: string;
+  agentId?: string;
+  messageID?: string;
+}): ReusableResultWriter | undefined {
+  if (
+    !options.sessionManager
+    || typeof options.sessionManager.recordDirectToolResult !== 'function'
+    || !options.sessionID
+    || !options.agentId
+    || !options.messageID
+  ) {
+    return undefined;
+  }
+
+  return async (tool, toolInput, output, completedAt) => {
+    return options.sessionManager!.recordDirectToolResult(
+      options.sessionID!,
+      options.agentId!,
+      options.messageID!,
+      { tool, toolInput, output: stripInlineMediaData(output), completedAt },
+    );
+  };
+}
+
 export function buildCodeModeTraceHooks(options: {
   sessionManager?: SessionManager;
   sessionID?: string;
@@ -1084,11 +1112,13 @@ async function* executeAgentAttempt(
     ? applyAnthropicCacheControlToMessages(initialMessages)
     : initialMessages;
   const writeToolOutputArtifact = buildToolOutputArtifactWriter(options);
+  const writeReusableResult = options.replay ? undefined : buildReusableResultWriter(options);
   const dispatcher = new ToolDispatcher(tools, {
     ...(options.effectWal && { effectWal: options.effectWal }),
     ...(options.pluginEvents && { pluginEvents: options.pluginEvents }),
     abortSignal: effectiveAbortSignal,
     ...(writeToolOutputArtifact && { writeToolOutputArtifact }),
+    ...(writeReusableResult && { writeReusableResult }),
     bashPermission,
     onPluginTerminate: () => { pluginTerminateRequested = true; },
   });
@@ -1100,8 +1130,24 @@ async function* executeAgentAttempt(
     );
   }
   let codeModeHiddenTools = new Set<string>();
+  const traceHooks = buildCodeModeTraceHooks(options);
+  if (
+    !options.replay
+    && options.sessionManager
+    && options.sessionID
+    && options.agentId
+  ) {
+    const resultsTool = createResultsTool({
+      manager: options.sessionManager,
+      sessionId: options.sessionID,
+      agentId: options.agentId,
+    });
+    dispatcher.register(
+      RESULTS_TOOL,
+      agent.config.intent === false ? resultsTool : injectIntentParam(RESULTS_TOOL, resultsTool),
+    );
+  }
   if (isCodeModeEnabled() && !options.replay && dispatcher.get(CODE_EXEC_TOOL) === undefined) {
-    const traceHooks = buildCodeModeTraceHooks(options);
     const codeModeTools = dispatcher.codeModeTools();
     const codeModeToolNames = codeModeEligibleToolNames(Object.keys(codeModeTools));
     const codeExecTool = createCodeExecTool({

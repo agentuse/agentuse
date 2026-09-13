@@ -4,23 +4,28 @@
  * Tool outputs are re-sent to the model on every subsequent turn, so a single
  * oversized result (a large diff, a verbose log) inflates input tokens for the
  * rest of the run. These limits cap how much of any one result reaches the
- * model. The defaults match the historical hardcoded values, so behaviour is
- * unchanged unless a power user opts to tune them.
+ * model. Direct results have a smaller inline budget than tool-local capture
+ * limits so the full value can move to durable result storage without bloating
+ * every later model step.
  *
  * Resolution order per limit: environment variable -> built-in default.
  * The reader is defensive: a missing or malformed value falls back to the
  * default, so tools never fail because of bad config.
  *
  * Env vars:
- *   AGENTUSE_TOOL_MAX_OUTPUT_BYTES  bash stdout/stderr cap (bytes)      default 30720
- *   AGENTUSE_TOOL_MAX_LINES         read_file pagination/truncation cap default 2000
- *   AGENTUSE_TOOL_MAX_LINE_LENGTH   per-line cap before "... (truncated)" default 2000
- *   AGENTUSE_TOOL_OUTPUT_HEAD_RATIO fraction of the byte cap kept as head default 0.4
+ *   AGENTUSE_TOOL_INLINE_RESULT_BYTES model-facing inline result cap     default 10240
+ *   AGENTUSE_RESULT_QUERY_BYTES       results tool query result cap      default 20480
+ *   AGENTUSE_TOOL_MAX_OUTPUT_BYTES    bash stdout/stderr cap (bytes)      default 30720
+ *   AGENTUSE_TOOL_MAX_LINES           read_file pagination/truncation cap default 2000
+ *   AGENTUSE_TOOL_MAX_LINE_LENGTH     per-line cap before "... (truncated)" default 2000
+ *   AGENTUSE_TOOL_OUTPUT_HEAD_RATIO   fraction of the byte cap kept as head default 0.4
  */
 
-// Built-in defaults — these match the pre-existing hardcoded constants, so the
-// module is behaviour-preserving when no env vars are set.
+// Tool-local capture retains the historical cap. The separate inline cap is
+// deliberately smaller because that payload is replayed on every model step.
 export const DEFAULT_MAX_OUTPUT_BYTES = 30 * 1024; // bash.ts DEFAULT_MAX_OUTPUT
+export const DEFAULT_INLINE_RESULT_BYTES = 10 * 1024;
+export const DEFAULT_RESULT_QUERY_BYTES = 20 * 1024;
 export const DEFAULT_MAX_LINES = 2000; // filesystem.ts DEFAULT_MAX_LINES
 export const DEFAULT_MAX_LINE_LENGTH = 2000; // filesystem.ts DEFAULT_MAX_LINE_LENGTH
 // Keep head (errors/context often surface early) and tail (most recent output)
@@ -29,6 +34,10 @@ export const DEFAULT_MAX_LINE_LENGTH = 2000; // filesystem.ts DEFAULT_MAX_LINE_L
 export const DEFAULT_HEAD_RATIO = 0.4;
 
 export interface ToolOutputLimits {
+  /** Largest serialized tool result returned inline to the model. */
+  inlineResultBytes: number;
+  /** Largest intentional lookup returned inline by the results tool. */
+  resultQueryBytes: number;
   maxBytes: number;
   maxLines: number;
   maxLineLength: number;
@@ -53,8 +62,18 @@ function ratio(value: string | undefined, fallback: number): number {
  * Never throws.
  */
 export function getToolOutputLimits(): ToolOutputLimits {
+  const legacyOutputBytes = process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES;
+  const inlineResultBytes = positiveInt(
+    process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES,
+    positiveInt(legacyOutputBytes, DEFAULT_INLINE_RESULT_BYTES),
+  );
   return {
-    maxBytes: positiveInt(process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES, DEFAULT_MAX_OUTPUT_BYTES),
+    inlineResultBytes,
+    resultQueryBytes: positiveInt(
+      process.env.AGENTUSE_RESULT_QUERY_BYTES,
+      Math.max(DEFAULT_RESULT_QUERY_BYTES, inlineResultBytes),
+    ),
+    maxBytes: positiveInt(legacyOutputBytes, DEFAULT_MAX_OUTPUT_BYTES),
     maxLines: positiveInt(process.env.AGENTUSE_TOOL_MAX_LINES, DEFAULT_MAX_LINES),
     maxLineLength: positiveInt(process.env.AGENTUSE_TOOL_MAX_LINE_LENGTH, DEFAULT_MAX_LINE_LENGTH),
     headRatio: ratio(process.env.AGENTUSE_TOOL_OUTPUT_HEAD_RATIO, DEFAULT_HEAD_RATIO),
@@ -231,6 +250,148 @@ function stableJson(value: unknown): string | undefined {
   }
 }
 
+const REUSABLE_PREVIEW_MAX_KEYS = 40;
+const REUSABLE_PREVIEW_MAX_DEPTH = 2;
+
+export interface ReusableResultPreview {
+  preview: unknown;
+  omitted: Record<string, string>;
+}
+
+function reusablePreviewJsonBytes(value: unknown): number {
+  const json = stableJson(value);
+  return json === undefined ? Number.POSITIVE_INFINITY : Buffer.byteLength(json, 'utf8');
+}
+
+function utf8Prefix(value: string, maxBytes: number): string {
+  if (maxBytes <= 0) return '';
+  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value;
+  let low = 0;
+  let high = value.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    const candidate = trimTrailingHighSurrogate(value.slice(0, middle));
+    if (Buffer.byteLength(candidate, 'utf8') <= maxBytes) low = middle;
+    else high = middle - 1;
+  }
+  return trimTrailingHighSurrogate(value.slice(0, low));
+}
+
+function objectPath(path: string, key: string): string {
+  const segment = /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)
+    ? `.${key}`
+    : `[${JSON.stringify(key)}]`;
+  return path === '.' ? segment : `${path}${segment}`;
+}
+
+function arrayPath(path: string, index: number): string {
+  return path === '.' ? `.[${index}]` : `${path}[${index}]`;
+}
+
+function buildReusablePreview(
+  value: unknown,
+  path: string,
+  omitted: Record<string, string>,
+  options: { depth: number; maxKeys: number; stringHeadBytes: number },
+): unknown {
+  if (typeof value === 'string') {
+    const bytes = Buffer.byteLength(value, 'utf8');
+    if (bytes <= options.stringHeadBytes) return value;
+    const markerBytes = Buffer.byteLength('…', 'utf8');
+    const head = utf8Prefix(value, Math.max(0, options.stringHeadBytes - markerBytes));
+    omitted[path] = `${bytes - Buffer.byteLength(head, 'utf8')} bytes`;
+    return `${head}…`;
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return [];
+    if (options.depth <= 0) {
+      omitted[path] = `${value.length} items`;
+      return [];
+    }
+    const preview = [buildReusablePreview(
+      value[0],
+      arrayPath(path, 0),
+      omitted,
+      { ...options, depth: options.depth - 1 },
+    )];
+    if (value.length > 1) omitted[path] = `${value.length - 1} items`;
+    return preview;
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>);
+    const preview: Record<string, unknown> = {};
+    for (const [key, child] of entries.slice(0, options.maxKeys)) {
+      const childPath = objectPath(path, key);
+      if (options.depth > 0 || typeof child === 'string') {
+        preview[key] = buildReusablePreview(child, childPath, omitted, {
+          ...options,
+          depth: Math.max(0, options.depth - 1),
+        });
+      } else if (Array.isArray(child)) {
+        if (child.length > 0) omitted[childPath] = `${child.length} items`;
+        preview[key] = [];
+      } else if (child && typeof child === 'object') {
+        const keyCount = Object.keys(child).length;
+        if (keyCount > 0) omitted[childPath] = `${keyCount} keys`;
+        preview[key] = {};
+      } else {
+        preview[key] = child;
+      }
+    }
+    if (entries.length > options.maxKeys) {
+      omitted[path] = `${entries.length - options.maxKeys} keys`;
+    }
+    return preview;
+  }
+  return value;
+}
+
+function reusablePreviewCandidate(
+  value: unknown,
+  maxKeys: number,
+  stringHeadBytes: number,
+): ReusableResultPreview {
+  const omitted: Record<string, string> = {};
+  const preview = buildReusablePreview(value, '.', omitted, {
+    depth: REUSABLE_PREVIEW_MAX_DEPTH,
+    maxKeys,
+    stringHeadBytes,
+  });
+  return { preview, omitted };
+}
+
+function reusablePreview(value: unknown, maxBytes: number): ReusableResultPreview {
+  const keyLimits = [REUSABLE_PREVIEW_MAX_KEYS, 20, 10, 5, 1, 0];
+  for (const maxKeys of keyLimits) {
+    let low = 0;
+    let high = maxBytes;
+    let best: ReusableResultPreview | undefined;
+    while (low <= high) {
+      const stringHeadBytes = Math.floor((low + high) / 2);
+      const candidate = reusablePreviewCandidate(value, maxKeys, stringHeadBytes);
+      if (reusablePreviewJsonBytes(candidate) <= maxBytes) {
+        best = candidate;
+        low = stringHeadBytes + 1;
+      } else {
+        high = stringHeadBytes - 1;
+      }
+    }
+    if (best !== undefined) return best;
+  }
+  return { preview: null, omitted: { '.': `${reusablePreviewJsonBytes(value)} bytes` } };
+}
+
+/**
+ * Build the one model-facing preview attached to a stored reusable result.
+ * Text and JSON share one format: preview preserves a partial original value,
+ * while omitted maps jq-style paths to the bytes, items, or keys left out.
+ * `maxBytes` applies to both fields together; the dispatcher reserves the rest
+ * of the inline budget for the result reference envelope.
+ */
+export function previewReusableResult(value: unknown, maxBytes: number): ReusableResultPreview {
+  return reusablePreview(value, maxBytes);
+}
+
 /**
  * Clamp an arbitrary tool result before it is handed back to the model. Builtin
  * tools already try to stay concise, but MCP/custom/store tools can return very
@@ -243,7 +404,7 @@ export function clampToolResultForModel(
   options: Partial<Pick<ToolOutputLimits, 'maxBytes' | 'headRatio'>> = {},
 ): ClampedToolResult {
   const limits = getToolOutputLimits();
-  const maxBytes = options.maxBytes ?? limits.maxBytes;
+  const maxBytes = options.maxBytes ?? limits.inlineResultBytes;
   const headRatio = options.headRatio ?? limits.headRatio;
 
   if (typeof value === 'string') {

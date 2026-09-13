@@ -160,13 +160,14 @@ export function grepCodeModeText(text: string, options: CodeModeGrepOptions): Co
     'RESULT_GREP_INPUT: contextLines'
   );
   const lines = text.split('\n');
-  const needle = options.caseSensitive === false ? options.pattern.toLowerCase() : options.pattern;
+  const caseSensitive = options.caseSensitive ?? false;
+  const needle = caseSensitive ? options.pattern : options.pattern.toLowerCase();
   const matches: CodeModeGrepMatch[] = [];
   let truncated = false;
 
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index]!;
-    const haystack = options.caseSensitive === false ? line.toLowerCase() : line;
+    const haystack = caseSensitive ? line : line.toLowerCase();
     const column = haystack.indexOf(needle);
     if (column < 0) continue;
     if (matches.length >= limit) {

@@ -750,6 +750,7 @@ describe('executeAgentCore Anthropic cache control', () => {
       }
 
       const streamConfig = streamTextMock.mock.calls[0][0] as any;
+      expect(streamConfig.tools.results.description).toBe('Query stored tool results by ID.');
       const result = await streamConfig.tools.verbose.execute({});
 
       expect(writeToolOutputArtifact).toHaveBeenCalledTimes(1);

@@ -8,6 +8,7 @@ import { codeModeResultId, describeCodeModeResult } from '../src/session/code-mo
 import { buildCodeModeTraceHooks } from '../src/runner/execution';
 import { createCodeExecTool } from '../src/runner/code-mode';
 import { ToolDispatcher } from '../src/runner/tool-dispatcher';
+import { createResultsTool } from '../src/tools/results';
 import { z } from 'zod';
 
 let testRoot: string | undefined;
@@ -302,5 +303,153 @@ describe('session Code Mode results', () => {
         capabilities: { read: false, grep: false, jq: true },
       }),
     ]));
+  });
+});
+
+describe('direct reusable results', () => {
+  it('allows a result query above the initial inline-result ceiling', async () => {
+    const previousInlineLimit = process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+    const previousQueryLimit = process.env.AGENTUSE_RESULT_QUERY_BYTES;
+    const previousOutputLimit = process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES;
+    delete process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+    delete process.env.AGENTUSE_RESULT_QUERY_BYTES;
+    delete process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES;
+    originalXdg = process.env.XDG_DATA_HOME;
+    testRoot = await mkdtemp(join(tmpdir(), 'agentuse-direct-query-limit-'));
+    process.env.XDG_DATA_HOME = testRoot;
+    await initStorage(testRoot);
+
+    try {
+      const manager = new SessionManager();
+      const agentId = 'agents/review';
+      const { sessionId, messageId } = await createSession(manager, testRoot, agentId);
+      const selected = 'x'.repeat(12_000);
+      const reference = await manager.recordDirectToolResult(sessionId, agentId, messageId, {
+        tool: 'load',
+        toolInput: { scope: 'all' },
+        output: { selected, overflow: 'y'.repeat(10_000) },
+        completedAt: Date.now(),
+      });
+      const resultsTool = createResultsTool({ manager, sessionId, agentId });
+      const query = {
+        action: 'jq',
+        resultId: reference.resultId,
+        expression: '.selected',
+      };
+      const expected = { values: [selected], truncated: false };
+
+      expect(Buffer.byteLength(JSON.stringify(expected), 'utf8')).toBeGreaterThan(10 * 1024);
+      expect(Buffer.byteLength(JSON.stringify(expected), 'utf8')).toBeLessThanOrEqual(20 * 1024);
+      await expect((resultsTool.execute as any)(query)).resolves.toEqual(expected);
+    } finally {
+      if (previousInlineLimit === undefined) delete process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+      else process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = previousInlineLimit;
+      if (previousQueryLimit === undefined) delete process.env.AGENTUSE_RESULT_QUERY_BYTES;
+      else process.env.AGENTUSE_RESULT_QUERY_BYTES = previousQueryLimit;
+      if (previousOutputLimit === undefined) delete process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES;
+      else process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES = previousOutputLimit;
+    }
+  });
+
+  it('persists large direct output and queries it through the results tool', async () => {
+    originalXdg = process.env.XDG_DATA_HOME;
+    testRoot = await mkdtemp(join(tmpdir(), 'agentuse-direct-results-'));
+    process.env.XDG_DATA_HOME = testRoot;
+    await initStorage(testRoot);
+
+    const manager = new SessionManager();
+    const agentId = 'agents/review';
+    const { sessionId, messageId } = await createSession(manager, testRoot, agentId);
+    const output = {
+      items: [
+        { id: 'one', status: 'ready', body: 'x'.repeat(4_000) },
+        { id: 'two', status: 'done', body: 'y'.repeat(4_000) },
+      ],
+    };
+    const completedAt = Date.now();
+    const reference = await manager.recordDirectToolResult(sessionId, agentId, messageId, {
+      tool: 'load',
+      toolInput: { scope: 'all' },
+      output,
+      completedAt,
+    });
+
+    expect(reference.resultId).toStartWith(`result_${messageId}_`);
+    expect(reference.capabilities).toEqual({ read: false, grep: false, jq: true });
+    await expect(manager.readCodeModeResult(sessionId, agentId, reference.resultId))
+      .rejects.toThrow('use results.jq()');
+
+    const resumedManager = new SessionManager();
+    const resultsTool = createResultsTool({ manager: resumedManager, sessionId, agentId });
+    await expect((resultsTool.execute as any)({
+      action: 'jq',
+      resultId: reference.resultId,
+      expression: '.items[] | select(.status == "ready") | { id, status }',
+      limit: 10,
+    })).resolves.toEqual({ values: [{ id: 'one', status: 'ready' }], truncated: false });
+    const listed = await (resultsTool.execute as any)({ action: 'list', limit: 10 });
+    expect(listed).toEqual([
+        expect.objectContaining({
+          resultId: reference.resultId,
+          tool: 'load',
+          bytes: Buffer.byteLength(JSON.stringify(output), 'utf8'),
+          completedAt,
+        }),
+      ]);
+    expect(listed[0]).not.toHaveProperty('preview');
+    expect(listed[0]).not.toHaveProperty('omitted');
+    expect(listed[0]).not.toHaveProperty('hint');
+  });
+
+  it('searches structured output text and rejects an oversized follow-up query', async () => {
+    const previousQueryLimit = process.env.AGENTUSE_RESULT_QUERY_BYTES;
+    process.env.AGENTUSE_RESULT_QUERY_BYTES = '256';
+    originalXdg = process.env.XDG_DATA_HOME;
+    testRoot = await mkdtemp(join(tmpdir(), 'agentuse-direct-output-results-'));
+    process.env.XDG_DATA_HOME = testRoot;
+    await initStorage(testRoot);
+
+    try {
+      const manager = new SessionManager();
+      const agentId = 'agents/review';
+      const { sessionId, messageId } = await createSession(manager, testRoot, agentId);
+      const output = {
+        output: `header\nTotal cost: $1.14\n${'x'.repeat(1_000)}`,
+        metadata: { exitCode: 0 },
+      };
+      const reference = await manager.recordDirectToolResult(sessionId, agentId, messageId, {
+        tool: 'tools__bash',
+        toolInput: { command: 'check-cost' },
+        output,
+        completedAt: Date.now(),
+      });
+      const resultsTool = createResultsTool({ manager, sessionId, agentId });
+
+      expect(reference.capabilities).toEqual({ read: false, grep: true, jq: true });
+      await expect((resultsTool.execute as any)({
+        action: 'grep',
+        resultId: reference.resultId,
+        pattern: 'total cost',
+        caseSensitive: false,
+        limit: 1,
+      })).resolves.toEqual({
+        matches: [{
+          line: 2,
+          column: 1,
+          excerpt: 'Total cost: $1.14',
+          before: [],
+          after: [],
+        }],
+        truncated: false,
+      });
+      await expect((resultsTool.execute as any)({
+        action: 'jq',
+        resultId: reference.resultId,
+        expression: '.output',
+      })).rejects.toThrow('RESULT_QUERY_TOO_LARGE: jq returned');
+    } finally {
+      if (previousQueryLimit === undefined) delete process.env.AGENTUSE_RESULT_QUERY_BYTES;
+      else process.env.AGENTUSE_RESULT_QUERY_BYTES = previousQueryLimit;
+    }
   });
 });

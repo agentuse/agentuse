@@ -235,6 +235,41 @@ describe('Code Mode', () => {
     }));
   });
 
+  it('accepts the object form for jq queries', async () => {
+    const resultId = 'result_01J00000000000000000000000_01J00000000000000000000002';
+    const jq = mock(async (id: string, expression: string, options?: { limit?: number }) => ({
+      values: [{ id, expression, limit: options?.limit }],
+      truncated: false,
+    }));
+
+    const result = await executeCodeModeDetailed(`
+      return await results.jq(${JSON.stringify(resultId)}, {
+        expression: '.items[] | { id, status }',
+        limit: 10,
+      });
+    `, {
+      dispatcher: { dispatch: async () => null },
+      toolNames: [],
+      parentCallId: 'query-results-object-form',
+      resultAccess: {
+        read: async () => null,
+        list: async () => [],
+        jq,
+      },
+    });
+
+    expect(jq).toHaveBeenCalledWith(
+      resultId,
+      '.items[] | { id, status }',
+      { limit: 10 },
+      expect.any(AbortSignal),
+    );
+    expect(result.value).toEqual({
+      values: [{ id: resultId, expression: '.items[] | { id, status }', limit: 10 }],
+      truncated: false,
+    });
+  });
+
   it('classifies missing and oversized stored results as result access failures', async () => {
     for (const scenario of [
       {
@@ -800,6 +835,7 @@ describe('Code Mode', () => {
       'await_human',
       'tools__bash',
       'code_exec',
+      'results',
       'subagent__worker',
       'submit_agent_revision',
       'submit_changes',
@@ -1847,6 +1883,7 @@ describe('Code Mode', () => {
     expect(contracts[0].overloads).toHaveLength(2);
     const declarations = codeModeDeclarations(contracts);
     expect(declarations).toContain('grep(resultId: string');
+    expect(declarations).toContain('jq(resultId: string, query: { expression: string; limit?: number }');
     expect(declarations).toContain('jq(resultId: string, expression: string');
     const lines = declarations.split('\n').filter(line => line.includes('"list"('));
     expect(lines).toHaveLength(3);

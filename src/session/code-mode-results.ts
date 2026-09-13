@@ -18,6 +18,16 @@ export interface CodeModeResultReference {
   completedAt: number;
 }
 
+/** The only model-facing envelope for an oversized direct JSON/text result. */
+export interface ReusableResultHandle extends Pick<
+  CodeModeResultReference,
+  'resultId' | 'bytes' | 'kind' | 'capabilities'
+> {
+  truncated: true;
+  preview: unknown;
+  omitted: Record<string, string>;
+}
+
 export type CodeModeResultMetadata = Pick<
   CodeModeResultReference,
   'inputHash' | 'inputPreview' | 'bytes' | 'kind' | 'capabilities'
@@ -26,6 +36,19 @@ export type CodeModeResultMetadata = Pick<
 export interface CodeModeResultIndexEntry extends CodeModeResultReference {
   messageId: string;
   partId: string;
+  /** Omitted for legacy/nested results whose payload lives in a tool part. */
+  storage?: 'part' | 'payload';
+}
+
+export interface StoredReusableToolResult {
+  version: 1;
+  resultId: string;
+  sessionId: string;
+  agentId: string;
+  messageId: string;
+  payloadId: string;
+  reference: CodeModeResultReference;
+  output: unknown;
 }
 
 export function codeModeResultId(messageId: string, partId: string): string {
@@ -53,6 +76,18 @@ function sortJson(value: unknown): unknown {
 function serialize(value: unknown): string {
   const serialized = JSON.stringify(sortJson(value));
   return serialized ?? 'null';
+}
+
+/** Text that can be searched without discarding a structured result's fields. */
+export function reusableResultText(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  try {
+    const output = (value as Record<string, unknown>).output;
+    return typeof output === 'string' ? output : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function describeCodeModeResult(input: {
@@ -99,7 +134,7 @@ export function describeCodeModeResultFromSerialized(input: {
     kind: typeof input.output === 'string' ? 'text' : 'json',
     capabilities: {
       read: input.readable,
-      grep: typeof input.output === 'string',
+      grep: reusableResultText(input.output) !== undefined,
       jq: typeof input.output !== 'string',
     },
   };

@@ -47,9 +47,14 @@ Writing:
     ? '\n- You are a sub-agent: your caller is a program consuming your return value, not a reader skimming a report. Cut commentary to nothing — but return the result itself IN FULL: every row, field, and document your caller asked for, no summarizing and no length ceiling. Brevity governs your narration, never your data'
     : '';
 
-  // Quote the live clamp so the guidance stays true when the cap is overridden
-  // through AGENTUSE_TOOL_MAX_OUTPUT_BYTES.
-  const resultCap = `${getToolOutputLimits().maxBytes.toLocaleString('en-US')} bytes`;
+  // Quote the live inline limit so the guidance stays true when overridden.
+  const outputLimits = getToolOutputLimits();
+  const resultCap = `${outputLimits.inlineResultBytes.toLocaleString('en-US')} bytes`;
+  const resultQueryCap = `${outputLimits.resultQueryBytes.toLocaleString('en-US')} bytes`;
+  const reusableResultAddition = `
+
+Reusable results:
+- Direct JSON/text results over ${resultCap} are stored outside model context and returned with a resultId, one bounded preview, and a jq-style omitted map. Use the preview first. Use the results tool for one bounded lookup up to ${resultQueryCap}; it returns only the requested data: action "list" discovers handles, "read" loads only references whose capabilities.read is true, "grep" searches case-insensitive literal text by default without regex escaping (including structured output when capabilities.grep is true), and "jq" selects JSON. Do not retry the original tool merely to recover omitted output. Refresh it only when current external state is required or an intervening mutation may have made the stored snapshot stale.`;
   const codeModeAddition = codeModeEnabled
     ? `
 
@@ -59,7 +64,7 @@ Tool composition and computation:
 - When two or more calls to eligible tools feed deterministic computation or later dependent calls, you MUST put those calls and the computation inside one code_exec program. This includes reading multiple records and then filtering, joining, sorting, selecting, branching, batching, or aggregating them. Do not perform that workflow as repeated direct tool calls.
 - Bash is available through code_exec only for commands already granted by the agent's auto-run allowlist. Use tools.tools__bash there when its structured output feeds filtering, parsing, branching, batching, or another tool call. A command matching tools.bash.gated is rejected inside Code Mode and must use the separately visible direct tools__bash path after human approval. Use direct Bash for a standalone command whose output needs no programmatic composition.
 - Call a tool directly only when it is separately visible in the current turn and needs direct-only behavior such as suspension, approval, subagent delegation, binary or provider-native result delivery, outcome submission, or the standalone Bash case above. A transport-sensitive tool may also appear in the Code Mode catalog for its JSON/text path; use its direct form only when that special delivery is needed.
-- Any model-facing result over ${resultCap} is replaced by a shape summary, so return ids, selected fields, counts, and decisions, never raw lists or whole records. Completed JSON-serializable nested calls are listed as reusableResults, including oversized results. Before repeating a call with the same inputs in a later code_exec, inspect results.list() for the result kind and capabilities. Use results.read(resultId) for bounded payloads, results.grep(resultId, { pattern, limit, contextLines }) for literal text search, and results.jq(resultId, expression, { limit }) for real jq queries over JSON without loading the whole payload into Code Mode. Reuse is appropriate for an immediate retry or continued analysis of the same snapshot; call the tool again when current state is required or an intervening mutation may have invalidated it. To learn an unknown JSON shape, query its keys and one element with results.jq() instead of repeating the tool.
+- Return ids, selected fields, counts, and decisions, never raw lists or whole records. Completed JSON-serializable nested calls are listed as reusableResults, including oversized results. Before repeating a call with the same inputs in a later code_exec, inspect results.list() for the result kind and capabilities. Use results.read(resultId) for bounded payloads, results.grep(resultId, { pattern, limit, contextLines }) for literal text search, and results.jq(resultId, { expression, limit }) for real jq queries over JSON without loading the whole payload into Code Mode. To learn an unknown JSON shape, query its keys and one element with results.jq() instead of repeating the tool.
 - Do not create or ask the user to maintain a helper script merely to compose available tools. When the user asks for a shell artifact, commands or scripts may contain the calculations the artifact itself needs; bash is forbidden only as private scratch space for working out an answer.`
     : '';
 
@@ -83,7 +88,7 @@ report_complete carries the report itself:
 - artifacts: paths or URLs the run produced or changed.
 The writing rules above govern \`details\`. When your instructions specify an output format, document, schema, or template, \`details\` IS that output in full and the word ceiling does not apply to it. Never split a specified output, streaming the document and attaching a summary; the document goes in \`details\`.`;
 
-  return `${basePrompt}${subAgentAddition}${codeModeAddition}${runOutcome}
+  return `${basePrompt}${subAgentAddition}${reusableResultAddition}${codeModeAddition}${runOutcome}
 
 Guidance use:
 1. Your agent instructions and the current task are authoritative.

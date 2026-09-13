@@ -329,6 +329,7 @@ function reusableResults(completed: readonly CompletedNestedCall[]): CodeModeRes
 
 const DIRECT_ONLY_TOOL_NAMES = new Set([
   CODE_EXEC_TOOL,
+  'results',
   'await_human',
   'report_complete',
   'report_incomplete',
@@ -1458,17 +1459,22 @@ export async function executeCodeModeDetailed(
               }
               return invokeResult('grep', JSON.stringify({ resultId, options }));
             },
-            jq: (resultId, expression, options = {}) => {
+            jq: (resultId, expressionOrQuery, options = {}) => {
               if (typeof resultId !== 'string' || resultId.length === 0) {
                 return TrackedPromise.reject(new TypeError('results.jq resultId must be a non-empty string'));
               }
+              const objectForm = expressionOrQuery && typeof expressionOrQuery === 'object' && !Array.isArray(expressionOrQuery);
+              const expression = objectForm ? expressionOrQuery.expression : expressionOrQuery;
+              const queryOptions = objectForm
+                ? (expressionOrQuery.limit === undefined ? {} : { limit: expressionOrQuery.limit })
+                : options;
               if (typeof expression !== 'string' || expression.length === 0) {
                 return TrackedPromise.reject(new TypeError('results.jq expression must be a non-empty string'));
               }
-              if (!options || typeof options !== 'object') {
+              if (!queryOptions || typeof queryOptions !== 'object' || Array.isArray(queryOptions)) {
                 return TrackedPromise.reject(new TypeError('results.jq options must be an object'));
               }
-              return invokeResult('jq', JSON.stringify({ resultId, expression, options }));
+              return invokeResult('jq', JSON.stringify({ resultId, expression, options: queryOptions }));
             },
           }),
           writable: false,
@@ -1729,7 +1735,7 @@ export function createCodeExecTool(options: {
       'tools.tools__bash runs only commands from the agent auto-run allowlist and returns structured output for composition. Gated commands are rejected here and must use the separately visible direct Bash tool after approval. Time awaiting an authorized Bash process is governed by the Bash timeout instead of consuming the guest computation timeout. ' +
       'When a needed tool is absent from the quick index, use await catalog.search(query), call handle.describe(), or inspect API.list("tools") and API.read("tools/<name>.d.ts") in a first code_exec. Catalog handles are callable and use the same dispatch policy as tools.<name>. ' +
       'For targeted file discovery, prefer tools__filesystem_search with an exact file or glob and bounded context, then use tools__filesystem_read with line offset/limit for any additional excerpt. The read limit is lines, not characters. Do not return several raw file bodies from one program; return only the matches, excerpts, fields, or decisions the next step needs. When complete reading is required, retrieve bounded chunks across later calls. ' +
-      'Completed JSON-serializable nested tool calls are recorded as same-session immutable results. The response lists recent reusableResults; use await results.list() to inspect each result kind and capabilities. Use await results.read(resultId) for bounded payloads, await results.grep(resultId, { pattern, limit, contextLines }) for literal text search, or await results.jq(resultId, expression, { limit }) for real jq queries over JSON, including oversized results. Reuse an earlier result only when its freshness is still valid. ' +
+      'Completed JSON-serializable nested tool calls are recorded as same-session immutable results. The response lists recent reusableResults; use await results.list() to inspect each result kind and capabilities. Use await results.read(resultId) for bounded payloads, await results.grep(resultId, { pattern, limit, contextLines }) for literal text search, or await results.jq(resultId, { expression, limit }) for real jq queries over JSON, including oversized results. Reuse an earlier result only when its freshness is still valid. ' +
       'Return one JSON-serializable result. You may also emit multiple ordered, bounded progress entries with text(value), json(value), or console.log/info/warn/error/debug. ' +
       'Code is strictly type-checked before any nested tool starts. For `-> ?` outputs, do not guess fields: return one element and its keys, observe, then narrow with runtime checks in a later code_exec before dependent logic. ' +
       `Nested tool catalog: ${catalogSummary}.\n\n${quickIndex}`,

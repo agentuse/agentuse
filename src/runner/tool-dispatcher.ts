@@ -4,13 +4,21 @@ import addFormats from 'ajv-formats';
 import type { Tool, ToolExecutionOptions, ToolSet } from 'ai';
 import { isSuspendSignal } from './suspend';
 import { sanitizeWALInput, type EffectWAL } from './effect-wal';
-import { clampToolResultForModel } from '../tools/tool-output-limits.js';
+import {
+  clampToolResultForModel,
+  getToolOutputLimits,
+  previewReusableResult,
+} from '../tools/tool-output-limits.js';
 import { logger } from '../utils/logger';
 import { toErrorMessage } from '../utils/error-message';
 import type {
   ModelToolOutputArtifactRef,
   ToolOutputArtifactRef,
 } from '../session';
+import type {
+  CodeModeResultReference,
+  ReusableResultHandle,
+} from '../session/code-mode-results';
 import type {
   ToolCallEvent,
   ToolCallEventResult,
@@ -30,6 +38,13 @@ export type ToolOutputArtifactWriter = (
   toolName: string,
   result: unknown
 ) => Promise<ToolOutputArtifactRef | undefined>;
+
+export type ReusableResultWriter = (
+  toolName: string,
+  toolInput: unknown,
+  result: unknown,
+  completedAt: number,
+) => Promise<CodeModeResultReference | undefined>;
 
 export interface ToolDispatcherPluginEvents {
   toolCall?(event: ToolCallEvent, signal?: AbortSignal): Promise<ToolCallEventResult>;
@@ -56,6 +71,7 @@ export interface ToolDispatcherOptions {
   pluginEvents?: ToolDispatcherPluginEvents;
   abortSignal?: AbortSignal;
   writeToolOutputArtifact?: ToolOutputArtifactWriter;
+  writeReusableResult?: ReusableResultWriter;
   bashPermission?: BashPermissionController;
   onPluginTerminate?(): void;
 }
@@ -204,6 +220,44 @@ function attachToolOutputArtifact(value: unknown, artifact: ToolOutputArtifactRe
     };
   }
   return { value, metadata: { fullOutputArtifact: modelArtifact } };
+}
+
+function serializedResultBytes(value: unknown): number | undefined {
+  try {
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? undefined : Buffer.byteLength(serialized, 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+function jsonBytes(value: unknown): number {
+  try {
+    return Buffer.byteLength(JSON.stringify(value) ?? 'null', 'utf8');
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+function reusableResultHandle(output: unknown, reference: CodeModeResultReference): ReusableResultHandle {
+  const makeHandle = (
+    preview: unknown,
+    omitted: Record<string, string>,
+  ): ReusableResultHandle => ({
+    resultId: reference.resultId,
+    kind: reference.kind,
+    bytes: reference.bytes,
+    truncated: true,
+    preview,
+    omitted,
+    capabilities: reference.capabilities,
+  });
+  const inlineLimit = getToolOutputLimits().inlineResultBytes;
+  const emptyPayload = { preview: null, omitted: {} };
+  const emptyHandleBytes = jsonBytes(makeHandle(emptyPayload.preview, emptyPayload.omitted));
+  const previewBudget = Math.max(0, inlineLimit - emptyHandleBytes + jsonBytes(emptyPayload));
+  const payload = previewReusableResult(output, previewBudget);
+  return makeHandle(payload.preview, payload.omitted);
 }
 
 /** Keep provider-facing JSON Schema while deferring normalization to the dispatcher. */
@@ -643,8 +697,35 @@ export class ToolDispatcher {
       );
     }
 
-    if (!options.modelFacing) return output;
-    const clamped = clampToolResultForModel(output);
+    if (!options.modelFacing || typeof tool.toModelOutput === 'function') return output;
+    const resultBytes = serializedResultBytes(output);
+    const outputLimits = getToolOutputLimits();
+    const isResultQuery = toolName === 'results';
+    const inlineLimit = isResultQuery
+      ? outputLimits.resultQueryBytes
+      : outputLimits.inlineResultBytes;
+    if (
+      resultBytes !== undefined
+      && resultBytes > inlineLimit
+      && !isResultQuery
+      && this.options.writeReusableResult
+    ) {
+      try {
+        const reference = await this.options.writeReusableResult(
+          toolName,
+          validatedInput,
+          output,
+          Date.now(),
+        );
+        if (reference) {
+          logger.debug(`[ToolOutput] Stored reusable result for ${toolName}`);
+          return reusableResultHandle(output, reference);
+        }
+      } catch (error) {
+        logger.debug(`[ToolOutput] Failed to persist reusable result for ${toolName}: ${toErrorMessage(error)}`);
+      }
+    }
+    const clamped = clampToolResultForModel(output, { maxBytes: inlineLimit });
     if (!clamped.truncated) return clamped.value;
 
     logger.debug(`[ToolOutput] Truncated model-facing result for ${toolName}`);
