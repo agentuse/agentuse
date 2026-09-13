@@ -5,6 +5,31 @@ description: Configuration reference for Code Mode, filesystem, bash, and artifa
 
 AgentUse provides built-in tools for file operations, command execution, and session-linked artifacts. This reference documents their configuration options and path matching behavior.
 
+## Reusable results
+
+Successful direct JSON and text results larger than 10KB are stored outside the
+model conversation. The first response contains a `resultId`, capabilities,
+and one bounded `preview` of the original value. Its `omitted` map uses jq-style
+paths to report the bytes, array items, or object keys left out. Text and JSON
+use this same format, and the complete stored value does not enter model
+context.
+
+The model can use the read-only `results` tool with `list`, `read`, `grep`, or
+`jq`. `read` is available only for bounded results; large text and JSON must be
+narrowed with `grep` or `jq`. Structured command results advertise `grep` when
+their `output` text is searchable. Payload queries return only the requested
+data and never another preview or result handle; `list` returns reference
+metadata only. Result queries have a separate 20KB inline budget and never
+create another result handle. A larger lookup asks for a narrower query.
+
+References are immutable and scoped to one session and agent. Reading one never
+replays its tool or side effect. Refresh the original tool only when current
+external state is required or an intervening mutation may have invalidated the
+stored snapshot.
+
+Provider-native and binary results that use native model-output conversion stay
+on their direct delivery path and are not replaced with reusable handles.
+
 ## Code Mode
 
 Every normal agent run receives `code_exec` automatically. It executes a
@@ -42,8 +67,8 @@ misspelled inputs, unhandled result variants, and invalid result paths fail
 before an effect occurs. External provider and MCP output schemas remain
 untrusted and appear as `-> ?`. Inspect an unknown result first, then narrow it
 with runtime checks before using its fields in a later program. Completed
-JSON-serializable nested calls are also exposed as immutable, same-session
-result references, including results too large to read directly into Code Mode:
+JSON-serializable nested calls use the same immutable, same-session result
+references, including results too large to read directly into Code Mode:
 
 ```typescript
 const recent = await results.list();
@@ -62,11 +87,10 @@ if (reference.kind === "text") {
 }
 
 if (reference.kind === "json") {
-  const selected = await results.jq(
-    reference.resultId,
-    '.items[] | select(.status == "ready") | { id, status }',
-    { limit: 100 },
-  );
+  const selected = await results.jq(reference.resultId, {
+    expression: '.items[] | select(.status == "ready") | { id, status }',
+    limit: 100,
+  });
 }
 ```
 
@@ -74,9 +98,12 @@ Use these references for immediate retries and continued analysis instead of
 repeating the same tool call. Refresh the tool when current external state is
 required or an intervening mutation may have invalidated the earlier result.
 References never cross session or subagent boundaries and do not replay tools
-or side effects. `results.grep()` performs bounded literal, line-oriented text
-search. `results.jq()` uses real jq syntax and returns jq's ordered output stream
-as `{ values, truncated }`. AgentUse runs bundled jq 1.8.2 WebAssembly in a
+or side effects. `results.grep()` performs bounded, case-insensitive literal
+text search by default. Patterns are not regular expressions and characters
+such as `$` should not be escaped. `results.jq()` also accepts the legacy
+`results.jq(resultId, expression, { limit })` form. It uses real jq syntax and
+returns jq's ordered output stream as `{ values, truncated }`. AgentUse runs
+bundled jq 1.8.2 WebAssembly in a
 resource-limited worker, without a shell, host environment access, jq modules,
 or a machine-level jq installation.
 
@@ -391,7 +418,13 @@ bash:
 
 ### Output Limits
 
-Command output is capped at **30KB** (`AGENTUSE_TOOL_MAX_OUTPUT_BYTES`) before it reaches the model. When output exceeds the cap, AgentUse keeps a **head + tail** slice (40% head / 60% tail by default) and drops the middle, inserting a marker such as `... [N chars truncated of M total] ...`. The head preserves errors and context that often appear early; the tail preserves the most recent output. The result's metadata flags `truncated: true`.
+The Bash tool retains at most **30KB** (`AGENTUSE_TOOL_MAX_OUTPUT_BYTES`) in its returned value. When command output exceeds that cap, AgentUse keeps a **head + tail** slice (40% head / 60% tail by default), saves the complete stream as a session artifact, and marks the result as truncated.
+
+Independently, any direct JSON or text result over **10KB** (`AGENTUSE_TOOL_INLINE_RESULT_BYTES`) becomes a reusable result handle before it reaches the model. This smaller limit prevents a large result from being re-sent on every subsequent model step.
+
+Queries through the `results` tool can return up to **20KB** (`AGENTUSE_RESULT_QUERY_BYTES`) inline. They never create recursive result handles.
+
+Provider-native and binary results with native model-output conversion are excluded from this inline-result limit.
 
 Because every tool result is re-sent to the model on each subsequent step, a single large output inflates input-token usage for the rest of the run. Prefer commands that emit only what you need, for example `git diff --stat` instead of a full `git diff` over high-churn files. See [Tool Output environment variables](/reference/environment-variables#tool-output) to tune the caps.
 

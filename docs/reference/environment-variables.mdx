@@ -382,10 +382,28 @@ Mock all tool outputs with the LLM instead of executing them. Mirror the `--mock
 
 ## Tool Output
 
-Large tool results are re-sent to the model on every subsequent step, so a single oversized output (a big diff, a verbose log, a huge file) inflates input tokens for the rest of the run. These variables cap how much of any one tool result reaches the model. When session storage is available, truncated `bash` output keeps the full stdout/stderr stream as a session-local tool output artifact; runner-level truncation of other tool results also saves the full raw result and adds a reference to the bounded preview. Defaults match historical behavior, so you only need to set them to tune.
+Large tool results are re-sent to the model on every subsequent step. AgentUse stores oversized direct JSON and text results outside model context and returns a queryable handle instead. Bash also keeps a separate bounded head and tail for its returned value, with the complete stream saved as a session artifact when needed.
+
+<ParamField path="AGENTUSE_TOOL_INLINE_RESULT_BYTES" type="number">
+  Maximum serialized size of a direct JSON or text response returned inline. Larger results become a reusable `resultId` handle with a partial `preview` and jq-style `omitted` map, and can be narrowed with the `results` tool.
+  Default: 10240 (10KB)
+
+  ```bash
+  export AGENTUSE_TOOL_INLINE_RESULT_BYTES="16384"  # 16KB
+  ```
+</ParamField>
+
+<ParamField path="AGENTUSE_RESULT_QUERY_BYTES" type="number">
+  Maximum serialized size returned inline by one `results` tool query. Queries above this limit ask for a narrower selection and never create another result handle.
+  Default: 20480 (20KB)
+
+  ```bash
+  export AGENTUSE_RESULT_QUERY_BYTES="32768"  # 32KB
+  ```
+</ParamField>
 
 <ParamField path="AGENTUSE_TOOL_MAX_OUTPUT_BYTES" type="number">
-  Maximum size (in characters) of a single model-facing tool result, also used by the built-in `bash` stream cap. Output over this limit is truncated to a head + tail slice, dropping the middle, with a marker noting how much was omitted.
+  Maximum size retained by the built-in `bash` output accumulator. Output over this limit is reduced to a head + tail slice and the complete stream is saved as a session artifact. For compatibility, this also controls the inline result limit when `AGENTUSE_TOOL_INLINE_RESULT_BYTES` is unset and this variable is explicitly configured.
   Default: 30720 (30KB)
 
   ```bash
