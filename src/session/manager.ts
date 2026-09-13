@@ -101,6 +101,61 @@ interface CodeModeResultIndex {
   results: Record<string, CodeModeResultIndexEntry>;
 }
 
+export interface CodeModeResultPage {
+  kind: CodeModeResultReference['kind'];
+  content: string;
+  offset: number;
+  bytes: number;
+  totalBytes: number;
+  truncated: boolean;
+  nextOffset: number | null;
+}
+
+function resultPageContent(output: unknown): string {
+  if (typeof output === 'string') return output;
+  const serialized = JSON.stringify(output);
+  if (serialized === undefined) throw new Error('RESULT_CORRUPT: stored result is not JSON-serializable');
+  return serialized;
+}
+
+function bytePage(content: string, offset: number, maxBytes: number): {
+  content: string;
+  offset: number;
+  bytes: number;
+  totalBytes: number;
+  truncated: boolean;
+  nextOffset: number | null;
+} {
+  const buffer = Buffer.from(content, 'utf8');
+  const totalBytes = buffer.byteLength;
+  if (!Number.isInteger(offset) || offset < 0 || offset > totalBytes) {
+    throw new Error(`RESULT_READ_OFFSET: offset must be an integer from 0 to ${totalBytes}`);
+  }
+  if (!Number.isInteger(maxBytes) || maxBytes < 1) {
+    throw new Error('RESULT_READ_LIMIT: maxBytes must be a positive integer');
+  }
+  if (offset < totalBytes && (buffer[offset]! & 0xC0) === 0x80) {
+    throw new Error('RESULT_READ_OFFSET: offset splits a UTF-8 character; use nextOffset from the previous page');
+  }
+
+  let end = Math.min(totalBytes, offset + maxBytes);
+  while (end > offset && end < totalBytes && (buffer[end]! & 0xC0) === 0x80) end--;
+  if (end === offset && offset < totalBytes) {
+    end++;
+    while (end < totalBytes && (buffer[end]! & 0xC0) === 0x80) end++;
+  }
+  const bytes = end - offset;
+  const truncated = end < totalBytes;
+  return {
+    content: buffer.subarray(offset, end).toString('utf8'),
+    offset,
+    bytes,
+    totalBytes,
+    truncated,
+    nextOffset: truncated ? end : null,
+  };
+}
+
 function normalizeCodeModeResultReference(value: unknown): CodeModeResultReference | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const ref = value as Record<string, unknown>;
@@ -1131,8 +1186,8 @@ export class SessionManager {
     const reference: CodeModeResultReference = {
       ...described,
       // Direct results reach this path only after exceeding the inline budget.
-      // Force callers to select a bounded text/JSON slice instead of loading the
-      // original payload back into model context wholesale.
+      // Keep Code Mode from loading the original payload wholesale. The direct
+      // results tool advertises its separately bounded byte pager as readable.
       capabilities: { ...described.capabilities, read: false },
     };
     const stored: StoredReusableToolResult = {
@@ -1233,6 +1288,20 @@ export class SessionManager {
       throw new Error(`RESULT_TOO_LARGE: ${resultId} is not readable; use ${suggested}`);
     }
     return result.output;
+  }
+
+  /** Serialize and page a result for the bounded direct results tool. */
+  async pageCodeModeResult(
+    sessionID: string,
+    agentId: string,
+    resultId: string,
+    options: { offset?: number; maxBytes: number },
+  ): Promise<CodeModeResultPage> {
+    const result = await this.resolveCodeModeResult(sessionID, agentId, resultId);
+    return {
+      kind: result.reference.kind,
+      ...bytePage(resultPageContent(result.output), options.offset ?? 0, options.maxBytes),
+    };
   }
 
   async grepCodeModeResult(

@@ -307,6 +307,111 @@ describe('session Code Mode results', () => {
 });
 
 describe('direct reusable results', () => {
+  it('uses one metadata-aware schema and ignores known fields from other actions', async () => {
+    const manager = new SessionManager();
+    const resultsTool = createResultsTool({ manager, sessionId: 'session', agentId: 'agent' });
+    const inputSchema = (resultsTool as any).inputSchema as z.ZodTypeAny;
+    const input = {
+      intent: 'Continue reading the stored output',
+      recovers: 'call_failed',
+      action: 'read',
+      resultId: 'result_01J00000000000000000000000_01J00000000000000000000001',
+      offset: 0,
+      maxBytes: 6_000,
+      limit: 20,
+      pattern: '.',
+      caseSensitive: false,
+      contextLines: 0,
+      expression: '.',
+    };
+
+    expect(inputSchema.safeParse(input)).toMatchObject({ success: true });
+    await expect((resultsTool.execute as any)({ action: 'grep', resultId: input.resultId }))
+      .rejects.toThrow('RESULT_GREP_INPUT: pattern is required');
+  });
+
+  it('advertises the configured direct-read budget without limiting Code Mode reads', async () => {
+    const previousQueryLimit = process.env.AGENTUSE_RESULT_QUERY_BYTES;
+    process.env.AGENTUSE_RESULT_QUERY_BYTES = '1024';
+    originalXdg = process.env.XDG_DATA_HOME;
+    testRoot = await mkdtemp(join(tmpdir(), 'agentuse-direct-read-capability-'));
+    process.env.XDG_DATA_HOME = testRoot;
+    await initStorage(testRoot);
+
+    try {
+      const manager = new SessionManager();
+      const agentId = 'agents/review';
+      const { sessionId, messageId } = await createSession(manager, testRoot, agentId);
+      const largeOutput = `x${'x'.repeat(999)}${'🙂'.repeat(300)}`;
+      const dispatcher = new ToolDispatcher({
+        load: {
+          description: 'Load a large text field',
+          inputSchema: z.object({}),
+          execute: async () => ({ output: largeOutput }),
+        },
+      });
+      const hooks = buildCodeModeTraceHooks({
+        sessionManager: manager,
+        sessionID: sessionId,
+        agentId,
+        messageID: messageId,
+      });
+      const codeExec = createCodeExecTool({
+        dispatcher,
+        toolNames: ['load'],
+        toolDefinitions: dispatcher.codeModeTools(),
+        ...hooks,
+      });
+      const first = await codeExec.execute!({
+        code: 'return await tools.load({});',
+      }, { toolCallId: 'large-load' }) as any;
+      const resultId = first.reusableResults[0].resultId;
+
+      expect((await manager.listCodeModeResults(sessionId, agentId))[0]).toMatchObject({
+        resultId,
+        capabilities: { read: true, grep: true, jq: true },
+      });
+
+      const directResults = createResultsTool({ manager, sessionId, agentId });
+      expect(directResults.description).toContain('1,024-byte response limit');
+      expect(directResults.description).toContain('use code_exec');
+      await expect((directResults.execute as any)({ action: 'list', limit: 1 })).resolves.toEqual([
+        expect.objectContaining({
+          resultId,
+          capabilities: { read: true, grep: true, jq: true },
+        }),
+      ]);
+      const pages: string[] = [];
+      let offset = 0;
+      while (true) {
+        const page = await (directResults.execute as any)({ action: 'read', resultId, offset });
+        expect(Buffer.byteLength(JSON.stringify(page), 'utf8')).toBeLessThanOrEqual(1_024);
+        expect(page.offset).toBe(offset);
+        pages.push(page.content);
+        if (page.nextOffset === null) break;
+        expect(page.nextOffset).toBeGreaterThan(offset);
+        offset = page.nextOffset;
+      }
+      expect(pages.join('')).toBe(JSON.stringify({ output: largeOutput }));
+
+      const resumedCodeExec = createCodeExecTool({
+        dispatcher,
+        toolNames: ['load'],
+        toolDefinitions: dispatcher.codeModeTools(),
+        ...hooks,
+      });
+      await expect(resumedCodeExec.execute!({
+        code: `const value = await results.read(${JSON.stringify(resultId)}) as { output: string }; return value.output.slice(0, 16);`,
+      }, { toolCallId: 'large-read' })).resolves.toMatchObject({
+        status: 'completed',
+        value: 'xxxxxxxxxxxxxxxx',
+      });
+    } finally {
+      if (previousQueryLimit === undefined) delete process.env.AGENTUSE_RESULT_QUERY_BYTES;
+      else process.env.AGENTUSE_RESULT_QUERY_BYTES = previousQueryLimit;
+    }
+  });
+
   it('allows a result query above the initial inline-result ceiling', async () => {
     const previousInlineLimit = process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
     const previousQueryLimit = process.env.AGENTUSE_RESULT_QUERY_BYTES;

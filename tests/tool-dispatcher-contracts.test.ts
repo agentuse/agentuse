@@ -136,6 +136,40 @@ describe('dispatcher execution boundaries', () => {
     expect(transforms).toBe(1);
   });
 
+  it('flattens top-level provider unions while retaining canonical validation', async () => {
+    const inputSchema = z.discriminatedUnion('action', [
+      z.object({ action: z.literal('list'), limit: z.number().int().optional() }).strict(),
+      z.object({ action: z.literal('read'), resultId: z.string() }).strict(),
+    ]);
+    const dispatcher = new ToolDispatcher({ results: {
+      inputSchema,
+      execute: async input => input,
+    } });
+    const transport = aiSdk.asSchema((dispatcher.modelTools().results as any).inputSchema);
+
+    expect(transport.jsonSchema).toMatchObject({
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'read'] },
+        limit: { type: 'integer' },
+        resultId: { type: 'string' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    });
+    expect((transport.jsonSchema as any).anyOf).toBeUndefined();
+    expect((transport.jsonSchema as any).oneOf).toBeUndefined();
+    expect((transport.jsonSchema as any).allOf).toBeUndefined();
+    await expect(transport.validate!({ action: 'read', resultId: 'result-1' }))
+      .resolves.toMatchObject({ success: true });
+    // The provider surface is intentionally looser than the discriminated
+    // runtime schema, which remains authoritative immediately before effect.
+    await expect(transport.validate!({ action: 'read' }))
+      .resolves.toMatchObject({ success: true });
+    await expect(dispatcher.dispatch('results', { action: 'read' }, { toolCallId: 'invalid-read' }))
+      .rejects.toThrow("Invalid input for tool 'results'");
+  });
+
   it('keeps standard URI and UUID format validation on the SDK transport schema', async () => {
     const dispatcher = new ToolDispatcher({ formatCheck: {
       inputSchema: z.object({
@@ -766,7 +800,7 @@ describe('direct reusable results', () => {
         resultId: 'result_01J00000000000000000000000_01J00000000000000000000001',
         kind: 'json',
         truncated: true,
-        capabilities: { read: false, grep: false, jq: true },
+        capabilities: { read: true, grep: false, jq: true },
       });
       expect(result).not.toHaveProperty('hint');
       expect(result.preview).toEqual({
@@ -896,7 +930,7 @@ describe('direct reusable results', () => {
         origin: 'direct',
         modelFacing: true,
       }) as Record<string, unknown>;
-      expect(result.capabilities).toEqual({ read: false, grep: true, jq: true });
+      expect(result.capabilities).toEqual({ read: true, grep: true, jq: true });
       expect(result).not.toHaveProperty('hint');
       expect(result.preview).toMatchObject({
         metadata: {

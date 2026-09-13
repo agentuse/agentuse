@@ -47,6 +47,10 @@ describe('isSoftToolError (soft tool-failure classification)', () => {
   it('skips skill tools whose content documents errors', () => {
     expect(isSoftToolError({ toolName: 'tools__skill_load' }, 'Error: not found')).toBe(false);
   });
+
+  it('does not treat an earlier error retrieved through results as a new failure', () => {
+    expect(isSoftToolError({ toolName: 'results' }, 'Error: upstream command failed')).toBe(false);
+  });
 });
 
 describe('runWithLogSink (logger structured capture)', () => {
@@ -253,6 +257,43 @@ describe('createSessionLogSink', () => {
       expect((parts.find((part) => part.type === 'tool') as any).state).toMatchObject({
         status: 'error',
         error: 'Command blocked',
+      });
+    });
+  });
+
+  it('records a successful results lookup even when the stored payload describes a failure', async () => {
+    await withTempProject('agentuse-results-error-payload-', async () => {
+      const { sessionManager, sessionID, messageID } = await makeSessionWithMessage(process.env.XDG_DATA_HOME!);
+
+      async function* chunks(): AsyncGenerator<AgentChunk> {
+        yield {
+          type: 'tool-call',
+          toolName: 'results',
+          toolCallId: 'lookup-call',
+          toolInput: { action: 'read', resultId: 'result_previous_failure' },
+          toolStartTime: 1_000,
+        };
+        yield {
+          type: 'tool-result',
+          toolName: 'results',
+          toolCallId: 'lookup-call',
+          toolDuration: 5,
+          toolResult: '{"output":"Error: command failed","metadata":{"exitCode":1}}',
+          toolResultRaw: { output: 'Error: command failed', metadata: { exitCode: 1 } },
+        };
+      }
+
+      await processAgentStream(chunks(), {
+        sessionManager,
+        sessionID,
+        agentId: 'agents/review',
+        messageID,
+      });
+
+      const parts = await sessionManager.getMessageParts(sessionID, 'agents/review', messageID);
+      expect((parts.find((part) => part.type === 'tool') as any).state).toMatchObject({
+        status: 'completed',
+        output: { output: 'Error: command failed', metadata: { exitCode: 1 } },
       });
     });
   });

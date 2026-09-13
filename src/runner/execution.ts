@@ -3522,6 +3522,10 @@ function toolResultObject(output: unknown): { source?: string; comment?: string 
  */
 export function isSoftToolError(chunk: any, resultStr: string): boolean {
   if (!resultStr || typeof resultStr !== 'string') return false;
+  // The results tool is a retrieval surface. Its payload may faithfully
+  // contain an earlier tool's error text, which must not turn the successful
+  // lookup into a second failed lifecycle. Actual results-tool failures throw.
+  if (chunk.toolName === RESULTS_TOOL) return false;
   // Skill content often documents errors (e.g. "not found" troubleshooting), so
   // it would always trip the heuristic; skip it.
   if (chunk.toolName === 'tools__skill_load' || chunk.toolName === 'tools__skill_read') return false;

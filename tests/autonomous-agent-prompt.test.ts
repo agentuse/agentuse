@@ -49,6 +49,7 @@ describe('autonomous agent system prompt', () => {
     expect(enabled).toContain('Direct JSON/text results over 10,240 bytes are stored outside model context');
     expect(enabled).toContain('Use the results tool for one bounded lookup');
     expect(enabled).toContain('up to 20,480 bytes');
+    expect(enabled).toContain('"read" returns a byte page and nextOffset for continuation');
     expect(enabled).toContain('never raw lists or whole records');
     expect(enabled).toContain('Completed JSON-serializable nested calls are listed as reusableResults, including oversized results');
     expect(enabled).toContain('inspect results.list() for the result kind and capabilities');

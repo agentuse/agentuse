@@ -15,6 +15,7 @@ import type { AgentChunk } from './types';
 import { SessionRecorder } from './session-recorder';
 import type { LiveToolOutputRelay } from './live-tool-output';
 import { LIVE_OUTPUT_INTERVAL_MS, LIVE_OUTPUT_METADATA_KEY } from '../tools/types';
+import { RESULTS_TOOL } from '../tools/results.js';
 import { withoutToolIntent } from './tool-intent';
 import { defaultTerminalPresenter, type TerminalPresenter } from './terminal-presenter';
 import { formatOutcomeLine, mergeReportBodies, stripLeadingOutcomeLine, REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL } from '../tools/report-outcome.js';
@@ -560,7 +561,11 @@ export async function processAgentStream(
         }
 
         // Check for failure conditions
-        if (rawResult) {
+        // A successful results lookup can return the exact payload of an
+        // earlier failed tool, including success:false, error, or a non-zero
+        // exit code. Preserve that evidence without recording a second failure.
+        const classifyReturnedPayload = chunk.toolName !== RESULTS_TOOL;
+        if (rawResult && classifyReturnedPayload) {
           // Check if tool explicitly returned success: false or has an error field.
           // Use != null so a tool returning `{ error: null }` (no error) isn't
           // mislabeled as failed in the trace/session log.
@@ -579,7 +584,7 @@ export async function processAgentStream(
         }
 
         // Check metadata for non-zero exit code (bash tool returns this)
-        if (toolMetadata) {
+        if (toolMetadata && classifyReturnedPayload) {
           if (typeof toolMetadata.exitCode === 'number' && toolMetadata.exitCode !== 0) {
             toolSuccess = false;
           }

@@ -250,7 +250,9 @@ function reusableResultHandle(output: unknown, reference: CodeModeResultReferenc
     truncated: true,
     preview,
     omitted,
-    capabilities: reference.capabilities,
+    // The direct results tool can page every stored JSON/text payload even
+    // when Code Mode deliberately forbids loading the whole value at once.
+    capabilities: { ...reference.capabilities, read: true },
   });
   const inlineLimit = getToolOutputLimits().inlineResultBytes;
   const emptyPayload = { preview: null, omitted: {} };
@@ -258,6 +260,101 @@ function reusableResultHandle(output: unknown, reference: CodeModeResultReferenc
   const previewBudget = Math.max(0, inlineLimit - emptyHandleBytes + jsonBytes(emptyPayload));
   const payload = previewReusableResult(output, previewBudget);
   return makeHandle(payload.preview, payload.omitted);
+}
+
+type JsonSchemaObject = Record<string, unknown>;
+
+function isJsonSchemaObject(value: unknown): value is JsonSchemaObject {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Merge alternate property schemas without making the provider-facing contract
+ * stricter than any valid runtime branch. The dispatcher still applies the
+ * original schema before execution, so this surface is guidance plus early
+ * structural validation, not the canonical semantic validator.
+ */
+function mergeAlternativePropertySchemas(schemas: unknown[]): unknown {
+  const unique = schemas.filter((schema, index) =>
+    schemas.findIndex(candidate => JSON.stringify(candidate) === JSON.stringify(schema)) === index
+  );
+  if (unique.length === 1) return unique[0];
+  if (!unique.every(isJsonSchemaObject)) return {};
+
+  const types = [...new Set(unique.map(schema => schema.type).filter(type => typeof type === 'string'))];
+  const constants = unique.map(schema => schema.const);
+  if (
+    constants.every((_value, index) => Object.prototype.hasOwnProperty.call(unique[index], 'const'))
+    && types.length <= 1
+  ) {
+    return {
+      ...(types[0] !== undefined && { type: types[0] }),
+      enum: constants,
+    };
+  }
+  return types.length === 1 ? { type: types[0] } : {};
+}
+
+/**
+ * Anthropic requires a top-level object schema and rejects top-level `anyOf`,
+ * `oneOf`, and `allOf`. Object unions are common for action-discriminated tools
+ * such as `results`, so expose one merged object to the provider while retaining
+ * the original schema as the dispatcher's canonical runtime validator.
+ */
+function providerToolInputSchema(schema: unknown): unknown {
+  if (!isJsonSchemaObject(schema)) {
+    return { type: 'object', additionalProperties: true };
+  }
+
+  const combinatorKeys = ['anyOf', 'oneOf', 'allOf'] as const;
+  const alternatives = combinatorKeys.flatMap(key =>
+    Array.isArray(schema[key]) ? schema[key] as unknown[] : []
+  );
+  if (alternatives.length === 0) {
+    return typeof schema.type === 'string' ? schema : { ...schema, type: 'object' };
+  }
+
+  const objectAlternatives = alternatives.filter(isJsonSchemaObject);
+  const propertyNames = [...new Set(objectAlternatives.flatMap(alternative =>
+    isJsonSchemaObject(alternative.properties) ? Object.keys(alternative.properties) : []
+  ))];
+  const properties = Object.fromEntries(propertyNames.map(name => [
+    name,
+    mergeAlternativePropertySchemas(objectAlternatives.flatMap(alternative =>
+      isJsonSchemaObject(alternative.properties) && name in alternative.properties
+        ? [alternative.properties[name]]
+        : []
+    )),
+  ]));
+  const requiredSets = objectAlternatives.map(alternative =>
+    new Set(Array.isArray(alternative.required)
+      ? alternative.required.filter((name): name is string => typeof name === 'string')
+      : [])
+  );
+  const required = requiredSets.length === alternatives.length && requiredSets.length > 0
+    ? [...requiredSets[0]].filter(name => requiredSets.slice(1).every(names => names.has(name)))
+    : [];
+  const additionalProperties = objectAlternatives.length === alternatives.length
+    && objectAlternatives.every(alternative => alternative.additionalProperties === false)
+      ? false
+      : true;
+  const {
+    anyOf: _anyOf,
+    oneOf: _oneOf,
+    allOf: _allOf,
+    properties: _properties,
+    required: _required,
+    additionalProperties: _additionalProperties,
+    ...metadata
+  } = schema;
+
+  return {
+    ...metadata,
+    type: 'object',
+    properties,
+    ...(required.length > 0 && { required }),
+    additionalProperties,
+  };
 }
 
 /** Keep provider-facing JSON Schema while deferring normalization to the dispatcher. */
@@ -269,7 +366,7 @@ function rawInputTransportSchema(
   // JSON Schema describes the provider-facing input shape without running a
   // Zod/Standard transform. Ajv therefore preserves AI SDK repair behavior
   // while the dispatcher owns the one canonical normalization after plugins.
-  const jsonSchema = original.jsonSchema;
+  const jsonSchema = providerToolInputSchema(original.jsonSchema);
   let validator: Promise<(value: unknown) => boolean> | undefined;
   return aiSdk.jsonSchema(jsonSchema, {
     validate: async value => {
