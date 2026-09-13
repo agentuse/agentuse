@@ -1455,7 +1455,7 @@ describe('Code Mode', () => {
     expect(message).not.toContain('guest saw a different value');
   });
 
-  it('shares guest heap and nested-call limits across sibling code_exec calls', async () => {
+  it('queues sibling code_exec calls behind the run-scoped guest-memory budget', async () => {
     let releaseFirst: (() => void) | undefined;
     let markNestedStarted: (() => void) | undefined;
     const started = new Promise<void>(resolve => { releaseFirst = resolve; });
@@ -1470,16 +1470,49 @@ describe('Code Mode', () => {
     const first = dispatcher.dispatch('code_exec', { code: 'return tools.wait({});' }, { toolCallId: 'first' });
     // The first guest has retained its heap while its nested effect waits.
     await nestedStarted;
-    await expect(dispatcher.dispatch('code_exec', { code: 'return 2;' }, { toolCallId: 'second' }))
-      .resolves.toEqual(expect.objectContaining({
-        status: 'failed',
-        error: expect.objectContaining({ message: expect.stringMatching(/run-scoped guest-memory limit/i) }),
-      }));
+    let secondSettled = false;
+    const second = dispatcher.dispatch('code_exec', { code: 'return 2;' }, { toolCallId: 'second' })
+      .finally(() => { secondSettled = true; });
+    const third = dispatcher.dispatch('code_exec', { code: 'return 3;' }, { toolCallId: 'third' });
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
+
     releaseFirst!();
     await expect(first).resolves.toEqual(expect.objectContaining({
       status: 'completed',
       value: { done: true },
     }));
+    await expect(second).resolves.toEqual(expect.objectContaining({ status: 'completed', value: 2 }));
+    await expect(third).resolves.toEqual(expect.objectContaining({ status: 'completed', value: 3 }));
+  });
+
+  it('removes an aborted sibling code_exec call from the guest-memory queue', async () => {
+    let releaseFirst: (() => void) | undefined;
+    let markNestedStarted: (() => void) | undefined;
+    const started = new Promise<void>(resolve => { releaseFirst = resolve; });
+    const nestedStarted = new Promise<void>(resolve => { markNestedStarted = resolve; });
+    const dispatcher = new ToolDispatcher({
+      wait: {
+        description: 'Wait', inputSchema: z.object({}),
+        execute: async () => { markNestedStarted!(); await started; return { done: true }; },
+      },
+    });
+    dispatcher.register('code_exec', createCodeExecTool({ dispatcher, toolNames: dispatcher.names() }));
+    const first = dispatcher.dispatch('code_exec', { code: 'return tools.wait({});' }, { toolCallId: 'first' });
+    await nestedStarted;
+
+    const controller = new AbortController();
+    const second = dispatcher.dispatch('code_exec', { code: 'return 2;' }, {
+      toolCallId: 'second',
+      abortSignal: controller.signal,
+    });
+    const third = dispatcher.dispatch('code_exec', { code: 'return 3;' }, { toolCallId: 'third' });
+    controller.abort(new Error('cancel queued program'));
+    await expect(second).rejects.toThrow('cancel queued program');
+
+    releaseFirst!();
+    await expect(first).resolves.toEqual(expect.objectContaining({ status: 'completed' }));
+    await expect(third).resolves.toEqual(expect.objectContaining({ status: 'completed', value: 3 }));
   });
 
   it('charges completed nested calls to the run-wide limit', async () => {

@@ -183,25 +183,72 @@ export class CodeModeRunBudget {
   private activeNestedCalls = 0;
   private activeRuntimes = 0;
   private reservedMemoryBytes = 0;
+  private runtimeWaiters: Array<{
+    requestedMemoryBytes: number;
+    resolve: (release: () => void) => void;
+    reject: (error: Error) => void;
+    signal?: AbortSignal;
+    onAbort?: () => void;
+  }> = [];
 
   constructor(private readonly limits: CodeModeLimits) {}
 
-  acquireRuntime(requestedMemoryBytes: number): () => void {
-    if (this.activeRuntimes >= this.limits.concurrency) {
-      throw new Error(`Code Mode exceeded its ${this.limits.concurrency}-program concurrency limit`);
+  acquireRuntime(requestedMemoryBytes: number, signal?: AbortSignal): Promise<() => void> {
+    if (requestedMemoryBytes > this.limits.memoryBytes) {
+      return Promise.reject(new Error('Code Mode requested more than its run-scoped guest-memory limit'));
     }
-    if (this.reservedMemoryBytes + requestedMemoryBytes > this.limits.memoryBytes) {
-      throw new Error('Code Mode exceeded its run-scoped guest-memory limit');
+    if (signal?.aborted) return Promise.reject(abortError(signal));
+
+    return new Promise<() => void>((resolve, reject) => {
+      const waiter: (typeof this.runtimeWaiters)[number] = {
+        requestedMemoryBytes,
+        resolve,
+        reject,
+        ...(signal && { signal }),
+      };
+      waiter.onAbort = () => {
+        const index = this.runtimeWaiters.indexOf(waiter);
+        if (index < 0) return;
+        this.runtimeWaiters.splice(index, 1);
+        signal?.removeEventListener('abort', waiter.onAbort!);
+        reject(signal ? abortError(signal) : new Error('Code Mode execution aborted'));
+        this.drainRuntimeWaiters();
+      };
+      signal?.addEventListener('abort', waiter.onAbort, { once: true });
+      this.runtimeWaiters.push(waiter);
+      this.drainRuntimeWaiters();
+    });
+  }
+
+  private drainRuntimeWaiters(): void {
+    while (this.runtimeWaiters.length > 0) {
+      const waiter = this.runtimeWaiters[0]!;
+      if (waiter.signal?.aborted) {
+        this.runtimeWaiters.shift();
+        waiter.signal.removeEventListener('abort', waiter.onAbort!);
+        waiter.reject(abortError(waiter.signal));
+        continue;
+      }
+      if (
+        this.activeRuntimes >= this.limits.concurrency
+        || this.reservedMemoryBytes + waiter.requestedMemoryBytes > this.limits.memoryBytes
+      ) {
+        return;
+      }
+
+      this.runtimeWaiters.shift();
+      waiter.signal?.removeEventListener('abort', waiter.onAbort!);
+      this.activeRuntimes++;
+      this.reservedMemoryBytes += waiter.requestedMemoryBytes;
+      let released = false;
+      waiter.resolve(() => {
+        if (released) return;
+        released = true;
+        this.activeRuntimes--;
+        this.reservedMemoryBytes -= waiter.requestedMemoryBytes;
+        this.drainRuntimeWaiters();
+      });
     }
-    this.activeRuntimes++;
-    this.reservedMemoryBytes += requestedMemoryBytes;
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      this.activeRuntimes--;
-      this.reservedMemoryBytes -= requestedMemoryBytes;
-    };
   }
 
   acquireNestedCall(): () => void {
@@ -627,7 +674,7 @@ export async function executeCodeModeDetailed(
     }
     // Reserve before any host-side preflight so sibling code_exec calls cannot
     // multiply TypeScript/compiler work while waiting for a guest heap.
-    releaseRuntime = runBudget.acquireRuntime(limits.memoryBytes);
+    releaseRuntime = await runBudget.acquireRuntime(limits.memoryBytes, signal);
     const eligible = codeModeEligibleToolNames(options.toolNames);
     const eligibleSet = new Set(eligible);
     const catalogContracts = await raceWithAbort(
