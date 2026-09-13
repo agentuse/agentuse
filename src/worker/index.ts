@@ -2,6 +2,7 @@ import { createInterface } from 'readline';
 import { logger, LogLevel } from '../utils/logger';
 import { loadGlobalDefaults } from '../utils/global-config';
 import { toErrorMessage } from '../utils/error-message';
+import { stringifyJsonLine } from '../utils/json-line';
 import { SessionManager } from '../session/index.js';
 import { initStorage } from '../storage/index.js';
 import { getApprovalInfo } from './approval.js';
@@ -205,7 +206,7 @@ export async function runInternalWorker() {
       const payload = isRequestReply
         ? { ...(response as Record<string, unknown>), workerRssBytes: process.memoryUsage.rss() }
         : response;
-      console.log(JSON.stringify(payload));
+      process.stdout.write(stringifyJsonLine(payload));
     } catch {
       // Released worker with nowhere to report; storage already has the result.
     }

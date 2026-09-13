@@ -101,6 +101,7 @@ import { readChangesetRecord, settleChangesetTestRun } from "../agents/changeset
 import { computeAgentId, stripAgentExtension } from '../utils/agent-id.js';
 import { formatCliRow, renderCliTable, renderCliTableHeader } from '../utils/cli-table.js';
 import { toErrorMessage } from '../utils/error-message.js';
+import { stringifyJsonLine } from '../utils/json-line.js';
 import { mountChangesetShadow } from "../agents/changeset-mount";
 import { type ChangesetProposal, type ChangesetRecord } from "../agents/changeset-types";
 import { configuredMockModel, mockRunEnv, resolveMockScope } from "../runner/mock-tools";
@@ -131,6 +132,21 @@ const SESSION_LIST_SSE_LIVE_INTERVAL_MS = 2_000;
 /** Ceiling on how many rows one ?q= search may read final output for. Identity
  *  matches are free; this bounds only the transcript reads behind a text match. */
 const SESSION_SEARCH_SCAN_LIMIT = 400;
+const WORKER_PROTOCOL_ERROR_CODE = 'WORKER_PROTOCOL_ERROR';
+
+/** Worker replies are serialized with `id` first. If JSON-line framing breaks,
+ * the first fragment can therefore still identify the request without
+ * inspecting or logging any user payload that follows it. */
+function workerRequestIdFromMalformedLine(line: string): string | undefined {
+  return /^\s*\{\s*"id"\s*:\s*"(req-\d+)"/.exec(line)?.[1];
+}
+
+function jsonParseErrorOffset(error: unknown): number | undefined {
+  const match = /\bposition\s+(\d+)\b/i.exec(toErrorMessage(error));
+  if (!match) return undefined;
+  const offset = Number(match[1]);
+  return Number.isSafeInteger(offset) ? offset : undefined;
+}
 /** How many rows of a window the status counts are taken over. Bounds the rows
  *  a worker ships across IPC when the page itself only needs the first 50. */
 const SESSION_COUNT_SCAN_LIMIT = 500;
@@ -546,10 +562,13 @@ export class AgentWorker {
     if (!line.trim()) return;
 
     try {
-      const message = JSON.parse(line);
+      const message = JSON.parse(line) as unknown;
 
       // Handle ready signal
-      if (message.type === "ready") {
+      if (
+        typeof message === 'object' && message !== null &&
+        'type' in message && message.type === "ready"
+      ) {
         this.ready = true;
         if (this.readyResolve) {
           this.readyResolve();
@@ -558,18 +577,56 @@ export class AgentWorker {
         return;
       }
 
+      const requestId = typeof message === 'object' && message !== null &&
+        'id' in message && typeof message.id === 'string' && /^req-\d+$/.test(message.id)
+        ? message.id
+        : undefined;
+      if (
+        !requestId ||
+        typeof message !== 'object' || message === null ||
+        !('success' in message) || typeof message.success !== 'boolean'
+      ) {
+        this.handleWorkerProtocolError(line, requestId);
+        return;
+      }
+
       // Handle response
-      const pending = this.pendingRequests.get(message.id);
+      const pending = this.pendingRequests.get(requestId);
       if (pending) {
         if (pending.timeoutId) {
           clearTimeout(pending.timeoutId);
         }
-        this.pendingRequests.delete(message.id);
-        pending.resolve(message);
+        this.pendingRequests.delete(requestId);
+        pending.resolve(message as WorkerExecuteResult | WorkerExecuteError | WorkerApprovalInfoResult | WorkerSessionStatusResult | WorkerPreparingSessionResult | WorkerSessionContextResult | WorkerSweepExpiredResult | WorkerListApprovalsResult | WorkerListSessionsResult | WorkerSessionFinalResponsesResult | WorkerStopSessionResult);
       }
     } catch (err) {
-      logger.debug(`Failed to parse worker message: ${line}`);
+      this.handleWorkerProtocolError(
+        line,
+        workerRequestIdFromMalformedLine(line),
+        jsonParseErrorOffset(err),
+      );
     }
+  }
+
+  private handleWorkerProtocolError(line: string, requestId?: string, parseOffset?: number): void {
+    const diagnosticId = ulid();
+    const pending = requestId ? this.pendingRequests.get(requestId) : undefined;
+    logger.error(
+      `Worker protocol error: diagnosticId=${diagnosticId} requestId=${requestId ?? 'unmatched'} ` +
+      `matched=${pending ? 'true' : 'false'} bytes=${Buffer.byteLength(line, 'utf8')} chars=${line.length}` +
+      (parseOffset !== undefined ? ` parseOffset=${parseOffset}` : ''),
+    );
+    if (!requestId || !pending) return;
+
+    if (pending.timeoutId) clearTimeout(pending.timeoutId);
+    this.pendingRequests.delete(requestId);
+    pending.resolve({
+      success: false,
+      error: {
+        code: WORKER_PROTOCOL_ERROR_CODE,
+        message: `Worker returned an unreadable response. Reload to retry. Diagnostic ID: ${diagnosticId}`,
+      },
+    });
   }
 
   private handleWorkerDeath() {
@@ -975,7 +1032,7 @@ export class AgentWorker {
         ...options,
       };
 
-      this.process.stdin!.write(JSON.stringify(request) + "\n");
+      this.process.stdin!.write(stringifyJsonLine(request));
     });
   }
 
@@ -1012,7 +1069,7 @@ export class AgentWorker {
       this.respawnTimer = null;
     }
     try {
-      child.stdin!.write(JSON.stringify({ id: `req-${++this.requestCounter}`, type: "release" }) + "\n");
+      child.stdin!.write(stringifyJsonLine({ id: `req-${++this.requestCounter}`, type: "release" }));
     } catch {
       return false;
     }

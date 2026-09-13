@@ -10,15 +10,15 @@ export interface ApprovalStreamHandlers {
   onLogs: (entries: ApprovalLogEntry[], total?: number) => void;
   /**
    * Terminal load failures that the view should render as an error instead of
-   * retrying: unauthorized (401), not found (404), and corrupted session data
-   * (422 / SESSION_CORRUPTED).
+   * retrying: unauthorized (401), not found (404), corrupted session data,
+   * and a worker response that the daemon could not decode.
    */
   onFatalError: (code: string, message: string) => void;
 }
 
 /** Codes/statuses that mean "stop trying, show the error" rather than retry. */
 const TERMINAL_STATUSES = new Set([401, 404, 422]);
-const TERMINAL_CODES = new Set(['SESSION_CORRUPTED']);
+const TERMINAL_CODES = new Set(['SESSION_CORRUPTED', 'WORKER_PROTOCOL_ERROR']);
 
 const SSE_FAILURE_WINDOW_MS = 10_000;
 const SSE_FAILURES_BEFORE_FALLBACK = 2;
@@ -148,8 +148,9 @@ export function useApprovalStream(options: {
       });
       source.addEventListener('stream-error', (event) => {
         // The hub keeps the stream open on transient snapshot failures, but a
-        // terminal one (corrupt session data) will never recover: surface it
-        // and stop. Non-terminal errors are left to the hub's own retry.
+        // terminal one (corrupt session data or a failed worker response) needs
+        // operator attention: surface it and stop. Non-terminal errors are
+        // left to the hub's own retry.
         const payload = JSON.parse((event as MessageEvent).data) as { code?: string; message?: string };
         if (payload.code !== undefined && TERMINAL_CODES.has(payload.code)) {
           closed = true;
@@ -157,7 +158,7 @@ export function useApprovalStream(options: {
           source = null;
           if (pollTimer) clearTimeout(pollTimer);
           if (sseRetryTimer) clearTimeout(sseRetryTimer);
-          handlersRef.current.onFatalError(payload.code, payload.message ?? 'Session data is corrupted.');
+          handlersRef.current.onFatalError(payload.code, payload.message ?? 'The session could not be loaded.');
         }
       });
       source.addEventListener('error', () => {
