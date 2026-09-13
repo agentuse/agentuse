@@ -12,6 +12,10 @@ export const approvalPartCache = new Map<string, {
   round: number;
 }>();
 export const APPROVAL_INFO_CACHE_TTL_MS = 10_000;
+// In-flight entries coalesce concurrent dashboard requests, but a loader that
+// never settles must not poison that session's cache key forever. This matches
+// the worker RPC budget used by approval-info callers.
+export const APPROVAL_INFO_IN_FLIGHT_TTL_MS = 30_000;
 // Non-terminal (running/suspended) responses are reused while their change
 // signature is unchanged; this ceiling bounds staleness from inputs the
 // signature can't observe (e.g. the agent file's learning config).
@@ -122,8 +126,16 @@ export function shouldCacheApprovalInfoResponse(
   response: ApprovalInfoResponse
 ): response is ApprovalInfoResponse & { success: true; approval: { sessionStatus: string } } {
   if (!response.success || !response.approval) return false;
-  const status = response.approval.sessionStatus;
-  return status === 'completed' || status === 'error';
+  return response.approval.sessionStatus === 'completed';
+}
+
+function freshApprovalInfoCacheEntry(key: string): ApprovalInfoCacheEntry | undefined {
+  const entry = approvalInfoResponseCache.get(key);
+  if (entry && entry.expiresAt <= Date.now()) {
+    approvalInfoResponseCache.delete(key);
+    return undefined;
+  }
+  return entry;
 }
 
 export async function withApprovalInfoCache(
@@ -132,9 +144,8 @@ export async function withApprovalInfoCache(
   loader: () => Promise<ApprovalInfoResponse>,
   getSignature?: () => Promise<string | null>
 ): Promise<ApprovalInfoResponse> {
-  const now = Date.now();
-  const cached = approvalInfoResponseCache.get(key);
-  if (cached?.response && cached.expiresAt > now && !cached.signature) {
+  let cached = freshApprovalInfoCacheEntry(key);
+  if (cached?.response && !cached.signature) {
     return { ...cached.response, id: requestId } as ApprovalInfoResponse;
   }
 
@@ -142,9 +153,15 @@ export async function withApprovalInfoCache(
   // directory mtime past this signature, so the next poll re-reads instead
   // of reusing a torn snapshot.
   const signature = getSignature ? await getSignature() : null;
+  // Another request may have populated or replaced this entry while the
+  // asynchronous signature probe was running. Re-read it so callers still
+  // coalesce on that work and never await an entry past its bounded lifetime.
+  cached = freshApprovalInfoCacheEntry(key);
   if (
-    cached?.response && cached.expiresAt > now &&
-    cached.signature && signature !== null && signature === cached.signature
+    cached?.response && (
+      !cached.signature ||
+      (signature !== null && signature === cached.signature)
+    )
   ) {
     return { ...cached.response, id: requestId } as ApprovalInfoResponse;
   }
@@ -154,21 +171,33 @@ export async function withApprovalInfoCache(
   }
 
   const promise = loader();
+  const inFlightEntry: ApprovalInfoCacheEntry = {
+    expiresAt: Date.now() + APPROVAL_INFO_IN_FLIGHT_TTL_MS,
+    promise
+  };
   boundedCacheSet(
     approvalInfoResponseCache,
     key,
-    { expiresAt: now + APPROVAL_INFO_CACHE_TTL_MS, promise },
+    inFlightEntry,
     MAX_CACHED_APPROVAL_INFO
   );
   try {
     const response = await promise;
     const { id: _id, ...rest } = response;
+    // A stale loader can settle after its entry expired and a retry replaced
+    // it. Only the request that still owns the key may publish or delete it.
+    if (approvalInfoResponseCache.get(key) !== inFlightEntry) return response;
+
     if (shouldCacheApprovalInfoResponse(response)) {
       boundedCacheSet(approvalInfoResponseCache, key, {
         expiresAt: Date.now() + APPROVAL_INFO_CACHE_TTL_MS,
         response: rest as Omit<ApprovalInfoResponse, 'id'>
       }, MAX_CACHED_APPROVAL_INFO);
-    } else if (response.success && signature !== null) {
+    } else if (
+      response.success &&
+      response.approval?.sessionStatus !== 'error' &&
+      signature !== null
+    ) {
       // Running/suspended sessions: reuse this snapshot until the on-disk
       // state changes. The SSE loop polls at 500ms/10s; without this every
       // tick re-reads and re-serializes the whole transcript.
@@ -182,7 +211,9 @@ export async function withApprovalInfoCache(
     }
     return response;
   } catch (error) {
-    approvalInfoResponseCache.delete(key);
+    if (approvalInfoResponseCache.get(key) === inFlightEntry) {
+      approvalInfoResponseCache.delete(key);
+    }
     throw error;
   }
 }

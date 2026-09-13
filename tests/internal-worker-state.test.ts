@@ -28,7 +28,7 @@ describe('internal worker session state ordering', () => {
     expect(resumeSource).toContain('agentPath = resumed.agentFilePath;');
   });
 
-  it('does not cache suspended approval snapshots', async () => {
+  it('only caches successfully completed approval snapshots without a signature', async () => {
     const source = await readFile(join(import.meta.dir, '..', 'src', 'worker', 'cache.ts'), 'utf-8');
     const helperStart = source.indexOf('function shouldCacheApprovalInfoResponse');
     const nextHelper = source.indexOf('async function withApprovalInfoCache', helperStart);
@@ -36,7 +36,8 @@ describe('internal worker session state ordering', () => {
     expect(nextHelper).toBeGreaterThan(helperStart);
 
     const helperSource = source.slice(helperStart, nextHelper);
-    expect(helperSource).toContain("return status === 'completed' || status === 'error';");
+    expect(helperSource).toContain("return response.approval.sessionStatus === 'completed';");
+    expect(helperSource).not.toContain("sessionStatus === 'error'");
     expect(helperSource).not.toContain("status !== 'running'");
   });
 
