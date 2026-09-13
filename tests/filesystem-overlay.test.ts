@@ -206,10 +206,20 @@ describe('overlay filesystem tools', () => {
   });
 
   it('searches the staged copy instead of the real content', async () => {
-    await run('tools__filesystem_write', { file_path: join(scopeRoot, 'README.md'), content: 'sentinel-staged\n' });
+    await run('tools__filesystem_write', {
+      file_path: join(scopeRoot, 'README.md'),
+      content: 'before\nsentinel-staged\nafter\n',
+    });
 
-    const staged = await run('tools__filesystem_search', { directory_path: scopeRoot, query: 'sentinel-staged' }) as Record<string, unknown>;
+    const staged = await run('tools__filesystem_search', {
+      file_path: join(scopeRoot, 'README.md'),
+      query: 'sentinel-staged',
+      context_lines: 1,
+    }) as Record<string, unknown>;
+    expect(staged.file).toBe(join(scopeRoot, 'README.md'));
     expect((staged.matches as Array<{ path: string }>).map((match) => match.path)).toEqual(['README.md']);
+    expect((staged.matches as Array<{ excerpt: string }>)[0]!.excerpt)
+      .toBe('1\tbefore\n2\tsentinel-staged\n3\tafter');
 
     const real = await run('tools__filesystem_search', { directory_path: scopeRoot, query: 'sentinel-real' }) as Record<string, unknown>;
     expect(real.matches).toEqual([]);

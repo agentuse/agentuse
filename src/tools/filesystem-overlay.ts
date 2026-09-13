@@ -36,6 +36,7 @@ import { toErrorMessage } from '../utils/error-message';
 const OVERLAY_LIST_MAX_ENTRIES = 500;
 const OVERLAY_SEARCH_MAX_MATCHES = 100;
 const OVERLAY_SEARCH_MAX_FILE_BYTES = 256 * 1024;
+const OVERLAY_SEARCH_MAX_CONTEXT_LINES = 5;
 
 export interface OverlayFilesystemOptions {
   /** Real project scope the model reads and appears to write. */
@@ -284,7 +285,7 @@ export function createOverlayFilesystemTools(options: OverlayFilesystemOptions):
   const readTool: Tool = {
     description: `Read file contents from the project.
 
-Text files return their content with line numbers (cat -n style), honoring \`offset\`/\`limit\`.
+Text files return their content with line numbers (cat -n style), honoring \`offset\`/\`limit\`. \`limit\` is a line count, not a character or byte count. Use bounded slices instead of returning several complete files together.
 
 Image files (PNG, JPEG, GIF, WebP) and PDFs are returned as the actual image/document to the model. File type is detected by content, not extension. \`offset\`/\`limit\` are ignored for these.
 
@@ -292,7 +293,7 @@ ${projectDescription}`,
     inputSchema: z.object({
       file_path: z.string().describe('Absolute path to the file to read'),
       offset: z.number().optional().describe('Line number to start from (1-indexed). Ignored for image/PDF files.'),
-      limit: z.number().optional().describe('Maximum number of lines to read. Ignored for image/PDF files.'),
+      limit: z.number().optional().describe('Maximum number of lines to read, not characters or bytes. Ignored for image/PDF files.'),
     }),
     execute: async ({ file_path, offset, limit }: { file_path: string; offset?: number; limit?: number }): Promise<ToolOutput | MediaToolOutput> => {
       const resolved = resolveScopePath(file_path);
@@ -375,50 +376,107 @@ ${projectDescription}`,
   };
 
   const searchTool: Tool = {
-    description: `Search text inside files below a project directory.
+    description: `Search text inside one exact file or across files below a project directory.
 
-The query is a literal case-insensitive string. Results include path, line number, and a short matching line, capped at ${OVERLAY_SEARCH_MAX_MATCHES} matches.
+The query is a literal case-insensitive string. Provide exactly one of \`file_path\` or \`directory_path\`. Use \`context_lines\` to return a bounded, line-numbered excerpt around each match. Results are capped at ${OVERLAY_SEARCH_MAX_MATCHES} matches and the configured tool-output byte limit.
 
 ${projectDescription}`,
     inputSchema: z.object({
-      directory_path: z.string().describe('Absolute path to a directory in the project'),
+      directory_path: z.string().optional().describe('Absolute path to a project directory. Provide this or file_path, not both.'),
+      file_path: z.string().optional().describe('Absolute path to one project text file. Provide this or directory_path, not both.'),
       query: z.string().min(1).max(500).describe('Literal text to find'),
-      pattern: z.string().optional().describe('Optional file glob, for example **/*.{ts,tsx}'),
+      pattern: z.string().optional().describe('Optional file glob when using directory_path, for example **/*.{ts,tsx}'),
       limit: z.number().int().positive().max(OVERLAY_SEARCH_MAX_MATCHES).optional(),
+      context_lines: z.number().int().min(0).max(OVERLAY_SEARCH_MAX_CONTEXT_LINES).optional()
+        .describe(`Lines of context before and after each match, from 0 to ${OVERLAY_SEARCH_MAX_CONTEXT_LINES}`),
     }),
-    execute: async ({ directory_path, query, pattern, limit }: { directory_path: string; query: string; pattern?: string; limit?: number }): Promise<ToolOutput> => {
-      const dir = resolveScopeDir(directory_path);
-      if (typeof dir === 'string') return errorOutput(dir);
+    execute: async ({ directory_path, file_path, query, pattern, limit, context_lines }: {
+      directory_path?: string;
+      file_path?: string;
+      query: string;
+      pattern?: string;
+      limit?: number;
+      context_lines?: number;
+    }): Promise<ToolOutput> => {
+      if ((directory_path === undefined) === (file_path === undefined)) {
+        return errorOutput('Provide exactly one of directory_path or file_path');
+      }
+
+      let target: { directory?: string; file?: string };
+      let candidates: Array<{ displayPath: string; target: ResolvedScopePath }>;
+      if (file_path !== undefined) {
+        const resolved = resolveScopePath(file_path);
+        if (typeof resolved === 'string') return errorOutput(resolved);
+        const source = (await fs.stat(resolved.editPath).catch(() => undefined))
+          ?? (await fs.stat(resolved.realPath).catch(() => undefined));
+        if (!source?.isFile()) return errorOutput(`Not a file: ${path.join(scopeRoot, resolved.rel)}`);
+        target = { file: path.join(scopeRoot, resolved.rel) };
+        candidates = [{ displayPath: path.basename(resolved.rel), target: resolved }];
+      } else {
+        const dir = resolveScopeDir(directory_path!);
+        if (typeof dir === 'string') return errorOutput(dir);
+        const relativePaths = await overlayCandidates(dir, pattern);
+        target = { directory: dir.rel ? path.join(scopeRoot, dir.rel) : scopeRoot };
+        candidates = relativePaths.map(relative => {
+          const projectRelative = dir.rel ? `${dir.rel}/${relative}` : relative;
+          return {
+            displayPath: relative,
+            target: {
+              rel: projectRelative,
+              realPath: path.join(scopeRoot, projectRelative),
+              editPath: path.join(editRoot, projectRelative),
+            },
+          };
+        });
+      }
+
       const cap = Math.min(limit ?? OVERLAY_SEARCH_MAX_MATCHES, OVERLAY_SEARCH_MAX_MATCHES);
-      const candidates = await overlayCandidates(dir, pattern);
       const needle = query.toLocaleLowerCase();
-      const matches: Array<{ path: string; line: number; text: string }> = [];
-      for (const relative of candidates) {
-        if (matches.length >= cap) break;
-        const projectRelative = dir.rel ? `${dir.rel}/${relative}` : relative;
-        const target: ResolvedScopePath = {
-          rel: projectRelative,
-          realPath: path.join(scopeRoot, projectRelative),
-          editPath: path.join(editRoot, projectRelative),
-        };
-        const source = (await fs.stat(target.editPath).catch(() => undefined)) ?? (await fs.stat(target.realPath).catch(() => undefined));
+      const contextLines = context_lines ?? 0;
+      const matches: Array<{ path: string; line: number; text: string; excerpt?: string }> = [];
+      const matchByteBudget = Math.max(0, getToolOutputLimits().maxBytes - 4_096);
+      let matchBytes = 0;
+      let truncated = false;
+      search: for (const candidate of candidates) {
+        const source = (await fs.stat(candidate.target.editPath).catch(() => undefined))
+          ?? (await fs.stat(candidate.target.realPath).catch(() => undefined));
         if (!source || !source.isFile() || source.size > OVERLAY_SEARCH_MAX_FILE_BYTES) continue;
-        const content = await overlayText(target);
+        const content = await overlayText(candidate.target);
         if (content === undefined) continue;
         const lines = content.split('\n');
-        for (let index = 0; index < lines.length && matches.length < cap; index += 1) {
+        for (let index = 0; index < lines.length; index += 1) {
           const line = lines[index]!;
           if (!line.toLocaleLowerCase().includes(needle)) continue;
-          matches.push({ path: relative, line: index + 1, text: line.length > 300 ? `${line.slice(0, 300)}…` : line });
+          if (matches.length >= cap) {
+            truncated = true;
+            break search;
+          }
+          const start = Math.max(0, index - contextLines);
+          const end = Math.min(lines.length, index + contextLines + 1);
+          const match = {
+            path: candidate.displayPath,
+            line: index + 1,
+            text: line.length > 300 ? `${truncateEnd(line, 300)}…` : line,
+            ...(contextLines > 0 && {
+              excerpt: formatWithLineNumbers(lines.slice(start, end).join('\n'), start + 1, 300),
+            }),
+          };
+          const bytes = Buffer.byteLength(JSON.stringify(match), 'utf8') + 1;
+          if (matchBytes + bytes > matchByteBudget) {
+            truncated = true;
+            break search;
+          }
+          matches.push(match);
+          matchBytes += bytes;
         }
       }
       return {
         output: JSON.stringify({
           success: true,
-          directory: dir.rel ? path.join(scopeRoot, dir.rel) : scopeRoot,
+          ...target,
           query,
           matches,
-          truncated: matches.length >= cap,
+          truncated,
         }),
       };
     },

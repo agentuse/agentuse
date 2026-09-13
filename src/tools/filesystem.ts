@@ -30,6 +30,7 @@ const FILESYSTEM_READ_MAX_BYTES = 256 * 1024 * 1024;
 const FILESYSTEM_LIST_MAX_ENTRIES = 500;
 const FILESYSTEM_SEARCH_MAX_MATCHES = 100;
 const FILESYSTEM_SEARCH_MAX_FILE_BYTES = 256 * 1024;
+const FILESYSTEM_SEARCH_MAX_CONTEXT_LINES = 5;
 
 /**
  * Format file content with line numbers (cat -n style)
@@ -107,7 +108,7 @@ export function createReadTool(
   const allowedPaths = formatPathsForDescription(configs, 'read', context);
   const description = `Read file contents from the filesystem.
 
-Text files return their content with line numbers (cat -n style), honoring \`offset\`/\`limit\`.
+Text files return their content with line numbers (cat -n style), honoring \`offset\`/\`limit\`. \`limit\` is a line count, not a character or byte count. Use bounded slices instead of returning several complete files together.
 
 Image files (PNG, JPEG, GIF, WebP) and PDFs are returned as the actual image/document to the model, so you can read charts, screenshots, scanned pages and PDF documents directly. File type is detected by content, not extension. \`offset\`/\`limit\` are ignored for these. This only works on models that accept image/PDF input; on a text-only model an image/PDF read returns an error instead.
 
@@ -121,7 +122,7 @@ Use absolute paths within these directories. Other paths will be rejected.`;
     inputSchema: z.object({
       file_path: z.string().describe('Absolute path to the file to read'),
       offset: z.number().optional().describe('Line number to start from (1-indexed). Ignored for image/PDF files.'),
-      limit: z.number().optional().describe('Maximum number of lines to read. Ignored for image/PDF files.'),
+      limit: z.number().optional().describe('Maximum number of lines to read, not characters or bytes. Ignored for image/PDF files.'),
     }),
     execute: async ({ file_path, offset, limit }: {
       file_path: string;
@@ -277,33 +278,73 @@ export function createSearchTool(
 ): Tool {
   const validator = new PathValidator(configs, context);
   return {
-    description: `Search text inside files below a read-authorized directory.
+    description: `Search text inside one exact file or across files below a read-authorized directory.
 
-The query is a literal case-insensitive string. Results include path, line number, and a short matching line, capped at ${FILESYSTEM_SEARCH_MAX_MATCHES} matches.`,
+The query is a literal case-insensitive string. Provide exactly one of \`file_path\` or \`directory_path\`. Use \`context_lines\` to return a bounded, line-numbered excerpt around each match. Results are capped at ${FILESYSTEM_SEARCH_MAX_MATCHES} matches and the configured tool-output byte limit.`,
     inputSchema: z.object({
-      directory_path: z.string().describe('Absolute path to an authorized directory'),
+      directory_path: z.string().optional().describe('Absolute path to an authorized directory. Provide this or file_path, not both.'),
+      file_path: z.string().optional().describe('Absolute path to one authorized text file. Provide this or directory_path, not both.'),
       query: z.string().min(1).max(500).describe('Literal text to find'),
-      pattern: z.string().optional().describe('Optional file glob, for example **/*.{ts,tsx}'),
+      pattern: z.string().optional().describe('Optional file glob when using directory_path, for example **/*.{ts,tsx}'),
       limit: z.number().int().positive().max(FILESYSTEM_SEARCH_MAX_MATCHES).optional(),
+      context_lines: z.number().int().min(0).max(FILESYSTEM_SEARCH_MAX_CONTEXT_LINES).optional()
+        .describe(`Lines of context before and after each match, from 0 to ${FILESYSTEM_SEARCH_MAX_CONTEXT_LINES}`),
     }),
-    execute: async ({ directory_path, query, pattern, limit }: { directory_path: string; query: string; pattern?: string; limit?: number }): Promise<ToolOutput> => {
-      const validation = validator.validate(directory_path, 'read');
-      if (!validation.allowed) return { output: JSON.stringify({ success: false, error: validation.error || 'Path validation failed' }) };
+    execute: async ({ directory_path, file_path, query, pattern, limit, context_lines }: {
+      directory_path?: string;
+      file_path?: string;
+      query: string;
+      pattern?: string;
+      limit?: number;
+      context_lines?: number;
+    }): Promise<ToolOutput> => {
+      if ((directory_path === undefined) === (file_path === undefined)) {
+        return { output: JSON.stringify({ success: false, error: 'Provide exactly one of directory_path or file_path' }) };
+      }
       try {
-        const stats = await fs.stat(validation.resolvedPath);
-        if (!stats.isDirectory()) return { output: JSON.stringify({ success: false, error: `Not a directory: ${validation.resolvedPath}` }) };
+        let target: { directory?: string; file?: string };
+        let candidates: Array<{ displayPath: string; resolvedPath: string }>;
+        if (file_path !== undefined) {
+          const validation = validator.validate(file_path, 'read');
+          if (!validation.allowed) {
+            return { output: JSON.stringify({ success: false, error: validation.error || 'Path validation failed' }) };
+          }
+          const stats = await fs.stat(validation.resolvedPath);
+          if (!stats.isFile()) {
+            return { output: JSON.stringify({ success: false, error: `Not a file: ${validation.resolvedPath}` }) };
+          }
+          target = { file: validation.resolvedPath };
+          candidates = [{ displayPath: path.basename(validation.resolvedPath), resolvedPath: validation.resolvedPath }];
+        } else {
+          const validation = validator.validate(directory_path!, 'read');
+          if (!validation.allowed) {
+            return { output: JSON.stringify({ success: false, error: validation.error || 'Path validation failed' }) };
+          }
+          const stats = await fs.stat(validation.resolvedPath);
+          if (!stats.isDirectory()) {
+            return { output: JSON.stringify({ success: false, error: `Not a directory: ${validation.resolvedPath}` }) };
+          }
+          const relativePaths = (await glob(pattern?.trim() || '**/*', {
+            cwd: validation.resolvedPath,
+            nodir: true,
+            dot: true,
+          })).sort();
+          target = { directory: validation.resolvedPath };
+          candidates = relativePaths.map(relativePath => ({
+            displayPath: relativePath,
+            resolvedPath: path.join(validation.resolvedPath, relativePath),
+          }));
+        }
+
         const cap = Math.min(limit ?? FILESYSTEM_SEARCH_MAX_MATCHES, FILESYSTEM_SEARCH_MAX_MATCHES);
-        const candidates = (await glob(pattern?.trim() || '**/*', {
-          cwd: validation.resolvedPath,
-          nodir: true,
-          dot: true,
-        })).sort();
         const needle = query.toLocaleLowerCase();
-        const matches: Array<{ path: string; line: number; text: string }> = [];
-        for (const relativePath of candidates) {
-          if (matches.length >= cap) break;
-          const candidate = path.join(validation.resolvedPath, relativePath);
-          const checked = validator.validate(candidate, 'read');
+        const contextLines = context_lines ?? 0;
+        const matches: Array<{ path: string; line: number; text: string; excerpt?: string }> = [];
+        const matchByteBudget = Math.max(0, getToolOutputLimits().maxBytes - 4_096);
+        let matchBytes = 0;
+        let truncated = false;
+        search: for (const candidate of candidates) {
+          const checked = validator.validate(candidate.resolvedPath, 'read');
           if (!checked.allowed) continue;
           let stat;
           try { stat = await fs.stat(checked.resolvedPath); } catch { continue; }
@@ -315,13 +356,33 @@ The query is a literal case-insensitive string. Results include path, line numbe
             content = buffer.toString('utf8');
           } catch { continue; }
           const lines = content.split('\n');
-          for (let index = 0; index < lines.length && matches.length < cap; index += 1) {
+          for (let index = 0; index < lines.length; index += 1) {
             const line = lines[index]!;
             if (!line.toLocaleLowerCase().includes(needle)) continue;
-            matches.push({ path: relativePath, line: index + 1, text: line.length > 300 ? `${line.slice(0, 300)}…` : line });
+            if (matches.length >= cap) {
+              truncated = true;
+              break search;
+            }
+            const start = Math.max(0, index - contextLines);
+            const end = Math.min(lines.length, index + contextLines + 1);
+            const match = {
+              path: candidate.displayPath,
+              line: index + 1,
+              text: line.length > 300 ? `${truncateEnd(line, 300)}…` : line,
+              ...(contextLines > 0 && {
+                excerpt: formatWithLineNumbers(lines.slice(start, end).join('\n'), start + 1, 300),
+              }),
+            };
+            const bytes = Buffer.byteLength(JSON.stringify(match), 'utf8') + 1;
+            if (matchBytes + bytes > matchByteBudget) {
+              truncated = true;
+              break search;
+            }
+            matches.push(match);
+            matchBytes += bytes;
           }
         }
-        return { output: JSON.stringify({ success: true, directory: validation.resolvedPath, query, matches, truncated: matches.length >= cap }) };
+        return { output: JSON.stringify({ success: true, ...target, query, matches, truncated }) };
       } catch (error) {
         return { output: JSON.stringify({ success: false, error: toErrorMessage(error) }) };
       }

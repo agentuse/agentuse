@@ -1648,6 +1648,8 @@ describe('Code Mode', () => {
     expect(tool.description).toContain('When the user asks for a shell artifact, commands or scripts may contain the calculations the artifact itself needs');
     expect(tool.description).toContain('including when the program needs only one JSON tool call');
     expect(tool.description).toContain('transport-sensitive tool may also remain separately visible');
+    expect(tool.description).toContain('prefer tools__filesystem_search with an exact file or glob and bounded context');
+    expect(tool.description).toContain('Do not return several raw file bodies from one program');
   });
 
   it('keeps untrusted provider output schemas unknown', () => {
