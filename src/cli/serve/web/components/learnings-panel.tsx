@@ -266,6 +266,11 @@ function LearningsSection(props: {
    *  cap and nothing stranded. For hosts where the panel is incidental to why
    *  the reader is on the page. */
   hideWhenEmpty?: boolean;
+  /** Fold the whole panel to its label plus a one-line count, opening on click.
+   *  For hosts where the panel is incidental (the session view). A warning
+   *  (stranded rules, rules over the cap) or an error forces it open, so the
+   *  fold never hides the one thing the panel exists to say. */
+  foldable?: boolean;
   /** Take the stranded-learnings path and render the warning yourself, higher up
    *  the page. Passed by hosts that keep this panel behind a tab, where a banner
    *  inside it would only be seen by someone who already went looking. */
@@ -369,9 +374,26 @@ function LearningsSection(props: {
 
   if (nothingToReport && props.hideWhenEmpty) return null;
 
+  const mustOpen = Boolean(error) || Boolean(strandedAt) || (summary?.dormant ?? 0) > 0;
+  const foldMeta = learnings === null
+    ? ''
+    : [
+        summary && summary.active > 0 ? `${summary.injected} of ${summary.active} apply per run` : '',
+        items.length === 0 ? 'nothing new this session' : `${items.length} new this ${items.length === 1 ? 'learning' : 'learnings'}`,
+      ].filter(Boolean).join(' · ');
+  const Root = props.foldable ? 'details' : 'div';
+  const rootProps = props.foldable ? { open: mustOpen } : {};
+
   return (
-    <div class="learnings-panel" id={props.id}>
-      {props.label !== null && <div class="learnings-label">{props.label}</div>}
+    <Root class={`learnings-panel${props.foldable ? ' is-foldable' : ''}`} id={props.id} {...rootProps}>
+      {props.label !== null && (props.foldable
+        ? (
+          <summary class="learnings-label">
+            {props.label}
+            {foldMeta && <span class="learnings-fold-meta">{foldMeta}</span>}
+          </summary>
+        )
+        : <div class="learnings-label">{props.label}</div>)}
 
       {/* Never inside the collapsed part. The whole reason this panel is no
           longer behind a toggle is that its warnings were unreachable, and a
@@ -486,7 +508,7 @@ function LearningsSection(props: {
         </button>
       </div>
       )}
-    </div>
+    </Root>
   );
 }
 
@@ -511,6 +533,7 @@ export function LearningsPanel(props: {
     <LearningsSection
       hidden={props.hidden}
       hideWhenEmpty
+      foldable
       id="learnings-panel"
       label="learnings from this session"
       emptyText="Nothing learned in this session — add one to steer future runs."

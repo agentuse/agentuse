@@ -106,10 +106,21 @@ export async function getApprovalInfoUncached(req: ExecuteRequest) {
     logs = logs.map((entry) => {
       const judge = entry.details?.judge;
       if (!judge || judge.sessionId) return entry;
-      const match = importantDescendants.find((descendant) =>
+      // Attempt numbers restart on every gate cycle (a retry gate's judge is
+      // attempt 0 again), so several judge children can fit one attempt.
+      // The verdict behind this gate came from the newest judge that started
+      // before it; `find` used to return the oldest and linked every later
+      // gate to the first judge run.
+      const fits = importantDescendants.filter((descendant) =>
         descendant.parentSessionId === req.sessionId
         && descendant.kinds.includes('judge')
         && judgedAttempt(descendant, judge.attempt)
+      );
+      const gateTime = entry.time ?? Number.POSITIVE_INFINITY;
+      const before = fits.filter((descendant) => descendant.createdAt <= gateTime);
+      const match = (before.length > 0 ? before : fits).reduce<typeof fits[number] | undefined>(
+        (latest, descendant) => !latest || descendant.createdAt > latest.createdAt ? descendant : latest,
+        undefined
       );
       return match
         ? { ...entry, details: { ...entry.details, judge: { ...judge, sessionId: match.sessionId } } }

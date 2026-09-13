@@ -48,6 +48,22 @@ describe('collectJudgeRows', () => {
     expect(collectJudgeRows([descendant])).toEqual([]);
   });
 
+  // Two gate cycles: attempts 1-2 bounced and fed gate A (judge run j1); a
+  // retry gate restarted the counter and its single attempt fed gate B (j2).
+  it('links each attempt to the judge run of its own gate cycle', () => {
+    const fail0 = { ...ownVerify, id: 'c1-a0', time: 1_000 };
+    const fail1: ApprovalLogEntry = { ...ownVerify, id: 'c1-a1', time: 2_000, verify: { ...ownVerify.verify!, attempt: 1 } };
+    const gateA: ApprovalLogEntry = { id: 'gate-a', type: 'tool', tool: 'await_human', status: 'completed', title: 'Rejected', time: 2_500,
+      details: { prompt: 'pick', judge: { verdict: 'fail', attempt: 1, maxAttempts: 3, sessionHref: '/sessions/j1' } } };
+    const pass0: ApprovalLogEntry = { ...ownPass, id: 'c2-a0', time: 5_000, verify: { ...ownPass.verify!, attempt: 0 } };
+    const gateB: ApprovalLogEntry = { id: 'gate-b', type: 'tool', tool: 'await_human', status: 'pending', title: 'Approval requested', time: 5_000,
+      details: { prompt: 'retry?', judge: { verdict: 'pass', attempt: 0, maxAttempts: 3, sessionHref: '/sessions/j2' } } };
+    const rows = collectJudgeRows([fail0, fail1, gateA, pass0, gateB]);
+    expect(rows.map((row) => [row.id, row.href])).toEqual([
+      ['c1-a0', '/sessions/j1'], ['c1-a1', '/sessions/j1'], ['c2-a0', '/sessions/j2'],
+    ]);
+  });
+
   it('ignores entries without a structured verdict', () => {
     expect(collectJudgeRows([{ id: 'x', type: 'text', title: 'hi' }, { id: 'y', type: 'verify', title: 'legacy' }])).toEqual([]);
   });

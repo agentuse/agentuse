@@ -311,6 +311,38 @@ describe('delegated call expansion', () => {
     expect(renderTool(toolEntry({ parentCallId: 'outer-code-call' }))).toContain('is-nested-tool');
   });
 
+  it('labels both sides of a successful tool-call recovery', () => {
+    const recoveredFailure = renderTool(toolEntry({
+      status: 'error',
+      details: {
+        errorMessage: 'Path not found',
+        recoveredByCallId: 'call-recovery',
+        recoveryInferred: true,
+      },
+    }));
+    expect(recoveredFailure).toContain('is-recovered');
+    expect(recoveredFailure).toContain('Recovered by later call');
+    expect(recoveredFailure).toContain('Recovered by call call-recovery');
+
+    const recovery = renderTool(toolEntry({
+      status: 'completed',
+      details: { recoversCallId: 'call-failed', recoveryInferred: true, output: 'found' },
+    }));
+    expect(recovery).toContain('Recovered failed call');
+    expect(recovery).toContain('Targets failed call call-failed');
+    expect(recovery).toContain('inferred from recovery chain');
+  });
+
+  it('labels an unsuccessful recovery attempt without claiming recovery', () => {
+    const html = renderTool(toolEntry({
+      status: 'error',
+      details: { recoversCallId: 'call-failed', errorMessage: 'Still missing' },
+    }));
+    expect(html).toContain('Recovery attempt failed');
+    expect(html).not.toContain('Recovered by later call');
+    expect(html).not.toContain('is-recovered');
+  });
+
   it('keeps completed descendant cards and report headlines visible while collapsing verbose details', () => {
     const child = row({
       id: 'writer', name: 'LifeHack Blog Writer', href: '/sessions/writer', createdAt: 2_000,

@@ -575,6 +575,9 @@ function ApprovalDetailCard(props: {
    *  the other. */
   entryId: string;
   hideOptions?: boolean | undefined;
+  /** The last decision comment before this gate (a judge bounce or a human
+   *  reply), folded into the card so the reviewer has it where they decide. */
+  priorReview?: PriorReview | undefined;
   sessionId: string;
   token: string | undefined;
   selectedChoice?: string | undefined;
@@ -765,6 +768,20 @@ function ApprovalDetailCard(props: {
         <details class={`approval-section approval-context${changes.length === 0 ? ' approval-context-open' : ''}`} open={changes.length === 0}>
           <summary>Source context</summary>
           <div class="approval-section-body"><LogContent value={stripEchoedHeading(details.context, 'Source context')} forceMarkdown /></div>
+        </details>
+      )}
+      {/* What the previous round said, folded: it explains why this draft looks
+          the way it does, but the candidates already carry the judge's marks,
+          so it opens on demand rather than pushing the pick down the page. */}
+      {props.priorReview && (
+        <details class="approval-section approval-secondary approval-summary-collapsed approval-prior-review">
+          <summary>
+            Previous review
+            <span class="approval-prior-review-meta">
+              {props.priorReview.status ?? 'commented'}{props.priorReview.reviewer ? ` by ${props.priorReview.reviewer}` : ''}
+            </span>
+          </summary>
+          <div class="approval-section-body"><LogContent value={props.priorReview.comment} forceMarkdown /></div>
         </details>
       )}
       {!props.hideOptions && options.length > 0 && (
@@ -1274,6 +1291,8 @@ function CorrectionsSummary(props: { counts: CorrectionsCounts }) {
   );
 }
 
+export interface PriorReview { comment: string; reviewer?: string; status?: string }
+
 function isApprovalDetails(entry: ApprovalLogEntry): boolean {
   if (entry.tool === 'await_human' || entry.type === 'approval') return true;
   const details = entry.details;
@@ -1317,6 +1336,8 @@ export interface LogEntryProps {
   showActions: boolean;
   /** The draft composer owns this pending gate's choices. Evidence stays here. */
   hideApprovalOptions?: boolean | undefined;
+  /** Last decision comment before this gate; rendered folded inside its card. */
+  priorReview?: PriorReview | undefined;
   actionsDisabled: boolean;
   /** The decision currently being submitted; renders a specific pending label
    *  ("approving…") in place of the keyboard hint. */
@@ -1368,8 +1389,14 @@ function LogEntryImpl(props: LogEntryProps) {
   const isApprovalEntry = isApprovalDetails(entry);
   const savedArtifact = entry.details?.savedArtifact;
   const runOutcome = entry.details?.runOutcome;
+  // A decided gate (an earlier round the judge or a reviewer already rejected or
+  // approved) is history: its full card restates every candidate, the command
+  // for each, and the critique that the judge panel above already shows. It
+  // folds to its one-line verdict; the live gate stays open and is never here.
+  const resolvedGate = isApprovalEntry && !props.showActions && entry.status !== 'pending'
+    && Boolean(entry.details?.decisionStatus);
   // A saved-artifact row shows its tile inline; there's nothing to expand into.
-  const expandable = entry.type === 'tool' && !isApprovalEntry && !savedArtifact;
+  const expandable = (entry.type === 'tool' && !isApprovalEntry && !savedArtifact) || resolvedGate;
   // A delegated call has no live output of its own to watch: its body is the
   // static task and context it was handed, while what the child is actually
   // doing shows on the subagent card above. Opening it by default buries the
@@ -1380,10 +1407,15 @@ function LogEntryImpl(props: LogEntryProps) {
   // row they never touched closes again when the call completes rather than
   // leaving a finished command's output wedged in the stream.
   const expanded = !expandable || (props.expanded ?? (entry.status === 'running' && !delegated));
+  // The one line a folded gate keeps: what was decided, by whom.
+  const resolvedGateSummary = resolvedGate
+    ? `${entry.details?.decisionStatus}${entry.details?.decisionReviewer ? ` by ${entry.details.decisionReviewer}` : ''}`
+    : undefined;
   const storeEvent = storeToolEvent(entry, props.projectId);
   const spinning = entry.status === 'streaming' || entry.status === 'running';
   // A failed tool call must read as failure without relying on color alone.
   const failed = entry.status === 'error' || entry.status === 'failed';
+  const recoveredFailure = failed && Boolean(entry.details?.recoveredByCallId);
   // Streaming prose reveals progressively (typing effect); everything else
   // renders its message as-is. The hook is a pass-through when not streaming.
   const prose = entry.type === 'text' || entry.type === 'reasoning';
@@ -1395,6 +1427,22 @@ function LogEntryImpl(props: LogEntryProps) {
   const toolIntent = entry.type === 'tool' && !isApprovalEntry && entry.details?.intent
     ? entry.details.intent
     : undefined;
+  const recoveryBadges = entry.type === 'tool' && (
+    <>
+      {entry.details?.recoversCallId && (
+        <span
+          class={`log-recovery-badge ${entry.status === 'completed' ? 'is-success' : failed ? 'is-failed' : 'is-active'}`}
+          title={`Targets failed call ${entry.details.recoversCallId}${entry.details.recoveryInferred ? ' (inferred from recovery chain)' : ''}`}
+        >{entry.status === 'completed' ? 'Recovered failed call' : failed ? 'Recovery attempt failed' : 'Recovering failed call'}</span>
+      )}
+      {entry.details?.recoveredByCallId && (
+        <span
+          class="log-recovery-badge is-success"
+          title={`Recovered by call ${entry.details.recoveredByCallId}${entry.details.recoveryInferred ? ' (inferred from recovery chain)' : ''}`}
+        >Recovered by later call</span>
+      )}
+    </>
+  );
   // A corrections marker states itself in one line, so the counts are the row.
   const corrections = correctionsCounts(entry);
   // On a pick-among-options gate the approve button names the selection, so the
@@ -1419,6 +1467,7 @@ function LogEntryImpl(props: LogEntryProps) {
     expanded ? 'expanded' : '',
     props.isNew ? 'is-new' : '',
     entry.parentCallId ? 'is-nested-tool' : '',
+    recoveredFailure ? 'is-recovered' : '',
   ].filter(Boolean).join(' ');
 
   const toggle = () => {
@@ -1435,7 +1484,7 @@ function LogEntryImpl(props: LogEntryProps) {
           : entry.type === 'log'
             ? { 'aria-label': `${entry.level ?? 'info'} log`, title: entry.level ?? 'info', role: 'img' }
             : { 'aria-hidden': 'true' })}
-      >{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : entry.type === 'learning' ? '✦' : entry.type === 'corrections' ? '✧' : entry.type === 'verify' ? (entry.status === 'completed' ? '✓' : '⚖') : entry.type === 'error' ? '✗' : entry.type === 'reasoning' ? '✻' : entry.type === 'log' ? logLevelMarker(entry.level) : failed ? '✗' : entry.type === 'tool' && entry.status === 'completed' ? '✓' : '⋮')}</span>
+      >{spinning ? <span class="log-spinner" aria-label="streaming" /> : (entry.type === 'compaction' ? '⇲' : entry.type === 'learning' ? '✦' : entry.type === 'corrections' ? '✧' : entry.type === 'verify' ? (entry.status === 'completed' ? '✓' : '⚖') : entry.type === 'error' ? '✗' : entry.type === 'reasoning' ? '✻' : entry.type === 'log' ? logLevelMarker(entry.level) : recoveredFailure ? '↻' : failed ? '✗' : entry.type === 'tool' && entry.status === 'completed' ? '✓' : '⋮')}</span>
       <span class="log-title">
         {corrections
           ? <CorrectionsSummary counts={corrections} />
@@ -1447,6 +1496,10 @@ function LogEntryImpl(props: LogEntryProps) {
               </>
             )
             : entry.title}
+        {resolvedGateSummary && !expanded && (
+          <span class="log-gate-summary">{resolvedGateSummary}</span>
+        )}
+        {recoveryBadges}
         {props.repeatCount !== undefined && props.repeatCount > 1 && (
           <span class="log-count-badge">x{props.repeatCount}</span>
         )}
@@ -1495,6 +1548,7 @@ function LogEntryImpl(props: LogEntryProps) {
             ? <ApprovalDetailCard
                 details={entry.details}
                 hideOptions={props.hideApprovalOptions}
+                priorReview={props.priorReview}
                 entryId={entry.id}
                 sessionId={props.sessionId}
                 token={props.token}

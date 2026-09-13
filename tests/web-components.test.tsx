@@ -1506,7 +1506,10 @@ describe('LogEntry component', () => {
     expect(html).toContain('External action');
     expect(html).toContain('Decision');
     expect(html).toContain('approved');
-    expect(html).not.toContain('expandable');
+    // A decided gate folds to its verdict line; the card is still rendered
+    // (searchable, expandable) but closed by default.
+    expect(html).toContain('expandable');
+    expect(html).toContain('log-gate-summary');
   });
 
   it('escapes hostile log content', () => {

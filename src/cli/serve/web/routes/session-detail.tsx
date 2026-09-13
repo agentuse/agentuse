@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation, useRoute } from 'preact-iso';
 import type { ApprovalLogEntry, ApprovalPageInfo, LogVerifySummary } from '../../types';
-import { CandidateVerdictList, LogEntry, toolChipLabel } from '../components/log-entry';
+import { CandidateVerdictList, LogEntry, toolChipLabel, type PriorReview } from '../components/log-entry';
 import { InlineMarkdown, LogContent } from '../components/content';
 import { DecisionDialog, type DecisionDialogMode } from '../components/comment-dialog';
 import { ContinuePanel } from '../components/continue-panel';
@@ -261,6 +261,8 @@ function recordedMetricAmount(m: RecordedMetric): string {
 /** One judge verdict for the hoisted panel: the session's own verify markers
  * plus every verify event under its important descendants, oldest first. */
 export interface JudgeRow {
+  /** Zero-based attempt within its gate cycle; resets on a retry gate. */
+  attempt: number;
   id: string;
   time: number;
   verdict: LogVerifySummary['verdict'];
@@ -285,6 +287,7 @@ export function collectJudgeRows(logs: ApprovalLogEntry[]): JudgeRow[] {
       id: entry.id,
       time: entry.time ?? 0,
       verdict: entry.verify.verdict,
+      attempt: entry.verify.attempt,
       attemptLabel: `Attempt ${entry.verify.attempt + 1} of ${entry.verify.maxAttempts}`,
       ...(entry.verify.judge && { judge: entry.verify.judge }),
       ...(entry.verify.critique && { critique: entry.verify.critique }),
@@ -292,7 +295,34 @@ export function collectJudgeRows(logs: ApprovalLogEntry[]): JudgeRow[] {
       href: `#log-${encodeURIComponent(entry.id)}`,
     });
   }
-  return rows.sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
+  rows.sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
+  // Point each attempt at the judge's own run, where its reasoning lives,
+  // rather than at the verify marker in this log, which only repeats the
+  // verdict the row already shows. A verify marker does not name the judge
+  // session; the gate it fed does (details.judge.sessionHref). One judge
+  // session is resumed across the attempts of one gate cycle, and a cycle
+  // restarts when the attempt counter drops back to 0 (a retry gate). So:
+  // group rows into cycles, then give each cycle the href of the first
+  // linked gate that follows its rows.
+  const cycles: { rows: JudgeRow[]; href?: string }[] = [];
+  for (const row of rows) {
+    const last = cycles[cycles.length - 1];
+    if (!last || row.attempt <= (last.rows[last.rows.length - 1]?.attempt ?? -1)) cycles.push({ rows: [row] });
+    else last.rows.push(row);
+  }
+  const gates = logs
+    .filter((entry) => entry.details?.judge?.sessionHref)
+    .sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
+  for (const gate of gates) {
+    const gateTime = gate.time ?? 0;
+    const cycle = [...cycles].reverse().find((c) => c.rows.some((row) => row.time <= gateTime));
+    if (cycle && !cycle.href) cycle.href = gate.details!.judge!.sessionHref!;
+  }
+  for (const cycle of cycles) {
+    if (!cycle.href) continue;
+    for (const row of cycle.rows) row.href = cycle.href;
+  }
+  return rows;
 }
 
 /**
@@ -302,10 +332,18 @@ export function collectJudgeRows(logs: ApprovalLogEntry[]): JudgeRow[] {
  * failed, and why") was the thing they never saw. Same placement reasoning as
  * the learnings panel below it.
  */
-export function JudgePanel(props: { rows: JudgeRow[] }) {
+export function JudgePanel(props: {
+  rows: JudgeRow[];
+  /** The live gate card already carries the latest verdict on its candidates,
+   *  so when one is on the page this panel is a repeat and starts folded. With
+   *  no gate showing it, a non-pass verdict is the page's headline and opens. */
+  gateVisible?: boolean;
+}) {
   if (props.rows.length === 0) return null;
   const last = props.rows[props.rows.length - 1]!;
+  const earlier = props.rows.slice(0, -1);
   const failed = props.rows.filter((row) => row.verdict === 'fail').length;
+  const open = !props.gateVisible && last.verdict !== 'pass';
   const lede = last.verdict === 'pass'
     ? failed > 0 ? `passed after ${failed} bounce${failed === 1 ? '' : 's'}` : 'passed first time'
     : last.verdict === 'fail'
@@ -314,28 +352,46 @@ export function JudgePanel(props: { rows: JudgeRow[] }) {
         ? 'not judged · escalated to you'
         : 'not reviewed · judge error';
   return (
-    <section class="panel judge-panel" aria-label="Judge verdicts">
-      <div class="judge-panel-head">
+    <details class="panel judge-panel" aria-label="Judge verdicts" open={open}>
+      <summary class="judge-panel-head">
         <span class="judge-label">judge</span>
         <span class={`chip status ${last.verdict === 'pass' ? 'completed' : last.verdict === 'skipped' ? 'skipped' : 'error'}`}>{lede}</span>
-      </div>
+        <span class="judge-panel-count">{props.rows.length} {props.rows.length === 1 ? 'attempt' : 'attempts'}</span>
+      </summary>
+      {/* Only the latest verdict stays open. Earlier attempts repeat the same
+          three-candidate critique with small deltas, and each folded gate in
+          the log carries its own copy, so printing every round here made the
+          page three critiques tall before the reviewer reached the decision. */}
+      {earlier.length > 0 && (
+        <details class="judge-earlier">
+          <summary>{earlier.length} earlier {earlier.length === 1 ? 'attempt' : 'attempts'}</summary>
+          <ol class="judge-rows">
+            {earlier.map((row) => <JudgeRowItem key={row.id} row={row} />)}
+          </ol>
+        </details>
+      )}
       <ol class="judge-rows">
-        {props.rows.map((row) => (
-          <li key={row.id} class={`judge-row is-${row.verdict}`}>
-            <a class="judge-row-head" href={row.href}>
-              <span class="judge-row-mark" aria-hidden="true">{row.verdict === 'pass' ? '✓' : row.verdict === 'fail' ? '✗' : row.verdict === 'skipped' ? '–' : '⚠'}</span>
-              <span class="judge-row-attempt">{row.attemptLabel}</span>
-              {row.owner && <span class="judge-row-owner">{row.owner}</span>}
-              {row.judge && <code class="judge-row-judge">{row.judge}</code>}
-              <time dateTime={new Date(row.time).toISOString()}>{formatLogTime(row.time)}</time>
-            </a>
-            {row.candidates && row.candidates.length > 0
-              ? <CandidateVerdictList candidates={row.candidates} />
-              : row.critique && <p class="judge-row-critique">{row.critique}</p>}
-          </li>
-        ))}
+        <JudgeRowItem row={last} />
       </ol>
-    </section>
+    </details>
+  );
+}
+
+function JudgeRowItem(props: { row: JudgeRow }) {
+  const { row } = props;
+  return (
+    <li class={`judge-row is-${row.verdict}`}>
+      <a class="judge-row-head" href={row.href}>
+        <span class="judge-row-mark" aria-hidden="true">{row.verdict === 'pass' ? '✓' : row.verdict === 'fail' ? '✗' : row.verdict === 'skipped' ? '–' : '⚠'}</span>
+        <span class="judge-row-attempt">{row.attemptLabel}</span>
+        {row.owner && <span class="judge-row-owner">{row.owner}</span>}
+        {row.judge && <code class="judge-row-judge">{row.judge}</code>}
+        <time dateTime={new Date(row.time).toISOString()}>{formatLogTime(row.time)}</time>
+      </a>
+      {row.candidates && row.candidates.length > 0
+        ? <CandidateVerdictList candidates={row.candidates} />
+        : row.critique && <p class="judge-row-critique">{row.critique}</p>}
+    </li>
   );
 }
 
@@ -504,6 +560,10 @@ export default function SessionDetail() {
   // re-collapsed transcript leaves the page too short for the scroll restore
   // below to land anywhere useful.
   const [transcriptOpen, setTranscriptOpen] = useState<boolean>(transcriptDefaultOpen);
+  // Transcript disclosure while a gate is pending. Not the remembered
+  // preference above: that defaults open, and the point here is that the log
+  // starts closed on every visit to a pending decision.
+  const [gateLogOpen, setGateLogOpen] = useState(false);
   // Entry-type filter. A long run is mostly tool calls, so free-text search is a
   // poor way to find the agent's reasoning spine or the thing that failed.
   const [logFilter, setLogFilter] = useState<LogFilter>(() => {
@@ -1149,21 +1209,24 @@ export default function SessionDetail() {
   const reopenActionable = ended && approval?.sessionStatus === 'error'
     && Boolean(approval?.reopenable) && !live && !submittingReopen && !fatalError;
 
-  // Surface the actionable gate as the LAST card in the feed. Normally the pending
-  // await_human entry is already last, so this is a no-op. But after a reopen —
-  // which re-arms an earlier gate in place while the failed resume's later work
-  // stays logged below it — the gate and its Approve/Reject/Comment buttons would
-  // otherwise be buried mid-stream. Move it to the end so the reviewer finds the
-  // request where they look (and where auto-scroll lands): the bottom of the feed.
-  const feedLogs = useMemo(() => {
-    if (!actionable) return collapsedLogs;
+  // Split the actionable gate OUT of the feed so the transcript can fold shut
+  // above it. The gate is the one thing a reviewer must act on; the hundreds
+  // of entries before it (rejected rounds, judge critiques, every tool call)
+  // are context they can open on demand. The split also covers a reopen,
+  // which re-arms an earlier gate mid-stream: it still ends the page.
+  const { gateEntry, feedLogs } = useMemo(() => {
+    if (!actionable) return { gateEntry: undefined, feedLogs: collapsedLogs };
     const activeToken = currentResumeTokenRef.current;
     const idx = collapsedLogs.findIndex((e) =>
       e.status === 'pending' && Boolean(e.details)
       && (!activeToken || e.details?.resumeToken === activeToken));
-    if (idx < 0 || idx === collapsedLogs.length - 1) return collapsedLogs;
-    return [...collapsedLogs.slice(0, idx), ...collapsedLogs.slice(idx + 1), collapsedLogs[idx]];
+    if (idx < 0) return { gateEntry: undefined, feedLogs: collapsedLogs };
+    return {
+      gateEntry: collapsedLogs[idx],
+      feedLogs: [...collapsedLogs.slice(0, idx), ...collapsedLogs.slice(idx + 1)],
+    };
   }, [collapsedLogs, actionable]);
+  const gateFolded = Boolean(gateEntry) && !summaryFirst;
   const matchingFeedLogs = useMemo(
     () => feedLogs.filter((entry) => sessionLogMatches(entry, logQuery, nestedToolCalls.get(entry.callId ?? ''))),
     [feedLogs, logQuery, nestedToolCalls]
@@ -1799,6 +1862,58 @@ export default function SessionDetail() {
     </>
   ) : null;
 
+  const renderLogEntry = (entry: PreparedLogEntry, extra?: { priorReview?: PriorReview | undefined }) => {
+    const entryActionable = actionable && entry.status === 'pending' && Boolean(entry.details) &&
+      (!currentResumeTokenRef.current || entry.details?.resumeToken === currentResumeTokenRef.current);
+    const nestedCalls = entry.callId ? nestedToolCalls.get(entry.callId) : undefined;
+    // This is deliberately derived instead of writing an expansion override:
+    // clearing the search restores the reviewer's normal collapsed state.
+    const expandedNestedCallIds = nestedCallIdsToExpand(logQuery, logFilter, nestedCalls);
+    return (
+      <LogEntry
+        key={entry.id}
+        entry={entry}
+        isNew={isNewLog(entry.id)}
+        repeatCount={entry.repeatCount}
+        warnings={entry.callId ? toolWarnings.get(entry.callId) : undefined}
+        nestedCalls={nestedCalls}
+        nestedWarnings={toolWarnings}
+        expanded={expandedNestedCallIds.size > 0 ? true : expandOverrides.get(entry.id)}
+        expandOverrides={expandOverrides}
+        forceExpandedNestedCallIds={expandedNestedCallIds}
+        showActions={entryActionable}
+        priorReview={extra?.priorReview}
+        parentApproveHref={showParentApproveCta ? parentLink : undefined}
+        parentApproveLabel={parentLabel}
+        actionsDisabled={submittingDecision !== null}
+        pendingAction={submittingDecision}
+        projectId={projectId}
+        sessionId={sessionId}
+        token={token}
+        selectedChoice={entryActionable ? effectiveChoice : undefined}
+        onSelectChoice={entryActionable ? setSelectedChoice : undefined}
+        onToggle={(id, next) => {
+          setExpandOverrides((current) => new Map(current).set(id, next));
+        }}
+        onAction={onAction}
+      />
+    );
+  };
+
+  // The pending gate, in its own list after the folded transcript. Same list
+  // markup as the feed so the card, its sticky action row, and the auto-scroll
+  // target (.log-item.is-actionable) all keep working unchanged.
+  const gatePanel = gateEntry ? (
+    <div class="panel gate-panel">
+      <ul class="logs" role="list">
+        {/* The previous round's comment used to be its own banner above the
+            page. It rides inside the gate now, folded, so the decision and
+            the reason the draft was sent back sit together. */}
+        {renderLogEntry(gateEntry, { priorReview: reviewerComment })}
+      </ul>
+    </div>
+  ) : null;
+
   // The transcript feed, shared by both layouts: inline under its section
   // title (live/feed-first) or inside the collapsed <details> (summary-first).
   const logsFeed = (
@@ -1822,42 +1937,7 @@ export default function SessionDetail() {
               : `${debugCount} debug ${debugCount === 1 ? 'entry' : 'entries'} hidden. Enable the debug toggle to view.`}
           </li>
         )}
-        {matchingFeedLogs.map((entry) => {
-          const entryActionable = actionable && entry.status === 'pending' && Boolean(entry.details) &&
-            (!currentResumeTokenRef.current || entry.details?.resumeToken === currentResumeTokenRef.current);
-          const nestedCalls = entry.callId ? nestedToolCalls.get(entry.callId) : undefined;
-          // This is deliberately derived instead of writing an expansion override:
-          // clearing the search restores the reviewer's normal collapsed state.
-          const expandedNestedCallIds = nestedCallIdsToExpand(logQuery, logFilter, nestedCalls);
-          return (
-            <LogEntry
-              key={entry.id}
-              entry={entry}
-              isNew={isNewLog(entry.id)}
-              repeatCount={entry.repeatCount}
-              warnings={entry.callId ? toolWarnings.get(entry.callId) : undefined}
-              nestedCalls={nestedCalls}
-              nestedWarnings={toolWarnings}
-              expanded={expandedNestedCallIds.size > 0 ? true : expandOverrides.get(entry.id)}
-              expandOverrides={expandOverrides}
-              forceExpandedNestedCallIds={expandedNestedCallIds}
-              showActions={entryActionable}
-              parentApproveHref={showParentApproveCta ? parentLink : undefined}
-              parentApproveLabel={parentLabel}
-              actionsDisabled={submittingDecision !== null}
-              pendingAction={submittingDecision}
-              projectId={projectId}
-              sessionId={sessionId}
-              token={token}
-              selectedChoice={entryActionable ? effectiveChoice : undefined}
-              onSelectChoice={entryActionable ? setSelectedChoice : undefined}
-              onToggle={(id, next) => {
-                setExpandOverrides((current) => new Map(current).set(id, next));
-              }}
-              onAction={onAction}
-            />
-          );
-        })}
+        {matchingFeedLogs.map((entry) => renderLogEntry(entry))}
         {showWorking && !logQuery && (
           <li class="log-item log-working">
             <div class="log-head">
@@ -2048,14 +2128,6 @@ export default function SessionDetail() {
 
         {summaryFirst && resultSection}
 
-        {reviewerComment && (
-          <div class="panel reviewer-comment">
-            <div class="label">latest reviewer comment</div>
-            <div class="body"><LogContent value={reviewerComment.comment} forceMarkdown /></div>
-            {reviewerComment.reviewer && <div class="meta-line">from {reviewerComment.reviewer}</div>}
-          </div>
-        )}
-
         {!summaryFirst && !resultSection && artifactTiles && (
           <div class="panel session-artifacts">
             <div class="label">artifacts</div>
@@ -2066,7 +2138,7 @@ export default function SessionDetail() {
             this page: anything under it is read only by someone who scrolled
             past every tool call to get there, which is not where a warning that
             the agent's learnings have stopped being read belongs. */}
-        <JudgePanel rows={judgeRows} />
+        <JudgePanel rows={judgeRows} gateVisible={Boolean(gateEntry)} />
 
         <LearningsPanel
           hidden={!learningsVisible}
@@ -2075,17 +2147,25 @@ export default function SessionDetail() {
           {...(projectId ? { project: projectId } : {})}
         />
 
-        {summaryFirst ? (
+        {summaryFirst || gateFolded ? (
+          // Two reasons to fold: the run ended and the result card leads
+          // (summary-first, remembered preference), or a decision is pending
+          // and the transcript above it is context, not the ask (gate-folded,
+          // closed on every visit). The folded row says which and how much it
+          // hides, so nobody mistakes it for an empty log.
           <details
-            class="session-transcript"
+            class={`session-transcript${gateFolded ? ' is-gate-folded' : ''}`}
             key={`transcript-${sessionId}`}
-            open={transcriptOpen}
-            onToggle={(e) => setTranscriptOpen((e.currentTarget as HTMLDetailsElement).open)}
+            open={gateFolded ? gateLogOpen : transcriptOpen}
+            onToggle={(e) => (gateFolded ? setGateLogOpen : setTranscriptOpen)((e.currentTarget as HTMLDetailsElement).open)}
           >
             <summary>
               <span>session log</span>
               {visibleLogs.length > 0 && (
                 <span class="count">{visibleLogs.length} {visibleLogs.length === 1 ? 'entry' : 'entries'}</span>
+              )}
+              {gateFolded && !gateLogOpen && (
+                <span class="count">folded while a decision is pending · click to show</span>
               )}
               <span class="rule"></span>
             </summary>
@@ -2100,9 +2180,13 @@ export default function SessionDetail() {
               {logTools}
             </div>
             {logsFeed}
-            {resultSection}
           </>
         )}
+        {!summaryFirst && resultSection}
+
+        {/* The pending gate closes the page, under the folded transcript: the
+            reviewer reads what the agent did (or skips it), then decides. */}
+        {gatePanel}
 
         <div class="session-actions">
           {reopenActionable && (
@@ -2220,6 +2304,19 @@ export default function SessionDetail() {
           )}
         </div>
 
+
+        <ContinuePanel
+          hidden={!continueActionable || !showResume}
+          disabled={submittingContinue || !continueActionable}
+          busy={submittingContinue}
+          onSubmit={(prompt) => void submitContinue(prompt)}
+        />
+
+        <div class="inactive-banner" hidden={actionable || cascadeRetryActionable || continueActionable || stopActionable || dismissActionable || reopenActionable || live || busy}>
+          This session is not accepting actions right now.
+        </div>
+
+
         <ChangesetSessionPanel
           sessionId={sessionId}
           token={token}
@@ -2244,16 +2341,6 @@ export default function SessionDetail() {
           }}
         />
 
-        <ContinuePanel
-          hidden={!continueActionable || !showResume}
-          disabled={submittingContinue || !continueActionable}
-          busy={submittingContinue}
-          onSubmit={(prompt) => void submitContinue(prompt)}
-        />
-
-        <div class="inactive-banner" hidden={actionable || cascadeRetryActionable || continueActionable || stopActionable || dismissActionable || reopenActionable || live || busy}>
-          This session is not accepting actions right now.
-        </div>
 
         {shouldShowResultNotice(result, Boolean(resultSection), resultErrorText) && (
           <p ref={noticeRef} class={`notice${result.error ? ' error' : ''}`} role={result.error ? 'alert' : 'status'}>{result.text}</p>

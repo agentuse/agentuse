@@ -1717,6 +1717,11 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   color: var(--muted);
   font-size: var(--font-size-caption);
 }
+.approval-prior-review-meta {
+  margin-left: 8px;
+  color: var(--muted);
+  font-weight: var(--weight-normal);
+}
 /* Artifacts the run produced. Green accent matches the "produced/completed"
    semantics this view already uses for completed/approved status. */
 .page-approval-detail .session-artifacts {
@@ -2346,6 +2351,8 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 .log-item[data-log-type="tool"].running { border-left-color: var(--amber-border); }
 .log-item[data-log-type="tool"].error,
 .log-item[data-log-type="tool"].failed { border-left-color: var(--red-border); }
+.log-item[data-log-type="tool"].error.is-recovered,
+.log-item[data-log-type="tool"].failed.is-recovered { border-left-color: var(--amber-border); }
 .log-item[data-log-type="compaction"] { border-left-color: var(--amber-border); }
 .log-item[data-log-type="error"] { border-left-color: var(--red-border); }
 .log-item[data-log-type="learning"] { border-left-color: var(--cyan-border); }
@@ -2389,6 +2396,31 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 .log-item.completed > .log-head .tool-chip, .log-item.approved > .log-head .tool-chip { border-color: var(--green-border); background: var(--green-soft); color: var(--green); }
 .log-item.running > .log-head .tool-chip { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
 .log-item.error > .log-head .tool-chip, .log-item.failed > .log-head .tool-chip { border-color: var(--red-border); background: var(--red-soft); color: var(--red); }
+/* The call still failed and remains expandable, but a later successful call
+   resolved it. Amber keeps that audit fact visible without implying the run is
+   still broken; the green badge names the successful recovery explicitly. */
+.log-item.error.is-recovered > .log-head .log-marker,
+.log-item.failed.is-recovered > .log-head .log-marker,
+.log-item.error.is-recovered > .log-head .log-title,
+.log-item.failed.is-recovered > .log-head .log-title { color: var(--amber); }
+.log-item.error.is-recovered > .log-head .tool-chip,
+.log-item.failed.is-recovered > .log-head .tool-chip { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
+.log-recovery-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-family: var(--sans);
+  font-size: var(--font-size-micro);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  vertical-align: 1px;
+}
+.log-recovery-badge.is-success { border-color: var(--green-border); background: var(--green-soft); color: var(--green); }
+.log-recovery-badge.is-active { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
+.log-recovery-badge.is-failed { border-color: var(--red-border); background: var(--red-soft); color: var(--red); }
 /* An executing tool spins amber (acting); streaming text keeps the cyan spinner. */
 .log-item.running > .log-head .log-spinner { border-color: var(--amber-border); border-top-color: var(--amber); }
 
@@ -3800,6 +3832,45 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
    the per-candidate list when the gate was a slate. */
 .judge-panel { display: grid; gap: 12px; }
 .judge-panel-head { display: flex; align-items: center; gap: 10px; }
+/* Same reset as the subagent card: `.status` carries the page-header pill's
+   margin-bottom, which lifts the chip off the label's centre line. */
+.judge-panel-head .chip.status { margin: 0; }
+/* Both panels fold to their heading line. The heading is the summary: the
+   caret sits before the label, and the native marker is hidden so the label
+   styling stays identical to the unfolded version. */
+details.judge-panel > summary,
+.learnings-panel.is-foldable > summary {
+  cursor: pointer;
+  list-style: none;
+}
+details.judge-panel > summary::-webkit-details-marker,
+.learnings-panel.is-foldable > summary::-webkit-details-marker { display: none; }
+details.judge-panel > summary::before,
+.learnings-panel.is-foldable > summary::before {
+  content: "▸";
+  color: var(--cyan);
+  font-size: var(--font-size-caption);
+  margin-right: 8px;
+}
+details.judge-panel[open] > summary::before,
+.learnings-panel.is-foldable[open] > summary::before { content: "▾"; }
+/* Closed, the hidden content is still a grid item, so the row gap would leave
+   a blank band under the summary. */
+details.judge-panel:not([open]),
+.learnings-panel.is-foldable:not([open]) { gap: 0; }
+details.judge-panel > summary:focus-visible,
+.learnings-panel.is-foldable > summary:focus-visible {
+  outline: 2px solid var(--cyan-border);
+  outline-offset: 2px;
+}
+.judge-panel-count,
+.learnings-fold-meta {
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+  letter-spacing: normal;
+  text-transform: none;
+  margin-left: 6px;
+}
 .judge-label {
   color: var(--muted);
   font-size: var(--font-size-micro);
@@ -3834,6 +3905,26 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 .judge-row-attempt { font-weight: 600; }
 .judge-row-owner, .judge-row-head time { color: var(--muted); }
 .judge-row-judge { color: var(--muted); font-size: var(--font-size-micro); }
+/* Folded earlier attempts: a plain disclosure line, muted, above the live row. */
+.judge-earlier { margin-bottom: 8px; }
+.judge-earlier > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+  padding: 2px 0;
+  list-style: none;
+}
+.judge-earlier > summary::-webkit-details-marker { display: none; }
+.judge-earlier > summary::before { content: "▸ "; color: var(--muted-3); font-size: var(--font-size-micro); }
+.judge-earlier[open] > summary::before { content: "▾ "; }
+.judge-earlier[open] > summary { margin-bottom: 8px; }
+/* A folded, already-decided gate keeps its verdict on the title line. */
+.log-gate-summary {
+  margin-left: 8px;
+  color: var(--muted);
+  font-weight: var(--weight-normal);
+  font-size: var(--font-size-caption);
+}
 .judge-row-critique {
   margin: 0;
   color: var(--fg);
@@ -10893,3 +10984,104 @@ html[data-page="draft-panel"] .app-route {
   font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted); text-decoration: none; white-space: nowrap;
 }
 .page-sessions .sessions-scope-clear:hover { color: var(--fg); }
+
+/* --- Folded rows on the session page: judge, learnings, gate-folded log ---
+   Three panels that fold to one line each, stacked. They share ONE look so
+   the stack reads as a set of drawers rather than three unrelated boxes:
+   same box, same caret, same label size, same meta size, same spacing. The
+   open state keeps each panel's own layout; only the closed row is unified. */
+.page-approval-detail details.judge-panel,
+.page-approval-detail .learnings-panel.is-foldable,
+.page-approval-detail .session-transcript.is-gate-folded {
+  margin: 12px 0 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: none;
+}
+.page-approval-detail details.judge-panel[open],
+.page-approval-detail .learnings-panel.is-foldable[open],
+.page-approval-detail .session-transcript.is-gate-folded[open] {
+  padding: 0 18px 16px;
+}
+.page-approval-detail details.judge-panel > summary,
+.page-approval-detail .learnings-panel.is-foldable > summary,
+.page-approval-detail .session-transcript.is-gate-folded > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 16px;
+  font-size: var(--font-size-micro);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+  list-style: none;
+  cursor: pointer;
+  border-radius: 12px;
+}
+.page-approval-detail details.judge-panel[open] > summary,
+.page-approval-detail .learnings-panel.is-foldable[open] > summary,
+.page-approval-detail .session-transcript.is-gate-folded[open] > summary {
+  padding: 0;
+  margin-bottom: 8px;
+}
+.page-approval-detail details.judge-panel > summary:hover,
+.page-approval-detail .learnings-panel.is-foldable > summary:hover,
+.page-approval-detail .session-transcript.is-gate-folded > summary:hover { color: var(--fg); }
+.page-approval-detail details.judge-panel > summary::before,
+.page-approval-detail .learnings-panel.is-foldable > summary::before,
+.page-approval-detail .session-transcript.is-gate-folded > summary::before {
+  content: "▸";
+  margin: 0;
+  color: var(--muted-3);
+  font-size: var(--font-size-micro);
+  width: 10px;
+  flex: none;
+}
+.page-approval-detail details.judge-panel[open] > summary::before,
+.page-approval-detail .learnings-panel.is-foldable[open] > summary::before,
+.page-approval-detail .session-transcript.is-gate-folded[open] > summary::before { content: "▾"; }
+/* Meta text after the label: one size, one colour, no caps. */
+.page-approval-detail .judge-panel-count,
+.page-approval-detail .learnings-fold-meta,
+.page-approval-detail .session-transcript.is-gate-folded > summary .count {
+  margin: 0;
+  color: var(--muted-3);
+  font-size: var(--font-size-caption);
+  font-weight: var(--weight-normal);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.page-approval-detail .session-transcript.is-gate-folded > summary .count + .count::before {
+  content: "· ";
+  color: var(--muted);
+}
+.page-approval-detail .session-transcript.is-gate-folded:not([open]) > summary .rule { display: none; }
+/* The judge chip is the only coloured element in the stack; keep it, but at
+   row scale rather than page-header scale. */
+.page-approval-detail .judge-panel-head .chip.status {
+  padding: 2px 8px;
+  font-size: var(--font-size-micro);
+  line-height: 1.4;
+}
+.page-approval-detail .judge-label,
+.page-approval-detail .learnings-label { color: inherit; font-size: inherit; letter-spacing: inherit; }
+
+/* One vertical rhythm for the stack under the header: 12px between every
+   block (the header's own 28px break stays). The gate is a bordered card
+   already, so its wrapper is invisible: no second frame, no inner padding. */
+.page-approval-detail .gate-panel {
+  margin-top: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.page-approval-detail .gate-panel > .logs,
+.page-approval-detail .gate-panel > .logs:first-child { margin: 0; }
+.page-approval-detail .gate-panel > .logs > .log-item.is-actionable { margin-top: 0; margin-bottom: 0; }
+.page-approval-detail .gate-panel + .session-actions { margin-top: 12px; }
