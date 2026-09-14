@@ -8566,6 +8566,17 @@ a.lastrun.waiting { color: var(--cyan); }
   border-left: 1px solid var(--line-strong);
 }
 .page-approval-detail .subagent-children .subagent-event { margin-top: 8px; }
+.page-approval-detail .subagent-children > * + * { margin-top: 14px; }
+/* Inside the gate the delegated run and its judges are context for the ask
+   below, not part of it: one quiet band above the question, a hairline under
+   it, and enough inset that the tone rails sit clear of the card edge. */
+.page-approval-detail .log-item.is-actionable > .log-main > .subagent-tree-node {
+  margin: 0;
+  padding: 14px 16px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.page-approval-detail .log-item.is-actionable > .log-main > .subagent-tree-node > .subagent-card { margin-top: 0; }
 .page-approval-detail .subagent-tree-node > .verify-event { border-left: 3px solid var(--cyan-border); }
 .page-approval-detail .subagent-tree-node > .verify-event.is-failure { border-left-color: var(--red); }
 /* All descendant roles use the same report rail. The runtime maps both ordinary
