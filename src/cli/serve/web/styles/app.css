@@ -11094,3 +11094,187 @@ html[data-page="draft-panel"] .app-route {
 .page-approval-detail .gate-panel > .logs:first-child { margin: 0; }
 .page-approval-detail .gate-panel > .logs > .log-item.is-actionable { margin-top: 0; margin-bottom: 0; }
 .page-approval-detail .gate-panel + .session-actions { margin-top: 12px; }
+
+/* --- Session page: compact header + the "now" card --- */
+.page-approval-detail header.session-header { margin-bottom: 20px; }
+.page-approval-detail .session-header h1 { margin: 0; }
+.page-approval-detail .session-header .header-title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.page-approval-detail .session-header-diagnostic { margin-left: auto; }
+.page-approval-detail .session-meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 18px;
+  font-size: var(--font-size-caption);
+  color: var(--muted);
+}
+.page-approval-detail .session-meta-line b { font-weight: var(--weight-normal); color: var(--muted-3); }
+.page-approval-detail .session-meta-line code { font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted-3); }
+.page-approval-detail .session-meta-id { margin-left: auto; }
+.page-approval-detail .session-meta-id code { color: var(--muted-2); }
+.page-approval-detail .session-header-note {
+  margin: 12px 0 0;
+  font-size: var(--font-size-caption);
+  color: var(--muted-3);
+  line-height: var(--lh-snug);
+}
+
+.page-approval-detail .now-card { padding: 0; overflow: hidden; }
+.page-approval-detail .now-card.is-decision { border-color: var(--cyan-border); }
+.page-approval-detail .now-card.is-error { border-color: var(--red-border); }
+.page-approval-detail .now-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 6px 18px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--font-size-caption);
+  color: var(--muted);
+}
+.page-approval-detail .now-head.is-decision { background: var(--cyan-soft); }
+.page-approval-detail .now-head.is-error { background: var(--red-soft); }
+.page-approval-detail .now-label {
+  font-size: var(--font-size-micro);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--muted-3);
+}
+.page-approval-detail .now-head.is-decision .now-label { color: var(--cyan); }
+.page-approval-detail .now-head.is-error .now-label { color: var(--red); }
+.page-approval-detail .now-head.is-result .now-label { color: var(--green); }
+.page-approval-detail .now-head.is-working .now-label { color: var(--cyan); }
+.page-approval-detail .now-trailing { margin-left: auto; }
+.page-approval-detail .now-body { padding: 14px 18px; }
+.page-approval-detail .now-error { color: var(--fg); font-size: var(--font-size-supporting); line-height: var(--lh-loose); }
+.page-approval-detail .now-working-label { color: var(--muted-3); }
+/* Inside the card the gate list and the single running/failed row lose their
+   own frame: the card is the frame. */
+.page-approval-detail .now-card .gate-panel { margin: 0; }
+.page-approval-detail .now-card .gate-panel > .logs > .log-item.is-actionable,
+.page-approval-detail .now-card > .logs > .log-item { border: 0; border-radius: 0; margin: 0; box-shadow: none; }
+.page-approval-detail .now-card > .logs { margin: 0; }
+/* The result card is the body of the now card, not a second framed panel. */
+.page-approval-detail .now-card > .session-result { border: 0; border-radius: 0; box-shadow: none; margin: 0; }
+.page-approval-detail .now-card.is-result { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--surface-shadow); }
+.page-approval-detail .now-card + .session-actions { margin-top: 12px; }
+/* The now-card head already carries the status and the timing line. */
+.page-approval-detail .now-card > .session-result > .result-verdict { display: none; }
+
+/* Now-card bodies: tiles under a result, the recent steps under a running
+   step, the report + way back on a sub-agent, and the action row at the foot. */
+.page-approval-detail .now-card .session-actions {
+  margin: 0;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+}
+.page-approval-detail .now-card .continue-panel,
+.page-approval-detail .now-card .inactive-banner { margin: 0 18px 12px; }
+.page-approval-detail .now-card .changeset-session-panel,
+.page-approval-detail .now-card .agent-revision-session-panel { margin: 0 18px 12px; }
+.page-approval-detail .now-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  padding: 0 18px 14px;
+}
+.page-approval-detail .now-tile {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: grid;
+  gap: 2px;
+}
+.page-approval-detail .now-tile-label {
+  font-size: var(--font-size-micro);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.page-approval-detail .now-tile-value { font-size: var(--font-size-caption); color: var(--fg); }
+.page-approval-detail .now-tile-sub { font-size: var(--font-size-micro); color: var(--muted); }
+.page-approval-detail .now-tile code { font-family: var(--mono); font-size: var(--font-size-micro); }
+.page-approval-detail .now-title { font-size: var(--font-size-subtitle); font-weight: var(--weight-medium); margin-bottom: 8px; }
+.page-approval-detail .now-recent-label {
+  padding: 10px 18px 4px;
+  border-top: 1px solid var(--line);
+  font-size: var(--font-size-micro);
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.page-approval-detail .now-card > .logs.now-recent > .log-item { border: 0; border-radius: 0; margin: 0; box-shadow: none; opacity: 0.85; }
+.page-approval-detail .now-cta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 18px 14px;
+}
+.page-approval-detail .now-cta-primary {
+  background: var(--primary-bg);
+  border-color: var(--primary-bg);
+  color: var(--primary-fg);
+  text-decoration: none;
+}
+.page-approval-detail .now-cta-primary:hover { background: var(--primary-bg-hover); color: var(--primary-fg); }
+.page-approval-detail .now-cta-note { font-size: var(--font-size-caption); color: var(--muted); }
+.page-approval-detail .now-head.is-report .now-label { color: var(--green); }
+
+/* Artifact tiles carry their kind so a row of files reads at a glance. */
+.artifact-open-kind {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  min-height: 18px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  font-size: 10px;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-right: 8px;
+}
+.artifact-open.is-image .artifact-open-kind { color: var(--cyan); border-color: var(--cyan-border); }
+.artifact-open.is-page .artifact-open-kind { color: var(--green); border-color: var(--green-border); }
+.artifact-open.is-pdf .artifact-open-kind,
+.artifact-open.is-doc .artifact-open-kind { color: var(--amber); border-color: var(--amber-border); }
+.artifact-text { margin-top: 8px; }
+.artifact-text > summary {
+  cursor: pointer;
+  color: var(--cyan);
+  font-size: var(--font-size-caption);
+  list-style: none;
+}
+.artifact-text > summary::-webkit-details-marker { display: none; }
+.artifact-text > summary::before { content: "▸ "; color: var(--muted-3); font-size: var(--font-size-micro); }
+.artifact-text[open] > summary::before { content: "▾ "; }
+.artifact-text-body {
+  margin-top: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  max-height: 480px;
+  overflow: auto;
+  font-size: var(--font-size-supporting);
+  line-height: var(--lh-loose);
+}
+.artifact-text-loading, .artifact-text-error { margin-top: 6px; font-size: var(--font-size-caption); color: var(--muted); }
+.artifact-text-error { color: var(--red); }
+/* The additional-instruction panel folds like judge / learnings / log. */
+.page-approval-detail .additional-instruction.is-foldable { padding: 0; margin-top: 12px; }
+.page-approval-detail .additional-instruction.is-foldable[open] { padding: 0 18px 16px; }
+.page-approval-detail .additional-instruction.is-foldable > summary {
+  display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 16px;
+  cursor: pointer; list-style: none; border-radius: 12px;
+}
+.page-approval-detail .additional-instruction.is-foldable[open] > summary { padding: 0; margin-bottom: 8px; }
+.page-approval-detail .additional-instruction.is-foldable > summary::-webkit-details-marker { display: none; }
+.page-approval-detail .additional-instruction.is-foldable > summary::before { content: "\25B8"; color: var(--muted-3); font-size: var(--font-size-micro); width: 10px; flex: none; }
+.page-approval-detail .additional-instruction.is-foldable[open] > summary::before { content: "\25BE"; }
+.page-approval-detail .additional-instruction.is-foldable > summary .label { margin: 0; }
+.page-approval-detail .additional-instruction-meta {
+  color: var(--muted-3); font-size: var(--font-size-caption);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+.page-approval-detail .additional-instruction.is-foldable[open] > summary .additional-instruction-meta { display: none; }

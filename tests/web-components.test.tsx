@@ -1452,7 +1452,7 @@ describe('LogEntry component', () => {
       },
     }, { showActions: true });
 
-    expect(html.match(/class="artifact-open"/g)).toHaveLength(paths.length);
+    expect(html.match(/class="artifact-open is-[a-z]+"/g)).toHaveLength(paths.length);
     for (const [i, path] of paths.entries()) {
       expect(html).toContain(`/artifacts/${path}?snap=snapshot${i}`);
     }
@@ -1474,7 +1474,7 @@ describe('LogEntry component', () => {
       },
     });
 
-    expect(html.match(/class="artifact-open"/g)).toHaveLength(paths.length);
+    expect(html.match(/class="artifact-open is-[a-z]+"/g)).toHaveLength(paths.length);
     expect(html.match(/<img /g)).toHaveLength(1);
     expect(html.match(/<iframe /g)).toHaveLength(2);
     expect(html.match(/<video /g)).toHaveLength(1);

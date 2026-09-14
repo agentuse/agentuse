@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation, useRoute } from 'preact-iso';
 import type { ApprovalLogEntry, ApprovalPageInfo, LogVerifySummary } from '../../types';
-import { CandidateVerdictList, LogEntry, toolChipLabel, type PriorReview } from '../components/log-entry';
+import { CandidateVerdictList, LogEntry, artifactKind, toolChipLabel, type PriorReview } from '../components/log-entry';
 import { InlineMarkdown, LogContent } from '../components/content';
 import { DecisionDialog, type DecisionDialogMode } from '../components/comment-dialog';
 import { ContinuePanel } from '../components/continue-panel';
@@ -16,10 +16,11 @@ import { syncAppBadge } from '../lib/badge';
 import { writeClipboardText } from '../lib/clipboard';
 import { useApprovalStream } from '../hooks/use-approval-stream';
 import { useGlobalApprovals } from '../hooks/use-global-approvals';
-import { TokenUsageStrip } from '../components/token-usage-strip';
 import { useTitle } from '../hooks/use-title';
 import { useSmartBack } from '../hooks/use-smart-back';
+import { useRunAgent } from '../hooks/use-run-agent';
 import {
+  formatTokens,
   formatApprovalTime,
   formatLogTime,
   humanizeMetric,
@@ -436,14 +437,6 @@ function actionableGateTarget(): Element | null {
   return gate.querySelector('.approval-card') ?? gate;
 }
 
-function scrollToActionableGate(): boolean {
-  const target = actionableGateTarget();
-  if (!target) return false;
-  const top = target.getBoundingClientRect().top + window.scrollY - stickyHeaderOffset() - 12;
-  window.scrollTo({ top: Math.max(0, top), behavior: 'auto' });
-  return true;
-}
-
 // error + USER_STOPPED / TIMEOUT / INCOMPLETE surface as their own pill, matching the server.
 function displaySessionStatus(status: string, header: ApprovalHeader | null): string {
   if ((status === 'error' || header?.sessionStatus === 'error')) {
@@ -536,6 +529,10 @@ export default function SessionDetail() {
   // Project artifacts this run produced, from the artifact manifest. Refetched as
   // the log grows so newly written artifacts appear without a page reload.
   const [artifacts, setArtifacts] = useState<SessionArtifact[]>([]);
+  // "Run again" on an ended run: a fresh detached session of the same agent.
+  // Hooks run before the early returns below, so the path may be empty here;
+  // the button that calls run() only renders once approval has loaded.
+  const runAgain = useRunAgent(approval?.agent.runPath ?? '', projectId ?? approval?.project);
   // Artifact manifests change only when artifact_save completes. Keeping this
   // separate from logsVersion prevents an initial SSE transcript replay from
   // turning N historical log entries into N manifest requests.
@@ -1001,7 +998,11 @@ export default function SessionDetail() {
       // card's top. Leave the ref unset until the card actually exists so a
       // gate that streams in a beat later still gets landed on.
       if (hasActionableApproval(status, approval)) {
-        if (!scrollToActionableGate()) return;
+        // The gate is the first card under the header now; the page opens on
+        // it without a jump. Leave the ref unset until it exists so a gate
+        // that streams in a beat later is still what the reviewer lands on.
+        if (!actionableGateTarget()) return;
+        window.scrollTo({ top: 0, behavior: 'auto' });
         hasScrolledRef.current = true;
         return;
       }
@@ -1176,6 +1177,10 @@ export default function SessionDetail() {
     };
   }, [collapsedLogs, actionable]);
   const gateFolded = Boolean(gateEntry) && !summaryFirst;
+  // With the result in the now card, an ended run's transcript is history too:
+  // it folds on the same terms as a pending gate's, so the page reads
+  // header, outcome, drawers, and the log only on request.
+  const logFolded = gateFolded || ended;
   const matchingFeedLogs = useMemo(
     () => feedLogs.filter((entry) => sessionLogMatches(entry, logQuery, nestedToolCalls.get(entry.callId ?? ''))),
     [feedLogs, logQuery, nestedToolCalls]
@@ -1574,13 +1579,15 @@ export default function SessionDetail() {
     ? `Revising ${revisionIdentity.targetAgentName}`
     : undefined;
   const pageAgentLabel = revisionTitle ?? agentLabel;
-  const agentIdentityLabel = isRevisionSession ? 'AgentUse Reviser' : agentLabel;
-  const agentDescription = !isRevisionSession && approval.agent.description && approval.agent.description !== agentLabel
-    ? approval.agent.description
-    : undefined;
   const busy = status === 'resuming' || status === 'continuing';
   const tokenUsage = headerTokenUsage(approval);
   const estimatedCost = pricing ? pricing.estimateSessionCostUsd(approval.model, tokenUsage) : undefined;
+  const costLabel = estimatedCost !== undefined && pricing ? pricing.formatUsd(estimatedCost) : undefined;
+  const contextLeftLabel = (() => {
+    const context = tokenUsage?.context;
+    if (!context || typeof context.contextLimit !== 'number' || context.contextLimit <= 0) return undefined;
+    return `${Math.max(0, 100 - context.usagePercentage).toFixed(0)}% left`;
+  })();
   // Resolved theme currently applied to the document (set by the theme toggle).
   // Threaded into artifact links so a new-tab markdown/text artifact renders in
   // the same theme as the app rather than the default.
@@ -1607,17 +1614,6 @@ export default function SessionDetail() {
   // parent run. Surface a prominent jump-to-parent CTA so the reviewer isn't left
   // hunting for the (intentionally hidden) approve buttons.
   const showParentApproveCta = isSubagentView && approval.sessionStatus === 'suspended' && Boolean(parentLink);
-  const eyebrow = isRevisionSession
-    ? 'internal revision'
-    : isSubagentView
-    ? 'sub-agent run'
-    : actionable
-      ? 'human approval requested'
-      : cascadeRetryActionable
-        ? 'session needs attention'
-      : continueActionable
-        ? approval.sessionStatus === 'error' ? 'session needs attention' : 'session completed'
-        : 'session log';
   const promptText = isRevisionSession
     ? 'This AgentUse-owned session diagnoses the originating run and prepares a source proposal for your review.'
     : isSubagentView
@@ -1645,6 +1641,16 @@ export default function SessionDetail() {
   // the agent look 30 minutes slower. Historical sessions fall back to wall
   // time derived from their log.
   const lastLogTime = orderedLogs.length > 0 ? orderedLogs[orderedLogs.length - 1].time : undefined;
+  const elapsedLabel = approval.timing
+    ? `active ${formatDuration(approval.timing.activeMs)}`
+    : approval.createdAt !== undefined && lastLogTime !== undefined && lastLogTime > approval.createdAt
+      ? `${ended ? 'finished in' : 'running'} ${formatDuration(lastLogTime - approval.createdAt)}`
+      : undefined;
+  // The only header prose that survives: a state the page cannot otherwise
+  // explain (a paused sub-agent, an expired or stranded run, a revision).
+  const headerNote = isRevisionSession || isSubagentView || expired || stranded || cascadeRetryActionable
+    ? promptText
+    : undefined;
   // The corrections row lives in the session log, which is collapsed by default.
   // A run that silently applied 10 of its 26 corrections would stay silent until
   // someone expanded it, so the count is repeated here where it cannot be
@@ -1701,12 +1707,13 @@ export default function SessionDetail() {
           return (
             <a
               key={a.name}
-              class="artifact-open"
+              class={`artifact-open is-${artifactKind(a.name)}`}
               href={href}
               target="_blank"
               rel="noopener noreferrer"
               aria-label={`Open artifact ${label} (new tab)`}
             >
+              <span class="artifact-open-kind">{artifactKind(a.name)}</span>
               <span class="artifact-open-name">{label}</span>
               <span class="artifact-open-hint">open</span>
             </a>
@@ -1766,10 +1773,6 @@ export default function SessionDetail() {
   // only where this sits: above the transcript, or after it.
   const resultSection = ended && (hasFinalOutcome || resultErrorText || resultMeta || artifactTiles) ? (
     <>
-            <div class="section-title result-title">
-              <span>result</span>
-              <span class="rule"></span>
-            </div>
             <section class="panel session-result">
               <div class="result-verdict">
                 <span class={`status ${displayStatus}`}>{displayStatus}</span>
@@ -1868,6 +1871,311 @@ export default function SessionDetail() {
       </ul>
     </div>
   ) : null;
+
+  // Session-level controls (retry, run again, revise the agent, continue,
+  // stop) plus the change set / revision panels a session may carry. They
+  // render inside the now card, at its foot, so the thing to do sits with the
+  // thing to read; a session with no card (still loading) gets them alone.
+  const sessionActions = (
+    <>
+        <div class="session-actions">
+          {ended && approval.agent.runPath && !isSubagentView && !isRevisionSession && !runControlsInMenu && (
+            <BusyButton
+              busy={runAgain.busy}
+              class="session-action-button"
+              label={
+                <>
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M5 3l14 9-14 9z" />
+                  </svg>
+                  <span>Run again</span>
+                </>
+              }
+              busyLabel={<span>Starting…</span>}
+              onClick={() => void runAgain.run()}
+            />
+          )}
+          {reopenActionable && !runControlsInMenu && (
+            <button
+              type="button"
+              class="debug-prompt-button"
+              disabled={submittingReopen}
+              aria-busy={submittingReopen}
+              onClick={() => void submitReopen()}
+              title="Roll the approval gate back to pending so you can re-submit your decision and retry the resume that failed"
+            >
+              {submittingReopen ? (
+                <span class="btn-spinner" aria-hidden="true" />
+              ) : (
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 12a9 9 0 1 1-3-6.7" />
+                  <path d="M21 4v5h-5" />
+                </svg>
+              )}
+              <span>{submittingReopen ? 'Reopening…' : 'Retry'}</span>
+            </button>
+          )}
+          {!approval.agent.filePath && approval.agent.name === ONBOARDING_AGENT_NAME && approval.model === ONBOARDING_MODEL ? (
+            <DebugPromptButton
+              mode="onboarding"
+              context={{
+                sessionId: approval.sessionId,
+                projectId: projectId ?? approval.project,
+                projectPath: approval.projectPath,
+                agentName: agentLabel,
+                model: approval.model,
+                sessionStatus: approval.sessionStatus,
+                errorCode: approval.errorCode,
+                errorMessage: approval.errorMessage,
+              }}
+            />
+          ) : approval.agent.filePath && !isRevisionSession ? (
+            <AgentRevisionLauncher
+              ended={ended}
+              atGate={approval.sessionStatus === 'suspended'}
+              hideTrigger={runControlsInMenu}
+              openRequest={reviseRequest}
+              token={token}
+              context={{
+                sessionId: approval.sessionId,
+                projectId: projectId ?? approval.project,
+                projectPath: approval.projectPath,
+                agentName: agentLabel,
+                agentFilePath: approval.agent.filePath,
+                model: approval.model,
+                sessionStatus: approval.sessionStatus,
+                errorCode: approval.errorCode,
+                errorMessage: approval.errorMessage,
+              }}
+            />
+          ) : null}
+          {continueActionable && !runControlsInMenu && (
+            <button
+              type="button"
+              class={`session-action-button${showResume ? ' active' : ''}`}
+              aria-expanded={showResume}
+              aria-controls="continue-prompt"
+              onClick={() => setShowResume((v) => !v)}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-3-6.7" />
+                <path d="M21 4v5h-5" />
+              </svg>
+              <span>Resume session</span>
+            </button>
+          )}
+          {cascadeRetryActionable && !runControlsInMenu && (
+            <BusyButton
+              busy={submittingContinue}
+              class="session-action-button"
+              label={
+                <>
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M21 12a9 9 0 1 1-3-6.7" />
+                    <path d="M21 4v5h-5" />
+                  </svg>
+                  <span>Resume</span>
+                </>
+              }
+              busyLabel={<span>Resuming…</span>}
+              onClick={() => void submitCascadeRetry()}
+            />
+          )}
+          {/* No "Learnings" toggle here any more. The panel below is always on
+              for a session that has one: its warnings were the whole reason it
+              existed, and a warning behind a button nobody presses is not a
+              warning. The rules themselves fold away inside the panel instead. */}
+          {(stopActionable || dismissActionable) && !runControlsInMenu && !stopInBar && (
+            <button
+              type="button"
+              class="debug-prompt-button stop-session-button"
+              disabled={submittingStop}
+              aria-busy={submittingStop}
+              onClick={() => void submitStop()}
+              title={live
+                ? 'Stop this session and any running subagents'
+                : dismissActionable
+                  ? 'Discard this failed run: marks it reviewed and clears it from "Needs your attention" (the run keeps its status)'
+                  : 'Discard this pending request: it is rejected, and the session resumes briefly so the agent records the rejection before ending'}
+            >
+              {submittingStop ? (
+                <span class="btn-spinner" aria-hidden="true" />
+              ) : (
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  {live
+                    ? <rect x="6" y="6" width="12" height="12" rx="2" />
+                    : <><path d="M18 6 6 18" /><path d="M6 6 18 18" /></>}
+                </svg>
+              )}
+              <span>{submittingStop ? (live ? 'Stopping…' : 'Discarding…') : (live ? 'Stop session' : 'Discard')}</span>
+            </button>
+          )}
+        </div>
+
+        <ContinuePanel
+          hidden={!continueActionable || !showResume}
+          disabled={submittingContinue || !continueActionable}
+          busy={submittingContinue}
+          onSubmit={(prompt) => void submitContinue(prompt)}
+        />
+
+        <div class="inactive-banner" hidden={actionable || cascadeRetryActionable || continueActionable || stopActionable || dismissActionable || reopenActionable || live || busy}>
+          This session is not accepting actions right now.
+        </div>
+        <ChangesetSessionPanel
+          sessionId={sessionId}
+          token={token}
+          project={projectId ?? approval.project}
+          sessionStatus={displayStatus}
+          onDetected={(changeset) => {
+            setIsRevisionSession(true);
+            if (changeset.target) setRevisionIdentity({ targetAgentName: changeset.target.name, ...(changeset.originSessionId && { originSessionId: changeset.originSessionId }) });
+          }}
+        />
+
+        {/* Changesets replaced revisions; this panel stays for sessions that
+            authored a revision record before that switch. */}
+        <AgentRevisionSessionPanel
+          sessionId={sessionId}
+          token={token}
+          project={projectId ?? approval.project}
+          sessionStatus={displayStatus}
+          onDetected={(identity) => {
+            setIsRevisionSession(true);
+            if (identity) setRevisionIdentity(identity);
+          }}
+        />
+    </>
+  );
+
+  // ---- The "now" card: what this page is for in its current state ----
+  // One card, directly under the header, whose head names the state and
+  // whose body is the one thing to read or do: the pending decision, the
+  // step in progress, the result, or the failure. Everything else on the
+  // page (judge, learnings, the transcript) folds under it.
+  const nowHead = (tone: 'decision' | 'working' | 'result' | 'error' | 'report', label: string, meta: string | undefined, trailing?: preact.ComponentChildren) => (
+    <div class={`now-head is-${tone}`}>
+      {tone === 'working' && <span class="log-spinner" aria-hidden="true" />}
+      <span class="now-label">{label}</span>
+      {meta && <span class="now-meta">{meta}</span>}
+      {trailing && <span class="now-trailing">{trailing}</span>}
+    </div>
+  );
+  const runningEntry = [...orderedLogs].reverse().find((e) => e.type === 'tool' && e.status === 'running');
+  const failedEntry = [...orderedLogs].reverse().find((e) => e.type === 'tool' && (e.status === 'error' || e.status === 'failed') && !e.details?.recoveredByCallId);
+  const gateWaitLabel = gateEntry?.time !== undefined ? `waiting ${formatDuration(Date.now() - gateEntry.time)}` : undefined;
+  const bounces = judgeRows.filter((row) => row.verdict === 'fail').length;
+  const lastJudge = judgeRows[judgeRows.length - 1];
+  const gateHeadMeta = [
+    gateWaitLabel,
+    lastJudge?.verdict === 'skipped' && bounces > 0 ? `escalated after ${bounces} automated rejection${bounces === 1 ? '' : 's'}` : undefined,
+    lastJudge?.verdict === 'pass' ? 'judge passed' : undefined,
+  ].filter(Boolean).join(' · ');
+  const decidedGate = [...orderedLogs].reverse().find((e) => e.details?.decisionStatus);
+  const decisionTile = decidedGate?.details
+    ? `${decidedGate.details.decisionStatus}${decidedGate.details.decisionReviewer ? ` by ${decidedGate.details.decisionReviewer}` : ''}`
+    : undefined;
+  const decisionTileTime = decidedGate ? formatLogTime(decidedGate.time) : undefined;
+  const judgeTile = lastJudge
+    ? lastJudge.verdict === 'pass'
+      ? bounces > 0 ? `passed after ${bounces} bounce${bounces === 1 ? '' : 's'}` : 'passed first time'
+      : lastJudge.verdict === 'fail' ? 'still failing' : lastJudge.verdict === 'skipped' ? 'not judged' : 'judge error'
+    : undefined;
+  const tokensTile = tokenUsage && (tokenUsage.input > 0 || tokenUsage.output > 0)
+    ? `${formatTokens(tokenUsage.input)} in · ${formatTokens(tokenUsage.output)} out`
+    : undefined;
+  const tokensTileSub = tokenUsage && tokenUsage.cachedInput > 0 ? `+${formatTokens(tokenUsage.cachedInput)} cached` : undefined;
+  const resultTiles = (decisionTile || judgeTile || tokensTile) ? (
+    <div class="now-tiles">
+      {decisionTile && (
+        <div class="now-tile"><div class="now-tile-label">Decision</div><div class="now-tile-value">{decisionTile}</div>{decisionTileTime && <div class="now-tile-sub">{decisionTileTime}</div>}</div>
+      )}
+      {judgeTile && (
+        <div class="now-tile"><div class="now-tile-label">Judge</div><div class="now-tile-value">{judgeTile}</div><div class="now-tile-sub">{judgeRows.length} {judgeRows.length === 1 ? 'attempt' : 'attempts'}</div></div>
+      )}
+      {tokensTile && (
+        <div class="now-tile"><div class="now-tile-label">Tokens</div><div class="now-tile-value"><code>{tokensTile}</code></div>{tokensTileSub && <div class="now-tile-sub"><code>{tokensTileSub}</code></div>}</div>
+      )}
+    </div>
+  ) : null;
+  // A sub-agent reports to its parent: the verdict (a judge child) or the
+  // outcome, and one way back to where the decision is made.
+  const lastVerifyWithCandidates = [...orderedLogs].reverse().find((e) => e.type === 'verify' && e.verify?.candidates && e.verify.candidates.length > 0);
+  const recentSteps = [...orderedLogs].reverse().filter((e) => e.type === 'tool' && e.status === 'completed' && !e.parentCallId).slice(0, 3).reverse();
+  const nowCard = gateEntry
+    ? (
+      <section class="panel now-card is-decision" aria-label="Pending decision">
+        {nowHead('decision', isSubagentView ? 'Paused for the parent\'s decision' : 'Decision needed', gateHeadMeta || undefined)}
+        {gatePanel}
+        {sessionActions}
+      </section>
+    )
+    : isSubagentView
+      ? (
+        <section class="panel now-card is-report" aria-label="Report to parent">
+          {nowHead('report', approval.sessionStatus === 'suspended' ? 'Paused for the parent\'s decision' : 'Report to parent', [displayStatus, resultMeta, 'view only, decisions are made on the parent'].filter(Boolean).join(' · '))}
+          {lastVerifyWithCandidates?.verify?.candidates
+            ? <div class="now-body"><div class="now-title">{lastVerifyWithCandidates.title}</div><CandidateVerdictList candidates={lastVerifyWithCandidates.verify.candidates} /></div>
+            : resultSection
+              ? resultSection
+              : resultErrorText
+                ? <div class="now-body"><div class="now-error">{resultErrorText}</div></div>
+                : <div class="now-body"><div class="now-working-label">{live ? workingLabel : 'No report yet.'}{live && <span class="log-dots" aria-hidden="true" />}</div></div>}
+          {parentLink && (
+            <div class="now-cta">
+              <a class="debug-prompt-button now-cta-primary" href={parentLink}>{approval.sessionStatus === 'suspended' ? `Open the parent's pending decision` : `Open ${parentLabel}`}</a>
+              {approval.sessionStatus === 'suspended' && <span class="now-cta-note">{parentLabel} is waiting on you</span>}
+            </div>
+          )}
+          {sessionActions}
+        </section>
+      )
+    : ended && resultErrorText && !summaryFirst
+      ? (
+        <section class="panel now-card is-error" role="alert" aria-label="Session needs attention">
+          {nowHead('error', 'Needs attention', resultMeta || undefined)}
+          <div class="now-body">
+            <div class="now-error">{resultErrorText}</div>
+          </div>
+          {failedEntry && (
+            <ul class="logs now-failed-step" role="list">{renderLogEntry(failedEntry)}</ul>
+          )}
+          {sessionActions}
+        </section>
+      )
+      : ended && resultSection
+        ? (
+          <section class={`now-card ${resultErrorText ? 'is-error' : 'is-result'}`} aria-label="Result">
+            {nowHead(resultErrorText ? 'error' : 'result', resultErrorText ? 'Needs attention' : 'Result', [displayStatus, resultMeta].filter(Boolean).join(' · '))}
+            {resultSection}
+            {failedEntry && resultErrorText && (
+              <ul class="logs now-failed-step" role="list">{renderLogEntry(failedEntry)}</ul>
+            )}
+            {resultTiles}
+            {sessionActions}
+          </section>
+        )
+        : live && !ended
+          ? (
+            <section class="panel now-card is-working" aria-label="In progress">
+              {nowHead('working', status === 'preparing' ? 'Preparing' : 'Working', [
+                `${orderedLogs.length} ${orderedLogs.length === 1 ? 'entry' : 'entries'}`,
+                elapsedLabel,
+                'no approval needed yet',
+              ].filter(Boolean).join(' · '))}
+              {runningEntry
+                ? <ul class="logs now-running-step" role="list">{renderLogEntry(runningEntry)}</ul>
+                : <div class="now-body"><div class="now-working-label">{workingLabel}<span class="log-dots" aria-hidden="true" /></div></div>}
+              {recentSteps.length > 0 && (
+                <>
+                  <div class="now-recent-label">Just before</div>
+                  <ul class="logs now-recent" role="list">{recentSteps.map((e) => renderLogEntry(e))}</ul>
+                </>
+              )}
+              {sessionActions}
+            </section>
+          )
+          : null;
 
   // The transcript feed, shared by both layouts: inline under its section
   // title (live/feed-first) or inside the collapsed <details> (summary-first).
@@ -2018,8 +2326,7 @@ export default function SessionDetail() {
             </svg>
           </button>
         </div>
-        <header>
-          <div class="eyebrow">{eyebrow}</div>
+        <header class="session-header">
           <div class="header-title-row">
             <h1>{pageAgentLabel}</h1>
             {isRevisionSession && <span class="internal-session-badge">AgentUse Reviser</span>}
@@ -2072,59 +2379,49 @@ export default function SessionDetail() {
                 ] } : {})}
               />
             )}
-          </div>
-          {agentDescription && <p class="agent-tagline">{agentDescription}</p>}
-          <p class="prompt">{promptText}</p>
-          <div class="meta">
-            <div class="cell"><span class="label">session</span><SessionIdCopy sessionId={approval.sessionId} /></div>
-            <div class="cell"><span class="label">{term('project')}</span><code>{projectId ?? approval.project ?? 'default'}</code></div>
-            <div class="cell"><span class="label">agent</span><span class="value">{agentIdentityLabel}</span></div>
-            {approval.createdAt !== undefined && (
-              <div class="cell"><span class="label">started</span><span class="value">{formatApprovalTime(approval.createdAt)}</span></div>
-            )}
-            {approval.model && (
-              <div class="cell"><span class="label">model</span><span class="value">{approval.model}</span></div>
-            )}
-            {approval.expiresAt !== undefined && (
-              <div class="cell"><span class="label">expires</span><span class="value">{formatApprovalTime(approval.expiresAt)}</span></div>
-            )}
-          </div>
-          {/* Context and cost get their own strip: they answer "what did this
-              run consume", not "what is this run", and the diagnostic page that
-              breaks them down hangs off its right edge. */}
-          <TokenUsageStrip
-            tokenUsage={tokenUsage}
-            estimatedCost={estimatedCost}
-            formatUsd={pricing?.formatUsd}
-          >
-            <a class="meta-band-link" href={diagnosticHref}>
+            <a class="meta-band-link session-header-diagnostic" href={diagnosticHref}>
               Diagnostic
               <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M6 3.5 10.5 8 6 12.5" />
               </svg>
             </a>
-          </TokenUsageStrip>
+          </div>
+          {/* One line of facts. The old header spent a full screen on the
+              agent's description, a boilerplate "review the request below"
+              paragraph, a five-cell grid and a token strip before any content.
+              Everything a reviewer glances at fits in one wrapping line; the
+              breakdown lives on the diagnostic page. */}
+          <div class="session-meta-line">
+            <span title={term('project')}><code>{projectId ?? approval.project ?? 'default'}</code></span>
+            {approval.model && <span title="model"><code>{approval.model}</code></span>}
+            {approval.createdAt !== undefined && (
+              <span>started <b>{formatApprovalTime(approval.createdAt)}</b>{elapsedLabel && <> · {elapsedLabel}</>}</span>
+            )}
+            {contextLeftLabel && <span>context <b>{contextLeftLabel}</b></span>}
+            {costLabel && <span>cost <b><code>{costLabel}</code></b></span>}
+            {approval.expiresAt !== undefined && <span>expires <b>{formatApprovalTime(approval.expiresAt)}</b></span>}
+            <span class="session-meta-id"><SessionIdCopy sessionId={approval.sessionId} /></span>
+          </div>
+          {headerNote && <p class="session-header-note">{headerNote}</p>}
         </header>
 
-        {/* Why the run died, above the fold. In summary-first the result card
-            sits right here and already leads with it; in feed-first the card is
-            below a transcript that can run to hundreds of entries, so without
-            this the only way to learn the cause is to scroll past all of it. */}
-        {!summaryFirst && ended && resultErrorText && (
-          <div class="panel session-error-lede" role="alert">
-            <div class="label">error</div>
-            <div class="body">{resultErrorText}</div>
-          </div>
-        )}
+        {nowCard}
+
+        {!nowCard && sessionActions}
+
 
         {approval.additionalInstruction && (
-          <div class="panel additional-instruction">
-            <div class="label">additional instruction</div>
+          // The instruction a delegated run was handed can be the parent's
+          // whole brief, thousands of words. It folds like the other drawers;
+          // the first line shows in the row so the fold is not a mystery.
+          <details class="panel additional-instruction is-foldable">
+            <summary>
+              <span class="label">additional instruction</span>
+              <span class="additional-instruction-meta">{approval.additionalInstruction.split('\n').find((line) => line.trim())?.slice(0, 120) ?? ''}</span>
+            </summary>
             <div class="body">{approval.additionalInstruction}</div>
-          </div>
+          </details>
         )}
-
-        {summaryFirst && resultSection}
 
         {!summaryFirst && !resultSection && artifactTiles && (
           <div class="panel session-artifacts">
@@ -2145,25 +2442,25 @@ export default function SessionDetail() {
           {...(projectId ? { project: projectId } : {})}
         />
 
-        {summaryFirst || gateFolded ? (
+        {summaryFirst || logFolded ? (
           // Two reasons to fold: the run ended and the result card leads
           // (summary-first, remembered preference), or a decision is pending
           // and the transcript above it is context, not the ask (gate-folded,
           // closed on every visit). The folded row says which and how much it
           // hides, so nobody mistakes it for an empty log.
           <details
-            class={`session-transcript${gateFolded ? ' is-gate-folded' : ''}`}
+            class={`session-transcript${logFolded ? ' is-gate-folded' : ''}`}
             key={`transcript-${sessionId}`}
-            open={gateFolded ? gateLogOpen : transcriptOpen}
-            onToggle={(e) => (gateFolded ? setGateLogOpen : setTranscriptOpen)((e.currentTarget as HTMLDetailsElement).open)}
+            open={logFolded ? gateLogOpen : transcriptOpen}
+            onToggle={(e) => (logFolded ? setGateLogOpen : setTranscriptOpen)((e.currentTarget as HTMLDetailsElement).open)}
           >
             <summary>
               <span>session log</span>
               {visibleLogs.length > 0 && (
                 <span class="count">{visibleLogs.length} {visibleLogs.length === 1 ? 'entry' : 'entries'}</span>
               )}
-              {gateFolded && !gateLogOpen && (
-                <span class="count">folded while a decision is pending · click to show</span>
+              {logFolded && !gateLogOpen && (
+                <span class="count">{gateFolded ? 'folded while a decision is pending' : 'folded, the result is above'} · click to show</span>
               )}
               <span class="rule"></span>
             </summary>
@@ -2180,167 +2477,6 @@ export default function SessionDetail() {
             {logsFeed}
           </>
         )}
-        {!summaryFirst && resultSection}
-
-        {/* The pending gate closes the page, under the folded transcript: the
-            reviewer reads what the agent did (or skips it), then decides. */}
-        {gatePanel}
-
-        <div class="session-actions">
-          {reopenActionable && !runControlsInMenu && (
-            <button
-              type="button"
-              class="debug-prompt-button"
-              disabled={submittingReopen}
-              aria-busy={submittingReopen}
-              onClick={() => void submitReopen()}
-              title="Roll the approval gate back to pending so you can re-submit your decision and retry the resume that failed"
-            >
-              {submittingReopen ? (
-                <span class="btn-spinner" aria-hidden="true" />
-              ) : (
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M21 12a9 9 0 1 1-3-6.7" />
-                  <path d="M21 4v5h-5" />
-                </svg>
-              )}
-              <span>{submittingReopen ? 'Reopening…' : 'Retry'}</span>
-            </button>
-          )}
-          {!approval.agent.filePath && approval.agent.name === ONBOARDING_AGENT_NAME && approval.model === ONBOARDING_MODEL ? (
-            <DebugPromptButton
-              mode="onboarding"
-              context={{
-                sessionId: approval.sessionId,
-                projectId: projectId ?? approval.project,
-                projectPath: approval.projectPath,
-                agentName: agentLabel,
-                model: approval.model,
-                sessionStatus: approval.sessionStatus,
-                errorCode: approval.errorCode,
-                errorMessage: approval.errorMessage,
-              }}
-            />
-          ) : approval.agent.filePath && !isRevisionSession ? (
-            <AgentRevisionLauncher
-              ended={ended}
-              atGate={approval.sessionStatus === 'suspended'}
-              hideTrigger={runControlsInMenu}
-              openRequest={reviseRequest}
-              token={token}
-              context={{
-                sessionId: approval.sessionId,
-                projectId: projectId ?? approval.project,
-                projectPath: approval.projectPath,
-                agentName: agentLabel,
-                agentFilePath: approval.agent.filePath,
-                model: approval.model,
-                sessionStatus: approval.sessionStatus,
-                errorCode: approval.errorCode,
-                errorMessage: approval.errorMessage,
-              }}
-            />
-          ) : null}
-          {continueActionable && !runControlsInMenu && (
-            <button
-              type="button"
-              class={`session-action-button${showResume ? ' active' : ''}`}
-              aria-expanded={showResume}
-              aria-controls="continue-prompt"
-              onClick={() => setShowResume((v) => !v)}
-            >
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M21 12a9 9 0 1 1-3-6.7" />
-                <path d="M21 4v5h-5" />
-              </svg>
-              <span>Resume session</span>
-            </button>
-          )}
-          {cascadeRetryActionable && !runControlsInMenu && (
-            <BusyButton
-              busy={submittingContinue}
-              class="session-action-button"
-              label={
-                <>
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M21 12a9 9 0 1 1-3-6.7" />
-                    <path d="M21 4v5h-5" />
-                  </svg>
-                  <span>Resume</span>
-                </>
-              }
-              busyLabel={<span>Resuming…</span>}
-              onClick={() => void submitCascadeRetry()}
-            />
-          )}
-          {/* No "Learnings" toggle here any more. The panel below is always on
-              for a session that has one: its warnings were the whole reason it
-              existed, and a warning behind a button nobody presses is not a
-              warning. The rules themselves fold away inside the panel instead. */}
-          {(stopActionable || dismissActionable) && !runControlsInMenu && !stopInBar && (
-            <button
-              type="button"
-              class="debug-prompt-button stop-session-button"
-              disabled={submittingStop}
-              aria-busy={submittingStop}
-              onClick={() => void submitStop()}
-              title={live
-                ? 'Stop this session and any running subagents'
-                : dismissActionable
-                  ? 'Discard this failed run: marks it reviewed and clears it from "Needs your attention" (the run keeps its status)'
-                  : 'Discard this pending request: it is rejected, and the session resumes briefly so the agent records the rejection before ending'}
-            >
-              {submittingStop ? (
-                <span class="btn-spinner" aria-hidden="true" />
-              ) : (
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  {live
-                    ? <rect x="6" y="6" width="12" height="12" rx="2" />
-                    : <><path d="M18 6 6 18" /><path d="M6 6 18 18" /></>}
-                </svg>
-              )}
-              <span>{submittingStop ? (live ? 'Stopping…' : 'Discarding…') : (live ? 'Stop session' : 'Discard')}</span>
-            </button>
-          )}
-        </div>
-
-
-        <ContinuePanel
-          hidden={!continueActionable || !showResume}
-          disabled={submittingContinue || !continueActionable}
-          busy={submittingContinue}
-          onSubmit={(prompt) => void submitContinue(prompt)}
-        />
-
-        <div class="inactive-banner" hidden={actionable || cascadeRetryActionable || continueActionable || stopActionable || dismissActionable || reopenActionable || live || busy}>
-          This session is not accepting actions right now.
-        </div>
-
-
-        <ChangesetSessionPanel
-          sessionId={sessionId}
-          token={token}
-          project={projectId ?? approval.project}
-          sessionStatus={displayStatus}
-          onDetected={(changeset) => {
-            setIsRevisionSession(true);
-            if (changeset.target) setRevisionIdentity({ targetAgentName: changeset.target.name, ...(changeset.originSessionId && { originSessionId: changeset.originSessionId }) });
-          }}
-        />
-
-        {/* Changesets replaced revisions; this panel stays for sessions that
-            authored a revision record before that switch. */}
-        <AgentRevisionSessionPanel
-          sessionId={sessionId}
-          token={token}
-          project={projectId ?? approval.project}
-          sessionStatus={displayStatus}
-          onDetected={(identity) => {
-            setIsRevisionSession(true);
-            if (identity) setRevisionIdentity(identity);
-          }}
-        />
-
 
         {shouldShowResultNotice(result, Boolean(resultSection), resultErrorText) && (
           <p ref={noticeRef} class={`notice${result.error ? ' error' : ''}`} role={result.error ? 'alert' : 'status'}>{result.text}</p>

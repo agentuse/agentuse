@@ -104,11 +104,12 @@ function SavedArtifactCard(props: { artifact: NonNullable<ApprovalLogDetails['sa
   return (
     <div class="artifact-tiles saved-artifact">
       <a
-        class="artifact-open"
+        class={`artifact-open is-${artifactKind(artifact.path)}`}
         href={artifactHref(props.sessionId, artifact.path, props.token)}
         target="_blank"
         rel="noopener noreferrer"
       >
+        <span class="artifact-open-kind">{artifactKind(artifact.path)}</span>
         <span class="artifact-open-name">{artifact.title || artifactName(artifact.path)}</span>
         <span class="artifact-open-hint">open</span>
       </a>
@@ -260,6 +261,49 @@ const HTML_ARTIFACT_RE = /\.(html?)$/i;
 const PDF_ARTIFACT_RE = /\.pdf$/i;
 const VIDEO_ARTIFACT_RE = /\.(mp4|m4v|webm|mov)$/i;
 const AUDIO_ARTIFACT_RE = /\.(mp3|m4a|wav|ogg)$/i;
+const TEXT_ARTIFACT_RE = /\.(md|markdown|txt|csv|json|log|yaml|yml)$/i;
+const MARKDOWN_ARTIFACT_RE = /\.(md|markdown)$/i;
+
+/** Coarse kind for a tile's label, so a row of files reads at a glance. */
+export function artifactKind(path: string): 'image' | 'page' | 'pdf' | 'video' | 'audio' | 'doc' | 'data' | 'file' {
+  if (IMAGE_ARTIFACT_RE.test(path)) return 'image';
+  if (HTML_ARTIFACT_RE.test(path)) return 'page';
+  if (PDF_ARTIFACT_RE.test(path)) return 'pdf';
+  if (VIDEO_ARTIFACT_RE.test(path)) return 'video';
+  if (AUDIO_ARTIFACT_RE.test(path)) return 'audio';
+  if (MARKDOWN_ARTIFACT_RE.test(path) || /\.txt$/i.test(path)) return 'doc';
+  if (TEXT_ARTIFACT_RE.test(path)) return 'data';
+  return 'file';
+}
+
+/**
+ * A text artifact (markdown, csv, json) read where the reviewer already is,
+ * instead of in a new tab: the whole point of shipping a doc for approval is
+ * that it gets read. Fetched on first open, capped so a huge dump stays a
+ * link.
+ */
+function TextArtifactPreview(props: { path: string; href: string }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open || text !== null || error) return;
+    fetch(props.href, { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.text() : Promise.reject(new Error(`HTTP ${res.status}`))))
+      .then((body) => setText(body.length > 20_000 ? `${body.slice(0, 20_000)}\n…` : body))
+      .catch((err) => setError((err as Error).message));
+  }, [open]);
+  return (
+    <details class="artifact-text" open={open} onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
+      <summary>read in place</summary>
+      {error
+        ? <div class="artifact-text-error">Could not load: {error}</div>
+        : text === null
+          ? <div class="artifact-text-loading">Loading…</div>
+          : <div class="artifact-text-body"><LogContent value={text} forceMarkdown={MARKDOWN_ARTIFACT_RE.test(props.path)} /></div>}
+    </details>
+  );
+}
 
 /** Media-file path tokens inside gate payload prose (images + audio/video). */
 const PAYLOAD_IMAGE_PATH_RE = /[\w.~@/-]+\.(?:png|jpe?g|gif|webp|avif|mp4|m4v|webm|mov|mp3|m4a|wav)\b/gi;
@@ -330,7 +374,8 @@ function DetectedMediaItem(props: { path: string; href: string; snapped?: boolea
   return (
     <div class="artifact-item">
       <div class="artifact-tiles">
-        <a class="artifact-open" href={props.href} target="_blank" rel="noopener noreferrer">
+        <a class={`artifact-open is-${artifactKind(props.path)}`} href={props.href} target="_blank" rel="noopener noreferrer">
+          <span class="artifact-open-kind">{artifactKind(props.path)}</span>
           <span class="artifact-open-name">{artifactName(props.path)}</span>
           <span class="artifact-open-hint">open</span>
         </a>
@@ -364,6 +409,9 @@ function ArtifactPreview(props: { path: string; href: string }) {
   }
   if (AUDIO_ARTIFACT_RE.test(props.path)) {
     return <audio class="artifact-preview-audio" src={props.href} controls preload="metadata" />;
+  }
+  if (TEXT_ARTIFACT_RE.test(props.path)) {
+    return <TextArtifactPreview path={props.path} href={props.href} />;
   }
   return null;
 }
@@ -709,7 +757,8 @@ function ApprovalDetailCard(props: {
               return (
                 <div class="artifact-item" key={path}>
                   <div class="artifact-tiles">
-                    <a class="artifact-open" href={href} target="_blank" rel="noopener noreferrer">
+                    <a class={`artifact-open is-${artifactKind(path)}`} href={href} target="_blank" rel="noopener noreferrer">
+                      <span class="artifact-open-kind">{artifactKind(path)}</span>
                       <span class="artifact-open-name">{artifactName(path)}</span>
                       <span class="artifact-open-hint">open</span>
                     </a>
@@ -1216,11 +1265,12 @@ function ToolDetails(props: { details: ApprovalLogDetails; sessionId: string; to
           <div class="log-detail-value">
             <div class="artifact-tiles">
               <a
-                class="artifact-open"
+                class="artifact-open is-data"
                 href={toolArtifactHref(props.sessionId, artifact.path, props.token)}
                 target="_blank"
                 rel="noopener noreferrer"
               >
+                <span class="artifact-open-kind">output</span>
                 <span class="artifact-open-name">{artifactName(artifact.path)}</span>
                 {typeof artifact.bytes === 'number' && <span class="artifact-size">{Math.ceil(artifact.bytes / 1024)} KB</span>}
                 <span class="artifact-open-hint">open</span>
