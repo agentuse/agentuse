@@ -3461,6 +3461,26 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   .approval-option-more { min-height: 44px; }
 }
 .approval-copy:hover { color: var(--fg); }
+/* Copy buttons are a per-entry affordance, not content: at rest an on-approval
+   entry shows none. Hovering or focusing the entry reveals its copy; the
+   command's copy shows only once the command is expanded. Eight actions used
+   to mean sixteen buttons on screen. The buttons stay in the DOM (opacity,
+   not display) so keyboard and screen-reader users still reach them, and
+   focus-within reveals them as soon as they do. Touch has no hover, so there
+   the entry's copy stays visible, dimmed. */
+.approval-change-head .approval-copy {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.approval-change:hover .approval-change-head .approval-copy,
+.approval-change:focus-within .approval-change-head .approval-copy { opacity: 1; }
+.approval-command-detail:not([open]) .approval-copy { display: none; }
+@media (hover: none) {
+  .approval-change-head .approval-copy { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .approval-change-head .approval-copy { transition: none; }
+}
 .page-approval-detail button.primary {
   background: var(--primary-bg);
   border-color: var(--primary-bg);
