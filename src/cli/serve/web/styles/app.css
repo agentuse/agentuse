@@ -3229,33 +3229,6 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
 .approval-option:not(.selected) .approval-option-action > * + * { display: none; }
-/* The selected candidate reads in full, but not without a ceiling: a long post
-   or answer rendered whole pushes the remaining options a screen below, so the
-   reviewer never discovers there was anything to compare. Roughly a dozen
-   lines, then Show full opens it. */
-.approval-option-clamp { max-height: 19em; overflow: hidden; }
-.approval-option-body.expanded .approval-option-clamp { max-height: none; }
-/* Mask, not an overlay gradient: the clipped edge has to fade against the
-   selected card's cyan wash and the plain ground alike, and a mask needs no
-   colour to match. Only while actually clipped, or a short candidate would
-   fade its own last line for nothing. */
-.approval-option-body.is-clipped .approval-option-clamp {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 3.5em), transparent);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 3.5em), transparent);
-}
-.approval-option-more {
-  display: block;
-  margin-top: 4px;
-  padding: 6px 0;
-  min-height: 32px;
-  border: 0;
-  background: transparent;
-  color: var(--cyan);
-  font: inherit;
-  font-size: var(--font-size-caption);
-  cursor: pointer;
-}
-.approval-option-more:hover { text-decoration: underline; }
 /* Focusable so their clipped overflow is keyboard-scrollable; matches the
    .content-table-scroll treatment already used for wide tables. */
 .approval-reference-excerpt:focus-visible,
@@ -3458,7 +3431,6 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   }
   .approval-command-summary { min-height: 44px; }
   .approval-toast-dismiss { min-width: 44px; min-height: 44px; padding: 6px 10px; }
-  .approval-option-more { min-height: 44px; }
 }
 .approval-copy:hover { color: var(--fg); }
 /* Copy buttons are a per-entry affordance, not content: at rest an on-approval
