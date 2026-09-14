@@ -1086,6 +1086,47 @@ function DescendantReportBlock(props: {
   );
 }
 
+/** The judge runs under one delegated call, folded to a single line. Only the
+ *  latest verdict is about the draft on the card; every earlier attempt judged
+ *  a draft that no longer exists. So the line names the latest verdict and
+ *  counts the rest, opens to the latest verdict's lines, and keeps the earlier
+ *  attempts behind a second fold inside. */
+function JudgeDrawer(props: { judges: LogSubagentSession[]; projectId?: string; expanded: boolean }) {
+  const ordered = [...props.judges].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0));
+  const latest = ordered[ordered.length - 1]!;
+  const earlier = ordered.slice(0, -1);
+  const verdict = latest.verdict ?? latest.report?.status;
+  const word = verdict === 'pass' ? 'passed'
+    : verdict === 'fail' ? 'failed'
+      : verdict === 'skipped' ? 'not judged'
+        : verdict === 'error' ? 'errored'
+          : isExecutingCardStatus(latest.status) ? 'running' : 'pending';
+  const tone = verdict === 'pass' ? 'is-success' : verdict === 'fail' || verdict === 'error' ? 'is-failure' : 'is-warning';
+  const rejections = earlier.filter((s) => (s.verdict ?? s.report?.status) === 'fail').length;
+  // The runtime's label already says "Judge attempt 2 of 4"; the line names
+  // the judge once, so drop that prefix here.
+  const attempt = latest.attemptLabel?.replace(/^judge\s+/i, '') ?? (latest.attempt !== undefined ? `attempt ${latest.attempt + 1}` : undefined);
+  const summary = [
+    `Judge ${word}${attempt ? ` on ${attempt}` : ''}`,
+    rejections > 0 ? `${rejections} earlier ${rejections === 1 ? 'rejection' : 'rejections'}` : earlier.length > 0 ? `${earlier.length} earlier` : undefined,
+  ].filter(Boolean).join(' · ');
+  return (
+    <details class={`judge-drawer ${tone}`}>
+      <summary>
+        <span class="judge-drawer-mark" aria-hidden="true">{verdict === 'pass' ? '✓' : verdict === 'fail' || verdict === 'error' ? '✗' : '⚖'}</span>
+        <span>{summary}</span>
+      </summary>
+      <SubagentCard session={latest} expanded={props.expanded} {...(props.projectId && { projectId: props.projectId })} />
+      {earlier.length > 0 && (
+        <details class="judge-drawer-earlier">
+          <summary>{earlier.length === 1 ? 'earlier attempt' : `${earlier.length} earlier attempts`}, on drafts since revised</summary>
+          {earlier.reverse().map((s) => <SubagentCard key={s.sessionId} session={s} expanded={props.expanded} {...(props.projectId && { projectId: props.projectId })} />)}
+        </details>
+      )}
+    </details>
+  );
+}
+
 function SubagentCard(props: { session: LogSubagentSession; projectId?: string; expanded: boolean }) {
   const s = props.session;
   const name = s.agent.name || s.agent.id;
@@ -1107,6 +1148,9 @@ function SubagentCard(props: { session: LogSubagentSession; projectId?: string; 
   // tool row is collapsed. Inline event detail remains part of the expanded
   // history unless this branch is still executing.
   const visibleNested = nested.filter((item) => item.type === 'session' || showExpandedContent);
+  const isJudgeSession = (item: typeof nested[number]) => item.type === 'session' && item.session.kinds?.includes('judge') === true;
+  const judgeChildren = visibleNested.flatMap((item) => (isJudgeSession(item) && item.type === 'session' ? [item.session] : []));
+  const otherNested = visibleNested.filter((item) => !isJudgeSession(item));
   const inner = (
     <>
       <span class={`chip status ${presentation?.chipClass ?? s.displayStatus}`}>
@@ -1141,11 +1185,12 @@ function SubagentCard(props: { session: LogSubagentSession; projectId?: string; 
       </div>
       {visibleNested.length > 0 && (
         <div class="subagent-children" aria-label={`Important descendants and events of ${name}`}>
-          {visibleNested.map((item) => item.type === 'session'
+          {otherNested.map((item) => item.type === 'session'
             ? <SubagentCard key={item.session.sessionId} session={item.session} expanded={props.expanded} {...(props.projectId && { projectId: props.projectId })} />
             : item.event.type === 'reviewer-feedback'
               ? <ReviewerFeedbackEventCard key={item.event.id} event={item.event} />
               : <VerifyEventCard key={item.event.id} event={item.event} />)}
+          {judgeChildren.length > 0 && <JudgeDrawer judges={judgeChildren} expanded={props.expanded} {...(props.projectId && { projectId: props.projectId })} />}
         </div>
       )}
     </div>

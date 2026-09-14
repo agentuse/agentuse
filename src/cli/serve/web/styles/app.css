@@ -8605,6 +8605,39 @@ a.lastrun.waiting { color: var(--cyan); }
   font-size: var(--font-size-caption);
   overflow-wrap: anywhere;
 }
+/* The judge runs, folded to one line under their delegated call. The mark
+   carries the verdict tone; the line reads like the other foldable rows. */
+.page-approval-detail .judge-drawer { margin: 8px 0 4px; }
+.page-approval-detail .judge-drawer > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  padding: 4px 0;
+  color: var(--muted-3);
+  font-size: var(--font-size-caption);
+}
+.page-approval-detail .judge-drawer > summary::-webkit-details-marker { display: none; }
+.page-approval-detail .judge-drawer > summary::before {
+  content: "▸";
+  color: var(--muted-2);
+  font-size: var(--font-size-micro);
+}
+.page-approval-detail .judge-drawer[open] > summary::before { content: "▾"; }
+.page-approval-detail .judge-drawer > summary:hover { color: var(--fg); }
+.page-approval-detail .judge-drawer > summary:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 2px; border-radius: 4px; }
+.page-approval-detail .judge-drawer-mark { flex: none; }
+.page-approval-detail .judge-drawer.is-success .judge-drawer-mark { color: var(--green); }
+.page-approval-detail .judge-drawer.is-failure .judge-drawer-mark { color: var(--red); }
+.page-approval-detail .judge-drawer.is-warning .judge-drawer-mark { color: var(--amber); }
+.page-approval-detail .judge-drawer-earlier { margin-top: 6px; }
+.page-approval-detail .judge-drawer-earlier > summary {
+  cursor: pointer;
+  padding: 4px 0;
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+}
 /* Children are indented, nothing more: a tree line next to each child's tone
    rail made three verticals side by side. */
 .page-approval-detail .subagent-children {
