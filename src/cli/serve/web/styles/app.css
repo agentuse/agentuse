@@ -3342,13 +3342,28 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   justify-content: space-between;
 }
 /* Inside the gate card the bar is the card's closing band rather than a pill
-   floating in it: flush to the edges, hairline on top, card corners below. */
+   floating in it: flush to the edges, hairline on top, no shadow, square. */
 .page-approval-detail .log-item.is-actionable .log-actions {
   margin: 0;
   border-width: 1px 0 0;
   border-top-color: var(--line);
-  border-radius: 0 0 13px 13px;
+  border-radius: 0;
+  box-shadow: none;
 }
+/* The shortcuts live in the buttons' tooltips; three key chips beside three
+   buttons read as six controls. The awaiting-pick explanation still shows. */
+.log-actions-hint-kbd { display: none; }
+/* Under a pending gate the session controls are a footnote to the decision
+   bar above them, not a second row of buttons: plain text links, no boxes. */
+.page-approval-detail .now-card.is-decision .session-actions { padding: 8px 18px 12px; border-top: 0; gap: 4px 20px; }
+.page-approval-detail .now-card.is-decision .session-actions > button {
+  padding: 4px 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: none;
+}
+.page-approval-detail .now-card.is-decision .session-actions > button:hover { background: transparent; color: var(--fg); }
 .log-actions-hint {
   font-size: var(--font-size-caption);
   color: var(--muted);

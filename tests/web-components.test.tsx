@@ -1280,8 +1280,8 @@ describe('LogEntry component', () => {
     expect(html).not.toContain('[truncated for display]');
     expect(html).toContain(`SHA-256 ${'a'.repeat(64)}`);
     expect(html).toContain(`SHA-256 ${'b'.repeat(64)}`);
-    expect(html).toContain('<button class="primary">Approve');
-    expect(html).toContain('<button class="danger">Reject');
+    expect(html).toContain('<button title="Approve (⌘⏎)" class="primary">Approve');
+    expect(html).toContain('<button title="Reject (Esc)" class="danger">Reject');
     expect(html).not.toContain('<button>Comment');
   });
 
@@ -1376,8 +1376,8 @@ describe('LogEntry component', () => {
     expect(html).toContain('Pick an option above to approve');
     expect(html).toContain('<button disabled title="Pick one of the options above first"');
     // Reject and comment are still valid answers to "which of these?".
-    expect(html).toContain('<button class="danger">Reject');
-    expect(html).toContain('<button>Comment');
+    expect(html).toContain('<button title="Reject (Esc)" class="danger">Reject');
+    expect(html).toContain('<button title="Comment (c)">Comment');
     // Nothing is emphasized, so the card never implies a pick that was not made.
     expect(html).toContain('approval-option interactive');
     expect(html).not.toContain('approval-option interactive selected');
@@ -1390,7 +1390,7 @@ describe('LogEntry component', () => {
 
     expect(html).not.toContain('log-actions-awaiting-pick');
     expect(html).not.toContain('Pick one of the options above first');
-    expect(html).toContain('<button class="primary">Approve<span class="approve-choice-label">');
+    expect(html).toContain('<button title="Approve (⌘⏎)" class="primary">Approve<span class="approve-choice-label">');
     expect(html).toContain('Candidate B');
     expect(html).toContain('approval-option interactive selected');
   });

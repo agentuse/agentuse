@@ -1608,12 +1608,12 @@ function LogEntryImpl(props: LogEntryProps) {
                 thing under the cursor and the last thing keyboard focus lands
                 on, so neither reaches it by accident. */}
             <div class="log-actions-buttons">
-              {!genericToolApproval && <button disabled={props.actionsDisabled} onClick={() => props.onAction('comment')}>Comment</button>}
-              <button class="danger" disabled={props.actionsDisabled} onClick={() => props.onAction('reject')}>Reject</button>
+              {!genericToolApproval && <button disabled={props.actionsDisabled} title="Comment (c)" onClick={() => props.onAction('comment')}>Comment</button>}
+              <button class="danger" disabled={props.actionsDisabled} title="Reject (Esc)" onClick={() => props.onAction('reject')}>Reject</button>
               <button
                 class="primary"
                 disabled={props.actionsDisabled || awaitingPick}
-                title={awaitingPick ? 'Pick one of the options above first' : undefined}
+                title={awaitingPick ? 'Pick one of the options above first' : 'Approve (⌘⏎)'}
                 onClick={() => props.onAction('approve')}
               >
                 {selectedOptionLabel ? <>Approve<span class="approve-choice-label">“{selectedOptionLabel}”</span></> : 'Approve'}
