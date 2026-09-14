@@ -2067,6 +2067,11 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   box-shadow: var(--surface-shadow);
 }
 /* The ask's own header band: time, marker, and what is being requested. */
+/* Inside the decision card that band only repeats the card head ("Decision
+   needed · waiting 3h"), so it is dropped there; the gate then opens on the
+   question itself. Elsewhere (a paused child's view-only gate in the feed)
+   the band is still what identifies the row. */
+.page-approval-detail .now-card.is-decision .log-item.is-actionable > .log-head { display: none; }
 .page-approval-detail .log-item.is-actionable .log-head {
   padding: 12px 16px;
   border-bottom: 1px solid var(--line);
@@ -2926,10 +2931,14 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   font-size: var(--font-size-supporting);
   line-height: var(--lh-loose);
 }
-/* The consequence line is the only band arguing against approving, so it gets a
-   warm label and a faint wash instead of blending into the evidence above it. */
-.approval-risk { background: var(--amber-soft); }
+/* The consequence line is the only band arguing against approving. The amber
+   label is what marks it; a wash on top of that made it read as yet another
+   box inside the gate card. It sits straight under the question with no
+   hairline between them: ask and consequence are one thought. */
 .approval-risk .approval-section-title { color: var(--amber); }
+.approval-question + .approval-risk { border-top: 0; }
+.approval-question + .approval-risk .approval-section-title { padding-top: 0; }
+.approval-question:has(+ .approval-risk) { padding-bottom: 6px; }
 /* The card's contrast ramp is declared on the wrappers (.approval-section-body,
    .approval-reference-excerpt, .approval-change-content, .approval-option-action),
    but the text lands in a .content-markdown descendant that sets its own colour -
@@ -3022,21 +3031,21 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   gap: 10px;
 }
 .approval-change {
-  border: 1px solid var(--green-border);
-  border-radius: 10px;
-  background: var(--bg);
-  /* Solid green edge so "this executes on approval" still reads as green over
-     the row's cyan actionable wash, where a soft tint alone washes out. */
-  box-shadow: inset 3px 0 0 var(--green);
-  overflow: hidden;
+  /* A green rule down the left says "this executes on approval"; the card it
+     used to be (border, tinted head, boxed command strip) was a box inside
+     the gate card inside the decision card. Same shape as the quoted
+     original across from it, so the two columns read as a pair. */
+  border-left: 3px solid var(--green);
+  padding-left: 12px;
+  display: grid;
+  gap: 4px;
+  justify-items: stretch;
 }
 .approval-change-head {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
-  background: var(--green-soft);
-  border-bottom: 1px solid var(--line);
+  min-height: 24px;
 }
 .approval-change-label {
   flex: 1;
@@ -3052,7 +3061,6 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   white-space: nowrap;
 }
 .approval-change-content {
-  padding: 10px 12px 12px;
   color: var(--fg);
   font-size: var(--font-size-supporting);
   line-height: var(--lh-loose);
@@ -3060,9 +3068,7 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 }
 .approval-command-detail {
   display: block;
-  padding: 7px 10px;
-  border-top: 1px solid var(--line);
-  background: color-mix(in srgb, var(--bg) 78%, var(--line));
+  margin-top: 4px;
   color: var(--muted);
 }
 .approval-command-label {
