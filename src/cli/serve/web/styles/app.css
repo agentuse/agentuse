@@ -3347,10 +3347,10 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 /* The shortcuts live in the buttons' tooltips; three key chips beside three
    buttons read as six controls. The awaiting-pick explanation still shows. */
 .log-actions-hint-kbd { display: none; }
-/* Under a pending gate the run controls live in the header's ⋯ menu, so this
-   row is empty unless the revise form is open; collapse it rather than leave
-   a blank band under Approve. */
-.page-approval-detail .now-card.is-decision .session-actions:empty { display: none; }
+/* Run controls live in the header's ⋯ menu, so this row is usually empty
+   (it still hosts the revise form and revision history when they show);
+   collapse it rather than leave a blank band. */
+.page-approval-detail .session-actions:empty { display: none; }
 .page-approval-detail .header-title-row .session-menu .menu-item .menu-icon-stop { color: var(--red); }
 .log-actions-hint {
   font-size: var(--font-size-caption);

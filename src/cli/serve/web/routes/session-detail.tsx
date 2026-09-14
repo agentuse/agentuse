@@ -1591,11 +1591,12 @@ export default function SessionDetail() {
   // shows a breadcrumb back to its parent and the page has no decision controls of
   // its own (the gate is acted on at the parent).
   const isSubagentView = Boolean(approval.viewOnly);
-  // While a decision is pending the card should end on Approve, so the run
-  // controls (revise, stop) sit in the header's ⋯ menu instead of a second
-  // button row under the gate. Only when that menu is actually rendered.
+  // Run controls (retry, revise, resume, stop) live in the header's ⋯ menu
+  // whenever that menu is rendered, on every state: the card is for reading
+  // and deciding, not a second button row. Views with no menu (a sub-agent's
+  // view-only page, a revision session) keep the inline row.
   const sessionMenuShown = !isSubagentView && Boolean(approval.agent.runPath) && Boolean(sessionProjectId) && !isRevisionSession;
-  const runControlsInMenu = actionable && sessionMenuShown;
+  const runControlsInMenu = sessionMenuShown;
   const parentLabel = approval.parentAgentName ?? 'parent run';
   const parentTarget = approval.parentSessionId ?? approval.rootSessionId;
   const parentLink = approval.parentHref
@@ -2031,15 +2032,39 @@ export default function SessionDetail() {
                 // "Run new session" working on multi-project daemons.
                 projectId={sessionProjectId}
                 {...(runControlsInMenu ? { runActions: [
-                  ...(approval.agent.filePath ? [{
+                  ...(reopenActionable ? [{
+                    label: submittingReopen ? 'Reopening…' : 'Retry',
+                    title: 'Roll the approval gate back to pending so you can re-submit your decision and retry the resume that failed',
+                    icon: 'retry' as const,
+                    busy: submittingReopen,
+                    onSelect: () => { void submitReopen(); },
+                  }] : []),
+                  ...(approval.agent.filePath && (ended || approval.sessionStatus === 'suspended') ? [{
                     label: 'Revise agent file',
                     title: "Diagnose this run and propose a change to this agent's source",
                     icon: 'edit' as const,
                     onSelect: () => setReviseRequest((n) => n + 1),
                   }] : []),
-                  ...(stopActionable && !stopInBar ? [{
+                  ...(continueActionable ? [{
+                    label: 'Resume session',
+                    title: 'Continue this run with a new instruction',
+                    icon: 'resume' as const,
+                    onSelect: () => setShowResume(true),
+                  }] : []),
+                  ...(cascadeRetryActionable ? [{
+                    label: submittingContinue ? 'Resuming…' : 'Resume',
+                    title: 'Resume this run where its delegated sub-agent left off',
+                    icon: 'resume' as const,
+                    busy: submittingContinue,
+                    onSelect: () => { void submitCascadeRetry(); },
+                  }] : []),
+                  ...((stopActionable || dismissActionable) && !stopInBar ? [{
                     label: live ? 'Stop session' : 'Discard',
-                    title: live ? 'Stop this session and any running subagents' : 'Discard this pending request: it is rejected, and the session resumes briefly so the agent records the rejection before ending',
+                    title: live
+                      ? 'Stop this session and any running subagents'
+                      : dismissActionable
+                        ? 'Discard this failed run: marks it reviewed and clears it from "Needs your attention" (the run keeps its status)'
+                        : 'Discard this pending request: it is rejected, and the session resumes briefly so the agent records the rejection before ending',
                     icon: 'stop' as const,
                     busy: submittingStop,
                     onSelect: () => { void submitStop(); },
@@ -2162,7 +2187,7 @@ export default function SessionDetail() {
         {gatePanel}
 
         <div class="session-actions">
-          {reopenActionable && (
+          {reopenActionable && !runControlsInMenu && (
             <button
               type="button"
               class="debug-prompt-button"
@@ -2216,7 +2241,7 @@ export default function SessionDetail() {
               }}
             />
           ) : null}
-          {continueActionable && (
+          {continueActionable && !runControlsInMenu && (
             <button
               type="button"
               class={`session-action-button${showResume ? ' active' : ''}`}
@@ -2231,7 +2256,7 @@ export default function SessionDetail() {
               <span>Resume session</span>
             </button>
           )}
-          {cascadeRetryActionable && (
+          {cascadeRetryActionable && !runControlsInMenu && (
             <BusyButton
               busy={submittingContinue}
               class="session-action-button"
