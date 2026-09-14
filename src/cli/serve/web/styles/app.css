@@ -8442,7 +8442,6 @@ a.lastrun.waiting { color: var(--cyan); }
    as well stacked three borders inside the decision card. */
 .page-approval-detail .subagent-card {
   margin: 6px 0 10px;
-  border-left: 3px solid var(--line-strong);
   border-radius: 0;
 }
 .page-approval-detail .subagent-card > .subagent-event {
@@ -8560,10 +8559,10 @@ a.lastrun.waiting { color: var(--cyan); }
   font-size: var(--font-size-caption);
   overflow-wrap: anywhere;
 }
+/* Children are indented, nothing more: a tree line next to each child's tone
+   rail made three verticals side by side. */
 .page-approval-detail .subagent-children {
-  margin: -2px 0 10px 18px;
-  padding-left: 16px;
-  border-left: 1px solid var(--line-strong);
+  margin: -2px 0 10px 24px;
 }
 .page-approval-detail .subagent-children .subagent-event { margin-top: 8px; }
 .page-approval-detail .subagent-children > * + * { margin-top: 14px; }
@@ -8665,7 +8664,7 @@ a.lastrun.waiting { color: var(--cyan); }
     flex-basis: 100%;
     min-width: 0;
   }
-  .page-approval-detail .subagent-children { margin-left: 8px; padding-left: 10px; }
+  .page-approval-detail .subagent-children { margin-left: 12px; }
 }
 
 /* Terminal report owned by the subagent card. Its headline stays visible while
