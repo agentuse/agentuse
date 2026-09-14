@@ -306,7 +306,7 @@ export function shouldShowResultNotice(
 
 /** The identifier itself is the copy target, with inline confirmation so the
  * interaction stays discoverable without adding another metadata control. */
-export function SessionIdCopy(props: { sessionId: string }) {
+export function SessionIdCopy(props: { sessionId: string; short?: boolean }) {
   const [copied, setCopied] = useState(false);
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -332,7 +332,7 @@ export function SessionIdCopy(props: { sessionId: string }) {
       title={copied ? 'Session ID copied' : 'Copy session ID'}
       onClick={() => void copy()}
     >
-      <code>{props.sessionId}</code>
+      <code>{props.short && props.sessionId.length > 14 ? `${props.sessionId.slice(0, 8)}…${props.sessionId.slice(-4)}` : props.sessionId}</code>
       <span class="session-id-copy-status" aria-live="polite">{copied ? 'copied' : ''}</span>
     </button>
   );
@@ -2399,6 +2399,7 @@ export default function SessionDetail() {
                 // URLs often omit it; the header's stamped project id keeps
                 // "Run new session" working on multi-project daemons.
                 projectId={sessionProjectId}
+                diagnosticHref={diagnosticHref}
                 {...(runControlsInMenu ? {
                   runActions: menuControls.map((control) => ({
                     label: control.label,
@@ -2410,28 +2411,37 @@ export default function SessionDetail() {
                 } : {})}
               />
             )}
-            <a class="meta-band-link session-header-diagnostic" href={diagnosticHref}>
-              Diagnostic
-              <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M6 3.5 10.5 8 6 12.5" />
-              </svg>
-            </a>
+            {!sessionMenuShown && (
+              <a class="meta-band-link session-header-diagnostic" href={diagnosticHref}>
+                Diagnostic
+                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M6 3.5 10.5 8 6 12.5" />
+                </svg>
+              </a>
+            )}
           </div>
           {/* One line of facts. The old header spent a full screen on the
               agent's description, a boilerplate "review the request below"
               paragraph, a five-cell grid and a token strip before any content.
               Everything a reviewer glances at fits in one wrapping line; the
               breakdown lives on the diagnostic page. */}
+          {/* Two quiet rows in one typeface. First what changes as the run
+              goes (time, context, cost), then what identifies it (project,
+              model, id). The old single line mixed mono, bold and plain and
+              orphaned the id on its own right-aligned row. */}
           <div class="session-meta-line">
-            <span title={term('project')}><code>{projectId ?? approval.project ?? 'default'}</code></span>
-            {approval.model && <span title="model"><code>{approval.model}</code></span>}
             {approval.createdAt !== undefined && (
-              <span>started <b>{formatApprovalTime(approval.createdAt)}</b>{elapsedLabel && <> · {elapsedLabel}</>}</span>
+              <span>started {formatApprovalTime(approval.createdAt)}</span>
             )}
-            {contextLeftLabel && <span>context <b>{contextLeftLabel}</b></span>}
-            {costLabel && <span>cost <b><code>{costLabel}</code></b></span>}
-            {approval.expiresAt !== undefined && <span>expires <b>{formatApprovalTime(approval.expiresAt)}</b></span>}
-            <span class="session-meta-id"><SessionIdCopy sessionId={approval.sessionId} /></span>
+            {elapsedLabel && <span>{elapsedLabel}</span>}
+            {contextLeftLabel && <span>context {contextLeftLabel}</span>}
+            {costLabel && <span>cost {costLabel}</span>}
+            {approval.expiresAt !== undefined && <span>expires {formatApprovalTime(approval.expiresAt)}</span>}
+          </div>
+          <div class="session-meta-line session-meta-identity">
+            <span title={term('project')}>{projectId ?? approval.project ?? 'default'}</span>
+            {approval.model && <span title="model">{approval.model}</span>}
+            <SessionIdCopy sessionId={approval.sessionId} short />
           </div>
           {headerNote && <p class="session-header-note">{headerNote}</p>}
         </header>

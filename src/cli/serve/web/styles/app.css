@@ -11174,20 +11174,26 @@ html[data-page="draft-panel"] .app-route {
 /* --- Session page: compact header + the "now" card --- */
 .page-approval-detail header.session-header { margin-bottom: 20px; }
 .page-approval-detail .session-header h1 { margin: 0; }
-.page-approval-detail .session-header .header-title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+/* The menu sits beside the name, not at the far edge: nothing else lives on
+   this row now that Diagnostic is in the menu. */
+.page-approval-detail .session-header .header-title-row { display: flex; align-items: center; justify-content: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .page-approval-detail .session-header-diagnostic { margin-left: auto; }
 .page-approval-detail .session-meta-line {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 18px;
+  align-items: baseline;
+  gap: 2px 0;
   font-size: var(--font-size-caption);
-  color: var(--muted);
+  color: var(--muted-3);
 }
-.page-approval-detail .session-meta-line b { font-weight: var(--weight-normal); color: var(--muted-3); }
-.page-approval-detail .session-meta-line code { font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted-3); }
-.page-approval-detail .session-meta-id { margin-left: auto; }
-.page-approval-detail .session-meta-id code { color: var(--muted-2); }
+/* Separators drawn, not typed, so wrapping never strands a dot at a line end. */
+.page-approval-detail .session-meta-line > * + *::before {
+  content: "·";
+  margin: 0 8px;
+  color: var(--muted-2);
+}
+.page-approval-detail .session-meta-identity { margin-top: 2px; color: var(--muted); }
+.page-approval-detail .session-meta-identity .session-id-copy code { font-size: var(--font-size-micro); }
 .page-approval-detail .session-header-note {
   margin: 12px 0 0;
   font-size: var(--font-size-caption);

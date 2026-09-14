@@ -56,6 +56,8 @@ export function SessionMenu(props: {
   projectId: string;
   /** Run-level actions listed after the agent actions, under their own rule. */
   runActions?: SessionMenuRunAction[];
+  /** This run's diagnostic page (context, tokens, timings). */
+  diagnosticHref?: string;
 }) {
   const [runOpen, setRunOpen] = useState(false);
   const { run, busy, error } = useRunAgent(props.agentRunPath, props.projectId);
@@ -117,6 +119,20 @@ export function SessionMenu(props: {
             </svg>
             <span>Run new session with custom…</span>
           </button>
+          {props.diagnosticHref && (
+            <a
+              class="menu-item"
+              role="menuitem"
+              href={props.diagnosticHref}
+              title="Context, tokens and timings for this run"
+              onClick={() => close()}
+            >
+              <svg class="menu-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M2.5 12.5 6 7.5l2.5 3 2-2.5 3 4.5" /><path d="M2.5 3h11" />
+              </svg>
+              <span>Diagnostic</span>
+            </a>
+          )}
             {error && !runOpen && <p class="menu-error" role="alert">{error}</p>}
             {props.runActions && props.runActions.length > 0 && (
               <>
