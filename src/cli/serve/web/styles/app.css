@@ -8436,13 +8436,14 @@ a.lastrun.waiting { color: var(--cyan); }
    identifiable hook and keep the hidden attribute working. */
 :is(.page-approval-detail, .page-draft) .meta .token-cell[hidden] { display: none; }
 
-/* child-session card shown inside a log entry */
+/* child-session card shown inside a log entry. Not a bordered card: the
+   status pill names the child, the tone rail on the left says how it went,
+   and the tree line under .subagent-children shows nesting. Boxing each one
+   as well stacked three borders inside the decision card. */
 .page-approval-detail .subagent-card {
   margin: 6px 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel);
-  overflow: hidden;
+  border-left: 3px solid var(--line-strong);
+  border-radius: 0;
 }
 .page-approval-detail .subagent-card > .subagent-event {
   margin: 0;
@@ -8456,15 +8457,12 @@ a.lastrun.waiting { color: var(--cyan); }
   gap: 6px 14px;
   align-items: center;
   margin: 6px 0 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel);
+  padding: 8px 12px;
+  border-radius: 6px;
   color: inherit;
   text-decoration: none;
-  border-bottom: 1px solid var(--line);
 }
-.page-approval-detail a.subagent-event:hover { background: var(--panel-hover); border-color: var(--line-strong); }
+.page-approval-detail a.subagent-event:hover { background: var(--panel-hover); }
 .page-approval-detail .subagent-identity { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .page-approval-detail .subagent-name { color: var(--fg); font-weight: var(--weight-medium); overflow-wrap: anywhere; }
 .page-approval-detail .subagent-role {
@@ -8567,14 +8565,7 @@ a.lastrun.waiting { color: var(--cyan); }
   padding-left: 16px;
   border-left: 1px solid var(--line-strong);
 }
-.page-approval-detail .subagent-children .subagent-event {
-  margin-top: 8px;
-  background: color-mix(in srgb, var(--panel) 82%, transparent);
-}
-.page-approval-detail .subagent-tree-node.is-important > .subagent-card,
-.page-approval-detail .subagent-tree-node.is-important > .subagent-event {
-  border-color: var(--line-strong);
-}
+.page-approval-detail .subagent-children .subagent-event { margin-top: 8px; }
 .page-approval-detail .subagent-tree-node > .verify-event { border-left: 3px solid var(--cyan-border); }
 .page-approval-detail .subagent-tree-node > .verify-event.is-failure { border-left-color: var(--red); }
 /* All descendant roles use the same report rail. The runtime maps both ordinary
@@ -8670,8 +8661,7 @@ a.lastrun.waiting { color: var(--cyan); }
    the parent tool row is collapsed; body, items, and artifacts expand together. */
 .page-approval-detail .subagent-card-report {
   margin: 0 12px 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
+  padding-top: 6px;
 }
 .page-approval-detail .subagent-report-headline {
   display: flex;
