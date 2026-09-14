@@ -11161,6 +11161,9 @@ html[data-page="draft-panel"] .app-route {
 .page-approval-detail .now-card + .session-actions { margin-top: 12px; }
 /* The now-card head already carries the status and the timing line. */
 .page-approval-detail .now-card > .session-result > .result-verdict { display: none; }
+/* The error card leads with the failure in its own body; the result block
+   under it would repeat the same line. */
+.page-approval-detail .now-card.is-error > .session-result > .result-error { display: none; }
 
 /* Now-card bodies: tiles under a result, the recent steps under a running
    step, the report + way back on a sub-agent, and the action row at the foot. */

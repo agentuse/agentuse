@@ -18,7 +18,6 @@ import { useApprovalStream } from '../hooks/use-approval-stream';
 import { useGlobalApprovals } from '../hooks/use-global-approvals';
 import { useTitle } from '../hooks/use-title';
 import { useSmartBack } from '../hooks/use-smart-back';
-import { useRunAgent } from '../hooks/use-run-agent';
 import {
   formatTokens,
   formatApprovalTime,
@@ -33,10 +32,9 @@ import {
   sessionErrorText,
   splitOutcomeHeadline,
 } from '../lib/format';
-import { brandName, pageTitle } from '../lib/brand';
+import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
 import { ONBOARDING_AGENT_NAME, ONBOARDING_MODEL } from '../../../../onboarding';
-import { BusyButton } from '../components/busy-button';
 
 type ApprovalHeader = Omit<ApprovalPageInfo, 'logs'>;
 
@@ -55,6 +53,133 @@ export function sessionResumeMode(options: {
   if (!options.ended || options.live || options.fatal || options.revision) return null;
   if (options.cascadeRetryable && options.hasAgentFile) return 'cascade';
   return options.hasAgentFile ? 'continue' : null;
+}
+
+/** The one word that says what this page is for right now. Every card, bar
+ *  and menu reads it instead of re-deriving the answer from raw status
+ *  strings. `idle` is a page with nothing to show or do in a card: an expired
+ *  gate, a stranded run, an ended run with no result. */
+export type SessionPageMode = 'decision' | 'report' | 'working' | 'error' | 'result' | 'idle';
+
+export function sessionPageMode(options: {
+  /** An actionable gate is on the page: pending, not expired, entry found. */
+  gate: boolean;
+  /** A delegated child viewed directly; decisions are made on the parent. */
+  viewOnly: boolean;
+  ended: boolean;
+  live: boolean;
+  /** Ended with an error the page can show. */
+  failed: boolean;
+  /** Ended with something to show: outcome, timings, artifacts. */
+  hasResult: boolean;
+}): SessionPageMode {
+  if (options.gate) return 'decision';
+  if (options.viewOnly) return 'report';
+  if (options.ended) return options.failed ? 'error' : options.hasResult ? 'result' : 'idle';
+  return options.live ? 'working' : 'idle';
+}
+
+export type SessionRunControl = {
+  id: 'retry' | 'revise' | 'resume' | 'cascade' | 'stop' | 'discard';
+  label: string;
+  title: string;
+  icon: 'retry' | 'edit' | 'resume' | 'stop';
+  busy: boolean;
+  /** `bar`: pinned in the sticky session bar. `menu`: the header ⋯ menu, or
+   *  the inline row on a page that has no menu. */
+  placement: 'bar' | 'menu';
+};
+
+/** Every run-level control the page offers, in display order, from one place.
+ *  The menu, the bar and the fallback row all render this list; none of them
+ *  decides on its own whether a control exists. */
+export function sessionRunControls(options: {
+  ended: boolean;
+  live: boolean;
+  /** The agent or a delegated sub-agent is doing work right now. */
+  working: boolean;
+  atGate: boolean;
+  hasAgentFile: boolean;
+  revision: boolean;
+  reopenable: boolean;
+  resume: 'cascade' | 'continue' | null;
+  /** A run that has not ended can be stopped (or, parked at a gate, discarded). */
+  stoppable: boolean;
+  /** A failed run can be dismissed from "Needs your attention". */
+  dismissable: boolean;
+  busy: { reopen: boolean; resume: boolean; stop: boolean };
+}): SessionRunControl[] {
+  const controls: SessionRunControl[] = [];
+  if (options.reopenable) {
+    controls.push({
+      id: 'retry',
+      label: options.busy.reopen ? 'Reopening…' : 'Retry',
+      title: 'Roll the approval gate back to pending so you can re-submit your decision and retry the resume that failed',
+      icon: 'retry',
+      busy: options.busy.reopen,
+      placement: 'menu',
+    });
+  }
+  if (options.hasAgentFile && !options.revision && (options.ended || options.atGate)) {
+    controls.push({
+      id: 'revise',
+      label: 'Revise agent file',
+      title: "Diagnose this run and propose a change to this agent's source",
+      icon: 'edit',
+      busy: false,
+      placement: 'menu',
+    });
+  }
+  if (options.resume === 'continue') {
+    controls.push({
+      id: 'resume',
+      label: 'Resume session',
+      title: 'Continue this run with a new instruction',
+      icon: 'resume',
+      busy: false,
+      placement: 'menu',
+    });
+  } else if (options.resume === 'cascade') {
+    controls.push({
+      id: 'cascade',
+      label: options.busy.resume ? 'Resuming…' : 'Resume',
+      title: 'Resume this run where its delegated sub-agent left off',
+      icon: 'resume',
+      busy: options.busy.resume,
+      placement: 'menu',
+    });
+  }
+  if (options.stoppable && options.live) {
+    controls.push({
+      id: 'stop',
+      label: options.busy.stop ? 'Stopping…' : 'Stop session',
+      title: 'Stop this session and any running subagents',
+      icon: 'stop',
+      busy: options.busy.stop,
+      // The one control a reader may need in a hurry: while work is running it
+      // sits in the sticky bar, reachable without a scroll.
+      placement: options.working ? 'bar' : 'menu',
+    });
+  } else if (options.stoppable) {
+    controls.push({
+      id: 'discard',
+      label: options.busy.stop ? 'Discarding…' : 'Discard',
+      title: 'Discard this pending request: it is rejected, and the session resumes briefly so the agent records the rejection before ending',
+      icon: 'stop',
+      busy: options.busy.stop,
+      placement: 'menu',
+    });
+  } else if (options.dismissable) {
+    controls.push({
+      id: 'discard',
+      label: options.busy.stop ? 'Discarding…' : 'Discard',
+      title: 'Discard this failed run: marks it reviewed and clears it from "Needs your attention" (the run keeps its status)',
+      icon: 'stop',
+      busy: options.busy.stop,
+      placement: 'menu',
+    });
+  }
+  return controls;
 }
 
 export function sessionLogSearchTerms(query: string): string[] {
@@ -530,9 +655,6 @@ export default function SessionDetail() {
   // the log grows so newly written artifacts appear without a page reload.
   const [artifacts, setArtifacts] = useState<SessionArtifact[]>([]);
   // "Run again" on an ended run: a fresh detached session of the same agent.
-  // Hooks run before the early returns below, so the path may be empty here;
-  // the button that calls run() only renders once approval has loaded.
-  const runAgain = useRunAgent(approval?.agent.runPath ?? '', projectId ?? approval?.project);
   // Artifact manifests change only when artifact_save completes. Keeping this
   // separate from logsVersion prevents an initial SSE transcript replay from
   // turning N historical log entries into N manifest requests.
@@ -606,11 +728,6 @@ export default function SessionDetail() {
   const hasScrolledRef = useRef(false);
   const resultRef = useRef(result);
   resultRef.current = result;
-  // Whether the session was ALREADY over the first time this page saw it.
-  // Summary-first layout applies only then: a run watched live keeps its
-  // feed-first layout after it ends, so the transcript never snaps closed
-  // under the reader. Latched per session (reset in the [sessionId] effect).
-  const firstViewEndedRef = useRef<boolean | null>(null);
 
   // The desktop Edit > Find command dispatches the same event. The search stays
   // out of the session header until requested, then takes focus like a native
@@ -724,9 +841,6 @@ export default function SessionDetail() {
     setTranscriptOpen(banked?.transcriptOpen ?? transcriptDefaultOpen());
     restoreScrollRef.current = banked && banked.scrollY > 0 ? banked.scrollY : null;
     restoreAttemptsRef.current = 0;
-    // Re-latch the summary-first decision, and the keyed uncontrolled
-    // <details> transcript remounts closed for the new session.
-    firstViewEndedRef.current = null;
     // Bank this session's view state on the way out, so stepping into a
     // sub-agent and coming back doesn't cost the reader their place.
     return () => {
@@ -1092,9 +1206,6 @@ export default function SessionDetail() {
   const showWorking = isWorkingStatus(status, orderedLogs) && !tailTyping;
   const workingLabel = status === 'preparing' ? 'Preparing project context' : 'Agent is running';
   const ended = isEndedStatus(approval?.sessionStatus);
-  if (approval !== null && firstViewEndedRef.current === null) {
-    firstViewEndedRef.current = ended;
-  }
   // Opening a finished run is reviewing it: stamp it so Home's "results you
   // haven't opened" and the unseen marks drop it. Once per page load; the
   // server ignores repeats. Best-effort, a miss only leaves the mark on.
@@ -1107,10 +1218,6 @@ export default function SessionDetail() {
       // Nothing to show the reader; the run simply stays marked new.
     });
   }, [approval?.sessionStatus, sessionId, token, projectId]);
-  // Summary-first (issue #150): outcome + artifacts lead, transcript collapses.
-  // Only for sessions that arrived already ended; live views keep feed-first
-  // behavior for their whole lifetime (see firstViewEndedRef).
-  const summaryFirst = ended && firstViewEndedRef.current === true;
   const expired = approval?.expiresAt !== undefined && approval.expiresAt <= Date.now();
   // Parked on a delegated sub-agent that already ended: still raw-status
   // suspended, but nothing will ever carry it forward. Without its own copy line
@@ -1143,21 +1250,20 @@ export default function SessionDetail() {
   // without any of it. The panel renders nothing at all when it has nothing to
   // report, so extending it to live and suspended runs adds no empty box.
   const learningsVisible = Boolean(approval?.agent.filePath) && !isRevisionSession;
-  const stopActionable = approval !== null && !ended && !expired && !submittingStop && !fatalError && !isRevisionSession;
-  // While the agent (or a sub-agent it delegated to) is actually working, Stop
-  // sits in the sticky session bar: the one control a reader may need in a
-  // hurry, reachable without scrolling. Parked at a gate it is not urgent and
-  // lives in the ⋯ menu instead.
-  const stopInBar = stopActionable && isWorkingStatus(status, orderedLogs);
-  // Same Discard button on an ended failed run: stamps the run as reviewed
-  // (dismissedAt) so it clears from Home's "Needs your attention". Stopped-by-
-  // user runs never re-enter that list, so they get no discard affordance.
-  const dismissActionable = approval !== null && ended && approval.sessionStatus === 'error'
+  // What the server lets this run do. Whether a control is busy is carried
+  // separately, so an in-flight stop keeps its button (disabled, spinning)
+  // instead of making it vanish mid-click.
+  const stoppable = approval !== null && !ended && !expired && !fatalError && !isRevisionSession;
+  // Discard on an ended failed run stamps it reviewed (dismissedAt) so it
+  // clears from Home's "Needs your attention". Stopped-by-user runs never
+  // re-enter that list, so they get no discard affordance.
+  const dismissable = approval !== null && ended && approval.sessionStatus === 'error'
     && approval.errorCode !== 'USER_STOPPED'
-    && approval.dismissedAt === undefined && !justDismissed && !submittingStop && !fatalError;
+    && approval.dismissedAt === undefined && !justDismissed && !fatalError;
   // An errored session whose resolved approval gate can be rolled back for a retry.
-  const reopenActionable = ended && approval?.sessionStatus === 'error'
-    && Boolean(approval?.reopenable) && !live && !submittingReopen && !fatalError;
+  const reopenable = ended && approval?.sessionStatus === 'error'
+    && Boolean(approval?.reopenable) && !live && !fatalError;
+  const working = isWorkingStatus(status, orderedLogs);
 
   // Split the actionable gate OUT of the feed so the transcript can fold shut
   // above it. The gate is the one thing a reviewer must act on; the hundreds
@@ -1176,7 +1282,7 @@ export default function SessionDetail() {
       feedLogs: [...collapsedLogs.slice(0, idx), ...collapsedLogs.slice(idx + 1)],
     };
   }, [collapsedLogs, actionable]);
-  const gateFolded = Boolean(gateEntry) && !summaryFirst;
+  const gateFolded = Boolean(gateEntry);
   // With the result in the now card, an ended run's transcript is history too:
   // it folds on the same terms as a pending gate's, so the page reads
   // header, outcome, drawers, and the log only on request.
@@ -1614,29 +1720,24 @@ export default function SessionDetail() {
   // parent run. Surface a prominent jump-to-parent CTA so the reviewer isn't left
   // hunting for the (intentionally hidden) approve buttons.
   const showParentApproveCta = isSubagentView && approval.sessionStatus === 'suspended' && Boolean(parentLink);
-  const promptText = isRevisionSession
+  // The only header prose that survives: a state the page cannot otherwise
+  // explain (a paused sub-agent, an expired or stranded run, a revision, a
+  // resumable delegated failure).
+  const headerNote = isRevisionSession
     ? 'This AgentUse-owned session diagnoses the originating run and prepares a source proposal for your review.'
     : isSubagentView
-    ? approval.sessionStatus === 'suspended'
-      ? 'This sub-agent is paused for approval. The decision is made on its parent run — open it from the pending request at the end of the log.'
-      : 'A delegated sub-agent run. Approvals and follow-ups for it are handled on the parent run.'
-    : actionable
-      ? 'Review the pending request in the session log below, then approve, reject, or send a comment back to the agent. The session is paused until you respond.'
+      ? approval.sessionStatus === 'suspended'
+        ? 'This sub-agent is paused for approval. The decision is made on its parent run — open it from the pending request at the end of the log.'
+        : 'A delegated sub-agent run. Approvals and follow-ups for it are handled on the parent run.'
       : cascadeRetryActionable
         ? 'This run was interrupted while completing a delegated task. Resume to continue where it stopped.'
-      : continueActionable
-        ? approval.sessionStatus === 'error'
-          ? 'This run stopped with an error. Review the session log, then send a follow-up instruction to continue the same session with its existing context.'
-          : 'This run has finished. Send a follow-up instruction to continue the same session with its existing context.'
-        : busy
-          ? `${brandName()} is working on this session. The session log updates as new work arrives.`
-          : expired
-            ? 'This approval request has expired. The session log remains available for review.'
-            : stranded
-              ? (approval.errorMessage ?? 'This run is waiting on a delegated sub-agent that has already ended, so it can no longer be resumed.')
-              : 'Live view of this run. The session log updates as new work arrives.';
+        : expired
+          ? 'This approval request has expired. The session log remains available for review.'
+          : stranded
+            ? (approval.errorMessage ?? 'This run is waiting on a delegated sub-agent that has already ended, so it can no longer be resumed.')
+            : undefined;
 
-  // Verdict line for the summary-first result card. Prefer the runtime's
+  // Verdict line for the result card. Prefer the runtime's
   // root+descendant timing split so a reviewer taking 30 minutes does not make
   // the agent look 30 minutes slower. Historical sessions fall back to wall
   // time derived from their log.
@@ -1646,11 +1747,6 @@ export default function SessionDetail() {
     : approval.createdAt !== undefined && lastLogTime !== undefined && lastLogTime > approval.createdAt
       ? `${ended ? 'finished in' : 'running'} ${formatDuration(lastLogTime - approval.createdAt)}`
       : undefined;
-  // The only header prose that survives: a state the page cannot otherwise
-  // explain (a paused sub-agent, an expired or stranded run, a revision).
-  const headerNote = isRevisionSession || isSubagentView || expired || stranded || cascadeRetryActionable
-    ? promptText
-    : undefined;
   // The corrections row lives in the session log, which is collapsed by default.
   // A run that silently applied 10 of its 26 corrections would stay silent until
   // someone expanded it, so the count is repeated here where it cannot be
@@ -1769,8 +1865,7 @@ export default function SessionDetail() {
   // The run's outcome: verdict, timings, recorded metrics, final response and
   // artifacts. Rendered for every ended run, not only ones that arrived ended --
   // watching a run finish in an open tab used to leave the reader at the bottom
-  // of a raw log with no answer to "what did it do". summaryFirst now decides
-  // only where this sits: above the transcript, or after it.
+  // of a raw log with no answer to "what did it do".
   const resultSection = ended && (hasFinalOutcome || resultErrorText || resultMeta || artifactTiles) ? (
     <>
             <section class="panel session-result">
@@ -1808,7 +1903,7 @@ export default function SessionDetail() {
                   )}
                 </>
               ) : !resultErrorText ? (
-                <div class="result-empty">This run ended without a final response; the session log {summaryFirst ? 'below' : 'above'} has the details.</div>
+                <div class="result-empty">This run ended without a final response; the session log below has the details.</div>
               ) : null}
               {artifactTiles && (
                 <div class="result-artifacts">
@@ -1819,6 +1914,45 @@ export default function SessionDetail() {
             </section>
     </>
   ) : null;
+
+  const mode = sessionPageMode({
+    gate: Boolean(gateEntry),
+    viewOnly: isSubagentView,
+    ended,
+    live,
+    failed: Boolean(resultErrorText),
+    hasResult: Boolean(resultSection),
+  });
+  const runControls = sessionRunControls({
+    ended,
+    live,
+    working,
+    atGate: approval.sessionStatus === 'suspended',
+    hasAgentFile: Boolean(approval.agent.filePath),
+    revision: isRevisionSession,
+    reopenable,
+    resume: resumeMode,
+    stoppable,
+    dismissable,
+    busy: { reopen: submittingReopen, resume: submittingContinue, stop: submittingStop },
+  });
+  const runControl = (control: SessionRunControl) => {
+    switch (control.id) {
+      case 'retry': void submitReopen(); return;
+      case 'revise': setReviseRequest((n) => n + 1); return;
+      case 'resume': setShowResume(true); return;
+      case 'cascade': void submitCascadeRetry(); return;
+      case 'stop':
+      case 'discard': void submitStop(); return;
+    }
+  };
+  const menuControls = runControls.filter((control) => control.placement === 'menu');
+  const barControl = runControls.find((control) => control.placement === 'bar');
+  const controlIcon = (icon: SessionRunControl['icon']) => icon === 'edit'
+    ? <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
+    : icon === 'stop'
+      ? <rect x="6" y="6" width="12" height="12" rx="2" />
+      : <><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 4v5h-5" /></>;
 
   const renderLogEntry = (entry: PreparedLogEntry, extra?: { priorReview?: PriorReview | undefined }) => {
     const entryActionable = actionable && entry.status === 'pending' && Boolean(entry.details) &&
@@ -1879,42 +2013,29 @@ export default function SessionDetail() {
   const sessionActions = (
     <>
         <div class="session-actions">
-          {ended && approval.agent.runPath && !isSubagentView && !isRevisionSession && !runControlsInMenu && (
-            <BusyButton
-              busy={runAgain.busy}
-              class="session-action-button"
-              label={
-                <>
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M5 3l14 9-14 9z" />
-                  </svg>
-                  <span>Run again</span>
-                </>
-              }
-              busyLabel={<span>Starting…</span>}
-              onClick={() => void runAgain.run()}
-            />
-          )}
-          {reopenActionable && !runControlsInMenu && (
+          {/* Only a page with no ⋯ menu (a sub-agent's view-only page, a
+              revision session) renders controls here; otherwise the row hosts
+              just the revise form and history, and collapses when empty. */}
+          {!runControlsInMenu && menuControls.map((control) => (
             <button
+              key={control.id}
               type="button"
-              class="debug-prompt-button"
-              disabled={submittingReopen}
-              aria-busy={submittingReopen}
-              onClick={() => void submitReopen()}
-              title="Roll the approval gate back to pending so you can re-submit your decision and retry the resume that failed"
+              class={`debug-prompt-button${control.id === 'stop' || control.id === 'discard' ? ' stop-session-button' : ''}`}
+              disabled={control.busy}
+              aria-busy={control.busy}
+              title={control.title}
+              onClick={() => runControl(control)}
             >
-              {submittingReopen ? (
-                <span class="btn-spinner" aria-hidden="true" />
-              ) : (
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M21 12a9 9 0 1 1-3-6.7" />
-                  <path d="M21 4v5h-5" />
-                </svg>
-              )}
-              <span>{submittingReopen ? 'Reopening…' : 'Retry'}</span>
+              {control.busy
+                ? <span class="btn-spinner" aria-hidden="true" />
+                : (
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    {controlIcon(control.icon)}
+                  </svg>
+                )}
+              <span>{control.label}</span>
             </button>
-          )}
+          ))}
           {!approval.agent.filePath && approval.agent.name === ONBOARDING_AGENT_NAME && approval.model === ONBOARDING_MODEL ? (
             <DebugPromptButton
               mode="onboarding"
@@ -1933,7 +2054,7 @@ export default function SessionDetail() {
             <AgentRevisionLauncher
               ended={ended}
               atGate={approval.sessionStatus === 'suspended'}
-              hideTrigger={runControlsInMenu}
+              hideTrigger
               openRequest={reviseRequest}
               token={token}
               context={{
@@ -1949,67 +2070,6 @@ export default function SessionDetail() {
               }}
             />
           ) : null}
-          {continueActionable && !runControlsInMenu && (
-            <button
-              type="button"
-              class={`session-action-button${showResume ? ' active' : ''}`}
-              aria-expanded={showResume}
-              aria-controls="continue-prompt"
-              onClick={() => setShowResume((v) => !v)}
-            >
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M21 12a9 9 0 1 1-3-6.7" />
-                <path d="M21 4v5h-5" />
-              </svg>
-              <span>Resume session</span>
-            </button>
-          )}
-          {cascadeRetryActionable && !runControlsInMenu && (
-            <BusyButton
-              busy={submittingContinue}
-              class="session-action-button"
-              label={
-                <>
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M21 12a9 9 0 1 1-3-6.7" />
-                    <path d="M21 4v5h-5" />
-                  </svg>
-                  <span>Resume</span>
-                </>
-              }
-              busyLabel={<span>Resuming…</span>}
-              onClick={() => void submitCascadeRetry()}
-            />
-          )}
-          {/* No "Learnings" toggle here any more. The panel below is always on
-              for a session that has one: its warnings were the whole reason it
-              existed, and a warning behind a button nobody presses is not a
-              warning. The rules themselves fold away inside the panel instead. */}
-          {(stopActionable || dismissActionable) && !runControlsInMenu && !stopInBar && (
-            <button
-              type="button"
-              class="debug-prompt-button stop-session-button"
-              disabled={submittingStop}
-              aria-busy={submittingStop}
-              onClick={() => void submitStop()}
-              title={live
-                ? 'Stop this session and any running subagents'
-                : dismissActionable
-                  ? 'Discard this failed run: marks it reviewed and clears it from "Needs your attention" (the run keeps its status)'
-                  : 'Discard this pending request: it is rejected, and the session resumes briefly so the agent records the rejection before ending'}
-            >
-              {submittingStop ? (
-                <span class="btn-spinner" aria-hidden="true" />
-              ) : (
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  {live
-                    ? <rect x="6" y="6" width="12" height="12" rx="2" />
-                    : <><path d="M18 6 6 18" /><path d="M6 6 18 18" /></>}
-                </svg>
-              )}
-              <span>{submittingStop ? (live ? 'Stopping…' : 'Discarding…') : (live ? 'Stop session' : 'Discard')}</span>
-            </button>
-          )}
         </div>
 
         <ContinuePanel
@@ -2019,7 +2079,7 @@ export default function SessionDetail() {
           onSubmit={(prompt) => void submitContinue(prompt)}
         />
 
-        <div class="inactive-banner" hidden={actionable || cascadeRetryActionable || continueActionable || stopActionable || dismissActionable || reopenActionable || live || busy}>
+        <div class="inactive-banner" hidden={mode !== 'idle' || runControls.length > 0 || busy}>
           This session is not accepting actions right now.
         </div>
         <ChangesetSessionPanel
@@ -2102,7 +2162,7 @@ export default function SessionDetail() {
   // outcome, and one way back to where the decision is made.
   const lastVerifyWithCandidates = [...orderedLogs].reverse().find((e) => e.type === 'verify' && e.verify?.candidates && e.verify.candidates.length > 0);
   const recentSteps = [...orderedLogs].reverse().filter((e) => e.type === 'tool' && e.status === 'completed' && !e.parentCallId).slice(0, 3).reverse();
-  const nowCard = gateEntry
+  const nowCard = mode === 'decision'
     ? (
       <section class="panel now-card is-decision" aria-label="Pending decision">
         {nowHead('decision', isSubagentView ? 'Paused for the parent\'s decision' : 'Decision needed', gateHeadMeta || undefined)}
@@ -2110,7 +2170,7 @@ export default function SessionDetail() {
         {sessionActions}
       </section>
     )
-    : isSubagentView
+    : mode === 'report'
       ? (
         <section class="panel now-card is-report" aria-label="Report to parent">
           {nowHead('report', approval.sessionStatus === 'suspended' ? 'Paused for the parent\'s decision' : 'Report to parent', [displayStatus, resultMeta, 'view only, decisions are made on the parent'].filter(Boolean).join(' · '))}
@@ -2130,52 +2190,53 @@ export default function SessionDetail() {
           {sessionActions}
         </section>
       )
-    : ended && resultErrorText && !summaryFirst
+    : mode === 'error'
       ? (
+        // The failure leads; whatever the run still produced (a partial
+        // outcome, metrics, artifacts) follows it in the same card.
         <section class="panel now-card is-error" role="alert" aria-label="Session needs attention">
-          {nowHead('error', 'Needs attention', resultMeta || undefined)}
+          {nowHead('error', 'Needs attention', [displayStatus, resultMeta].filter(Boolean).join(' · '))}
           <div class="now-body">
             <div class="now-error">{resultErrorText}</div>
           </div>
           {failedEntry && (
             <ul class="logs now-failed-step" role="list">{renderLogEntry(failedEntry)}</ul>
           )}
+          {(hasFinalOutcome || artifactTiles || recordedMetrics.length > 0) && resultSection}
+          {resultTiles}
           {sessionActions}
         </section>
       )
-      : ended && resultSection
-        ? (
-          <section class={`now-card ${resultErrorText ? 'is-error' : 'is-result'}`} aria-label="Result">
-            {nowHead(resultErrorText ? 'error' : 'result', resultErrorText ? 'Needs attention' : 'Result', [displayStatus, resultMeta].filter(Boolean).join(' · '))}
-            {resultSection}
-            {failedEntry && resultErrorText && (
-              <ul class="logs now-failed-step" role="list">{renderLogEntry(failedEntry)}</ul>
-            )}
-            {resultTiles}
-            {sessionActions}
-          </section>
-        )
-        : live && !ended
-          ? (
-            <section class="panel now-card is-working" aria-label="In progress">
-              {nowHead('working', status === 'preparing' ? 'Preparing' : 'Working', [
-                `${orderedLogs.length} ${orderedLogs.length === 1 ? 'entry' : 'entries'}`,
-                elapsedLabel,
-                'no approval needed yet',
-              ].filter(Boolean).join(' · '))}
-              {runningEntry
-                ? <ul class="logs now-running-step" role="list">{renderLogEntry(runningEntry)}</ul>
-                : <div class="now-body"><div class="now-working-label">{workingLabel}<span class="log-dots" aria-hidden="true" /></div></div>}
-              {recentSteps.length > 0 && (
-                <>
-                  <div class="now-recent-label">Just before</div>
-                  <ul class="logs now-recent" role="list">{recentSteps.map((e) => renderLogEntry(e))}</ul>
-                </>
-              )}
-              {sessionActions}
-            </section>
-          )
-          : null;
+    : mode === 'result'
+      ? (
+        <section class="now-card is-result" aria-label="Result">
+          {nowHead('result', 'Result', [displayStatus, resultMeta].filter(Boolean).join(' · '))}
+          {resultSection}
+          {resultTiles}
+          {sessionActions}
+        </section>
+      )
+    : mode === 'working'
+      ? (
+        <section class="panel now-card is-working" aria-label="In progress">
+          {nowHead('working', status === 'preparing' ? 'Preparing' : 'Working', [
+            `${orderedLogs.length} ${orderedLogs.length === 1 ? 'entry' : 'entries'}`,
+            elapsedLabel,
+            'no approval needed yet',
+          ].filter(Boolean).join(' · '))}
+          {runningEntry
+            ? <ul class="logs now-running-step" role="list">{renderLogEntry(runningEntry)}</ul>
+            : <div class="now-body"><div class="now-working-label">{workingLabel}<span class="log-dots" aria-hidden="true" /></div></div>}
+          {recentSteps.length > 0 && (
+            <>
+              <div class="now-recent-label">Just before</div>
+              <ul class="logs now-recent" role="list">{recentSteps.map((e) => renderLogEntry(e))}</ul>
+            </>
+          )}
+          {sessionActions}
+        </section>
+      )
+      : null;
 
   // The transcript feed, shared by both layouts: inline under its section
   // title (live/feed-first) or inside the collapsed <details> (summary-first).
@@ -2292,23 +2353,23 @@ export default function SessionDetail() {
               </svg>
             </button>
           </div>}
-          {(stopInBar || (submittingStop && live)) && (
+          {barControl && (
             <button
               type="button"
               class="session-bar-stop"
-              disabled={submittingStop}
-              aria-busy={submittingStop}
-              onClick={() => void submitStop()}
-              title="Stop this session and any running subagents"
+              disabled={barControl.busy}
+              aria-busy={barControl.busy}
+              onClick={() => runControl(barControl)}
+              title={barControl.title}
             >
-              {submittingStop
+              {barControl.busy
                 ? <span class="btn-spinner" aria-hidden="true" />
                 : (
                   <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
                     <rect x="5" y="5" width="14" height="14" rx="2" />
                   </svg>
                 )}
-              <span>{submittingStop ? 'Stopping…' : 'Stop'}</span>
+              <span>{barControl.busy ? 'Stopping…' : 'Stop'}</span>
             </button>
           )}
           <button
@@ -2338,45 +2399,15 @@ export default function SessionDetail() {
                 // URLs often omit it; the header's stamped project id keeps
                 // "Run new session" working on multi-project daemons.
                 projectId={sessionProjectId}
-                {...(runControlsInMenu ? { runActions: [
-                  ...(reopenActionable ? [{
-                    label: submittingReopen ? 'Reopening…' : 'Retry',
-                    title: 'Roll the approval gate back to pending so you can re-submit your decision and retry the resume that failed',
-                    icon: 'retry' as const,
-                    busy: submittingReopen,
-                    onSelect: () => { void submitReopen(); },
-                  }] : []),
-                  ...(approval.agent.filePath && (ended || approval.sessionStatus === 'suspended') ? [{
-                    label: 'Revise agent file',
-                    title: "Diagnose this run and propose a change to this agent's source",
-                    icon: 'edit' as const,
-                    onSelect: () => setReviseRequest((n) => n + 1),
-                  }] : []),
-                  ...(continueActionable ? [{
-                    label: 'Resume session',
-                    title: 'Continue this run with a new instruction',
-                    icon: 'resume' as const,
-                    onSelect: () => setShowResume(true),
-                  }] : []),
-                  ...(cascadeRetryActionable ? [{
-                    label: submittingContinue ? 'Resuming…' : 'Resume',
-                    title: 'Resume this run where its delegated sub-agent left off',
-                    icon: 'resume' as const,
-                    busy: submittingContinue,
-                    onSelect: () => { void submitCascadeRetry(); },
-                  }] : []),
-                  ...((stopActionable || dismissActionable) && !stopInBar ? [{
-                    label: live ? 'Stop session' : 'Discard',
-                    title: live
-                      ? 'Stop this session and any running subagents'
-                      : dismissActionable
-                        ? 'Discard this failed run: marks it reviewed and clears it from "Needs your attention" (the run keeps its status)'
-                        : 'Discard this pending request: it is rejected, and the session resumes briefly so the agent records the rejection before ending',
-                    icon: 'stop' as const,
-                    busy: submittingStop,
-                    onSelect: () => { void submitStop(); },
-                  }] : []),
-                ] } : {})}
+                {...(runControlsInMenu ? {
+                  runActions: menuControls.map((control) => ({
+                    label: control.label,
+                    title: control.title,
+                    icon: control.icon,
+                    busy: control.busy,
+                    onSelect: () => runControl(control),
+                  })),
+                } : {})}
               />
             )}
             <a class="meta-band-link session-header-diagnostic" href={diagnosticHref}>
@@ -2423,7 +2454,7 @@ export default function SessionDetail() {
           </details>
         )}
 
-        {!summaryFirst && !resultSection && artifactTiles && (
+        {!resultSection && artifactTiles && (
           <div class="panel session-artifacts">
             <div class="label">artifacts</div>
             {artifactTiles}
@@ -2442,24 +2473,24 @@ export default function SessionDetail() {
           {...(projectId ? { project: projectId } : {})}
         />
 
-        {summaryFirst || logFolded ? (
+        {logFolded ? (
           // Two reasons to fold: the run ended and the result card leads
-          // (summary-first, remembered preference), or a decision is pending
-          // and the transcript above it is context, not the ask (gate-folded,
-          // closed on every visit). The folded row says which and how much it
-          // hides, so nobody mistakes it for an empty log.
+          // (remembered preference), or a decision is pending and the
+          // transcript above it is context, not the ask (closed on every
+          // visit). The folded row says which and how much it hides, so
+          // nobody mistakes it for an empty log.
           <details
-            class={`session-transcript${logFolded ? ' is-gate-folded' : ''}`}
+            class="session-transcript is-gate-folded"
             key={`transcript-${sessionId}`}
-            open={logFolded ? gateLogOpen : transcriptOpen}
-            onToggle={(e) => (logFolded ? setGateLogOpen : setTranscriptOpen)((e.currentTarget as HTMLDetailsElement).open)}
+            open={gateFolded ? gateLogOpen : transcriptOpen}
+            onToggle={(e) => (gateFolded ? setGateLogOpen : setTranscriptOpen)((e.currentTarget as HTMLDetailsElement).open)}
           >
             <summary>
               <span>session log</span>
               {visibleLogs.length > 0 && (
                 <span class="count">{visibleLogs.length} {visibleLogs.length === 1 ? 'entry' : 'entries'}</span>
               )}
-              {logFolded && !gateLogOpen && (
+              {!(gateFolded ? gateLogOpen : transcriptOpen) && (
                 <span class="count">{gateFolded ? 'folded while a decision is pending' : 'folded, the result is above'} · click to show</span>
               )}
               <span class="rule"></span>

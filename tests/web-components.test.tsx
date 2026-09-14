@@ -21,7 +21,7 @@ import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/c
 import { parseChartSpec } from '../src/cli/serve/web/lib/chart-svg';
 import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { displayAgentName, isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
-import { aggregateToolStats, hasActionableApproval, headerTokenUsage, matchesLogFilter, nestedCallIdsToExpand, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, sessionResumeMode, shouldExpandForNestedSearch, shouldShowResultNotice, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
+import { aggregateToolStats, hasActionableApproval, headerTokenUsage, matchesLogFilter, nestedCallIdsToExpand, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, sessionPageMode, sessionResumeMode, sessionRunControls, shouldExpandForNestedSearch, shouldShowResultNotice, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
 import { tokenUsageMetaItems } from '../src/cli/serve/web/components/token-usage-strip';
 import { dayLabel, Highlight, outputPreview, sessionPurposeLabel, sessionRepeatRunPath, SessionListItem, statusDot } from '../src/cli/serve/web/routes/sessions-list';
 import { formatElapsedClock, formatElapsedShort, formatElapsedWithSeconds } from '../src/cli/serve/web/lib/format';
@@ -1652,6 +1652,41 @@ describe('SessionDetail header', () => {
       fatal: false,
       revision: false,
     })).toBe('cascade');
+  });
+
+  it('names the page mode from one place: gate, then view-only, then ended, then live', () => {
+    const base = { gate: false, viewOnly: false, ended: false, live: false, failed: false, hasResult: false };
+    expect(sessionPageMode({ ...base, gate: true, viewOnly: true, ended: true })).toBe('decision');
+    expect(sessionPageMode({ ...base, viewOnly: true, live: true })).toBe('report');
+    expect(sessionPageMode({ ...base, ended: true, failed: true, hasResult: true })).toBe('error');
+    expect(sessionPageMode({ ...base, ended: true, hasResult: true })).toBe('result');
+    expect(sessionPageMode({ ...base, ended: true })).toBe('idle');
+    expect(sessionPageMode({ ...base, live: true })).toBe('working');
+    expect(sessionPageMode(base)).toBe('idle');
+  });
+
+  it('lists run controls once, in order, with stop pinned to the bar only while working', () => {
+    const base = {
+      ended: false, live: true, working: true, atGate: false, hasAgentFile: true, revision: false,
+      reopenable: false, resume: null, stoppable: true, dismissable: false,
+      busy: { reopen: false, resume: false, stop: false },
+    };
+    expect(sessionRunControls(base).map((c) => `${c.id}:${c.placement}`)).toEqual(['stop:bar']);
+    // Parked at a gate: not working, so stop moves to the menu and revise appears.
+    expect(sessionRunControls({ ...base, working: false, atGate: true }).map((c) => `${c.id}:${c.placement}`))
+      .toEqual(['revise:menu', 'stop:menu']);
+    // Ended and resumable: retry, revise, resume; a failed run offers discard.
+    expect(sessionRunControls({
+      ...base, ended: true, live: false, working: false, stoppable: false, dismissable: true, reopenable: true, resume: 'continue',
+    }).map((c) => c.id)).toEqual(['retry', 'revise', 'resume', 'discard']);
+    // A busy control stays listed, disabled, instead of vanishing mid-click.
+    const stopping = sessionRunControls({ ...base, busy: { reopen: false, resume: false, stop: true } });
+    expect(stopping).toHaveLength(1);
+    expect(stopping[0]?.busy).toBe(true);
+    expect(stopping[0]?.label).toBe('Stopping…');
+    // A revision session or a run without an agent file never offers revise.
+    expect(sessionRunControls({ ...base, ended: true, live: false, working: false, stoppable: false, revision: true }).map((c) => c.id)).toEqual([]);
+    expect(sessionRunControls({ ...base, ended: true, live: false, working: false, stoppable: false, hasAgentFile: false }).map((c) => c.id)).toEqual([]);
   });
 
   it('does not repeat the Result card error in the bottom action notice', () => {
