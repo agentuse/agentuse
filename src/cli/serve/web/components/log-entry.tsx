@@ -247,7 +247,21 @@ function ChangesBlock(props: { changes: ApprovalChange[]; options: ApprovalOptio
               )}
               <CopyButton text={changeDisplayContent(change)} label={change.label || `action ${index + 1}`} />
             </div>
-            <div class="approval-change-content"><LogContent value={changeDisplayContent(change)} forceMarkdown /></div>
+            {change.displayParts && change.displayParts.length > 1
+              ? (
+                // A thread: each post on its own, numbered, so the reviewer
+                // sees where one ends and the next begins without the agent
+                // inventing a separator.
+                <ol class="approval-change-parts" aria-label={`${change.displayParts.length} posts in this thread`}>
+                  {change.displayParts.map((part, partIndex) => (
+                    <li class="approval-change-part" key={partIndex}>
+                      <span class="approval-change-part-index" aria-hidden="true">{partIndex + 1}/{change.displayParts!.length}</span>
+                      <div class="approval-change-content"><LogContent value={part} forceMarkdown /></div>
+                    </li>
+                  ))}
+                </ol>
+              )
+              : <div class="approval-change-content"><LogContent value={changeDisplayContent(change)} forceMarkdown /></div>}
             <CommandDetail change={change} />
           </div>
         ))}

@@ -577,6 +577,9 @@ export interface ApprovalChange {
   content: string;
   /** Exact business content shown prominently when `content` is a command. */
   displayContent?: string;
+  /** A multi-post submission (a thread), one entry per post in order. When
+   *  present, `displayContent` holds the same posts joined for text surfaces. */
+  displayParts?: string[];
   optionId?: string;
 }
 

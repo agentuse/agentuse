@@ -425,11 +425,26 @@ export function normalizeApprovalChanges(value: unknown): ApprovalChange[] | und
     const content = typeof rec.content === 'string' ? repairEscapedText(rec.content) : '';
     if (!content.trim()) return [];
     const label = typeof rec.label === 'string' && rec.label.trim() ? rec.label.trim() : undefined;
+    // The tool normalizes a listed displayContent into displayParts + a joined
+    // string, but a record written by an older runtime or a raw transport can
+    // still carry the list itself: accept both.
+    const listed = Array.isArray(rec.displayParts) ? rec.displayParts : Array.isArray(rec.displayContent) ? rec.displayContent : undefined;
+    const displayParts = listed
+      ?.filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+      .map((part) => repairEscapedText(part.trim()));
     const displayContent = typeof rec.displayContent === 'string' && rec.displayContent.trim()
       ? repairEscapedText(rec.displayContent)
-      : undefined;
+      : displayParts && displayParts.length > 0
+        ? displayParts.join('\n\n')
+        : undefined;
     const optionId = typeof rec.optionId === 'string' && rec.optionId.trim() ? rec.optionId.trim() : undefined;
-    return [{ ...(label && { label }), content, ...(displayContent && { displayContent }), ...(optionId && { optionId }) }];
+    return [{
+      ...(label && { label }),
+      content,
+      ...(displayContent && { displayContent }),
+      ...(displayParts && displayParts.length > 1 && { displayParts }),
+      ...(optionId && { optionId }),
+    }];
   });
   return changes.length > 0 ? changes : undefined;
 }

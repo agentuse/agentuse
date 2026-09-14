@@ -75,6 +75,9 @@ export interface ApprovalChange {
   label?: string;
   content: string;
   displayContent?: string;
+  /** A multi-post submission (a thread), one entry per post in order. When
+   *  present, `displayContent` holds the same posts joined for text surfaces. */
+  displayParts?: string[];
   optionId?: string;
 }
 

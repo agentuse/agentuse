@@ -1252,6 +1252,31 @@ describe('LogEntry component', () => {
     expect(html).toContain('Comment');
   });
 
+  it('renders a thread as numbered posts instead of one joined body', () => {
+    const html = renderEntry({
+      id: 'log-thread',
+      type: 'approval',
+      title: 'Approval requested',
+      status: 'pending',
+      details: {
+        resumeToken: 'tok-t',
+        prompt: 'Approve scheduling this thread?',
+        changes: [{
+          label: 'Schedule X thread',
+          content: 'uv run postiz_api.py post_thread_x cm71 "2026-09-09T16:00:00Z" \'[...]\'',
+          displayContent: 'First post.\n\nSecond post.',
+          displayParts: ['First post.', 'Second post.'],
+        }],
+      },
+    }, { showActions: true });
+    expect(html).toContain('approval-change-parts');
+    expect(html).toContain('aria-label="2 posts in this thread"');
+    expect(html).toContain('1/2');
+    expect(html).toContain('2/2');
+    expect(html).toContain('First post.');
+    expect(html).toContain('Second post.');
+  });
+
   it('renders the complete long generic approval request and integrity digests', () => {
     const longSuffix = `prefix-${'x'.repeat(20_000)}-security-relevant-suffix`;
     const html = renderEntry({

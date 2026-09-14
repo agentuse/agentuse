@@ -241,6 +241,40 @@ describe('await_human approval URL', () => {
     }).success).toBe(true);
   });
 
+  it('keeps a listed displayContent as thread parts and joins it for text surfaces', () => {
+    const normalized = normalizeAwaitHumanInput({
+      prompt: 'Approve scheduling this thread?',
+      changes: [{
+        label: 'Schedule X thread',
+        content: 'uv run postiz_api.py post_thread_x cm71 "2026-09-09T16:00:00Z" \'[{"text":"First"},{"text":"Second"}]\'',
+        displayContent: ['First post.', '  ', 'Second post.'],
+      }],
+    }) as { changes: Array<{ displayContent?: string; displayParts?: string[] }> };
+    expect(normalized.changes[0]?.displayParts).toEqual(['First post.', 'Second post.']);
+    expect(normalized.changes[0]?.displayContent).toBe('First post.\n\nSecond post.');
+
+    // a one-item list is just a string; no parts are recorded
+    const single = normalizeAwaitHumanInput({
+      prompt: 'Approve?',
+      changes: [{ content: 'echo hi', displayContent: ['Only post.'] }],
+    }) as { changes: Array<{ displayContent?: string; displayParts?: string[] }> };
+    expect(single.changes[0]?.displayParts).toBeUndefined();
+    expect(single.changes[0]?.displayContent).toBe('Only post.');
+
+    // the schema accepts the list form end to end
+    const tool = createAwaitHumanTool('session-1', { projectRoot: '/tmp/project-a' });
+    const schema = tool.inputSchema as { safeParse: (v: unknown) => { success: boolean } };
+    expect(schema.safeParse({
+      prompt: 'Approve scheduling this thread?',
+      changes: [{
+        label: 'Schedule X thread',
+        content: 'uv run /Users/x/.claude/skills/postiz-social/postiz_api.py post_thread_x cm71 "2026-09-09T16:00:00Z" '
+          + '\'[{"text":"More advice is not the answer when the real gap is an action with no trigger."},{"text":"Pick one daily cue."}]\'',
+        displayContent: ['More advice is not the answer when the real gap is an action with no trigger.', 'Pick one daily cue.'],
+      }],
+    }).success).toBe(true);
+  });
+
   it('requires displayContent when a change is a command carrying a payload', () => {
     const tool = createAwaitHumanTool('session-1', { projectRoot: '/tmp/project-a' });
     const schema = tool.inputSchema as { safeParse: (v: unknown) => { success: boolean } };

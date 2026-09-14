@@ -167,6 +167,20 @@ export function normalizeAwaitHumanInput(input: unknown): unknown {
     normalized.changes = normalized.changes.map((change) => {
       if (!isRecord(change)) return change;
       const next = { ...change };
+      // A thread is a list of posts. Keep the list as displayParts for the
+      // card and join it into displayContent for every text surface (Slack,
+      // the judge, replay), so downstream code only ever sees one string.
+      const listed = Array.isArray(next.displayContent) ? next.displayContent : Array.isArray(next.displayParts) ? next.displayParts : undefined;
+      if (listed) {
+        const parts = listed.filter((part): part is string => typeof part === 'string' && part.trim().length > 0).map((part) => part.trim());
+        delete next.displayParts;
+        if (parts.length > 1) {
+          next.displayParts = parts;
+          next.displayContent = parts.join('\n\n');
+        } else {
+          next.displayContent = parts[0];
+        }
+      }
       for (const field of ['label', 'displayContent', 'optionId']) omitBlankString(next, field);
       return next;
     });
@@ -192,7 +206,8 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       changes: z.array(z.object({
         label: z.string().optional().describe('Short name for this action, e.g. "Comment to post", "Then: Like the post", "Email body"'),
         content: z.string().describe('The exact, final content or action, verbatim: what will literally be submitted on approval'),
-        displayContent: z.string().optional().describe('Human-facing business content to feature above `content` when `content` must be an executable command. REQUIRED (validation rejects the call without it) once such a command carries an embedded payload. For a post, reply, email, or message, use the exact body without the CLI wrapper. The UI keeps the command visible but visually secondary.'),
+        displayContent: z.union([z.string(), z.array(z.string()).min(1)]).optional().describe('Human-facing business content to feature above `content` when `content` must be an executable command. REQUIRED (validation rejects the call without it) once such a command carries an embedded payload. For a post, reply, email, or message, use the exact body without the CLI wrapper. For a thread or any multi-post submission, pass a LIST of strings, one per post in order; never join posts with a made-up separator. The UI keeps the command visible but visually secondary.'),
+        displayParts: z.array(z.string()).optional().describe('Set automatically when displayContent is a list. Do not set it yourself.'),
         optionId: z.string().min(1).optional().describe('For a pick gate, the options[].id that authorizes this action. Omit for an action that should run regardless of the selected option.')
       })).optional().describe('The exact actions executed on approval, one entry per discrete action, in order. Rendered as highlighted "On approval" content. When `content` is an executable command, also provide `displayContent` so the reviewer sees the business content first and the exact command de-emphasized beneath it. Rationale belongs in summary or context.'),
       reference: z.object({
@@ -244,7 +259,9 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       for (const [index, change] of (val.changes ?? []).entries()) {
         const content = change.content ?? '';
         const firstLine = content.split('\n').find((line) => line.trim()) ?? '';
-        const hasDisplay = Boolean(change.displayContent?.trim());
+        const hasDisplay = typeof change.displayContent === 'string'
+          ? Boolean(change.displayContent.trim())
+          : Boolean(change.displayContent?.some((part) => part.trim()));
         if (!hasDisplay && content.length > COMMAND_PAYLOAD_MIN_LENGTH && COMMAND_CONTENT_RE.test(firstLine)) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
@@ -317,7 +334,7 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       prompt: string;
       summary?: string;
       draft?: string;
-      changes?: Array<{ label?: string; content: string; displayContent?: string; optionId?: string }>;
+      changes?: Array<{ label?: string; content: string; displayContent?: string | string[]; displayParts?: string[]; optionId?: string }>;
       reference?: { label?: string; author?: string; title?: string; url?: string; excerpt?: string };
       draft_url?: string;
       artifact_url?: string;

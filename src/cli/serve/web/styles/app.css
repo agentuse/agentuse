@@ -3054,6 +3054,29 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   font-size: var(--font-size-micro);
   white-space: nowrap;
 }
+/* A thread inside one on-approval entry: numbered posts, the number in the
+   gutter so the body text keeps the same left edge as a single post. */
+.approval-change-parts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.approval-change-part {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+.approval-change-part-index {
+  padding-top: 2px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+  white-space: nowrap;
+}
+.approval-change-part + .approval-change-part { border-top: 1px dashed var(--line); padding-top: 10px; }
 .approval-change-content {
   color: var(--fg);
   font-size: var(--font-size-supporting);

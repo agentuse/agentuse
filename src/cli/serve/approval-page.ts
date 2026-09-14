@@ -46,7 +46,7 @@ export interface ApprovalPageInfo {
    *  src/index.ts): the runtime has carried `displayContent` and `optionId`
    *  since gates grew commands and options, and declaring the narrower shape
    *  here silently dropped both for every consumer that trusts this type. */
-  changes?: Array<{ label?: string; content: string; displayContent?: string; optionId?: string }>;
+  changes?: Array<{ label?: string; content: string; displayContent?: string; displayParts?: string[]; optionId?: string }>;
   reference?: { label?: string; author?: string; title?: string; url?: string; excerpt?: string };
   options?: Array<{ id: string; label: string; description?: string; recommended?: boolean }>;
   draftUrl?: string;
