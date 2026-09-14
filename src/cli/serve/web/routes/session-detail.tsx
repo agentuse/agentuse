@@ -416,17 +416,6 @@ function scrollToPageEnd(): void {
   });
 }
 
-/** Combined height of the two bars that stay pinned over the feed (topbar, then
- *  the session bar beneath it), so a scroll target lands below them rather than
- *  underneath them. Measured live instead of read from --topbar-h: the var is set
- *  by a later layout effect and is not yet available on the first paint. */
-function stickyHeaderOffset(): number {
-  const topbar = document.querySelector('.topbar');
-  const sessionBar = document.querySelector('.session-bar');
-  return (topbar?.getBoundingClientRect().height ?? 0)
-    + (sessionBar?.getBoundingClientRect().height ?? 0);
-}
-
 /**
  * Put the pending gate's card at the top of the viewport. Returns false when the
  * gate has not rendered yet, so the caller can retry on a later commit.
@@ -1090,54 +1079,6 @@ export default function SessionDetail() {
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
   }, []);
-  // Long logs bury the gate under hundreds of entries; the bar keeps a one-tap
-  // jump to it for as long as a decision is owed on this page.
-  const gateOwed = hasActionableApproval(status, approval);
-  // Hidden while the gate card is on screen: a jump that lands where you
-  // already are is noise, and the up-arrow follows the same rule at the top.
-  const [gateInView, setGateInView] = useState(false);
-  useEffect(() => {
-    if (!gateOwed) {
-      setGateInView(false);
-      return;
-    }
-    // The question card is itself over a thousand pixels tall, so "any sliver
-    // visible" hides the button while the reviewer is still far from the
-    // question. Track the card's top edge instead: in view means the heading
-    // sits between the sticky bar and the lower part of the viewport.
-    let raf = 0;
-    const measure = () => {
-      raf = 0;
-      const target = actionableGateTarget();
-      if (!target) {
-        setGateInView(false);
-        return;
-      }
-      const top = target.getBoundingClientRect().top;
-      const upper = stickyHeaderOffset() - 24;
-      const lower = window.innerHeight * 0.75;
-      setGateInView(top >= upper && top <= lower);
-    };
-    const schedule = () => {
-      if (raf === 0) raf = requestAnimationFrame(measure);
-    };
-    schedule();
-    window.addEventListener('scroll', schedule, { passive: true });
-    window.addEventListener('resize', schedule);
-    return () => {
-      if (raf !== 0) cancelAnimationFrame(raf);
-      window.removeEventListener('scroll', schedule);
-      window.removeEventListener('resize', schedule);
-    };
-  }, [gateOwed, logsVersion]);
-  const canJumpToGate = gateOwed && !gateInView;
-  const jumpToGate = useCallback(() => {
-    const target = actionableGateTarget();
-    if (!target) return;
-    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    const top = target.getBoundingClientRect().top + window.scrollY - stickyHeaderOffset() - 12;
-    window.scrollTo({ top: Math.max(0, top), behavior: reduce ? 'auto' : 'smooth' });
-  }, []);
 
   const live = isLiveStatus(status, orderedLogs);
   // While the run is live, keep a persistent "working" row pinned to the end of
@@ -1202,6 +1143,11 @@ export default function SessionDetail() {
   // report, so extending it to live and suspended runs adds no empty box.
   const learningsVisible = Boolean(approval?.agent.filePath) && !isRevisionSession;
   const stopActionable = approval !== null && !ended && !expired && !submittingStop && !fatalError && !isRevisionSession;
+  // While the agent (or a sub-agent it delegated to) is actually working, Stop
+  // sits in the sticky session bar: the one control a reader may need in a
+  // hurry, reachable without scrolling. Parked at a gate it is not urgent and
+  // lives in the ⋯ menu instead.
+  const stopInBar = stopActionable && isWorkingStatus(status, orderedLogs);
   // Same Discard button on an ended failed run: stamps the run as reviewed
   // (dismissedAt) so it clears from Home's "Needs your attention". Stopped-by-
   // user runs never re-enter that list, so they get no discard affordance.
@@ -2037,19 +1983,23 @@ export default function SessionDetail() {
               </svg>
             </button>
           </div>}
-          {canJumpToGate && (
+          {(stopInBar || (submittingStop && live)) && (
             <button
               type="button"
-              class="session-bar-gate"
-              onClick={jumpToGate}
-              aria-label="Jump to the approval gate"
-              title="Jump to the approval gate"
+              class="session-bar-stop"
+              disabled={submittingStop}
+              aria-busy={submittingStop}
+              onClick={() => void submitStop()}
+              title="Stop this session and any running subagents"
             >
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M12 5v14" />
-                <path d="m5 12 7 7 7-7" />
-              </svg>
-              <span class="session-bar-gate-label">gate</span>
+              {submittingStop
+                ? <span class="btn-spinner" aria-hidden="true" />
+                : (
+                  <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
+                    <rect x="5" y="5" width="14" height="14" rx="2" />
+                  </svg>
+                )}
+              <span>{submittingStop ? 'Stopping…' : 'Stop'}</span>
             </button>
           )}
           <button
@@ -2087,7 +2037,7 @@ export default function SessionDetail() {
                     icon: 'edit' as const,
                     onSelect: () => setReviseRequest((n) => n + 1),
                   }] : []),
-                  ...(stopActionable ? [{
+                  ...(stopActionable && !stopInBar ? [{
                     label: live ? 'Stop session' : 'Discard',
                     title: live ? 'Stop this session and any running subagents' : 'Discard this pending request: it is rejected, and the session resumes briefly so the agent records the rejection before ending',
                     icon: 'stop' as const,
@@ -2302,7 +2252,7 @@ export default function SessionDetail() {
               for a session that has one: its warnings were the whole reason it
               existed, and a warning behind a button nobody presses is not a
               warning. The rules themselves fold away inside the panel instead. */}
-          {(stopActionable || dismissActionable) && !runControlsInMenu && (
+          {(stopActionable || dismissActionable) && !runControlsInMenu && !stopInBar && (
             <button
               type="button"
               class="debug-prompt-button stop-session-button"

@@ -1166,37 +1166,31 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   .page-approval-detail .session-bar-top { transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease; transform: none; }
   .page-approval-detail .session-bar-top:hover { transform: none; }
 }
-/* Jump-to-gate: always visible while a decision is owed, because that is the
-   one place on a long page the reviewer must reach. Reads "v gate" on desktop
-   and collapses to the arrow on narrow screens. */
-.page-approval-detail .session-bar-gate {
+/* Stop, in the bar, only while the agent or a delegated sub-agent is working:
+   the one control worth reaching without a scroll. A red pill so it is never
+   mistaken for navigation. */
+.page-approval-detail .session-bar-stop {
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   min-height: 0;
-  padding: 3px 8px;
-  border: 1px solid var(--amber-border);
+  padding: 3px 9px;
+  border: 1px solid var(--red-border);
   border-radius: 999px;
-  background: var(--amber-soft);
-  color: var(--amber);
+  background: var(--red-soft);
+  color: var(--red);
   font-family: var(--sans);
   font-size: var(--font-size-micro);
+  font-weight: var(--weight-bold);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   cursor: pointer;
-  transition: color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+  transition: color 0.15s ease, background 0.15s ease;
 }
-.page-approval-detail .session-bar-gate:hover { color: var(--fg); transform: translateY(2px); }
-.page-approval-detail .session-bar-gate:active { transform: translateY(0); }
-.page-approval-detail .session-bar-gate:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 2px; }
-@media (prefers-reduced-motion: reduce) {
-  .page-approval-detail .session-bar-gate, .page-approval-detail .session-bar-gate:hover { transform: none; }
-}
-@media (max-width: 640px) {
-  .page-approval-detail .session-bar-gate { padding: 4px; border-radius: 6px; }
-  .page-approval-detail .session-bar-gate-label { display: none; }
-}
+.page-approval-detail .session-bar-stop:hover { color: var(--fg); background: color-mix(in srgb, var(--red-soft) 70%, var(--red)); }
+.page-approval-detail .session-bar-stop:focus-visible { outline: 2px solid var(--red-border); outline-offset: 2px; }
+.page-approval-detail .session-bar-stop:disabled { cursor: default; opacity: 0.7; }
 /* Back-to-parent: an icon-only control on sub-agent runs. The parent name lives in
    its tooltip/aria-label rather than inline, keeping the bar compact. */
 .page-approval-detail .session-bar-back {
