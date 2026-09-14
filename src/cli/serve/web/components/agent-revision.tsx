@@ -98,6 +98,10 @@ export function AgentRevisionLauncher(props: {
   buttonLabel?: string | undefined;
   buttonClassName?: string | undefined;
   buttonTitle?: string | undefined;
+  /** Render no trigger of its own: something else (the session menu) opens it. */
+  hideTrigger?: boolean | undefined;
+  /** Bump to open the form from outside, e.g. a menu item. */
+  openRequest?: number | undefined;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -206,6 +210,14 @@ export function AgentRevisionLauncher(props: {
     return () => clearInterval(timer);
   }, [activeChangeset?.sessionId, activeChangeset?.status]);
 
+  const beginRef = useRef<() => Promise<void>>(async () => undefined);
+  useEffect(() => {
+    if (!props.openRequest) return;
+    if (!open) void beginRef.current();
+    // Only a new request opens the form; a re-render while open must not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.openRequest]);
+
   const begin = async () => {
     setError(null);
     setErrorHref(null);
@@ -245,6 +257,7 @@ export function AgentRevisionLauncher(props: {
       setLoadingOptions(false);
     }
   };
+  beginRef.current = begin;
 
   const submit = async () => {
     if (!instruction.trim() || !model || busy) return;
@@ -345,7 +358,7 @@ export function AgentRevisionLauncher(props: {
           )}
         </div>
       )}
-      {historyLoaded && !showCard && !activeChangeset && (
+      {historyLoaded && !showCard && !activeChangeset && !props.hideTrigger && (
         <button
           type="button"
           class={`${props.buttonClassName ?? `debug-prompt-button${props.atGate ? '' : ' is-primary'}`}${open ? ' is-open' : ''}`}

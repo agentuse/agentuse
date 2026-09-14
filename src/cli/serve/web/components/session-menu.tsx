@@ -1,4 +1,5 @@
 import { useState } from 'preact/hooks';
+import type { ComponentChildren } from 'preact';
 import { useRunAgent } from '../hooks/use-run-agent';
 import { agentDetailHref } from '../lib/links';
 import { RunCustomDialog } from './run-custom-dialog';
@@ -16,11 +17,38 @@ import { MenuPopover } from './menu-popover';
  * The diagnostic subpage is reached from the context table in the header, not
  * from here: it is about this run, not about the agent.
  */
+/** An action on this run (not the agent) that the page parks in the menu
+ *  while the decision card needs the foot of the page to itself. */
+export type SessionMenuRunAction = {
+  label: string;
+  title?: string;
+  icon: 'edit' | 'stop';
+  disabled?: boolean;
+  busy?: boolean;
+  onSelect: () => void;
+};
+
+function RunActionIcon(props: { icon: SessionMenuRunAction['icon'] }): ComponentChildren {
+  return props.icon === 'edit'
+    ? (
+      <svg class="menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
+      </svg>
+    )
+    : (
+      <svg class="menu-icon menu-icon-stop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="6" y="6" width="12" height="12" rx="2" />
+      </svg>
+    );
+}
+
 export function SessionMenu(props: {
   agentName: string;
   /** Scope-relative path of a currently loaded project agent. */
   agentRunPath: string;
   projectId: string;
+  /** Run-level actions listed after the agent actions, under their own rule. */
+  runActions?: SessionMenuRunAction[];
 }) {
   const [runOpen, setRunOpen] = useState(false);
   const { run, busy, error } = useRunAgent(props.agentRunPath, props.projectId);
@@ -83,6 +111,26 @@ export function SessionMenu(props: {
             <span>Run new session with custom…</span>
           </button>
             {error && !runOpen && <p class="menu-error" role="alert">{error}</p>}
+            {props.runActions && props.runActions.length > 0 && (
+              <>
+                <div class="menu-sep" />
+                {props.runActions.map((action) => (
+                  <button
+                    key={action.label}
+                    type="button"
+                    class="menu-item"
+                    role="menuitem"
+                    disabled={action.disabled || action.busy}
+                    aria-busy={action.busy}
+                    {...(action.title ? { title: action.title } : {})}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); close(); action.onSelect(); }}
+                  >
+                    {action.busy ? <span class="btn-spinner" aria-hidden="true" /> : <RunActionIcon icon={action.icon} />}
+                    <span>{action.label}</span>
+                  </button>
+                ))}
+              </>
+            )}
           </>
         )}
       </MenuPopover>

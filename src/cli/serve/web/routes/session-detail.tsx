@@ -533,6 +533,9 @@ export default function SessionDetail() {
   // The resume composer stays collapsed until the user clicks "Resume session";
   // clicking again collapses it.
   const [showResume, setShowResume] = useState(false);
+  // Bumped by the session menu's "Revise agent file" while a decision is
+  // pending; the launcher (still mounted under the card) opens on change.
+  const [reviseRequest, setReviseRequest] = useState(0);
   const [result, setResult] = useState<{ text: string; error: boolean }>({ text: '', error: false });
   // Terminal load failures (unauthorized, not found, corrupted session data):
   // the page can't recover, so we render this instead of the live view.
@@ -1642,6 +1645,11 @@ export default function SessionDetail() {
   // shows a breadcrumb back to its parent and the page has no decision controls of
   // its own (the gate is acted on at the parent).
   const isSubagentView = Boolean(approval.viewOnly);
+  // While a decision is pending the card should end on Approve, so the run
+  // controls (revise, stop) sit in the header's ⋯ menu instead of a second
+  // button row under the gate. Only when that menu is actually rendered.
+  const sessionMenuShown = !isSubagentView && Boolean(approval.agent.runPath) && Boolean(sessionProjectId) && !isRevisionSession;
+  const runControlsInMenu = actionable && sessionMenuShown;
   const parentLabel = approval.parentAgentName ?? 'parent run';
   const parentTarget = approval.parentSessionId ?? approval.rootSessionId;
   const parentLink = approval.parentHref
@@ -2072,6 +2080,21 @@ export default function SessionDetail() {
                 // URLs often omit it; the header's stamped project id keeps
                 // "Run new session" working on multi-project daemons.
                 projectId={sessionProjectId}
+                {...(runControlsInMenu ? { runActions: [
+                  ...(approval.agent.filePath ? [{
+                    label: 'Revise agent file',
+                    title: "Diagnose this run and propose a change to this agent's source",
+                    icon: 'edit' as const,
+                    onSelect: () => setReviseRequest((n) => n + 1),
+                  }] : []),
+                  ...(stopActionable ? [{
+                    label: live ? 'Stop session' : 'Discard',
+                    title: live ? 'Stop this session and any running subagents' : 'Discard this pending request: it is rejected, and the session resumes briefly so the agent records the rejection before ending',
+                    icon: 'stop' as const,
+                    busy: submittingStop,
+                    onSelect: () => { void submitStop(); },
+                  }] : []),
+                ] } : {})}
               />
             )}
           </div>
@@ -2227,6 +2250,8 @@ export default function SessionDetail() {
             <AgentRevisionLauncher
               ended={ended}
               atGate={approval.sessionStatus === 'suspended'}
+              hideTrigger={runControlsInMenu}
+              openRequest={reviseRequest}
               token={token}
               context={{
                 sessionId: approval.sessionId,
@@ -2277,7 +2302,7 @@ export default function SessionDetail() {
               for a session that has one: its warnings were the whole reason it
               existed, and a warning behind a button nobody presses is not a
               warning. The rules themselves fold away inside the panel instead. */}
-          {(stopActionable || dismissActionable) && (
+          {(stopActionable || dismissActionable) && !runControlsInMenu && (
             <button
               type="button"
               class="debug-prompt-button stop-session-button"
