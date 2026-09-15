@@ -1883,28 +1883,28 @@ describe('SessionDetail header', () => {
     expect(failedSessionEntry([rejectedReply, laterDirectFailure])).toBe(laterDirectFailure);
   });
 
-  it('lists run controls once, in order, with stop pinned to the bar only while working', () => {
+  it('lists run controls once, in order, with the ending control pinned to the bar', () => {
     const base = {
-      ended: false, live: true, working: true, atGate: false, hasAgentFile: true, revision: false,
+      ended: false, live: true, atGate: false, hasAgentFile: true, revision: false,
       reopenable: false, resume: null, stoppable: true, dismissable: false,
       busy: { reopen: false, resume: false, stop: false },
     };
     expect(sessionRunControls(base).map((c) => `${c.id}:${c.placement}`)).toEqual(['stop:bar']);
-    // Parked at a gate: not working, so stop moves to the menu and revise appears.
-    expect(sessionRunControls({ ...base, working: false, atGate: true }).map((c) => `${c.id}:${c.placement}`))
-      .toEqual(['revise:menu', 'stop:menu']);
-    // Ended and resumable: retry, revise, resume; a failed run offers discard.
+    // Parked at a gate: stop stays in the bar and revise appears in the menu.
+    expect(sessionRunControls({ ...base, atGate: true }).map((c) => `${c.id}:${c.placement}`))
+      .toEqual(['revise:menu', 'stop:bar']);
+    // Ended and resumable: retry, revise, resume in the menu; a failed run offers discard in the bar.
     expect(sessionRunControls({
-      ...base, ended: true, live: false, working: false, stoppable: false, dismissable: true, reopenable: true, resume: 'continue',
-    }).map((c) => c.id)).toEqual(['retry', 'revise', 'resume', 'discard']);
+      ...base, ended: true, live: false, stoppable: false, dismissable: true, reopenable: true, resume: 'continue',
+    }).map((c) => `${c.id}:${c.placement}`)).toEqual(['retry:menu', 'revise:menu', 'resume:menu', 'discard:bar']);
     // A busy control stays listed, disabled, instead of vanishing mid-click.
     const stopping = sessionRunControls({ ...base, busy: { reopen: false, resume: false, stop: true } });
     expect(stopping).toHaveLength(1);
     expect(stopping[0]?.busy).toBe(true);
     expect(stopping[0]?.label).toBe('Stopping…');
     // A revision session or a run without an agent file never offers revise.
-    expect(sessionRunControls({ ...base, ended: true, live: false, working: false, stoppable: false, revision: true }).map((c) => c.id)).toEqual([]);
-    expect(sessionRunControls({ ...base, ended: true, live: false, working: false, stoppable: false, hasAgentFile: false }).map((c) => c.id)).toEqual([]);
+    expect(sessionRunControls({ ...base, ended: true, live: false, stoppable: false, revision: true }).map((c) => c.id)).toEqual([]);
+    expect(sessionRunControls({ ...base, ended: true, live: false, stoppable: false, hasAgentFile: false }).map((c) => c.id)).toEqual([]);
   });
 
   it('does not repeat the Result card error in the bottom action notice', () => {

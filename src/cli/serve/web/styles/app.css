@@ -1174,24 +1174,25 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   min-height: 0;
-  padding: 3px 9px;
-  border: 1px solid var(--red-border);
-  border-radius: 999px;
-  background: var(--red-soft);
-  color: var(--red);
+  padding: 5px 11px;
+  border: 1px solid var(--red);
+  border-radius: 6px;
+  background: var(--red);
+  color: var(--bg);
   font-family: var(--sans);
-  font-size: var(--font-size-micro);
-  font-weight: var(--weight-bold);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: var(--weight-medium);
+  line-height: 1.2;
   cursor: pointer;
-  transition: color 0.15s ease, background 0.15s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+  transition: filter 0.15s ease, box-shadow 0.15s ease;
 }
-.page-approval-detail .session-bar-stop:hover { color: var(--fg); background: color-mix(in srgb, var(--red-soft) 70%, var(--red)); }
+.page-approval-detail .session-bar-stop:hover { filter: brightness(1.08); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18); }
+.page-approval-detail .session-bar-stop:active { filter: brightness(0.94); box-shadow: none; }
 .page-approval-detail .session-bar-stop:focus-visible { outline: 2px solid var(--red-border); outline-offset: 2px; }
-.page-approval-detail .session-bar-stop:disabled { cursor: default; opacity: 0.7; }
+.page-approval-detail .session-bar-stop:disabled { cursor: default; opacity: 0.7; filter: none; box-shadow: none; }
 /* Back-to-parent: an icon-only control on sub-agent runs. The parent name lives in
    its tooltip/aria-label rather than inline, keeping the bar compact. */
 .page-approval-detail .session-bar-back {

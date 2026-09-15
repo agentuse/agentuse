@@ -207,8 +207,9 @@ export type SessionRunControl = {
   title: string;
   icon: 'retry' | 'edit' | 'resume' | 'stop';
   busy: boolean;
-  /** `bar`: pinned in the sticky session bar. `menu`: the header ⋯ menu, or
-   *  the inline row on a page that has no menu. */
+  /** `bar`: pinned in the sticky session bar (the one ending control a run
+   *  offers: Stop while it runs, Discard once it is parked or failed).
+   *  `menu`: the header ⋯ menu, or the inline row on a page that has no menu. */
   placement: 'bar' | 'menu';
 };
 
@@ -218,8 +219,6 @@ export type SessionRunControl = {
 export function sessionRunControls(options: {
   ended: boolean;
   live: boolean;
-  /** The agent or a delegated sub-agent is doing work right now. */
-  working: boolean;
   atGate: boolean;
   hasAgentFile: boolean;
   revision: boolean;
@@ -274,13 +273,11 @@ export function sessionRunControls(options: {
   if (options.stoppable && options.live) {
     controls.push({
       id: 'stop',
-      label: options.busy.stop ? 'Stopping…' : 'Stop session',
+      label: options.busy.stop ? 'Stopping…' : 'Stop',
       title: 'Stop this session and any running subagents',
       icon: 'stop',
       busy: options.busy.stop,
-      // The one control a reader may need in a hurry: while work is running it
-      // sits in the sticky bar, reachable without a scroll.
-      placement: options.working ? 'bar' : 'menu',
+      placement: 'bar',
     });
   } else if (options.stoppable) {
     controls.push({
@@ -289,7 +286,7 @@ export function sessionRunControls(options: {
       title: 'Discard this pending request: it is rejected, and the session resumes briefly so the agent records the rejection before ending',
       icon: 'stop',
       busy: options.busy.stop,
-      placement: 'menu',
+      placement: 'bar',
     });
   } else if (options.dismissable) {
     controls.push({
@@ -298,7 +295,7 @@ export function sessionRunControls(options: {
       title: 'Discard this failed run: marks it reviewed and clears it from "Needs your attention" (the run keeps its status)',
       icon: 'stop',
       busy: options.busy.stop,
-      placement: 'menu',
+      placement: 'bar',
     });
   }
   return controls;
@@ -2023,7 +2020,6 @@ export default function SessionDetail() {
   const runControls = sessionRunControls({
     ended,
     live,
-    working,
     atGate: approval.sessionStatus === 'suspended',
     hasAgentFile: Boolean(approval.agent.filePath),
     revision: isRevisionSession,
@@ -2528,7 +2524,7 @@ export default function SessionDetail() {
                     <rect x="5" y="5" width="14" height="14" rx="2" />
                   </svg>
                 )}
-              <span>{barControl.busy ? 'Stopping…' : 'Stop'}</span>
+              <span>{barControl.label}</span>
             </button>
           )}
           <button
