@@ -8679,6 +8679,21 @@ a.lastrun.waiting { color: var(--cyan); }
   overflow-wrap: anywhere;
 }
 .page-approval-detail .subagent-report-body .content-markdown { padding: 0; color: inherit; }
+.page-approval-detail .subagent-report-body.is-folded { max-height: 14em; overflow: hidden; }
+.page-approval-detail .subagent-report-body.has-more {
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
+  mask-image: linear-gradient(to bottom, #000 70%, transparent);
+}
+.page-approval-detail .subagent-report-toggle {
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--cyan);
+  font: inherit;
+  font-size: var(--font-size-micro);
+  cursor: pointer;
+}
 .page-approval-detail .subagent-report-items { margin-top: 10px; }
 .page-approval-detail .subagent-artifacts {
   margin: 6px 0 0;

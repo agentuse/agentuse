@@ -1010,6 +1010,31 @@ function reportPresentation(report: NonNullable<LogSubagentSession['report']>): 
   }
 }
 
+/** A report body opens as a preview: a manager can own several descendants,
+ *  each with a multi-page report, and all of them in full buries the log.
+ *  The toggle only appears when the body actually overflows the preview. */
+function ReportBody(props: { body: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el && !open) setOverflows(el.scrollHeight > el.clientHeight + 1);
+  }, [props.body, open]);
+  return (
+    <>
+      <div ref={ref} class={`subagent-report-body${open ? '' : ' is-folded'}${overflows && !open ? ' has-more' : ''}`}>
+        <LogContent value={props.body} forceMarkdown />
+      </div>
+      {overflows && (
+        <button type="button" class="subagent-report-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
+          {open ? 'Show less' : 'Show full report'}
+        </button>
+      )}
+    </>
+  );
+}
+
 /** One report renderer for every descendant role. The runtime adapts ordinary
  * outcomes and Judge verdicts into this shape before they reach the browser. */
 function DescendantReportBlock(props: {
@@ -1024,9 +1049,7 @@ function DescendantReportBlock(props: {
         <span class="subagent-report-mark" aria-hidden="true">{presentation.mark}</span>
         <InlineMarkdown value={report.headline} />
       </p>
-      {expanded && report.body && (
-        <div class="subagent-report-body"><LogContent value={report.body} forceMarkdown /></div>
-      )}
+      {expanded && report.body && <ReportBody body={report.body} />}
       {expanded && report.items && report.items.length > 0 && (
         <ul class="verify-candidates subagent-report-items" aria-label="Report items">
           {report.items.map((item) => (
