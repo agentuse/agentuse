@@ -149,6 +149,27 @@ describe('subagent approval cascade — resume (worker integration)', () => {
       } as any);
       await leafSm.setSessionSuspended(leafId, leafAgentId);
 
+      // Reproduce the production failure: compaction persisted history before
+      // the leaf's gate reached the snapshot. The fresh worker must combine
+      // this stale snapshot with the resolved durable part exactly once.
+      await leafSm.writeContextSnapshot(leafId, leafAgentId, {
+        version: 1,
+        updatedAt: 1,
+        messageID: leafMsg,
+        messages: [
+          { role: 'user', content: 'reply' },
+          { role: 'system', content: '[Context Summary]\nPrepared a reply.\n[End Summary]' },
+        ],
+        usage: {
+          activeTokens: 1_000,
+          contextLimit: 10_000,
+          usagePercentage: 10,
+          compacted: true,
+          compactions: 1,
+          updatedAt: 1,
+        },
+      });
+
       // Mid is parked on the leaf's gate via a subagent_wait bookmark.
       await midSm.addPart(midId, midAgentId, midMsg, {
         type: 'tool', callID: 'mid-call', tool: 'subagent__reply_to_post',

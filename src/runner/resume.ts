@@ -1,4 +1,5 @@
-import type { SessionManager } from '../session';
+import type { ModelMessage } from 'ai';
+import { assertResolvedToolCall, rehydrateMessages, type SessionManager } from '../session';
 import type { SessionInfo, ToolState } from '../session/types';
 import { isProcessRefAliveAsync } from '../utils/process-info';
 import { LeaseStore, type ApprovalLease } from './approval-lease';
@@ -31,13 +32,23 @@ export interface ResumeToolRollback {
   };
 }
 
+export interface AppliedResumeToolResult {
+  agentId: string;
+  agentFilePath?: string;
+  rollback?: ResumeToolRollback;
+  /** Validated under the resume claim and safe to pass to preparation directly. */
+  resumedMessages?: ModelMessage[];
+}
+
 export async function applyResumeToolResult(options: {
   sessionManager: SessionManager;
   sessionId: string;
   toolResult: unknown;
   resumeToken?: string;
   skipTokenValidation?: boolean;
-}): Promise<{ agentId: string; agentFilePath?: string; rollback?: ResumeToolRollback }> {
+  /** Build the model history before releasing the durable resume claim. */
+  buildResumedMessages?: boolean;
+}): Promise<AppliedResumeToolResult> {
   const initial = await options.sessionManager.findSession(options.sessionId);
   if (!initial) {
     throw new Error(`SESSION_NOT_FOUND: ${options.sessionId}`);
@@ -76,8 +87,9 @@ async function applyClaimedResumeToolResult(options: {
   toolResult: unknown;
   resumeToken?: string;
   skipTokenValidation?: boolean;
-}): Promise<{ agentId: string; agentFilePath?: string; rollback?: ResumeToolRollback }> {
-  const { sessionManager, sessionId, toolResult, resumeToken, skipTokenValidation } = options;
+  buildResumedMessages?: boolean;
+}): Promise<AppliedResumeToolResult> {
+  const { sessionManager, sessionId, toolResult, resumeToken, skipTokenValidation, buildResumedMessages } = options;
   const found = await sessionManager.findSession(sessionId);
   if (!found) {
     throw new Error(`SESSION_NOT_FOUND: ${sessionId}`);
@@ -247,12 +259,33 @@ async function applyClaimedResumeToolResult(options: {
     logger.debug(`[Lease] resume lease update failed: ${(error as Error).message}`);
   }
 
-  await sessionManager.setSessionRunning(sessionId, found.agentId);
+  let resumedMessages: ModelMessage[] | undefined;
+  try {
+    if (buildResumedMessages) {
+      resumedMessages = await rehydrateMessages(sessionManager, sessionId, found.agentId);
+      assertResolvedToolCall(
+        resumedMessages,
+        pending.part.callID,
+        isGenericToolApproval && typeof resumePayload?.approvalId === 'string'
+          ? resumePayload.approvalId
+          : undefined,
+      );
+    }
+    await sessionManager.setSessionRunning(sessionId, found.agentId);
+  } catch (error) {
+    // The caller cannot receive the rollback token when this function throws,
+    // so restore here while the resume claim is still held.
+    await restoreResumeToolResult({ sessionManager, rollback }).catch((restoreError) => {
+      logger.warn(`Failed to restore approval after resume history preparation failed: ${(restoreError as Error).message}`);
+    });
+    throw error;
+  }
 
   return {
     agentId: found.agentId,
     ...(found.session.agent.filePath && { agentFilePath: found.session.agent.filePath }),
-    rollback
+    rollback,
+    ...(resumedMessages && { resumedMessages }),
   };
 }
 

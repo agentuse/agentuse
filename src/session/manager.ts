@@ -1906,9 +1906,22 @@ export class SessionManager {
     if (!message) return null;
 
     const parts = await this.getMessageParts(sessionID, agentId, message.id);
-    const pending = parts.find((part): part is ToolPart =>
-      part.type === 'tool' && (part.state.status === 'pending' || part.state.status === 'running')
+    // Only top-level model calls can suspend and resume the model. Nested Code
+    // Mode parts are execution traces whose result is folded into code_exec;
+    // a failed parent can leave one of those traces marked running. Selecting
+    // that stale child instead of a later await_human gate applies the human
+    // decision to the wrong part and makes rehydration fail because nested
+    // calls are deliberately excluded from model history.
+    const resumable = parts.filter((part): part is ToolPart =>
+      part.type === 'tool'
+      && part.parentCallID === undefined
+      && (part.state.status === 'pending' || part.state.status === 'running')
     );
+    // A real suspension is persisted as pending. Prefer it over an older
+    // interrupted top-level call that may still be marked running; retain the
+    // running fallback for legacy generic-tool approval states.
+    const pending = resumable.find((part) => part.state.status === 'pending')
+      ?? resumable.find((part) => part.state.status === 'running');
 
     return pending ? { message, part: pending } : null;
   }

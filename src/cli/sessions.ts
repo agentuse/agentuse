@@ -15,7 +15,7 @@ import { loadGlobalDefaults } from "../utils/global-config";
 import { logger, LogLevel } from "../utils/logger";
 import { parseAgent } from "../parser";
 import { connectMCP } from "../mcp";
-import { applyResumeToolResult, restoreResumeToolResult, runAgent, describeErrorPart, classifyRunResult } from "../runner";
+import { applyResumeToolResult, restoreResumeToolResult, runAgent, prepareAgentExecution, describeErrorPart, classifyRunResult } from "../runner";
 import { reconcileOrphanedSessions } from "../runner/resume";
 import { describeLearningOutcome, effectiveCap, saveManualLearning, type LearningSource } from "../learning";
 import { findServerForProject } from "../utils/server-registry";
@@ -1741,10 +1741,14 @@ async function resumeSession(
       sessionManager,
       sessionId: summary.id,
       toolResult,
-      skipTokenValidation: true
+      skipTokenValidation: true,
+      buildResumedMessages: true,
     });
     let enteredRunAgent = false;
     try {
+      if (!resumed.resumedMessages) {
+        throw new Error(`RESUME_HISTORY_INVALID: no resolved history was built for session ${summary.id}`);
+      }
       const agentPath = resumed.agentFilePath ?? found.session.agent.filePath;
       const agent = (rememberAgent && agentPath === found.session.agent.filePath)
         ? rememberAgent
@@ -1755,6 +1759,16 @@ async function resumeSession(
         path.dirname(agentPath),
         cwd
       );
+      const preparedExecution = await prepareAgentExecution({
+        agent,
+        mcpClients: mcp,
+        agentFilePath: agentPath,
+        sessionManager,
+        projectContext: { projectRoot: projectContext.projectRoot, stateRoot: projectContext.stateRoot, cwd },
+        verbose: options.debug ?? false,
+        existingSessionId: summary.id,
+        prebuiltMessages: resumed.resumedMessages,
+      });
 
       // From this boundary onward the reviewer decision is durable. A later
       // error may follow successful external effects, so reopening the gate
@@ -1772,7 +1786,7 @@ async function resumeSession(
         sessionManager,
         { projectRoot: projectContext.projectRoot, stateRoot: projectContext.stateRoot, cwd },
         undefined,
-        undefined,
+        preparedExecution,
         false,
         undefined,
         true,

@@ -262,6 +262,61 @@ export async function rehydrateMessages(
   return normalizeRehydratedMessages(messages, parts);
 }
 
+/**
+ * Prove that one resumed tool call is settled in the exact history about to be
+ * handed to the model. Approval resume is a durable state transition: checking
+ * the part file before rehydration is not enough when another process can
+ * rewrite that file before the later read. Callers use this while holding the
+ * resume claim, then pass the validated messages forward without re-reading
+ * storage.
+ */
+export function assertResolvedToolCall(
+  messages: ModelMessage[],
+  callID: string,
+  approvalId?: string,
+): void {
+  let callCount = 0;
+  let settlementCount = 0;
+  let unresolved = false;
+
+  const fail = (reason: string): never => {
+    throw new Error(`RESUME_HISTORY_INVALID: ${reason} for tool call ${callID}`);
+  };
+
+  for (const message of messages) {
+    const content = (message as { content?: unknown }).content;
+    if (message.role === 'assistant' && Array.isArray(content)) {
+      for (const part of content as any[]) {
+        if (part?.type !== 'tool-call' || part.toolCallId !== callID) continue;
+        callCount++;
+        unresolved = true;
+      }
+      continue;
+    }
+
+    if (message.role === 'tool' && Array.isArray(content)) {
+      for (const part of content as any[]) {
+        const isResult = part?.type === 'tool-result' && part.toolCallId === callID;
+        const isApproval = approvalId !== undefined
+          && part?.type === 'tool-approval-response'
+          && part.approvalId === approvalId;
+        if (!isResult && !isApproval) continue;
+        settlementCount++;
+        unresolved = false;
+      }
+      continue;
+    }
+
+    if ((message.role === 'user' || message.role === 'system') && unresolved) {
+      fail(`a ${message.role} message appears before its result`);
+    }
+  }
+
+  if (callCount !== 1) fail(`expected one call but found ${callCount}`);
+  if (settlementCount !== 1) fail(`expected one result but found ${settlementCount}`);
+  if (unresolved) fail('the history ends before its result');
+}
+
 function appendPartMessages(messages: ModelMessage[], part: Part): void {
   switch (part.type) {
     case 'text':

@@ -10,8 +10,9 @@ import { buildDescendantActivity, buildDescendantReport, buildImportantDescendan
 import { resolveProjectContext } from '../utils/project';
 import { logger } from '../utils/logger';
 import { PluginManager } from '../plugin';
-import { SessionManager } from '../session/index.js';
+import { assertResolvedToolCall, rehydrateMessages, SessionManager } from '../session/index.js';
 import type { Part, SessionInfo } from '../session';
+import type { ModelMessage } from 'ai';
 import { sessionErrorFields } from './helpers.js';
 import type { WorkerContext } from './context.js';
 
@@ -87,8 +88,9 @@ export async function runExistingSession(opts: {
   debug?: boolean;
   maxSteps?: number;
   continuationPrompt?: string;
+  prebuiltMessages?: ModelMessage[];
 }): Promise<Awaited<ReturnType<typeof runAgent>>> {
-  const { ctx, sessionManager, sessionId, projectRoot, abortController, startTime, debug, maxSteps, continuationPrompt } = opts;
+  const { ctx, sessionManager, sessionId, projectRoot, abortController, startTime, debug, maxSteps, continuationPrompt, prebuiltMessages } = opts;
   const existingSessionPreRunError = Symbol.for('agentuse.existingSessionPreRunError');
   const markPreRunError = (error: unknown): unknown => {
     if (error && typeof error === 'object') {
@@ -136,6 +138,7 @@ export async function runExistingSession(opts: {
       pluginManager,
       verbose: debug ?? false,
       existingSessionId: sessionId,
+      ...(prebuiltMessages && { prebuiltMessages }),
     });
     enteredRunAgent = true;
     return await runAgent(
@@ -180,56 +183,85 @@ export async function completeSubagentBookmark(
   childSessionId: string,
   childAgentName: string,
   childResult: CascadeChildResult
-): Promise<NonNullable<Awaited<ReturnType<typeof applyResumeToolResult>>['rollback']>> {
-  const parts = await loadSessionPartsFlat(sessionManager, parentSessionId, parentAgentId);
-  const part = [...parts].reverse().find((p: any) =>
-    p?.type === 'tool' &&
-    p?.state?.status === 'pending' &&
-    p?.state?.resumePayload?.kind === 'subagent_wait' &&
-    p?.state?.resumePayload?.childSessionID === childSessionId
-  ) as any;
-  if (!part) {
-    throw new Error(`No pending subagent_wait bookmark for child ${childSessionId} in ${parentSessionId}`);
-  }
-  const rollback = {
-    sessionId: parentSessionId,
-    agentId: parentAgentId,
-    messageId: part.messageID,
-    partId: part.id,
-    state: part.state,
-  };
-  const start = typeof part.state?.suspendedAt === 'number' ? part.state.suspendedAt : Date.now();
-  await sessionManager.updatePart(parentSessionId, parentAgentId, part.messageID, part.id, {
-    state: {
-      status: 'completed',
-      input: part.state?.input ?? {},
-      output: (() => {
-        // Same composer as the straight-through path (subagent.ts), so a child
-        // resumed after a human cleared its gate hands the parent the same
-        // shape. Rebuilding this pair by hand is what used to drop the child's
-        // headline and artifacts on this path alone. `childResult.text` is
-        // already composed by runAgent, so the composer sees a body it merely
-        // re-splits rather than an opener it would double.
-        const composed = composeSubagentResult({
-          agent: childAgentName,
-          outcome: {
-            ...(childResult.complete && { complete: childResult.complete }),
-            ...(childResult.incomplete && { incomplete: childResult.incomplete }),
-          },
-          text: childResult.text,
+): Promise<{
+  rollback: NonNullable<Awaited<ReturnType<typeof applyResumeToolResult>>['rollback']>;
+  resumedMessages: ModelMessage[];
+}> {
+  const sessionDir = await sessionManager.getSessionDirectory(parentSessionId, parentAgentId);
+  return withOwnershipLock(join(sessionDir, '.resume-claim'), async () => {
+    const parts = await loadSessionPartsFlat(sessionManager, parentSessionId, parentAgentId);
+    const part = [...parts].reverse().find((p: any) =>
+      p?.type === 'tool' &&
+      p?.state?.status === 'pending' &&
+      p?.state?.resumePayload?.kind === 'subagent_wait' &&
+      p?.state?.resumePayload?.childSessionID === childSessionId
+    ) as any;
+    if (!part) {
+      throw new Error(`No pending subagent_wait bookmark for child ${childSessionId} in ${parentSessionId}`);
+    }
+    const rollback = {
+      sessionId: parentSessionId,
+      agentId: parentAgentId,
+      messageId: part.messageID,
+      partId: part.id,
+      state: part.state,
+    };
+    const start = typeof part.state?.suspendedAt === 'number' ? part.state.suspendedAt : Date.now();
+    let updated = false;
+    try {
+      await sessionManager.updatePart(parentSessionId, parentAgentId, part.messageID, part.id, {
+        state: {
+          status: 'completed',
+          input: part.state?.input ?? {},
+          output: (() => {
+            // Same composer as the straight-through path (subagent.ts), so a child
+            // resumed after a human cleared its gate hands the parent the same
+            // shape. Rebuilding this pair by hand is what used to drop the child's
+            // headline and artifacts on this path alone. `childResult.text` is
+            // already composed by runAgent, so the composer sees a body it merely
+            // re-splits rather than an opener it would double.
+            const composed = composeSubagentResult({
+              agent: childAgentName,
+              outcome: {
+                ...(childResult.complete && { complete: childResult.complete }),
+                ...(childResult.incomplete && { incomplete: childResult.incomplete }),
+              },
+              text: childResult.text,
+            });
+            return {
+              output: composed.output,
+              metadata: {
+                ...composed.metadata,
+                ...(childResult.usage?.totalTokens && { tokensUsed: childResult.usage.totalTokens }),
+              },
+            };
+          })(),
+          time: { start, end: Date.now() },
+        },
+      } as any);
+      updated = true;
+      const applied = await sessionManager.getPart(parentSessionId, parentAgentId, part.messageID, part.id) as any;
+      if (applied?.state?.status !== 'completed') {
+        throw new Error(`DECISION_NOT_PERSISTED: sub-agent result for ${childSessionId} did not persist to parent ${parentSessionId}`);
+      }
+      const resumedMessages = await rehydrateMessages(sessionManager, parentSessionId, parentAgentId);
+      assertResolvedToolCall(resumedMessages, part.callID);
+      await sessionManager.setSessionRunning(parentSessionId, parentAgentId);
+      return { rollback, resumedMessages };
+    } catch (error) {
+      if (updated) {
+        await restoreResumeToolResult({ sessionManager, rollback }).catch((restoreError) => {
+          logger.warn(`Failed to restore sub-agent bookmark after resume history preparation failed: ${(restoreError as Error).message}`);
         });
-        return {
-          output: composed.output,
-          metadata: {
-            ...composed.metadata,
-            ...(childResult.usage?.totalTokens && { tokensUsed: childResult.usage.totalTokens }),
-          },
-        };
-      })(),
-      time: { start, end: Date.now() },
-    },
-  } as any);
-  return rollback;
+      }
+      throw error;
+    }
+  }, {
+    staleMs: 30_000,
+    retryMs: 10,
+    maxWaitMs: 35_000,
+    label: `resume:${parentSessionId}`,
+  });
 }
 
 export function cascadeReparkedResponse(reqId: string, rootSessionId: string) {
@@ -294,14 +326,14 @@ export async function walkUpCascadeChain(opts: {
   let lastParentResult: Awaited<ReturnType<typeof runAgent>> | undefined;
   for (let i = ancestors.length - 1; i >= 0; i--) {
     const parent = ancestors[i];
-    let parentRollback: Awaited<ReturnType<typeof completeSubagentBookmark>> | undefined;
+    let parentRollback: Awaited<ReturnType<typeof completeSubagentBookmark>>['rollback'] | undefined;
     let enteredParentRun = false;
     let parentResult: Awaited<ReturnType<typeof runAgent>>;
     try {
-      parentRollback = await completeSubagentBookmark(sessionManager, parent.sessionId, parent.agentId, childSessionId, childAgentName, childResult);
-      await sessionManager.setSessionRunning(parent.sessionId, parent.agentId);
+      const completedBookmark = await completeSubagentBookmark(sessionManager, parent.sessionId, parent.agentId, childSessionId, childAgentName, childResult);
+      parentRollback = completedBookmark.rollback;
       enteredParentRun = true;
-      parentResult = await runExistingSession({ ctx, sessionManager, sessionId: parent.sessionId, projectRoot, abortController, startTime, ...(debug !== undefined && { debug }), ...(maxSteps !== undefined && { maxSteps }) });
+      parentResult = await runExistingSession({ ctx, sessionManager, sessionId: parent.sessionId, projectRoot, abortController, startTime, prebuiltMessages: completedBookmark.resumedMessages, ...(debug !== undefined && { debug }), ...(maxSteps !== undefined && { maxSteps }) });
       parentRollback = undefined;
     } catch (error) {
       if (parentRollback && (!enteredParentRun || isExistingSessionPreRunError(error))) {
@@ -377,13 +409,17 @@ export async function resumeApprovalCascade(opts: {
     sessionId: leaf.sessionId,
     toolResult,
     ...(resumeToken && { resumeToken }),
+    buildResumedMessages: true,
   });
   leafRollback = appliedLeaf.rollback;
 
   // 2. Run the leaf to completion (or re-suspension on a new gate).
   let childResult: Awaited<ReturnType<typeof runAgent>>;
   try {
-    childResult = await runExistingSession({ ctx, sessionManager, sessionId: leaf.sessionId, projectRoot, abortController, startTime, ...(debug !== undefined && { debug }), ...(maxSteps !== undefined && { maxSteps }) });
+    if (!appliedLeaf.resumedMessages) {
+      throw new Error(`RESUME_HISTORY_INVALID: no resolved history was built for delegated leaf ${leaf.sessionId}`);
+    }
+    childResult = await runExistingSession({ ctx, sessionManager, sessionId: leaf.sessionId, projectRoot, abortController, startTime, prebuiltMessages: appliedLeaf.resumedMessages, ...(debug !== undefined && { debug }), ...(maxSteps !== undefined && { maxSteps }) });
     leafRollback = undefined;
   } catch (error) {
     if (leafRollback && isExistingSessionPreRunError(error)) {

@@ -23,6 +23,7 @@ export async function executeAgent(ctx: WorkerContext, req: ExecuteRequest) {
   let mcp: Awaited<ReturnType<typeof connectMCP>> = [];
   let sessionManager: InstanceType<typeof SessionManager> | undefined;
   let resumeRollback: Awaited<ReturnType<typeof applyResumeToolResult>>['rollback'] | undefined;
+  let prebuiltResumeMessages: Awaited<ReturnType<typeof applyResumeToolResult>>['resumedMessages'] | undefined;
   let continuationSession: { sessionId: string; agentId: string } | undefined;
   let activeSessionId: string | undefined;
 
@@ -157,9 +158,11 @@ export async function executeAgent(ctx: WorkerContext, req: ExecuteRequest) {
         sessionManager,
         sessionId: req.sessionId,
         toolResult: req.toolResult,
-        ...(req.resumeToken && { resumeToken: req.resumeToken })
+        ...(req.resumeToken && { resumeToken: req.resumeToken }),
+        buildResumedMessages: true,
       });
       resumeRollback = resumed.rollback;
+      prebuiltResumeMessages = resumed.resumedMessages;
       if (!resumed.agentFilePath) {
         return restoreResumeAndReturn({
           id: req.id,
@@ -272,6 +275,7 @@ export async function executeAgent(ctx: WorkerContext, req: ExecuteRequest) {
       pluginManager,
       verbose: req.debug ?? false,
       existingSessionId,
+      ...(prebuiltResumeMessages && { prebuiltMessages: prebuiltResumeMessages }),
       // A continuation adds a new user turn to an ended run, so it can repair
       // an older missing snapshot from today's agent definition. Approval
       // resumes deliberately keep the strict historical-snapshot requirement.
