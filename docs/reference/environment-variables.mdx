@@ -170,6 +170,17 @@ model: anthropic:claude-sonnet-5:dev  # Uses ANTHROPIC_API_KEY_DEV
   ```
 </ParamField>
 
+<ParamField path="AGENTUSE_ISSUE_REPO" type="string" default="agentuse/agentuse">
+  GitHub repository (`owner/name`) that the "Report to AgentUse" link on a
+  changeset review points at. The reviser sets it when a no-change diagnosis
+  blames the AgentUse runtime rather than the agent. Point it at a fork or an
+  internal tracker when your team triages framework bugs elsewhere.
+
+  ```bash
+  export AGENTUSE_ISSUE_REPO="my-org/agentuse-fork"
+  ```
+</ParamField>
+
 <ParamField path="AGENTUSE_WORKER_RECYCLE_MB" type="number" default="300">
   Heap size, in MB, at which an idle per-project worker is retired and replaced.
 

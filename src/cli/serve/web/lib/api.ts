@@ -889,6 +889,16 @@ export interface ChangesetPayload {
   changeset: ChangesetRecord;
   /** Present when the caller needs it to follow the authoring session log. */
   sessionToken?: string;
+  /** Present when the latest proposal blamed AgentUse itself: a pre-filled
+   *  bug report the reviewer can open and file. */
+  report?: UpstreamIssueReport;
+}
+
+export interface UpstreamIssueReport {
+  repo: string;
+  title: string;
+  body: string;
+  url: string;
 }
 
 /** Files Restore left alone because they were hand-edited after Apply. */

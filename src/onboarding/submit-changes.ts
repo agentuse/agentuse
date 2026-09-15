@@ -18,6 +18,7 @@ import { glob } from 'glob';
 import { z } from 'zod';
 import { appendChangesetProposal, readChangesetRecord } from '../agents/changeset.js';
 import {
+  CHANGESET_CAUSES,
   changesetBasePath,
   changesetEditRoot,
   type ChangesetMode,
@@ -97,6 +98,8 @@ const changesetSubmissionSchema = z.object({
     .describe('Required for proposed: project-relative path of the .agentuse file a test run should execute.'),
   recommendedAction: z.string().max(2000).optional()
     .describe('Required for no-change: explain what the operator should do next in plain language. Use short paragraphs separated by blank lines, or bullets for multiple steps.'),
+  cause: z.enum(CHANGESET_CAUSES as [string, ...string[]]).optional()
+    .describe('Required for no-change: which layer owns the cause. agent when the agent file or its scripts are wrong; project when the fix belongs in project code outside this agent; setup when a provider, credential, or environment needs changing; agentuse only when the AgentUse runtime itself misbehaved (a tool, the runner, approvals, sessions) in a way no agent edit can work around.'),
 }).strict();
 
 type ChangesetSubmissionInput = z.infer<typeof changesetSubmissionSchema>;
@@ -252,9 +255,13 @@ export function createSubmitChangesTool(
           if (!recommendedAction) {
             throw new Error('A no-change outcome requires a recommendedAction. Add it and call submit_changes again.');
           }
+          if (!input.cause) {
+            throw new Error('A no-change outcome requires a cause: agent, project, setup, or agentuse. Add it and call submit_changes again.');
+          }
           await appendChangesetProposal(contract.projectRoot, contract.sessionId, {
             reply: recommendedAction,
             ...(diagnosis && { diagnosis }),
+            cause: input.cause as (typeof CHANGESET_CAUSES)[number],
             files: [],
             ...(loadedSkills.length > 0 && { loadedSkills }),
             ...(externalReads.length > 0 && { externalReads }),

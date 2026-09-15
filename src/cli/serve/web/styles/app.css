@@ -10865,6 +10865,30 @@ html[data-page="draft-panel"] .app-route {
 .changeset-op.is-add { border-color: var(--green-border); background: var(--green-soft); color: var(--green); }
 .changeset-op.is-modify { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
 
+/* A no-change proposal that blames AgentUse itself: the one thing to do here
+   is file it, so the notice carries the link and sits above the summary. */
+.changeset-upstream {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--amber-border);
+  border-radius: 10px;
+  background: var(--amber-soft);
+}
+.changeset-upstream-copy { display: grid; gap: 3px; min-width: 0; }
+.changeset-upstream-copy strong { color: var(--fg); font-size: var(--font-size-caption); font-weight: var(--weight-bold); }
+.changeset-upstream-copy span { color: var(--muted); font-size: var(--font-size-caption); line-height: var(--lh-snug); }
+.changeset-upstream-link { flex: none; white-space: nowrap; text-decoration: none; }
+/* Leads the Changes tab, in the thread's gutter, and never shrinks under it. */
+.draft-file-scroll.is-changes > .changeset-upstream { flex: none; margin: 16px var(--draft-gutter) 0; }
+@media (max-width: 640px) {
+  .changeset-upstream { flex-direction: column; align-items: stretch; }
+  .changeset-upstream-link { text-align: center; }
+}
+
 .changeset-summary {
   margin: 0 0 12px;
   color: var(--fg);

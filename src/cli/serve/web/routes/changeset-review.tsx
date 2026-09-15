@@ -3,6 +3,7 @@ import { useLocation, useRoute } from 'preact-iso';
 import type { ChangesetRecord } from '../../../../agents/changeset-types';
 import {
   fetchChangeset,
+  type UpstreamIssueReport,
   postChangesetAction,
   requestChangesetChanges,
   restoreChangeset,
@@ -55,6 +56,7 @@ export default function ChangesetReview() {
 
   const [changeset, setChangeset] = useState<ChangesetRecord | null>(null);
   const [sessionToken, setSessionToken] = useState<string | undefined>(undefined);
+  const [report, setReport] = useState<UpstreamIssueReport | undefined>(undefined);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyAction | null>(null);
@@ -85,6 +87,7 @@ export default function ChangesetReview() {
     try {
       const payload = await fetchChangeset(projectId, sessionId);
       setChangeset(payload.changeset);
+      setReport(payload.report);
       if (payload.sessionToken) setSessionToken(payload.sessionToken);
       setLoadError(null);
     } catch (caught) {
@@ -317,6 +320,22 @@ export default function ChangesetReview() {
       }
       : null;
 
+  // A no-change proposal blamed on AgentUse itself: the thing to do is file
+  // it, so the notice leads the Changes tab, above the thread.
+  const upstreamNotice = proposal?.cause === 'agentuse' && (
+    <div class="changeset-upstream" role="status">
+      <span class="changeset-upstream-copy">
+        <strong>This looks like an AgentUse problem, not your agent.</strong>
+        <span>The reviser found nothing to change in this agent. Filing the report helps get it fixed upstream. Read it first: the diagnosis was written by a model.</span>
+      </span>
+      {report && (
+        <a class="draft-secondary changeset-upstream-link" href={report.url} rel="noreferrer noopener" target="_blank">
+          Report to AgentUse
+        </a>
+      )}
+    </div>
+  );
+
   const sources = [
     ...(proposal?.externalReads ?? []).map((url) => ({ key: `url:${url}`, label: url, href: url })),
     ...(proposal?.loadedSkills ?? []).map((skill) => ({ key: `skill:${skill}`, label: skill, href: undefined })),
@@ -406,6 +425,8 @@ export default function ChangesetReview() {
               </>
             ),
             panel: (
+          <>
+          {upstreamNotice}
           <DraftThread
             turns={changeset.exchange ?? []}
             entries={authorSession.entries}
@@ -418,6 +439,7 @@ export default function ChangesetReview() {
             leadRequest={changeset.instruction}
             emptyHint="The author is working. Its steps appear here as it goes."
           />
+          </>
             ),
           },
           {

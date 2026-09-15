@@ -24,6 +24,12 @@ export type ChangesetStatus =
   | 'restored'
   | 'error';
 
+/** Where the reviser placed the cause of a run's problem. `agentuse` marks a
+ *  defect in the framework itself, which no agent edit can fix: the review
+ *  page turns that into a bug report the operator can file. */
+export type ChangesetCause = 'agent' | 'project' | 'setup' | 'agentuse';
+export const CHANGESET_CAUSES: readonly ChangesetCause[] = ['agent', 'project', 'setup', 'agentuse'];
+
 export type ChangesetFileKind = 'agent' | 'support';
 export type ChangesetFileOp = 'add' | 'modify';
 
@@ -55,6 +61,8 @@ export interface ChangesetProposal {
   /** The model's short reply (summary or recommended action). */
   reply: string;
   diagnosis?: string;
+  /** Which layer owns the cause. Set on a no-change proposal. */
+  cause?: ChangesetCause;
   /** Project-relative path of the agent to run in a test run. Absent on a no-change proposal. */
   entry?: string;
   files: ChangesetFile[];

@@ -29,7 +29,9 @@ import { OnboardingModelJob } from "../internal-jobs";
 import { resolveScopedAgentPath } from "../project";
 import type { Project } from "../project";
 import { CHANGESET_CREATE_MAX_STEPS, CHANGESET_CREATE_TIMEOUT_SECONDS, CHANGESET_REVISE_MAX_STEPS, CHANGESET_REVISE_TIMEOUT_SECONDS, revisionProposalTag, revisionRequestTag } from "../revision-limits";
+import { buildUpstreamIssueReport } from "../issue-report";
 import { buildRunTranscript } from "../session-lists";
+import { version as packageVersion } from "../../../../package.json";
 import { WorkerApprovalInfoResult } from "../session-types";
 import { existsSync } from "fs";
 import { lstat, readFile, realpath } from "fs/promises";
@@ -44,6 +46,35 @@ import type { ServeContext, ServeRequest } from "../context";
  */
 export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promise<boolean> {
   const { req, res, requestUrl, isApi, routePath, sessionAuthorized } = rq;
+  /** A no-change proposal blamed on AgentUse itself ships with a pre-filled
+   *  bug report. The origin run's transcript is re-read here, clipped small,
+   *  so the report can quote it without the record having to store it. */
+  const upstreamIssueReport = async (record: ChangesetRecord) => {
+    const proposal = latestChangesetProposal(record);
+    if (!proposal || proposal.cause !== 'agentuse') return undefined;
+    let transcript: string | undefined;
+    let runModel: string | undefined;
+    if (record.originSessionId) {
+      const origin = await findSessionInfo(record.originSessionId, record.projectId);
+      if (origin.success) {
+        runModel = origin.info.approval.model;
+        transcript = buildRunTranscript(origin.info.approval.logs, 3_000, {
+          focus: 'latest-attempt',
+          terminal: {
+            status: origin.info.approval.sessionStatus,
+            ...(origin.info.approval.errorCode && { errorCode: origin.info.approval.errorCode }),
+            ...(origin.info.approval.errorMessage && { errorMessage: origin.info.approval.errorMessage }),
+          },
+        });
+      }
+    }
+    try {
+      return buildUpstreamIssueReport({ record, proposal, version: packageVersion, runModel, transcript });
+    } catch (error) {
+      logger.warn(`Could not build the AgentUse issue report for changeset ${record.sessionId}: ${toErrorMessage(error)}`);
+      return undefined;
+    }
+  };
   const {
     options,
     apiKey,
@@ -754,10 +785,12 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
           }
           const record = await settleStaleChangesetTestRuns(project, stored);
           const sessionToken = sessionViewToken(sessionId, apiKey);
+          const report = await upstreamIssueReport(record);
           sendJSON(res, 200, {
             success: true,
             changeset: record,
             ...(sessionToken && { sessionToken }),
+            ...(report && { report }),
           });
           return;
         }

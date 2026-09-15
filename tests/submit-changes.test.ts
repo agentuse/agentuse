@@ -335,6 +335,7 @@ describe('submit_changes no-change', () => {
       summary: 'The agent is already correct.',
       diagnosis: 'The failure came from an expired credential, not the agent.',
       recommendedAction: 'Refresh the API token in the project environment.',
+      cause: 'setup',
     });
 
     expect(accepted).toContain('no-change diagnosis');
@@ -344,6 +345,7 @@ describe('submit_changes no-change', () => {
     expect(record?.proposals[0]?.files).toEqual([]);
     expect(record?.proposals[0]?.entry).toBeUndefined();
     expect(record?.proposals[0]?.reply).toBe('Refresh the API token in the project environment.');
+    expect(record?.proposals[0]?.cause).toBe('setup');
   });
 
   it('requires a recommendedAction', async () => {
@@ -353,6 +355,16 @@ describe('submit_changes no-change', () => {
       outcome: 'no-change',
       summary: 'Nothing to change.',
     })).rejects.toThrow('requires a recommendedAction');
+  });
+
+  it('requires a cause, so an upstream verdict is never lost in prose', async () => {
+    const { projectRoot } = await project();
+    await startRecord(projectRoot);
+    await expect(run(tool(projectRoot), {
+      outcome: 'no-change',
+      summary: 'Nothing to change.',
+      recommendedAction: 'Report it.',
+    })).rejects.toThrow('requires a cause');
   });
 });
 

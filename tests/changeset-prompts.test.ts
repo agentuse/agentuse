@@ -131,6 +131,8 @@ describe('changeset session prompts', () => {
     expect(parsed.instructions).toContain('untrusted evidence');
     expect(parsed.instructions).toContain('agents/daily.agentuse');
     expect(parsed.instructions).toContain('outcome no-change');
+    expect(parsed.instructions).toContain('cause: agent, project, setup, or agentuse');
+    expect(parsed.instructions).toContain('Use agentuse only when the AgentUse runtime itself misbehaved');
     expect(parsed.instructions).toContain('Resolve routine implementation choices yourself');
     expect(parsed.instructions).toContain('top-level options array');
     expect(parsed.instructions).toContain('Tool arguments must be valid JSON objects');
