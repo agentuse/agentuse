@@ -814,6 +814,51 @@ describe('direct reusable results', () => {
     }
   });
 
+  it('does not create a reusable handle from an incomplete captured result', async () => {
+    const previous = process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+    process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = '512';
+    const output = {
+      output: 'x'.repeat(2_000),
+      metadata: {
+        truncated: true,
+        fullOutputArtifact: {
+          kind: 'tool-output',
+          path: 'session/message/artifact/tool-output-tools-bash.txt',
+          bytes: 4_000,
+          originalChars: 3_000,
+        },
+      },
+    };
+    const writeReusableResult = mock(async () => {
+      throw new Error('an incomplete capture must not receive a result ID');
+    });
+    const writeToolOutputArtifact = mock(async () => {
+      throw new Error('the complete artifact already exists');
+    });
+    const dispatcher = new ToolDispatcher({
+      tools__bash: { inputSchema: z.object({}), execute: async () => output },
+    }, { writeReusableResult, writeToolOutputArtifact });
+
+    try {
+      const result = await dispatcher.dispatch('tools__bash', {}, {
+        toolCallId: 'direct-incomplete-capture',
+        origin: 'direct',
+        modelFacing: true,
+      }) as any;
+
+      expect(writeReusableResult).not.toHaveBeenCalled();
+      expect(writeToolOutputArtifact).not.toHaveBeenCalled();
+      expect(result).not.toHaveProperty('resultId');
+      expect(result.metadata).toMatchObject({
+        truncated: true,
+        fullOutputArtifact: { path: 'session/message/artifact/tool-output-tools-bash.txt' },
+      });
+    } finally {
+      if (previous === undefined) delete process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
+      else process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = previous;
+    }
+  });
+
   it('uses the available inline budget for the beginning of a text result', async () => {
     const previous = process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
     process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = '512';

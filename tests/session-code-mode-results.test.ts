@@ -9,6 +9,7 @@ import { buildCodeModeTraceHooks } from '../src/runner/execution';
 import { createCodeExecTool } from '../src/runner/code-mode';
 import { ToolDispatcher } from '../src/runner/tool-dispatcher';
 import { createResultsTool } from '../src/tools/results';
+import { createBashTool } from '../src/tools/bash';
 import { z } from 'zod';
 
 let testRoot: string | undefined;
@@ -45,6 +46,110 @@ async function createSession(manager: SessionManager, projectRoot: string, agent
 }
 
 describe('session Code Mode results', () => {
+  it('persists complete Bash JSON above the model preview limit', async () => {
+    const previousOutputLimit = process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES;
+    const previousCaptureLimit = process.env.AGENTUSE_BASH_CAPTURE_BYTES;
+    originalXdg = process.env.XDG_DATA_HOME;
+    testRoot = await mkdtemp(join(tmpdir(), 'agentuse-code-bash-results-'));
+    process.env.XDG_DATA_HOME = testRoot;
+    delete process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES;
+    delete process.env.AGENTUSE_BASH_CAPTURE_BYTES;
+    await initStorage(testRoot);
+
+    try {
+      const manager = new SessionManager();
+      const agentId = 'agents/review';
+      const { sessionId, messageId } = await createSession(manager, testRoot, agentId);
+      const command = `node -e 'process.stdout.write(JSON.stringify({body:"x".repeat(40000)}))'`;
+      const bash = createBashTool({ commands: ['node -e *'] }, testRoot, { projectRoot: testRoot });
+      const dispatcher = new ToolDispatcher({ tools__bash: bash });
+      const hooks = buildCodeModeTraceHooks({
+        sessionManager: manager,
+        sessionID: sessionId,
+        agentId,
+        messageID: messageId,
+      });
+      const codeExec = createCodeExecTool({
+        dispatcher,
+        toolNames: ['tools__bash'],
+        toolDefinitions: dispatcher.codeModeTools(),
+        ...hooks,
+      });
+
+      const first = await codeExec.execute!({
+        code: `const result: any = await tools.tools__bash({ command: ${JSON.stringify(command)} }); return JSON.parse(result.output).body.length;`,
+      }, { toolCallId: 'large-bash-json' }) as any;
+
+      expect(first.value).toBe(40_000);
+      const resultId = first.reusableResults?.[0]?.resultId;
+      expect(resultId).toStartWith(`result_${messageId}_`);
+      const stored = await manager.readCodeModeResult(sessionId, agentId, resultId) as any;
+      expect(JSON.parse(stored.output).body).toHaveLength(40_000);
+      expect(stored.metadata.truncated).toBe(false);
+    } finally {
+      if (previousOutputLimit === undefined) delete process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES;
+      else process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES = previousOutputLimit;
+      if (previousCaptureLimit === undefined) delete process.env.AGENTUSE_BASH_CAPTURE_BYTES;
+      else process.env.AGENTUSE_BASH_CAPTURE_BYTES = previousCaptureLimit;
+    }
+  });
+
+  it('does not issue a reusable result ID for a truncated Bash capture', async () => {
+    const previousOutputLimit = process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES;
+    const previousCaptureLimit = process.env.AGENTUSE_BASH_CAPTURE_BYTES;
+    originalXdg = process.env.XDG_DATA_HOME;
+    testRoot = await mkdtemp(join(tmpdir(), 'agentuse-code-bash-truncated-'));
+    process.env.XDG_DATA_HOME = testRoot;
+    delete process.env.AGENTUSE_BASH_CAPTURE_BYTES;
+    process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES = '1024';
+    await initStorage(testRoot);
+
+    try {
+      const manager = new SessionManager();
+      const agentId = 'agents/review';
+      const { sessionId, messageId } = await createSession(manager, testRoot, agentId);
+      const command = `node -e 'process.stdout.write("x".repeat(40000))'`;
+      const bash = createBashTool({ commands: ['node -e *'] }, testRoot, {
+        projectRoot: testRoot,
+        toolOutputArtifacts: {
+          createStream: (toolName, metadata) => manager.createToolOutputArtifactStream(
+            sessionId,
+            agentId,
+            messageId,
+            toolName,
+            metadata,
+          ),
+        },
+      });
+      const dispatcher = new ToolDispatcher({ tools__bash: bash });
+      const codeExec = createCodeExecTool({
+        dispatcher,
+        toolNames: ['tools__bash'],
+        toolDefinitions: dispatcher.codeModeTools(),
+        ...buildCodeModeTraceHooks({
+          sessionManager: manager,
+          sessionID: sessionId,
+          agentId,
+          messageID: messageId,
+        }),
+      });
+
+      const result = await codeExec.execute!({
+        code: `return await tools.tools__bash({ command: ${JSON.stringify(command)} });`,
+      }, { toolCallId: 'truncated-bash-output' }) as any;
+
+      expect(result.value.metadata.truncated).toBe(true);
+      expect(result.value.metadata.fullOutputArtifact).toBeDefined();
+      expect(result.reusableResults).toBeUndefined();
+      expect(await manager.listCodeModeResults(sessionId, agentId)).toEqual([]);
+    } finally {
+      if (previousOutputLimit === undefined) delete process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES;
+      else process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES = previousOutputLimit;
+      if (previousCaptureLimit === undefined) delete process.env.AGENTUSE_BASH_CAPTURE_BYTES;
+      else process.env.AGENTUSE_BASH_CAPTURE_BYTES = previousCaptureLimit;
+    }
+  });
+
   it('persists a nested result and reuses it through a later real Code Mode invocation', async () => {
     originalXdg = process.env.XDG_DATA_HOME;
     testRoot = await mkdtemp(join(tmpdir(), 'agentuse-code-results-'));

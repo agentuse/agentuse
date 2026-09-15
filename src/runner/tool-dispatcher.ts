@@ -19,6 +19,7 @@ import type {
   CodeModeResultReference,
   ReusableResultHandle,
 } from '../session/code-mode-results';
+import { isIncompleteCapturedResult } from '../session/code-mode-results';
 import type {
   ToolCallEvent,
   ToolCallEventResult,
@@ -798,6 +799,7 @@ export class ToolDispatcher {
     const resultBytes = serializedResultBytes(output);
     const outputLimits = getToolOutputLimits();
     const isResultQuery = toolName === 'results';
+    const incompleteCapture = isIncompleteCapturedResult(output);
     const inlineLimit = isResultQuery
       ? outputLimits.resultQueryBytes
       : outputLimits.inlineResultBytes;
@@ -805,6 +807,7 @@ export class ToolDispatcher {
       resultBytes !== undefined
       && resultBytes > inlineLimit
       && !isResultQuery
+      && !incompleteCapture
       && this.options.writeReusableResult
     ) {
       try {
@@ -826,6 +829,9 @@ export class ToolDispatcher {
     if (!clamped.truncated) return clamped.value;
 
     logger.debug(`[ToolOutput] Truncated model-facing result for ${toolName}`);
+    // The tool already persisted the only complete representation. Do not
+    // create a second artifact containing its incomplete preview.
+    if (incompleteCapture) return clamped.value;
     if (this.options.writeToolOutputArtifact) {
       try {
         const artifact = await this.options.writeToolOutputArtifact(toolName, output);

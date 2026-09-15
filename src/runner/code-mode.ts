@@ -17,6 +17,7 @@ import { typecheckCodeMode, type CodeModeSourceLocation } from './code-mode-type
 import { mapCodeModeStack } from './code-mode-source-map';
 import {
   describeCodeModeResultFromSerialized,
+  isIncompleteCapturedResult,
   type CodeModeResultMetadata,
   type CodeModeResultReference,
 } from '../session/code-mode-results';
@@ -977,12 +978,14 @@ export async function executeCodeModeDetailed(
         const { serialized } = completion;
         const endedAt = Date.now();
         const resultBytes = Buffer.byteLength(serialized, 'utf8');
-        const reusableResult = describeCodeModeResultFromSerialized({
-          serializedInput: inputJson,
-          serializedOutput: serialized,
-          output,
-          readable: serialized.length <= limits.resultCharsPerCall && resultBytes <= limits.resultReadBytes,
-        });
+        const reusableResult = isIncompleteCapturedResult(output)
+          ? undefined
+          : describeCodeModeResultFromSerialized({
+              serializedInput: inputJson,
+              serializedOutput: serialized,
+              output,
+              readable: serialized.length <= limits.resultCharsPerCall && resultBytes <= limits.resultReadBytes,
+            });
         const resultReference = await notifyFinish({
           parentCallId: options.parentCallId,
           callId,

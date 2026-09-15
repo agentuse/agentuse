@@ -9,6 +9,7 @@ import {
   getToolOutputLimits,
   DEFAULT_INLINE_RESULT_BYTES,
   DEFAULT_RESULT_QUERY_BYTES,
+  DEFAULT_BASH_CAPTURE_BYTES,
   DEFAULT_MAX_OUTPUT_BYTES,
   DEFAULT_MAX_LINES,
   DEFAULT_MAX_LINE_LENGTH,
@@ -175,6 +176,7 @@ describe('getToolOutputLimits', () => {
   const saved = {
     inlineBytes: process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES,
     queryBytes: process.env.AGENTUSE_RESULT_QUERY_BYTES,
+    bashCaptureBytes: process.env.AGENTUSE_BASH_CAPTURE_BYTES,
     bytes: process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES,
     lines: process.env.AGENTUSE_TOOL_MAX_LINES,
     lineLen: process.env.AGENTUSE_TOOL_MAX_LINE_LENGTH,
@@ -188,6 +190,7 @@ describe('getToolOutputLimits', () => {
     set('AGENTUSE_TOOL_MAX_OUTPUT_BYTES', saved.bytes);
     set('AGENTUSE_TOOL_INLINE_RESULT_BYTES', saved.inlineBytes);
     set('AGENTUSE_RESULT_QUERY_BYTES', saved.queryBytes);
+    set('AGENTUSE_BASH_CAPTURE_BYTES', saved.bashCaptureBytes);
     set('AGENTUSE_TOOL_MAX_LINES', saved.lines);
     set('AGENTUSE_TOOL_MAX_LINE_LENGTH', saved.lineLen);
     set('AGENTUSE_TOOL_OUTPUT_HEAD_RATIO', saved.ratio);
@@ -197,12 +200,14 @@ describe('getToolOutputLimits', () => {
     delete process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES;
     delete process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
     delete process.env.AGENTUSE_RESULT_QUERY_BYTES;
+    delete process.env.AGENTUSE_BASH_CAPTURE_BYTES;
     delete process.env.AGENTUSE_TOOL_MAX_LINES;
     delete process.env.AGENTUSE_TOOL_MAX_LINE_LENGTH;
     delete process.env.AGENTUSE_TOOL_OUTPUT_HEAD_RATIO;
     expect(getToolOutputLimits()).toEqual({
       inlineResultBytes: DEFAULT_INLINE_RESULT_BYTES,
       resultQueryBytes: DEFAULT_RESULT_QUERY_BYTES,
+      bashCaptureBytes: DEFAULT_BASH_CAPTURE_BYTES,
       maxBytes: DEFAULT_MAX_OUTPUT_BYTES,
       maxLines: DEFAULT_MAX_LINES,
       maxLineLength: DEFAULT_MAX_LINE_LENGTH,
@@ -214,10 +219,12 @@ describe('getToolOutputLimits', () => {
     process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES = '12345';
     process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = '7000';
     process.env.AGENTUSE_RESULT_QUERY_BYTES = '14000';
+    process.env.AGENTUSE_BASH_CAPTURE_BYTES = '400000';
     process.env.AGENTUSE_TOOL_OUTPUT_HEAD_RATIO = '0.25';
     const limits = getToolOutputLimits();
     expect(limits.inlineResultBytes).toBe(7000);
     expect(limits.resultQueryBytes).toBe(14000);
+    expect(limits.bashCaptureBytes).toBe(400000);
     expect(limits.maxBytes).toBe(12345);
     expect(limits.headRatio).toBe(0.25);
   });
@@ -225,12 +232,14 @@ describe('getToolOutputLimits', () => {
   it('falls back to defaults on invalid env values', () => {
     process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = 'not-a-number';
     process.env.AGENTUSE_RESULT_QUERY_BYTES = 'not-a-number';
+    process.env.AGENTUSE_BASH_CAPTURE_BYTES = 'not-a-number';
     process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES = 'not-a-number';
     process.env.AGENTUSE_TOOL_MAX_LINES = '-5';
     process.env.AGENTUSE_TOOL_OUTPUT_HEAD_RATIO = '1.5'; // out of (0,1)
     const limits = getToolOutputLimits();
     expect(limits.inlineResultBytes).toBe(DEFAULT_INLINE_RESULT_BYTES);
     expect(limits.resultQueryBytes).toBe(DEFAULT_RESULT_QUERY_BYTES);
+    expect(limits.bashCaptureBytes).toBe(DEFAULT_BASH_CAPTURE_BYTES);
     expect(limits.maxBytes).toBe(DEFAULT_MAX_OUTPUT_BYTES);
     expect(limits.maxLines).toBe(DEFAULT_MAX_LINES);
     expect(limits.headRatio).toBe(DEFAULT_HEAD_RATIO);
@@ -240,6 +249,7 @@ describe('getToolOutputLimits', () => {
     delete process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
     process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES = '4096';
     expect(getToolOutputLimits().inlineResultBytes).toBe(4096);
+    expect(getToolOutputLimits().bashCaptureBytes).toBe(4096);
   });
 
   it('keeps the default query budget at least as large as an overridden inline budget', () => {

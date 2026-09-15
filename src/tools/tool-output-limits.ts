@@ -15,15 +15,18 @@
  * Env vars:
  *   AGENTUSE_TOOL_INLINE_RESULT_BYTES model-facing inline result cap     default 10240
  *   AGENTUSE_RESULT_QUERY_BYTES       results tool query result cap      default 20480
- *   AGENTUSE_TOOL_MAX_OUTPUT_BYTES    bash stdout/stderr cap (bytes)      default 30720
+ *   AGENTUSE_BASH_CAPTURE_BYTES       bash canonical capture cap          default 4194304
+ *   AGENTUSE_TOOL_MAX_OUTPUT_BYTES    legacy tool output cap              default 30720
  *   AGENTUSE_TOOL_MAX_LINES           read_file pagination/truncation cap default 2000
  *   AGENTUSE_TOOL_MAX_LINE_LENGTH     per-line cap before "... (truncated)" default 2000
  *   AGENTUSE_TOOL_OUTPUT_HEAD_RATIO   fraction of the byte cap kept as head default 0.4
  */
 
-// Tool-local capture retains the historical cap. The separate inline cap is
-// deliberately smaller because that payload is replayed on every model step.
-export const DEFAULT_MAX_OUTPUT_BYTES = 30 * 1024; // bash.ts DEFAULT_MAX_OUTPUT
+export const DEFAULT_MAX_OUTPUT_BYTES = 30 * 1024;
+// Canonical Bash capture is persisted once and queried by resultId when needed,
+// so it can be larger than output repeatedly sent to the model. Keep this
+// aligned with Code Mode's default result-read ceiling.
+export const DEFAULT_BASH_CAPTURE_BYTES = 4 * 1024 * 1024;
 export const DEFAULT_INLINE_RESULT_BYTES = 10 * 1024;
 export const DEFAULT_RESULT_QUERY_BYTES = 20 * 1024;
 export const DEFAULT_MAX_LINES = 2000; // filesystem.ts DEFAULT_MAX_LINES
@@ -38,6 +41,8 @@ export interface ToolOutputLimits {
   inlineResultBytes: number;
   /** Largest intentional lookup returned inline by the results tool. */
   resultQueryBytes: number;
+  /** Largest complete Bash result retained before falling back to an artifact. */
+  bashCaptureBytes: number;
   maxBytes: number;
   maxLines: number;
   maxLineLength: number;
@@ -72,6 +77,12 @@ export function getToolOutputLimits(): ToolOutputLimits {
     resultQueryBytes: positiveInt(
       process.env.AGENTUSE_RESULT_QUERY_BYTES,
       Math.max(DEFAULT_RESULT_QUERY_BYTES, inlineResultBytes),
+    ),
+    bashCaptureBytes: positiveInt(
+      process.env.AGENTUSE_BASH_CAPTURE_BYTES,
+      legacyOutputBytes === undefined
+        ? DEFAULT_BASH_CAPTURE_BYTES
+        : positiveInt(legacyOutputBytes, DEFAULT_BASH_CAPTURE_BYTES),
     ),
     maxBytes: positiveInt(legacyOutputBytes, DEFAULT_MAX_OUTPUT_BYTES),
     maxLines: positiveInt(process.env.AGENTUSE_TOOL_MAX_LINES, DEFAULT_MAX_LINES),

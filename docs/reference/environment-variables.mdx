@@ -393,7 +393,7 @@ Mock all tool outputs with the LLM instead of executing them. Mirror the `--mock
 
 ## Tool Output
 
-Large tool results are re-sent to the model on every subsequent step. AgentUse stores oversized direct JSON and text results outside model context and returns a queryable handle instead. Bash also keeps a separate bounded head and tail for its returned value, with the complete stream saved as a session artifact when needed.
+Large tool results are re-sent to the model on every subsequent step. AgentUse stores oversized direct JSON and text results outside model context and returns a queryable handle instead. Bash keeps a larger bounded canonical capture for that result store, with the complete stream saved as a session artifact if the capture ceiling is crossed.
 
 <ParamField path="AGENTUSE_TOOL_INLINE_RESULT_BYTES" type="number">
   Maximum serialized size of a direct JSON or text response returned inline. Larger results become a reusable `resultId` handle with a partial `preview` and jq-style `omitted` map, and can be narrowed with the `results` tool.
@@ -413,8 +413,17 @@ Large tool results are re-sent to the model on every subsequent step. AgentUse s
   ```
 </ParamField>
 
+<ParamField path="AGENTUSE_BASH_CAPTURE_BYTES" type="number">
+  Maximum canonical output retained by the built-in `bash` accumulator for reusable results. Output over this limit is reduced to a head + tail slice and the complete stream is saved as a session artifact; AgentUse does not issue a reusable `resultId` for that incomplete capture.
+  Default: 4194304 (4MB)
+
+  ```bash
+  export AGENTUSE_BASH_CAPTURE_BYTES="8388608"  # 8MB
+  ```
+</ParamField>
+
 <ParamField path="AGENTUSE_TOOL_MAX_OUTPUT_BYTES" type="number">
-  Maximum size retained by the built-in `bash` output accumulator. Output over this limit is reduced to a head + tail slice and the complete stream is saved as a session artifact. For compatibility, this also controls the inline result limit when `AGENTUSE_TOOL_INLINE_RESULT_BYTES` is unset and this variable is explicitly configured.
+  Legacy general tool-output limit. It remains the fallback for Bash canonical capture and the inline result limit when their dedicated variables are unset, preserving existing configurations. Prefer `AGENTUSE_BASH_CAPTURE_BYTES` and `AGENTUSE_TOOL_INLINE_RESULT_BYTES` for independent control.
   Default: 30720 (30KB)
 
   ```bash
@@ -423,7 +432,7 @@ Large tool results are re-sent to the model on every subsequent step. AgentUse s
 </ParamField>
 
 <ParamField path="AGENTUSE_TOOL_OUTPUT_HEAD_RATIO" type="number">
-  Fraction of `AGENTUSE_TOOL_MAX_OUTPUT_BYTES` kept as the head when truncating; the remainder is kept as the tail. Errors and context often appear early, while the most recent output appears at the end, so both ends are preserved.
+  Fraction of a truncated output budget kept as the head; the remainder is kept as the tail. Errors and context often appear early, while the most recent output appears at the end, so both ends are preserved.
   Default: 0.4 (40% head / 60% tail)
 
   ```bash

@@ -204,7 +204,7 @@ export function createBashTool(
   const defaultTimeout = config.timeout !== undefined
     ? parseDurationMs(config.timeout, { bareUnit: 'milliseconds', field: 'tools.bash.timeout' })
     : DEFAULT_TIMEOUT;
-  const { maxBytes: maxOutputBytes, headRatio } = getToolOutputLimits();
+  const { bashCaptureBytes: maxOutputBytes, headRatio } = getToolOutputLimits();
   const artifactSink = resolverContext.toolOutputArtifacts;
   const liveSink = resolverContext.liveToolOutput;
 

@@ -418,7 +418,7 @@ bash:
 
 ### Output Limits
 
-The Bash tool retains at most **30KB** (`AGENTUSE_TOOL_MAX_OUTPUT_BYTES`) in its returned value. When command output exceeds that cap, AgentUse keeps a **head + tail** slice (40% head / 60% tail by default), saves the complete stream as a session artifact, and marks the result as truncated.
+The Bash tool retains at most **4MB** (`AGENTUSE_BASH_CAPTURE_BYTES`) as canonical output for reusable results. When command output exceeds that cap, AgentUse keeps a **head + tail** slice (40% head / 60% tail by default), saves the complete stream as a session artifact, and marks the result as truncated. A truncated capture never receives a reusable `resultId` because that ID must always represent complete data.
 
 Independently, any direct JSON or text result over **10KB** (`AGENTUSE_TOOL_INLINE_RESULT_BYTES`) becomes a reusable result handle before it reaches the model. This smaller limit prevents a large result from being re-sent on every subsequent model step.
 

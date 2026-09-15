@@ -90,6 +90,15 @@ export function reusableResultText(value: unknown): string | undefined {
   }
 }
 
+/** A tool crossed its own capture ceiling, so this value is only a preview. */
+export function isIncompleteCapturedResult(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const metadata = (value as Record<string, unknown>).metadata;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return false;
+  const record = metadata as Record<string, unknown>;
+  return record.truncated === true && record.fullOutputArtifact !== undefined;
+}
+
 export function describeCodeModeResult(input: {
   resultId: string;
   tool: string;
