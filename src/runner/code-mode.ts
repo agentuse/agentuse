@@ -184,6 +184,12 @@ export class CodeModeRunBudget {
   private activeNestedCalls = 0;
   private activeRuntimes = 0;
   private reservedMemoryBytes = 0;
+  private nestedCallWaiters: Array<{
+    resolve: (release: () => void) => void;
+    reject: (error: Error) => void;
+    signal?: AbortSignal;
+    onAbort?: () => void;
+  }> = [];
   private runtimeWaiters: Array<{
     requestedMemoryBytes: number;
     resolve: (release: () => void) => void;
@@ -198,7 +204,10 @@ export class CodeModeRunBudget {
     if (requestedMemoryBytes > this.limits.memoryBytes) {
       return Promise.reject(new Error('Code Mode requested more than its run-scoped guest-memory limit'));
     }
-    if (signal?.aborted) return Promise.reject(abortError(signal));
+    if (signal?.aborted) {
+      this.nestedCallCount--;
+      return Promise.reject(abortError(signal));
+    }
 
     return new Promise<() => void>((resolve, reject) => {
       const waiter: (typeof this.runtimeWaiters)[number] = {
@@ -252,23 +261,55 @@ export class CodeModeRunBudget {
     }
   }
 
-  acquireNestedCall(): () => void {
+  acquireNestedCall(signal?: AbortSignal): Promise<() => void> {
     this.nestedCallCount++;
     if (this.nestedCallCount > this.limits.nestedCalls) {
       this.nestedCallCount--;
-      throw new Error(`Code Mode exceeded its ${this.limits.nestedCalls} nested-call limit`);
+      return Promise.reject(new Error(`Code Mode exceeded its ${this.limits.nestedCalls} nested-call limit`));
     }
-    if (this.activeNestedCalls >= this.limits.concurrency) {
-      this.nestedCallCount--;
-      throw new Error(`Code Mode exceeded its ${this.limits.concurrency}-call concurrency limit`);
+    if (signal?.aborted) return Promise.reject(abortError(signal));
+
+    return new Promise<() => void>((resolve, reject) => {
+      const waiter: (typeof this.nestedCallWaiters)[number] = {
+        resolve,
+        reject,
+        ...(signal && { signal }),
+      };
+      waiter.onAbort = () => {
+        const index = this.nestedCallWaiters.indexOf(waiter);
+        if (index < 0) return;
+        this.nestedCallWaiters.splice(index, 1);
+        this.nestedCallCount--;
+        signal?.removeEventListener('abort', waiter.onAbort!);
+        reject(signal ? abortError(signal) : new Error('Code Mode execution aborted'));
+        this.drainNestedCallWaiters();
+      };
+      signal?.addEventListener('abort', waiter.onAbort, { once: true });
+      this.nestedCallWaiters.push(waiter);
+      this.drainNestedCallWaiters();
+    });
+  }
+
+  private drainNestedCallWaiters(): void {
+    while (this.nestedCallWaiters.length > 0 && this.activeNestedCalls < this.limits.concurrency) {
+      const waiter = this.nestedCallWaiters.shift()!;
+      if (waiter.signal?.aborted) {
+        this.nestedCallCount--;
+        waiter.signal.removeEventListener('abort', waiter.onAbort!);
+        waiter.reject(abortError(waiter.signal));
+        continue;
+      }
+
+      waiter.signal?.removeEventListener('abort', waiter.onAbort!);
+      this.activeNestedCalls++;
+      let released = false;
+      waiter.resolve(() => {
+        if (released) return;
+        released = true;
+        this.activeNestedCalls--;
+        this.drainNestedCallWaiters();
+      });
     }
-    this.activeNestedCalls++;
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      this.activeNestedCalls--;
-    };
   }
 }
 
@@ -927,7 +968,7 @@ export async function executeCodeModeDetailed(
           throw new Error(`Input for '${toolName}' exceeds the per-call size limit`);
         }
         input = JSON.parse(inputJson);
-        releaseNestedCall = runBudget.acquireNestedCall();
+        releaseNestedCall = await runBudget.acquireNestedCall(signal);
         if (options.onNestedToolStart) {
           if (signal.aborted) throw abortError(signal);
           await raceWithAbort(Promise.resolve(options.onNestedToolStart({

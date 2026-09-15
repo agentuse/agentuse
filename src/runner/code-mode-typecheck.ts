@@ -19,6 +19,18 @@ export interface CodeModePreflightResult {
   locations: CodeModeSourceLocation[];
 }
 
+const MIB = 1024 * 1024;
+
+/**
+ * The TypeScript compiler needs host-side heap for its own module, ASTs, and
+ * diagnostics in addition to the bounded source/declaration bytes. Reusing the
+ * QuickJS guest limit as the Node heap cap leaves the default 32 MiB run with
+ * effectively no compiler working space and can OOM before a tool is called.
+ */
+export function codeModeTypecheckHeapMb(maxBytes: number): number {
+  return Math.max(64, Math.ceil(maxBytes / MIB) * 2);
+}
+
 // Deliberately self-contained: the production bundle has no separate source
 // file beside it that a child process could import.
 const TYPECHECK_CHILD_SOURCE = String.raw`
@@ -65,7 +77,7 @@ export async function typecheckCodeMode(
   if (abortSignal?.aborted) {
     throw abortSignal.reason instanceof Error ? abortSignal.reason : new Error('Code Mode execution aborted');
   }
-  const memoryMb = Math.max(16, Math.ceil(maxBytes / (1024 * 1024)));
+  const memoryMb = codeModeTypecheckHeapMb(maxBytes);
   const typeScriptPath = createRequire(import.meta.url).resolve('typescript');
   const libDir = dirname(typeScriptPath);
   const child = spawn(process.execPath, [`--max-old-space-size=${memoryMb}`, '--input-type=module', '--eval', TYPECHECK_CHILD_SOURCE], {

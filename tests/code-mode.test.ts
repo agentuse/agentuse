@@ -27,8 +27,15 @@ import { createStoreTools } from '../src/store/tools';
 import { extractToolIntent, extractToolRecovery, injectIntentParam } from '../src/runner/tool-intent';
 import { BashPermissionController } from '../src/runner/approval-lease';
 import { createBashTool } from '../src/tools/bash';
+import { codeModeTypecheckHeapMb } from '../src/runner/code-mode-typecheck';
 
 describe('Code Mode', () => {
+  it('reserves compiler overhead beyond the QuickJS guest heap', () => {
+    expect(codeModeTypecheckHeapMb(16 * 1024 * 1024)).toBe(64);
+    expect(codeModeTypecheckHeapMb(32 * 1024 * 1024)).toBe(64);
+    expect(codeModeTypecheckHeapMb(64 * 1024 * 1024)).toBe(128);
+  });
+
   it('is default-on and can be disabled only by runtime policy', () => {
     const previous = process.env.AGENTUSE_CODE_MODE;
     try {
@@ -917,17 +924,26 @@ describe('Code Mode', () => {
       limits: { nestedCalls: 2 },
     })).rejects.toThrow(/nested-call limit/i);
 
+    let active = 0;
+    let maxActive = 0;
+    const dispatched: number[] = [];
     await expect(executeCodeMode(`
       return Promise.all([tools.wait({ i: 1 }), tools.wait({ i: 2 })]);
     `, {
       dispatcher: { dispatch: async (_name, input) => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        dispatched.push((input as { i: number }).i);
         await new Promise(resolve => setTimeout(resolve, 10));
+        active--;
         return input;
       } },
       toolNames: ['wait'],
       parentCallId: 'concurrency-limit',
       limits: { concurrency: 1 },
-    })).rejects.toThrow(/concurrency limit/i);
+    })).resolves.toEqual([{ i: 1 }, { i: 2 }]);
+    expect(maxActive).toBe(1);
+    expect(dispatched).toEqual([1, 2]);
   });
 
   it('keeps approval-required tools direct-only', () => {
@@ -1122,17 +1138,18 @@ describe('Code Mode', () => {
     controller.abort(new Error('cancel first dispatcher'));
     await expect(firstExecution).rejects.toThrow(/cancel first dispatcher/i);
 
-    await expect(executeCodeMode('return tools.second({});', {
+    const secondExecution = executeCodeMode('return tools.second({});', {
       dispatcher,
       toolNames: ['second'],
       parentCallId: 'lease-second',
       typecheck: false,
       runBudget,
       limits: { timeoutMs: 500 },
-    })).rejects.toThrow(/1-call concurrency limit/i);
+    });
+    await new Promise(resolve => setTimeout(resolve, 10));
 
     releaseFirst!({ committed: true });
-    await Promise.resolve();
+    await expect(secondExecution).resolves.toEqual({ name: 'second' });
     await expect(executeCodeMode('return tools.third({});', {
       dispatcher,
       toolNames: ['third'],
@@ -1141,6 +1158,44 @@ describe('Code Mode', () => {
       runBudget,
       limits: { timeoutMs: 500 },
     })).resolves.toEqual({ name: 'third' });
+  });
+
+  it('does not dispatch a queued nested call after the Code Mode run is aborted', async () => {
+    const controller = new AbortController();
+    let releaseFirst: ((value: unknown) => void) | undefined;
+    let markFirstStarted: (() => void) | undefined;
+    const firstStarted = new Promise<void>(resolve => { markFirstStarted = resolve; });
+    const firstDispatch = new Promise<unknown>(resolve => { releaseFirst = resolve; });
+    const dispatched: number[] = [];
+    const execution = executeCodeMode(`
+      return Promise.all([tools.write({ i: 1 }), tools.write({ i: 2 })]);
+    `, {
+      dispatcher: {
+        dispatch: async (_name, input) => {
+          const i = (input as { i: number }).i;
+          dispatched.push(i);
+          if (i === 1) {
+            markFirstStarted!();
+            return firstDispatch;
+          }
+          return { i };
+        },
+      },
+      toolNames: ['write'],
+      parentCallId: 'abort-queued-call',
+      abortSignal: controller.signal,
+      typecheck: false,
+      limits: { concurrency: 1, timeoutMs: 1_000 },
+    });
+
+    await firstStarted;
+    controller.abort(new Error('cancel queued fan-out'));
+    await expect(execution).rejects.toThrow(/cancel queued fan-out/i);
+    expect(dispatched).toEqual([1]);
+
+    releaseFirst!({ committed: true });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(dispatched).toEqual([1]);
   });
 
   it('bounds an aborted start hook and releases its pre-dispatch lease', async () => {
