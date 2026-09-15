@@ -19,10 +19,11 @@ import { DraftUsageLine } from '../components/token-usage-strip';
 import { DraftComposer, DraftStatusPill } from '../components/draft-panel';
 import { DraftAnswerComposer, pendingDraftQuestion } from '../components/draft-answer-composer';
 import { DraftThread } from '../components/draft-thread';
+import { RevisionSessionContext } from '../components/revision-session-context';
 import { LogContent } from '../components/content';
 import { ChangesetFileList } from '../components/changeset-file-list';
 import { ChangesetFileView, type ChangesetFileTab } from '../components/changeset-file-view';
-import { changesetNeedsFileReview } from '../lib/changeset-view';
+import { changesetAcceptedHref, changesetExchangeTurns, changesetNeedsFileReview } from '../lib/changeset-view';
 import { agentDetailHref } from '../lib/links';
 import { pageTitle } from '../lib/brand';
 import { Tabs } from '../components/tabs';
@@ -56,6 +57,7 @@ export default function ChangesetReview() {
 
   const [changeset, setChangeset] = useState<ChangesetRecord | null>(null);
   const [sessionToken, setSessionToken] = useState<string | undefined>(undefined);
+  const [originHref, setOriginHref] = useState<string | undefined>(undefined);
   const [report, setReport] = useState<UpstreamIssueReport | undefined>(undefined);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -87,6 +89,7 @@ export default function ChangesetReview() {
     try {
       const payload = await fetchChangeset(projectId, sessionId);
       setChangeset(payload.changeset);
+      setOriginHref(payload.originHref);
       setReport(payload.report);
       if (payload.sessionToken) setSessionToken(payload.sessionToken);
       setLoadError(null);
@@ -119,6 +122,7 @@ export default function ChangesetReview() {
   });
 
   const proposal = changeset?.proposals[changeset.proposals.length - 1];
+  const exchangeTurns = useMemo(() => changeset ? changesetExchangeTurns(changeset) : [], [changeset]);
   const files = proposal?.files ?? [];
 
   // Open on the entry agent, which is the file the change is really about.
@@ -181,13 +185,13 @@ export default function ChangesetReview() {
     setActionError(null);
     try {
       const payload = await postChangesetAction(projectId, sessionId, action);
-      setChangeset(payload.changeset);
+      setChangeset({ ...payload.changeset, ...(changeset.originTranscript && { originTranscript: changeset.originTranscript }) });
       if (action === 'apply') {
         const entry = proposal?.entry ?? changeset.target?.path;
         if (entry) location.route(agentDetailHref(projectId, entry, { tab: 'source' }));
       }
       if (action === 'discard' && changeset.status === 'no-change') {
-        location.route(`/agents/${encodeURIComponent(projectId)}`);
+        location.route(changesetAcceptedHref(changeset, originHref));
       }
     } catch (caught) {
       setActionError((caught as Error).message || `Could not ${action} these changes.`);
@@ -201,7 +205,7 @@ export default function ChangesetReview() {
     setActionError(null);
     try {
       const payload = await restoreChangeset(projectId, sessionId);
-      setChangeset(payload.changeset);
+      setChangeset({ ...payload.changeset, ...(changeset.originTranscript && { originTranscript: changeset.originTranscript }) });
       setSkipped(payload.skipped ?? []);
     } catch (caught) {
       setActionError((caught as Error).message || 'Could not restore these files.');
@@ -320,19 +324,17 @@ export default function ChangesetReview() {
       }
       : null;
 
-  // A no-change proposal blamed on AgentUse itself: the thing to do is file
-  // it, so the notice leads the Changes tab, above the thread.
-  const upstreamNotice = proposal?.cause === 'agentuse' && (
-    <div class="changeset-upstream" role="status">
+  // A no-change proposal blamed on AgentUse itself: filing it is the next
+  // step the author's reply recommends, so it sits at the end of that reply.
+  const upstreamNotice = proposal?.cause === 'agentuse' && report && (
+    <div class="changeset-upstream">
       <span class="changeset-upstream-copy">
-        <strong>This looks like an AgentUse problem, not your agent.</strong>
-        <span>The reviser found nothing to change in this agent. Filing the report helps get it fixed upstream. Read it first: the diagnosis was written by a model.</span>
+        <strong>Looks like an AgentUse problem, not your agent.</strong>
+        <span>The diagnosis was written by a model, so read the report before filing it.</span>
       </span>
-      {report && (
-        <a class="draft-secondary changeset-upstream-link" href={report.url} rel="noreferrer noopener" target="_blank">
-          Report to AgentUse
-        </a>
-      )}
+      <a class="draft-secondary changeset-upstream-link" href={report.url} rel="noreferrer noopener" target="_blank">
+        Report to AgentUse
+      </a>
     </div>
   );
 
@@ -377,7 +379,9 @@ export default function ChangesetReview() {
             <span><span class="draft-meta-key">Model</span> {changeset.authoringModel}</span>
             <span class="changeset-session-id">
               <span class="draft-meta-key">Session</span>{' '}
-              <a class="draft-quiet-link" href={sessionHref} title="Open the full session log">{sessionId}</a>
+              {changeset.mode === 'revise'
+                ? <span class="changeset-session-value">{sessionId}</span>
+                : <a class="draft-quiet-link" href={sessionHref} title="Open the full session log">{sessionId}</a>}
               <CopyButton text={sessionId} label="session id" />
             </span>
           </div>
@@ -425,10 +429,8 @@ export default function ChangesetReview() {
               </>
             ),
             panel: (
-          <>
-          {upstreamNotice}
           <DraftThread
-            turns={changeset.exchange ?? []}
+            turns={exchangeTurns}
             entries={authorSession.entries}
             approval={authorSession.approval}
             status={authorSession.status}
@@ -437,9 +439,18 @@ export default function ChangesetReview() {
             projectId={projectId}
             token={sessionToken ?? token}
             leadRequest={changeset.instruction}
+            leadContext={changeset.mode === 'revise' && changeset.originSessionId ? (
+              <RevisionSessionContext
+                key={`${projectId}:${sessionId}:${changeset.originSessionId}`}
+                projectId={projectId}
+                sessionId={changeset.originSessionId}
+                transcript={changeset.originTranscript}
+                originHref={originHref}
+              />
+            ) : undefined}
+            replyFooter={upstreamNotice || undefined}
             emptyHint="The author is working. Its steps appear here as it goes."
           />
-          </>
             ),
           },
           {

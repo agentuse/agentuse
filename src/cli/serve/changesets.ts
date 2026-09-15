@@ -148,6 +148,7 @@ export async function prepareChangesetStart(input: {
   authoringModel: string;
   target?: { path: string; name: string };
   originSessionId?: string;
+  originTranscript?: string;
 }): Promise<ChangesetRecord> {
   if (input.mode === 'revise') {
     if (!input.target) throw new Error('A revise change set needs a target agent');
@@ -170,6 +171,7 @@ export async function prepareChangesetStart(input: {
     mode: input.mode,
     ...(input.target && { target: input.target }),
     ...(input.originSessionId && { originSessionId: input.originSessionId }),
+    ...(input.originTranscript && { originTranscript: input.originTranscript }),
     instruction: input.instruction,
     authoringModel: input.authoringModel,
   });

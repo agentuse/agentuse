@@ -3,7 +3,9 @@ import renderToString from 'preact-render-to-string';
 import type { ChangesetFile, ChangesetProposal } from '../src/agents/changeset-types';
 import {
   CHANGESET_UNREFERENCED_FLAG,
+  changesetAcceptedHref,
   changesetDiffStat,
+  changesetExchangeTurns,
   changesetFileGroup,
   changesetFileGroups,
   changesetNeedsFileReview,
@@ -13,6 +15,67 @@ import {
 } from '../src/cli/serve/web/lib/changeset-view';
 import { ChangesetFileList } from '../src/cli/serve/web/components/changeset-file-list';
 import { ChangesetFileView } from '../src/cli/serve/web/components/changeset-file-view';
+
+describe('accepting a changeset diagnosis', () => {
+  const target = { path: 'agents/daily report.agentuse', name: 'Daily report' };
+
+  it('returns to the source session before the agent page', () => {
+    expect(changesetAcceptedHref({ projectId: 'my project', originSessionId: 'source/session', target }))
+      .toBe('/sessions/source%2Fsession?project=my+project');
+  });
+
+  it('preserves the source session capability link from the server', () => {
+    expect(changesetAcceptedHref({ projectId: 'demo', originSessionId: 'source', target }, '/sessions/source?project=demo&token=source-token'))
+      .toBe('/sessions/source?project=demo&token=source-token');
+  });
+
+  it('returns to the target agent when there is no source session', () => {
+    expect(changesetAcceptedHref({ projectId: 'my project', target }))
+      .toBe('/agents/my%20project/agents/daily%20report.agentuse');
+  });
+
+  it('uses Home only when neither a source session nor target agent is available', () => {
+    expect(changesetAcceptedHref({ projectId: 'demo' })).toBe('/');
+  });
+});
+
+describe('changeset conversation explanations', () => {
+  const proposal = (reply: string, diagnosis: string, request?: string): ChangesetProposal => ({
+    index: 1, submittedAt: 0, files: [], reply, diagnosis, ...(request && { request }),
+  });
+
+  it('answers why before giving the recommended action for an existing no-change proposal', () => {
+    const reply = 'Approve or reject the waiting run.';
+    const diagnosis = 'The run stopped because an earlier run is waiting for review. This prevents duplicate publishing.';
+    const exchange = [{ reply }];
+    expect(changesetExchangeTurns({ exchange, proposals: [proposal(reply, diagnosis)] })).toEqual([
+      { reply: `${diagnosis}\n\n${reply}` },
+    ]);
+    expect(exchange).toEqual([{ reply }]);
+  });
+
+  it('keeps each diagnosis with its own reply while a follow-up is pending', () => {
+    expect(changesetExchangeTurns({
+      exchange: [{ reply: 'First advice' }, { request: 'What changed?', reply: 'Second advice' }, { request: 'One more question' }],
+      proposals: [proposal('First advice', 'First cause'), proposal('Second advice', 'Second cause', 'What changed?')],
+    })).toEqual([
+      { reply: 'First cause\n\nFirst advice' },
+      { request: 'What changed?', reply: 'Second cause\n\nSecond advice' },
+      { request: 'One more question' },
+    ]);
+  });
+
+  it('does not repeat a diagnosis already included in the reply', () => {
+    const reply = 'The run stopped.\n\nApprove the waiting run.';
+    expect(changesetExchangeTurns({ exchange: [{ reply }], proposals: [proposal(reply, 'The run stopped.')] })).toEqual([{ reply }]);
+  });
+
+  it('leaves unmatched historical replies alone instead of guessing their diagnosis', () => {
+    const exchange = [{ reply: 'Historical advice' }];
+    expect(changesetExchangeTurns({ exchange, proposals: [] })).toEqual(exchange);
+    expect(changesetExchangeTurns({ exchange, proposals: [proposal('Different advice', 'Unrelated cause')] })).toEqual(exchange);
+  });
+});
 
 function file(partial: Partial<ChangesetFile> & Pick<ChangesetFile, 'path'>): ChangesetFile {
   return {

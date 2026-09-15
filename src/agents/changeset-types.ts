@@ -102,6 +102,8 @@ export interface ChangesetRecord {
   target?: { path: string; name: string };
   /** Revise from a run: the session whose transcript is the evidence. */
   originSessionId?: string;
+  /** The source session transcript supplied to the reviser when it started. */
+  originTranscript?: string;
   instruction: string;
   authoringModel: string;
   status: ChangesetStatus;

@@ -901,6 +901,8 @@ export interface ChangesetSummary extends Omit<ChangesetRecord, 'proposals'> {
 
 export interface ChangesetPayload {
   changeset: ChangesetRecord;
+  /** Source session detail link, including its own view token when required. */
+  originHref?: string;
   /** Present when the caller needs it to follow the authoring session log. */
   sessionToken?: string;
   /** Present when the latest proposal blamed AgentUse itself: a pre-filled

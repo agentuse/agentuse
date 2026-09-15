@@ -177,8 +177,12 @@ export function DraftThread(props: {
   token: string | undefined;
   /** The brief or instruction that started this session: turn 0's request. */
   leadRequest?: string | undefined;
+  /** Source context shown as an agent bubble before the initial request. */
+  leadContext?: ComponentChildren;
   /** Extra context for turn 0, e.g. the evidence a revision was started from. */
   leadExtra?: ComponentChildren;
+  /** A next step attached to the newest reply, e.g. filing an upstream report. */
+  replyFooter?: ComponentChildren;
   emptyHint?: string;
 }) {
   const groups = useMemo(() => groupDraftTurns(props.entries, props.turns), [props.entries, props.turns]);
@@ -196,7 +200,7 @@ export function DraftThread(props: {
     return () => cancelAnimationFrame(frame);
   }, [groups.length, lastGroup?.steps.length, lastGroup?.turn?.reply, props.running]);
 
-  const hasContent = Boolean(props.leadRequest)
+  const hasContent = Boolean(props.leadContext) || Boolean(props.leadRequest)
     || groups.some((group) => group.steps.length > 0 || group.turn?.request || group.turn?.reply);
   if (!hasContent) {
     return (
@@ -212,6 +216,9 @@ export function DraftThread(props: {
         const isLast = group.index === groups.length - 1;
         return (
           <div class="draft-exchange-turn" key={group.index}>
+            {group.index === 0 && props.leadContext && (
+              <div class="draft-exchange-reply is-context" aria-label="Session context">{props.leadContext}</div>
+            )}
             {group.index === 0 && props.leadRequest && (
               <div class="draft-exchange-request is-lead">{props.leadRequest}</div>
             )}
@@ -228,7 +235,10 @@ export function DraftThread(props: {
               token={props.token}
             />
             {group.turn?.reply && (
-              <div class="draft-exchange-reply"><LogContent value={group.turn.reply} forceMarkdown /></div>
+              <div class="draft-exchange-reply">
+                <LogContent value={group.turn.reply} forceMarkdown />
+                {isLast && props.replyFooter && <div class="draft-exchange-reply-footer">{props.replyFooter}</div>}
+              </div>
             )}
           </div>
         );

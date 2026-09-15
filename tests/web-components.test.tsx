@@ -317,6 +317,40 @@ describe('draft Changes thread', () => {
     expect(html).toContain('Created it');
   });
 
+  it('shows source context once as an agent bubble before the first user request', () => {
+    const html = renderToString(<DraftThread
+      turns={[{ reply: 'First reply' }, { request: 'Follow-up request', reply: 'Second reply' }]}
+      entries={[]}
+      running={false}
+      sessionId="reviser-session"
+      projectId="demo"
+      token={undefined}
+      leadContext={<p>Source session context</p>}
+      leadRequest="Initial user request"
+    />);
+
+    expect(html).toContain('class="draft-exchange-reply is-context"');
+    expect(html.split('Source session context')).toHaveLength(2);
+    expect(html.indexOf('Source session context')).toBeLessThan(html.indexOf('Initial user request'));
+    expect(html.indexOf('Initial user request')).toBeLessThan(html.indexOf('First reply'));
+    expect(html.indexOf('First reply')).toBeLessThan(html.indexOf('Follow-up request'));
+  });
+
+  it('attaches the reply footer to the newest reply only', () => {
+    const html = renderToString(<DraftThread
+      turns={[{ reply: 'First reply' }, { request: 'Why?', reply: 'Report this to AgentUse.' }]}
+      entries={[]}
+      running={false}
+      sessionId="reviser-session"
+      projectId="demo"
+      token={undefined}
+      replyFooter={<a href="https://example.test/report">Report to AgentUse</a>}
+    />);
+
+    expect(html.split('draft-exchange-reply-footer')).toHaveLength(2);
+    expect(html.indexOf('Report this to AgentUse.')).toBeLessThan(html.indexOf('draft-exchange-reply-footer'));
+  });
+
   it('moves current question options out of the thread and into the composer', () => {
     const gate: ApprovalLogEntry = {
       id: 'gate', type: 'tool', tool: 'await_human', title: 'Choose a fix', status: 'pending',

@@ -150,6 +150,26 @@ describe('starting a change set', () => {
     expect(await exists(join(changesetDir(projectRoot), OTHER_SESSION_ID))).toBe(false);
   });
 
+  it('preserves the source session context through subsequent proposals', async () => {
+    const projectRoot = await project();
+    const originTranscript = 'Agent output:\nThe run stopped while waiting for review.';
+    await start(projectRoot, {
+      mode: 'revise',
+      target: { path: TARGET, name: 'Triage' },
+      originSessionId: OTHER_SESSION_ID,
+      originTranscript,
+    });
+    await appendChangesetProposal(projectRoot, SESSION_ID, {
+      reply: 'Clarified the review step.',
+      entry: TARGET,
+      files: [modifyFile(TARGET, TARGET_SOURCE, REVISED_SOURCE)],
+    });
+
+    const stored = await readChangesetRecord(projectRoot, SESSION_ID);
+    expect(stored?.originSessionId).toBe(OTHER_SESSION_ID);
+    expect(stored?.originTranscript).toBe(originTranscript);
+  });
+
   it('allows a revise on a different target, and one on a settled change set', async () => {
     const projectRoot = await project();
     await writeFile(join(projectRoot, 'agents/other.agentuse'), TARGET_SOURCE);

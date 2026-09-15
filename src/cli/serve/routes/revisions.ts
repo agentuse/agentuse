@@ -245,6 +245,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
         authoringModel: model,
         ...(target && { target }),
         ...(originSessionId && { originSessionId }),
+        ...(originTranscript && { originTranscript }),
       });
 
       const timeout = mode === 'create' ? CHANGESET_CREATE_TIMEOUT_SECONDS : CHANGESET_REVISE_TIMEOUT_SECONDS;
@@ -773,12 +774,35 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
             return;
           }
           const record = await settleStaleChangesetTestRuns(project, stored);
+          // Older changesets only stored the origin id. Resolve their context
+          // on read without rewriting the historical record.
+          if (record.mode === 'revise' && record.originSessionId && !record.originTranscript) {
+            const origin = await findSessionInfo(record.originSessionId, project.id);
+            if (origin.success) {
+              record.originTranscript = buildRunTranscript(origin.info.approval.logs, 80_000, {
+                focus: 'latest-attempt',
+                terminal: {
+                  status: origin.info.approval.sessionStatus,
+                  ...(origin.info.approval.errorCode && { errorCode: origin.info.approval.errorCode }),
+                  ...(origin.info.approval.errorMessage && { errorMessage: origin.info.approval.errorMessage }),
+                },
+              });
+            }
+          }
           const sessionToken = sessionViewToken(sessionId, apiKey);
+          const originHref = (() => {
+            if (record.mode !== 'revise' || !record.originSessionId) return undefined;
+            const params = new URLSearchParams({ project: project.id });
+            const originToken = sessionViewToken(record.originSessionId, apiKey);
+            if (originToken) params.set('token', originToken);
+            return `/sessions/${encodeURIComponent(record.originSessionId)}?${params.toString()}`;
+          })();
           const report = await upstreamIssueReport(record);
           sendJSON(res, 200, {
             success: true,
             changeset: record,
             ...(sessionToken && { sessionToken }),
+            ...(originHref && { originHref }),
             ...(report && { report }),
           });
           return;

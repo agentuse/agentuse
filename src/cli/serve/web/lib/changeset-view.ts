@@ -7,8 +7,39 @@
  * no agent in the set references is called out last: that is the group where a
  * surprise lives.
  */
-import type { ChangesetFile, ChangesetProposal } from '../../../../agents/changeset-types';
+import type { ChangesetFile, ChangesetProposal, ChangesetRecord } from '../../../../agents/changeset-types';
 import { revisionLineDiff } from './revision-diff';
+import { agentDetailHref } from './links';
+
+/** Accept closes the review and returns to the session or agent it came from. */
+export function changesetAcceptedHref(
+  changeset: Pick<ChangesetRecord, 'projectId' | 'originSessionId' | 'target'>,
+  originHref?: string,
+): string {
+  if (changeset.originSessionId) {
+    return originHref ?? `/sessions/${encodeURIComponent(changeset.originSessionId)}?${new URLSearchParams({ project: changeset.projectId })}`;
+  }
+  if (changeset.target?.path) return agentDetailHref(changeset.projectId, changeset.target.path);
+  return '/';
+}
+
+/** Each proposal stores the explanation separately from its short next action.
+ * Keep that explanation in the conversation, before the advice it supports. */
+export function changesetExchangeTurns(
+  changeset: Pick<ChangesetRecord, 'exchange' | 'proposals'>,
+): ChangesetRecord['exchange'] {
+  let proposalIndex = 0;
+  return (changeset.exchange ?? []).map((turn) => {
+    if (turn.reply === undefined) return turn;
+    const proposal = changeset.proposals[proposalIndex++];
+    // Never attach another turn's diagnosis to a historical or partial record.
+    if (!proposal || proposal.reply !== turn.reply || proposal.request !== turn.request) return turn;
+    const diagnosis = proposal.diagnosis?.trim();
+    const reply = turn.reply.trim();
+    if (!diagnosis || reply.includes(diagnosis)) return turn;
+    return { ...turn, reply: reply ? `${diagnosis}\n\n${reply}` : diagnosis };
+  });
+}
 
 /** The validator's wording for a file no agent in the changeset references. */
 export const CHANGESET_UNREFERENCED_FLAG = 'not referenced by any agent in this changeset';
