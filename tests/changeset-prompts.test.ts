@@ -139,14 +139,17 @@ describe('changeset session prompts', () => {
     expect(parsed.instructions).toContain('a revision review presents completed edits');
   });
 
-  it('reviser requests readable review text with paragraphs and accurate change status', () => {
+  it('reviser answers the question concisely across the combined visible fields', () => {
     const parsed = parseAgentContent(reviser(), 'changeset-reviser');
-    expect(parsed.instructions).toContain('Lead with the practical outcome in plain language');
+    expect(parsed.instructions).toContain("Answer the operator's actual question in the first sentence");
+    expect(parsed.instructions).toContain('For a short question such as "why"');
+    expect(parsed.instructions).toContain('at most 100 words across the diagnosis and the summary or recommendedAction combined');
+    expect(parsed.instructions).toContain('do not repeat facts across these fields');
     expect(parsed.instructions).toContain('short paragraphs separated by blank lines');
     expect(parsed.instructions).toContain('user-facing replies, diagnosis, and recommendedAction');
-    expect(parsed.instructions).toContain('Put essential technical details in a separate paragraph');
+    expect(parsed.instructions).toContain('expand only when the operator requests detail or accuracy requires it');
     expect(parsed.instructions).toContain('whether edits are prepared, applied, or only recommended');
-    expect(parsed.instructions).toContain('account.\n\nI prepared a fix');
+    expect(parsed.instructions).not.toContain('Say which one you concluded, and why, in the diagnosis');
   });
 
   it('reviser prepares supporting script repairs without requiring agent source changes', () => {

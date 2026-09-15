@@ -93,11 +93,11 @@ const changesetSubmissionSchema = z.object({
   summary: z.string().min(1).max(1000)
     .describe('One plain-language sentence describing the practical outcome, or why nothing should change. Avoid file paths, commands, and internal jargon.'),
   diagnosis: z.string().max(12_000).optional()
-    .describe('Explain the problem, cause, and practical effect in plain language. Separate ideas with blank lines; put essential technical details in a separate paragraph or code block. Required in practice for a no-change outcome.'),
+    .describe('Answer the operator question directly in 1-3 short sentences: cause and practical effect. Keep diagnosis plus summary or next action within 100 words by default; omit investigation narration and repeated IDs. Required in practice for a no-change outcome.'),
   entry: z.string().max(400).optional()
     .describe('Required for proposed: project-relative path of the .agentuse file a test run should execute.'),
   recommendedAction: z.string().max(2000).optional()
-    .describe('Required for no-change: explain what the operator should do next in plain language. Use short paragraphs separated by blank lines, or bullets for multiple steps.'),
+    .describe('Required for no-change: the essential next step in at most one sentence. Do not repeat the diagnosis. Expand only when requested or needed for accuracy.'),
   cause: z.enum(CHANGESET_CAUSES as [string, ...string[]]).optional()
     .describe('Required for no-change: which layer owns the cause. agent when the agent file or its scripts are wrong; project when the fix belongs in project code outside this agent; setup when a provider, credential, or environment needs changing; agentuse only when the AgentUse runtime itself misbehaved (a tool, the runner, approvals, sessions) in a way no agent edit can work around.'),
 }).strict();

@@ -124,6 +124,8 @@ describe('internal agent revision', () => {
     expect(source).toContain('Tool arguments must be valid JSON objects');
     expect(source).toContain('a revision review presents completed edits');
     expect(source).toContain('Classification changes the diagnosis, not the authorized edit scope.');
+    expect(source).toContain("Answer the operator's actual question in the first sentence");
+    expect(source).toContain('at most 100 words across the diagnosis and the summary or recommendedAction combined');
     const preparedInstructions = resolveSafeVariables(parsed.instructions, {
       projectRoot: f.projectRoot,
       agentDir: join(f.projectRoot, 'agents'),
