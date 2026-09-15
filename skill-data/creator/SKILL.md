@@ -284,6 +284,12 @@ Run a subtraction pass after every draft and substantive edit:
 whole; edits get appended and never re-read. When adding a rule to an existing
 agent:
 
+- Audit the resolved instruction graph, not only the open file: agent body,
+  applied learnings, every preloaded skill, and every reference the run must
+  read. Compare objective, ownership, state source, actions, approval gates,
+  ordering, completion/blocker conditions, and output. Treat comments as
+  model-visible. Fix conflicting source instructions instead of adding a
+  higher-precedence override to the agent.
 - Ship the rule, not the case for it. The measurement, the date, the incident,
   the "added because..." belong in the commit message. Provenance inline is paid
   on every run, forever, and changes no behavior.
@@ -295,7 +301,8 @@ agent:
   paragraph on why the rule exists, and costs less.
 - Writing the same rule into N agents means it belongs one layer up. Put it there.
 
-Size guidance is advisory, not a parser limit:
+Semantic clarity comes before size. Size guidance is advisory, not a parser
+limit:
 
 - Ordinary agents should land around 300-700 body words. A judgment-heavy agent
   often needs no procedure at all; a compliance-heavy one commonly needs 5-8
@@ -401,7 +408,8 @@ runtime changed.
   skill default, so an absolute skill rule fights the feedback loop.
 - State a rule **once**, at the right layer, and reference it. The same craft
   rule copied into both a skill and the agent drifts; the lower-precedence copy
-  then silently wins (the "same rule in several layers" smell above, seen from
+  then silently loses to the higher-precedence copy (the "same rule in several
+  layers" smell above, seen from
   the runtime side).
 - `learning: true` (sugar for `capture + apply`) injects the agent's stored
   learnings every run, for delegated subagents too, not just top-level runs. So
@@ -419,10 +427,14 @@ skills:
   x-personal:
 ```
 
-The named skills are preloaded. `auto: false` hides every unlisted discovered
-skill, reducing the catalog repeated on each model request and making runtime
-selection more deterministic. Leave discovery open only when the task genuinely
-needs to choose among skills that were not known at authoring time:
+The named skills are preloaded in full. Preload one only when its complete
+instruction set is semantically compatible with the agent's job. If the agent
+needs only a narrow mechanics subset, extract a smaller skill or load a focused
+reference on demand; do not preload the broad skill and negate the rest in the
+agent body. `auto: false` hides every unlisted discovered skill, reducing the
+catalog repeated on each model request and making runtime selection more
+deterministic. Leave discovery open only when the task genuinely needs to choose
+among skills that were not known at authoring time:
 
 ```yaml
 skills: [x-personal] # preloads x-personal; all discovered skills remain visible
