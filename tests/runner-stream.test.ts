@@ -254,6 +254,45 @@ describe('processAgentStream session logging', () => {
     expect(terminal).toContainEqual(expect.objectContaining({ status: 'pending', input: '', rawApprovedInput: null }));
   });
 
+  it('persists complete oversized await_human inputs while keeping ordinary tool inputs bounded', async () => {
+    const added: any[] = [];
+    const updates: any[] = [];
+    const sessionManager = {
+      addPart: async (...args: any[]) => { added.push(args); return `part-${added.length}`; },
+      updatePart: async (...args: any[]) => { updates.push(args); },
+      updateMessage: async () => {},
+      writeContextSnapshot: async () => {},
+    };
+    const largeDraft = 'review me\n'.repeat(2_500);
+    const gateInput = {
+      prompt: 'Approve the complete draft?',
+      draft: largeDraft,
+      changes: [{ label: 'Publish', content: largeDraft }],
+    };
+
+    async function* chunks(): AsyncGenerator<AgentChunk> {
+      yield { type: 'tool-call', toolName: 'ordinary_tool', toolCallId: 'ordinary', toolInput: { value: largeDraft }, toolStartTime: 1 };
+      yield { type: 'tool-result', toolName: 'ordinary_tool', toolCallId: 'ordinary', toolResult: 'ok', toolSuccess: true };
+      yield { type: 'tool-call', toolName: 'await_human', toolCallId: 'gate', toolInput: gateInput, toolStartTime: 2 };
+      yield { type: 'suspended', toolName: 'await_human', toolCallId: 'gate', toolResultRaw: { kind: 'await_human', prompt: gateInput.prompt } };
+    }
+
+    const result = await processAgentStream(chunks(), {
+      sessionManager: sessionManager as any,
+      sessionID: 'session-1',
+      agentId: 'agent-1',
+      messageID: 'message-1',
+      quiet: true,
+    });
+
+    expect((added[0][3].state.input as any).__truncated).toBe(true);
+    expect(added[1][3].state.input).toEqual(gateInput);
+    expect(result.parts.find((part: any) => part.type === 'tool-call' && part.tool === 'await_human')?.args).toEqual(gateInput);
+    const pending = updates.map((args) => args[4]?.state).find((state: any) => state?.status === 'pending');
+    expect(pending.input).toEqual(gateInput);
+    expect((pending.input as any).__truncated).toBeUndefined();
+  });
+
   it('persists step usage before a session suspends for approval', async () => {
     const messageUpdates: any[] = [];
     const partUpdates: any[] = [];
@@ -563,5 +602,60 @@ describe('processAgentStream session logging', () => {
     expect(updatedParts[0][4]).toMatchObject({
       state: { status: 'error', error: 'Command blocked' },
     });
+  });
+
+  it('persists timed-out and aborted bash results as durable tool errors', async () => {
+    const updatedParts: any[] = [];
+    const terminalEvents: string[] = [];
+    const presenter: TerminalPresenter = {
+      text: () => {},
+      responseComplete: () => {},
+      llmStarted: () => {},
+      llmFirstToken: () => {},
+      toolStarted: () => {},
+      toolFinished: (_result, options) => terminalEvents.push(`tool-finish:${options?.success}`),
+      warning: () => {},
+    };
+    const sessionManager = {
+      addPart: async (_s: string, _a: string, _m: string, part: any) => part.callID,
+      updatePart: async (...args: any[]) => updatedParts.push(args),
+      updateMessage: async () => {},
+    };
+
+    async function* chunks(): AsyncGenerator<AgentChunk> {
+      yield { type: 'tool-call', toolName: 'tools__bash', toolCallId: 'timeout', toolInput: { command: 'slow' }, toolStartTime: 1 };
+      yield {
+        type: 'tool-result', toolName: 'tools__bash', toolCallId: 'timeout',
+        toolResult: 'partial output\n\n<bash_metadata>\nbash tool terminated command after exceeding timeout 1000ms\n</bash_metadata>',
+        toolResultRaw: { output: 'partial output', metadata: { exitCode: null, timedOut: true, truncated: false } },
+      };
+      yield { type: 'tool-call', toolName: 'tools__bash', toolCallId: 'aborted', toolInput: { command: 'cancelled' }, toolStartTime: 2 };
+      yield {
+        type: 'tool-result', toolName: 'tools__bash', toolCallId: 'aborted',
+        toolResult: 'partial output\n\n<bash_metadata>\nbash tool killed the command: execution aborted\n</bash_metadata>',
+        toolResultRaw: { output: 'partial output', metadata: { exitCode: null, timedOut: false, aborted: true, truncated: false } },
+      };
+    }
+
+    await processAgentStream(chunks(), {
+      sessionManager: sessionManager as any,
+      sessionID: 'session-1',
+      agentId: 'agent-1',
+      messageID: 'message-1',
+      terminalPresenter: presenter,
+    });
+
+    expect(terminalEvents).toEqual(['tool-finish:false', 'tool-finish:false']);
+    const terminalStates = updatedParts.map(update => update[4].state);
+    expect(terminalStates).toContainEqual(expect.objectContaining({
+      status: 'error',
+      error: expect.stringContaining('terminated command'),
+      metadata: expect.objectContaining({ exitCode: null, timedOut: true }),
+    }));
+    expect(terminalStates).toContainEqual(expect.objectContaining({
+      status: 'error',
+      error: expect.stringContaining('execution aborted'),
+      metadata: expect.objectContaining({ exitCode: null, aborted: true }),
+    }));
   });
 });

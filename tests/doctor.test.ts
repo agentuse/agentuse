@@ -15,6 +15,7 @@ describe('agentuse doctor', () => {
   let originalHome: string | undefined;
   let originalXdgDataHome: string | undefined;
   let originalConsoleLog: typeof console.log;
+  let originalExitCode: typeof process.exitCode;
   let logs: string[];
 
   async function writeSkill(
@@ -61,6 +62,8 @@ ${body}`);
     originalHome = process.env.HOME;
     originalXdgDataHome = process.env.XDG_DATA_HOME;
     originalConsoleLog = console.log;
+    originalExitCode = process.exitCode;
+    process.exitCode = undefined;
     logs = [];
 
     process.env.HOME = homeDir;
@@ -77,6 +80,7 @@ ${body}`);
   afterEach(async () => {
     process.chdir(originalCwd);
     console.log = originalConsoleLog;
+    process.exitCode = originalExitCode;
     if (originalHome !== undefined) {
       process.env.HOME = originalHome;
     } else {
@@ -195,6 +199,126 @@ Idle.`);
     const output = logs.join('\n');
     expect(output).toContain('Runtime Analysis From Last Run');
     expect(output).toContain('No prior sessions found');
+  });
+
+  it('reports bash timeouts, Code Mode failures, and unfinished nested calls from the latest run', async () => {
+    const agentDir = join(testDir, 'agents');
+    await mkdir(agentDir, { recursive: true });
+    const agentPath = join(agentDir, 'runtime.agentuse');
+    await writeFile(agentPath, `---
+name: Runtime Agent
+model: demo:test
+---
+
+Run diagnostics.`);
+
+    const sessionId = '01H10000000000000000000000';
+    const messageId = '01H10000000000000000000001';
+    const sessionDir = join(await getSessionStorageDir(testDir), `${sessionId}-agents-runtime`);
+    const partDir = join(sessionDir, messageId, 'part');
+    await mkdir(partDir, { recursive: true });
+    const now = Date.now();
+    const session: SessionInfo = {
+      id: sessionId,
+      status: 'error',
+      trigger: 'manual',
+      agent: { id: 'agents/runtime', name: 'Runtime Agent', filePath: agentPath, isSubAgent: false },
+      model: 'demo:test',
+      version: 'test',
+      config: {},
+      project: { root: testDir, cwd: testDir },
+      time: { created: now, updated: now },
+    };
+    const message: Message = {
+      id: messageId,
+      sessionID: sessionId,
+      time: { created: now },
+      user: { prompt: { task: 'Run diagnostics.' } },
+      assistant: {
+        system: [], modelID: 'test', providerID: 'demo', mode: 'build',
+        path: { cwd: testDir, root: testDir }, cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      },
+    };
+    const parts: ToolPart[] = [
+      {
+        id: '01H10000000000000000000002', sessionID: sessionId, messageID: messageId,
+        type: 'tool', callID: 'bash-timeout', tool: 'tools__bash',
+        state: {
+          status: 'completed', input: { command: 'slow-job' },
+          output: { output: 'partial output', metadata: { exitCode: null, timedOut: true } },
+          time: { start: now, end: now + 1 },
+        },
+      },
+      {
+        id: '01H10000000000000000000003', sessionID: sessionId, messageID: messageId,
+        type: 'tool', callID: 'outer', tool: 'code_exec',
+        state: {
+          status: 'error', input: { code: 'return Promise.all([])' },
+          error: 'Code Mode runtime_error: nested call failed', time: { start: now, end: now + 1 },
+        },
+      },
+      {
+        id: '01H10000000000000000000004', sessionID: sessionId, messageID: messageId,
+        type: 'tool', callID: 'outer:nested:1', parentCallID: 'outer', tool: 'store_update',
+        state: {
+          status: 'running', input: { id: 'post-1' },
+          metadata: { parentCallId: 'outer', codeMode: true }, time: { start: now },
+        },
+      },
+    ];
+
+    await writeFile(join(sessionDir, 'session.json'), JSON.stringify(session, null, 2));
+    await writeFile(join(sessionDir, messageId, 'message.json'), JSON.stringify(message, null, 2));
+    for (const part of parts) {
+      await writeFile(join(partDir, `${part.id}.json`), JSON.stringify(part, null, 2));
+    }
+
+    await runDoctor(agentPath, { lastRun: true });
+
+    const output = logs.join('\n');
+    expect(output).toContain('Bash command timed out');
+    expect(output).toContain('slow-job');
+    expect(output).toContain('Code Mode call failed');
+    expect(output).toContain('Unfinished Code Mode nested call');
+    expect(output).not.toContain('Suggested global allow');
+  });
+
+  it('warns on read access and fails doctor on write access to the selected runtime store', async () => {
+    const readAgent = join(testDir, 'read-store.agentuse');
+    await writeFile(readAgent, `---
+name: Read Store Agent
+model: demo:test
+store: posts
+tools:
+  filesystem:
+    - path: ./.agentuse/store/posts
+      permissions: [read]
+---
+
+Read through store tools.`);
+    await runDoctor(readAgent);
+    expect(logs.join('\n')).toContain('Runtime-owned store access');
+    expect(logs.join('\n')).toContain('Use store_list/store_get');
+    expect(process.exitCode).toBeUndefined();
+
+    logs = [];
+    const writeAgent = join(testDir, 'write-store.agentuse');
+    await writeFile(writeAgent, `---
+name: Write Store Agent
+model: demo:test
+store: posts
+tools:
+  filesystem:
+    - path: ./
+      permissions: [read, write, edit]
+---
+
+Write through store tools.`);
+    await runDoctor(writeAgent);
+    expect(logs.join('\n')).toContain('Direct mutation bypasses locking');
+    expect(process.exitCode).toBe(1);
+    process.exitCode = 0;
   });
 
   it('reports skill trust banner when skills: trusted', async () => {

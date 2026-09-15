@@ -12,6 +12,7 @@ import { resolveProjectContext } from '../utils/project.js';
 import { computeAgentId } from '../utils/agent-id.js';
 import { getSessionStorageDir } from '../storage/paths.js';
 import { parseBashCommand } from '../tools/bash-parser.js';
+import { PathValidator } from '../tools/path-validator.js';
 import { looksEffectful, grantsUnnamedSubcommands, grantsArbitraryCode, commandHead } from '../tools/effectful-heuristic.js';
 import { isEffectful } from '../runner/approval-lease.js';
 import { previewLearningPrompt } from '../runner/system-messages.js';
@@ -29,6 +30,7 @@ interface RuntimeSessionDetails {
 }
 
 interface RuntimeProblem {
+  kind: 'blocked-bash' | 'bash-timeout' | 'bash-aborted' | 'code-mode-failure' | 'unfinished-code-mode-call';
   tool: string;
   command?: string | undefined;
   error: string;
@@ -181,23 +183,92 @@ function isBlockedCommandError(error: string): boolean {
     || error.includes('does not match any allowed pattern');
 }
 
+function getToolMetadata(part: ToolPart): Record<string, unknown> {
+  const stateMetadata = part.state.metadata ?? {};
+  if (part.state.status !== 'completed' || !part.state.output || typeof part.state.output !== 'object') {
+    return stateMetadata;
+  }
+  const outputMetadata = (part.state.output as Record<string, unknown>).metadata;
+  return outputMetadata && typeof outputMetadata === 'object'
+    ? { ...stateMetadata, ...outputMetadata as Record<string, unknown> }
+    : stateMetadata;
+}
+
+function getToolError(part: ToolPart, fallback: string): string {
+  if (part.state.status === 'error') return part.state.error;
+  if (part.state.status === 'completed' && part.state.output && typeof part.state.output === 'object') {
+    const output = (part.state.output as Record<string, unknown>).output;
+    if (typeof output === 'string' && output.trim()) return output;
+  }
+  return fallback;
+}
+
 async function collectRuntimeProblems(details: RuntimeSessionDetails): Promise<RuntimeProblem[]> {
   const problems: RuntimeProblem[] = [];
 
   for (const entry of details.messages) {
     for (const part of entry.parts) {
-      if (part.type !== 'tool' || part.state.status !== 'error') continue;
-      if (part.tool !== 'tools__bash') continue;
-      if (!isBlockedCommandError(part.state.error)) continue;
-
+      if (part.type !== 'tool') continue;
+      const metadata = getToolMetadata(part);
       const command = getToolInputCommand(part);
-      const suggestedAllows = command ? await extractCommandHeads(command) : [];
-      problems.push({
-        tool: part.tool,
-        ...(command && { command }),
-        error: part.state.error,
-        suggestedAllows,
-      });
+      if (part.tool === 'tools__bash') {
+        if (part.state.status === 'error' && isBlockedCommandError(part.state.error)) {
+          const suggestedAllows = command ? await extractCommandHeads(command) : [];
+          problems.push({
+            kind: 'blocked-bash',
+            tool: part.tool,
+            ...(command && { command }),
+            error: part.state.error,
+            suggestedAllows,
+          });
+          continue;
+        }
+        if (metadata.timedOut === true) {
+          problems.push({
+            kind: 'bash-timeout',
+            tool: part.tool,
+            ...(command && { command }),
+            error: getToolError(part, 'Bash command exceeded its configured timeout.'),
+            suggestedAllows: [],
+          });
+          continue;
+        }
+        if (metadata.aborted === true) {
+          problems.push({
+            kind: 'bash-aborted',
+            tool: part.tool,
+            ...(command && { command }),
+            error: getToolError(part, 'Bash command was aborted before it completed.'),
+            suggestedAllows: [],
+          });
+          continue;
+        }
+      }
+
+      const isNestedCodeModeCall = metadata.codeMode === true || Boolean(part.parentCallID);
+      if (
+        isNestedCodeModeCall
+        && (part.state.status === 'running' || part.state.status === 'pending')
+        && details.session.status !== 'running'
+        && details.session.status !== 'suspended'
+      ) {
+        problems.push({
+          kind: 'unfinished-code-mode-call',
+          tool: part.tool,
+          error: `Nested tool call remained ${part.state.status} after the session ended. Its effect may be unknown; verify before retrying.`,
+          suggestedAllows: [],
+        });
+        continue;
+      }
+
+      if (part.state.status === 'error' && (isNestedCodeModeCall || /(?:^|__)code_exec$/.test(part.tool))) {
+        problems.push({
+          kind: 'code-mode-failure',
+          tool: part.tool,
+          error: part.state.error,
+          suggestedAllows: [],
+        });
+      }
     }
   }
 
@@ -236,17 +307,24 @@ async function printLastRunAnalysis(
   console.log(chalk.gray(`Session: ${details.session.id} (${details.session.status})`));
 
   if (problems.length === 0) {
-    console.log(chalk.green('No blocked bash commands found in the last run.'));
+    console.log(chalk.green('No runtime problems found in the last run.'));
     return;
   }
 
   for (const problem of problems) {
-    console.log(chalk.red('\nBlocked bash command'));
+    const label = {
+      'blocked-bash': 'Blocked bash command',
+      'bash-timeout': 'Bash command timed out',
+      'bash-aborted': 'Bash command aborted',
+      'code-mode-failure': 'Code Mode call failed',
+      'unfinished-code-mode-call': 'Unfinished Code Mode nested call',
+    }[problem.kind];
+    console.log(chalk.red(`\n${label}`));
     if (problem.command) {
       console.log(`  command: ${problem.command}`);
     }
     console.log(`  reason: ${problem.error.split('\n')[0]}`);
-    printRuntimeSuggestion(problem);
+    if (problem.kind === 'blocked-bash') printRuntimeSuggestion(problem);
   }
 }
 
@@ -565,9 +643,35 @@ export async function runDoctor(file: string, options: DoctorOptions = {}): Prom
     console.log(chalk.gray('If the agent genuinely needs to write its own code, that is a deliberate choice - gate it, or scope the run with sandbox:.'));
   }
 
+  let grantsDirectStoreMutation = false;
+  if (agent.config.store && agent.config.tools?.filesystem?.length) {
+    const storeName = agent.config.store === true
+      ? computeAgentId(agentFilePath, projectContext.projectRoot, agent.name)
+      : agent.config.store;
+    const storeItems = path.join(projectContext.projectRoot, '.agentuse', 'store', storeName, 'items.json');
+    const validator = new PathValidator(agent.config.tools.filesystem, {
+      projectRoot: projectContext.projectRoot,
+      agentDir: path.dirname(agentFilePath),
+    });
+    const canRead = validator.validate(storeItems, 'read').allowed;
+    const canEdit = validator.validate(storeItems, 'edit').allowed;
+    const canWrite = validator.validate(storeItems, 'write').allowed;
+    grantsDirectStoreMutation = canEdit || canWrite;
+
+    if (grantsDirectStoreMutation || canRead) {
+      console.log((grantsDirectStoreMutation ? chalk.red : chalk.yellow)('\nRuntime-owned store access:'));
+      console.log(`- Filesystem grants reach the selected store: ${storeItems}`);
+      if (grantsDirectStoreMutation) {
+        console.log(chalk.red('  Remove write/edit access. Direct mutation bypasses locking, validation, provenance, and atomic store tools.'));
+      } else {
+        console.log(chalk.yellow('  Remove read access. Use store_list/store_get so large raw files and runtime internals do not enter model context.'));
+      }
+    }
+  }
+
   console.log(chalk.gray('\nFor runtime-accurate diagnosis, run `agentuse doctor <agent-file> --last-run`.'));
 
-  if (unknownExplicit.length > 0) {
+  if (unknownExplicit.length > 0 || grantsDirectStoreMutation) {
     process.exitCode = 1;
   }
 }

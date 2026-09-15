@@ -21,6 +21,19 @@ import { defaultTerminalPresenter, type TerminalPresenter } from './terminal-pre
 import { formatOutcomeLine, mergeReportBodies, stripLeadingOutcomeLine, REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL } from '../tools/report-outcome.js';
 import { sanitizeWALInput } from './effect-wal';
 
+/**
+ * Session history is the source of truth for an approval card. Unlike ordinary
+ * tool telemetry, an await_human input must remain complete so the reviewer can
+ * inspect exactly what approval would authorize. The tool schema has already
+ * normalized this value to plain JSON before it reaches the stream.
+ *
+ * Keep the bounded WAL projection for every other tool. The effect WAL is an
+ * audit trail, not a review artifact, and one giant argument must not bloat it.
+ */
+function sessionToolInput(toolName: string, input: unknown): unknown {
+  return toolName === 'await_human' ? input : sanitizeWALInput(input);
+}
+
 type SlackRunChannelHandle = {
   channel: string;
   ts: string;
@@ -435,7 +448,7 @@ export async function processAgentStream(
         parts.push({
           type: 'tool-call',
           tool: chunk.toolName!,
-          args: sanitizeWALInput(chunk.toolInput),
+          args: sessionToolInput(chunk.toolName!, chunk.toolInput),
           timestamp: Date.now()
         });
         // The outcome tools carry the run's answer, not a step of the work, so
@@ -474,7 +487,7 @@ export async function processAgentStream(
         // Store info for this tool call using toolCallId as key
         if (chunk.toolCallId && chunk.toolName) {
           const startTime = chunk.toolStartTime ?? Date.now();
-          const persistedInput = sanitizeWALInput(chunk.toolInput);
+          const persistedInput = sessionToolInput(chunk.toolName, chunk.toolInput);
           const hasRawApprovedInput = Object.prototype.hasOwnProperty.call(chunk, 'rawApprovedInput');
           const persistedRawApprovedInput = hasRawApprovedInput
             ? sanitizeWALInput(chunk.rawApprovedInput)
@@ -592,6 +605,9 @@ export async function processAgentStream(
           if (typeof toolMetadata.exitCode === 'number' && toolMetadata.exitCode !== 0) {
             toolSuccess = false;
           }
+          if (toolMetadata.timedOut === true || toolMetadata.aborted === true) {
+            toolSuccess = false;
+          }
           if (typeof toolMetadata.tokensUsed === 'number') {
             tokens = toolMetadata.tokensUsed;
           }
@@ -599,6 +615,11 @@ export async function processAgentStream(
             isSubAgent = true;
           }
         }
+        const persistedToolMetadata = {
+          ...(toolMetadata ?? {}),
+          ...(tokens !== undefined && { tokens }),
+        };
+        const hasPersistedToolMetadata = Object.keys(persistedToolMetadata).length > 0;
 
         parts.push({
           type: 'tool-result',
@@ -677,7 +698,7 @@ export async function processAgentStream(
                     ? chunk.toolResultRaw
                     : chunk.toolResult,
                   time: { start: pending.startTime, end: endTime },
-                  ...(tokens && { metadata: { tokens } })
+                  ...(hasPersistedToolMetadata && { metadata: persistedToolMetadata })
                 }
               : {
                   status: 'error',
@@ -687,7 +708,7 @@ export async function processAgentStream(
                     ? formatToolResultForDisplay(rawResult.error, { preferError: true })
                     : formatToolResultForDisplay(chunk.toolResult ?? chunk.toolResultRaw ?? 'Unknown error', { preferError: true }),
                   time: { start: pending.startTime, end: endTime },
-                  ...(tokens && { metadata: { tokens } })
+                  ...(hasPersistedToolMetadata && { metadata: persistedToolMetadata })
                 };
             await persistToolState(chunk.toolCallId, toolState);
 
@@ -699,9 +720,11 @@ export async function processAgentStream(
             if (previous?.part && (previous.part as any).callID === chunk.toolCallId) {
               const prior = (previous.part as any).state;
               const endTime = Date.now();
+              const reconciledMetadata = { ...(prior.metadata ?? {}), ...persistedToolMetadata };
+              const hasReconciledMetadata = Object.keys(reconciledMetadata).length > 0;
               const state = toolSuccess
-                ? { status: 'completed' as const, input: prior.input, ...(Object.prototype.hasOwnProperty.call(prior, 'rawApprovedInput') && { rawApprovedInput: prior.rawApprovedInput }), ...(prior.metadata && { metadata: prior.metadata }), output: Object.prototype.hasOwnProperty.call(chunk, 'toolResultRaw') ? chunk.toolResultRaw : chunk.toolResult, time: { start: prior.time?.start ?? endTime, end: endTime } }
-                : { status: 'error' as const, input: prior.input, ...(Object.prototype.hasOwnProperty.call(prior, 'rawApprovedInput') && { rawApprovedInput: prior.rawApprovedInput }), ...(prior.metadata && { metadata: prior.metadata }), error: formatToolResultForDisplay(chunk.toolResult ?? chunk.toolResultRaw ?? 'Unknown error', { preferError: true }), time: { start: prior.time?.start ?? endTime, end: endTime } };
+                ? { status: 'completed' as const, input: prior.input, ...(Object.prototype.hasOwnProperty.call(prior, 'rawApprovedInput') && { rawApprovedInput: prior.rawApprovedInput }), ...(hasReconciledMetadata && { metadata: reconciledMetadata }), output: Object.prototype.hasOwnProperty.call(chunk, 'toolResultRaw') ? chunk.toolResultRaw : chunk.toolResult, time: { start: prior.time?.start ?? endTime, end: endTime } }
+                : { status: 'error' as const, input: prior.input, ...(Object.prototype.hasOwnProperty.call(prior, 'rawApprovedInput') && { rawApprovedInput: prior.rawApprovedInput }), ...(hasReconciledMetadata && { metadata: reconciledMetadata }), error: formatToolResultForDisplay(chunk.toolResult ?? chunk.toolResultRaw ?? 'Unknown error', { preferError: true }), time: { start: prior.time?.start ?? endTime, end: endTime } };
               await options.sessionManager.updatePart(options.sessionID, options.agentId, previous.message.id, previous.part.id, { state } as any);
             }
           }
