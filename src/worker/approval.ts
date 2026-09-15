@@ -10,7 +10,7 @@ import { SessionManager } from '../session/index.js';
 import { initStorage, CorruptStorageError } from '../storage/index.js';
 import type { Part, SessionInfo } from '../session';
 import { aggregateSessionTokenUsage, dismissedAtField, mockField, sessionErrorFields, valueAsRecord } from './helpers.js';
-import { buildApprovalLogs, buildAwaitHumanDetails, approvalWasRolledBackAfterResume, judgeSummaryForGate, judgedAttempt, logsWithRecoveredApprovalDecision, logsWithSessionError, normalizeApprovalChanges, normalizeApprovalOptions, normalizeApprovalReference } from './approval-logs.js';
+import { buildApprovalLogs, buildAwaitHumanDetails, approvalWasRolledBackAfterResume, judgeSummaryForGate, judgedAttempt, logsWithRecoveredApprovalDecision, logsWithSessionError, normalizeApprovalChanges, normalizeApprovalOptions, normalizeApprovalReference, normalizeReviewEscalation } from './approval-logs.js';
 import { approvalInfoCacheKey, sessionBelongsToProject, withApprovalInfoCache } from './cache.js';
 import { sessionHierarchySummaries } from './cascade.js';
 import type { ExecuteRequest } from './types.js';
@@ -390,6 +390,7 @@ export async function getApprovalInfoUncached(req: ExecuteRequest) {
     const payloadChanges = normalizeApprovalChanges(input.changes);
     const payloadReference = normalizeApprovalReference(input.reference);
     const payloadOptions = normalizeApprovalOptions(input.options);
+    const reviewEscalation = normalizeReviewEscalation(resumePayload.reviewEscalation);
     const genericToolName = typeof resumePayload.toolName === 'string'
       ? resumePayload.toolName
       : String(effectiveApprovalPart.tool);
@@ -480,6 +481,7 @@ export async function getApprovalInfoUncached(req: ExecuteRequest) {
         ...(detailArtifactUrl && { artifactUrl: detailArtifactUrl }),
         ...(typeof input.context === 'string' && { context: repairEscapedText(input.context) }),
         ...(typeof input.risk === 'string' && { risk: repairEscapedText(input.risk) }),
+        ...(reviewEscalation && { reviewEscalation }),
         ...(typeof resumePayload.surface === 'string' && { surface: resumePayload.surface }),
         ...(approvalUrl && { approvalUrl }),
         // Delegated children are view-only: never surface an actionable token; the

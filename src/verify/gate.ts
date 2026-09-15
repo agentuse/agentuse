@@ -4,7 +4,9 @@
  * returns a rejection-with-comment tool result (the exact protocol a human
  * rejection uses), so the agent revises and re-gates. The judge can never
  * deadlock a run: after `maxRedos` rejections, on any judge error, and on
- * every pass, the gate suspends to the human as normal (fail-open).
+ * every pass, the gate suspends to the human as normal (fail-open). Strict
+ * fresh review is the exception: exhaustion opens a feedback-only human gate,
+ * with approval unavailable until a later revision passes automated review.
  * @experimental This feature is experimental and may change in future versions.
  */
 
@@ -24,6 +26,8 @@ import {
 import { open, realpath, stat } from 'fs/promises';
 import { resolve } from 'path';
 import { isBlockedReviewPath, isPathInside } from '../utils/path-policy.js';
+import { isSuspendSignal } from '../runner/suspend.js';
+import type { ReviewEscalation } from '../session/types.js';
 
 /** Resolve which placements are active. Default: gate when the agent carries
  * an approval gate, output otherwise. */
@@ -286,13 +290,13 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
   if (!innerExecute) return tool;
   let gateRejections = 0;
   const freshReview = config.gateReview === 'fresh';
+  const freshReviewAttempts = Math.max(1, config.maxRedos);
+  let lastFreshCritique: string | undefined;
   const rejectFreshReview = (critique: string) => ({
     status: 'rejected',
     source: 'pre-review',
-    exhausted: gateRejections >= Math.max(1, config.maxRedos),
-    comment: `[Automated pre-review — not the human reviewer] ${critique}\n\n${gateRejections >= Math.max(1, config.maxRedos)
-      ? 'Review budget exhausted. Stop without publishing or requesting another gate.'
-      : 'Revise the draft and request review again. Every candidate will receive a fresh review.'} Do not perform side-effectful actions.`,
+    exhausted: false,
+    comment: `[Automated pre-review — not the human reviewer] ${critique}\n\nRevise the draft and request review again. Every candidate will receive a fresh review. Attempt ${gateRejections} of ${freshReviewAttempts}. If the review budget is exhausted, the draft returns to the human for revision guidance without authorizing publication. Do not perform side-effectful actions.`,
     reviewer: { username: 'verify-judge' },
   });
   // Candidates that passed on an earlier attempt, keyed by id → exact text.
@@ -322,9 +326,17 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
   return {
     ...tool,
     execute: async (input: Record<string, unknown>, callOptions: unknown) => {
-      const suspend = () => {
+      const suspend = async (reviewEscalation?: ReviewEscalation) => {
         judgeSession = undefined;
-        return innerExecute(input as never, callOptions as never);
+        try {
+          return await innerExecute(input as never, callOptions as never);
+        } catch (error) {
+          if (reviewEscalation && isSuspendSignal(error)) {
+            error.payload.reviewEscalation = reviewEscalation;
+            error.payload.prompt = 'Automated review needs your revision guidance';
+          }
+          throw error;
+        }
       };
       const humanDecisions = sessionManager && sessionID && agentId
         ? await gatherHumanApprovalHistory(sessionManager, sessionID, agentId)
@@ -343,13 +355,19 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
         return suspend();
       }
 
-      if (freshReview && gateRejections >= Math.max(1, config.maxRedos)) {
+      if (freshReview && gateRejections >= freshReviewAttempts) {
+        const critique = lastFreshCritique ?? 'Automated review could not approve this draft within the configured attempt budget.';
         await recordVerifyPart({
           type: 'verify', verdict: 'skipped', attempt: gateRejections, maxRedos: config.maxRedos,
-          critique: 'Not judged: review budget exhausted; request blocked without human approval.',
+          critique: 'Not judged again: review budget exhausted; returned to the human for revision guidance.',
           judge: judgeName, time: { start: Date.now() },
         });
-        return rejectFreshReview('This request has no remaining automated review budget.');
+        return suspend({
+          kind: 'fresh-review-exhausted',
+          critique,
+          attempts: gateRejections,
+          maxAttempts: freshReviewAttempts,
+        });
       }
 
       if (!freshReview && config.maxRedos > 0 && gateRejections >= config.maxRedos) {
@@ -417,6 +435,15 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
         });
         if (freshReview) {
           gateRejections++;
+          lastFreshCritique = `The automated reviewer could not complete the check: ${outcome.detail}`;
+          if (gateRejections >= freshReviewAttempts) {
+            return suspend({
+              kind: 'fresh-review-exhausted',
+              critique: lastFreshCritique,
+              attempts: gateRejections,
+              maxAttempts: freshReviewAttempts,
+            });
+          }
           return rejectFreshReview(`The reviewer could not complete the check: ${outcome.detail}`);
         }
         return suspend();
@@ -448,6 +475,7 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
 
       gateRejections++;
       const critique = verdict.critique ?? 'The draft did not pass pre-review.';
+      if (freshReview) lastFreshCritique = critique;
       await recordVerifyPart({
         type: 'verify', verdict: 'fail', attempt, maxRedos: config.maxRedos,
         critique, ...(candidateVerdicts && { candidates: candidateVerdicts }),
@@ -455,7 +483,17 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
       });
       // Zero redos still judges the initial candidate. A failure has no
       // automated revision budget, so send that judged candidate to the human.
-      if (freshReview) return rejectFreshReview(critique);
+      if (freshReview) {
+        if (gateRejections >= freshReviewAttempts) {
+          return suspend({
+            kind: 'fresh-review-exhausted',
+            critique,
+            attempts: gateRejections,
+            maxAttempts: freshReviewAttempts,
+          });
+        }
+        return rejectFreshReview(critique);
+      }
       if (config.maxRedos === 0) return suspend();
       logger.info(`[Verify] Gate draft rejected by pre-review (${gateRejections} of ${config.maxRedos}): ${critique.slice(0, 200)}`);
       // Keep the rejection-with-comment shape for compatibility, but mark the

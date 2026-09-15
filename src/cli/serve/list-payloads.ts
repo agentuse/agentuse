@@ -29,6 +29,8 @@ export interface ApprovalSummary {
   risk?: string;
   /** The gate offers a pick-among-options menu; one-tap approve is not enough. */
   hasOptions?: boolean;
+  /** The gate needs revision guidance after strict automated review exhausted. */
+  needsRevisionGuidance?: boolean;
   suspendedAt?: number;
   expiresAt?: number;
   createdAt?: number;

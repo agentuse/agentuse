@@ -1,4 +1,4 @@
-import type { ActiveContextUsage, SessionTrigger } from '../session';
+import type { ActiveContextUsage, ReviewEscalation, SessionTrigger } from '../session';
 
 export interface ExecuteRequest {
   id: string;
@@ -108,6 +108,8 @@ export interface LogVerifySummary {
 
 export interface ApprovalLogDetails {
   resumeToken?: string;
+  /** Strict automated review exhausted; this gate accepts revision guidance or stop, not approval. */
+  reviewEscalation?: ReviewEscalation;
   toolApproval?: {
     approvalId: string;
     toolName: string;
@@ -202,6 +204,8 @@ export interface ApprovalSummary {
   risk?: string;
   /** The gate offers a pick-among-options menu; one-tap approve is not enough. */
   hasOptions?: boolean;
+  /** The gate needs revision guidance after strict automated review exhausted. */
+  needsRevisionGuidance?: boolean;
   /** Which look this is for the reviewer: one more than the earlier gates in
    *  this session a human answered with a comment. Omitted on round one. */
   round?: number;

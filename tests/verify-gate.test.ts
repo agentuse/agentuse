@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, beforeEach, mock } from 'bun:test';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { SuspendSignal } from '../src/runner/suspend';
 
 // Ensure no module mocks leak from other files
 mock.restore();
@@ -45,6 +46,28 @@ function makeGateTool() {
   });
   const tool = { description: 'gate', inputSchema: {}, execute: suspend } as any;
   return { tool, suspend };
+}
+
+function makeStrictGateTool() {
+  const suspend = mock(async (input: Record<string, unknown>) => {
+    throw new SuspendSignal({
+      kind: 'await_human',
+      prompt: typeof input.prompt === 'string' ? input.prompt : 'Review this draft',
+      resumeToken: 'strict-review-token',
+    });
+  });
+  const tool = { description: 'gate', inputSchema: {}, execute: suspend } as any;
+  return { tool, suspend };
+}
+
+async function captureSuspend(run: Promise<unknown>): Promise<SuspendSignal> {
+  try {
+    await run;
+  } catch (error) {
+    expect(error).toBeInstanceOf(SuspendSignal);
+    return error as SuspendSignal;
+  }
+  throw new Error('Expected the gate to suspend');
 }
 
 const gateInput = {
@@ -617,29 +640,70 @@ describe('fresh gate review', () => {
     expect(judgeOutputMock).toHaveBeenCalledTimes(2);
   });
 
-  it('blocks unreviewed replacements after the budget is exhausted', async () => {
+  it('returns an exhausted fresh review to the human for revision guidance', async () => {
     judgeOutputMock.mockResolvedValue({ status: 'verdict', verdict: { pass: false, critique: 'weak point' } });
-    const { tool, suspend } = makeGateTool();
+    const { tool, suspend } = makeStrictGateTool();
     const gate = withGateVerify(tool, freshOptions);
-    await (gate.execute as any)(gateInput, {});
-    const second = await (gate.execute as any)(gateInput, {});
-    expect(second.exhausted).toBe(true);
-    const third = await (gate.execute as any)({ ...gateInput, draft: 'new unreviewed copy' }, {});
-    expect(third.status).toBe('rejected');
-    expect(third.exhausted).toBe(true);
+    const first = await (gate.execute as any)(gateInput, {});
+    expect(first.status).toBe('rejected');
+    expect(first.exhausted).toBe(false);
+    expect(first.comment).toContain('If the review budget is exhausted');
+
+    const signal = await captureSuspend((gate.execute as any)(gateInput, {}));
+    expect(signal.payload).toMatchObject({
+      kind: 'await_human',
+      prompt: 'Automated review needs your revision guidance',
+      resumeToken: 'strict-review-token',
+      reviewEscalation: {
+        kind: 'fresh-review-exhausted',
+        critique: 'weak point',
+        attempts: 2,
+        maxAttempts: 2,
+      },
+    });
+
+    // A stale extra call cannot smuggle a replacement past review. In normal
+    // operation the human comment resumes the session with a new wrapper and
+    // therefore a fresh review cycle.
+    const defensiveSignal = await captureSuspend((gate.execute as any)({ ...gateInput, draft: 'new unreviewed copy' }, {}));
+    expect(defensiveSignal.payload.reviewEscalation?.critique).toBe('weak point');
     expect(judgeOutputMock).toHaveBeenCalledTimes(2);
-    expect(suspend).not.toHaveBeenCalled();
+    expect(suspend).toHaveBeenCalledTimes(2);
   });
 
-  it('does not fail open on a reviewer error or with zero redos', async () => {
-    const { tool, suspend } = makeGateTool();
-    judgeOutputMock.mockResolvedValueOnce({ status: 'error', detail: 'offline' });
+  it('uses reviewer errors as attempts, then requests human revision guidance', async () => {
+    const { tool, suspend } = makeStrictGateTool();
     const errorGate = withGateVerify(tool, freshOptions);
-    expect((await (errorGate.execute as any)(gateInput, {})).status).toBe('rejected');
-    judgeOutputMock.mockResolvedValueOnce({ status: 'verdict', verdict: { pass: false } });
+    judgeOutputMock.mockResolvedValue({ status: 'error', detail: 'offline' });
+
+    const first = await (errorGate.execute as any)(gateInput, {});
+    expect(first.status).toBe('rejected');
+    expect(first.comment).toContain('reviewer could not complete the check: offline');
+
+    const signal = await captureSuspend((errorGate.execute as any)(gateInput, {}));
+    expect(signal.payload.reviewEscalation).toEqual({
+      kind: 'fresh-review-exhausted',
+      critique: 'The automated reviewer could not complete the check: offline',
+      attempts: 2,
+      maxAttempts: 2,
+    });
+    expect(judgeOutputMock).toHaveBeenCalledTimes(2);
+    expect(suspend).toHaveBeenCalledTimes(1);
+  });
+
+  it('judges once with zero redos, then requests revision guidance on failure', async () => {
+    const { tool, suspend } = makeStrictGateTool();
+    judgeOutputMock.mockResolvedValueOnce({ status: 'verdict', verdict: { pass: false, critique: 'Missing evidence.' } });
     const zeroGate = withGateVerify(tool, { ...freshOptions, config: { ...freshOptions.config, maxRedos: 0 } });
-    const result = await (zeroGate.execute as any)(gateInput, {});
-    expect(result.exhausted).toBe(true);
-    expect(suspend).not.toHaveBeenCalled();
+
+    const signal = await captureSuspend((zeroGate.execute as any)(gateInput, {}));
+    expect(signal.payload.reviewEscalation).toEqual({
+      kind: 'fresh-review-exhausted',
+      critique: 'Missing evidence.',
+      attempts: 1,
+      maxAttempts: 1,
+    });
+    expect(judgeOutputMock).toHaveBeenCalledTimes(1);
+    expect(suspend).toHaveBeenCalledTimes(1);
   });
 });

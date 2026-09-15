@@ -1,4 +1,4 @@
-import type { ActiveContextUsage, SessionTrigger } from "../../session/types";
+import type { ActiveContextUsage, ReviewEscalation, SessionTrigger } from "../../session/types";
 import type { SessionTimingSummary } from "../../session/timing";
 import type { DescendantActivity, DescendantBreadcrumb, DescendantReport, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary, VerifyCandidateSummary } from '../../session/important-descendants';
 
@@ -54,6 +54,8 @@ export interface ApprovalSummary {
   risk?: string;
   /** The gate offers a pick-among-options menu; one-tap approve is not enough. */
   hasOptions?: boolean;
+  /** The gate needs revision guidance after strict automated review exhausted. */
+  needsRevisionGuidance?: boolean;
   /** Which look this is for the reviewer: one more than the earlier gates in
    *  this session a human answered with a comment. Omitted on round one. */
   round?: number;
@@ -436,6 +438,8 @@ export interface ApprovalPageInfo {
   artifactUrl?: string;
   context?: string;
   risk?: string;
+  /** Strict automated review exhausted; approval stays blocked while the reviewer guides another revision. */
+  reviewEscalation?: ReviewEscalation;
   surface?: string;
   approvalUrl?: string;
   currentResumeToken?: string;
@@ -611,6 +615,8 @@ export interface ToolTokenUsage {
 
 export interface ApprovalLogDetails {
   resumeToken?: string;
+  /** Strict automated review exhausted; this gate accepts revision guidance or stop, not approval. */
+  reviewEscalation?: ReviewEscalation;
   toolApproval?: {
     approvalId: string;
     toolName: string;

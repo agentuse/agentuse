@@ -6,7 +6,7 @@ import { initStorage, CorruptStorageError, readJSON, writeJSON } from '../storag
 import type { SessionInfo } from '../session';
 import { approvalPartCache, approvalPartCacheKey, boundedCacheSet, listCacheKey, sessionBelongsToProject, withListCache, MAX_CACHED_APPROVAL_PARTS } from './cache.js';
 import { approvalProjectionKey, dismissedAtField, mockField, sessionErrorFields, valueAsRecord } from './helpers.js';
-import { normalizeApprovalOptions } from './approval-logs.js';
+import { normalizeApprovalOptions, normalizeReviewEscalation } from './approval-logs.js';
 import type { WorkerContext } from './context.js';
 import type { ApprovalProjectionIndex, ApprovalSummary, ApprovalSummaryStatus, ExecuteRequest } from './types.js';
 
@@ -163,6 +163,7 @@ export async function listAllApprovals(ctx: WorkerContext, req: ExecuteRequest) 
       const output = state.status === 'completed' ? valueAsRecord(state.output) : {};
       const approvalResponse = valueAsRecord(metadata.approvalResponse);
       const isGenericToolApproval = resumePayload.kind === 'tool_approval';
+      const reviewEscalation = normalizeReviewEscalation(resumePayload.reviewEscalation);
       const reviewer = isGenericToolApproval
         ? valueAsRecord(metadata.approvalReviewer)
         : valueAsRecord(output.reviewer);
@@ -226,14 +227,17 @@ export async function listAllApprovals(ctx: WorkerContext, req: ExecuteRequest) 
         ...((originAgentFilePath ?? session.agent.filePath) && { agentFilePath: originAgentFilePath ?? session.agent.filePath }),
         status,
         sessionStatus: session.status,
-        ...(typeof input.prompt === 'string'
-          ? { prompt: input.prompt }
+        ...(reviewEscalation
+          ? { prompt: 'Revision needs your input' }
+          : typeof input.prompt === 'string'
+            ? { prompt: input.prompt }
           : isGenericToolApproval
             ? { prompt: `Approve execution of ${approvalPart.tool}?` }
             : {}),
         ...(typeof input.summary === 'string' && { summary: input.summary }),
         ...(typeof input.risk === 'string' && { risk: input.risk }),
         ...(normalizeApprovalOptions(input.options) && { hasOptions: true }),
+        ...(reviewEscalation && { needsRevisionGuidance: true }),
         ...(round > 1 && { round }),
         ...(suspendedAt !== undefined && { suspendedAt }),
         ...(typeof resumePayload.expiresAt === 'number' && { expiresAt: resumePayload.expiresAt }),

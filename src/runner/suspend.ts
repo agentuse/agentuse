@@ -1,3 +1,5 @@
+import type { ReviewEscalation } from '../session/types';
+
 export interface SuspendPayload {
   // 'await_human' is a real human gate (leaf). 'subagent_wait' is a parent step
   // parked on a delegated child's gate — it carries no human-facing fields, only
@@ -22,6 +24,9 @@ export interface SuspendPayload {
   /** await_human only: gate-time snapshots of referenced media files, so the
    *  approval page shows the exact bytes under review (see session/gate-artifacts). */
   artifactSnapshots?: Array<{ path: string; hash: string; ext: string; bytes: number }>;
+  /** await_human only: this is a feedback gate after strict automated review
+   * exhausted its attempts. Approval is intentionally unavailable. */
+  reviewEscalation?: ReviewEscalation;
   // subagent_wait only: the suspended child gate this parent step is parked on.
   childSessionID?: string;
   childAgentName?: string;

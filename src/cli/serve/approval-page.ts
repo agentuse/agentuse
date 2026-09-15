@@ -3,7 +3,7 @@
  * rides along with it. Moved verbatim out of serve.ts.
  */
 import type { ImportantDescendantEvent, ImportantDescendantSummary } from "../../session/important-descendants";
-import type { ActiveContextUsage } from "../../session/types";
+import type { ActiveContextUsage, ReviewEscalation } from "../../session/types";
 import { ApprovalLogEntry, ChildSessionSummary } from "./session-log";
 
 export interface ApprovalPageInfo {
@@ -53,6 +53,8 @@ export interface ApprovalPageInfo {
   artifactUrl?: string;
   context?: string;
   risk?: string;
+  /** Strict automated review exhausted; approval stays blocked while the reviewer guides another revision. */
+  reviewEscalation?: ReviewEscalation;
   surface?: string;
   approvalUrl?: string;
   currentResumeToken?: string;

@@ -1,8 +1,33 @@
 import { describe, expect, it } from 'bun:test';
-import { buildApprovalLogs } from '../src/worker/approval-logs';
+import { buildApprovalLogs, normalizeReviewEscalation } from '../src/worker/approval-logs';
 import { completeApprovalValueDisplay } from '../src/utils/approval-value';
 
 describe('buildApprovalLogs', () => {
+  it('projects a strict-review escalation only from valid pending metadata', () => {
+    const escalation = {
+      kind: 'fresh-review-exhausted',
+      critique: '  Tighten the claim.  ',
+      attempts: 2,
+      maxAttempts: 2,
+    };
+    const logs = buildApprovalLogs([{
+      id: 'part-review-escalation',
+      type: 'tool',
+      callID: 'review-call',
+      tool: 'await_human',
+      state: {
+        status: 'pending',
+        input: { prompt: 'Automated review needs your revision guidance' },
+        resumePayload: { kind: 'await_human', resumeToken: 'review-token', reviewEscalation: escalation },
+      },
+    }]);
+
+    expect(logs[0]?.details?.reviewEscalation).toEqual({ ...escalation, critique: 'Tighten the claim.' });
+    expect(normalizeReviewEscalation({ ...escalation, attempts: 0 })).toBeUndefined();
+    expect(normalizeReviewEscalation({ ...escalation, attempts: 3 })).toBeUndefined();
+    expect(normalizeReviewEscalation({ ...escalation, kind: 'unknown' })).toBeUndefined();
+  });
+
   it('carries the parent Code Mode call id into Web log data', () => {
     const logs = buildApprovalLogs([{
       id: 'part-1',

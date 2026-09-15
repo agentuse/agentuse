@@ -42,7 +42,7 @@ verify: "Every metric cited must come from a tool result; includes a risks secti
 | `criteria` | string | Rubric for the built-in judge (one LLM call). Mutually exclusive with `judge`. |
 | `judge` | string | Path to a `.agentuse` file to run as the evaluator, relative to this agent file. Mutually exclusive with `criteria`. |
 | `at` | `gate` \| `output` \| `both` | Where the judge runs. Defaults to `gate` when the agent has an approval gate, `output` otherwise. |
-| `maxRedos` | number | Maximum critique-informed redos before shipping anyway (default `1`, max `10`, `0` = judge only). |
+| `maxRedos` | number | Maximum critique-informed redos before output ships or the gate applies its configured exhaustion behavior (default `1`, max `10`, `0` = judge only). |
 | `model` | string | Model for the built-in judge. Defaults to the agent's own model. Invalid with `judge`. |
 
 `verify: true` uses a generic task-fulfillment rubric. `verify: "<string>"` is shorthand for `{ criteria: "<string>" }`.
@@ -54,7 +54,7 @@ For agents with an [approval gate](/guides/approval-gates), verify defaults to `
 - **Fail** → the run does not suspend. The critique returns as a rejection-with-comment tool result, the same protocol as a human rejection, so the agent revises its draft and requests approval again. The human never sees the failed draft.
 - **Pass** → the gate suspends to the human as normal.
 - **After a human Comment** → the next gate skips pre-review and goes directly back to that reviewer. Their requested revision is authoritative for that review cycle; an automated judge cannot reinterpret or override it. Machine pre-review feedback does not trigger this bypass.
-- **Fail-open** → after `maxRedos` pre-review rejections, or on any judge error, the request goes to the human regardless, with the unresolved critique in the session log. The judge protects your attention; it can never deadlock a run or replace your decision. A gate that reaches the human this way records a `skipped` verify marker, so the approval card and `sessions show` say "not judged" and why.
+- **Fail-open** → after `maxRedos` pre-review rejections, or on any judge error, the request goes to the human regardless, with the unresolved critique in the session log. The judge protects your attention; it can never deadlock a run or replace your decision. A gate that reaches the human this way records a `skipped` verify marker, so the approval card and `sessions show` say "not judged" and why. [`gateReview: fresh`](#fresh-gate-review) instead opens a feedback-only human gate and keeps approval blocked.
 
 When a gate offers several drafts (a slate keyed by `options` / `changes[].optionId`), the judge returns one verdict per candidate and lists every failing candidate in one pass. A candidate that passed keeps its pass on the next attempt as long as its text is byte-identical: the gate carries it forward, tells the judge not to re-judge it, and skips the judge call entirely when nothing changed. The bounce sent back to the agent names the passing candidates so it leaves them alone.
 
@@ -130,10 +130,16 @@ including after human comments. Human feedback remains available as review
 context, but no previous candidate verdict is carried forward. This also
 rechecks unchanged wording when the source or evidence changes.
 
-Fresh mode blocks unreviewed requests when the rejection budget is spent or the
-judge fails. It never escalates an unreviewed replacement to human approval.
-With `maxRedos: 0`, the initial request is judged once and a failure stops there.
-Agents should stop on `exhausted: true`; a reviewer error consumes one attempt.
-An approval still requires the human's decision after the automated pass.
+Fresh mode never lets an unreviewed replacement reach approval. When failed
+verdicts or reviewer errors consume the review budget, the current draft returns
+to the human in a feedback-only gate with the latest critique. Approval stays
+unavailable. The reviewer can comment with guidance to resume the same session
+and start a fresh revision-and-review cycle, or reject to stop the action. The
+current draft, prior human comments, and automated critique remain in the
+session rather than being discarded by a terminal failure.
+
+With `maxRedos: 0`, the initial request is still judged once. A failure then
+opens the same feedback-only gate. A reviewer error consumes one attempt. An
+approval still requires the human's decision after the automated pass.
 Without this option, existing incremental review and fail-open behavior remain
 unchanged. This setting only affects gate placement, not final-output review.

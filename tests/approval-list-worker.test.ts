@@ -298,7 +298,16 @@ describe('approval list worker', () => {
           status: 'pending',
           input: { prompt: 'Approve fresh session?' },
           suspendedAt: freshApprovalTime,
-          resumePayload: { kind: 'await_human', resumeToken: 'fresh-session-token' },
+          resumePayload: {
+            kind: 'await_human',
+            resumeToken: 'fresh-session-token',
+            reviewEscalation: {
+              kind: 'fresh-review-exhausted',
+              critique: 'The current claim needs evidence.',
+              attempts: 2,
+              maxAttempts: 2,
+            },
+          },
         },
       });
       await sessionManager.setSessionSuspended(freshSessionId, 'agents/fresh-review');
@@ -317,8 +326,9 @@ describe('approval list worker', () => {
       expect(response.approvals[0]).toMatchObject({
         sessionId: freshSessionId,
         status: 'pending',
-        prompt: 'Approve fresh session?',
+        prompt: 'Revision needs your input',
         resumeToken: 'fresh-session-token',
+        needsRevisionGuidance: true,
       });
     } finally {
       Date.now = originalNow;

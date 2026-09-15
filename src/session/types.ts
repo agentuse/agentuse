@@ -16,6 +16,17 @@ export type SessionStatus = 'preparing' | 'running' | 'completed' | 'error' | 's
 // launched from an empty serve dashboard.
 export type SessionTrigger = 'scheduled' | 'manual' | 'slack' | 'api' | 'onboarding';
 
+/** A strict fresh pre-review used its full automated retry budget. The draft
+ * remains blocked from approval, but the run suspends so a human can supply
+ * another revision direction or stop the action instead of losing the work. */
+export interface ReviewEscalation {
+  kind: 'fresh-review-exhausted';
+  critique: string;
+  /** Number of automated review attempts made in this cycle. */
+  attempts: number;
+  maxAttempts: number;
+}
+
 export interface SessionInfo {
   id: string;                        // ULID
   parentSessionID?: string;          // For subagent sessions - links to parent agent session
@@ -326,6 +337,8 @@ export type ToolStatePending = {
     };
     /** await_human only: gate-time snapshots of referenced media (session/gate-artifacts). */
     artifactSnapshots?: Array<{ path: string; hash: string; ext: string; bytes: number }>;
+    /** await_human only: strict review exhausted; collect revision guidance or stop. */
+    reviewEscalation?: ReviewEscalation;
     // subagent_wait only: the suspended child gate this step is parked on.
     childSessionID?: string;
     childAgentName?: string;

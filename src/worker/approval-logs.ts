@@ -496,6 +496,21 @@ export function normalizeApprovalReference(value: unknown): ApprovalReference | 
   return Object.keys(reference).length > 0 ? reference : undefined;
 }
 
+/** Untrusted suspension metadata for a strict-review feedback gate. */
+export function normalizeReviewEscalation(value: unknown): ApprovalLogDetails['reviewEscalation'] | undefined {
+  const rec = valueAsRecord(value);
+  if (rec.kind !== 'fresh-review-exhausted' || typeof rec.critique !== 'string' || !rec.critique.trim()) return undefined;
+  if (!Number.isInteger(rec.attempts) || (rec.attempts as number) < 1) return undefined;
+  if (!Number.isInteger(rec.maxAttempts) || (rec.maxAttempts as number) < 1) return undefined;
+  if ((rec.attempts as number) > (rec.maxAttempts as number)) return undefined;
+  return {
+    kind: 'fresh-review-exhausted',
+    critique: repairEscapedText(rec.critique.trim()),
+    attempts: rec.attempts as number,
+    maxAttempts: rec.maxAttempts as number,
+  };
+}
+
 export function buildAwaitHumanDetails(state: any): ApprovalLogDetails | undefined {
   const input = valueAsRecord(state?.input);
   const output = valueAsRecord(state?.output);
@@ -507,6 +522,8 @@ export function buildAwaitHumanDetails(state: any): ApprovalLogDetails | undefin
   if (typeof resumePayload.resumeToken === 'string' && resumePayload.resumeToken) {
     fields.resumeToken = resumePayload.resumeToken;
   }
+  const reviewEscalation = normalizeReviewEscalation(resumePayload.reviewEscalation);
+  if (reviewEscalation) fields.reviewEscalation = reviewEscalation;
   if (typeof input.prompt === 'string' && input.prompt) fields.prompt = repairEscapedText(input.prompt);
   if (typeof input.summary === 'string' && input.summary) fields.summary = repairEscapedText(input.summary);
   if (typeof input.context === 'string' && input.context) fields.context = repairEscapedText(input.context);

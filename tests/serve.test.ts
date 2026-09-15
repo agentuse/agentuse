@@ -963,6 +963,28 @@ describe('serve telemetry attribution', () => {
   });
 });
 
+describe('strict review decision validation', () => {
+  it('rejects both approval spellings while revision guidance is required', async () => {
+    const { validateDecisionChoice } = (await import('../src/cli/serve')).__testing;
+    const info = {
+      approval: {
+        approvalKind: 'await_human',
+        reviewEscalation: {
+          kind: 'fresh-review-exhausted',
+          critique: 'Add evidence.',
+          attempts: 2,
+          maxAttempts: 2,
+        },
+      },
+    } as any;
+
+    expect(validateDecisionChoice(info, 'approve', undefined)?.code).toBe('REVIEW_REVISION_REQUIRED');
+    expect(validateDecisionChoice(info, 'approved', undefined)?.code).toBe('REVIEW_REVISION_REQUIRED');
+    expect(validateDecisionChoice(info, 'commented', undefined)).toBeNull();
+    expect(validateDecisionChoice(info, 'rejected', undefined)).toBeNull();
+  });
+});
+
 describe('worker recycling', () => {
   const MB = 1024 * 1024;
   const base = { rssBytes: 400 * MB, activeRuns: 0, ageMs: 10 * 60_000, thresholdMb: 300, minAgeMs: 120_000 };

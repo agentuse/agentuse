@@ -134,6 +134,51 @@ const SESSION_LIST_SSE_LIVE_INTERVAL_MS = 2_000;
 const SESSION_SEARCH_SCAN_LIMIT = 400;
 const WORKER_PROTOCOL_ERROR_CODE = 'WORKER_PROTOCOL_ERROR';
 
+/** Validate a human decision against the durable approval contract. Keeping
+ * this server-side means stale clients and notification actions cannot bypass
+ * a strict-review feedback gate merely by posting an approve decision. */
+function validateDecisionChoice(
+  info: WorkerApprovalInfoResult,
+  status: string,
+  choice: string | undefined
+): { code: string; message: string } | null {
+  if (info.approval.approvalKind === 'tool_approval') {
+    const supported = status === 'approve' || status === 'approved'
+      || status === 'reject' || status === 'rejected';
+    if (!supported) {
+      return { code: 'TOOL_APPROVAL_DECISION_INVALID', message: 'Generic tool approvals support only approve or reject' };
+    }
+    if (choice !== undefined) {
+      return { code: 'CHOICE_INVALID', message: 'Generic tool approvals do not accept option choices' };
+    }
+    return null;
+  }
+  const gateOptions = info.approval.options;
+  // Both spellings reach the worker as an approval ('approve' and 'approved'
+  // normalize to the same decision in src/index.ts), so both must validate
+  // identically.
+  const isApprove = status === 'approve' || status === 'approved';
+  if (isApprove && info.approval.reviewEscalation) {
+    return {
+      code: 'REVIEW_REVISION_REQUIRED',
+      message: 'This draft did not pass strict automated review. Send revision guidance or reject it; it cannot be approved in its current form.',
+    };
+  }
+  if (choice !== undefined) {
+    if (!isApprove) {
+      return { code: 'CHOICE_REQUIRES_APPROVE', message: 'A choice can only be submitted with an approve decision' };
+    }
+    if (!gateOptions?.some((o) => o.id === choice)) {
+      return { code: 'CHOICE_INVALID', message: `Choice "${choice}" is not one of this gate's options` };
+    }
+    return null;
+  }
+  if (isApprove && gateOptions && gateOptions.length > 0) {
+    return { code: 'CHOICE_REQUIRED', message: 'This gate offers options; approve decisions must include a choice (option id)' };
+  }
+  return null;
+}
+
 /** Worker replies are serialized with `id` first. If JSON-line framing breaks,
  * the first fragment can therefore still identify the request without
  * inspecting or logging any user payload that follows it. */
@@ -3234,48 +3279,6 @@ export function createServeCommand(): Command {
           ? body.remember.trim()
           : undefined;
 
-      // Shared choice validation for both decision routes. A gate that published
-      // options requires an approve decision to name one of them, so the agent can
-      // trust `approved ⇒ choice is a known id`; gates without options reject any
-      // choice to catch client bugs early. Returns an error to send, or null when
-      // the (status, choice) pair is acceptable.
-      const validateDecisionChoice = (
-        info: WorkerApprovalInfoResult,
-        status: string,
-        choice: string | undefined
-      ): { code: string; message: string } | null => {
-        if (info.approval.approvalKind === 'tool_approval') {
-          const supported = status === 'approve' || status === 'approved'
-            || status === 'reject' || status === 'rejected';
-          if (!supported) {
-            return { code: 'TOOL_APPROVAL_DECISION_INVALID', message: 'Generic tool approvals support only approve or reject' };
-          }
-          if (choice !== undefined) {
-            return { code: 'CHOICE_INVALID', message: 'Generic tool approvals do not accept option choices' };
-          }
-          return null;
-        }
-        const gateOptions = info.approval.options;
-        // Both spellings reach the worker as an approval ('approve' and
-        // 'approved' normalize to the same decision in src/index.ts), so both
-        // must validate identically — otherwise 'approved' bypasses
-        // CHOICE_REQUIRED and a valid 'approved'+choice is spuriously rejected.
-        const isApprove = status === 'approve' || status === 'approved';
-        if (choice !== undefined) {
-          if (!isApprove) {
-            return { code: 'CHOICE_REQUIRES_APPROVE', message: 'A choice can only be submitted with an approve decision' };
-          }
-          if (!gateOptions?.some((o) => o.id === choice)) {
-            return { code: 'CHOICE_INVALID', message: `Choice "${choice}" is not one of this gate's options` };
-          }
-          return null;
-        }
-        if (isApprove && gateOptions && gateOptions.length > 0) {
-          return { code: 'CHOICE_REQUIRED', message: 'This gate offers options; approve decisions must include a choice (option id)' };
-        }
-        return null;
-      };
-
       // Revision sessions persist their product state separately from the
       // ordinary session transcript. Keep that state in sync for every way a
       // suspended/completed session can resume, not only for its first run.
@@ -5477,5 +5480,6 @@ export const __testing = {
   createWebUITelemetryGuard,
   acceptWebUITelemetry,
   canSubmitWebUITelemetry,
+  validateDecisionChoice,
   WEB_UI_TELEMETRY_DEDUPE_MS,
 };

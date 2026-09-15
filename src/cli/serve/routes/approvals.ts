@@ -166,11 +166,14 @@ export async function approvalRoutes(ctx: ServeContext, rq: ServeRequest): Promi
             // Gates that offer options can't be one-tap approved (approve
             // requires a choice), so those always tap through to the page.
             const hasOptions = (found.info.approval.options?.length ?? 0) > 0;
-            const decidableInline = pushSessionId === sessionId && !hasOptions;
+            const needsRevisionGuidance = Boolean(found.info.approval.reviewEscalation);
+            const decidableInline = pushSessionId === sessionId && !hasOptions && !needsRevisionGuidance;
             await deliverNotification('approvals', {
-              title: "Approval needed",
+              title: needsRevisionGuidance ? "Revision guidance needed" : "Approval needed",
               body: [
-                prompt ? `${label}: ${prompt.slice(0, 140)}` : label,
+                needsRevisionGuidance
+                  ? `${label}: automated review still blocks this draft`
+                  : prompt ? `${label}: ${prompt.slice(0, 140)}` : label,
                 ...(firstChange ? [firstChange.slice(0, 160)] : []),
               ].join('\n'),
               url: `${effectivePublicUrl}/sessions/${encodeURIComponent(pushSessionId)}?${approvalQuery.toString()}`,

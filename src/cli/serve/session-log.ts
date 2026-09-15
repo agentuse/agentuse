@@ -7,7 +7,7 @@
  */
 import type { DescendantActivity, DescendantBreadcrumb, DescendantReport, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary, VerifyCandidateSummary } from "../../session/important-descendants";
 import { isTerminalSessionStatus } from "../../session/status";
-import type { SessionTrigger } from "../../session/types";
+import type { ReviewEscalation, SessionTrigger } from "../../session/types";
 import { agentBaseName } from "../../utils/agent-id.js";
 
 export interface ChildSessionSummary {
@@ -83,6 +83,8 @@ export type LogSubagentEvent = ImportantDescendantEvent & {
 
 export interface ApprovalLogDetails {
   resumeToken?: string;
+  /** Strict automated review exhausted; this gate accepts revision guidance or stop, not approval. */
+  reviewEscalation?: ReviewEscalation;
   toolApproval?: {
     approvalId: string;
     toolName: string;

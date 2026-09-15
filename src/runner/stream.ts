@@ -3,7 +3,7 @@ import type { ToolCallTrace } from '../plugin/types';
 import type { DoomLoopDetector } from '../tools/index.js';
 import type { SessionManager } from '../session';
 import type { AgentPart } from '../types/parts';
-import type { ToolState, ToolStateCompleted, ToolStateError } from '../session/types';
+import type { ReviewEscalation, ToolState, ToolStateCompleted, ToolStateError } from '../session/types';
 import type { ActiveContextUsage } from '../session/types';
 import { addLanguageModelUsage, usageToAssistantTokens, addAssistantTokens, type AssistantTokens } from '../session/usage';
 import { repairEscapedText } from '../utils/display-text';
@@ -71,6 +71,7 @@ async function sendPersistedSlackApproval(options: {
   approvalUrl?: string;
   prompt?: string;
   input?: unknown;
+  reviewEscalation?: { critique: string };
   expiresAt?: number;
   channelRequest?: unknown;
   slackRunChannelHandles?: SlackRunChannelHandle[];
@@ -123,7 +124,10 @@ async function sendPersistedSlackApproval(options: {
   const optionsText = optionEntries.length >= 2
     ? `**Pick one on the approval page:**\n${optionEntries.join('\n')}`
     : '';
-  const slackDraft = [optionsText, changesText, typeof input.draft === 'string' ? repairEscapedText(input.draft) : '']
+  const reviewFeedback = options.reviewEscalation
+    ? `**Automated review still blocks this draft**\n${options.reviewEscalation.critique}`
+    : '';
+  const slackDraft = [reviewFeedback, optionsText, changesText, typeof input.draft === 'string' ? repairEscapedText(input.draft) : '']
     .filter(Boolean)
     .join('\n\n');
   try {
@@ -142,7 +146,7 @@ async function sendPersistedSlackApproval(options: {
       ...(typeof input.risk === 'string' && { risk: repairEscapedText(input.risk) }),
       resumeToken: options.resumeToken,
       approvalUrl: options.approvalUrl,
-      interactive: Boolean(process.env.SLACK_APP_TOKEN) && optionEntries.length < 2,
+      interactive: Boolean(process.env.SLACK_APP_TOKEN) && optionEntries.length < 2 && !options.reviewEscalation,
       ...(options.expiresAt !== undefined && { expiresAt: new Date(options.expiresAt).toISOString() })
     };
     const root = options.slackRunChannelHandles?.find((handle) =>
@@ -735,6 +739,9 @@ export async function processAgentStream(
           const pending = pendingToolCalls.get(chunk.toolCallId);
           if (pending) {
             const payload = suspendPayload;
+            const reviewEscalation = payload.reviewEscalation && typeof payload.reviewEscalation === 'object'
+              ? payload.reviewEscalation as ReviewEscalation
+              : undefined;
             const channelMessage = payload.channelMessage && typeof payload.channelMessage === 'object'
               ? payload.channelMessage as any
               : undefined;
@@ -788,6 +795,7 @@ export async function processAgentStream(
                     ...(typeof payload.expiresAt === 'number' && { expiresAt: payload.expiresAt }),
                     ...(typeof payload.resumeToken === 'string' && { resumeToken: payload.resumeToken }),
                     ...(Array.isArray(payload.artifactSnapshots) && payload.artifactSnapshots.length > 0 && { artifactSnapshots: payload.artifactSnapshots }),
+                    ...(reviewEscalation && { reviewEscalation }),
                     ...(activeChannelMessage ? { channelMessage: activeChannelMessage } : {})
                   }
             });
@@ -809,6 +817,7 @@ export async function processAgentStream(
                 ...(typeof payload.approvalUrl === 'string' && { approvalUrl: payload.approvalUrl }),
                 ...(approvalPrompt && { prompt: approvalPrompt }),
                 ...(typeof payload.expiresAt === 'number' && { expiresAt: payload.expiresAt }),
+                ...(reviewEscalation && { reviewEscalation }),
                 input: pending.input,
                 channelRequest,
                 ...(options?.slackRunChannelHandles && { slackRunChannelHandles: options.slackRunChannelHandles })

@@ -142,6 +142,12 @@ describe('processAgentStream session logging', () => {
           prompt: 'Approve?',
           resumeToken: 'token-1',
           approvalUrl: 'https://example.test/sessions/session-1',
+          reviewEscalation: {
+            kind: 'fresh-review-exhausted',
+            critique: 'Add evidence for the claim.',
+            attempts: 2,
+            maxAttempts: 2,
+          },
         },
         contextSnapshot: {
           version: 1,
@@ -204,6 +210,12 @@ describe('processAgentStream session logging', () => {
         kind: 'await_human',
         prompt: 'Approve?',
         resumeToken: 'token-1',
+        reviewEscalation: {
+          kind: 'fresh-review-exhausted',
+          critique: 'Add evidence for the claim.',
+          attempts: 2,
+          maxAttempts: 2,
+        },
       },
     });
     expect(typeof pendingState.suspendedAt).toBe('number');
