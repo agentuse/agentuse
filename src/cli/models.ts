@@ -178,14 +178,17 @@ function printAliasSections(providers: string[]): void {
           `  ${chalk.white(`${MODEL_ALIAS_SIGIL}${name}`.padEnd(width))} ${chalk.gray('→')} ${chalk.gray(target)}${suffix}`
         );
       } else {
-        let resolved = target.candidates;
+        let resolved = ('model' in target ? [target] : target.candidates).map((entry) =>
+          typeof entry === 'string' ? entry : `${entry.model}${entry.reasoning ? ` (${entry.reasoning})` : ''}`);
         try {
-          resolved = resolveModelString(`${MODEL_ALIAS_SIGIL}${name}`).candidates ?? resolved;
+          const policy = resolveModelString(`${MODEL_ALIAS_SIGIL}${name}`);
+          resolved = (policy.candidates ?? [policy.model]).map((model) =>
+            `${model}${policy.candidateReasoning?.[model] ? ` (${policy.candidateReasoning[model]})` : ''}`);
         } catch {
           // Listing must remain usable so it can show the malformed alias the
           // user needs to repair; agent parsing still reports the real error.
         }
-        const cooldown = target.cooldown ? chalk.gray(` (cooldown ${target.cooldown})`) : '';
+        const cooldown = 'cooldown' in target && target.cooldown ? chalk.gray(` (cooldown ${target.cooldown})`) : '';
         console.log(
           `  ${chalk.white(`${MODEL_ALIAS_SIGIL}${name}`.padEnd(width))} ${chalk.gray('→')} ${chalk.gray(resolved.join(' → '))}${cooldown}`
         );

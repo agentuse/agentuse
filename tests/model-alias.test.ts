@@ -540,3 +540,41 @@ describe('resume pins the model at the prepare step', () => {
     }
   });
 });
+
+
+describe('reasoning presets', () => {
+  it('resolves presets and preserves independent fallback reasoning', () => {
+    useConfig({ default: '@deep', aliases: {
+      primary: { model: 'openai:gpt-5.6', reasoning: 'high' },
+      deep: { candidates: ['@primary', { model: 'anthropic:claude-opus-5', reasoning: 'medium' }, 'openai:gpt-5.4'] },
+    } });
+    const resolved = resolveAgentModel(undefined)!;
+    expect(resolved.candidateReasoning).toEqual({ 'openai:gpt-5.6': 'high', 'anthropic:claude-opus-5': 'medium' });
+    expect(resolved.candidates).toHaveLength(3);
+    const parsed = parseAgentContent('---\nmodel: "@primary"\n---\nWork.', 'preset');
+    expect(parsed.config.modelCandidateReasoning).toEqual({ 'openai:gpt-5.6': 'high' });
+    expect(parsed.config.modelCandidates).toEqual(['openai:gpt-5.6']);
+  });
+
+  it('rejects invalid reasoning and conflicting settings for a repeated model', () => {
+    useConfig({ aliases: { bad: { model: 'openai:gpt', reasoning: 'turbo' } } });
+    expect(() => resolveModelString('@bad')).toThrow('reasoning must be one of');
+    useConfig({ aliases: { bad: { candidates: [
+      { model: 'openai:gpt-5.6', reasoning: 'high' },
+      { model: 'openai:gpt-5.6', reasoning: 'low' },
+    ] } } });
+    expect(() => resolveModelString('@bad')).toThrow('conflicting reasoning');
+  });
+
+  it('snapshots and restores reasoning independently of subsequent alias edits', async () => {
+    const { snapshotModelFallbackPolicy, applyModelFallbackPolicy, applyRunModelOverride } = await import('../src/utils/model-alias');
+    useConfig({ aliases: { deep: { model: 'openai:gpt-5.6', reasoning: 'high' } } });
+    const target = parseAgentContent('---\nmodel: "@deep"\n---\nWork.', 'preset').config;
+    const policy = snapshotModelFallbackPolicy(target)!;
+    target.modelCandidateReasoning!['openai:gpt-5.6'] = 'low';
+    applyModelFallbackPolicy(target, policy);
+    expect(target.modelCandidateReasoning!['openai:gpt-5.6']).toBe('high');
+    applyRunModelOverride(target, { requested: 'openai:gpt-5.4', resolved: resolveModelString('openai:gpt-5.4') });
+    expect(target.modelCandidateReasoning).toBeUndefined();
+  });
+});

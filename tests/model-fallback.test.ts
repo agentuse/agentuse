@@ -376,3 +376,19 @@ describe('model alias fallback execution', () => {
     }
   });
 });
+
+
+it.each([undefined, 'medium'] as const)('uses fallback reasoning %s without inheriting primary effort', async (fallbackReasoning) => {
+  streamTextMock
+    .mockImplementationOnce(() => ({ stream: (async function* () { yield { type: 'error', error: new Error('429 rate limit') }; })() }))
+    .mockImplementationOnce(() => ({ stream: (async function* () { yield { type: 'finish', finishReason: 'stop' }; })(), response: Promise.resolve({ messages: [] }) }));
+  const runAgent = agent();
+  runAgent.config.reasoning = 'low';
+  runAgent.config.modelCandidateReasoning = {
+    'anthropic:claude-opus-5': 'high',
+    ...(fallbackReasoning && { 'openai:gpt-5.6': fallbackReasoning }),
+  };
+  await drain(executeAgentCore(runAgent, {}, options as any));
+  expect((streamTextMock.mock.calls[0][0] as any).reasoning).toBe('high');
+  expect((streamTextMock.mock.calls[1][0] as any).reasoning).toBe(fallbackReasoning ?? 'low');
+});

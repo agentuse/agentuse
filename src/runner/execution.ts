@@ -904,7 +904,7 @@ export async function* executeAgentCore(
     else await persistSelectedModel(agent, model, attemptSystemMessages, options);
     const attemptAgent: ParsedAgent = {
       ...agent,
-      config: { ...agent.config, model },
+      config: { ...agent.config, model, reasoning: agent.config.modelCandidateReasoning?.[model] ?? agent.config.reasoning },
     };
     const crossesProvider = resolveModelProvider(model) !== resolveModelProvider(initiallyPreparedModel);
     let meaningfulOutput = false;

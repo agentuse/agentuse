@@ -28,6 +28,7 @@ import { joinModelString, splitModelString } from './model-utils';
 import { loadModelSettings, type ModelAliasConfig, type ModelSettings } from './global-config';
 import { logger } from './logger';
 import { parseDurationMs } from './duration';
+import type { ReasoningLevel } from '../model-compatibility';
 
 /** Marks a user-defined alias from the config `models.aliases` block. */
 export const MODEL_ALIAS_SIGIL = '@';
@@ -53,6 +54,7 @@ export interface ResolvedModel {
   source: ModelResolutionSource;
   /** Ordered concrete models for an object-form user alias. First is `model`. */
   candidates?: string[];
+  candidateReasoning?: Record<string, ReasoningLevel>;
   /** Process-local cooldown applied after a transient first-response failure. */
   cooldownMs?: number;
 }
@@ -69,6 +71,7 @@ export interface RunModelOverride {
 
 /** Durable ordered fallback policy captured when a session starts. */
 export interface ModelFallbackPolicy {
+  candidateReasoning?: Record<string, ReasoningLevel>;
   candidates: string[];
   cooldownMs?: number;
 }
@@ -79,6 +82,7 @@ export interface ModelOverrideTarget {
   modelAlias?: string;
   modelSource?: ModelResolutionSource;
   modelCandidates?: string[];
+  modelCandidateReasoning?: Record<string, ReasoningLevel>;
   modelFallbackCooldownMs?: number;
 }
 
@@ -89,6 +93,7 @@ export function snapshotModelFallbackPolicy(
   if (!target.modelCandidates) return undefined;
   return {
     candidates: [...target.modelCandidates],
+    ...(target.modelCandidateReasoning && { candidateReasoning: { ...target.modelCandidateReasoning } }),
     ...(target.modelFallbackCooldownMs !== undefined && {
       cooldownMs: target.modelFallbackCooldownMs,
     }),
@@ -101,6 +106,8 @@ export function applyModelFallbackPolicy(
   policy: ModelFallbackPolicy
 ): void {
   target.modelCandidates = [...policy.candidates];
+  if (policy.candidateReasoning) target.modelCandidateReasoning = { ...policy.candidateReasoning };
+  else delete target.modelCandidateReasoning;
   if (policy.cooldownMs !== undefined) target.modelFallbackCooldownMs = policy.cooldownMs;
   else delete target.modelFallbackCooldownMs;
 }
@@ -112,6 +119,8 @@ export function applyRunModelOverride(
 ): void {
   const resolved = override.resolved;
   target.model = resolved.model;
+  if (resolved.candidateReasoning) target.modelCandidateReasoning = { ...resolved.candidateReasoning };
+  else delete target.modelCandidateReasoning;
   if (resolved.candidates !== undefined) target.modelCandidates = [...resolved.candidates];
   else delete target.modelCandidates;
   if (resolved.cooldownMs !== undefined) target.modelFallbackCooldownMs = resolved.cooldownMs;
@@ -280,7 +289,8 @@ export function resolveModelString(input: string): ResolvedModel {
       model,
       alias: written,
       source: 'user-alias',
-      ...(resolved.candidates.length > 1 && { candidates: resolved.candidates }),
+      ...((resolved.candidates.length > 1 || resolved.candidateReasoning) && { candidates: resolved.candidates }),
+      ...(resolved.candidateReasoning && { candidateReasoning: resolved.candidateReasoning }),
       ...(resolved.cooldownMs !== undefined && { cooldownMs: resolved.cooldownMs }),
     };
   }
@@ -300,7 +310,7 @@ export function resolveModelString(input: string): ResolvedModel {
 function resolveUserAlias(
   written: string,
   seen: Set<string>
-): { candidates: string[]; cooldownMs?: number } {
+): { candidates: string[]; candidateReasoning?: Record<string, ReasoningLevel>; cooldownMs?: number } {
   const name = written.slice(MODEL_ALIAS_SIGIL.length);
   if (name === '') {
     throw new ModelAliasError(
@@ -335,22 +345,33 @@ function resolveUserAlias(
   }
 
   const candidates: string[] = [];
+  const candidateReasoning: Record<string, ReasoningLevel> = {};
   let nestedCooldownMs: number | undefined;
-  for (const candidate of target.candidates) {
-    if (candidate.startsWith(MODEL_ALIAS_SIGIL)) {
-      const nested = resolveUserAlias(candidate, new Set(seen));
-      candidates.push(...nested.candidates);
-      nestedCooldownMs ??= nested.cooldownMs;
-    } else {
-      candidates.push(resolveVersionAlias(candidate) ?? candidate);
+  for (const entry of ('model' in target ? [target] : target.candidates)) {
+    const candidate = typeof entry === 'string' ? entry : entry.model;
+    const explicitReasoning = typeof entry === 'string' ? undefined : entry.reasoning;
+    const nested = candidate.startsWith(MODEL_ALIAS_SIGIL)
+      ? resolveUserAlias(candidate, new Set(seen))
+      : { candidates: [resolveVersionAlias(candidate) ?? candidate] };
+    nestedCooldownMs ??= nested.cooldownMs;
+    for (const model of nested.candidates) {
+      // An override on an alias reference applies only to its primary model.
+      const reasoning = (model === nested.candidates[0] ? explicitReasoning : undefined)
+        ?? nested.candidateReasoning?.[model];
+      if (candidates.includes(model) && candidateReasoning[model] !== reasoning) {
+        throw new ModelAliasError(`Alias ${written} configures conflicting reasoning for ${model}`);
+      }
+      candidates.push(model);
+      if (reasoning !== undefined) candidateReasoning[model] = reasoning;
     }
   }
   const uniqueCandidates = [...new Set(candidates)];
-  const cooldownMs = target.cooldown !== undefined
+  const cooldownMs = 'cooldown' in target && target.cooldown !== undefined
     ? parseDurationMs(target.cooldown, { bareUnit: 'seconds', field: `models.aliases.${name}.cooldown` })
     : nestedCooldownMs;
   return {
     candidates: uniqueCandidates,
+    ...(Object.keys(candidateReasoning).length > 0 && { candidateReasoning }),
     ...(cooldownMs !== undefined && { cooldownMs }),
   };
 }
@@ -403,6 +424,7 @@ export function resolveAgentModel(frontmatterModel: string | undefined): Resolve
     alias: resolved.alias ?? fallback,
     source: 'default',
     ...(resolved.candidates !== undefined && { candidates: resolved.candidates }),
+    ...(resolved.candidateReasoning && { candidateReasoning: resolved.candidateReasoning }),
     ...(resolved.cooldownMs !== undefined && { cooldownMs: resolved.cooldownMs }),
   };
 }

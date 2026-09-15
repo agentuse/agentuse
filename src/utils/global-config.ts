@@ -5,15 +5,21 @@ import * as dotenv from 'dotenv';
 import { atomicWriteFileSync } from './atomic-write';
 import { parseDurationMs } from './duration';
 import { expandHome } from './path';
+import { REASONING_LEVELS, type ReasoningLevel } from '../model-compatibility';
+
+export interface ModelAliasPreset {
+  model: string;
+  reasoning?: ReasoningLevel;
+}
 
 export interface ModelAliasFallbackConfig {
   /** Ordered model ids or aliases. The first available candidate is preferred. */
-  candidates: string[];
+  candidates: (string | ModelAliasPreset)[];
   /** How long a transiently failing concrete model is skipped by this process. */
   cooldown?: string;
 }
 
-export type ModelAliasConfig = string | ModelAliasFallbackConfig;
+export type ModelAliasConfig = string | ModelAliasPreset | ModelAliasFallbackConfig;
 
 export interface GlobalConfigProject {
   id?: string;
@@ -146,6 +152,10 @@ function validateModels(input: unknown, configPath: string): GlobalModelsConfig 
         fail(configPath, `\`models.aliases.${name}\` must be a non-empty string or fallback object`);
       }
       const fallback = value as Record<string, unknown>;
+      if ('model' in fallback) {
+        aliases[name] = parseModelPreset(fallback, configPath, `models.aliases.${name}`);
+        continue;
+      }
       const unknownKeys = Object.keys(fallback).filter((key) => !['candidates', 'cooldown'].includes(key));
       if (unknownKeys.length > 0) {
         fail(configPath, `\`models.aliases.${name}\` has unknown key(s): ${unknownKeys.join(', ')}`);
@@ -154,6 +164,9 @@ function validateModels(input: unknown, configPath: string): GlobalModelsConfig 
         fail(configPath, `\`models.aliases.${name}.candidates\` must be a non-empty array`);
       }
       const candidates = fallback.candidates.map((candidate, index) => {
+        if (candidate !== null && typeof candidate === 'object' && !Array.isArray(candidate)) {
+          return parseModelPreset(candidate as Record<string, unknown>, configPath, `models.aliases.${name}.candidates[${index}]`);
+        }
         if (typeof candidate !== 'string' || candidate.trim().length === 0) {
           fail(configPath, `\`models.aliases.${name}.candidates[${index}]\` must be a non-empty string`);
         }
@@ -518,4 +531,14 @@ function validate(input: unknown, configPath: string): GlobalConfig {
   }
   out.serve = srv;
   return out;
+}
+
+function parseModelPreset(value: Record<string, unknown>, configPath: string, field: string): ModelAliasPreset {
+  const unknown = Object.keys(value).filter((key) => !['model', 'reasoning'].includes(key));
+  if (unknown.length) fail(configPath, `${field} has unknown key(s): ${unknown.join(', ')}`);
+  if (typeof value.model !== 'string' || !value.model.trim()) fail(configPath, `${field}.model must be a non-empty string`);
+  if (value.reasoning !== undefined && !(REASONING_LEVELS as readonly unknown[]).includes(value.reasoning)) {
+    fail(configPath, `${field}.reasoning must be one of: ${REASONING_LEVELS.join(', ')}`);
+  }
+  return { model: value.model.trim(), ...(value.reasoning !== undefined && { reasoning: value.reasoning as ReasoningLevel }) };
 }
