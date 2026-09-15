@@ -22,6 +22,7 @@ import {
 import { changesetReviewHref } from '../lib/changeset-view';
 import { buildDebugPrompt, type DebugPromptContext } from './debug-prompt-button';
 import { writeClipboardText } from '../lib/clipboard';
+import { Modal } from './modal';
 
 const ACTIVE_REVISION_STATUSES = new Set(['running', 'proposed', 'no-change']);
 const AUTHORING_PREFS_KEY = 'agentuse:revision-authoring';
@@ -102,6 +103,10 @@ export function AgentRevisionLauncher(props: {
   hideTrigger?: boolean | undefined;
   /** Bump to open the form from outside, e.g. a menu item. */
   openRequest?: number | undefined;
+  /** `dialog`: the form opens as a modal over the page (the session view's
+   *  ⋯ menu opens it from the top of the page, far from the inline row).
+   *  Default `inline`: the form expands in place under its trigger. */
+  presentation?: 'inline' | 'dialog' | undefined;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -295,11 +300,33 @@ export function AgentRevisionLauncher(props: {
     }
   };
 
+  const formTitle = `Revise ${props.context.agentName ?? 'this agent'}`;
+  const instructionRef = useRef<HTMLTextAreaElement>(null);
   const active = Boolean(activeRevision);
   // A finished revision is history, not a task: it collapses to a quiet line so
   // the agent header keeps reading as a row of actions.
   const showCard = Boolean(latest) && (active || latest!.status === 'no-change' || latest!.status === 'accepted');
   if (!agentTarget && ((!props.ended && !props.atGate) || !props.context.agentFilePath)) return null;
+
+  const formBody = (
+    <div class="agent-revision-form-body">
+      <div class="agent-revision-intro"><span>{agentTarget
+        ? 'Start one internal session to review this agent\'s source and propose a safe change. Nothing changes until you review and apply it.'
+        : 'Start one internal session to diagnose this run and propose a safe source change. Nothing changes until you review and apply it.'}</span></div>
+      {!agentTarget && <p class="agent-revision-gate-note">This changes the agent file for future runs, not this run.{props.atGate ? ' Approve or reject the pending step to continue this one.' : ''}</p>}
+      <label class="agent-revision-field"><span>What should change?</span><textarea ref={instructionRef} value={instruction} disabled={busy} placeholder="e.g. exclude refunded orders, or make results shorter without missing urgent tickets" onInput={(event) => setInstruction((event.target as HTMLTextAreaElement).value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); if (!busy && !loadingOptions && instruction.trim() && model) void submit(); } }} /></label>
+      <div class="agent-revision-models">
+        <label class="agent-revision-field"><span>Authoring model</span><select value={model} disabled={busy || loadingOptions} onChange={(event) => { const value = (event.target as HTMLSelectElement).value; setModel(value); storeAuthoring({ model: value }); }}>{models.map((option) => <option value={option.value}>{option.label}</option>)}</select></label>
+        <label class="agent-revision-field"><span>Thinking effort</span><select value={reasoning} disabled={busy} onChange={(event) => { const value = (event.target as HTMLSelectElement).value as ReasoningLevel; setReasoning(value); storeAuthoring({ reasoning: value }); }}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
+      </div>
+      {error && <p class="agent-revision-error" role="alert">{error}{errorHref && <> <a href={errorHref}>Open it</a></>}</p>}
+      <div class="agent-revision-actions"><span class="hint"><span class="kbd">⌘⏎</span> start</span><button type="button" class="agent-revision-cancel" disabled={busy} onClick={() => setOpen(false)}>Cancel</button><button type="button" class="agent-revision-primary" disabled={busy || loadingOptions || !instruction.trim() || !model} onClick={() => void submit()}>{busy ? 'Starting revision…' : 'Start revision session'}</button></div>
+      <div class="agent-revision-handoff">
+        <span><strong>Need project code or a custom integration?</strong><small>Use your coding agent when the change is larger than this AgentUse file.</small></span>
+        <button type="button" disabled={busy} onClick={() => { void writeClipboardText(agentTarget ? agentTarget.handoffPrompt(instruction) : buildDebugPrompt(props.context, instruction)).then((ok) => { if (!ok) return; setHandoffCopied(true); setTimeout(() => setHandoffCopied(false), 2000); }); }}>{handoffCopied ? 'Prompt copied — paste it into your coding agent' : 'Copy prompt for Coding Agent'}</button>
+      </div>
+    </div>
+  );
 
   return (
     <>
@@ -372,26 +399,22 @@ export function AgentRevisionLauncher(props: {
           <span>{props.buttonLabel ?? 'Revise agent file'}</span>
         </button>
       )}
-      {open && <section class="agent-revision-form" aria-labelledby="agent-revision-title">
-        <div class="agent-revision-form-head"><span id="agent-revision-title">Revise {props.context.agentName ?? 'this agent'}</span><button type="button" aria-label="Close revision form" disabled={busy} onClick={() => setOpen(false)}>×</button></div>
-        <div class="agent-revision-form-body">
-          <div class="agent-revision-intro"><span>{agentTarget
-            ? 'Start one internal session to review this agent\'s source and propose a safe change. Nothing changes until you review and apply it.'
-            : 'Start one internal session to diagnose this run and propose a safe source change. Nothing changes until you review and apply it.'}</span></div>
-          {!agentTarget && <p class="agent-revision-gate-note">This changes the agent file for future runs, not this run.{props.atGate ? ' Approve or reject the pending step to continue this one.' : ''}</p>}
-          <label class="agent-revision-field"><span>What should change?</span><textarea value={instruction} disabled={busy} placeholder="e.g. exclude refunded orders, or make results shorter without missing urgent tickets" onInput={(event) => setInstruction((event.target as HTMLTextAreaElement).value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); if (!busy && !loadingOptions && instruction.trim() && model) void submit(); } }} /></label>
-          <div class="agent-revision-models">
-            <label class="agent-revision-field"><span>Authoring model</span><select value={model} disabled={busy || loadingOptions} onChange={(event) => { const value = (event.target as HTMLSelectElement).value; setModel(value); storeAuthoring({ model: value }); }}>{models.map((option) => <option value={option.value}>{option.label}</option>)}</select></label>
-            <label class="agent-revision-field"><span>Thinking effort</span><select value={reasoning} disabled={busy} onChange={(event) => { const value = (event.target as HTMLSelectElement).value as ReasoningLevel; setReasoning(value); storeAuthoring({ reasoning: value }); }}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
-          </div>
-          {error && <p class="agent-revision-error" role="alert">{error}{errorHref && <> <a href={errorHref}>Open it</a></>}</p>}
-          <div class="agent-revision-actions"><span class="hint"><span class="kbd">⌘⏎</span> start</span><button type="button" class="agent-revision-cancel" disabled={busy} onClick={() => setOpen(false)}>Cancel</button><button type="button" class="agent-revision-primary" disabled={busy || loadingOptions || !instruction.trim() || !model} onClick={() => void submit()}>{busy ? 'Starting revision…' : 'Start revision session'}</button></div>
-          <div class="agent-revision-handoff">
-            <span><strong>Need project code or a custom integration?</strong><small>Use your coding agent when the change is larger than this AgentUse file.</small></span>
-            <button type="button" disabled={busy} onClick={() => { void writeClipboardText(agentTarget ? agentTarget.handoffPrompt(instruction) : buildDebugPrompt(props.context, instruction)).then((ok) => { if (!ok) return; setHandoffCopied(true); setTimeout(() => setHandoffCopied(false), 2000); }); }}>{handoffCopied ? 'Prompt copied — paste it into your coding agent' : 'Copy prompt for Coding Agent'}</button>
-          </div>
-        </div>
-      </section>}
+      {open && (props.presentation === 'dialog'
+        ? (
+          <Modal
+            class="agent-revision-dialog"
+            open={open}
+            onClose={() => setOpen(false)}
+            title={formTitle}
+            onOpened={() => requestAnimationFrame(() => instructionRef.current?.focus())}
+          >
+            {formBody}
+          </Modal>
+        )
+        : <section class="agent-revision-form" aria-labelledby="agent-revision-title">
+          <div class="agent-revision-form-head"><span id="agent-revision-title">{formTitle}</span><button type="button" aria-label="Close revision form" disabled={busy} onClick={() => setOpen(false)}>×</button></div>
+          {formBody}
+        </section>)}
     </>
   );
 }

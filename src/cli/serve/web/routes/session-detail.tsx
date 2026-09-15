@@ -2055,6 +2055,7 @@ export default function SessionDetail() {
               ended={ended}
               atGate={approval.sessionStatus === 'suspended'}
               hideTrigger
+              presentation="dialog"
               openRequest={reviseRequest}
               token={token}
               context={{

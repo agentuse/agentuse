@@ -3506,6 +3506,7 @@ dialog#decision-dialog .dialog-foot .hint .kbd {
 dialog#decision-dialog::backdrop,
 .push-bell-dialog::backdrop,
 .run-dialog::backdrop,
+.agent-revision-dialog::backdrop,
 .cca-dialog::backdrop,
 .provider-setup-dialog::backdrop,
 .agent-create-dialog::backdrop,
@@ -3517,6 +3518,7 @@ dialog#decision-dialog::backdrop,
 :root[data-theme="light"] dialog#decision-dialog::backdrop,
 :root[data-theme="light"] .push-bell-dialog::backdrop,
 :root[data-theme="light"] .run-dialog::backdrop,
+:root[data-theme="light"] .agent-revision-dialog::backdrop,
 :root[data-theme="light"] .cca-dialog::backdrop,
 :root[data-theme="light"] .provider-setup-dialog::backdrop,
 :root[data-theme="light"] .agent-create-dialog::backdrop,
@@ -8359,10 +8361,20 @@ a.lastrun.waiting { color: var(--cyan); }
   color: var(--primary-fg);
 }
 .page-approval-detail .agent-revision-primary:hover:not(:disabled) { background: var(--primary-bg-hover); }
-/* Keep the resume button up in the actions row instead of stranding it below
-   the open revision form. */
-.page-approval-detail .session-actions .agent-revision-form { order: 2; }
-.page-approval-detail .session-actions > button { order: 1; }
+/* The session view opens the revision form as a modal from its ⋯ menu (the
+   menu sits at the top of the page, the inline row at the foot of the card).
+   Same shell as .run-dialog, which the same menu opens. */
+.agent-revision-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-width: 100%;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+.agent-revision-dialog .agent-revision-form-body { padding: 16px 18px 18px; }
 .agent-revision-handoff {
   display: flex;
   align-items: center;

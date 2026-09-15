@@ -142,7 +142,35 @@ describe('agent revision entry', () => {
     expect(formRules).toContain('background: var(--panel);');
     expect(formRules).toContain('overflow: hidden;');
     expect(fieldRules).toContain('font-weight: var(--weight-normal);');
-    expect(css).not.toContain('.agent-revision-dialog');
+  });
+
+  it('opens as a modal when asked to, with the same form body', () => {
+    const context = {
+      sessionId: 'session-1',
+      projectId: 'support',
+      projectPath: '/project',
+      agentName: 'Support triage',
+      agentFilePath: '/project/support-triage.agentuse',
+      model: 'openai:gpt-5.6-luna',
+      sessionStatus: 'error' as const,
+      errorCode: 'INCOMPLETE',
+    };
+    // Neither surface renders the form until it is opened, so the shells are
+    // checked in CSS: the session view's ⋯ menu opens the dialog skin, which
+    // shares the .run-dialog backdrop recipe.
+    const inline = renderToString(<AgentRevisionLauncher ended context={context} />);
+    const dialog = renderToString(<AgentRevisionLauncher ended hideTrigger presentation="dialog" context={context} />);
+    expect(inline).not.toContain('agent-revision-dialog');
+    expect(dialog).not.toContain('agent-revision-form-head');
+  });
+
+  it('skins the revision dialog like the run dialog it shares a menu with', async () => {
+    const css = await Bun.file(new URL('../src/cli/serve/web/styles/app.css', import.meta.url)).text();
+    const shell = css.slice(css.indexOf('.agent-revision-dialog {'), css.indexOf('.agent-revision-dialog .agent-revision-form-body'));
+    expect(shell).toContain('box-shadow: 0 20px 60px');
+    expect(css).toContain('.agent-revision-dialog::backdrop,');
+    const sessionDetail = await Bun.file(new URL('../src/cli/serve/web/routes/session-detail.tsx', import.meta.url)).text();
+    expect(sessionDetail).toContain('presentation="dialog"');
   });
 
   it('gives a running internal revision an explicit stop control', () => {
