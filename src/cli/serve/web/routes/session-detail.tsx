@@ -57,50 +57,64 @@ export function sessionResumeMode(options: {
 
 /** The one word that says what this page is for right now. Every card, bar
  *  and menu reads it instead of re-deriving the answer from raw status
- *  strings. `idle` is a page with nothing to show or do in a card: an expired
- *  gate, a stranded run, an ended run with no result. */
-export type SessionPageMode = 'decision' | 'report' | 'working' | 'error' | 'result' | 'idle';
+ *  strings. `idle` is a page with nothing to do: an expired gate, a stranded
+ *  run, a run parked at a gate that is not this reader's to decide, an ended
+ *  run with no result. A delegated child viewed directly is not a mode of its
+ *  own: it takes whichever of these fits and gets the view-only overlay on
+ *  top (a label, a meta note, a way back to the parent; see nowCardLabel). */
+export type SessionPageMode = 'decision' | 'working' | 'error' | 'result' | 'idle';
 
 export function sessionPageMode(options: {
   /** An actionable gate is on the page: pending, not expired, entry found. */
   gate: boolean;
-  /** A delegated child viewed directly; decisions are made on the parent. */
-  viewOnly: boolean;
   ended: boolean;
-  live: boolean;
+  /** The agent or a delegated sub-agent is doing work right now. Narrower
+   *  than "live": a run parked at a gate is live but not working, and an
+   *  expired or stranded gate must not read as progress. */
+  working: boolean;
   /** Ended with an error the page can show. */
   failed: boolean;
   /** Ended with something to show: outcome, timings, artifacts. */
   hasResult: boolean;
 }): SessionPageMode {
   if (options.gate) return 'decision';
-  if (options.viewOnly) return 'report';
   if (options.ended) return options.failed ? 'error' : options.hasResult ? 'result' : 'idle';
-  return options.live ? 'working' : 'idle';
+  return options.working ? 'working' : 'idle';
 }
 
-/** The transcript always uses one disclosure/card presentation. Decision and
- * working views get transient disclosure state because their summary cards are
- * the primary surface; every other view follows the reader's saved preference. */
-export type SessionTranscriptMode = 'decision' | 'working' | 'remembered';
-
-export function sessionTranscriptMode(pageMode: SessionPageMode): SessionTranscriptMode {
-  if (pageMode === 'decision') return 'decision';
-  if (pageMode === 'working') return 'working';
-  return 'remembered';
+/** The head label of the now card. The view-only overlay wins only while the
+ *  child is parked at its parent's gate; otherwise the mode names the card. */
+export function nowCardLabel(options: {
+  mode: SessionPageMode;
+  viewOnly: boolean;
+  /** Raw session status is suspended: parked at an approval gate. */
+  suspended: boolean;
+  ended: boolean;
+  preparing: boolean;
+  /** The gate is a review escalation asking for revision guidance. */
+  escalation: boolean;
+}): string {
+  if (options.viewOnly && options.suspended) return "Paused for the parent's decision";
+  switch (options.mode) {
+    case 'decision': return options.escalation ? 'Revision needs your input' : 'Decision needed';
+    case 'working': return options.preparing ? 'Preparing' : 'Working';
+    case 'error': return 'Needs attention';
+    case 'result': return 'Result';
+    case 'idle': return options.ended ? 'Ended' : 'Paused';
+  }
 }
 
-export function sessionTranscriptFoldedCopy(mode: SessionTranscriptMode): string {
+/** Decision and working pages fold the transcript on every visit: the card is
+ *  the surface, and a log that starts open would push it off screen. Every
+ *  other page follows the reader's remembered preference. */
+export function transcriptFoldsPerVisit(mode: SessionPageMode): boolean {
+  return mode === 'decision' || mode === 'working';
+}
+
+export function sessionTranscriptFoldedCopy(mode: SessionPageMode): string {
   if (mode === 'decision') return 'folded while a decision is pending';
   if (mode === 'working') return 'folded while the run is working';
   return 'folded, the summary is above';
-}
-
-export function sessionTranscriptOpenState(
-  mode: SessionTranscriptMode,
-  state: { decision: boolean; working: boolean; remembered: boolean },
-): boolean {
-  return state[mode];
 }
 
 const EXECUTING_SUBAGENT_STATUSES = new Set([
@@ -803,14 +817,10 @@ export default function SessionDetail() {
   // re-collapsed transcript leaves the page too short for the scroll restore
   // below to land anywhere useful.
   const [transcriptOpen, setTranscriptOpen] = useState<boolean>(transcriptDefaultOpen);
-  // Transcript disclosure while a gate is pending. Not the remembered
+  // Transcript disclosure on a decision or working page. Not the remembered
   // preference above: that defaults open, and the point here is that the log
-  // starts closed on every visit to a pending decision.
-  const [gateLogOpen, setGateLogOpen] = useState(false);
-  // The Working card already carries the live call plus the most recent steps.
-  // Keep the full feed tucked away by default without changing the reader's
-  // remembered transcript preference for completed and report views.
-  const [workingLogOpen, setWorkingLogOpen] = useState(false);
+  // starts closed on every visit while the card is the surface.
+  const [transcriptVisitOpen, setTranscriptVisitOpen] = useState(false);
   // Entry-type filter. A long run is mostly tool calls, so free-text search is a
   // poor way to find the agent's reasoning spine or the thing that failed.
   const [logFilter, setLogFilter] = useState<LogFilter>(() => {
@@ -871,8 +881,7 @@ export default function SessionDetail() {
   useEffect(() => {
     const revealSearch = () => {
       document.querySelector<HTMLDetailsElement>('.session-transcript')?.setAttribute('open', '');
-      setGateLogOpen(true);
-      setWorkingLogOpen(true);
+      setTranscriptVisitOpen(true);
       setTranscriptOpen(true);
       setShowLogSearch(true);
       requestAnimationFrame(() => {
@@ -979,8 +988,7 @@ export default function SessionDetail() {
     setLogQuery(banked?.logQuery ?? '');
     setShowLogSearch(banked?.showLogSearch ?? false);
     setTranscriptOpen(banked?.transcriptOpen ?? transcriptDefaultOpen());
-    setGateLogOpen(false);
-    setWorkingLogOpen(false);
+    setTranscriptVisitOpen(false);
     restoreScrollRef.current = banked && banked.scrollY > 0 ? banked.scrollY : null;
     restoreAttemptsRef.current = 0;
     // Bank this session's view state on the way out, so stepping into a
@@ -1828,7 +1836,6 @@ export default function SessionDetail() {
     ? `Revising ${revisionIdentity.targetAgentName}`
     : undefined;
   const pageAgentLabel = revisionTitle ?? agentLabel;
-  const busy = status === 'resuming' || status === 'continuing';
   const tokenUsage = headerTokenUsage(approval);
   const estimatedCost = pricing ? pricing.estimateSessionCostUsd(approval.model, tokenUsage) : undefined;
   const costLabel = estimatedCost !== undefined && pricing ? pricing.formatUsd(estimatedCost) : undefined;
@@ -1863,22 +1870,20 @@ export default function SessionDetail() {
   // parent run. Surface a prominent jump-to-parent CTA so the reviewer isn't left
   // hunting for the (intentionally hidden) approve buttons.
   const showParentApproveCta = isSubagentView && approval.sessionStatus === 'suspended' && Boolean(parentLink);
-  // The only header prose that survives: a state the page cannot otherwise
-  // explain (a paused sub-agent, an expired or stranded run, a revision, a
-  // resumable delegated failure).
-  const headerNote = isRevisionSession
+  // The only prose the card carries: a state the page cannot otherwise
+  // explain (a revision, a resumable delegated failure, an expired or
+  // stranded run). A view-only child needs none: its head, its meta and the
+  // link back to the parent say it.
+  const cardNote = isRevisionSession
     ? 'This AgentUse-owned session diagnoses the originating run and prepares a source proposal for your review.'
-    : isSubagentView
-      ? approval.sessionStatus === 'suspended'
-        ? 'This sub-agent is paused for approval. The decision is made on its parent run — open it from the pending request at the end of the log.'
-        : 'A delegated sub-agent run. Approvals and follow-ups for it are handled on the parent run.'
-      : cascadeRetryActionable
-        ? 'This run was interrupted while completing a delegated task. Resume to continue where it stopped.'
-        : expired
-          ? 'This approval request has expired. The session log remains available for review.'
-          : stranded
-            ? (approval.errorMessage ?? 'This run is waiting on a delegated sub-agent that has already ended, so it can no longer be resumed.')
-            : undefined;
+    : cascadeRetryActionable
+      ? 'This run was interrupted while completing a delegated task. Resume to continue where it stopped.'
+      : expired
+        ? 'This approval request has expired. The session log remains available for review.'
+        : stranded && !ended
+          // An ended stranded run leads with this same message as its failure.
+          ? (approval.errorMessage ?? 'This run is waiting on a delegated sub-agent that has already ended, so it can no longer be resumed.')
+          : undefined;
 
   // Verdict line for the result card. Prefer the runtime's
   // root+descendant timing split so a reviewer taking 30 minutes does not make
@@ -1925,11 +1930,8 @@ export default function SessionDetail() {
   // Older outcome records can contain an ellipsized copy of the full error.
   // Keep distinct headlines, but avoid repeating the failure as a large title.
   const errorHeadline = finalOutcome.headline?.replace(/(?:\.{3}|…)$/, '').trim();
-  const showOutcomeHeadline = Boolean(finalOutcome.headline)
-    && !(resultErrorText && errorHeadline && resultErrorText.includes(errorHeadline));
 
-  // Shared between the feed-first artifacts panel and the summary-first result
-  // card, so the tile markup stays single-sourced.
+  // The artifact tiles, rendered in the card's result slot.
   const artifactTiles = artifacts.length > 0 ? (
     <div class="artifact-tiles">
       {[...artifacts]
@@ -2005,78 +2007,19 @@ export default function SessionDetail() {
     <div class="log-tools">{logFilterControl}{reasoningToggle}{debugToggle}</div>
   ) : null;
 
-  // The run's outcome: verdict, timings, recorded metrics, final response and
-  // artifacts. Rendered for every ended run, not only ones that arrived ended --
-  // watching a run finish in an open tab used to leave the reader at the bottom
-  // of a raw log with no answer to "what did it do".
-  const resultSection = ended && (hasFinalOutcome || resultErrorText || resultMeta || artifactTiles) ? (
-    <>
-            <section class="panel session-result">
-              <div class="result-verdict">
-                <span class={`status ${displayStatus}`}>{displayStatus}</span>
-                {resultMeta && <span class="result-meta">{resultMeta}</span>}
-              </div>
-              {recordedMetrics.length > 0 && (
-                <div class="result-recorded">
-                  <span class="label">recorded</span>
-                  {recordedMetrics.map((m) => {
-                    const amount = recordedMetricAmount(m);
-                    return (
-                      <a
-                        key={m.metric}
-                        class="metric-chip"
-                        href={`/stores/metrics${projectId ? `?project=${encodeURIComponent(projectId)}` : ''}`}
-                        title={m.metric}
-                      >
-                        <span class="metric-chip-name">{humanizeMetric(m.metric)}</span>
-                        {amount && <span class="metric-chip-amount">{amount}</span>}
-                      </a>
-                    );
-                  })}
-                </div>
-              )}
-              {resultErrorText && <div class="result-error">{resultErrorText}</div>}
-              {hasFinalOutcome ? (
-                <>
-                  {showOutcomeHeadline && finalOutcome.headline && (
-                    <p class="result-headline"><InlineMarkdown value={finalOutcome.headline} /></p>
-                  )}
-                  {finalOutcome.body && (
-                    <div class="result-body"><LogContent value={finalOutcome.body} forceMarkdown /></div>
-                  )}
-                </>
-              ) : !resultErrorText ? (
-                <div class="result-empty">This run ended without a final response; the session log below has the details.</div>
-              ) : null}
-              {artifactTiles && (
-                <div class="result-artifacts">
-                  <div class="label">artifacts</div>
-                  {artifactTiles}
-                </div>
-              )}
-            </section>
-    </>
-  ) : null;
-
+  // Ended with something to show: an outcome, timings, artifacts. Decides
+  // result-vs-idle; the card's slots below render the pieces.
+  const hasResult = ended && (hasFinalOutcome || Boolean(resultMeta) || artifacts.length > 0);
   const mode = sessionPageMode({
     gate: Boolean(gateEntry),
-    viewOnly: isSubagentView,
     ended,
-    live,
+    working,
     failed: Boolean(resultErrorText),
-    hasResult: Boolean(resultSection),
+    hasResult,
   });
-  const transcriptMode = sessionTranscriptMode(mode);
-  const transcriptIsOpen = sessionTranscriptOpenState(transcriptMode, {
-    decision: gateLogOpen,
-    working: workingLogOpen,
-    remembered: transcriptOpen,
-  });
-  const setTranscriptIsOpen = transcriptMode === 'decision'
-    ? setGateLogOpen
-    : transcriptMode === 'working'
-      ? setWorkingLogOpen
-      : setTranscriptOpen;
+  const transcriptPerVisit = transcriptFoldsPerVisit(mode);
+  const transcriptIsOpen = transcriptPerVisit ? transcriptVisitOpen : transcriptOpen;
+  const setTranscriptIsOpen = transcriptPerVisit ? setTranscriptVisitOpen : setTranscriptOpen;
   const runControls = sessionRunControls({
     ended,
     live,
@@ -2234,9 +2177,6 @@ export default function SessionDetail() {
           onSubmit={(prompt) => void submitContinue(prompt)}
         />
 
-        <div class="inactive-banner" hidden={mode !== 'idle' || runControls.length > 0 || busy}>
-          This session is not accepting actions right now.
-        </div>
         <ChangesetSessionPanel
           sessionId={sessionId}
           token={token}
@@ -2264,28 +2204,138 @@ export default function SessionDetail() {
   );
 
   // ---- The "now" card: what this page is for in its current state ----
-  // One card, directly under the header, whose head names the state and
-  // whose body is the one thing to read or do: the pending decision, the
-  // step in progress, the result, or the failure. Everything else on the
-  // page (judge, learnings, the transcript) folds under it.
-  const nowHead = (tone: 'decision' | 'working' | 'result' | 'error' | 'report', label: string, meta: string | undefined, trailing?: preact.ComponentChildren) => (
-    <div class={`now-head is-${tone}`}>
-      {tone === 'working' && <span class="log-spinner" aria-hidden="true" />}
-      <span class="now-label">{label}</span>
-      {meta && <span class="now-meta">{meta}</span>}
-      {trailing && <span class="now-trailing">{trailing}</span>}
-    </div>
-  );
-  const runningEntry = workingSessionEntry(orderedLogs);
-  const failedEntry = failedSessionEntry(orderedLogs);
+  // One card, directly under the header, built from fixed slots: a head that
+  // names the state, a note the page cannot otherwise explain, the one thing
+  // to read or do (the gate, the running step, the failure), the result, the
+  // tiles, a way back to the parent, and the action row. Every mode fills
+  // the same slots or leaves them empty; no mode composes its own tree.
+  // Everything else on the page (judge, learnings, the transcript) folds
+  // under it.
+  const isSuspended = approval.sessionStatus === 'suspended';
+  const cardLabel = nowCardLabel({
+    mode,
+    viewOnly: isSubagentView,
+    suspended: isSuspended,
+    ended,
+    preparing: status === 'preparing',
+    escalation: Boolean(gateEntry?.details?.reviewEscalation),
+  });
+  const cardAria: Record<SessionPageMode, string> = {
+    decision: 'Pending decision',
+    working: 'In progress',
+    error: 'Session needs attention',
+    result: 'Result',
+    idle: 'Session state',
+  };
   const gateWaitLabel = gateEntry?.time !== undefined ? `waiting ${formatDuration(Date.now() - gateEntry.time)}` : undefined;
   const bounces = judgeRows.filter((row) => row.verdict === 'fail').length;
   const lastJudge = judgeRows[judgeRows.length - 1];
-  const gateHeadMeta = [
-    gateWaitLabel,
-    lastJudge?.verdict === 'skipped' && bounces > 0 ? `escalated after ${bounces} automated rejection${bounces === 1 ? '' : 's'}` : undefined,
-    lastJudge?.verdict === 'pass' ? 'judge passed' : undefined,
+  const cardMeta = [
+    ...(mode === 'decision'
+      ? [
+        gateWaitLabel,
+        lastJudge?.verdict === 'skipped' && bounces > 0 ? `escalated after ${bounces} automated rejection${bounces === 1 ? '' : 's'}` : undefined,
+        lastJudge?.verdict === 'pass' ? 'judge passed' : undefined,
+      ]
+      : mode === 'working'
+        ? [
+          `${orderedLogs.length} ${orderedLogs.length === 1 ? 'entry' : 'entries'}`,
+          elapsedLabel,
+          'no approval needed yet',
+        ]
+        : [displayStatus, resultMeta]),
+    isSubagentView ? 'view only, decisions are made on the parent' : undefined,
   ].filter(Boolean).join(' · ');
+
+  // Slot: the note. An idle page with nothing else to say gets a fallback so
+  // the card never opens on an empty body.
+  const note = cardNote ?? (mode !== 'idle'
+    ? undefined
+    : ended
+      ? 'This run ended with nothing to show; the session log below has the details.'
+      : 'This session is not accepting actions right now.');
+
+  // Slot: the focus, the one thing to read or do. The only place the page
+  // still branches on the mode to pick markup.
+  const runningEntry = mode === 'working' ? workingSessionEntry(orderedLogs) : undefined;
+  const failedEntry = mode === 'error' ? failedSessionEntry(orderedLogs) : undefined;
+  const recentSteps = mode === 'working'
+    ? [...orderedLogs].reverse().filter((e) => e.type === 'tool' && e.status === 'completed' && !e.parentCallId).slice(0, 3).reverse()
+    : [];
+  const focus = mode === 'decision'
+    ? gatePanel
+    : mode === 'working'
+      ? (
+        <>
+          {runningEntry
+            ? <ul class="logs now-running-step" role="list">{renderLogEntry(runningEntry)}</ul>
+            : <div class="now-body"><div class="now-working-label">{workingLabel}<span class="log-dots" aria-hidden="true" /></div></div>}
+          {recentSteps.length > 0 && (
+            <>
+              <div class="now-recent-label">Just before</div>
+              <ul class="logs now-recent" role="list">{recentSteps.map((e) => renderLogEntry(e))}</ul>
+            </>
+          )}
+        </>
+      )
+      : mode === 'error'
+        ? (
+          <>
+            <div class="now-body"><div class="now-error">{resultErrorText}</div></div>
+            {failedEntry && <ul class="logs now-failed-step" role="list">{renderLogEntry(failedEntry)}</ul>}
+          </>
+        )
+        : null;
+
+  // Slot: the result. Recorded metrics and the final answer once the run
+  // ended; artifacts as soon as they exist, so a working run shows what it has
+  // written so far. A result page with no answer says so instead of going
+  // blank; a failed run leads with its failure above and skips that line.
+  const showOutcomeHeadline = Boolean(finalOutcome.headline)
+    && !(resultErrorText && errorHeadline && resultErrorText.includes(errorHeadline));
+  const resultSlot = (ended && (recordedMetrics.length > 0 || hasFinalOutcome)) || mode === 'result' || artifactTiles ? (
+    <div class="session-result">
+      {ended && recordedMetrics.length > 0 && (
+        <div class="result-recorded">
+          <span class="label">recorded</span>
+          {recordedMetrics.map((m) => {
+            const amount = recordedMetricAmount(m);
+            return (
+              <a
+                key={m.metric}
+                class="metric-chip"
+                href={`/stores/metrics${projectId ? `?project=${encodeURIComponent(projectId)}` : ''}`}
+                title={m.metric}
+              >
+                <span class="metric-chip-name">{humanizeMetric(m.metric)}</span>
+                {amount && <span class="metric-chip-amount">{amount}</span>}
+              </a>
+            );
+          })}
+        </div>
+      )}
+      {ended && hasFinalOutcome ? (
+        <>
+          {showOutcomeHeadline && finalOutcome.headline && (
+            <p class="result-headline"><InlineMarkdown value={finalOutcome.headline} /></p>
+          )}
+          {finalOutcome.body && (
+            <div class="result-body"><LogContent value={finalOutcome.body} forceMarkdown /></div>
+          )}
+        </>
+      ) : mode === 'result' ? (
+        <div class="result-empty">This run ended without a final response; the session log below has the details.</div>
+      ) : null}
+      {artifactTiles && (
+        <div class="result-artifacts">
+          <div class="label">artifacts</div>
+          {artifactTiles}
+        </div>
+      )}
+    </div>
+  ) : null;
+
+  // Slot: the tiles, facts about an ended run.
   const decidedGate = [...orderedLogs].reverse().find((e) => e.details?.decisionStatus);
   const decisionTile = decidedGate?.details
     ? `${decidedGate.details.decisionStatus}${decidedGate.details.decisionReviewer ? ` by ${decidedGate.details.decisionReviewer}` : ''}`
@@ -2300,7 +2350,7 @@ export default function SessionDetail() {
     ? `${formatTokens(tokenUsage.input)} in · ${formatTokens(tokenUsage.output)} out`
     : undefined;
   const tokensTileSub = tokenUsage && tokenUsage.cachedInput > 0 ? `+${formatTokens(tokenUsage.cachedInput)} cached` : undefined;
-  const resultTiles = (decisionTile || judgeTile || tokensTile) ? (
+  const resultTiles = ended && (decisionTile || judgeTile || tokensTile) ? (
     <div class="now-tiles">
       {decisionTile && (
         <div class="now-tile"><div class="now-tile-label">Decision</div><div class="now-tile-value">{decisionTile}</div>{decisionTileTime && <div class="now-tile-sub">{decisionTileTime}</div>}</div>
@@ -2313,85 +2363,35 @@ export default function SessionDetail() {
       )}
     </div>
   ) : null;
-  // A sub-agent reports to its parent: the verdict (a judge child) or the
-  // outcome, and one way back to where the decision is made.
-  const lastVerifyWithCandidates = [...orderedLogs].reverse().find((e) => e.type === 'verify' && e.verify?.candidates && e.verify.candidates.length > 0);
-  const recentSteps = [...orderedLogs].reverse().filter((e) => e.type === 'tool' && e.status === 'completed' && !e.parentCallId).slice(0, 3).reverse();
-  const nowCard = mode === 'decision'
-    ? (
-      <section class="panel now-card is-decision" aria-label="Pending decision">
-        {nowHead('decision', isSubagentView ? 'Paused for the parent\'s decision' : gateEntry?.details?.reviewEscalation ? 'Revision needs your input' : 'Decision needed', gateHeadMeta || undefined)}
-        {gatePanel}
-        {sessionActions}
-      </section>
-    )
-    : mode === 'report'
-      ? (
-        <section class="panel now-card is-report" aria-label="Report to parent">
-          {nowHead('report', approval.sessionStatus === 'suspended' ? 'Paused for the parent\'s decision' : 'Report to parent', [displayStatus, resultMeta, 'view only, decisions are made on the parent'].filter(Boolean).join(' · '))}
-          {lastVerifyWithCandidates?.verify?.candidates
-            ? <div class="now-body"><div class="now-title">{lastVerifyWithCandidates.title}</div><CandidateVerdictList candidates={lastVerifyWithCandidates.verify.candidates} /></div>
-            : resultSection
-              ? resultSection
-              : resultErrorText
-                ? <div class="now-body"><div class="now-error">{resultErrorText}</div></div>
-                : <div class="now-body"><div class="now-working-label">{live ? workingLabel : 'No report yet.'}{live && <span class="log-dots" aria-hidden="true" />}</div></div>}
-          {parentLink && (
-            <div class="now-cta">
-              <a class="debug-prompt-button now-cta-primary" href={parentLink}>{approval.sessionStatus === 'suspended' ? `Open the parent's pending decision` : `Open ${parentLabel}`}</a>
-              {approval.sessionStatus === 'suspended' && <span class="now-cta-note">{parentLabel} is waiting on you</span>}
-            </div>
-          )}
-          {sessionActions}
-        </section>
-      )
-    : mode === 'error'
-      ? (
-        // The failure leads; whatever the run still produced (a partial
-        // outcome, metrics, artifacts) follows it in the same card.
-        <section class="panel now-card is-error" role="alert" aria-label="Session needs attention">
-          {nowHead('error', 'Needs attention', [displayStatus, resultMeta].filter(Boolean).join(' · '))}
-          <div class="now-body">
-            <div class="now-error">{resultErrorText}</div>
-          </div>
-          {failedEntry && (
-            <ul class="logs now-failed-step" role="list">{renderLogEntry(failedEntry)}</ul>
-          )}
-          {(hasFinalOutcome || artifactTiles || recordedMetrics.length > 0) && resultSection}
-          {resultTiles}
-          {sessionActions}
-        </section>
-      )
-    : mode === 'result'
-      ? (
-        <section class="now-card is-result" aria-label="Result">
-          {nowHead('result', 'Result', [displayStatus, resultMeta].filter(Boolean).join(' · '))}
-          {resultSection}
-          {resultTiles}
-          {sessionActions}
-        </section>
-      )
-    : mode === 'working'
-      ? (
-        <section class="panel now-card is-working" aria-label="In progress">
-          {nowHead('working', status === 'preparing' ? 'Preparing' : 'Working', [
-            `${orderedLogs.length} ${orderedLogs.length === 1 ? 'entry' : 'entries'}`,
-            elapsedLabel,
-            'no approval needed yet',
-          ].filter(Boolean).join(' · '))}
-          {runningEntry
-            ? <ul class="logs now-running-step" role="list">{renderLogEntry(runningEntry)}</ul>
-            : <div class="now-body"><div class="now-working-label">{workingLabel}<span class="log-dots" aria-hidden="true" /></div></div>}
-          {recentSteps.length > 0 && (
-            <>
-              <div class="now-recent-label">Just before</div>
-              <ul class="logs now-recent" role="list">{recentSteps.map((e) => renderLogEntry(e))}</ul>
-            </>
-          )}
-          {sessionActions}
-        </section>
-      )
-      : null;
+
+  // Slot: the way back. A sub-agent reports to its parent, where its
+  // decisions are made.
+  const parentCta = isSubagentView && parentLink ? (
+    <div class="now-cta">
+      <a class="debug-prompt-button now-cta-primary" href={parentLink}>{isSuspended ? "Open the parent's pending decision" : `Open ${parentLabel}`}</a>
+      {isSuspended && <span class="now-cta-note">{parentLabel} is waiting on you</span>}
+    </div>
+  ) : null;
+
+  const nowCard = (
+    <section
+      class={`panel now-card is-${mode}`}
+      aria-label={cardAria[mode]}
+      role={mode === 'error' ? 'alert' : undefined}
+    >
+      <div class={`now-head is-${mode}`}>
+        {mode === 'working' && <span class="log-spinner" aria-hidden="true" />}
+        <span class="now-label">{cardLabel}</span>
+        {cardMeta && <span class="now-meta">{cardMeta}</span>}
+      </div>
+      {note && <div class="now-body"><p class="now-note">{note}</p></div>}
+      {focus}
+      {resultSlot}
+      {resultTiles}
+      {parentCta}
+      {sessionActions}
+    </section>
+  );
 
   // The transcript feed always lives in the same disclosure card. Page state
   // changes only its initial disclosure, never its visual presentation.
@@ -2485,8 +2485,7 @@ export default function SessionDetail() {
                 if (query && logsTotal !== null && logsRef.current.size < logsTotal) setLogsLimit(5_000);
                 if (query) {
                   document.querySelector<HTMLDetailsElement>('.session-transcript')?.setAttribute('open', '');
-                  setGateLogOpen(true);
-                  setWorkingLogOpen(true);
+                  setTranscriptVisitOpen(true);
                   setTranscriptOpen(true);
                 }
               }}
@@ -2603,13 +2602,9 @@ export default function SessionDetail() {
             {approval.model && <span title="model">{approval.model}</span>}
             <SessionIdCopy sessionId={approval.sessionId} short />
           </div>
-          {headerNote && <p class="session-header-note">{headerNote}</p>}
         </header>
 
         {nowCard}
-
-        {!nowCard && sessionActions}
-
 
         {approval.additionalInstruction && (
           // The instruction a delegated run was handed can be the parent's
@@ -2624,12 +2619,6 @@ export default function SessionDetail() {
           </details>
         )}
 
-        {!resultSection && artifactTiles && (
-          <div class="panel session-artifacts">
-            <div class="label">artifacts</div>
-            {artifactTiles}
-          </div>
-        )}
         {/* Above the session log, not below it. The log is the long thing on
             this page: anything under it is read only by someone who scrolled
             past every tool call to get there, which is not where a warning that
@@ -2655,7 +2644,7 @@ export default function SessionDetail() {
               <span class="count">{visibleLogs.length} {visibleLogs.length === 1 ? 'entry' : 'entries'}</span>
             )}
             {!transcriptIsOpen && (
-              <span class="count">{sessionTranscriptFoldedCopy(transcriptMode)} · click to show</span>
+              <span class="count">{sessionTranscriptFoldedCopy(mode)} · click to show</span>
             )}
             <span class="rule"></span>
           </summary>
@@ -2663,7 +2652,7 @@ export default function SessionDetail() {
           {logsFeed}
         </details>
 
-        {shouldShowResultNotice(result, Boolean(resultSection), resultErrorText) && (
+        {shouldShowResultNotice(result, mode === 'error', resultErrorText) && (
           <p ref={noticeRef} class={`notice${result.error ? ' error' : ''}`} role={result.error ? 'alert' : 'status'}>{result.text}</p>
         )}
       </main>

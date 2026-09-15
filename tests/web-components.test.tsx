@@ -21,7 +21,7 @@ import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/c
 import { parseChartSpec } from '../src/cli/serve/web/lib/chart-svg';
 import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { displayAgentName, isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
-import { aggregateToolStats, failedSessionEntry, hasActionableApproval, headerTokenUsage, isActionableApproval, isBackgroundSessionActionFailure, matchesLogFilter, nestedCallIdsToExpand, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, sessionPageMode, sessionResumeMode, sessionRunControls, sessionTranscriptFoldedCopy, sessionTranscriptMode, sessionTranscriptOpenState, shouldExpandForNestedSearch, shouldShowResultNotice, withoutQueuedApproval, workingSessionEntry } from '../src/cli/serve/web/routes/session-detail';
+import { aggregateToolStats, failedSessionEntry, hasActionableApproval, headerTokenUsage, isActionableApproval, isBackgroundSessionActionFailure, matchesLogFilter, nestedCallIdsToExpand, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, nowCardLabel, sessionPageMode, sessionResumeMode, sessionRunControls, sessionTranscriptFoldedCopy, shouldExpandForNestedSearch, transcriptFoldsPerVisit, shouldShowResultNotice, withoutQueuedApproval, workingSessionEntry } from '../src/cli/serve/web/routes/session-detail';
 import { tokenUsageMetaItems } from '../src/cli/serve/web/components/token-usage-strip';
 import { dayLabel, Highlight, outputPreview, sessionPurposeLabel, sessionRepeatRunPath, SessionListItem, statusDot } from '../src/cli/serve/web/routes/sessions-list';
 import { formatElapsedClock, formatElapsedShort, formatElapsedWithSeconds } from '../src/cli/serve/web/lib/format';
@@ -1758,28 +1758,47 @@ describe('SessionDetail header', () => {
     })).toBe('cascade');
   });
 
-  it('names the page mode from one place: gate, then view-only, then ended, then live', () => {
-    const base = { gate: false, viewOnly: false, ended: false, live: false, failed: false, hasResult: false };
-    expect(sessionPageMode({ ...base, gate: true, viewOnly: true, ended: true })).toBe('decision');
-    expect(sessionPageMode({ ...base, viewOnly: true, live: true })).toBe('report');
+  it('names the page mode from one place: gate, then ended, then working', () => {
+    const base = { gate: false, ended: false, working: false, failed: false, hasResult: false };
+    expect(sessionPageMode({ ...base, gate: true, ended: true })).toBe('decision');
     expect(sessionPageMode({ ...base, ended: true, failed: true, hasResult: true })).toBe('error');
     expect(sessionPageMode({ ...base, ended: true, hasResult: true })).toBe('result');
     expect(sessionPageMode({ ...base, ended: true })).toBe('idle');
-    expect(sessionPageMode({ ...base, live: true })).toBe('working');
+    expect(sessionPageMode({ ...base, working: true })).toBe('working');
+    // Parked at a gate that is not actionable here (expired, stranded, a
+    // child's parent gate): live, but not working, so not "Working".
     expect(sessionPageMode(base)).toBe('idle');
   });
 
-  it('folds the shared transcript card while the decision or working summary is active', () => {
-    expect(sessionTranscriptMode('decision')).toBe('decision');
-    expect(sessionTranscriptMode('working')).toBe('working');
-    expect(sessionTranscriptMode('result')).toBe('remembered');
-    expect(sessionTranscriptMode('report')).toBe('remembered');
+  it('labels the card by mode, with the view-only overlay only while parked at the parent gate', () => {
+    const base: Parameters<typeof nowCardLabel>[0] = { mode: 'result', viewOnly: false, suspended: false, ended: true, preparing: false, escalation: false };
+    const cases: Array<[Partial<typeof base>, string]> = [
+      [{ mode: 'decision', ended: false }, 'Decision needed'],
+      [{ mode: 'decision', ended: false, escalation: true }, 'Revision needs your input'],
+      [{ mode: 'working', ended: false }, 'Working'],
+      [{ mode: 'working', ended: false, preparing: true }, 'Preparing'],
+      [{ mode: 'error' }, 'Needs attention'],
+      [{ mode: 'result' }, 'Result'],
+      [{ mode: 'result', viewOnly: true }, 'Result'],
+      [{ mode: 'idle' }, 'Ended'],
+      [{ mode: 'idle', ended: false }, 'Paused'],
+      [{ mode: 'idle', ended: false, viewOnly: true, suspended: true }, "Paused for the parent's decision"],
+      [{ mode: 'decision', ended: false, viewOnly: true, suspended: true }, "Paused for the parent's decision"],
+    ];
+    for (const [overrides, label] of cases) {
+      expect(nowCardLabel({ ...base, ...overrides })).toBe(label);
+    }
+  });
+
+  it('folds the shared transcript card per visit only while the decision or working card is the surface', () => {
+    expect(transcriptFoldsPerVisit('decision')).toBe(true);
+    expect(transcriptFoldsPerVisit('working')).toBe(true);
+    expect(transcriptFoldsPerVisit('result')).toBe(false);
+    expect(transcriptFoldsPerVisit('error')).toBe(false);
+    expect(transcriptFoldsPerVisit('idle')).toBe(false);
     expect(sessionTranscriptFoldedCopy('decision')).toBe('folded while a decision is pending');
     expect(sessionTranscriptFoldedCopy('working')).toBe('folded while the run is working');
-    const disclosure = { decision: false, working: false, remembered: true };
-    expect(sessionTranscriptOpenState('decision', disclosure)).toBe(false);
-    expect(sessionTranscriptOpenState('working', disclosure)).toBe(false);
-    expect(sessionTranscriptOpenState('remembered', disclosure)).toBe(true);
+    expect(sessionTranscriptFoldedCopy('result')).toBe('folded, the summary is above');
   });
 
   it('shows active delegated work instead of a stale nested running tool', () => {

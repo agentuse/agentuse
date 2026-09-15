@@ -1716,40 +1716,11 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   color: var(--muted);
   font-weight: var(--weight-normal);
 }
-/* Artifacts the run produced. Green accent matches the "produced/completed"
-   semantics this view already uses for completed/approved status. */
-.page-approval-detail .session-artifacts {
-  margin: 0 0 18px;
-  border-color: var(--green-border);
-  background: var(--green-soft);
-}
-.page-approval-detail .session-artifacts .label {
-  color: var(--green);
-  font-size: var(--font-size-micro);
-  font-weight: var(--weight-medium);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-  margin-bottom: 10px;
-}
-
 /* Summary-first layout for ended sessions (issue #150): the result card leads,
    the transcript collapses behind a native <details>. */
 .page-approval-detail .section-title.result-title { margin-top: 0; }
-.page-approval-detail .session-result {
-  margin: 0 0 18px;
-  border-color: var(--line-strong);
-}
-.page-approval-detail .result-verdict {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-/* The status pill's global 18px bottom margin (header placement) breaks the
-   flex centering inside the verdict strip; the strip spaces itself instead. */
-.page-approval-detail .result-verdict .status { margin-bottom: 0; }
-.page-approval-detail .result-verdict .result-meta { color: var(--muted); font-size: var(--font-size-caption); }
+/* The result slot of the now card: metrics, the final answer, artifacts. */
+.page-approval-detail .session-result { padding: 14px 18px; }
 /* Facts the run recorded via record_metric: green = verified write, matching
    the artifacts/completed semantics elsewhere on this page. */
 .page-approval-detail .result-recorded {
@@ -1782,18 +1753,6 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   font-family: var(--mono);
   font-weight: var(--weight-bold);
   color: var(--green);
-}
-.page-approval-detail .result-error {
-  color: var(--fg);
-  font-size: var(--font-size-supporting);
-  line-height: var(--lh-loose);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.page-approval-detail .result-error + :is(.result-body, .result-headline) {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
 }
 .page-approval-detail .result-body {
   color: var(--fg);
@@ -3801,17 +3760,6 @@ textarea:disabled { opacity: 0.55; cursor: not-allowed; }
   }
   dialog#decision-dialog .dialog-foot .actions button { width: 100%; }
 }
-
-.inactive-banner {
-  margin-top: 24px;
-  padding: 14px 16px;
-  border: 1px dashed var(--line-strong);
-  border-radius: 10px;
-  color: var(--muted);
-  font-size: var(--font-size-supporting);
-}
-.inactive-banner[hidden] { display: none; }
-.inactive-banner::before { content: "⋮ "; color: var(--muted-2); }
 
 .continue-panel {
   margin-top: 24px;
@@ -11190,13 +11138,6 @@ html[data-page="draft-panel"] .app-route {
 }
 .page-approval-detail .session-meta-identity { margin-top: 2px; color: var(--muted); }
 .page-approval-detail .session-meta-identity .session-id-copy code { font-size: var(--font-size-micro); }
-.page-approval-detail .session-header-note {
-  margin: 12px 0 0;
-  font-size: var(--font-size-caption);
-  color: var(--muted-3);
-  line-height: var(--lh-snug);
-}
-
 .page-approval-detail .now-card { padding: 0; overflow: hidden; }
 .page-approval-detail .now-card.is-decision { border-color: var(--cyan-border); }
 .page-approval-detail .now-card.is-error { border-color: var(--red-border); }
@@ -11225,33 +11166,26 @@ html[data-page="draft-panel"] .app-route {
 .page-approval-detail .now-head.is-working .now-label { color: var(--cyan); }
 .page-approval-detail .now-trailing { margin-left: auto; }
 .page-approval-detail .now-body { padding: 14px 18px; }
-.page-approval-detail .now-error { color: var(--fg); font-size: var(--font-size-supporting); line-height: var(--lh-loose); }
+.page-approval-detail .now-error { color: var(--fg); font-size: var(--font-size-supporting); line-height: var(--lh-loose); white-space: pre-wrap; overflow-wrap: anywhere; }
 .page-approval-detail .now-working-label { color: var(--muted-3); }
+.page-approval-detail .now-note { margin: 0; font-size: var(--font-size-caption); color: var(--muted-3); line-height: var(--lh-snug); }
+/* A body followed by a body (a note, then the failure) shares the padding. */
+.page-approval-detail .now-body + .now-body { padding-top: 0; }
 /* Inside the card the gate list and the single running/failed row lose their
    own frame: the card is the frame. */
 .page-approval-detail .now-card .gate-panel { margin: 0; }
 .page-approval-detail .now-card .gate-panel > .logs > .log-item.is-actionable,
 .page-approval-detail .now-card > .logs > .log-item { border: 0; border-radius: 0; margin: 0; box-shadow: none; }
 .page-approval-detail .now-card > .logs { margin: 0; }
-/* The result card is the body of the now card, not a second framed panel. */
-.page-approval-detail .now-card > .session-result { border: 0; border-radius: 0; box-shadow: none; margin: 0; }
-.page-approval-detail .now-card.is-result { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: var(--surface-shadow); }
-.page-approval-detail .now-card + .session-actions { margin-top: 12px; }
-/* The now-card head already carries the status and the timing line. */
-.page-approval-detail .now-card > .session-result > .result-verdict { display: none; }
-/* The error card leads with the failure in its own body; the result block
-   under it would repeat the same line. */
-.page-approval-detail .now-card.is-error > .session-result > .result-error { display: none; }
 
-/* Now-card bodies: tiles under a result, the recent steps under a running
-   step, the report + way back on a sub-agent, and the action row at the foot. */
+/* Now-card slots: tiles under a result, the recent steps under a running
+   step, the way back on a sub-agent, and the action row at the foot. */
 .page-approval-detail .now-card .session-actions {
   margin: 0;
   padding: 12px 18px;
   border-top: 1px solid var(--line);
 }
-.page-approval-detail .now-card .continue-panel,
-.page-approval-detail .now-card .inactive-banner { margin: 0 18px 12px; }
+.page-approval-detail .now-card .continue-panel { margin: 0 18px 12px; }
 .page-approval-detail .now-card .changeset-session-panel,
 .page-approval-detail .now-card .agent-revision-session-panel { margin: 0 18px 12px; }
 .page-approval-detail .now-tiles {
@@ -11276,7 +11210,6 @@ html[data-page="draft-panel"] .app-route {
 .page-approval-detail .now-tile-value { font-size: var(--font-size-caption); color: var(--fg); }
 .page-approval-detail .now-tile-sub { font-size: var(--font-size-micro); color: var(--muted); }
 .page-approval-detail .now-tile code { font-family: var(--mono); font-size: var(--font-size-micro); }
-.page-approval-detail .now-title { font-size: var(--font-size-subtitle); font-weight: var(--weight-medium); margin-bottom: 8px; }
 .page-approval-detail .now-recent-label {
   padding: 10px 18px 4px;
   border-top: 1px solid var(--line);
@@ -11300,7 +11233,6 @@ html[data-page="draft-panel"] .app-route {
 }
 .page-approval-detail .now-cta-primary:hover { background: var(--primary-bg-hover); color: var(--primary-fg); }
 .page-approval-detail .now-cta-note { font-size: var(--font-size-caption); color: var(--muted); }
-.page-approval-detail .now-head.is-report .now-label { color: var(--green); }
 
 /* Artifact tiles carry their kind so a row of files reads at a glance. */
 .artifact-open-kind {
