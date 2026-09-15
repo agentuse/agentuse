@@ -47,29 +47,18 @@ import type { ServeContext, ServeRequest } from "../context";
 export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promise<boolean> {
   const { req, res, requestUrl, isApi, routePath, sessionAuthorized } = rq;
   /** A no-change proposal blamed on AgentUse itself ships with a pre-filled
-   *  bug report. The origin run's transcript is re-read here, clipped small,
-   *  so the report can quote it without the record having to store it. */
+   *  bug report. It names the origin run's model and ids, never its
+   *  transcript: the tracker is public and the run data is the operator's. */
   const upstreamIssueReport = async (record: ChangesetRecord) => {
     const proposal = latestChangesetProposal(record);
     if (!proposal || proposal.cause !== 'agentuse') return undefined;
-    let transcript: string | undefined;
     let runModel: string | undefined;
     if (record.originSessionId) {
       const origin = await findSessionInfo(record.originSessionId, record.projectId);
-      if (origin.success) {
-        runModel = origin.info.approval.model;
-        transcript = buildRunTranscript(origin.info.approval.logs, 3_000, {
-          focus: 'latest-attempt',
-          terminal: {
-            status: origin.info.approval.sessionStatus,
-            ...(origin.info.approval.errorCode && { errorCode: origin.info.approval.errorCode }),
-            ...(origin.info.approval.errorMessage && { errorMessage: origin.info.approval.errorMessage }),
-          },
-        });
-      }
+      if (origin.success) runModel = origin.info.approval.model;
     }
     try {
-      return buildUpstreamIssueReport({ record, proposal, version: packageVersion, runModel, transcript });
+      return buildUpstreamIssueReport({ record, proposal, version: packageVersion, runModel });
     } catch (error) {
       logger.warn(`Could not build the AgentUse issue report for changeset ${record.sessionId}: ${toErrorMessage(error)}`);
       return undefined;

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { DEFAULT_ISSUE_REPO, buildUpstreamIssueReport, issueRepo } from '../src/cli/serve/issue-report';
 
 const record = {
+  sessionId: '01K4REVISIONXXXXXXXXXXXXXX',
   target: { path: 'agents/triage.agentuse', name: 'Triage' },
   authoringModel: 'anthropic:claude-sonnet-5',
   originSessionId: '01K4ABCDEFGHJKMNPQRSTVWXYZ',
@@ -24,13 +25,12 @@ describe('issueRepo', () => {
 });
 
 describe('buildUpstreamIssueReport', () => {
-  it('pre-fills a new-issue link with the diagnosis, environment and transcript', () => {
+  it('pre-fills a new-issue link with the diagnosis, environment and session ids', () => {
     const report = buildUpstreamIssueReport({
       record,
       proposal,
       version: '0.22.0',
       runModel: 'openai:gpt-5.6-luna',
-      transcript: 'Tool bash: input ls → output nothing',
       repo: 'agentuse/agentuse',
     });
     expect(report.url.startsWith('https://github.com/agentuse/agentuse/issues/new?title=')).toBe(true);
@@ -39,32 +39,33 @@ describe('buildUpstreamIssueReport', () => {
     expect(report.body).toContain('- AgentUse: 0.22.0');
     expect(report.body).toContain('- Run model: openai:gpt-5.6-luna');
     expect(report.body).toContain('- Agent: agents/triage.agentuse');
-    expect(report.body).toContain('Tool bash: input ls');
-    expect(report.body).toContain('written by a model');
+    expect(report.body).toContain('- Run: 01K4ABCDEFGHJKMNPQRSTVWXYZ');
+    expect(report.body).toContain('- Revision: 01K4REVISIONXXXXXXXXXXXXXX');
+    expect(report.body).toContain('this tracker is public');
     const decoded = new URL(report.url);
     expect(decoded.searchParams.get('body')).toBe(report.body);
   });
 
-  it('trims the transcript, never the diagnosis, to keep the link short enough for GitHub', () => {
+  it('never carries run data: the report has no transcript, only ids a maintainer can ask about', () => {
     const report = buildUpstreamIssueReport({
       record,
       proposal,
       version: '0.22.0',
-      transcript: 'x'.repeat(20_000),
       repo: 'agentuse/agentuse',
     });
+    expect(report.body).not.toContain('transcript');
+    expect(report.body).toContain('No run data is attached');
     expect(report.url.length).toBeLessThanOrEqual(7_500);
-    expect(report.body).toContain(proposal.diagnosis);
-    expect(report.body).toContain('Run transcript (clipped)');
   });
 
-  it('works without a run: a source-only revision has no transcript section', () => {
+  it('works without a run: a source-only revision lists only the revision session', () => {
     const report = buildUpstreamIssueReport({
       record: { ...record, originSessionId: undefined },
       proposal,
       version: '0.22.0',
       repo: 'agentuse/agentuse',
     });
-    expect(report.body).not.toContain('Run transcript');
+    expect(report.body).not.toContain('- Run:');
+    expect(report.body).toContain('- Revision:');
   });
 });

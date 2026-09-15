@@ -7,15 +7,18 @@
  * leaves the machine on its own: a model's "upstream bug" verdict is often a
  * bad prompt or a missing credential, and a public tracker should not carry
  * that noise unread.
+ *
+ * The report deliberately carries no run transcript. Tool inputs and outputs
+ * are the operator's data (paths, URLs, customer records), and the tracker is
+ * public. The session ids go in instead: they identify the run on the
+ * operator's own machine, so a maintainer can ask for exactly what they need
+ * and the operator decides what to share.
  */
 import type { ChangesetProposal, ChangesetRecord } from '../../agents/changeset-types.js';
 
 export const DEFAULT_ISSUE_REPO = 'agentuse/agentuse';
 
 const REPO_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\/[A-Za-z0-9._-]+$/u;
-
-/** GitHub caps a new-issue URL well under this; keep the whole link safe. */
-const MAX_URL_LENGTH = 7_500;
 
 export interface UpstreamIssueReport {
   repo: string;
@@ -41,20 +44,18 @@ function clip(text: string, max: number): string {
 }
 
 export function buildUpstreamIssueReport(input: {
-  record: Pick<ChangesetRecord, 'target' | 'authoringModel' | 'originSessionId'>;
+  record: Pick<ChangesetRecord, 'sessionId' | 'target' | 'authoringModel' | 'originSessionId'>;
   proposal: Pick<ChangesetProposal, 'reply' | 'diagnosis'>;
   version: string;
   /** The origin run's model, when the changeset started from a run. */
   runModel?: string | undefined;
-  /** Clipped transcript of the origin run; absent on a source-only revision. */
-  transcript?: string | undefined;
   repo?: string | undefined;
 }): UpstreamIssueReport {
   const repo = input.repo ?? issueRepo();
   const agentName = input.record.target?.name ?? 'an agent';
   const title = clip(`Reviser diagnosed an AgentUse issue while revising ${agentName}`, 120);
 
-  const sections: string[] = [
+  const body = [
     '## What the reviser found',
     input.proposal.diagnosis ? clip(input.proposal.diagnosis, 3_000) : clip(input.proposal.reply, 1_000),
     '## Recommended next step',
@@ -66,24 +67,16 @@ export function buildUpstreamIssueReport(input: {
       ...(input.runModel ? [`- Run model: ${input.runModel}`] : []),
       ...(input.record.target ? [`- Agent: ${input.record.target.path}`] : []),
     ].join('\n'),
-  ];
-  const fixed = sections.join('\n\n');
+    '## Sessions',
+    [
+      'These ids are local to the reporter\'s AgentUse. No run data is attached; ask the reporter for what you need.',
+      '',
+      ...(input.record.originSessionId ? [`- Run: ${input.record.originSessionId}`] : []),
+      `- Revision: ${input.record.sessionId}`,
+    ].join('\n'),
+    '---\nFiled from the AgentUse changeset review. Please read the report before submitting: the diagnosis was written by a model, and this tracker is public.',
+  ].join('\n\n');
 
-  const base = `https://github.com/${repo}/issues/new`;
-  const urlFor = (body: string): string => `${base}?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
-
-  // The transcript takes whatever room the URL has left, so the diagnosis is
-  // never the part that gets cut.
-  let body = fixed;
-  if (input.transcript?.trim()) {
-    const withTranscript = (excerpt: string) => `${fixed}\n\n## Run transcript (clipped)\n\n\`\`\`text\n${excerpt}\n\`\`\``;
-    let excerpt = input.transcript.trim();
-    while (excerpt.length > 0 && urlFor(withTranscript(excerpt)).length > MAX_URL_LENGTH) {
-      excerpt = clip(excerpt, Math.floor(excerpt.length * 0.8));
-    }
-    if (excerpt.length > 0) body = withTranscript(excerpt);
-  }
-  body += '\n\n---\nFiled from the AgentUse changeset review. Please read the report before submitting: the diagnosis was written by a model.';
-
-  return { repo, title, body, url: urlFor(body) };
+  const url = `https://github.com/${repo}/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
+  return { repo, title, body, url };
 }
