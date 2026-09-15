@@ -91,7 +91,7 @@ export function ApprovalToast() {
         <span class="approval-toast-body">
           <span class="approval-toast-head">
             <span class="approval-toast-agent">{title}</span>
-            <span class="approval-toast-label">{toast.hasOptions ? 'wants you to pick an option' : 'wants approval'}</span>
+            <span class="approval-toast-label">{toast.needsRevisionGuidance ? 'needs revision guidance' : toast.hasOptions ? 'wants you to pick an option' : 'wants approval'}</span>
             {others > 0 && <span class="approval-toast-more">+{others} more waiting</span>}
           </span>
           {line && <span class="approval-toast-line" title={line}>{line}</span>}

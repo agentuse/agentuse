@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation, useRoute } from 'preact-iso';
-import type { ApprovalLogEntry, ApprovalPageInfo, LogVerifySummary } from '../../types';
+import type { ApprovalLogEntry, ApprovalPageInfo, LogSubagentSession, LogVerifySummary } from '../../types';
 import { CandidateVerdictList, LogEntry, artifactKind, toolChipLabel, type PriorReview } from '../components/log-entry';
 import { InlineMarkdown, LogContent } from '../components/content';
 import { DecisionDialog, type DecisionDialogMode } from '../components/comment-dialog';
@@ -77,6 +77,114 @@ export function sessionPageMode(options: {
   if (options.viewOnly) return 'report';
   if (options.ended) return options.failed ? 'error' : options.hasResult ? 'result' : 'idle';
   return options.live ? 'working' : 'idle';
+}
+
+/** The transcript always uses one disclosure/card presentation. Decision and
+ * working views get transient disclosure state because their summary cards are
+ * the primary surface; every other view follows the reader's saved preference. */
+export type SessionTranscriptMode = 'decision' | 'working' | 'remembered';
+
+export function sessionTranscriptMode(pageMode: SessionPageMode): SessionTranscriptMode {
+  if (pageMode === 'decision') return 'decision';
+  if (pageMode === 'working') return 'working';
+  return 'remembered';
+}
+
+export function sessionTranscriptFoldedCopy(mode: SessionTranscriptMode): string {
+  if (mode === 'decision') return 'folded while a decision is pending';
+  if (mode === 'working') return 'folded while the run is working';
+  return 'folded, the summary is above';
+}
+
+export function sessionTranscriptOpenState(
+  mode: SessionTranscriptMode,
+  state: { decision: boolean; working: boolean; remembered: boolean },
+): boolean {
+  return state[mode];
+}
+
+const EXECUTING_SUBAGENT_STATUSES = new Set([
+  'preparing', 'running', 'resuming', 'continuing', 'run', 'revising',
+]);
+
+const ATTENTION_SUBAGENT_STATUSES = new Set([
+  'error', 'failed', 'incomplete',
+]);
+
+const ATTENTION_REPORT_STATUSES = new Set([
+  'incomplete', 'fail', 'error',
+]);
+
+/** Latest activity timestamp within an executing delegated branch. A parent
+ * card can be suspended or pending while a resumed child below it is actively
+ * revising, so inspect the full projected tree rather than the log row status. */
+function executingSubagentUpdatedAt(session: LogSubagentSession): number | undefined {
+  const ownExecuting = session.activity?.running === true
+    || EXECUTING_SUBAGENT_STATUSES.has(session.status)
+    || EXECUTING_SUBAGENT_STATUSES.has(session.displayStatus);
+  const childUpdatedAt = (session.children ?? [])
+    .map(executingSubagentUpdatedAt)
+    .filter((value): value is number => value !== undefined)
+    .reduce<number | undefined>((latest, value) => latest === undefined || value > latest ? value : latest, undefined);
+  if (!ownExecuting) return childUpdatedAt;
+  return childUpdatedAt === undefined ? session.updatedAt : Math.max(session.updatedAt, childUpdatedAt);
+}
+
+/** The single row that best answers “what is working now?” Delegated activity
+ * wins over raw tool state because a stale nested Code Mode call can remain
+ * marked running after the parent has moved on to a resumed sub-agent. */
+export function workingSessionEntry(entries: readonly ApprovalLogEntry[]): ApprovalLogEntry | undefined {
+  const delegated = entries
+    .flatMap((entry) => {
+      const updatedAt = entry.subagentSession ? executingSubagentUpdatedAt(entry.subagentSession) : undefined;
+      return updatedAt === undefined ? [] : [{ entry, updatedAt }];
+    })
+    .sort((a, b) => b.updatedAt - a.updatedAt || (b.entry.time ?? 0) - (a.entry.time ?? 0));
+  return delegated[0]?.entry
+    ?? [...entries].reverse().find((entry) =>
+      entry.type === 'tool' && entry.status === 'running' && !entry.parentCallId
+    );
+}
+
+/** Latest activity timestamp within a delegated branch that ended needing
+ * attention. A delegated tool row can itself be `completed` even when the
+ * child's terminal report is incomplete, so the report and descendants are
+ * authoritative rather than the wrapper row's status. */
+function attentionSubagentUpdatedAt(session: LogSubagentSession): number | undefined {
+  const ownNeedsAttention = Boolean(session.errorMessage)
+    || ATTENTION_SUBAGENT_STATUSES.has(session.status)
+    || ATTENTION_SUBAGENT_STATUSES.has(session.displayStatus)
+    || (session.report ? ATTENTION_REPORT_STATUSES.has(session.report.status) : false);
+  const childUpdatedAt = (session.children ?? [])
+    .map(attentionSubagentUpdatedAt)
+    .filter((value): value is number => value !== undefined)
+    .reduce<number | undefined>((latest, value) => latest === undefined || value > latest ? value : latest, undefined);
+  if (!ownNeedsAttention) return childUpdatedAt;
+  return childUpdatedAt === undefined ? session.updatedAt : Math.max(session.updatedAt, childUpdatedAt);
+}
+
+/** The row that best explains why an ended session needs attention. Prefer a
+ * delegated branch with an incomplete or failed terminal report over an older
+ * incidental tool error that the run continued past. */
+export function failedSessionEntry(entries: readonly ApprovalLogEntry[]): ApprovalLogEntry | undefined {
+  const delegated = entries
+    .flatMap((entry) => {
+      const updatedAt = entry.subagentSession ? attentionSubagentUpdatedAt(entry.subagentSession) : undefined;
+      return updatedAt === undefined ? [] : [{ entry, updatedAt }];
+    })
+    .sort((a, b) => b.updatedAt - a.updatedAt || (b.entry.time ?? 0) - (a.entry.time ?? 0));
+  const directFailure = [...entries].reverse().find((entry) =>
+    entry.type === 'tool'
+    && (entry.status === 'error' || entry.status === 'failed')
+    && !entry.parentCallId
+    && !entry.details?.recoveredByCallId
+  );
+  const delegatedFailure = delegated[0];
+  if (!delegatedFailure) return directFailure;
+  if (!directFailure) return delegatedFailure.entry;
+  return delegatedFailure.updatedAt >= (directFailure.time ?? 0)
+    ? delegatedFailure.entry
+    : directFailure;
 }
 
 export type SessionRunControl = {
@@ -577,6 +685,30 @@ export function hasActionableApproval(status: string, header: ApprovalHeader | n
   return status === 'waiting' || (status === 'loading' && header.sessionStatus === 'suspended');
 }
 
+/** Fire-and-forget decision/continue endpoints report a later worker failure
+ * through the streamed session header. Recognize both families so the busy
+ * decision row is released and the retryable server error reaches the page. */
+export function isBackgroundSessionActionFailure(message: string | undefined): boolean {
+  if (!message) return false;
+  return message.startsWith("Couldn't continue this session:")
+    || /^Couldn't (?:approve|reject|send your comment on|act on) this request:/.test(message);
+}
+
+/** The streamed header and the local pending flag can update on different
+ * frames after a decision is accepted. Status is authoritative: once the run
+ * is resuming, the old gate must stop looking actionable immediately instead
+ * of lingering as "sending comment…" while the agent is already working. */
+export function isActionableApproval(options: {
+  pending: boolean;
+  status: string;
+  header: ApprovalHeader | null;
+  expired: boolean;
+}): boolean {
+  return options.pending
+    && !options.expired
+    && hasActionableApproval(options.status, options.header);
+}
+
 /** A sibling gate in the pending queue: just enough to label it and link to it. */
 export interface QueuedApproval {
   sessionId: string;
@@ -675,6 +807,10 @@ export default function SessionDetail() {
   // preference above: that defaults open, and the point here is that the log
   // starts closed on every visit to a pending decision.
   const [gateLogOpen, setGateLogOpen] = useState(false);
+  // The Working card already carries the live call plus the most recent steps.
+  // Keep the full feed tucked away by default without changing the reader's
+  // remembered transcript preference for completed and report views.
+  const [workingLogOpen, setWorkingLogOpen] = useState(false);
   // Entry-type filter. A long run is mostly tool calls, so free-text search is a
   // poor way to find the agent's reasoning spine or the thing that failed.
   const [logFilter, setLogFilter] = useState<LogFilter>(() => {
@@ -735,6 +871,9 @@ export default function SessionDetail() {
   useEffect(() => {
     const revealSearch = () => {
       document.querySelector<HTMLDetailsElement>('.session-transcript')?.setAttribute('open', '');
+      setGateLogOpen(true);
+      setWorkingLogOpen(true);
+      setTranscriptOpen(true);
       setShowLogSearch(true);
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -794,10 +933,11 @@ export default function SessionDetail() {
     }
 
     const transitionResult = /submitting decision|decision recorded|resuming the session|continuing session|follow-up recorded|stopping session/.test(resultRef.current.text);
-    const transitionFailure = header.errorMessage?.startsWith("Couldn't continue this session:");
+    const transitionFailure = isBackgroundSessionActionFailure(header.errorMessage);
     if (transitionFailure) {
       setResult({ text: header.errorMessage as string, error: true });
       setSubmittingContinue(false);
+      setSubmittingDecision(null);
     } else if (nextStatus === 'error' || header.sessionStatus === 'error') {
       setResult({
         text: sessionErrorText(header) || 'Session finished with an error. Check the latest log entry for details.',
@@ -839,6 +979,8 @@ export default function SessionDetail() {
     setLogQuery(banked?.logQuery ?? '');
     setShowLogSearch(banked?.showLogSearch ?? false);
     setTranscriptOpen(banked?.transcriptOpen ?? transcriptDefaultOpen());
+    setGateLogOpen(false);
+    setWorkingLogOpen(false);
     restoreScrollRef.current = banked && banked.scrollY > 0 ? banked.scrollY : null;
     restoreAttemptsRef.current = 0;
     // Bank this session's view state on the way out, so stepping into a
@@ -939,7 +1081,7 @@ export default function SessionDetail() {
       nested.add(e.id); // hide from the flat stream regardless of dedup
       // The same warning is emitted more than once per call; collapse identical
       // lines so the badge count reflects distinct warnings, not retries.
-      const dedupKey = `${e.title} ${e.message ?? ''}`;
+      const dedupKey = `${e.title}\0${e.message ?? ''}`;
       const seen = seenPerCall.get(e.toolId) ?? new Set<string>();
       if (seen.has(dedupKey)) continue;
       seen.add(dedupKey);
@@ -1224,7 +1366,12 @@ export default function SessionDetail() {
   // the page reads "live view of this run" indefinitely.
   const stranded = approval?.errorCode === 'CASCADE_ORPHANED';
   const displayStatus = status === 'waiting' && expired ? 'expired' : displaySessionStatus(status, approval);
-  const actionable = pendingActionable && !expired;
+  const actionable = isActionableApproval({
+    pending: pendingActionable,
+    status,
+    header: approval,
+    expired,
+  });
   // A manual "remember" rule can be saved for any agent (the reviewer's action
   // is the opt-in), so the affordance shows whenever there's an agent file to
   // attach it to. Whether the rule is injected into future runs is a separate
@@ -1282,11 +1429,6 @@ export default function SessionDetail() {
       feedLogs: [...collapsedLogs.slice(0, idx), ...collapsedLogs.slice(idx + 1)],
     };
   }, [collapsedLogs, actionable]);
-  const gateFolded = Boolean(gateEntry);
-  // With the result in the now card, an ended run's transcript is history too:
-  // it folds on the same terms as a pending gate's, so the page reads
-  // header, outcome, drawers, and the log only on request.
-  const logFolded = gateFolded || ended;
   const matchingFeedLogs = useMemo(
     () => feedLogs.filter((entry) => sessionLogMatches(entry, logQuery, nestedToolCalls.get(entry.callId ?? ''))),
     [feedLogs, logQuery, nestedToolCalls]
@@ -1605,12 +1747,13 @@ export default function SessionDetail() {
 
   const onAction = useCallback((action: 'approve' | 'reject' | 'comment') => {
     if (action === 'comment' && approval?.approvalKind === 'tool_approval') return;
+    if (action === 'approve' && gateEntry?.details?.reviewEscalation) return;
     if (action === 'comment' || action === 'reject') {
       setDecisionDialog(action);
       return;
     }
     void submitDecision(action);
-  }, [approval?.approvalKind, submitDecision]);
+  }, [approval?.approvalKind, gateEntry?.details?.reviewEscalation, submitDecision]);
 
   // Keyboard shortcuts: cmd/ctrl+Enter approve, Esc opens reject, C comment.
   useEffect(() => {
@@ -1646,7 +1789,7 @@ export default function SessionDetail() {
       if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
         // Reject and comment stay available on an unpicked gate; only approve
         // needs the choice, so only approve is withheld.
-        if (!canAct || inField || awaitingPick) return;
+        if (!canAct || inField || awaitingPick || gateEntry?.details?.reviewEscalation) return;
         event.preventDefault();
         void submitDecision('approve');
       } else if (event.key === 'Escape' && !inField && !anyDialogOpen) {
@@ -1660,7 +1803,7 @@ export default function SessionDetail() {
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [decisionDialog, actionable, submittingDecision, submitDecision, awaitingPick, approval?.approvalKind]);
+  }, [decisionDialog, actionable, submittingDecision, submitDecision, awaitingPick, approval?.approvalKind, gateEntry?.details?.reviewEscalation]);
 
   if (fatalError) {
     return (
@@ -1923,6 +2066,17 @@ export default function SessionDetail() {
     failed: Boolean(resultErrorText),
     hasResult: Boolean(resultSection),
   });
+  const transcriptMode = sessionTranscriptMode(mode);
+  const transcriptIsOpen = sessionTranscriptOpenState(transcriptMode, {
+    decision: gateLogOpen,
+    working: workingLogOpen,
+    remembered: transcriptOpen,
+  });
+  const setTranscriptIsOpen = transcriptMode === 'decision'
+    ? setGateLogOpen
+    : transcriptMode === 'working'
+      ? setWorkingLogOpen
+      : setTranscriptOpen;
   const runControls = sessionRunControls({
     ended,
     live,
@@ -2122,8 +2276,8 @@ export default function SessionDetail() {
       {trailing && <span class="now-trailing">{trailing}</span>}
     </div>
   );
-  const runningEntry = [...orderedLogs].reverse().find((e) => e.type === 'tool' && e.status === 'running');
-  const failedEntry = [...orderedLogs].reverse().find((e) => e.type === 'tool' && (e.status === 'error' || e.status === 'failed') && !e.details?.recoveredByCallId);
+  const runningEntry = workingSessionEntry(orderedLogs);
+  const failedEntry = failedSessionEntry(orderedLogs);
   const gateWaitLabel = gateEntry?.time !== undefined ? `waiting ${formatDuration(Date.now() - gateEntry.time)}` : undefined;
   const bounces = judgeRows.filter((row) => row.verdict === 'fail').length;
   const lastJudge = judgeRows[judgeRows.length - 1];
@@ -2166,7 +2320,7 @@ export default function SessionDetail() {
   const nowCard = mode === 'decision'
     ? (
       <section class="panel now-card is-decision" aria-label="Pending decision">
-        {nowHead('decision', isSubagentView ? 'Paused for the parent\'s decision' : 'Decision needed', gateHeadMeta || undefined)}
+        {nowHead('decision', isSubagentView ? 'Paused for the parent\'s decision' : gateEntry?.details?.reviewEscalation ? 'Revision needs your input' : 'Decision needed', gateHeadMeta || undefined)}
         {gatePanel}
         {sessionActions}
       </section>
@@ -2239,10 +2393,10 @@ export default function SessionDetail() {
       )
       : null;
 
-  // The transcript feed, shared by both layouts: inline under its section
-  // title (live/feed-first) or inside the collapsed <details> (summary-first).
+  // The transcript feed always lives in the same disclosure card. Page state
+  // changes only its initial disclosure, never its visual presentation.
   const logsFeed = (
-    <div class="panel">
+    <div class="transcript-feed">
       {logsTotal !== null && logsRef.current.size < logsTotal && (
         <button
           type="button"
@@ -2329,7 +2483,12 @@ export default function SessionDetail() {
                 const query = (event.currentTarget as HTMLInputElement).value;
                 setLogQuery(query);
                 if (query && logsTotal !== null && logsRef.current.size < logsTotal) setLogsLimit(5_000);
-                if (query) document.querySelector<HTMLDetailsElement>('.session-transcript')?.setAttribute('open', '');
+                if (query) {
+                  document.querySelector<HTMLDetailsElement>('.session-transcript')?.setAttribute('open', '');
+                  setGateLogOpen(true);
+                  setWorkingLogOpen(true);
+                  setTranscriptOpen(true);
+                }
               }}
               onKeyDown={(event) => {
                 if (event.key !== 'Escape') return;
@@ -2484,41 +2643,25 @@ export default function SessionDetail() {
           {...(projectId ? { project: projectId } : {})}
         />
 
-        {logFolded ? (
-          // Two reasons to fold: the run ended and the result card leads
-          // (remembered preference), or a decision is pending and the
-          // transcript above it is context, not the ask (closed on every
-          // visit). The folded row says which and how much it hides, so
-          // nobody mistakes it for an empty log.
-          <details
-            class="session-transcript is-gate-folded"
-            key={`transcript-${sessionId}`}
-            open={gateFolded ? gateLogOpen : transcriptOpen}
-            onToggle={(e) => (gateFolded ? setGateLogOpen : setTranscriptOpen)((e.currentTarget as HTMLDetailsElement).open)}
-          >
-            <summary>
-              <span>session log</span>
-              {visibleLogs.length > 0 && (
-                <span class="count">{visibleLogs.length} {visibleLogs.length === 1 ? 'entry' : 'entries'}</span>
-              )}
-              {!(gateFolded ? gateLogOpen : transcriptOpen) && (
-                <span class="count">{gateFolded ? 'folded while a decision is pending' : 'folded, the result is above'} · click to show</span>
-              )}
-              <span class="rule"></span>
-            </summary>
-            {logTools && <div class="transcript-tools">{logTools}</div>}
-            {logsFeed}
-          </details>
-        ) : (
-          <>
-            <div class="section-title">
-              <span>session log</span>
-              <span class="rule"></span>
-              {logTools}
-            </div>
-            {logsFeed}
-          </>
-        )}
+        <details
+          class="session-transcript"
+          key={`transcript-${sessionId}`}
+          open={transcriptIsOpen}
+          onToggle={(e) => setTranscriptIsOpen((e.currentTarget as HTMLDetailsElement).open)}
+        >
+          <summary>
+            <span>session log</span>
+            {visibleLogs.length > 0 && (
+              <span class="count">{visibleLogs.length} {visibleLogs.length === 1 ? 'entry' : 'entries'}</span>
+            )}
+            {!transcriptIsOpen && (
+              <span class="count">{sessionTranscriptFoldedCopy(transcriptMode)} · click to show</span>
+            )}
+            <span class="rule"></span>
+          </summary>
+          {logTools && <div class="transcript-tools">{logTools}</div>}
+          {logsFeed}
+        </details>
 
         {shouldShowResultNotice(result, Boolean(resultSection), resultErrorText) && (
           <p ref={noticeRef} class={`notice${result.error ? ' error' : ''}`} role={result.error ? 'alert' : 'status'}>{result.text}</p>
@@ -2531,6 +2674,7 @@ export default function SessionDetail() {
         choiceLabel={gateOptions?.find((o) => o.id === effectiveChoice)?.label}
         allowRemember={canRememberLearning}
         rememberApplies={rememberApplies}
+        revisionGuidance={Boolean(gateEntry?.details?.reviewEscalation)}
         onClose={() => setDecisionDialog(null)}
         onSubmit={({ comment, remember }) => {
           const action = decisionDialog;

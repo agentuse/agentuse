@@ -21,7 +21,7 @@ import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/c
 import { parseChartSpec } from '../src/cli/serve/web/lib/chart-svg';
 import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { displayAgentName, isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
-import { aggregateToolStats, hasActionableApproval, headerTokenUsage, matchesLogFilter, nestedCallIdsToExpand, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, sessionPageMode, sessionResumeMode, sessionRunControls, shouldExpandForNestedSearch, shouldShowResultNotice, withoutQueuedApproval } from '../src/cli/serve/web/routes/session-detail';
+import { aggregateToolStats, failedSessionEntry, hasActionableApproval, headerTokenUsage, isActionableApproval, isBackgroundSessionActionFailure, matchesLogFilter, nestedCallIdsToExpand, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, sessionPageMode, sessionResumeMode, sessionRunControls, sessionTranscriptFoldedCopy, sessionTranscriptMode, sessionTranscriptOpenState, shouldExpandForNestedSearch, shouldShowResultNotice, withoutQueuedApproval, workingSessionEntry } from '../src/cli/serve/web/routes/session-detail';
 import { tokenUsageMetaItems } from '../src/cli/serve/web/components/token-usage-strip';
 import { dayLabel, Highlight, outputPreview, sessionPurposeLabel, sessionRepeatRunPath, SessionListItem, statusDot } from '../src/cli/serve/web/routes/sessions-list';
 import { formatElapsedClock, formatElapsedShort, formatElapsedWithSeconds } from '../src/cli/serve/web/lib/format';
@@ -649,6 +649,19 @@ describe('PendingApprovalRow', () => {
     expect(html).toContain('you commented 2 times');
     expect(html).not.toContain('>revised<');
     expect(html.match(/pending-row-tag revised/g)).toHaveLength(1);
+  });
+
+  it('labels feedback-only strict review gates as needing revision', () => {
+    const html = renderToString(<PendingApprovalRow now={Date.now()} row={{
+      ...base,
+      sessionId: 'strict-review',
+      prompt: 'Revision needs your input',
+      needsRevisionGuidance: true,
+    }} />);
+
+    expect(html).toContain('>revision needed<');
+    expect(html).toContain('Revision needs your input');
+    expect(html).not.toContain('>pick<');
   });
 
   it('orders home pending gates newest first and leaves missing timestamps last', () => {
@@ -1448,6 +1461,33 @@ describe('LogEntry component', () => {
     expect(html).toContain('approval-option interactive selected');
   });
 
+  it('turns an exhausted fresh review into a feedback-only gate', () => {
+    const html = renderEntry({
+      id: 'log-review-escalation',
+      type: 'approval',
+      title: 'Approval requested',
+      status: 'pending',
+      details: {
+        resumeToken: 'tok-review-escalation',
+        prompt: 'Automated review needs your revision guidance',
+        draft: 'The current blocked draft',
+        reviewEscalation: {
+          kind: 'fresh-review-exhausted',
+          critique: 'The claim needs a source tied to this exact example.',
+          attempts: 2,
+          maxAttempts: 2,
+        },
+      },
+    }, { showActions: true });
+
+    expect(html).toContain('Revision needs your input');
+    expect(html).toContain('The claim needs a source tied to this exact example.');
+    expect(html).toContain('Approval is unavailable until a revision passes review.');
+    expect(html).toContain('<button title="Guide revision (c)">Guide revision</button>');
+    expect(html).toContain('<button title="Stop (Esc)" class="danger">Stop</button>');
+    expect(html).not.toContain('>Approve</button>');
+  });
+
   it('collapses the summary on a pick gate but leaves it open on a plain gate', () => {
     // The per-option descriptions already carry what separates the alternatives,
     // so the summary starts collapsed there.
@@ -1693,6 +1733,17 @@ describe('DecisionDialog component', () => {
     expect(html).toContain('>Reject</button>');
     expect(html).not.toContain('Learn from this comment');
   });
+
+  it('reframes strict review actions as revision guidance or stopping', () => {
+    const comment = renderToString(<DecisionDialog open mode="comment" revisionGuidance onSubmit={noop} onClose={noop} />);
+    const reject = renderToString(<DecisionDialog open mode="reject" revisionGuidance onSubmit={noop} onClose={noop} />);
+
+    expect(comment).toContain('guide the next revision');
+    expect(comment).toContain('Your earlier feedback is preserved.');
+    expect(comment).toContain('>Revise again</button>');
+    expect(reject).toContain('stop this action?');
+    expect(reject).toContain('>Stop action</button>');
+  });
 });
 
 describe('SessionDetail header', () => {
@@ -1716,6 +1767,101 @@ describe('SessionDetail header', () => {
     expect(sessionPageMode({ ...base, ended: true })).toBe('idle');
     expect(sessionPageMode({ ...base, live: true })).toBe('working');
     expect(sessionPageMode(base)).toBe('idle');
+  });
+
+  it('folds the shared transcript card while the decision or working summary is active', () => {
+    expect(sessionTranscriptMode('decision')).toBe('decision');
+    expect(sessionTranscriptMode('working')).toBe('working');
+    expect(sessionTranscriptMode('result')).toBe('remembered');
+    expect(sessionTranscriptMode('report')).toBe('remembered');
+    expect(sessionTranscriptFoldedCopy('decision')).toBe('folded while a decision is pending');
+    expect(sessionTranscriptFoldedCopy('working')).toBe('folded while the run is working');
+    const disclosure = { decision: false, working: false, remembered: true };
+    expect(sessionTranscriptOpenState('decision', disclosure)).toBe(false);
+    expect(sessionTranscriptOpenState('working', disclosure)).toBe(false);
+    expect(sessionTranscriptOpenState('remembered', disclosure)).toBe(true);
+  });
+
+  it('shows active delegated work instead of a stale nested running tool', () => {
+    const staleNested: ApprovalLogEntry = {
+      id: 'nested-store-get', type: 'tool', tool: 'store_get', status: 'running',
+      title: 'Read old parent state', parentCallId: 'code-exec-1', time: 10,
+    };
+    const activeSubagent: ApprovalLogEntry = {
+      id: 'engage-reply', type: 'tool', tool: 'subagent__engage_reply', status: 'pending',
+      title: 'Delegate reply revision', time: 20,
+      subagentSession: {
+        sessionId: 'child-1',
+        agent: { id: 'engage-reply', name: 'Engage Reply' },
+        status: 'running',
+        displayStatus: 'revising',
+        trigger: 'manual',
+        createdAt: 20,
+        updatedAt: 30,
+        command: '',
+        activity: { tool: 'report_incomplete', steps: 23, startedAt: 29, running: true },
+      },
+    };
+
+    expect(workingSessionEntry([staleNested, activeSubagent])).toBe(activeSubagent);
+    expect(workingSessionEntry([staleNested])).toBeUndefined();
+
+    const topLevel: ApprovalLogEntry = {
+      id: 'bash', type: 'tool', tool: 'bash', status: 'running', title: 'Run tests', time: 40,
+    };
+    expect(workingSessionEntry([staleNested, topLevel])).toBe(topLevel);
+  });
+
+  it('shows the delegated incomplete outcome instead of an earlier tool error', () => {
+    const incidentalError: ApprovalLogEntry = {
+      id: 'prepare-context', type: 'tool', tool: 'code_exec', status: 'error',
+      title: 'Prepare reply delegation context', time: 10,
+    };
+    const incompleteMeasure: ApprovalLogEntry = {
+      id: 'measure', type: 'tool', tool: 'subagent__measure', status: 'completed',
+      title: 'Measure reply outcomes', time: 20,
+      subagentSession: {
+        sessionId: 'child-measure',
+        agent: { id: 'measure', name: 'Measure' },
+        status: 'completed',
+        displayStatus: 'completed',
+        trigger: 'manual',
+        createdAt: 20,
+        updatedAt: 30,
+        command: '',
+        report: { status: 'incomplete', headline: 'One outcome could not be measured.' },
+      },
+    };
+    const rejectedReply: ApprovalLogEntry = {
+      id: 'engage-reply', type: 'tool', tool: 'subagent__engage_reply', status: 'completed',
+      title: 'Delegate reply', time: 40,
+      subagentSession: {
+        sessionId: 'child-reply',
+        agent: { id: 'engage-reply', name: 'Engage Reply' },
+        status: 'completed',
+        displayStatus: 'completed',
+        trigger: 'manual',
+        createdAt: 40,
+        updatedAt: 50,
+        command: '',
+        report: { status: 'incomplete', headline: 'Reply rejected by automated review.' },
+      },
+    };
+
+    expect(failedSessionEntry([incidentalError, incompleteMeasure, rejectedReply])).toBe(rejectedReply);
+
+    const nestedFailure: ApprovalLogEntry = {
+      id: 'nested-store', type: 'tool', tool: 'store_get', status: 'error',
+      title: 'Read nested state', parentCallId: 'code-exec', time: 60,
+    };
+    expect(failedSessionEntry([nestedFailure])).toBeUndefined();
+    expect(failedSessionEntry([incidentalError])).toBe(incidentalError);
+
+    const laterDirectFailure: ApprovalLogEntry = {
+      id: 'publish', type: 'tool', tool: 'publish', status: 'failed',
+      title: 'Publish approved reply', time: 70,
+    };
+    expect(failedSessionEntry([rejectedReply, laterDirectFailure])).toBe(laterDirectFailure);
   });
 
   it('lists run controls once, in order, with stop pinned to the bar only while working', () => {
@@ -1772,6 +1918,22 @@ describe('SessionDetail header', () => {
     expect(hasActionableApproval('resuming', header)).toBe(false);
     expect(hasActionableApproval('continuing', header)).toBe(false);
     expect(hasActionableApproval('completed', { ...header, sessionStatus: 'completed' })).toBe(false);
+
+    // The local pending flag is intentionally cached between stream frames.
+    // It must not keep the old gate busy after submitDecision has already
+    // moved the authoritative page status to resuming.
+    expect(isActionableApproval({ pending: true, status: 'waiting', header, expired: false })).toBe(true);
+    expect(isActionableApproval({ pending: true, status: 'resuming', header, expired: false })).toBe(false);
+    expect(isActionableApproval({ pending: true, status: 'running', header, expired: false })).toBe(false);
+    expect(isActionableApproval({ pending: true, status: 'waiting', header, expired: true })).toBe(false);
+  });
+
+  it('recognizes asynchronous decision failures that must release the busy row', () => {
+    expect(isBackgroundSessionActionFailure("Couldn't send your comment on this request: resume failed; the gate is still open, try again.")).toBe(true);
+    expect(isBackgroundSessionActionFailure("Couldn't approve this request: resume failed; the gate is still open, try again.")).toBe(true);
+    expect(isBackgroundSessionActionFailure("Couldn't reject this request: resume failed; the gate is still open, try again.")).toBe(true);
+    expect(isBackgroundSessionActionFailure("Couldn't continue this session: resume failed")).toBe(true);
+    expect(isBackgroundSessionActionFailure('Session finished with an error.')).toBe(false);
   });
 
   it('groups tool calls by tool, busiest first, tallying failures', () => {

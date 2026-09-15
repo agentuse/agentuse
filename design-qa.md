@@ -196,6 +196,61 @@ final result: passed
 
 ---
 
+# Design QA — Session log drawer
+
+- Source visual truth:
+  - `/Users/llch/Library/Application Support/CleanShot/media/media_IjPSBuAB0q/CleanShot 2026-09-14 at 18.25.49.png` (924 × 467 px, Working summary)
+  - `/Users/llch/Library/Application Support/CleanShot/media/media_85qs6VLbEG/CleanShot 2026-09-14 at 18.25.52.png` (921 × 58 px, old split session-log heading)
+  - `/Users/llch/Library/Application Support/CleanShot/media/media_pZSeFNZkBA/CleanShot 2026-09-14 at 18.25.59.png` (927 × 66 px, desired boxed drawer)
+- Implementation screenshot: inline Codex built-in browser capture of `http://127.0.0.1:12233/sessions/01M2H9B83G8MKB15P5H4YH1EG1?project=lifehack-cs`; the browser provider did not expose a persistent screenshot path.
+- Browser viewport: 1266 × 1271 CSS px at device pixel ratio 0.99.
+- Focused implementation geometry: session-log card 959.99 × 46.01 CSS px; summary row 957.97 × 43.99 CSS px.
+- State: completed session checked open and folded; pending-decision session checked initially folded and then expanded. The Working default uses the same shared drawer and is covered by the targeted state test.
+- Density normalization: the reference crops are approximately 1× captures. The implementation was assessed in CSS pixels at approximately 1× density, focused on the 44 px summary row and its 1 px border.
+
+## Full-view comparison evidence
+
+The Working card remains the dominant current-state surface. The transcript no
+longer introduces a competing standalone section heading beneath it. In the
+tested completed and decision pages, the transcript remains inside the same
+rounded, bordered drawer shell whether open or folded.
+
+## Focused-region comparison evidence
+
+The desired reference shows a 46 px bordered box containing a compact caret,
+uppercase label, entry count, contextual fold explanation, and click hint. The
+rendered drawer measures 46.01 CSS px tall and retains the same hierarchy,
+radius, border weight, muted metadata, and horizontal rhythm. The open state
+uses the same outer shell and places its filters and feed inside it without a
+second nested border.
+
+## Required fidelity surfaces
+
+- Fonts and typography: existing product font tokens and uppercase micro-label treatment are preserved. Metadata remains sentence case at caption size.
+- Spacing and layout rhythm: the closed row matches the reference's approximately 44 px content height plus border. Open and closed states share one 12 px stacked-panel rhythm.
+- Colors and visual tokens: the drawer uses the existing `--surface`, `--line`, `--muted`, and `--muted-3` tokens, matching adjacent foldable panels.
+- Image quality and asset fidelity: no raster assets, logos, or custom icons are introduced. The existing disclosure caret treatment is reused.
+- Copy and content: decision, working, and summary contexts each explain why the log is folded; the entry count and “click to show” affordance remain visible.
+
+## Interaction checks
+
+- Pending decision defaults to folded.
+- Drawer expands and collapses from its summary row.
+- Search continues to open the drawer before focusing results.
+- Browser console warnings/errors: none.
+
+## Findings and comparison history
+
+1. Initial mismatch: live/working pages used an unboxed section heading and exposed the full transcript, while decision/result pages used a boxed disclosure.
+2. Fix: replaced both branches with one transcript disclosure card, added transient default-closed state for Working and decision views, and removed the nested inner panel border.
+3. Post-fix evidence: the browser-rendered folded card is 46.01 CSS px tall, visually matches the desired boxed reference, and the expanded state retains the same outer shell.
+
+No actionable P0, P1, P2, or P3 mismatch remains.
+
+final result: passed
+
+---
+
 # Design QA — Settings project management split
 
 - Source visual truth: `/Users/llch/Library/Application Support/CleanShot/media/media_QQjjDXDJHv/CleanShot 2026-09-01 at 11.44.36.png`

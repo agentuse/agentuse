@@ -667,6 +667,7 @@ function ApprovalDetailCard(props: {
   // one twice. A pick gate with bare options (no per-option change) keeps the
   // draft open, since then it is the only place the candidates live.
   const judge = details.judge;
+  const reviewEscalation = details.reviewEscalation;
   const judgeMarks = judgeMarksFor(judge, details);
   // A gate with no options is one draft: the judge's verdict on it is the sole
   // candidate when the gate recorded one, else the marker's own verdict. A
@@ -685,7 +686,7 @@ function ApprovalDetailCard(props: {
     details.draftUrl ? <a class="approval-link" href={details.draftUrl} target="_blank" rel="noopener noreferrer">Open draft</a> : null,
     details.artifactUrl ? <a class="approval-link" href={details.artifactUrl} target="_blank" rel="noopener noreferrer">Open artifact</a> : null,
   ].filter(Boolean);
-  const hasContent = details.prompt || primary || changes.length > 0 || options.length > 0 || details.reference || details.risk || showSummary || details.context || links.length > 0 || artifactPaths.length > 0 || snapshotOnlyPaths.length > 0 || detectedImagePaths.length > 0 || decisionLabel || details.decisionComment || details.errorMessage || judge;
+  const hasContent = details.prompt || primary || changes.length > 0 || options.length > 0 || details.reference || details.risk || showSummary || details.context || links.length > 0 || artifactPaths.length > 0 || snapshotOnlyPaths.length > 0 || detectedImagePaths.length > 0 || decisionLabel || details.decisionComment || details.errorMessage || judge || reviewEscalation;
   if (!hasContent) return null;
 
   return (
@@ -694,6 +695,16 @@ function ApprovalDetailCard(props: {
           to land on it. Without this a screen-reader user tabbing by heading
           skipped straight past the question the whole card exists to pose. */}
       {details.prompt && <h3 class="approval-question"><InlineMarkdown value={details.prompt} /></h3>}
+      {reviewEscalation && (
+        <section class="approval-section approval-review-escalation" role="note" aria-labelledby={`${idBase}-review-escalation`}>
+          <h4 class="approval-section-title" id={`${idBase}-review-escalation`}>Revision needs your input</h4>
+          <div class="approval-section-body">
+            <p>This draft remains blocked after {reviewEscalation.attempts} automated review {reviewEscalation.attempts === 1 ? 'attempt' : 'attempts'}.</p>
+            <LogContent value={reviewEscalation.critique} forceMarkdown />
+            <p>Send guidance for another revision, or stop this action. Approval is unavailable until a revision passes review.</p>
+          </div>
+        </section>
+      )}
       {/* What approving does in the world comes first: the reviewer needs it
           before reading any candidate, not after scrolling past all of them.
           role="note" so the warning survives without the amber wash, which is
@@ -1524,6 +1535,7 @@ function LogEntryImpl(props: LogEntryProps) {
     && (entry.details?.options?.length ?? 0) > 0
     && !props.selectedChoice;
   const genericToolApproval = Boolean(entry.details?.toolApproval);
+  const reviewEscalation = entry.details?.reviewEscalation;
 
   const classes = [
     'log-item',
@@ -1659,6 +1671,11 @@ function LogEntryImpl(props: LogEntryProps) {
                 <span class="btn-spinner" aria-hidden="true" />
                 {props.pendingAction === 'approve' ? 'approving…' : props.pendingAction === 'reject' ? 'rejecting…' : props.pendingAction === 'comment' ? 'sending comment…' : 'submitting decision…'}
               </span>
+            ) : reviewEscalation ? (
+              <div class="log-actions-hint">
+                Automated review still blocks this draft. Guide another revision or stop.
+                <span class="log-actions-hint-kbd"> <span class="kbd">esc</span> stop <span class="kbd">c</span> revise</span>
+              </div>
             ) : awaitingPick ? (
               // An explanation, not a shortcut list, so it must survive on touch
               // where the keyboard hints are hidden; only the keys are wrapped.
@@ -1675,16 +1692,18 @@ function LogEntryImpl(props: LogEntryProps) {
                 thing under the cursor and the last thing keyboard focus lands
                 on, so neither reaches it by accident. */}
             <div class="log-actions-buttons">
-              {!genericToolApproval && <button disabled={props.actionsDisabled} title="Comment (c)" onClick={() => props.onAction('comment')}>Comment</button>}
-              <button class="danger" disabled={props.actionsDisabled} title="Reject (Esc)" onClick={() => props.onAction('reject')}>Reject</button>
-              <button
-                class="primary"
-                disabled={props.actionsDisabled || awaitingPick}
-                title={awaitingPick ? 'Pick one of the options above first' : 'Approve (⌘⏎)'}
-                onClick={() => props.onAction('approve')}
-              >
-                {selectedOptionLabel ? <>Approve<span class="approve-choice-label">“{selectedOptionLabel}”</span></> : 'Approve'}
-              </button>
+              {!genericToolApproval && <button disabled={props.actionsDisabled} title={reviewEscalation ? 'Guide revision (c)' : 'Comment (c)'} onClick={() => props.onAction('comment')}>{reviewEscalation ? 'Guide revision' : 'Comment'}</button>}
+              <button class="danger" disabled={props.actionsDisabled} title={reviewEscalation ? 'Stop (Esc)' : 'Reject (Esc)'} onClick={() => props.onAction('reject')}>{reviewEscalation ? 'Stop' : 'Reject'}</button>
+              {!reviewEscalation && (
+                <button
+                  class="primary"
+                  disabled={props.actionsDisabled || awaitingPick}
+                  title={awaitingPick ? 'Pick one of the options above first' : 'Approve (⌘⏎)'}
+                  onClick={() => props.onAction('approve')}
+                >
+                  {selectedOptionLabel ? <>Approve<span class="approve-choice-label">“{selectedOptionLabel}”</span></> : 'Approve'}
+                </button>
+              )}
             </div>
           </div>
         )}

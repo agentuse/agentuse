@@ -1909,45 +1909,6 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   text-transform: uppercase;
   margin-bottom: 10px;
 }
-.page-approval-detail .session-transcript { margin-top: 36px; }
-.page-approval-detail .session-transcript > summary {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 0 0 12px;
-  font-size: var(--font-size-caption);
-  font-weight: var(--weight-bold);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-  color: var(--muted);
-  cursor: pointer;
-  list-style: none;
-}
-.page-approval-detail .session-transcript > summary::-webkit-details-marker { display: none; }
-.page-approval-detail .session-transcript > summary::before {
-  content: "▸";
-  color: var(--cyan);
-  font-size: var(--font-size-caption);
-}
-.page-approval-detail .session-transcript[open] > summary::before { content: "▾"; }
-.page-approval-detail .session-transcript > summary:hover { color: var(--fg); }
-.page-approval-detail .session-transcript > summary:focus-visible {
-  outline: 2px solid var(--cyan-border);
-  outline-offset: 2px;
-}
-.page-approval-detail .session-transcript > summary .count {
-  color: var(--muted-3);
-  font-size: var(--font-size-micro);
-  letter-spacing: normal;
-  text-transform: none;
-}
-.page-approval-detail .session-transcript > summary .rule { flex: 1; height: 1px; background: var(--line); }
-.page-approval-detail .transcript-tools {
-  display: flex;
-  justify-content: flex-end;
-  margin: 0 0 8px;
-}
-
 /* logs */
 .logs { list-style: none; margin: 0; padding: 0; }
 .log-item {
@@ -2930,6 +2891,15 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
    box inside the gate card. It sits straight under the question with no
    hairline between them: ask and consequence are one thought. */
 .approval-risk .approval-section-title { color: var(--amber); }
+.approval-review-escalation {
+  background: var(--amber-soft);
+  border-top-color: var(--amber-border);
+  border-bottom: 1px solid var(--amber-border);
+}
+.approval-review-escalation .approval-section-title { color: var(--amber); }
+.approval-review-escalation .approval-section-body { color: var(--fg); }
+.approval-review-escalation .approval-section-body > p { margin: 0; }
+.approval-review-escalation .approval-section-body > * + * { margin-top: 8px; }
 .approval-question + .approval-risk { border-top: 0; }
 .approval-question + .approval-risk .approval-section-title { padding-top: 0; }
 .approval-question:has(+ .approval-risk) { padding-bottom: 6px; }
@@ -11078,14 +11048,14 @@ html[data-page="draft-panel"] .app-route {
 }
 .page-sessions .sessions-scope-clear:hover { color: var(--fg); }
 
-/* --- Folded rows on the session page: judge, learnings, gate-folded log ---
+/* --- Foldable rows on the session page: judge, learnings, session log ---
    Three panels that fold to one line each, stacked. They share ONE look so
    the stack reads as a set of drawers rather than three unrelated boxes:
    same box, same caret, same label size, same meta size, same spacing. The
-   open state keeps each panel's own layout; only the closed row is unified. */
+   session log keeps this shell in every page state, open or folded. */
 .page-approval-detail details.judge-panel,
 .page-approval-detail .learnings-panel.is-foldable,
-.page-approval-detail .session-transcript.is-gate-folded {
+.page-approval-detail .session-transcript {
   margin: 12px 0 0;
   padding: 0;
   border: 1px solid var(--line);
@@ -11094,13 +11064,12 @@ html[data-page="draft-panel"] .app-route {
   box-shadow: none;
 }
 .page-approval-detail details.judge-panel[open],
-.page-approval-detail .learnings-panel.is-foldable[open],
-.page-approval-detail .session-transcript.is-gate-folded[open] {
+.page-approval-detail .learnings-panel.is-foldable[open] {
   padding: 0 18px 16px;
 }
 .page-approval-detail details.judge-panel > summary,
 .page-approval-detail .learnings-panel.is-foldable > summary,
-.page-approval-detail .session-transcript.is-gate-folded > summary {
+.page-approval-detail .session-transcript > summary {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -11117,17 +11086,16 @@ html[data-page="draft-panel"] .app-route {
   border-radius: 12px;
 }
 .page-approval-detail details.judge-panel[open] > summary,
-.page-approval-detail .learnings-panel.is-foldable[open] > summary,
-.page-approval-detail .session-transcript.is-gate-folded[open] > summary {
+.page-approval-detail .learnings-panel.is-foldable[open] > summary {
   padding: 0;
   margin-bottom: 8px;
 }
 .page-approval-detail details.judge-panel > summary:hover,
 .page-approval-detail .learnings-panel.is-foldable > summary:hover,
-.page-approval-detail .session-transcript.is-gate-folded > summary:hover { color: var(--fg); }
+.page-approval-detail .session-transcript > summary:hover { color: var(--fg); }
 .page-approval-detail details.judge-panel > summary::before,
 .page-approval-detail .learnings-panel.is-foldable > summary::before,
-.page-approval-detail .session-transcript.is-gate-folded > summary::before {
+.page-approval-detail .session-transcript > summary::before {
   content: "▸";
   margin: 0;
   color: var(--muted-3);
@@ -11137,11 +11105,11 @@ html[data-page="draft-panel"] .app-route {
 }
 .page-approval-detail details.judge-panel[open] > summary::before,
 .page-approval-detail .learnings-panel.is-foldable[open] > summary::before,
-.page-approval-detail .session-transcript.is-gate-folded[open] > summary::before { content: "▾"; }
+.page-approval-detail .session-transcript[open] > summary::before { content: "▾"; }
 /* Meta text after the label: one size, one colour, no caps. */
 .page-approval-detail .judge-panel-count,
 .page-approval-detail .learnings-fold-meta,
-.page-approval-detail .session-transcript.is-gate-folded > summary .count {
+.page-approval-detail .session-transcript > summary .count {
   margin: 0;
   color: var(--muted-3);
   font-size: var(--font-size-caption);
@@ -11149,11 +11117,31 @@ html[data-page="draft-panel"] .app-route {
   letter-spacing: normal;
   text-transform: none;
 }
-.page-approval-detail .session-transcript.is-gate-folded > summary .count + .count::before {
+.page-approval-detail .session-transcript > summary .count + .count::before {
   content: "· ";
   color: var(--muted);
 }
-.page-approval-detail .session-transcript.is-gate-folded:not([open]) > summary .rule { display: none; }
+.page-approval-detail .session-transcript:not([open]) > summary .rule { display: none; }
+.page-approval-detail .session-transcript > summary::-webkit-details-marker { display: none; }
+.page-approval-detail .session-transcript > summary:focus-visible {
+  outline: 2px solid var(--cyan-border);
+  outline-offset: -2px;
+}
+.page-approval-detail .session-transcript[open] > summary {
+  border-bottom: 1px solid var(--line);
+  border-radius: 12px 12px 0 0;
+}
+.page-approval-detail .transcript-tools {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0;
+  padding: 8px 16px 0;
+}
+.page-approval-detail .transcript-feed {
+  padding: 16px 18px;
+}
+.page-approval-detail .transcript-feed > .logs { margin: 0 -18px -16px; }
+.page-approval-detail .transcript-feed > .logs:first-child { margin-top: -16px; }
 /* The judge chip is the only coloured element in the stack; keep it, but at
    row scale rather than page-header scale. */
 .page-approval-detail .judge-panel-head .chip.status {

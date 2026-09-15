@@ -91,7 +91,9 @@ export function PendingApprovalRow(props: {
         <span class="pending-row-agent">{displayAgentName(row.agentName, row.agentFilePath, row.agentId)}</span>
       )}
       <span class="pending-row-text">
-        {row.hasOptions && <span class="pending-row-tag">pick</span>}
+        {row.needsRevisionGuidance
+          ? <span class="pending-row-tag revised">revision needed</span>
+          : row.hasOptions && <span class="pending-row-tag">pick</span>}
         {row.round !== undefined && row.round > 1
           ? <span class="pending-row-tag revised" title={`Round ${row.round}: you commented ${row.round - 1} time${row.round === 2 ? '' : 's'} on this gate`}>round {row.round}</span>
           : isRevisedGate(row) && <span class="pending-row-tag revised">revised</span>}

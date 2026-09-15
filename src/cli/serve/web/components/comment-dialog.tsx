@@ -52,6 +52,8 @@ export function DecisionDialog(props: {
    *  (learning.apply). When false, the dialog notes the rule is stored but
    *  inert until learning.apply is enabled. */
   rememberApplies?: boolean;
+  /** Strict automated review exhausted, so this dialog guides a revision or stops the action. */
+  revisionGuidance?: boolean;
   onSubmit: (payload: { comment?: string; remember?: string }) => void;
   onClose: () => void;
 }) {
@@ -62,7 +64,22 @@ export function DecisionDialog(props: {
   // rather than a silent prefix, because feedback on the gate as a whole is a
   // real case and rewriting someone's words without showing them is not.
   const [aboutChoice, setAboutChoice] = useState(true);
-  const copy = COPY[props.mode];
+  const copy = props.revisionGuidance
+    ? props.mode === 'comment'
+      ? {
+          ...COPY.comment,
+          title: 'guide the next revision',
+          placeholder: 'tell the agent what to change, remove, verify, or try instead',
+          hint: 'Your earlier feedback is preserved. Add only what the next revision needs to resolve the automated review objection.',
+          submitLabel: 'Revise again',
+        }
+      : {
+          ...COPY.reject,
+          title: 'stop this action?',
+          body: 'The blocked draft will not be published. The agent will record that you stopped this approval flow.',
+          submitLabel: 'Stop action',
+        }
+    : COPY[props.mode];
 
   const submit = () => {
     const raw = (inputRef.current?.value ?? '').trim();
