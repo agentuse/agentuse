@@ -6,6 +6,9 @@
  * calls below are exactly what those buttons run on submit.
  */
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { h } from 'preact';
+import { renderToString } from 'preact-render-to-string';
+import { PendingChangesetRow } from '../src/cli/serve/web/components/pending-approval-card';
 
 const startChangeset = mock(async (projectId: string, input: unknown) => ({
   changeset: { sessionId: '01CHANGESET', projectId, ...(input as object) },
@@ -18,8 +21,10 @@ const {
   buildCreateInstruction,
   changesetCountLine,
   changesetEntries,
+  changesetReviewName,
   startCreateChangeset,
   startReviseChangeset,
+  waitingChangesetEntries,
 } = await import('../src/cli/serve/web/lib/changeset-entry');
 
 beforeEach(() => { startChangeset.mockClear(); });
@@ -154,5 +159,38 @@ describe('changeset list rows', () => {
     const [row] = changesetEntries([summary({ status: 'running' })]);
     expect(row!.detail).toBe('exclude refunded orders');
     expect(changesetCountLine(row!)).toBe('');
+  });
+
+  it('returns only changesets whose next action is a human review', () => {
+    const rows = waitingChangesetEntries([
+      summary({ sessionId: '01RUN', status: 'running', updatedAt: 40 }),
+      summary({ sessionId: '01APPLIED', status: 'applied', updatedAt: 30 }),
+      summary({ sessionId: '01PROPOSED', status: 'proposed', updatedAt: 10 }),
+      summary({ sessionId: '01NOCHANGE', status: 'no-change', updatedAt: 20 }),
+    ]);
+    expect(rows.map((row) => row.sessionId)).toEqual(['01NOCHANGE', '01PROPOSED']);
+  });
+
+  it('names create and revise reviews for the Home queue', () => {
+    const [create] = changesetEntries([summary({ mode: 'create' })]);
+    const [revise] = changesetEntries([summary({ target: { path: 'agents/triage.agentuse', name: 'Inbox triage' } })]);
+    expect(changesetReviewName(create!)).toBe('Create agent');
+    expect(changesetReviewName(revise!)).toBe('Revise Inbox triage');
+  });
+
+  it('renders a proposed revision as a direct review row', () => {
+    const [row] = waitingChangesetEntries([summary({
+      status: 'proposed',
+      updatedAt: 1_000,
+      target: { path: 'agents/triage.agentuse', name: 'Inbox triage' },
+      proposals: [{ index: 1, submittedAt: 1_000, reply: 'Refunded orders are excluded.', files: [{ path: 'agents/triage.agentuse' }] }],
+    })]);
+    const html = renderToString(h(PendingChangesetRow, { row: row!, now: 61_000 }));
+    expect(html).toContain('Revise Inbox triage');
+    expect(html).toContain('Refunded orders are excluded.');
+    expect(html).toContain('href="/projects/support/changesets/01A"');
+    expect(html).toContain('>changes</span>');
+    expect(html).toContain('>1m</span>');
+    expect(html).toContain('review →');
   });
 });

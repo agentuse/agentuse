@@ -94,6 +94,14 @@ export const ACTIVE_CHANGESET_STATUSES: ReadonlySet<ChangesetStatus> = new Set<C
   'no-change',
 ]);
 
+/** The authoring turn has ended and the operator now owns the next move. A
+ * running changeset is active too, but it belongs under Home's Working now
+ * section rather than its review queue. */
+export const WAITING_CHANGESET_STATUSES: ReadonlySet<ChangesetStatus> = new Set<ChangesetStatus>([
+  'proposed',
+  'no-change',
+]);
+
 const CHANGESET_LABELS: Record<ChangesetStatus, string> = {
   running: 'Changeset session is running',
   proposed: 'Changes ready to review',
@@ -114,6 +122,8 @@ export function changesetStatusLabel(status: ChangesetStatus): string {
 export interface ChangesetEntry {
   sessionId: string;
   projectId: string;
+  mode: ChangesetSummary['mode'];
+  targetAgentName?: string;
   status: ChangesetStatus;
   active: boolean;
   label: string;
@@ -131,6 +141,8 @@ export function changesetEntry(changeset: ChangesetSummary): ChangesetEntry {
   return {
     sessionId: changeset.sessionId,
     projectId: changeset.projectId,
+    mode: changeset.mode,
+    ...(changeset.target?.name && { targetAgentName: changeset.target.name }),
     status: changeset.status,
     active: ACTIVE_CHANGESET_STATUSES.has(changeset.status),
     label: changesetStatusLabel(changeset.status),
@@ -147,6 +159,18 @@ export function changesetEntries(changesets: readonly ChangesetSummary[]): Chang
   return changesets
     .map(changesetEntry)
     .sort((a, b) => (Number(b.active) - Number(a.active)) || (b.updatedAt - a.updatedAt));
+}
+
+/** Changesets whose next action is an operator review, newest first. */
+export function waitingChangesetEntries(changesets: readonly ChangesetSummary[]): ChangesetEntry[] {
+  return changesetEntries(changesets)
+    .filter((entry) => WAITING_CHANGESET_STATUSES.has(entry.status))
+    .sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export function changesetReviewName(entry: Pick<ChangesetEntry, 'mode' | 'targetAgentName'>): string {
+  if (entry.mode === 'create') return 'Create agent';
+  return entry.targetAgentName ? `Revise ${entry.targetAgentName}` : 'Revise agent';
 }
 
 /** `2 files · proposal 3`, the one line that says how big a changeset got. */

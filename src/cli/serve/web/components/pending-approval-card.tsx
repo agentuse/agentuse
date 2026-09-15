@@ -2,6 +2,7 @@ import type { ComponentChildren } from 'preact';
 import type { ApprovalRow } from '../lib/api';
 import { displayAgentName, formatApprovalTime } from '../lib/format';
 import { EXPIRES_SOON_MS, EXPIRES_URGENT_MS, formatCompactAge } from '../lib/approval-stats';
+import { changesetReviewName, type ChangesetEntry } from '../lib/changeset-entry';
 
 function formatWaiting(ms: number): string {
   const min = Math.floor(ms / 60_000);
@@ -110,6 +111,27 @@ export function PendingApprovalRow(props: {
           {formatWaiting(waited)}
         </span>
       )}
+      <span class="pending-row-review">review →</span>
+    </a>
+  );
+}
+
+/** A completed authoring session with a proposal is still waiting on the
+ * operator. It uses the same scan row as an approval gate, but links straight
+ * to the changeset review where Apply, request changes, and Discard live. */
+export function PendingChangesetRow(props: { row: ChangesetEntry; now: number }) {
+  const { row, now } = props;
+  const waited = Math.max(0, now - row.updatedAt);
+  return (
+    <a class="pending-row" href={row.href} title={row.detail}>
+      <span class="pending-row-agent">{changesetReviewName(row)}</span>
+      <span class="pending-row-text">
+        <span class="pending-row-tag revised">{row.status === 'no-change' ? 'diagnosis' : 'changes'}</span>
+        {row.detail}
+      </span>
+      <span class={`pending-row-age tone-${waitingTone(waited)}`} title={formatApprovalTime(row.updatedAt)}>
+        {formatWaiting(waited)}
+      </span>
       <span class="pending-row-review">review →</span>
     </a>
   );

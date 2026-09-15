@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import type { ApprovalRow, ProjectInfo, SerializedSchedule, SessionRow } from '../lib/api';
-import { fetchInfo, fetchAgents, fetchSchedules, fetchStoreRows, postSessionStop } from '../lib/api';
+import { fetchInfo, fetchAgents, fetchProjectChangesets, fetchSchedules, fetchStoreRows, postSessionStop } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useHomeSections } from '../hooks/use-home-sections';
 import { useLiveHome, sessionRowKey, ORPHANED_LABEL, type ActivityEvent } from '../hooks/use-live-home';
@@ -10,7 +10,7 @@ import { useTitle } from '../hooks/use-title';
 import { UpdateBanner } from '../components/update-banner';
 import { Loading } from '../components/loading';
 import { AgentResultsRows } from '../components/metric-results';
-import { pendingNewestFirst, PendingApprovalRow } from '../components/pending-approval-card';
+import { waitingSince, PendingApprovalRow, PendingChangesetRow } from '../components/pending-approval-card';
 import { displayAgentName, errorText, formatApprovalTime, formatRelativeTime, displayStatusLabel, plural, runTone, type RunTone } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
@@ -19,6 +19,7 @@ import { consumeUpdatePreview, previewUpdate } from '../lib/update-preview';
 import { InlineError } from '../components/error-banner';
 import { formatElapsedClock } from '../lib/format';
 import { useNow } from '../hooks/use-now';
+import { waitingChangesetEntries, type ChangesetEntry } from '../lib/changeset-entry';
 
 function formatCountdown(ms: number): string {
   if (ms <= 0) return 'now';
@@ -200,8 +201,8 @@ const ATTENTION_ROWS = 3;
 /** How many dismissals are in flight at once during a bulk sweep. */
 const DISMISS_ALL_CONCURRENCY = 4;
 
-/** Pending gates shown before the tail folds. Twenty-plus open gates is a
- *  real state; the reviewer needs the latest few on screen, not all of them. */
+/** Reviews shown before the tail folds. Twenty-plus open reviews is a real
+ * state; the reviewer needs the latest few on screen, not all of them. */
 const PENDING_ROWS = 8;
 
 /** Recent-activity rows shown on Home; the full stream lives on /sessions. */
@@ -215,6 +216,7 @@ const FEED_LIMIT = 6;
  *  section exists to give. */
 function AttentionSection(props: {
   pending: ApprovalRow[];
+  changesets: ChangesetEntry[];
   failed: SessionRow[];
   stranded: SessionRow[];
   onDismissFailed: (row: SessionRow) => void;
@@ -222,12 +224,15 @@ function AttentionSection(props: {
 }) {
   const [expanded, setExpanded] = useState(false);
   const [pendingOpen, setPendingOpen] = useState(false);
-  const { pending, failed, stranded } = props;
-  const total = pending.length + failed.length + stranded.length;
-  const now = useNow(pending.length > 0);
-  const ordered = pendingNewestFirst(pending);
-  const shownPending = pendingOpen ? ordered : ordered.slice(0, PENDING_ROWS);
-  const foldedPending = ordered.length - shownPending.length;
+  const { pending, changesets, failed, stranded } = props;
+  const total = pending.length + changesets.length + failed.length + stranded.length;
+  const now = useNow(pending.length + changesets.length > 0);
+  const orderedReviews = [
+    ...pending.map((row) => ({ kind: 'approval' as const, row, at: waitingSince(row) ?? Number.MIN_SAFE_INTEGER })),
+    ...changesets.map((row) => ({ kind: 'changeset' as const, row, at: row.updatedAt })),
+  ].sort((a, b) => b.at - a.at);
+  const shownReviews = pendingOpen ? orderedReviews : orderedReviews.slice(0, PENDING_ROWS);
+  const foldedPending = orderedReviews.length - shownReviews.length;
   // Each group keeps its own head, so one long list never buries the other.
   const shownFailed = expanded ? failed : failed.slice(0, ATTENTION_ROWS);
   const shownStranded = expanded ? stranded : stranded.slice(0, ATTENTION_ROWS);
@@ -247,12 +252,14 @@ function AttentionSection(props: {
         ? <div class="attn-empty">Nothing waiting on you.</div>
         : (
           <div class="attn-list">
-            {pending.length > 0 && (
+            {orderedReviews.length > 0 && (
               <div class="surface appr-surface pending-rows">
-                {shownPending.map((row) => <PendingApprovalRow key={`${row.project}:${row.sessionId}`} row={row} now={now} />)}
+                {shownReviews.map((review) => review.kind === 'approval'
+                  ? <PendingApprovalRow key={`approval:${review.row.project}:${review.row.sessionId}`} row={review.row} now={now} />
+                  : <PendingChangesetRow key={`changeset:${review.row.projectId}:${review.row.sessionId}`} row={review.row} now={now} />)}
                 {(foldedPending > 0 || pendingOpen) && (
                   <button type="button" class="attn-more pending-more" onClick={() => setPendingOpen((on) => !on)}>
-                    {pendingOpen ? 'show fewer' : `show all ${ordered.length} waiting →`}
+                    {pendingOpen ? 'show fewer' : `show all ${orderedReviews.length} waiting →`}
                   </button>
                 )}
               </div>
@@ -538,6 +545,27 @@ export default function Home() {
   // installations, so do not let those secondary requests contend with the
   // sessions and approvals snapshots during the critical first paint.
   const primaryReady = data !== null && !liveHome.loading && !attentionState.loading;
+  const projects = data?.projects ?? [];
+  const changesetProjectIds = projects.map((project) => project.id).sort();
+  const changesetReviews = useFetch(
+    `home-changesets:${changesetProjectIds.join(',')}`,
+    async () => {
+      const results = await Promise.all(changesetProjectIds.map(async (projectId) => {
+        try {
+          const payload = await fetchProjectChangesets(projectId);
+          return { rows: waitingChangesetEntries(payload.changesets), error: undefined };
+        } catch (error) {
+          return { rows: [] as ChangesetEntry[], error: `${projectId}: ${(error as Error).message}` };
+        }
+      }));
+      return {
+        rows: results.flatMap((result) => result.rows).sort((a, b) => b.updatedAt - a.updatedAt),
+        errors: results.flatMap((result) => result.error ? [result.error] : []),
+      };
+    },
+    { refreshMs: 30_000, enabled: data !== null && changesetProjectIds.length > 0 },
+  );
+  const pendingChangesets = changesetReviews.data?.rows ?? [];
 
   // Agent parse failures are counted on their project card, using the same
   // payload as /agents rather than hiding one aggregate warning in the footer.
@@ -638,18 +666,18 @@ export default function Home() {
   const allWaitingResuming = liveHome.suspendedGates.loaded && waiting.every((s) =>
     !liveHome.suspendedGates.pending.has(sessionRowKey(s)) && !liveHome.suspendedGates.expired.has(sessionRowKey(s)));
 
-  const projects = data?.projects ?? [];
   const noProjects = Boolean(data) && projects.length === 0;
   const noAgents = Boolean(data) && projects.length > 0 && projects.every((project) => project.agentCount === 0);
   const runningByProject = new Map<string, number>();
   for (const row of running) runningByProject.set(row.project, (runningByProject.get(row.project) ?? 0) + 1);
 
   // One ambient state drives the background tint: running beats waiting beats idle.
-  const ambient = running.length > 0 ? 'running' : (pendingApprovals > 0 || waiting.length > 0) ? 'waiting' : 'idle';
+  const ambient = running.length > 0 ? 'running' : (pendingApprovals > 0 || pendingChangesets.length > 0 || waiting.length > 0) ? 'waiting' : 'idle';
 
   // Header sentence + stat line. "Waiting on you" counts what the section of
-  // the same name lists: pending gates, recent failures, stranded runs.
-  const waitingOnYou = liveHome.pendingRows.length + failedRecent.length + strandedRecent.length;
+  // the same name lists: pending gates, open changesets, recent failures,
+  // stranded runs.
+  const waitingOnYou = liveHome.pendingRows.length + pendingChangesets.length + failedRecent.length + strandedRecent.length;
   const runs24h = operationalSessions.length;
   // Crashes only, matching the /sessions?status=error filter this stat links to.
   // A run the agent declared incomplete is listed under its own filter there.
@@ -695,12 +723,13 @@ export default function Home() {
           </div>
           {error && <InlineError>Failed to load: {error.message}</InlineError>}
           {liveHome.error && <InlineError>Failed to load sessions: {liveHome.error.message}</InlineError>}
+          {(changesetReviews.data?.errors.length ?? 0) > 0 && <InlineError>Failed to load some change reviews: {changesetReviews.data!.errors.join('; ')}</InlineError>}
         </header>
 
         {sections.isVisible('running') && running.length > 0 && <WorkingNow running={running} />}
 
         {sections.isVisible('attention') && (
-          <AttentionSection pending={liveHome.pendingRows} failed={failedRecent} stranded={strandedRecent} onDismissFailed={dismissFailed} onDismissAll={dismissAll} />
+          <AttentionSection pending={liveHome.pendingRows} changesets={pendingChangesets} failed={failedRecent} stranded={strandedRecent} onDismissFailed={dismissFailed} onDismissAll={dismissAll} />
         )}
 
         {sections.isVisible('results') && (
