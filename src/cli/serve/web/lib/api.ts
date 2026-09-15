@@ -28,6 +28,8 @@ import type {
 import type { AboutInfo } from "../../about";
 import type { PushPrefs } from "../../push";
 
+import { FIXTURE_SESSION_PREFIX } from './dev';
+
 export type { SerializedSchedule };
 
 export interface ApiError {
@@ -48,11 +50,21 @@ export class ApiRequestError extends Error implements ApiError {
   }
 }
 
+/** A fixture session (dev builds only) has no daemon-side data. Every call
+ *  scoped to one answers 404 here, which each panel already reads as "nothing
+ *  for this session", instead of reaching a daemon that never heard of it. */
+function rejectFixtureRequest(path: string): void {
+  if (typeof __AGENTUSE_WEB_DEV__ === 'undefined' || !__AGENTUSE_WEB_DEV__) return;
+  if (!path.includes(`/${FIXTURE_SESSION_PREFIX}`)) return;
+  throw new ApiRequestError(404, 'NOT_FOUND', 'Fixture sessions have no data on the daemon.');
+}
+
 async function getJson<T>(
   path: string,
   params: Record<string, string | undefined> = {},
   options: { signal?: AbortSignal } = {}
 ): Promise<T> {
+  rejectFixtureRequest(path);
   const url = new URL(path, location.origin);
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined) url.searchParams.set(key, value);
@@ -74,6 +86,7 @@ async function getJson<T>(
 }
 
 async function postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  rejectFixtureRequest(path);
   const response = await fetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -92,6 +105,7 @@ async function postJson<T>(path: string, body: Record<string, unknown>): Promise
 }
 
 async function deleteJson<T>(path: string): Promise<T> {
+  rejectFixtureRequest(path);
   const response = await fetch(path, { method: 'DELETE', headers: { Accept: 'application/json' } });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {

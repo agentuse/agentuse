@@ -382,11 +382,12 @@ a, button, select, summary, label, input, textarea,
 }
 .page-settings h1 { margin: 0 0 8px; font-family: var(--sans); font-size: var(--font-size-display); line-height: var(--lh-tight); font-weight: var(--weight-medium); }
 .page-settings .lede { margin: 0; color: var(--muted-3); font-family: var(--sans); font-size: var(--font-size-body); }
-.settings-tabs { position: relative; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin-bottom: 14px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+/* --tab-count is set inline by the route; a dev build adds a fifth tab. */
+.settings-tabs { position: relative; display: grid; grid-template-columns: repeat(var(--tab-count, 4), minmax(0, 1fr)); gap: 4px; margin-bottom: 14px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 /* The selected tab is a sliding thumb rather than a background that jumps. */
 .settings-tab-thumb {
   position: absolute; left: 4px; top: 4px; bottom: 4px;
-  width: calc((100% - 8px - 12px) / 4); border-radius: 7px;
+  width: calc((100% - 8px - (var(--tab-count, 4) - 1) * 4px) / var(--tab-count, 4)); border-radius: 7px;
   background: var(--bg); box-shadow: inset 0 0 0 1px var(--line-strong);
   transition: transform 220ms var(--ease-out);
 }

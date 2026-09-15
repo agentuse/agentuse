@@ -3,6 +3,7 @@ import { DashboardEventSource } from '../lib/dashboard-event-source';
 import type { ApprovalLogEntry, ApprovalPageInfo } from '../../types';
 import { fetchSessionStatus } from '../lib/api';
 import { isLiveStatus } from '../lib/format';
+import { FIXTURE_SESSION_PREFIX } from '../lib/dev';
 
 export interface ApprovalStreamHandlers {
   onStatus: (status: string, approval: Omit<ApprovalPageInfo, 'logs'>) => void;
@@ -61,6 +62,22 @@ export function useApprovalStream(options: {
 
   useEffect(() => {
     if (!enabled) return;
+    // A fixture session (Settings > Developer, dev builds only) paints once
+    // from canned data and never touches the daemon.
+    if (typeof __AGENTUSE_WEB_DEV__ !== 'undefined' && __AGENTUSE_WEB_DEV__ && sessionId.startsWith(FIXTURE_SESSION_PREFIX)) {
+      let cancelled = false;
+      void import('../fixtures/session-fixtures').then(({ sessionFixture }) => {
+        if (cancelled) return;
+        const fixture = sessionFixture(sessionId);
+        if (!fixture) {
+          handlersRef.current.onFatalError('NOT_FOUND', `No session fixture named "${sessionId}". See Settings > Developer for the list.`);
+          return;
+        }
+        handlersRef.current.onStatus(fixture.status, fixture.approval);
+        handlersRef.current.onLogs(fixture.logs, fixture.logs.length);
+      });
+      return () => { cancelled = true; };
+    }
     // Grace window for a just-started session that 404s in the polling fallback.
     const mountedAt = Date.now();
     let seenOk = false;

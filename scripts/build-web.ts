@@ -14,6 +14,10 @@ const ROOT = resolve(import.meta.dir, "..");
 const ENTRY = resolve(ROOT, "src/cli/serve/web/main.tsx");
 const OUTDIR = resolve(ROOT, "dist/web");
 const WATCH = process.argv.includes("--watch");
+// Developer-only dashboard surfaces (Settings > Developer, session page
+// fixtures). On for a watch build or when asked for explicitly; a release
+// build compiles them out.
+const DEV_TOOLS = WATCH || process.env.AGENTUSE_WEB_DEV === "1";
 const LOCK_PATH = resolve(
   tmpdir(),
   `agentuse-build-web-${createHash("sha256").update(ROOT).digest("hex").slice(0, 16)}.lock`,
@@ -109,14 +113,18 @@ async function buildWeb(): Promise<void> {
     splitting: true,
     minify: true,
     sourcemap: "linked",
+    define: { __AGENTUSE_WEB_DEV__: DEV_TOOLS ? "true" : "false" },
     naming: {
       entry: "[name]-[hash].[ext]",
       chunk: "chunks/[name]-[hash].[ext]",
       asset: "assets/[name]-[hash].[ext]",
     },
     // Font URLs in app.css point at the runtime asset route; they are copied
-    // and hash-renamed below, not bundled.
-    external: ["/assets/*"],
+    // and hash-renamed below, not bundled. A release build also leaves the
+    // dev fixtures out: their only import sits in a branch the define above
+    // makes dead, but the bundler still emits a chunk for it unless told not
+    // to resolve it at all.
+    external: ["/assets/*", ...(DEV_TOOLS ? [] : ["../fixtures/*"])],
   });
 
   if (!result.success) {

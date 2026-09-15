@@ -10,6 +10,7 @@ import { ProviderSettingsGroup } from '../components/provider-setup';
 import { ProjectsSettingsGroup, RestartOnboardingGroup } from '../components/project-settings';
 import { SettingsGroup as Group, SettingsRow as Row } from '../components/settings-layout';
 import { BusyButton } from '../components/busy-button';
+import { DeveloperSettings } from '../components/developer-settings';
 
 /** Two per-category checkboxes when push can work here; otherwise a single
  *  explanation of what stands in the way (mirrors the push-bell dialogs). */
@@ -62,18 +63,21 @@ function BrowserNotificationsGroup() {
   );
 }
 
-type SettingsTab = 'general' | 'projects' | 'providers' | 'plugins';
+type SettingsTab = 'general' | 'projects' | 'providers' | 'plugins' | 'developer';
 
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: 'general', label: 'General' },
   { id: 'projects', label: 'Projects' },
   { id: 'providers', label: 'Providers' },
   { id: 'plugins', label: 'Plugins' },
+  // Dev builds only: canned session pages and other QA tools. See lib/dev.ts
+  // for why the flag is read inline.
+  ...(typeof __AGENTUSE_WEB_DEV__ !== 'undefined' && __AGENTUSE_WEB_DEV__ ? [{ id: 'developer' as const, label: 'Developer' }] : []),
 ];
 
 function settingsTabFromSearch(search: string): SettingsTab {
   const candidate = new URLSearchParams(search).get('tab');
-  return candidate === 'projects' || candidate === 'providers' || candidate === 'plugins' ? candidate : 'general';
+  return SETTINGS_TABS.some((tab) => tab.id === candidate && tab.id !== 'general') ? candidate as SettingsTab : 'general';
 }
 
 export default function Settings() {
@@ -153,7 +157,7 @@ export default function Settings() {
             : 'Manage appearance, projects, and models.'}</p>
         </header>
 
-        <div class="settings-tabs" role="tablist" aria-label="Settings sections">
+        <div class="settings-tabs" role="tablist" aria-label="Settings sections" style={{ '--tab-count': SETTINGS_TABS.length }}>
           <span
             class="settings-tab-thumb"
             aria-hidden="true"
@@ -181,6 +185,7 @@ export default function Settings() {
             {...(activeTab === 'providers' && providerParam ? { initialExpanded: providerParam } : {})}
           />}
           {activeTab === 'projects' && <ProjectsSettingsGroup />}
+          {typeof __AGENTUSE_WEB_DEV__ !== 'undefined' && __AGENTUSE_WEB_DEV__ && activeTab === 'developer' && <DeveloperSettings />}
           {activeTab === 'general' && (
             <>
               {isDesktop && (
