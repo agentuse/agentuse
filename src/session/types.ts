@@ -524,6 +524,9 @@ export interface VerifyPart extends PartBase {
   critique?: string;
   /** Judge identity: model string (built-in) or judge agent name. */
   judge?: string;
+  /** SHA-256 fingerprint of the complete rendered gate plus the judge contract.
+   * A later byte-identical gate may reuse a recorded pass across suspension. */
+  gateFingerprint?: string;
   /** Slate gates: one verdict per candidate. A `settled` entry was carried
    * forward unchanged from an earlier attempt rather than judged again. */
   candidates?: Array<{ id: string; pass: boolean; critique?: string; settled?: boolean; fingerprint?: string }>;

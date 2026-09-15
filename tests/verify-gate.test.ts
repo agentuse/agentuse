@@ -610,9 +610,64 @@ describe('fresh gate review', () => {
     } as any;
     const { tool, suspend } = makeGateTool();
     const gate = withGateVerify(tool, { ...freshOptions, sessionManager, sessionID: 's', agentId: 'a', messageID: 'm2' });
-    await expect((gate.execute as any)(gateInput, {})).rejects.toThrow('SUSPENDED');
+    const revised = { ...gateInput, changes: [{ label: 'Reply to post', content: 'The revised reply text mentions the product.' }] };
+    await expect((gate.execute as any)(revised, {})).rejects.toThrow('SUSPENDED');
     expect(judgeOutputMock).toHaveBeenCalledTimes(1);
     expect(suspend).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses a durable pass after suspension when the complete gate is unchanged', async () => {
+    judgeOutputMock.mockResolvedValue({ status: 'verdict', verdict: { pass: true } });
+    const parts: any[] = [];
+    const sessionManager = {
+      getSessionMessages: async () => [{ id: 'message-1' }],
+      getMessageParts: async () => parts,
+      addPart: async (_session: string, _agent: string, _message: string, part: unknown) => {
+        parts.push(part);
+        return `part-${parts.length}`;
+      },
+    } as any;
+
+    const firstTool = makeGateTool();
+    const firstGate = withGateVerify(firstTool.tool, {
+      ...freshOptions,
+      sessionManager,
+      sessionID: 's',
+      agentId: 'a',
+      messageID: 'message-1',
+    });
+    await expect((firstGate.execute as any)(gateInput, {})).rejects.toThrow('SUSPENDED');
+    expect(judgeOutputMock).toHaveBeenCalledTimes(1);
+
+    parts.push({
+      type: 'tool',
+      tool: 'await_human',
+      state: {
+        status: 'completed',
+        input: gateInput,
+        output: { status: 'commented', comment: 'Can you re-list the gate?', reviewer: { username: 'web' } },
+      },
+    });
+
+    const resumedTool = makeGateTool();
+    const resumedGate = withGateVerify(resumedTool.tool, {
+      ...freshOptions,
+      sessionManager,
+      sessionID: 's',
+      agentId: 'a',
+      messageID: 'message-2',
+    });
+    await expect((resumedGate.execute as any)(gateInput, {})).rejects.toThrow('SUSPENDED');
+
+    expect(judgeOutputMock).toHaveBeenCalledTimes(1);
+    expect(resumedTool.suspend).toHaveBeenCalledTimes(1);
+    const carried = parts.filter((part) => part.type === 'verify').at(-1);
+    expect(carried).toMatchObject({
+      verdict: 'pass',
+      critique: expect.stringContaining('Exact gate unchanged'),
+      gateFingerprint: expect.stringMatching(/^sha256:/),
+    });
+    expect(carried.candidates.every((candidate: any) => candidate.settled === true)).toBe(true);
   });
 
   it('does not carry a pass or judge session into a revised slate', async () => {
