@@ -16,7 +16,8 @@ import { useTitle } from '../hooks/use-title';
 import { Loading } from '../components/loading';
 import { CopyButton } from '../components/copy-button';
 import { DraftUsageLine } from '../components/token-usage-strip';
-import { DraftComposer, DraftStatusPill } from '../components/draft-panel';
+import { DraftStatusPill } from '../components/draft-panel';
+import { ChangesetComposer } from '../components/changeset-composer';
 import { DraftAnswerComposer, pendingDraftQuestion } from '../components/draft-answer-composer';
 import { DraftThread } from '../components/draft-thread';
 import { RevisionSessionContext } from '../components/revision-session-context';
@@ -39,9 +40,6 @@ import { Tabs } from '../components/tabs';
  */
 
 const POLL_MS = 1200;
-
-/** Statuses where the operator can still steer this changeset. */
-const OPEN_STATUSES = new Set(['running', 'proposed', 'no-change']);
 
 type BusyAction = 'apply' | 'discard' | 'restore' | 'cancel' | 'request' | 'test';
 
@@ -176,7 +174,6 @@ export default function ChangesetReview() {
 
   const question = pendingDraftQuestion(authorSession.entries, authorSession.approval, authorSession.status);
   const running = changeset.status === 'running';
-  const open = OPEN_STATUSES.has(changeset.status);
   const needsReview = changesetNeedsFileReview(proposal);
   const testBlocked = needsReview && !openedAFile;
 
@@ -238,8 +235,10 @@ export default function ChangesetReview() {
       setTabPinned(true);
       setTab('changes');
       await refresh();
+      return true;
     } catch (caught) {
       setActionError((caught as Error).message || 'Could not send that change request.');
+      return false;
     } finally {
       setBusy(null);
     }
@@ -533,11 +532,10 @@ export default function ChangesetReview() {
           onAnswered={authorSession.onAnswered}
           onShowContext={() => selectTab('changes')}
         />
-      ) : open && (
-        <DraftComposer
-          placeholder="Tell the author what to change in this proposal…"
-          hint="to send · same session, keeps context"
-          busy={busy === 'request' || running}
+      ) : (
+        <ChangesetComposer
+          changeset={changeset}
+          busy={busy !== null}
           onSend={requestChange}
         />
       )}

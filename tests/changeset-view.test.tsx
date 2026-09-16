@@ -15,6 +15,46 @@ import {
 } from '../src/cli/serve/web/lib/changeset-view';
 import { ChangesetFileList } from '../src/cli/serve/web/components/changeset-file-list';
 import { ChangesetFileView } from '../src/cli/serve/web/components/changeset-file-view';
+import { ChangesetComposer } from '../src/cli/serve/web/components/changeset-composer';
+
+describe('changeset recovery composer', () => {
+  const onSend = async () => true;
+
+  it('keeps the text box and offers retry after a failed authoring turn', () => {
+    const html = renderToString(<ChangesetComposer
+      changeset={{ status: 'error', instruction: 'Initial request', pendingRequest: 'Allow concurrent drafts' }}
+      busy={false} onSend={onSend}
+    />);
+    expect(html).toContain('<textarea');
+    expect(html).toContain('>Retry</button>');
+    expect(html).toContain('Your conversation and staged files are kept.');
+    expect(html).not.toMatch(/<textarea[^>]*disabled/);
+    expect(html).not.toMatch(/<button[^>]*disabled[^>]*>Retry/);
+  });
+
+  it('disables recovery controls while a request is being submitted', () => {
+    const html = renderToString(<ChangesetComposer
+      changeset={{ status: 'error', instruction: 'Initial request' }}
+      busy onSend={onSend}
+    />);
+    expect(html).toContain('Retrying…');
+    expect(html.match(/disabled/g)).toHaveLength(3);
+  });
+
+  it('keeps settled and running authoring conversations available without a retry button', () => {
+    for (const status of ['running', 'proposed', 'no-change'] as const) {
+      const html = renderToString(<ChangesetComposer changeset={{ status, instruction: 'Initial request' }} busy={false} onSend={onSend} />);
+      expect(html).toContain('<textarea');
+      expect(html).not.toContain('>Retry</button>');
+    }
+  });
+
+  it('does not reopen applied, discarded, or restoring changesets', () => {
+    for (const status of ['applying', 'applied', 'discarded', 'restoring', 'restored'] as const) {
+      expect(renderToString(<ChangesetComposer changeset={{ status, instruction: 'Initial request' }} busy={false} onSend={onSend} />)).toBe('');
+    }
+  });
+});
 
 describe('accepting a changeset diagnosis', () => {
   const target = { path: 'agents/daily report.agentuse', name: 'Daily report' };

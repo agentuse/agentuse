@@ -59,15 +59,27 @@ export function DraftComposer(props: {
   hint: string;
   busy: boolean;
   disabled?: boolean;
-  onSend: (prompt: string) => void | Promise<void>;
+  /** Return false when sending fails to keep the operator's text. */
+  onSend: (prompt: string) => void | boolean | Promise<void | boolean>;
 }) {
   const [value, setValue] = useState('');
   const ref = useRef<HTMLTextAreaElement>(null);
-  const send = () => {
+  const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
+  const blocked = props.busy || props.disabled || sending;
+  const send = async () => {
     const prompt = value.trim();
-    if (!prompt || props.busy || props.disabled) return;
-    setValue('');
-    void props.onSend(prompt);
+    if (!prompt || blocked || sendingRef.current) return;
+    sendingRef.current = true;
+    setSending(true);
+    try {
+      if (await props.onSend(prompt) !== false) setValue('');
+    } catch {
+      // The caller displays the error; retain the text for another attempt.
+    } finally {
+      sendingRef.current = false;
+      setSending(false);
+    }
   };
   return (
     <div class="draft-composer">
@@ -76,12 +88,12 @@ export function DraftComposer(props: {
         ref={ref}
         value={value}
         placeholder={props.placeholder}
-        disabled={props.busy || props.disabled}
+        disabled={blocked}
         onInput={(event) => setValue((event.target as HTMLTextAreaElement).value)}
         onKeyDown={(event) => {
           if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
             event.preventDefault();
-            send();
+            void send();
           }
         }}
       />
@@ -90,11 +102,11 @@ export function DraftComposer(props: {
         <button
           type="button"
           class="draft-primary"
-          disabled={!value.trim() || props.busy || props.disabled}
-          aria-busy={props.busy}
-          onClick={send}
+          disabled={!value.trim() || blocked}
+          aria-busy={props.busy || sending}
+          onClick={() => void send()}
         >
-          {props.busy ? 'Working…' : 'Send'}
+          {props.busy || sending ? 'Working…' : 'Send'}
         </button>
       </div>
     </div>
