@@ -786,7 +786,7 @@ function ApprovalDetailCard(props: {
         <section class="approval-section approval-artifact">
           <h4 class="approval-section-title">Artifact</h4>
           <div class="approval-section-body approval-artifact-body">
-            <a class="approval-link" href={details.artifactUrl} target="_blank" rel="noopener noreferrer">Open artifact: {details.artifactUrl}</a>
+            <a class="approval-link" href={details.artifactUrl} title={details.artifactUrl} target="_blank" rel="noopener noreferrer">Open artifact</a>
             <ExternalMediaPreview url={details.artifactUrl} />
           </div>
         </section>
