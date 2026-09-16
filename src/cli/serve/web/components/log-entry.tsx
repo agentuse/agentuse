@@ -351,31 +351,23 @@ export function artifactKind(path: string): 'image' | 'page' | 'pdf' | 'video' |
   return 'file';
 }
 
-/**
- * A text artifact (markdown, csv, json) read where the reviewer already is,
- * instead of in a new tab: the whole point of shipping a doc for approval is
- * that it gets read. Fetched on first open, capped so a huge dump stays a
- * link.
- */
+/** The artifact endpoint already renders a complete, escaped HTML document.
+ * Embed it on demand instead of treating that response as Markdown source. */
 function TextArtifactPreview(props: { path: string; href: string }) {
   const [open, setOpen] = useState(false);
-  const [text, setText] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    if (!open || text !== null || error) return;
-    fetch(props.href, { credentials: 'same-origin' })
-      .then((res) => (res.ok ? res.text() : Promise.reject(new Error(`HTTP ${res.status}`))))
-      .then((body) => setText(body.length > 20_000 ? `${body.slice(0, 20_000)}\n…` : body))
-      .catch((err) => setError((err as Error).message));
-  }, [open]);
+  const theme = typeof document !== 'undefined' ? document.documentElement.dataset.theme : undefined;
+  const href = theme === 'light' || theme === 'dark'
+    ? `${props.href}${props.href.includes('?') ? '&' : '?'}theme=${theme}`
+    : props.href;
   return (
     <details class="artifact-text" open={open} onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}>
-      <summary>read in place</summary>
-      {error
-        ? <div class="artifact-text-error">Could not load: {error}</div>
-        : text === null
-          ? <div class="artifact-text-loading">Loading…</div>
-          : <div class="artifact-text-body"><LogContent value={text} forceMarkdown={MARKDOWN_ARTIFACT_RE.test(props.path)} /></div>}
+      <summary>{artifactKind(props.path) === 'doc' ? 'Preview document' : 'View data'}</summary>
+      {open && <iframe
+        class="artifact-preview-frame artifact-text-frame"
+        src={href}
+        title={`Preview of ${artifactName(props.path)}`}
+        sandbox=""
+      />}
     </details>
   );
 }

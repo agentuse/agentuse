@@ -11407,18 +11407,7 @@ html[data-page="draft-panel"] .app-route {
 .artifact-text > summary::-webkit-details-marker { display: none; }
 .artifact-text > summary::before { content: "▸ "; color: var(--muted-3); font-size: var(--font-size-micro); }
 .artifact-text[open] > summary::before { content: "▾ "; }
-.artifact-text-body {
-  margin-top: 8px;
-  padding: 12px 14px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  max-height: 480px;
-  overflow: auto;
-  font-size: var(--font-size-supporting);
-  line-height: var(--lh-loose);
-}
-.artifact-text-loading, .artifact-text-error { margin-top: 6px; font-size: var(--font-size-caption); color: var(--muted); }
-.artifact-text-error { color: var(--red); }
+.artifact-text-frame { height: min(480px, 65vh); }
 /* The additional-instruction panel folds like judge / learnings / log. */
 .page-approval-detail .additional-instruction.is-foldable { padding: 0; margin-top: 12px; }
 .page-approval-detail .additional-instruction.is-foldable[open] { padding: 0 18px 16px; }
