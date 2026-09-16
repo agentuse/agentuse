@@ -584,6 +584,9 @@ export interface ApprovalChange {
   /** A multi-post submission (a thread), one entry per post in order. When
    *  present, `displayContent` holds the same posts joined for text surfaces. */
   displayParts?: string[];
+  /** External media that belongs to this exact action and should be previewed
+   *  inline in the approval card. */
+  mediaUrls?: string[];
   optionId?: string;
 }
 

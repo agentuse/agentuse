@@ -437,12 +437,16 @@ export function normalizeApprovalChanges(value: unknown): ApprovalChange[] | und
       : displayParts && displayParts.length > 0
         ? displayParts.join('\n\n')
         : undefined;
+    const mediaUrls = Array.isArray(rec.media_urls)
+      ? [...new Set(rec.media_urls.map(safeHttpUrl).filter((url): url is string => Boolean(url)))]
+      : undefined;
     const optionId = typeof rec.optionId === 'string' && rec.optionId.trim() ? rec.optionId.trim() : undefined;
     return [{
       ...(label && { label }),
       content,
       ...(displayContent && { displayContent }),
       ...(displayParts && displayParts.length > 1 && { displayParts }),
+      ...(mediaUrls && mediaUrls.length > 0 && { mediaUrls }),
       ...(optionId && { optionId }),
     }];
   });

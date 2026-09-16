@@ -173,7 +173,7 @@ See [Channels](/guides/channels) for Slack setup, channel ids, events, and compl
 The session page shows the best available review details from the agent:
 
 - `prompt`: the reviewer-facing decision prompt
-- `changes`: the exact actions taken on approval, one `{ label, content }` entry per discrete action. Each renders as a highlighted "On approval" box with a copy button and character count, so the reviewer skims the verbatim payload first. When `content` is a command, `displayContent` carries the human-facing body; for a thread or any multi-post submission, pass `displayContent` as a list of strings, one per post, and the card renders them as numbered posts
+- `changes`: the exact actions taken on approval, one `{ label, content }` entry per discrete action. Each renders as a highlighted "On approval" box with a copy button and character count, so the reviewer skims the verbatim payload first. When `content` is a command, `displayContent` carries the human-facing body; for a thread or any multi-post submission, pass `displayContent` as a list of strings, one per post, and the card renders them as numbered posts. Add `media_urls` when an action carries an external image, video, or audio asset; supported media renders inline in the same action card for review
 - `reference`: the original item the action responds to (`{ label, author, title, url, excerpt }`), such as the post being commented on or the message being replied to. On a wide screen it renders in a column beside the changes, so the reviewer reads original and response together; on a narrow one it stacks above them
 - `options`: two or more choices for the reviewer, each with an `id`, `label`,
   and optional `description` / `recommended`. The session page renders a

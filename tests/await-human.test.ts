@@ -70,6 +70,23 @@ describe('await_human approval URL', () => {
     });
   });
 
+  it('preserves explicit media URLs on approval changes', async () => {
+    const input = {
+      prompt: 'Approve publishing this video?',
+      changes: [{
+        label: 'Schedule video',
+        content: 'post-video "https://cdn.example.test/clip.mp4"',
+        media_urls: ['https://cdn.example.test/clip.mp4'],
+      }],
+    };
+    expect(normalizeAwaitHumanInput(input)).toEqual(input);
+
+    const schema = createAwaitHumanTool().inputSchema as any;
+    const result = await schema.safeParseAsync(input);
+    expect(result.success).toBe(true);
+    expect(result.data.changes[0].media_urls).toEqual(['https://cdn.example.test/clip.mp4']);
+  });
+
   it('points the reviewer link at the unified session page (no token when local/no api key)', () => {
     process.env.AGENTUSE_RESUME_PUBLIC_URL = 'https://agentuse.example.com/';
     delete process.env.AGENTUSE_SERVE_URL;

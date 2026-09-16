@@ -3158,6 +3158,21 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   display: grid;
   gap: 12px;
 }
+.approval-change-media {
+  margin-top: 12px;
+}
+.approval-change-media-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.approval-change-media-link {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 12px;
+}
 .artifact-preview {
   display: block;
   margin-top: 8px;

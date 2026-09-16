@@ -181,6 +181,11 @@ export function normalizeAwaitHumanInput(input: unknown): unknown {
           next.displayContent = parts[0];
         }
       }
+      if (Array.isArray(next.media_urls)) {
+        const mediaUrls = [...new Set(next.media_urls.filter((url): url is string => typeof url === 'string' && url.trim().length > 0).map((url) => url.trim()))];
+        if (mediaUrls.length > 0) next.media_urls = mediaUrls;
+        else delete next.media_urls;
+      }
       for (const field of ['label', 'displayContent', 'optionId']) omitBlankString(next, field);
       return next;
     });
@@ -208,6 +213,7 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
         content: z.string().describe('The exact, final content or action, verbatim: what will literally be submitted on approval'),
         displayContent: z.union([z.string(), z.array(z.string()).min(1)]).optional().describe('Human-facing business content to feature above `content` when `content` must be an executable command. REQUIRED (validation rejects the call without it) once such a command carries an embedded payload. For a post, reply, email, or message, use the exact body without the CLI wrapper. For a thread or any multi-post submission, pass a LIST of strings, one per post in order; never join posts with a made-up separator. The UI keeps the command visible but visually secondary.'),
         displayParts: z.array(z.string()).optional().describe('Set automatically when displayContent is a list. Do not set it yourself.'),
+        media_urls: z.array(z.string().url().refine(isHttpUrl, 'must be an http(s) URL')).min(1).optional().describe('External image, video, or audio URLs that are part of this exact action and should render inline under "On approval" for review. Include the public MP4 URL when the action publishes a video.'),
         optionId: z.string().min(1).optional().describe('For a pick gate, the options[].id that authorizes this action. Omit for an action that should run regardless of the selected option.')
       })).optional().describe('The exact actions executed on approval, one entry per discrete action, in order. Rendered as highlighted "On approval" content. When `content` is an executable command, also provide `displayContent` so the reviewer sees the business content first and the exact command de-emphasized beneath it. Rationale belongs in summary or context.'),
       reference: z.object({
@@ -334,7 +340,7 @@ export function createAwaitHumanTool(sessionId?: string, defaults?: AwaitHumanDe
       prompt: string;
       summary?: string;
       draft?: string;
-      changes?: Array<{ label?: string; content: string; displayContent?: string | string[]; displayParts?: string[]; optionId?: string }>;
+      changes?: Array<{ label?: string; content: string; displayContent?: string | string[]; displayParts?: string[]; media_urls?: string[]; optionId?: string }>;
       reference?: { label?: string; author?: string; title?: string; url?: string; excerpt?: string };
       draft_url?: string;
       artifact_url?: string;

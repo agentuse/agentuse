@@ -214,7 +214,7 @@ export async function renderGatePayload(
     }
   }
 
-  const changes = input.changes as Array<{ label?: string; content?: string; displayContent?: string; optionId?: string }> | undefined;
+  const changes = input.changes as Array<{ label?: string; content?: string; displayContent?: string; media_urls?: string[]; optionId?: string }> | undefined;
   if (Array.isArray(changes)) {
     const rendered = changes
       .map((c, i) => {
@@ -227,7 +227,11 @@ export async function renderGatePayload(
         const exactCommand = displayContent && displayContent !== content
           ? `\n\nExact command:\n${content}`
           : '';
-        return `### ${str(c?.label) ?? `Action ${i + 1}`}${scope}\n${displayContent ?? content}${exactCommand}`;
+        const media = Array.isArray(c?.media_urls)
+          ? c.media_urls.filter((url): url is string => typeof url === 'string' && url.trim().length > 0)
+          : [];
+        const mediaText = media.length > 0 ? `\n\nMedia for review:\n${media.join('\n')}` : '';
+        return `### ${str(c?.label) ?? `Action ${i + 1}`}${scope}\n${displayContent ?? content}${exactCommand}${mediaText}`;
       })
       .join('\n\n');
     if (rendered.trim()) sections.push(`## On approval (the exact content under review)\n${rendered}`);

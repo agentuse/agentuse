@@ -1352,6 +1352,30 @@ describe('LogEntry component', () => {
     expect(html).toContain('Second post.');
   });
 
+  it('renders approval media inline and detects legacy media URLs in commands', () => {
+    const video = 'https://cdn.example.test/clip.mp4';
+    const html = renderEntry({
+      id: 'log-video',
+      type: 'approval',
+      title: 'Approval requested',
+      status: 'pending',
+      details: {
+        resumeToken: 'tok-video',
+        prompt: 'Approve scheduling this video?',
+        changes: [{
+          label: 'Schedule video',
+          content: `post-video "${video}"`,
+          displayContent: 'Video caption',
+          mediaUrls: [video],
+        }],
+      },
+    }, { showActions: true });
+    expect(html.match(/<video /g)).toHaveLength(1);
+    expect(html).toContain('approval-change-media');
+    expect(html).toContain('Review video');
+    expect(html).toContain('Open media');
+  });
+
   it('renders the complete long generic approval request and integrity digests', () => {
     const longSuffix = `prefix-${'x'.repeat(20_000)}-security-relevant-suffix`;
     const html = renderEntry({

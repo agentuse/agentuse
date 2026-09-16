@@ -231,6 +231,7 @@ function ReferenceBlock(props: { reference: ApprovalReference }) {
 
 /** The verbatim actions taken on approval: the first thing a reviewer skims. */
 function ChangesBlock(props: { changes: ApprovalChange[]; options: ApprovalOption[] }) {
+  const mediaSeen = new Set<string>();
   return (
     <section class="approval-section approval-changes">
       <h4 class="approval-section-title">On approval</h4>
@@ -261,6 +262,11 @@ function ChangesBlock(props: { changes: ApprovalChange[]; options: ApprovalOptio
                 </ol>
               )
               : <div class="approval-change-content"><LogContent value={changeDisplayContent(change)} forceMarkdown /></div>}
+            {changeMediaUrls(change).filter((url) => {
+              if (mediaSeen.has(url)) return false;
+              mediaSeen.add(url);
+              return true;
+            }).map((url) => <ExternalMediaPreview key={url} url={url} />)}
             <CommandDetail change={change} />
           </div>
         ))}
@@ -276,6 +282,62 @@ const VIDEO_ARTIFACT_RE = /\.(mp4|m4v|webm|mov)$/i;
 const AUDIO_ARTIFACT_RE = /\.(mp3|m4a|wav|ogg)$/i;
 const TEXT_ARTIFACT_RE = /\.(md|markdown|txt|csv|json|log|yaml|yml)$/i;
 const MARKDOWN_ARTIFACT_RE = /\.(md|markdown)$/i;
+
+type ExternalMediaKind = 'image' | 'video' | 'audio';
+
+function externalMediaKind(value: string): ExternalMediaKind | undefined {
+  try {
+    const pathname = new URL(value).pathname;
+    if (IMAGE_ARTIFACT_RE.test(pathname)) return 'image';
+    if (VIDEO_ARTIFACT_RE.test(pathname)) return 'video';
+    if (AUDIO_ARTIFACT_RE.test(pathname)) return 'audio';
+  } catch {
+    // Invalid URLs are ignored here; the approval normalizer also rejects them.
+  }
+  return undefined;
+}
+
+/** Extract only explicit HTTP(S) media URLs from an approval action. This is a
+ * compatibility path for gates written before `media_urls` existed, when a
+ * video URL was commonly buried inside the command JSON. */
+function extractExternalMediaUrls(value: string): string[] {
+  const out: string[] = [];
+  for (const match of value.matchAll(/https?:\/\/[^\s"'<>]+/gi)) {
+    const raw = match[0].replace(/[),\]}]+$/g, '');
+    try {
+      const url = new URL(raw);
+      if ((url.protocol !== 'http:' && url.protocol !== 'https:') || !externalMediaKind(url.toString())) continue;
+      out.push(url.toString());
+    } catch {
+      // Ignore malformed URL-like text in the command.
+    }
+  }
+  return out;
+}
+
+function changeMediaUrls(change: ApprovalChange): string[] {
+  const explicit = change.mediaUrls ?? [];
+  const mentioned = [
+    change.content,
+    change.displayContent,
+    ...(change.displayParts ?? []),
+  ].flatMap((value) => value ? extractExternalMediaUrls(value) : []);
+  return [...new Set([...explicit, ...mentioned])].filter((url) => Boolean(externalMediaKind(url)));
+}
+
+function ExternalMediaPreview(props: { url: string }) {
+  const kind = externalMediaKind(props.url);
+  if (!kind) return null;
+  return (
+    <div class="approval-change-media">
+      <div class="approval-change-media-label">Review {kind}</div>
+      {kind === 'video' && <video class="artifact-preview-video" src={props.url} controls preload="metadata" />}
+      {kind === 'audio' && <audio class="artifact-preview-audio" src={props.url} controls preload="metadata" />}
+      {kind === 'image' && <a class="artifact-preview" href={props.url} target="_blank" rel="noopener noreferrer"><img class="artifact-preview-img" src={props.url} alt="Review media" loading="lazy" /></a>}
+      <a class="approval-link approval-change-media-link" href={props.url} target="_blank" rel="noopener noreferrer">Open media</a>
+    </div>
+  );
+}
 
 /** Coarse kind for a tile's label, so a row of files reads at a glance. */
 export function artifactKind(path: string): 'image' | 'page' | 'pdf' | 'video' | 'audio' | 'doc' | 'data' | 'file' {
