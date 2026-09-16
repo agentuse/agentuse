@@ -378,8 +378,10 @@ function LearningsSection(props: {
   const foldMeta = learnings === null
     ? ''
     : [
-        summary && summary.active > 0 ? `${summary.injected} of ${summary.active} apply per run` : '',
-        items.length === 0 ? 'nothing new this session' : `${items.length} new this ${items.length === 1 ? 'learning' : 'learnings'}`,
+        // A learning a run records is live for the next run immediately; there
+        // is nothing to approve. The line says what is new and what applied.
+        items.length === 0 ? 'nothing new this run' : `${items.length} new this run`,
+        summary && summary.active > 0 ? `${summary.injected} applied` : '',
       ].filter(Boolean).join(' · ');
   const Root = props.foldable ? 'details' : 'div';
   const rootProps = props.foldable ? { open: mustOpen } : {};
@@ -535,7 +537,7 @@ export function LearningsPanel(props: {
       hideWhenEmpty
       foldable
       id="learnings-panel"
-      label="learnings from this session"
+      label="Learnings"
       emptyText="Nothing learned in this session — add one to steer future runs."
       fetchList={() => fetchSessionLearnings(props.sessionId, props.token, props.project)}
       addRule={(instruction) =>

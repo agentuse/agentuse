@@ -165,7 +165,7 @@ a, button, select, summary, label, input, textarea,
 [role="button"], .nav-item, .palette-trigger {
   touch-action: manipulation;
 }
-.topbar, .brand, .nav, .nav-item, .session-bar, .status, .eyebrow, kbd {
+.topbar, .brand, .nav, .nav-item, .session-sticky, .status, .eyebrow, kbd {
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
@@ -947,59 +947,48 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
    runs show the run status and agent name. Both carry a scroll-to-top control
    that appears once the page is scrolled. --topbar-h is measured in JS so the
    offset follows the toolbar height on Mac and mobile layouts. */
-.page-approval-detail .session-bar {
+/* A zero-height sticky shell. It draws nothing at rest, because the header
+   right below it already carries the status, the name and the one control; a
+   bar repeating them was the page's third copy of each fact. The compact bar
+   inside is pulled out of flow and fades in only once the page scrolls. */
+.page-approval-detail .session-sticky {
   position: sticky;
   top: var(--topbar-h, 60px);
   z-index: 20;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 16px;
-  /* Bleeds to the edges of the centered main column (matching padding keeps the
-     content aligned) so log entries scroll beneath it -- frosted rather than
-     hidden, so scroll position stays legible under the bar. Same recipe as
-     .topbar.app-toolbar, which sits directly above this one on mobile; the two
-     have to read as one piece of chrome. Opaque fallback first: a 60% fill with
-     no blur behind it is just unreadable text. */
+  height: 0;
   margin-inline: -16px;
-  padding: 12px 16px;
-  background: var(--bg);
-  /* The separator + opaque band only matter once the bar detaches and log
-     entries scroll beneath it. At the top it reads as a plain identity row, so
-     the border stays transparent there (kept transparent, not removed, so the
-     bar's height doesn't shift when it gains the line on scroll). */
-  border-bottom: 1px solid transparent;
   font-family: var(--sans);
   font-size: var(--font-size-caption);
 }
-.page-approval-detail .session-bar.is-scrolled {
-  border-bottom-color: var(--line);
+.page-approval-detail .session-sticky-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease;
+}
+.page-approval-detail .session-sticky.is-scrolled .session-sticky-bar {
+  opacity: 1;
+  visibility: visible;
 }
 /* backdrop-filter makes an element a containing block for fixed-position
-   descendants, so it is only safe directly on a bar that has none. This one has
-   none: its children are .session-bar-lead and .session-bar-top, and the session
-   menu whose popover is position: fixed lives up in .header-title-row, outside
-   the bar. Re-check that before adding anything fixed in here. */
+   descendants, so it is only safe on a bar that has none. This one has none:
+   the session menu whose popover is position: fixed lives in the header
+   below, outside the bar. Re-check that before adding anything fixed here. */
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .page-approval-detail .session-bar {
+  .page-approval-detail .session-sticky-bar {
     background: color-mix(in srgb, var(--bg) 60%, transparent);
     backdrop-filter: blur(18px) saturate(115%);
     -webkit-backdrop-filter: blur(18px) saturate(115%);
   }
 }
-.page-approval-detail .session-bar-lead {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 10px;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.page-approval-detail .session-bar .status {
-  margin-bottom: 0;
-  flex: none;
-}
-.page-approval-detail .session-bar-name {
+.page-approval-detail .session-sticky-spacer { flex: 1 1 auto; }
+.page-approval-detail .session-sticky-name {
   font-family: var(--sans);
   font-size: var(--font-size-supporting);
   font-weight: var(--weight-medium);
@@ -1008,6 +997,31 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+/* The status: a dot and a word, said once, in plain English. It replaced a
+   coloured pill shouting a raw status token in capitals. */
+.page-approval-detail .session-status {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-size-caption);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+.page-approval-detail .session-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: currentColor;
+  flex: none;
+}
+.page-approval-detail .session-status.is-ok { color: var(--green); }
+.page-approval-detail .session-status.is-bad { color: var(--red); }
+.page-approval-detail .session-status.is-wait { color: var(--amber); }
+.page-approval-detail .session-status.is-busy { color: var(--cyan); }
+.page-approval-detail .session-status.is-busy .session-status-dot {
+  animation: pulse 1.8s ease-in-out infinite;
 }
 /* Pending-queue position, shown only while other gates are also waiting. Lives in
    the sticky bar so a reviewer working a backlog can advance from anywhere in a
@@ -1052,24 +1066,25 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 @media (max-width: 560px) {
   .page-approval-detail .session-bar-queue-count { display: none; }
 }
-/* Contextual transcript search. This lives in the sticky session header instead
-   of browser chrome: Cmd/Ctrl+F searches only the run's log entries. */
+/* Contextual search over the run's log. It belongs to the log, so it sits in
+   the log's own tools row rather than in the page chrome above it; Cmd/Ctrl+F
+   opens the log and focuses it. */
 .page-approval-detail .session-log-search {
-  flex: 0 1 280px;
-  min-width: 180px;
-  height: 36px;
-  margin-left: auto;
+  flex: 0 1 220px;
+  min-width: 120px;
+  height: 30px;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 0 7px 0 12px;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  background: var(--surface);
+  gap: 8px;
+  padding: 0 6px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
   color: var(--muted-3);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--fg) 7%, transparent);
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
+.page-approval-detail .session-log-search.is-idle { border-color: transparent; }
+.page-approval-detail .session-log-search.is-idle:hover { border-color: var(--line); }
 .page-approval-detail .session-log-search:focus-within {
   border-color: var(--cyan-border);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--cyan) 14%, transparent),
@@ -1125,12 +1140,13 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   color: inherit;
 }
 @media (max-width: 700px) {
-  .page-approval-detail .session-bar { flex-wrap: wrap; }
+  .page-approval-detail .session-header-controls { flex-wrap: wrap; }
   .page-approval-detail .session-log-search {
     order: 3;
     flex-basis: 100%;
     width: 100%;
     margin-left: 0;
+    border-color: var(--line);
   }
 }
 /* Scroll-to-top: revealed only once the page is scrolled away from the top, so it
@@ -1152,7 +1168,7 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   pointer-events: none;
   transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease, transform 0.15s ease;
 }
-.page-approval-detail .session-bar.is-scrolled .session-bar-top {
+.page-approval-detail .session-sticky.is-scrolled .session-bar-top {
   opacity: 1;
   pointer-events: auto;
 }
@@ -1721,40 +1737,12 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 /* Summary-first layout for ended sessions (issue #150): the result card leads,
    the transcript collapses behind a native <details>. */
 .page-approval-detail .section-title.result-title { margin-top: 0; }
-/* The result slot of the now card: metrics, the final answer, artifacts. */
-.page-approval-detail .session-result { padding: 14px 18px; }
-/* Facts the run recorded via record_metric: green = verified write, matching
-   the artifacts/completed semantics elsewhere on this page. */
-.page-approval-detail .result-recorded {
+/* The result slot of the now card: the report, its numbers, its artifacts.
+   The card supplies the padding now; the slot is a plain stack. */
+.page-approval-detail .session-result {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-.page-approval-detail .result-recorded > .label {
-  color: var(--muted-3);
-  font-size: var(--font-size-micro);
-  font-weight: var(--weight-medium);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-}
-.page-approval-detail a.metric-chip {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 7px;
-  padding: 3px 11px;
-  border: 1px solid var(--green-border);
-  border-radius: 999px;
-  background: var(--green-soft);
-  color: var(--fg);
-  font-size: var(--font-size-caption);
-}
-.page-approval-detail a.metric-chip:hover { opacity: 0.85; }
-.page-approval-detail .metric-chip-amount {
-  font-family: var(--mono);
-  font-weight: var(--weight-bold);
-  color: var(--green);
+  flex-direction: column;
+  gap: 16px;
 }
 .page-approval-detail .result-body {
   color: var(--fg);
@@ -1768,26 +1756,16 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
    body, so it reads as the answer and they read as its sections. The status
    pill above already carries the ✅/⚠️ signal, which is why the composed line's
    icon is stripped rather than repeated here. */
+/* Only reached when the card's own headline is something else (a failure):
+   the agent's report title then reads as a subhead inside the body. */
 .page-approval-detail .result-headline {
   margin: 0;
   color: var(--fg);
-  /* 20px, not 17: the verdict has to stay above the report's own `##` sections,
-     and at 17 there was no room left to separate those from 14px body text -
-     they landed at 15.5px, a 1.11x step that reads as bold prose rather than as
-     a heading. Raising the ceiling is what lets the scale below it breathe. */
-  font-size: var(--font-size-title);
-  font-weight: var(--weight-bold);
+  font-size: var(--font-size-subtitle);
+  font-weight: var(--weight-medium);
   line-height: var(--lh-snug);
   letter-spacing: var(--tracking-tight);
   overflow-wrap: anywhere;
-}
-
-/* Only a hairline when a body follows: a headline-only run should not trail off
-   into an empty rule. */
-.page-approval-detail .result-headline + .result-body {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
 }
 
 /* `color: inherit` is load-bearing, same as on the approval card: .result-body
@@ -1857,34 +1835,24 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   max-width: 72ch;
 }
 .page-approval-detail .session-result .content-code { color: inherit; white-space: pre-wrap; }
-.page-approval-detail .result-artifacts {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px dashed var(--line);
-}
-.page-approval-detail .result-artifacts .label {
-  color: var(--green);
-  font-size: var(--font-size-micro);
-  font-weight: var(--weight-medium);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-  margin-bottom: 10px;
-}
+.page-approval-detail .result-artifacts { margin: 0; }
 /* logs */
+/* One row style for every entry: time, mark, title, tool name, what it cost,
+   chevron. The row itself is the click target. There is no per-type coloured
+   spine and no "show" badge — twelve visual dialects made a log of ordinary
+   steps look like twelve different kinds of event. */
 .logs { list-style: none; margin: 0; padding: 0; }
 .log-item {
   display: block;
-  /* 16px + the 2px spine puts every row's text on the same 18px inset as the
-     card's other edges, spined or not. */
-  padding: 11px 18px 11px 16px;
+  padding: 12px 18px;
   /* Solid, not dashed: the entries are one continuous timeline inside a single
      card, not a list of loose notes. */
   border-bottom: 1px solid var(--line);
-  /* Per-type accent spine, colored by the data-log-type rules below. */
-  border-left: 2px solid transparent;
+  cursor: default;
 }
+.log-item.expandable { cursor: pointer; }
+.log-item.expandable:hover { background: var(--panel-hover); }
 .log-item.is-nested-tool {
-  border-left-style: dashed;
   background: color-mix(in srgb, var(--surface) 72%, transparent);
 }
 /* Calls a code_exec program made through the sandbox: listed inside the parent
@@ -1898,23 +1866,12 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 .log-nested-calls > .log-item:last-child {
   border-bottom: 0;
 }
-.log-nested-badge {
-  display: inline-flex;
-  align-items: center;
-  margin-left: 8px;
-  padding: 1px 7px;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  font-size: 11px;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
 .log-head {
   display: grid;
   /* 84px fits a locale timestamp ("12:41:38 PM") at 11px on one line; the rail
-     is deliberately narrow and quiet so the type spine + content, not the
-     clock, carry the eye. */
-  grid-template-columns: 84px 14px 1fr;
+     is deliberately narrow and quiet so the content, not the clock, carries
+     the eye. */
+  grid-template-columns: 84px 14px minmax(0, 1fr);
   gap: 12px;
   align-items: start;
 }
@@ -2000,26 +1957,50 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 .page-approval-detail .log-item.is-actionable .log-main { margin-left: 0; }
 .page-approval-detail .log-item.is-actionable .log-content { margin-top: 0; }
 .page-approval-detail .log-item.is-actionable .approval-card { margin-top: 0; }
-/* `>` scoping: a nested Code Mode row lives inside its parent's .log-item, so
-   an unscoped descendant selector would read the parent's expanded state. */
-.log-item.expandable > .log-head .log-title::after {
-  content: "show";
-  display: inline-flex;
-  margin-left: 8px;
-  padding: 1px 6px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  /* The collapsed "show" invites the click, so it reads brighter than the
-     "hide" it toggles to (--muted-3 > --muted). */
-  color: var(--muted-3);
-  font-size: var(--font-size-micro);
-  font-weight: var(--weight-medium);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-  vertical-align: 1px;
+/* The title row: the sentence, then the tool that wrote it, then what the row
+   cost, pushed right, then the chevron. `>` scoping throughout: a nested Code
+   Mode row lives inside its parent's .log-item, so an unscoped descendant
+   selector would read the parent's expanded state. */
+.log-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  font-weight: var(--weight-normal);
+  color: var(--fg);
 }
-.log-item.expandable.expanded > .log-head .log-title::after { content: "hide"; color: var(--muted); }
-.log-title { font-weight: var(--weight-medium); color: var(--fg); }
+/* The tool's name, in plain grey text rather than a bordered pill. */
+.log-tool {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: var(--font-size-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.log-head-meta {
+  margin-left: auto;
+  flex: none;
+  color: var(--muted-2);
+  font-size: var(--font-size-micro);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* The only expand affordance. It sits at the right edge; a .log-head-meta
+   before it has already claimed the free space, so it does not claim it
+   twice. */
+.log-chevron {
+  flex: none;
+  display: inline-flex;
+  margin-left: auto;
+  color: var(--muted-2);
+  transition: transform 0.15s ease;
+}
+.log-head-meta + .log-chevron { margin-left: 0; }
+.log-item.expanded > .log-head .log-chevron { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .log-chevron { transition: none; } }
 /* Context compaction is a housekeeping event: subtle amber accent, understated. */
 .log-item[data-log-type="compaction"] .log-marker { color: var(--amber); opacity: 0.9; }
 .log-item[data-log-type="compaction"] .log-title { color: var(--amber); font-weight: var(--weight-medium); }
@@ -2104,26 +2085,22 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   overflow-wrap: anywhere;
 }
 
-/* Session-log header controls: entry-type filter plus the debug toggle. */
+/* The log's own tools row: filter tabs, search, the debug switch. They live
+   inside the log card, not in the page chrome above it. */
 .log-tools {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  justify-content: flex-end;
 }
-/* Same segmented control as .session-view-toggle: an inset track holding one
-   raised, selected tile. Kept deliberately quieter than that one -- this sits on
-   a section rule, not in the header -- but the shape has to read as the same
-   component, because it is. */
+.log-tools-spacer { flex: 1 1 auto; }
+/* Text tabs with an underline on the chosen one, not a segmented control:
+   four bordered pills read as four buttons to press rather than one choice
+   already made. */
 .log-filter {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel);
+  gap: 18px;
 }
 /* The compound selector out-specifies the :where()-weakened 40px base button
    rule, same trick .approval-copy uses above. Without it these render as four
@@ -2132,31 +2109,33 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 .page-approval-detail button.log-filter-btn {
   appearance: none;
   border: 0;
-  border-radius: 6px;
+  border-bottom: 1.5px solid transparent;
+  border-radius: 0;
   background: transparent;
   cursor: pointer;
-  color: var(--muted-3);
+  color: var(--muted);
   font-family: var(--sans);
-  font-size: var(--font-size-micro);
+  font-size: var(--font-size-caption);
   font-weight: var(--weight-normal);
   letter-spacing: normal;
-  /* 26px + the track's 2px padding clears the 24px pointer-target floor without
-     out-weighing the section title it sits beside. */
+  text-transform: capitalize;
   min-height: 26px;
-  padding: 0 9px;
+  padding: 0 0 2px;
 }
 .page-approval-detail button.log-filter-btn:hover {
   color: var(--fg);
-  background: var(--panel-hover);
-  border-color: transparent;
+  background: transparent;
+  border-bottom-color: var(--line-strong);
 }
 .page-approval-detail button.log-filter-btn.is-on {
-  background: var(--bg);
+  background: transparent;
   color: var(--fg);
-  box-shadow: inset 0 0 0 1px var(--line-strong);
+  font-weight: var(--weight-medium);
+  border-bottom-color: var(--fg);
+  box-shadow: none;
 }
 .page-approval-detail button.log-filter-btn:active { transform: none; }
-.log-filter-btn:focus-visible { outline: 2px solid var(--cyan); outline-offset: 1px; }
+.log-filter-btn:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
 
 /* "debug" toggle in the session-log header. */
 .log-debug-toggle {
@@ -2164,8 +2143,8 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  color: var(--muted-3);
-  font-size: var(--font-size-micro);
+  color: var(--muted);
+  font-size: var(--font-size-caption);
   letter-spacing: normal;
   user-select: none;
   padding: 4px 6px;
@@ -2260,72 +2239,34 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   75%, 100% { content: "..."; }
 }
 
-/* --- live-stream treatment: spines, chips, motion ---------------------- */
-/* Per-type accent spine on the shared left border: the log reads as a
-   color-coded thinking → acting → answering narrative at a glance. Soft
-   -border tokens (35% alpha) keep it an accent, not a stripe. Operational
-   `log` rows stay spineless on purpose — they're background noise. */
-.log-item[data-log-type="text"] { border-left-color: var(--cyan-border); }
-.log-item[data-log-type="reasoning"] { border-left-color: var(--line-strong); }
-.log-item[data-log-type="tool"].completed,
-.log-item[data-log-type="tool"].approved { border-left-color: var(--green-border); }
-.log-item[data-log-type="tool"].running { border-left-color: var(--amber-border); }
-.log-item[data-log-type="tool"].error,
-.log-item[data-log-type="tool"].failed { border-left-color: var(--red-border); }
-.log-item[data-log-type="tool"].error.is-recovered,
-.log-item[data-log-type="tool"].failed.is-recovered { border-left-color: var(--amber-border); }
-.log-item[data-log-type="compaction"] { border-left-color: var(--amber-border); }
-.log-item[data-log-type="error"] { border-left-color: var(--red-border); }
-.log-item[data-log-type="learning"] { border-left-color: var(--cyan-border); }
+/* --- live-stream treatment ---------------------------------------------
+   The per-type coloured left spine is gone. It painted eight different
+   stripes down a list whose rows differ only in what happened, and the mark
+   and the title already say that. A failed row reads red in its mark and its
+   title, and nowhere else. */
 
-/* Tool calls render as humanized status chips ("skill_load", "sandbox · exec")
-   instead of raw `tools__*` ids; color tracks the call's lifecycle. The raw id
-   + status text stay on the tooltip/aria-label. */
-.tool-chip {
-  display: inline-flex;
-  align-items: center;
-  font-family: var(--mono);
-  font-size: var(--font-size-micro);
-  font-weight: var(--weight-medium);
-  letter-spacing: normal;
-  padding: 2px 9px;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  background: var(--panel);
-  color: var(--fg);
-  vertical-align: 1px;
-}
-/* Model-declared intent phrase: the row's primary text. The chip that follows
-   it drops to quiet metadata so the log reads as a narrative of goals with tool
-   names as annotations, not a list of tool names. */
+/* The tool's name, next to the sentence the model wrote. It used to be a
+   bordered mono pill whose fill tracked the call's lifecycle: a third colour
+   channel saying what the mark to its left already said. The raw id and the
+   status text stay on the tooltip/aria-label. */
+/* Model-declared intent phrase: the row's primary text, with the tool name
+   demoted to quiet metadata, so the log reads as a narrative of goals with
+   tool names as annotations rather than a list of tool names. */
 .log-intent {
   color: var(--fg);
-  font-weight: var(--weight-medium);
-  margin-right: 8px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tool-chip.has-intent {
-  flex: 0 0 auto;
-  font-weight: var(--weight-normal);
-  color: var(--muted);
-  border-color: var(--line);
-  background: transparent;
-}
-.log-item.completed > .log-head .tool-chip, .log-item.approved > .log-head .tool-chip { border-color: var(--green-border); background: var(--green-soft); color: var(--green); }
-.log-item.running > .log-head .tool-chip { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
-.log-item.error > .log-head .tool-chip, .log-item.failed > .log-head .tool-chip { border-color: var(--red-border); background: var(--red-soft); color: var(--red); }
-/* The call still failed and remains expandable, but a later successful call
-   resolved it. Amber keeps that audit fact visible without implying the run is
-   still broken; the green badge names the successful recovery explicitly. */
+.log-tool.has-intent { flex: 0 0 auto; }
+/* A failed call that a later call resolved. Amber keeps that audit fact
+   visible without implying the run is still broken; the badge beside it names
+   the recovery explicitly. */
 .log-item.error.is-recovered > .log-head .log-marker,
 .log-item.failed.is-recovered > .log-head .log-marker,
 .log-item.error.is-recovered > .log-head .log-title,
 .log-item.failed.is-recovered > .log-head .log-title { color: var(--amber); }
-.log-item.error.is-recovered > .log-head .tool-chip,
-.log-item.failed.is-recovered > .log-head .tool-chip { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
 .log-recovery-badge {
   display: inline-flex;
   align-items: center;
@@ -2462,19 +2403,28 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   display: grid;
   gap: 4px;
 }
+/* "Input" and "Output": two plain blocks. The label is a word, not a
+   tracked-out all-caps field name. */
 .log-detail-label {
-  color: var(--muted-2);
-  font-size: var(--font-size-micro);
-  font-weight: var(--weight-medium);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
+  color: var(--muted);
+  font-size: var(--font-size-caption);
+  font-weight: var(--weight-normal);
+  letter-spacing: normal;
+  text-transform: none;
+  margin-bottom: 4px;
 }
+/* Height-capped with its own scroller. A tool that read forty files printed
+   its whole payload into the page and buried every row after it; the cap
+   keeps the row a row, and the artifact tile below still opens the full
+   output when the runtime saved one. */
 .log-detail-value {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
   color: var(--muted-3);
-  overflow: hidden;
+  max-height: 22em;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 /* Live tail of a running tool call. Height-capped with its own scroller so a
    command that prints for ten minutes never grows the page (the feed follows
@@ -2669,9 +2619,19 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   line-height: var(--lh-loose);
   overflow-wrap: anywhere;
 }
+/* No box. What the agent wrote is the row's content, not an attachment to it,
+   and a bordered panel inside a bordered row inside a bordered card was three
+   frames around one paragraph. Fenced code keeps its frame: there the box is
+   what marks the text as literal. */
 .log-content > .content-markdown,
+.log-content > .content-render > .content-markdown {
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+}
 .log-content > .content-code,
-.log-content > .content-render > .content-markdown,
 .log-content > .content-render > .content-code {
   margin-top: 4px;
   border: 1px solid var(--line);
@@ -3413,10 +3373,13 @@ dialog#decision-dialog {
 }
 /* The dialog's shared head/body/foot rules are used by other views too, so the
    v2 skin is scoped to this dialog rather than applied to all of them. */
+/* A title, not a label: "Comment" in the page's own voice, not "LEAVE A
+   COMMENT" in tracked-out capitals. */
 dialog#decision-dialog .dialog-head {
-  font-size: var(--font-size-caption);
-  font-weight: var(--weight-bold);
-  letter-spacing: var(--tracking-caps);
+  font-size: var(--font-size-subtitle);
+  font-weight: var(--weight-medium);
+  letter-spacing: normal;
+  text-transform: none;
 }
 dialog#decision-dialog .dialog-head .title::before { content: none; }
 /* Reject is the destructive half of this dialog: the title carries the warning,
@@ -4211,20 +4174,33 @@ html[data-route-loading] body::after {
   .log-item {
     padding: 12px 10px;
   }
+  /* On a phone the clock stops taking a column of its own: the mark leads,
+     the sentence gets the full width, and the time sits under it. */
   .log-head {
-    grid-template-columns: auto 14px minmax(0, 1fr);
-    gap: 8px;
+    grid-template-columns: 14px minmax(0, 1fr);
+    gap: 2px 10px;
   }
+  .log-marker { grid-row: 1; grid-column: 1; }
+  .log-title { grid-row: 1; grid-column: 2; flex-wrap: wrap; row-gap: 2px; }
+  .log-time { grid-row: 2; grid-column: 2; padding-top: 0; }
+  .log-head-meta { margin-left: 0; }
+  .log-chevron { position: absolute; right: 10px; }
+  .log-item { position: relative; padding-right: 32px; }
+  .log-delegate-status, .log-delegate-tag { font-size: var(--font-size-micro); }
+  /* The model belongs to the run, not to the glance: on a phone it costs a
+     whole line, so it stays in the menu and the diagnostic page. */
+  .page-approval-detail .session-meta-model { display: none; }
+  .page-approval-detail .now-card { padding: 18px 16px; gap: 14px; }
+  .page-approval-detail .now-headline { font-size: var(--font-size-subtitle); }
+  .page-approval-detail .now-headline-row { flex-wrap: wrap; }
+  .page-approval-detail .now-headline-meta { margin-left: 0; width: 100%; }
+  .page-approval-detail .transcript-tools { flex-wrap: wrap; row-gap: 8px; }
   .log-item.is-actionable { padding-left: 14px; }
   .log-main { margin-left: 0; }
-  /* Long tool ids yield space before the Show/Hide control wraps. */
-  .log-item.expandable .log-title { display: flex; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; }
-  .log-item.expandable .tool-chip { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .log-item.expandable .log-title::after { flex: 0 0 auto; }
-  /* With an intent phrase, the phrase IS the row on a phone: the chip would
-     crush it to a few characters ("Read wr…"), so the chip yields until the row
-     is expanded (tap), where the tool identity matters again. Long phrases wrap
-     to two clamped lines instead of truncating. */
+  /* With an intent phrase, the phrase IS the row on a phone: the tool name
+     would crush it to a few characters ("Read wr…"), so the name yields until
+     the row is expanded (tap), where the tool identity matters again. Long
+     phrases wrap to two clamped lines instead of truncating. */
   .log-item .log-intent {
     flex: 1 1 auto;
     white-space: normal;
@@ -4234,7 +4210,7 @@ html[data-route-loading] body::after {
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .log-item:not(.expanded) .tool-chip.has-intent { display: none; }
+  .log-item:not(.expanded) .log-tool.has-intent { display: none; }
   .approval-question { font-size: var(--font-size-subtitle); }
   /* Let the label / char count / copy chip wrap instead of crushing the label. */
   .approval-change-head { flex-wrap: wrap; row-gap: 4px; }
@@ -8386,6 +8362,45 @@ a.lastrun.waiting { color: var(--cyan); }
    identifiable hook and keep the hidden attribute working. */
 :is(.page-approval-detail, .page-draft) .meta .token-cell[hidden] { display: none; }
 
+/* A delegated call's row in the parent's log: the child's name, a branch mark
+   saying it is delegated, and how it ended. The tool id ("subagent · research")
+   named none of those. */
+.log-delegate-tag { display: inline-flex; align-items: center; gap: 5px; flex: none; }
+.log-delegate-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-size: var(--font-size-caption);
+}
+.log-delegate-status .session-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentColor;
+  flex: none;
+}
+.log-delegate-status.is-ok { color: var(--green); }
+.log-delegate-status.is-bad { color: var(--red); }
+.log-delegate-status.is-wait { color: var(--amber); }
+.log-delegate-status.is-busy { color: var(--cyan); }
+/* The row above already states the child's name and status, so its card does
+   not repeat them; what stays is the evidence — the report, the last steps,
+   the id, the way in. A nested child keeps its own name, since no row states
+   it. */
+.page-approval-detail .log-item > .log-main > .subagent-tree-node > .subagent-card > .subagent-event > .chip.status,
+.page-approval-detail .log-item > .log-main > .subagent-tree-node > .subagent-card > .subagent-event > .subagent-id,
+.page-approval-detail .log-item > .log-main > .subagent-tree-node > .subagent-card > .subagent-event > .subagent-context,
+.page-approval-detail .log-item > .log-main > .subagent-tree-node > .subagent-card > .subagent-event > .subagent-identity { display: none; }
+.page-approval-detail .log-item > .log-main > .subagent-tree-node > .subagent-card > .subagent-event {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 4px 0;
+}
+.page-approval-detail .log-item > .log-main > .subagent-tree-node > .subagent-card.is-success,
+.page-approval-detail .log-item > .log-main > .subagent-tree-node > .subagent-card.is-warning,
+.page-approval-detail .log-item > .log-main > .subagent-tree-node > .subagent-card.is-failure { border-left: 0; }
+.page-approval-detail .log-item > .log-main > .subagent-tree-node { margin-left: 2px; padding-left: 14px; border-left: 2px solid var(--line); }
+
 /* child-session card shown inside a log entry. Not a bordered card: the
    status pill names the child, the tone rail on the left says how it went,
    and the tree line under .subagent-children shows nesting. Boxing each one
@@ -11050,14 +11065,16 @@ html[data-page="draft-panel"] .app-route {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 44px;
+  min-height: 48px;
   margin: 0;
-  padding: 0 16px;
-  font-size: var(--font-size-micro);
+  padding: 0 18px;
+  /* A section title, in the page's own voice: "Log · 23 entries". It used to
+     be "SESSION LOG" in 11px capitals, which read as a form field label. */
+  font-size: var(--font-size-supporting);
   font-weight: var(--weight-medium);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-  color: var(--muted);
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--fg);
   list-style: none;
   cursor: pointer;
   border-radius: 12px;
@@ -11110,15 +11127,35 @@ html[data-page="draft-panel"] .app-route {
 }
 .page-approval-detail .transcript-tools {
   display: flex;
-  justify-content: flex-end;
   margin: 0;
-  padding: 8px 16px 0;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--line);
 }
-.page-approval-detail .transcript-feed {
-  padding: 16px 18px;
+.page-approval-detail .transcript-feed { padding: 0; }
+.page-approval-detail .transcript-feed > .logs { margin: 0; }
+.page-approval-detail .transcript-feed > .logs > .log-item:last-child { border-bottom: 0; }
+/* "Load 400 earlier entries": a plain link row at the head of the feed, not a
+   full-width button competing with the rows below it. */
+.page-approval-detail .transcript-more,
+.page-approval-detail button.transcript-more {
+  display: block;
+  width: 100%;
+  min-height: 0;
+  padding: 12px 18px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--green);
+  font-family: var(--sans);
+  font-size: var(--font-size-caption);
+  font-weight: var(--weight-normal);
+  letter-spacing: normal;
+  text-align: center;
+  cursor: pointer;
 }
-.page-approval-detail .transcript-feed > .logs { margin: 0 -18px -16px; }
-.page-approval-detail .transcript-feed > .logs:first-child { margin-top: -16px; }
+.page-approval-detail button.transcript-more:hover { background: var(--panel-hover); color: var(--green); }
+.page-approval-detail button.transcript-more:active { transform: none; }
 /* The judge chip is the only coloured element in the stack; keep it, but at
    row scale rather than page-header scale. */
 .page-approval-detail .judge-panel-head .chip.status {
@@ -11144,20 +11181,62 @@ html[data-page="draft-panel"] .app-route {
 .page-approval-detail .gate-panel > .logs > .log-item.is-actionable { margin-top: 0; margin-bottom: 0; }
 .page-approval-detail .gate-panel + .session-actions { margin-top: 12px; }
 
-/* --- Session page: compact header + the "now" card --- */
-.page-approval-detail header.session-header { margin-bottom: 20px; }
+/* --- Session page: the header and the "now" card ---
+   Rule one of this page: say each fact once. The status, the agent name, the
+   timings and the cost live here and nowhere else. */
+.page-approval-detail header.session-header { margin: 0 0 20px; }
 .page-approval-detail .session-header h1 { margin: 0; }
-/* The menu sits beside the name, not at the far edge: nothing else lives on
-   this row now that Diagnostic is in the menu. */
-.page-approval-detail .session-header .header-title-row { display: flex; align-items: center; justify-content: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
-.page-approval-detail .session-header-diagnostic { margin-left: auto; }
+/* Row one: back, status, labels, then the queue, the one ending control and
+   the menu pushed to the right edge. */
+.page-approval-detail .session-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  margin-bottom: 6px;
+}
+.page-approval-detail .session-header-spacer { flex: 1 1 auto; }
+/* A label, not a badge: "mock", "internal", "view only" are qualifiers on the
+   status beside them, so they read as quiet grey words. */
+.page-approval-detail .session-header-tag {
+  flex: none;
+  font-size: var(--font-size-caption);
+  color: var(--muted);
+  letter-spacing: normal;
+  text-transform: none;
+}
+.page-approval-detail .session-bar-back-label {
+  font-size: var(--font-size-caption);
+  color: inherit;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.page-approval-detail .session-bar-back:has(.session-bar-back-label) { padding: 4px 8px 4px 4px; gap: 4px; }
+.page-approval-detail .session-header-diagnostic { flex: none; }
+/* Row two: the name, once, with whose sub-agent or whose revision it is. */
+.page-approval-detail .session-header .header-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.page-approval-detail .session-title-note {
+  font-size: var(--font-size-supporting);
+  color: var(--muted);
+}
+/* Row three: one line, one typeface, one colour. It used to be two rows that
+   mixed mono, bold and plain and repeated the elapsed time into the card. */
 .page-approval-detail .session-meta-line {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 2px 0;
   font-size: var(--font-size-caption);
-  color: var(--muted-3);
+  color: var(--muted);
 }
 /* Separators drawn, not typed, so wrapping never strands a dot at a line end. */
 .page-approval-detail .session-meta-line > * + *::before {
@@ -11165,94 +11244,84 @@ html[data-page="draft-panel"] .app-route {
   margin: 0 8px;
   color: var(--muted-2);
 }
-.page-approval-detail .session-meta-identity { margin-top: 2px; color: var(--muted); }
-.page-approval-detail .session-meta-identity .session-id-copy code { font-size: var(--font-size-micro); }
-.page-approval-detail .now-card { padding: 0; overflow: hidden; }
-.page-approval-detail .now-card.is-decision { border-color: var(--cyan-border); }
-.page-approval-detail .now-card.is-error { border-color: var(--red-border); }
-.page-approval-detail .now-head {
+.page-approval-detail .session-meta-line .session-id-copy code { font-size: var(--font-size-micro); }
+
+/* The now card. One frame, generous padding, no inner frames: the head band,
+   the caps state label and the three bordered tiles are all gone. What is
+   left is a headline, a body, and one grey line of facts. */
+.page-approval-detail .now-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px 28px;
+  border-radius: 14px;
+}
+.page-approval-detail .now-headline {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: var(--font-size-title);
+  font-weight: var(--weight-medium);
+  line-height: var(--lh-snug);
+  letter-spacing: -0.01em;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.page-approval-detail .now-headline.is-error { white-space: pre-wrap; }
+.page-approval-detail .now-headline-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 40px;
-  padding: 6px 18px;
-  border-bottom: 1px solid var(--line);
+  gap: 12px;
+  min-width: 0;
+}
+.page-approval-detail .now-headline-row .now-headline { min-width: 0; }
+.page-approval-detail .now-headline-row .log-spinner { flex: none; width: 14px; height: 14px; }
+.page-approval-detail .now-headline-meta {
+  margin-left: auto;
+  flex: none;
+  font-size: var(--font-size-caption);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.page-approval-detail .now-note {
+  margin: 0;
+  font-size: var(--font-size-supporting);
+  color: var(--muted-3);
+  line-height: var(--lh-loose);
+  max-width: 72ch;
+}
+/* The facts line: who approved, what the judge said, what it cost. One quiet
+   row under a hairline, in place of three bordered tiles. */
+.page-approval-detail .now-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
   font-size: var(--font-size-caption);
   color: var(--muted);
 }
-.page-approval-detail .now-head.is-decision { background: var(--cyan-soft); }
-.page-approval-detail .now-head.is-error { background: var(--red-soft); }
-.page-approval-detail .now-label {
-  font-size: var(--font-size-micro);
-  font-weight: var(--weight-medium);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-  color: var(--muted-3);
+.page-approval-detail .now-facts > * + *::before {
+  content: "·";
+  margin: 0 8px;
+  color: var(--muted-2);
 }
-.page-approval-detail .now-head.is-decision .now-label { color: var(--cyan); }
-.page-approval-detail .now-head.is-error .now-label { color: var(--red); }
-.page-approval-detail .now-head.is-result .now-label { color: var(--green); }
-.page-approval-detail .now-head.is-working .now-label { color: var(--cyan); }
-.page-approval-detail .now-trailing { margin-left: auto; }
-.page-approval-detail .now-body { padding: 14px 18px; }
-.page-approval-detail .now-error { color: var(--fg); font-size: var(--font-size-supporting); line-height: var(--lh-loose); white-space: pre-wrap; overflow-wrap: anywhere; }
-.page-approval-detail .now-working-label { color: var(--muted-3); }
-.page-approval-detail .now-note { margin: 0; font-size: var(--font-size-caption); color: var(--muted-3); line-height: var(--lh-snug); }
-/* A body followed by a body (a note, then the failure) shares the padding. */
-.page-approval-detail .now-body + .now-body { padding-top: 0; }
 /* Inside the card the gate list and the single running/failed row lose their
    own frame: the card is the frame. */
 .page-approval-detail .now-card .gate-panel { margin: 0; }
 .page-approval-detail .now-card .gate-panel > .logs > .log-item.is-actionable,
-.page-approval-detail .now-card > .logs > .log-item { border: 0; border-radius: 0; margin: 0; box-shadow: none; }
+.page-approval-detail .now-card > .logs > .log-item { border: 0; border-radius: 0; margin: 0; padding-left: 0; padding-right: 0; box-shadow: none; }
 .page-approval-detail .now-card > .logs { margin: 0; }
-
-/* Now-card slots: tiles under a result, the recent steps under a running
-   step, the way back on a sub-agent, and the action row at the foot. */
-.page-approval-detail .now-card .session-actions {
-  margin: 0;
-  padding: 12px 18px;
-  border-top: 1px solid var(--line);
-}
-.page-approval-detail .now-card .continue-panel { margin: 0 18px 12px; }
+.page-approval-detail .now-card > .logs.now-recent > .log-item:last-child { border-bottom: 0; }
+.page-approval-detail .now-card > .logs.now-recent { opacity: 0.85; }
+.page-approval-detail .now-card .session-actions { margin: 0; padding: 0; border: 0; }
+.page-approval-detail .now-card .session-actions:empty { display: none; }
+.page-approval-detail .now-card .continue-panel,
 .page-approval-detail .now-card .changeset-session-panel,
-.page-approval-detail .now-card .agent-revision-session-panel { margin: 0 18px 12px; }
-.page-approval-detail .now-tiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px;
-  padding: 0 18px 14px;
-}
-.page-approval-detail .now-tile {
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  display: grid;
-  gap: 2px;
-}
-.page-approval-detail .now-tile-label {
-  font-size: var(--font-size-micro);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.page-approval-detail .now-tile-value { font-size: var(--font-size-caption); color: var(--fg); }
-.page-approval-detail .now-tile-sub { font-size: var(--font-size-micro); color: var(--muted); }
-.page-approval-detail .now-tile code { font-family: var(--mono); font-size: var(--font-size-micro); }
-.page-approval-detail .now-recent-label {
-  padding: 10px 18px 4px;
-  border-top: 1px solid var(--line);
-  font-size: var(--font-size-micro);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.page-approval-detail .now-card > .logs.now-recent > .log-item { border: 0; border-radius: 0; margin: 0; box-shadow: none; opacity: 0.85; }
+.page-approval-detail .now-card .agent-revision-session-panel { margin: 0; }
 .page-approval-detail .now-cta {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 4px 18px 14px;
 }
 .page-approval-detail .now-cta-primary {
   background: var(--primary-bg);
@@ -11262,6 +11331,29 @@ html[data-page="draft-panel"] .app-route {
 }
 .page-approval-detail .now-cta-primary:hover { background: var(--primary-bg-hover); color: var(--primary-fg); }
 .page-approval-detail .now-cta-note { font-size: var(--font-size-caption); color: var(--muted); }
+/* Recorded business facts as plain numbers. They were chips, which made a
+   count the agent measured look like a filter control. */
+.page-approval-detail .result-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+}
+.page-approval-detail .result-metric {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--fg);
+  text-decoration: none;
+}
+.page-approval-detail .result-metric:hover .result-metric-name { color: var(--fg); }
+.page-approval-detail .result-metric-amount {
+  font-size: var(--font-size-title);
+  font-weight: var(--weight-medium);
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.page-approval-detail .result-metric-name { font-size: var(--font-size-caption); color: var(--muted); }
+
 
 /* Artifact tiles carry their kind so a row of files reads at a glance. */
 .artifact-open-kind {

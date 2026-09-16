@@ -19,7 +19,7 @@ const COPY: Record<DecisionDialogMode, {
   requireText: boolean;
 }> = {
   comment: {
-    title: 'leave a comment',
+    title: 'Comment',
     placeholder: 'explain your decision, ask for a tweak, or send context back to the agent',
     hint: 'Name the part to change and what it should be instead. The agent applies your comment literally, so a specific note produces a specific fix.',
     submitLabel: 'Send comment',
@@ -27,7 +27,7 @@ const COPY: Record<DecisionDialogMode, {
     requireText: true,
   },
   reject: {
-    title: 'reject this request?',
+    title: 'Reject this request?',
     body: 'The agent will stop this approval flow and apply any configured rejected-state updates.',
     placeholder: 'optional: which part is wrong is enough - the source, a fact, the angle, the tone',
     hint: 'This is the only thing the agent learns from. Reject in silence and the next run drafts the same way. It does not have to be articulate: naming which part is off is enough, and even "cannot say, just wrong" tells it more than nothing.',
@@ -68,14 +68,14 @@ export function DecisionDialog(props: {
     ? props.mode === 'comment'
       ? {
           ...COPY.comment,
-          title: 'guide the next revision',
+          title: 'Guide revision',
           placeholder: 'tell the agent what to change, remove, verify, or try instead',
           hint: 'Your earlier feedback is preserved. Add only what the next revision needs to resolve the automated review objection.',
           submitLabel: 'Revise again',
         }
       : {
           ...COPY.reject,
-          title: 'stop this action?',
+          title: 'Stop this action?',
           body: 'The blocked draft will not be published. The agent will record that you stopped this approval flow.',
           submitLabel: 'Stop action',
         }
