@@ -6,6 +6,7 @@ import { useSessionsStream } from './use-sessions-stream';
 import { useGlobalApprovals } from './use-global-approvals';
 import { displayAgentName, displayStatusLabel } from '../lib/format';
 import { isExecutingSessionStatus } from '../../../../session/status';
+import { sessionDestinationHref } from '../lib/links';
 
 /** One row of the home-page activity feed, derived from session transitions. */
 export interface ActivityEvent {
@@ -95,7 +96,7 @@ function eventFor(row: SessionRow, opts: { isNew: boolean; fresh: boolean; seq: 
     tone: toneFor(label),
     at: row.updatedAt || row.createdAt,
     fresh: opts.fresh,
-    href: `/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`,
+    href: sessionDestinationHref(row),
   };
 }
 

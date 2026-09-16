@@ -21,6 +21,7 @@ import { InlineError } from '../components/error-banner';
 import { formatElapsedClock } from '../lib/format';
 import { useNow } from '../hooks/use-now';
 import { waitingChangesetEntries, type ChangesetEntry } from '../lib/changeset-entry';
+import { sessionDestinationHref } from '../lib/links';
 
 function formatCountdown(ms: number): string {
   if (ms <= 0) return 'now';
@@ -60,7 +61,7 @@ function FeedRow(props: { event: ActivityEvent }) {
 
 function RunningRow(props: { row: SessionRow; now: number; ticker: boolean }) {
   const { row, now } = props;
-  const href = `/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`;
+  const href = sessionDestinationHref(row);
   // Live one-line tail of what the agent is doing right now. Capped upstream
   // (`ticker`) so a busy daemon doesn't exhaust the browser's per-host
   // connection budget; capless rows keep the static description.
@@ -101,7 +102,7 @@ function WorkingNow(props: { running: SessionRow[] }) {
   );
 }
 
-function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => void; label?: string }) {
+export function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => void; label?: string }) {
   const { row } = props;
   const at = row.updatedAt || row.createdAt;
   const agentName = displayAgentName(row.agent.name, row.agent.filePath, row.agent.id);
@@ -113,7 +114,7 @@ function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => voi
     ? errorText(row.errorMessage)
     : (failureLabel(row.errorCause) ?? (errorText(row.errorMessage) || row.errorCode || ''));
   return (
-    <a class="attn-run" href={`/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`}>
+    <a class="attn-run" href={sessionDestinationHref(row)}>
       <span class={`feed-dot ${incomplete ? 'incomplete' : 'failed'}`} aria-hidden="true"></span>
       <span class="attn-agent">{agentName}</span>
       <span class={`attn-fail${incomplete ? ' warn' : ''}`}>

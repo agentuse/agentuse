@@ -4,6 +4,14 @@
  * Its own module so a component can link to a page without importing the
  * route that renders it.
  */
+import type { SessionRow } from './api';
+
+/** Open authoring runs in their review flow, including failed attempts. */
+export function sessionDestinationHref(row: Pick<SessionRow, 'sessionId' | 'project' | 'purpose'>): string {
+  if (row.purpose?.kind === 'changeset') return row.purpose.href;
+  if (row.purpose?.kind === 'agent-revision') return agentRevisionHref(row.project, row.sessionId);
+  return `/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`;
+}
 
 export type AgentDetailTab = 'jobs' | 'results' | 'learnings' | 'revisions' | 'source';
 export type AgentTutorialStep = 'run' | 'schedule' | null;
