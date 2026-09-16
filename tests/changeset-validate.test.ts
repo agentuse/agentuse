@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it } from 'bun:test';
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
+import { join, relative } from 'node:path';
 import {
   isChangesetPathAllowed,
   validateChangesetFiles,
@@ -402,5 +405,139 @@ tools:
     expect(shared?.flags).toContain('also used by agents/reporter.agentuse');
     expect(shared?.flags).toContain('existing project file outside the agent folder');
     expect(shared?.flags).not.toContain('not referenced by any agent in this changeset');
+  });
+});
+
+
+describe('installed skill script dependencies', () => {
+  const temporaryRoots: string[] = [];
+  afterEach(async () => {
+    await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  });
+
+  async function fixture() {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'changeset-skills-')));
+    temporaryRoots.push(root);
+    const skill = join(root, 'listmonk');
+    await mkdir(join(skill, 'scripts'), { recursive: true });
+    const scriptPath = join(skill, 'scripts/listmonk_cli.py');
+    await writeFile(scriptPath, 'print("ok")');
+    const catalog = new Map([['listmonk', {
+      name: 'listmonk', description: 'Campaign analytics', location: join(skill, 'SKILL.md'),
+    }]]);
+    const source = (path: string, timeout = 600) => agentSource({
+      name: 'Measure', extra: `timeout: ${timeout}
+skills:
+  listmonk:
+tools:
+  bash:
+    commands:
+      - "uv run ${path} campaign *"`,
+    });
+    const validate = (path: string, basePath?: string) => validateChangesetFiles(input({
+      mode: basePath ? 'revise' : 'create',
+      availableSkills: ['listmonk'],
+      discoverInstalledSkills: async () => catalog,
+      files: [file({ path: 'agents/manager.agentuse', content: source(path, 900),
+        ...(basePath ? { op: 'modify' as const, baseHash: 'base', baseContent: source(basePath) } : {}),
+      })],
+    }));
+    return { root, skill, scriptPath, catalog, validate };
+  }
+
+  it('accepts installed scripts through equivalent home-relative and absolute paths', async () => {
+    const f = await fixture();
+    const homePath = `~/${relative(homedir(), f.scriptPath)}`;
+    expect((await f.validate(homePath))[0]!.flags).toBeUndefined();
+    expect((await f.validate(f.scriptPath))[0]!.flags).toBeUndefined();
+    // Regression: only timeout changes from 600 to 900, with the old command intact.
+    expect((await f.validate(homePath, homePath))[0]!.flags).toBeUndefined();
+  });
+
+  it('rejects new missing skill scripts and warns on unchanged missing dependencies', async () => {
+    const f = await fixture();
+    const missing = join(f.skill, 'scripts/missing.py');
+    await expect(f.validate(missing)).rejects.toThrow('skill script missing');
+    expect((await f.validate(missing, missing))[0]!.flags?.join(' ')).toContain('pre-existing unresolved dependency');
+    await expect(f.validate(missing, f.scriptPath)).rejects.toThrow('skill script missing');
+  });
+
+  it('rejects a new external script that no available skill provides', async () => {
+    const f = await fixture();
+    const outside = join(f.root, 'external.py');
+    await writeFile(outside, 'print("external")');
+    await expect(f.validate(outside)).rejects.toThrow('not provided by an available installed skill');
+    f.catalog.clear();
+    await expect(f.validate(f.scriptPath)).rejects.toThrow('not provided by an available installed skill');
+  });
+
+  it('accepts a symlinked skill directory but rejects script symlink escapes', async () => {
+    const f = await fixture();
+    const alias = join(f.root, 'alias');
+    await symlink(f.skill, alias);
+    f.catalog.get('listmonk')!.location = join(alias, 'SKILL.md');
+    expect((await f.validate(join(alias, 'scripts/listmonk_cli.py')))[0]!.flags).toBeUndefined();
+    const outside = join(f.root, 'external.py');
+    await writeFile(outside, 'print("external")');
+    const escape = join(alias, 'scripts/escape.py');
+    await symlink(outside, escape);
+    await expect(f.validate(escape)).rejects.toThrow('escapes installed skill');
+    await expect(f.validate(escape, escape)).rejects.toThrow('escapes installed skill');
+  });
+
+  it('uses runtime discovery for installed skills when no catalog is injected', async () => {
+    const f = await fixture();
+    const install = join(f.root, '.claude/skills/changeset-fixture-skill');
+    await mkdir(install, { recursive: true });
+    await writeFile(join(install, 'SKILL.md'), '---\nname: changeset-fixture-skill\ndescription: Test fixture\n---\nRead analytics.');
+    await writeFile(join(install, 'query.py'), 'print("ok")');
+    const source = agentSource({ name: 'Collector', extra: `skills:
+  changeset-fixture-skill:
+tools:
+  bash:
+    commands:
+      - python3 ${install}/query.py` });
+    // A scope may be a subdirectory of the served project. The installed skill
+    // is external to that scope but discoverable by the runtime there.
+    const scope = join(f.root, 'scope');
+    await mkdir(scope);
+    await symlink(join(f.root, '.claude'), join(scope, '.claude'));
+    const result = await validateChangesetFiles(input({
+      scopeRoot: scope, projectRoot: f.root,
+      availableSkills: ['changeset-fixture-skill'],
+      files: [file({ path: 'agents/manager.agentuse', content: source })],
+    }));
+    expect(result[0]!.flags).toBeUndefined();
+  });
+
+  it('rejects ambiguous skills and skills unavailable with auto discovery disabled', async () => {
+    const f = await fixture();
+    const source = agentSource({ name: 'Collector', extra: `skills:
+  auto: false
+tools:
+  bash:
+    commands:
+      - python3 ${f.scriptPath}` });
+    await expect(validateChangesetFiles(input({
+      availableSkills: ['listmonk'], discoverInstalledSkills: async () => f.catalog,
+      files: [file({ path: 'agents/manager.agentuse', content: source })],
+    }))).rejects.toThrow('not provided by an available installed skill');
+    const ambiguous = new Map([...f.catalog].map(([name, skill]) => [name, {
+      ...skill, shadowedLocations: [join(f.root, 'other/SKILL.md')],
+    }]));
+    await expect(validateChangesetFiles(input({
+      availableSkills: ['listmonk'], discoverInstalledSkills: async () => ambiguous,
+      files: [file({ path: 'agents/manager.agentuse', content: source.replace('auto: false', 'listmonk:') })],
+    }))).rejects.toThrow('not provided by an available installed skill');
+  });
+
+  it('resolves absolute project scripts against the staged project tree', async () => {
+    const source = agentSource({ name: 'Collector', extra: `tools:
+  bash:
+    commands:
+      - python3 ${PROJECT_ROOT}/agents/collect.py` });
+    const files = [file({ path: 'agents/manager.agentuse', content: source }), passingSet[2]!];
+    expect(await validateChangesetFiles(input({ files }))).toHaveLength(2);
+    await expect(validateChangesetFiles(input({ files: [files[0]!] }))).rejects.toThrow('runs agents/collect.py');
   });
 });

@@ -13,7 +13,11 @@
  * then the cross-file graph (#227).
  */
 import { createHash } from 'node:crypto';
-import { posix, resolve } from 'node:path';
+import { dirname, isAbsolute, posix, relative, resolve } from 'node:path';
+import { realpath, stat } from 'node:fs/promises';
+import { discoverSkills } from '../skill/discovery.js';
+import type { SkillInfo } from '../skill/types.js';
+import { expandHome } from '../utils/path.js';
 import { createTwoFilesPatch } from 'diff';
 import { parseAgentContent } from '../parser.js';
 import { grantsArbitraryCode, grantsUnnamedSubcommands } from '../tools/effectful-heuristic.js';
@@ -76,6 +80,8 @@ export interface ValidateChangesetFilesInput {
   availableModels: readonly string[];
   availableSkills: readonly string[];
   loadedSkills?: readonly string[];
+  /** Host-resolved catalog; defaults to runtime discovery, never model-supplied paths. */
+  discoverInstalledSkills?: () => Promise<Map<string, SkillInfo>>;
   /** Reads a project-relative file from the real project. `undefined` when absent. */
   readProjectFile: (relPath: string) => Promise<string | undefined>;
   /** Project-relative paths of every `.agentuse` file already in the project. */
@@ -337,7 +343,8 @@ function scriptReferencesIn(commands: readonly string[], agentDir: string): stri
       if (!token || token.includes('*') || token.includes('?')) continue;
       if (!CHANGESET_SUPPORT_EXTENSIONS.some((extension) => token.toLowerCase().endsWith(extension))) continue;
       // Bash runs from the project root, so a bare script path is root-relative.
-      const resolved = expandPathVariables(token, agentDir, '');
+      const expanded = expandHome(token);
+      const resolved = isAbsolute(expanded) ? resolve(expanded) : expandPathVariables(token, agentDir, '');
       if (resolved) references.push(resolved);
     }
   }
@@ -351,7 +358,7 @@ interface AgentReferences {
   supports: string[];
 }
 
-function referencesOf(config: AgentConfig, agentPath: string): AgentReferences {
+function referencesOf(config: AgentConfig, agentPath: string, scopeRoot?: string): AgentReferences {
   const agentDir = posix.dirname(agentPath) === '.' ? '' : posix.dirname(agentPath);
   const agents: string[] = [];
   for (const token of [
@@ -365,7 +372,9 @@ function referencesOf(config: AgentConfig, agentPath: string): AgentReferences {
     ...(config.tools?.bash?.commands ?? []),
     ...(config.tools?.bash?.gated ?? []),
   ], agentDir);
-  return { agents, supports };
+  return { agents, supports: supports.map((path) =>
+    scopeRoot && isAbsolute(path) && isPathInside(resolve(scopeRoot), path)
+      ? relative(resolve(scopeRoot), path).split('\\').join('/') : path) };
 }
 
 function detectCycle(edges: Map<string, string[]>): string[] | undefined {
@@ -389,6 +398,32 @@ function detectCycle(edges: Map<string, string[]>): string[] | undefined {
     if (cycle) return cycle;
   }
   return undefined;
+}
+
+/** External dependency checks inspect metadata only and never grant execution access. */
+async function externalSupportIssue(
+  path: string,
+  config: AgentConfig,
+  catalog: Map<string, SkillInfo>,
+  availableSkills: readonly string[],
+): Promise<string | undefined> {
+  const explicit = new Set(explicitSkillNames(config));
+  const allowed = new Set(availableSkills);
+  const target = await realpath(path).catch(() => undefined);
+  for (const skill of catalog.values()) {
+    if (!allowed.has(skill.name) || skill.shadowedLocations?.length
+      || (config.skills?.auto === false && !explicit.has(skill.name))) continue;
+    const root = await realpath(dirname(skill.location)).catch(() => undefined);
+    if (!root) continue;
+    const lexicalRoot = resolve(dirname(skill.location));
+    // Support a symlinked installed skill root, but not a script escaping that root.
+    if (!isPathInside(lexicalRoot, path) && !(target && isPathInside(root, target))) continue;
+    if (!target) return `skill script missing: ${path} (skill ${skill.name})`;
+    if (!isPathInside(root, target)) throw new Error(`skill script escapes installed skill ${skill.name}: ${path}`);
+    if (!(await stat(target)).isFile()) return `skill script is not a file: ${path}`;
+    return undefined;
+  }
+  return `external script ${path} is not provided by an available installed skill`;
 }
 
 export async function validateChangesetFiles(input: ValidateChangesetFilesInput): Promise<ChangesetFile[]> {
@@ -489,11 +524,12 @@ export async function validateChangesetFiles(input: ValidateChangesetFilesInput)
   // 6. Cross-file graph (#227).
   const changesetPaths = new Set(files.map((file) => file.path));
   const referencedSupports = new Set<string>();
+  let installedSkills: Map<string, SkillInfo> | undefined;
   const edges = new Map<string, string[]>();
   for (const file of files) {
     const config = configByPath.get(file.path);
     if (!config) continue;
-    const references = referencesOf(config, file.path);
+    const references = referencesOf(config, file.path, input.scopeRoot);
     const agentEdges: string[] = [];
     for (const reference of references.agents) {
       if (reference === file.path) throw new Error(`${file.path} references itself as a sub-agent or dependency`);
@@ -503,8 +539,19 @@ export async function validateChangesetFiles(input: ValidateChangesetFilesInput)
       if (changesetPaths.has(reference)) agentEdges.push(reference);
     }
     edges.set(file.path, agentEdges);
+    const baseSource = baseByPath.get(file.path);
+    const priorSupports = new Set(baseSource === undefined ? [] : referencesOf(
+      parseAgentContent(baseSource, file.path).config, file.path, input.scopeRoot,
+    ).supports);
     for (const reference of references.supports) {
-      if (!changesetPaths.has(reference) && (await input.readProjectFile(reference)) === undefined) {
+      if (isAbsolute(reference)) {
+        installedSkills ??= await (input.discoverInstalledSkills?.() ?? discoverSkills(input.scopeRoot));
+        const issue = await externalSupportIssue(reference, config, installedSkills, input.availableSkills);
+        if (issue) {
+          if (!priorSupports.has(reference)) throw new Error(`${file.path}: ${issue}`);
+          flagsByPath.get(file.path)!.push(`pre-existing unresolved dependency: ${issue}`);
+        }
+      } else if (!changesetPaths.has(reference) && (await input.readProjectFile(reference)) === undefined) {
         throw new Error(`${file.path} runs ${reference}, which is neither in this changeset nor in the project`);
       }
       referencedSupports.add(reference);
@@ -538,7 +585,7 @@ export async function validateChangesetFiles(input: ValidateChangesetFilesInput)
       } catch {
         continue;
       }
-      const references = referencesOf(config, agentPath);
+      const references = referencesOf(config, agentPath, input.scopeRoot);
       for (const reference of [...references.agents, ...references.supports]) {
         usersByPath.set(reference, [...(usersByPath.get(reference) ?? []), agentPath]);
       }
