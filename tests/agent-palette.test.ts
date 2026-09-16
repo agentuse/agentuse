@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { rankPaletteItems } from '../src/cli/serve/web/components/agent-palette';
 
 describe('command palette search grouping', () => {
-  test('keeps matching items in source-group order', () => {
+  test('keeps agents first and matching items in source-group order', () => {
     const results = rankPaletteItems([
       { key: 'agent:scout', group: 'Agents', title: 'Reddit Scout' },
       { key: 'session:reply', group: 'Sessions', title: 'Reddit Engage Reply' },
@@ -11,9 +11,9 @@ describe('command palette search grouping', () => {
     ], 'reddit');
 
     expect(results.map(({ item }) => item.group)).toEqual([
+      'Agents',
       'Needs you',
       'Sessions',
-      'Agents',
       'Pages',
     ]);
   });

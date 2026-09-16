@@ -54,10 +54,10 @@ type PaletteGroup = 'Needs you' | 'Recent' | 'Agents' | 'Sessions' | 'Pages' | '
 
 /** Keep search results in the same source sections as the resting palette. */
 const PALETTE_GROUP_ORDER: readonly PaletteGroup[] = [
+  'Agents',
   'Needs you',
   'Recent',
   'Sessions',
-  'Agents',
   'Pages',
   'Actions',
 ];
@@ -156,7 +156,7 @@ function approvalItems(rows: readonly ApprovalRow[]): PaletteItem[] {
     ...(row.summary || row.prompt ? { desc: row.summary || row.prompt } : {}),
     meta: 'waiting',
     search: `approval ${row.sessionId} ${row.agentName}`,
-    // Keeps a blocked run above same-named agents and sessions while typing.
+    // Prioritizes blocked runs within the approval section while typing.
     boost: 200,
     href: approvalHref(row),
   }));
@@ -188,8 +188,8 @@ function orderSessions(rows: readonly SessionRow[]): SessionRow[] {
 /**
  * Global command palette. Opens on ⌘K / Ctrl+K from any serve page and fuzzy
  * matches across pending approvals, sessions, agents, pages, and a couple of
- * actions. With an empty query it leads with the runs that are blocked on the
- * reviewer, then the most recent sessions — the two lookups that dominate.
+ * actions. Agents lead both the empty palette and search results, followed by
+ * runs that are blocked on the reviewer and recent or matching sessions.
  * Agents and sessions are fetched on open; approvals ride the shell's stream.
  */
 export function AgentPalette() {
@@ -303,11 +303,11 @@ export function AgentPalette() {
         act: () => setPref(pref === 'dark' ? 'light' : 'dark'),
       },
     ];
-    // Empty query is a launchpad (blocked runs, then recents); typing searches
+    // Empty query is a launchpad (agents, blocked runs, then recents); typing searches
     // the full session window instead of the recent slice.
     return query.trim()
-      ? [...gates, ...agentItems, ...rest.map((row) => sessionItem(row, 'Sessions')), ...pages, ...actions]
-      : [...gates, ...rest.slice(0, RECENT_COUNT).map((row) => sessionItem(row, 'Recent')), ...agentItems, ...pages, ...actions];
+      ? [...agentItems, ...gates, ...rest.map((row) => sessionItem(row, 'Sessions')), ...pages, ...actions]
+      : [...agentItems, ...gates, ...rest.slice(0, RECENT_COUNT).map((row) => sessionItem(row, 'Recent')), ...pages, ...actions];
   }, [pending, sessions, agents, pref, query]);
 
   const results = useMemo(() => rankPaletteItems(items, query.trim()), [items, query]);
