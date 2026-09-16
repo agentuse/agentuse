@@ -11280,7 +11280,15 @@ html[data-page="draft-panel"] .app-route {
   color: var(--fg);
   overflow-wrap: anywhere;
 }
-.page-approval-detail .now-headline.is-error { white-space: pre-wrap; }
+.page-approval-detail .now-headline.is-error {
+  /* A failure message is a paragraph, not a one-line title: body size,
+     normal weight, and reading line height. */
+  white-space: pre-wrap;
+  font-size: var(--font-size-body);
+  font-weight: var(--weight-normal);
+  line-height: var(--lh-loose);
+  letter-spacing: 0;
+}
 .page-approval-detail .now-headline-row {
   display: flex;
   align-items: center;
