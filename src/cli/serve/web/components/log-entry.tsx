@@ -540,7 +540,7 @@ export function OptionsBlock(props: {
             <div class="approval-option-main">
               <div class="approval-option-label">
                 {opt.label}
-                {opt.recommended && <span class="approval-option-badge">recommended</span>}
+                {opt.recommended && <span class="approval-option-badge">Recommended</span>}
                 {isDecided && <span class="approval-option-badge picked">picked</span>}
               </div>
               {opt.description && <div class="approval-option-desc"><InlineMarkdown value={opt.description} /></div>}
@@ -1576,6 +1576,12 @@ function LogEntryImpl(props: LogEntryProps) {
   const awaitingPick = props.showActions
     && (entry.details?.options?.length ?? 0) > 0
     && !props.selectedChoice;
+  // A pending gate seen from a delegated child's own page: the decision is
+  // taken on the parent, so this page links there instead of restating it.
+  const parkedAtParent = !props.showActions
+    && Boolean(props.parentApproveHref)
+    && isApprovalEntry
+    && entry.status === 'pending';
   const genericToolApproval = Boolean(entry.details?.toolApproval);
   const reviewEscalation = entry.details?.reviewEscalation;
 
@@ -1717,7 +1723,13 @@ function LogEntryImpl(props: LogEntryProps) {
           {runOutcome && <RunOutcomeCard outcome={runOutcome} />}
           {storeEvent && <StoreEventBlock event={storeEvent} />}
           {entry.details && (isApprovalEntry
-            ? <ApprovalDetailCard
+            ? parkedAtParent
+              // The decision is the parent's. Copying the whole gate onto a
+              // page that cannot answer it gives the reader a wall of draft
+              // to read and no way to act; the row and its link to the parent
+              // are the whole story here.
+              ? null
+              : <ApprovalDetailCard
                 details={entry.details}
                 hideOptions={props.hideApprovalOptions}
                 priorReview={props.priorReview}
@@ -1726,7 +1738,7 @@ function LogEntryImpl(props: LogEntryProps) {
                 token={props.token}
                 selectedChoice={props.selectedChoice}
                 onSelectChoice={props.showActions ? props.onSelectChoice : undefined}
-              />
+                />
             : <ToolDetails details={entry.details} sessionId={props.sessionId} token={props.token} />)}
           {/* The counts are the whole corrections row; anything the session log
               also wrote about them would restate the line above. */}
@@ -1800,17 +1812,13 @@ function LogEntryImpl(props: LogEntryProps) {
             </div>
           </div>
         )}
-        {!props.showActions && props.parentApproveHref && isApprovalEntry && entry.status === 'pending' && (
-          <div class="log-actions" data-actions-row>
-            <div class="log-actions-hint">The decision is made on the parent run.</div>
-            <a class="log-parent-approve" href={props.parentApproveHref}>
-              <span>Approve on {props.parentApproveLabel ?? 'the parent run'}</span>
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <line x1="5" y1="12" x2="19" y2="12" />
-                <polyline points="12 5 19 12 12 19" />
-              </svg>
-            </a>
-          </div>
+        {parkedAtParent && (
+          // One line, not a second action bar: the card at the top of this
+          // page already offers the button to the parent, and two primary
+          // calls to the same action is the page asking twice.
+          <p class="log-parent-note">
+            The decision is made on <a href={props.parentApproveHref}>{props.parentApproveLabel ?? 'the parent run'}</a>.
+          </p>
         )}
       </div>
     </li>

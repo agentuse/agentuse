@@ -1844,6 +1844,11 @@ describe('SessionDetail header', () => {
     })).toBe('Stream aborted - execution timeout or manual cancellation');
     expect(sessionFailureHeadline({ fallback: 'Session finished with an error.' }))
       .toBe('Session finished with an error.');
+    // Capitalizing an identifier renames the thing that broke.
+    expect(sessionFailureHeadline({
+      errorMessage: 'tools__fetch failed twice in a row: upstream returned 502 Bad Gateway.',
+      fallback: 'x',
+    })).toBe('tools__fetch failed twice in a row: upstream returned 502 Bad Gateway.');
   });
 
   it('collapses a trailing run of same-failure rows into one Session failed row', () => {

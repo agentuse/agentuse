@@ -804,6 +804,10 @@ export function sessionFailureHeadline(options: {
   const message = options.errorMessage?.trim();
   if (!message) return options.fallback;
   const sentence = message.split(/\n\s*\n/)[0].trim();
+  // Sentence case, unless the first word is an identifier: capitalizing
+  // `tools__fetch` into `Tools__fetch` renames the thing that broke.
+  const firstWord = sentence.split(/\s/)[0] ?? '';
+  if (!/^[a-z]+$/.test(firstWord)) return sentence;
   return sentence.charAt(0).toLocaleUpperCase() + sentence.slice(1);
 }
 
@@ -1449,7 +1453,9 @@ export default function SessionDetail() {
       if (raf) return;
       raf = requestAnimationFrame(() => {
         raf = 0;
-        setScrolled(window.scrollY > 8);
+        // Past the header, not past the first pixel: the compact bar replaces
+        // the header, so it must not slide over a header still on screen.
+        setScrolled(window.scrollY > 140);
       });
     };
     onScroll();
@@ -2775,7 +2781,7 @@ export default function SessionDetail() {
           // the first line shows in the row so the fold is not a mystery.
           <details class="panel additional-instruction is-foldable">
             <summary>
-              <span class="label">additional instruction</span>
+              <span class="label">Brief from the parent</span>
               <span class="additional-instruction-meta">{approval.additionalInstruction.split('\n').find((line) => line.trim())?.slice(0, 120) ?? ''}</span>
             </summary>
             <div class="body">{approval.additionalInstruction}</div>

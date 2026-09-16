@@ -1237,8 +1237,10 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
    Sits beside the H1 agent name in the page header. The trigger carries
    .icon-btn so the page's broad `button` rule skips it (same escape as the
    topbar chrome); .menu-btn re-skins the pill. The item selectors go through
-   .header-title-row so they outrank that broad rule (0,4,0 vs its 0,3,1) —
-   plain 3-class selectors here would lose to it. */
+   .session-header so they outrank that broad rule (0,4,0 vs its 0,3,1) —
+   plain 3-class selectors here would lose to it. The menu sits in the
+   header's controls row now, not beside the h1, so the scope is the header
+   rather than the title row. */
 .page-approval-detail .header-title-row {
   display: flex;
   align-items: center;
@@ -1277,7 +1279,7 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   overflow-wrap: anywhere;
 }
 .page-approval-detail .session-menu .menu-sep { height: 1px; margin: 10px -14px 6px; background: var(--line); }
-.page-approval-detail .header-title-row .session-menu .menu-item {
+.page-approval-detail .session-header .session-menu .menu-item {
   appearance: none;
   cursor: pointer;
   width: calc(100% + 28px);
@@ -1300,9 +1302,9 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   text-decoration: none;
   line-height: normal;
 }
-.page-approval-detail .header-title-row .session-menu .menu-item:hover { background: var(--panel-hover); border-color: transparent; opacity: 1; }
-.page-approval-detail .header-title-row .session-menu .menu-item:disabled { cursor: default; color: var(--muted); }
-.page-approval-detail .header-title-row .session-menu .menu-item .menu-icon { width: 14px; height: 14px; flex: 0 0 auto; color: var(--cyan); }
+.page-approval-detail .session-header .session-menu .menu-item:hover { background: var(--panel-hover); border-color: transparent; opacity: 1; }
+.page-approval-detail .session-header .session-menu .menu-item:disabled { cursor: default; color: var(--muted); }
+.page-approval-detail .session-header .session-menu .menu-item .menu-icon { width: 14px; height: 14px; flex: 0 0 auto; color: var(--cyan); }
 .page-approval-detail .session-menu .menu-error {
   margin: 4px 0 6px;
   font-family: var(--sans);
@@ -1313,22 +1315,14 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 /* .eyebrow comes from the shared page-shell group. */
 /* Sub-agent approval CTA: a paused child's pending gate has no controls of its
    own, so its log-actions row links to the parent run where the decision is made. */
-.page-approval-detail .log-parent-approve {
-  display: inline-flex; align-items: center; gap: 8px; flex: none;
-  /* The only actionable control on a suspended leaf page: match the decision
-     buttons' touch height, not the copy-chip scale. */
-  min-height: 42px;
-  padding: 8px 16px;
-  border-radius: 8px;
-  background: var(--primary-bg);
-  color: var(--primary-fg);
-  text-decoration: none;
-  font-family: var(--sans); font-size: var(--font-size-supporting); font-weight: var(--weight-medium);
-  transition: background 0.15s ease;
+/* A delegated child's page states where the decision lives, in one line.
+   It used to be a second primary button pointing at the same place as the
+   card above it. */
+.page-approval-detail .log-parent-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: var(--font-size-caption);
 }
-.page-approval-detail .log-parent-approve:hover { background: var(--primary-bg-hover); }
-.page-approval-detail .log-parent-approve svg { flex: none; transition: transform 0.15s ease; }
-.page-approval-detail .log-parent-approve:hover svg { transform: translateX(2px); }
 /* The run's identity, not a poster: the status chip and the pending gate carry
    the urgency, so the name sits at a reading size the meta row can align to. */
 .page-approval-detail h1 {
@@ -1688,12 +1682,14 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 .page-approval-detail .additional-instruction {
   margin: 0 0 18px;
 }
+/* A section title in the page's own voice, matching the other drawers on
+   this page rather than shouting in tracked-out capitals. */
 .page-approval-detail .additional-instruction .label {
-  color: var(--muted-3);
-  font-size: var(--font-size-micro);
+  color: var(--fg);
+  font-size: var(--font-size-supporting);
   font-weight: var(--weight-medium);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
+  letter-spacing: normal;
+  text-transform: none;
   margin-bottom: 8px;
 }
 .page-approval-detail .additional-instruction .body {
@@ -2778,16 +2774,22 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
    reset keeps that purely semantic, with no visual change from the divs. */
 .approval-section-title { margin: 0; }
 .approval-question { margin: 0; }
+/* Section labels in the page's own voice: "On approval", not "ON APPROVAL".
+   Tracked-out capitals on eight stacked sections turned the one thing the
+   reader has to decide into a form. */
 .approval-section-title,
 .approval-context > summary,
 .approval-summary-collapsed > summary {
   color: var(--muted);
-  font-size: var(--font-size-micro);
-  font-weight: var(--weight-medium);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
+  font-size: var(--font-size-caption);
+  font-weight: var(--weight-normal);
+  letter-spacing: normal;
+  text-transform: none;
   padding: 13px 16px 0;
 }
+.approval-section-title::first-letter,
+.approval-context > summary::first-letter,
+.approval-summary-collapsed > summary::first-letter { text-transform: uppercase; }
 .approval-context > summary,
 .approval-summary-collapsed > summary {
   cursor: pointer;
@@ -3081,21 +3083,19 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   align-items: baseline;
   gap: 8px;
 }
+/* A word beside the option's label, not a pill: the choice itself is already
+   a bordered box, and a bordered badge inside it was a frame in a frame. */
 .approval-option-badge {
   color: var(--cyan);
-  font-size: var(--font-size-micro);
-  font-weight: var(--weight-bold);
-  letter-spacing: var(--tracking-caps);
-  text-transform: uppercase;
-  border: 1px solid var(--cyan-border);
-  border-radius: 999px;
-  padding: 1px 8px;
+  font-size: var(--font-size-caption);
+  font-weight: var(--weight-normal);
+  letter-spacing: normal;
+  text-transform: none;
+  border: 0;
+  padding: 0;
   white-space: nowrap;
 }
-.approval-option-badge.picked {
-  color: var(--green);
-  border-color: var(--green-border);
-}
+.approval-option-badge.picked { color: var(--green); }
 .approval-option-desc {
   color: var(--muted-3);
   font-size: var(--font-size-caption);
@@ -3238,7 +3238,7 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
    (it still hosts the revise form and revision history when they show);
    collapse it rather than leave a blank band. */
 .page-approval-detail .session-actions:empty { display: none; }
-.page-approval-detail .header-title-row .session-menu .menu-item .menu-icon-stop { color: var(--red); }
+.page-approval-detail .session-header .session-menu .menu-item .menu-icon-stop { color: var(--red); }
 .log-actions-hint {
   font-size: var(--font-size-caption);
   color: var(--muted);
@@ -4233,7 +4233,6 @@ html[data-route-loading] body::after {
   }
   .log-actions-buttons button { min-height: 48px; min-width: 0; padding: 0 12px; }
   .log-actions-buttons button.primary { grid-column: 1 / -1; }
-  .page-approval-detail .log-parent-approve { min-height: 48px; justify-content: center; }
   /* Full-width button row: the button itself bounds the label now. */
   .approve-choice-label { max-width: 100%; margin-left: 0; }
   .continue-actions { flex-direction: column; align-items: stretch; }
@@ -8863,7 +8862,6 @@ a.lastrun.waiting { color: var(--cyan); }
 .approval-card summary:focus-visible,
 .theme-toggle button:focus-visible,
 .log-actions-buttons button:focus-visible,
-.log-parent-approve:focus-visible,
 .page-home .card:focus-visible,
 .page-home a.proj:focus-visible,
 .page-sessions a.row:focus-visible,
@@ -11238,8 +11236,9 @@ html[data-page="draft-panel"] .app-route {
   font-size: var(--font-size-caption);
   color: var(--muted);
 }
-/* Separators drawn, not typed, so wrapping never strands a dot at a line end. */
-.page-approval-detail .session-meta-line > * + *::before {
+/* Separators drawn, not typed. They trail their own item so a line that
+   wraps opens on a word rather than on a stranded dot. */
+.page-approval-detail .session-meta-line > *:not(:last-child)::after {
   content: "·";
   margin: 0 8px;
   color: var(--muted-2);
