@@ -714,11 +714,9 @@ function ApprovalDetailCard(props: {
     : '';
   const primary = details.draft
     ? { title: 'Draft', body: <LogContent value={details.draft} forceMarkdown /> }
-    : details.artifactUrl
-      ? { title: 'Artifact', body: <a class="approval-link" href={details.artifactUrl} target="_blank" rel="noopener noreferrer">{details.artifactUrl}</a> }
-      : details.draftUrl
+    : details.draftUrl
         ? { title: 'Draft', body: <a class="approval-link" href={details.draftUrl} target="_blank" rel="noopener noreferrer">{details.draftUrl}</a> }
-        : details.summary && changes.length === 0
+        : details.summary && changes.length === 0 && !details.artifactUrl && artifactPaths.length === 0
           ? { title: 'Review', body: <LogContent value={details.summary} forceMarkdown /> }
           : undefined;
   const showSummary = Boolean(details.summary) && primary?.title !== 'Review';
@@ -746,9 +744,8 @@ function ApprovalDetailCard(props: {
   const primaryTitle = primary && demotePrimary && optionsCarryText ? `${primary.title} notes` : primary?.title;
   const links = [
     details.draftUrl ? <a class="approval-link" href={details.draftUrl} target="_blank" rel="noopener noreferrer">Open draft</a> : null,
-    details.artifactUrl ? <a class="approval-link" href={details.artifactUrl} target="_blank" rel="noopener noreferrer">Open artifact</a> : null,
   ].filter(Boolean);
-  const hasContent = details.prompt || primary || changes.length > 0 || options.length > 0 || details.reference || details.risk || showSummary || details.context || links.length > 0 || artifactPaths.length > 0 || snapshotOnlyPaths.length > 0 || detectedImagePaths.length > 0 || decisionLabel || details.decisionComment || details.errorMessage || judge || reviewEscalation;
+  const hasContent = details.prompt || primary || details.artifactUrl || changes.length > 0 || options.length > 0 || details.reference || details.risk || showSummary || details.context || links.length > 0 || artifactPaths.length > 0 || snapshotOnlyPaths.length > 0 || detectedImagePaths.length > 0 || decisionLabel || details.decisionComment || details.errorMessage || judge || reviewEscalation;
   if (!hasContent) return null;
 
   return (
@@ -793,6 +790,15 @@ function ApprovalDetailCard(props: {
         </>
       )}
       {soloMark && <JudgeStrip candidate={soloMark.candidate} attempt={soloAttempt} stale={soloMark.stale} href={judgeMarks?.href ?? judge?.sessionHref} />}
+      {details.artifactUrl && (
+        <section class="approval-section approval-artifact">
+          <h4 class="approval-section-title">Artifact</h4>
+          <div class="approval-section-body approval-artifact-body">
+            <a class="approval-link" href={details.artifactUrl} target="_blank" rel="noopener noreferrer">Open artifact: {details.artifactUrl}</a>
+            <ExternalMediaPreview url={details.artifactUrl} />
+          </div>
+        </section>
+      )}
       {(artifactPaths.length > 0 || snapshotOnlyPaths.length > 0 || detectedImagePaths.length > 0) && (
         <section class="approval-section approval-artifact">
           <h4 class="approval-section-title">{artifactPaths.length + snapshotOnlyPaths.length + detectedImagePaths.length > 1 ? 'Artifacts' : 'Artifact'}</h4>

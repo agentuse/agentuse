@@ -170,7 +170,14 @@ See [Channels](/guides/channels) for Slack setup, channel ids, events, and compl
 
 ## Reviewer Flow
 
-The session page shows the best available review details from the agent:
+Make each approval understandable without opening Draft or Context or reading "Why this request". Choose one primary review surface:
+
+- **Actions:** use `prompt` + `changes`. Put the exact caption/body in `displayContent` when `content` is a command, attach the media in `media_urls`, and name the destination account/platform and timing in the action label. Material revisions belong in the visible prompt or action label, and critical consequences belong in `risk`.
+- **Standalone deliverables:** first create and save the report, proposal, or other artifact using `tools__artifact_save` when available or another suitable creation tool. Wait for success, then call `await_human` with its returned `artifact_path` (or `artifact_paths` for several files). Use `artifact_url` for an existing hosted deliverable. Never invent paths or URLs. Artifacts appear in an expanded section; supported local formats and hosted media have inline previews, and hosted documents have a visible open link.
+
+Omit `draft`, `summary`, and `context` by default. Existing payloads remain supported.
+
+The session page supports these review fields:
 
 - `prompt`: the reviewer-facing decision prompt
 - `changes`: the exact actions taken on approval, one `{ label, content }` entry per discrete action. Each renders as a highlighted "On approval" box with a copy button and character count, so the reviewer skims the verbatim payload first. When `content` is a command, `displayContent` carries the human-facing body; for a thread or any multi-post submission, pass `displayContent` as a list of strings, one per post, and the card renders them as numbered posts. Add `media_urls` when an action carries an external image, video, or audio asset; supported media renders inline in the same action card for review
@@ -179,8 +186,8 @@ The session page shows the best available review details from the agent:
   and optional `description` / `recommended`. The session page renders a
   single-choice picker before the decision controls. On approval, the selected
   id reaches the agent as `toolResult.choice`
-- `summary`: what changed and what is being approved
-- `draft`: inline draft content. When `changes` carries the verbatim payload, the draft renders collapsed as supporting detail
+- `summary`: optional background under "Why this request"; never the only place essential review information appears
+- `draft`: legacy inline Markdown, retained for compatibility. Use actions or saved artifacts in new requests. When `changes` carries the verbatim payload, the draft renders collapsed as supporting detail
 - `draft_url`: URL to a draft artifact
 - `artifact_url`: URL to the primary review artifact, such as a PR, preview, document, or generated artifact
 - `artifact_path` / `artifact_paths`: project-relative local files the session page can open in the artifact viewer. Images, HTML, and PDF artifacts render inline; MP4/WebM/MOV/M4V video and MP3/M4A/WAV/OGG audio use native players. Files are snapshotted at gate time so the reviewer approves immutable bytes

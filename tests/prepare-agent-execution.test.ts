@@ -297,8 +297,11 @@ describe('prepareAgentExecution', () => {
       expect(result.userMessage).toContain('reply "very nice!"');
       expect(result.userMessage).toContain('a missing `choice` is NOT ambiguous');
       expect(result.userMessage).toContain('call `await_human` again');
-      expect(result.userMessage).toContain('why the previous approval no longer covers the action');
-      expect(result.userMessage).toContain('If it still covers the action, do not ask again');
+      expect(result.userMessage).toContain('material change or new scope visible in the prompt or action label');
+      expect(result.userMessage).toContain('If the previous approval still covers the action, do not ask again');
+      expect(result.userMessage).toContain('create and save the artifact FIRST');
+      expect(result.userMessage).toContain('wait for a successful result before requesting approval');
+      expect(result.userMessage).toContain('never place essential review information only there');
     });
 
     it('routes Slack approval channels through channels config', () => {

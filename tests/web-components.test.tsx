@@ -1570,6 +1570,33 @@ describe('LogEntry component', () => {
     expect(plain).toContain('approval-section-title">Why this request');
   });
 
+  it('keeps hosted artifacts visible alongside legacy draft notes and actions', () => {
+    const url = 'https://cdn.example.test/review.mp4';
+    const html = renderEntry({
+      id: 'hosted-artifact', type: 'approval', title: 'Approval requested', status: 'pending',
+      details: {
+        prompt: 'Approve this deliverable?',
+        artifactUrl: url,
+        draft: 'Optional legacy notes',
+        changes: [{ label: 'Finalize', content: 'Finalize the reviewed deliverable.' }],
+      },
+    }, { showActions: true });
+    expect(html).toContain(`href="${url}"`);
+    expect(html).toContain(`<video`);
+    expect(html.indexOf('approval-section approval-artifact')).toBeLessThan(html.indexOf('<summary>Draft</summary>'));
+    expect(html).toContain('Open artifact:');
+  });
+
+  it('keeps hosted document links visible without requiring media support', () => {
+    const html = renderEntry({
+      id: 'hosted-doc', type: 'approval', title: 'Approval requested', status: 'pending',
+      details: { artifactUrl: 'https://docs.example.test/proposal', summary: 'Background only' },
+    }, { showActions: true });
+    expect(html).toContain('Open artifact: https://docs.example.test/proposal');
+    expect(html).toContain('Why this request');
+    expect(html).not.toContain('approval-section-title">Review');
+  });
+
   it('renders inline artifact previews for image, html, and pdf artifacts', () => {
     const html = renderEntry({
       id: 'log-artifacts',
