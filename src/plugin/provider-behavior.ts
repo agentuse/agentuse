@@ -30,18 +30,24 @@ async function behaviorProvider(model: string): Promise<ProviderDefinition | und
   return getActiveProviderAdapter(parts.provider, parts.modelId);
 }
 
-export async function applyProviderSystemMessages<T extends { role: string; content: string }>(
+export async function applyProviderSystemMessages<T extends { role: string; content: unknown }>(
   messages: T[],
   model: string,
 ): Promise<Array<T | ProviderSystemMessage>> {
   const providerId = resolveModelProvider(model);
+  const additions = await systemContributions(model);
+  const contributedContent = new Set(additions.map((contribution) => contribution.content));
   // Drop contributions the target provider owns too: they are re-added below,
   // so keeping the portable ones would duplicate them on every re-apply.
   const neutral = messages.filter((message) => {
     const owned = (message as T & ProviderSystemMessage).providerContribution;
+    // Older persisted sessions store system messages as plain strings. Match
+    // the active provider's exact contributions so replay repairs their order
+    // without adding another identity on every continuation.
+    if (!owned && message.role === 'system' && typeof message.content === 'string'
+      && contributedContent.has(message.content)) return false;
     return !owned || (owned.portable && owned.providerId !== providerId);
   });
-  const additions = await systemContributions(model);
   const tagged = additions.map((contribution): ProviderSystemMessage => ({
     role: 'system',
     content: contribution.content,
@@ -53,7 +59,9 @@ export async function applyProviderSystemMessages<T extends { role: string; cont
   }));
   const prepend = tagged.filter((_, index) => (additions[index]?.position ?? 'prepend') === 'prepend');
   const append = tagged.filter((_, index) => additions[index]?.position === 'append');
-  return [...prepend, ...neutral, ...append];
+  const conversationStart = neutral.findIndex((message) => message.role !== 'system');
+  const systemEnd = conversationStart < 0 ? neutral.length : conversationStart;
+  return [...prepend, ...neutral.slice(0, systemEnd), ...append, ...neutral.slice(systemEnd)];
 }
 
 export interface HelperSystemPrompt {

@@ -30,6 +30,8 @@ import { logger } from '../src/utils/logger';
 import { getProviderReadiness, getProviderStatus } from '../src/auth/provider-status';
 import { createModel } from '../src/models';
 import { applyProviderSystemMessages } from '../src/plugin/provider-behavior';
+import { prepareAgentExecution } from '../src/runner/preparation';
+import { buildAutonomousAgentPrompt } from '../src/runner/prompt';
 
 const event: AgentCompleteEvent = {
   agent: { name: 'test-agent', model: 'demo:test' },
@@ -738,6 +740,67 @@ describe('project-local activation scope', () => {
     // Crossing to another provider keeps only the portable contribution.
     const elsewhere = await applyProviderSystemMessages(twice, 'openai:gpt-5');
     expect(elsewhere.map((message) => message.content)).toEqual(['PORTABLE', 'base']);
+  });
+
+  it('restores provider prompt order on continuation without duplicating legacy identities', async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-resume-provider-order-'));
+    const plugins = path.join(root, 'plugins');
+    const dataDir = path.join(root, 'data');
+    await fs.mkdir(plugins);
+    await fs.mkdir(path.join(dataDir, 'plugins'), { recursive: true });
+    await fs.writeFile(path.join(plugins, 'prompt.js'), `export default function (agentuse) {
+      agentuse.registerProvider({
+        id: 'resume-prompt', name: 'Resume Prompt',
+        transport: { kind: 'anthropic-messages', baseURL: 'https://unused.example' },
+        models: [{ id: 'm', name: 'M', input: ['text'], reasoning: false, contextWindow: 10000, maxOutputTokens: 100 }],
+        prompts: { system: () => [
+          { id: 'identity', content: 'PROVIDER IDENTITY', position: 'prepend' },
+          { id: 'suffix', content: 'PROVIDER SUFFIX', position: 'append' },
+        ] },
+      });
+    }`);
+    oldDataDir = process.env.AGENTUSE_DATA_DIR;
+    process.env.AGENTUSE_DATA_DIR = dataDir;
+    resetProviderPluginCache();
+    const manager = new PluginManager();
+    await manager.loadPlugins([plugins]);
+    const policy = buildAutonomousAgentPrompt('Monday, July 29, 2026', false, true);
+
+    // Cover intact fresh ordering and records already reordered by a failed
+    // continuation, with and without a context snapshot.
+    for (const system of [[ 'PROVIDER IDENTITY', policy ], [ policy, 'PROVIDER IDENTITY' ]]) {
+      for (const snapshot of [false, true]) {
+        let saved = [...system];
+        const history = [...system.map(content => ({ role: 'system', content })),
+          { role: 'user', content: 'PROVIDER IDENTITY' }];
+        const sessionManager = {
+          findSession: async () => ({ agentId: 'a', session: { model: 'resume-prompt:m', config: {}, agent: {} } }),
+          getPrimaryMessage: async () => ({ id: 'msg', user: { prompt: { task: 'PROVIDER IDENTITY' } }, assistant: { system: saved } }),
+          updateMessage: async (_s: string, _a: string, _m: string, update: any) => { saved = update.assistant.system; },
+          readContextSnapshot: async () => snapshot ? { version: 1, updatedAt: 0, messages: history } : null,
+          getMessageParts: async () => [],
+          readToolsSnapshot: async () => ({ tools: [] }),
+        };
+        for (let repeat = 0; repeat < 2; repeat++) {
+          const prepared = await prepareAgentExecution({
+            agent: { name: 'a', instructions: 'Continue.', config: { model: 'resume-prompt:m' } },
+            mcpClients: [], existingSessionId: 'session', sessionManager: sessionManager as any,
+            userPrompt: 'Continue the previous request.',
+          });
+          try {
+            expect(saved[0]).toBe('PROVIDER IDENTITY');
+            expect(saved.filter(content => content === 'PROVIDER IDENTITY')).toHaveLength(1);
+            expect(saved[1]).toStartWith('## Agentuse Runtime Policy');
+            expect(prepared.systemMessages.map(message => message.content)).toEqual(saved);
+            const messages = prepared.messages!;
+            expect(messages[0]?.content).toBe('PROVIDER IDENTITY');
+            expect(messages[2]?.content).toBe('PROVIDER SUFFIX');
+            expect(messages.filter(message => message.role === 'system' && message.content === 'PROVIDER IDENTITY')).toHaveLength(1);
+            expect(messages.some(message => message.role === 'user' && message.content === 'PROVIDER IDENTITY')).toBe(true);
+          } finally { await prepared.cleanup(); }
+        }
+      }
+    }
   });
 
   it('runs the legacy credential upgrade once per process, not on every host lookup', async () => {

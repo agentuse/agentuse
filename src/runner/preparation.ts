@@ -33,6 +33,7 @@ import { bindToolsToSnapshot, createToolsSnapshot } from './tool-snapshot';
 import { rehydrateMessages, ensureTrailingUserTurn } from '../session';
 import type { AssistantTokens } from '../session/usage';
 import { resolveVerifyPlacements, withGateVerify } from '../verify/gate.js';
+import { applyProviderSystemMessages } from '../plugin/provider-behavior';
 
 /**
  * Prepare agent execution - shared setup logic for both streaming and non-streaming modes
@@ -171,6 +172,10 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       : persistedSystemMessages,
       runtimePrompt,
     ) as Array<{ role: string; content: string }>;
+    // Runtime policy reconciliation moves its message first. Restore the
+    // provider's declared prepend/append order afterwards, just as fresh runs
+    // do, including legacy sessions whose provider tags were not persisted.
+    systemMessages = await applyProviderSystemMessages(systemMessages, agent.config.model);
     const persistedSystemChanged =
       systemMessages.length !== persistedSystemMessages.length
       || systemMessages.some((systemMessage, index) =>
@@ -206,6 +211,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
       // enforce the same boundary directly in the history sent to the model.
       resumedMessages = ensurePersistentStoreBoundary(resumedMessages ?? []);
     }
+    resumedMessages = await applyProviderSystemMessages(resumedMessages ?? [], agent.config.model) as any;
     if (userPrompt?.trim()) {
       resumedMessages = [
         ...(resumedMessages ?? []),
