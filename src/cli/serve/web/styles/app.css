@@ -3175,6 +3175,8 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 }
 .artifact-preview {
   display: block;
+  width: fit-content;
+  max-width: 100%;
   margin-top: 8px;
   border-bottom: 0;
 }
