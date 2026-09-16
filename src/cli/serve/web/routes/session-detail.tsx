@@ -691,6 +691,122 @@ function displaySessionStatus(status: string, header: ApprovalHeader | null): st
   return status;
 }
 
+/** The one word the header says about this run, and the only place the page
+ *  says it. Plain English rather than a raw status token: a reader should not
+ *  have to know that `incomplete` means the agent stopped before reporting.
+ *  `tone` drives the status dot's colour; nothing else on the page carries it. */
+export function sessionStatusWord(options: {
+  /** displaySessionStatus output. */
+  status: string;
+  mode: SessionPageMode;
+  expired: boolean;
+  stranded: boolean;
+  suspended: boolean;
+  ended: boolean;
+}): { word: string; tone: 'ok' | 'bad' | 'wait' | 'busy' } {
+  if (options.expired) return { word: 'Expired', tone: 'wait' };
+  if (options.mode === 'decision') return { word: 'Needs your decision', tone: 'wait' };
+  if (options.stranded) return { word: 'Stuck', tone: 'bad' };
+  switch (options.status) {
+    case 'timeout': return { word: 'Timed out', tone: 'bad' };
+    case 'stopped': return { word: 'Stopped', tone: 'bad' };
+    case 'incomplete': return { word: 'Incomplete', tone: 'bad' };
+    case 'error':
+    case 'failed': return { word: 'Failed', tone: 'bad' };
+    case 'completed': return { word: 'Completed', tone: 'ok' };
+    case 'preparing': return { word: 'Preparing', tone: 'busy' };
+    case 'resuming': return { word: 'Resuming', tone: 'busy' };
+    case 'loading': return { word: 'Loading', tone: 'busy' };
+  }
+  if (options.mode === 'working') return { word: 'Working', tone: 'busy' };
+  if (options.suspended) return { word: 'Paused', tone: 'wait' };
+  if (options.ended) return { word: 'Ended', tone: 'ok' };
+  return { word: options.status.charAt(0).toUpperCase() + options.status.slice(1), tone: 'busy' };
+}
+
+/** A timed-out run writes the same sentence four times on its way out: the
+ *  sub-agent's failure, an operational warn, "Session failed", and the run
+ *  error row. Collapse a trailing run of error/warn entries that carry the
+ *  same message into the last one. Display-only: it runs on a fresh array at
+ *  render-preparation time and never touches the stored log. */
+export function collapseTrailingRunErrors<T extends ApprovalLogEntry>(entries: readonly T[]): T[] {
+  const errorish = (entry: ApprovalLogEntry): boolean =>
+    entry.type === 'error'
+    || (entry.type === 'session' && entry.status === 'error')
+    || (entry.type === 'log' && (entry.level === 'error' || entry.level === 'warn'))
+    || (entry.type === 'tool' && (entry.status === 'error' || entry.status === 'failed'));
+  // The same failure arrives worded four ways: as a title, as a message, with
+  // a "[SubAgent] X failed: " prefix, behind a warning emoji, and with an em
+  // dash where the next one has a hyphen. Normalize all of that away first.
+  const core = (entry: ApprovalLogEntry): string => {
+    const raw = (entry.message ?? entry.title ?? '')
+      .replace(/[–—]/g, '-')
+      .replace(/^[^\p{L}\p{N}[]+/u, '')
+      .trim()
+      .toLocaleLowerCase();
+    const prefixed = /^\[[^\]]{1,40}\][^:]{0,40}:\s*(.+)$/s.exec(raw);
+    return (prefixed?.[1] ?? raw).replace(/\s+/g, ' ').trim();
+  };
+  /** Two lines are the same failure when they open the same way. The shared
+   *  opening has to be long enough not to match on a stock phrase, and a real
+   *  fraction of the shorter line. */
+  const sameFailure = (a: string, b: string): boolean => {
+    const limit = Math.min(a.length, b.length);
+    let i = 0;
+    while (i < limit && a[i] === b[i]) i += 1;
+    return i >= 16 && i >= limit * 0.25;
+  };
+  let start = entries.length;
+  while (start > 0 && errorish(entries[start - 1] as ApprovalLogEntry)) start -= 1;
+  const tail = entries.slice(start);
+  // A single trailing error is already said once; a sub-agent row carries its
+  // own status and never folds away.
+  if (tail.length < 2) return [...entries];
+  const last = tail[tail.length - 1] as ApprovalLogEntry;
+  // The run's closing row is often a bare "Session failed" with no text, so
+  // the sentence to keep is the longest one anywhere in the trailing run.
+  const anchorEntry = tail
+    .map((entry) => entry as ApprovalLogEntry)
+    .filter((entry) => !entry.subagentSession && entry.type !== 'session')
+    .reduce<ApprovalLogEntry | undefined>(
+      (best, entry) => best === undefined || core(entry).length > core(best).length ? entry : best,
+      undefined,
+    );
+  const anchor = anchorEntry ? core(anchorEntry) : '';
+  if (!anchor) return [...entries];
+  const foldable = tail.filter((entry) => {
+    const row = entry as ApprovalLogEntry;
+    if (row.subagentSession) return false;
+    // A `session` row is the runtime's terminal marker. It never carries
+    // anything the error row beside it does not already say.
+    if (row.type === 'session') return true;
+    const text = core(row);
+    return text === '' || sameFailure(text, anchor);
+  });
+  if (foldable.length < 2) return [...entries];
+  const foldedIds = new Set(foldable.filter((entry) => entry.id !== last.id).map((entry) => entry.id));
+  if (foldedIds.size === 0) return [...entries];
+  return entries.filter((entry) => !foldedIds.has(entry.id)).map((entry) =>
+    entry.id === last.id
+      ? { ...entry, title: 'Session failed', message: entry.message ?? anchorEntry?.message ?? anchorEntry?.title }
+      : entry
+  );
+}
+
+/** The one sentence an error card leads with. The header already says the run
+ *  timed out, so the headline drops the "Session finished with an error:
+ *  TIMEOUT:" scaffolding and says only what happened. */
+export function sessionFailureHeadline(options: {
+  errorCode?: string | undefined;
+  errorMessage?: string | undefined;
+  fallback: string;
+}): string {
+  const message = options.errorMessage?.trim();
+  if (!message) return options.fallback;
+  const sentence = message.split(/\n\s*\n/)[0].trim();
+  return sentence.charAt(0).toLocaleUpperCase() + sentence.slice(1);
+}
+
 export function hasActionableApproval(status: string, header: ApprovalHeader | null): boolean {
   if (!header?.currentResumeToken) return false;
   return status === 'waiting' || (status === 'loading' && header.sessionStatus === 'suspended');
@@ -1161,7 +1277,9 @@ export default function SessionDetail() {
       }
       out.push(entry);
     }
-    return out;
+    // One error, said once at the end of the log. The card above states it too;
+    // everything between the two is the same sentence in four costumes.
+    return collapseTrailingRunErrors(out);
   }, [visibleLogs]);
   const reviewerComment = useMemo(() => latestReviewerComment(orderedLogs), [orderedLogs]);
   // The outcome for the summary-first ended layout. An agent that declared its
@@ -1171,21 +1289,26 @@ export default function SessionDetail() {
   // assistant text, which is then split here. Derived client-side from the
   // entries already loaded (same idea as the server's feed-detail
   // finalResponse, which reads the durable transcript).
-  const finalOutcome = useMemo<{ headline?: string; body: string }>(() => {
+  const finalOutcome = useMemo<{ headline?: string; body: string; reported: boolean }>(() => {
     for (let i = orderedLogs.length - 1; i >= 0; i--) {
       const outcome = orderedLogs[i].details?.runOutcome;
-      if (outcome) return { headline: outcome.headline, body: outcome.body ?? '' };
+      if (outcome) return { headline: outcome.headline, body: outcome.body ?? '', reported: true };
     }
     for (let i = orderedLogs.length - 1; i >= 0; i--) {
       const entry = orderedLogs[i];
       if (entry.type === 'text' && entry.status !== 'streaming' && (entry.message ?? '').trim()) {
         // Lead the card with the verdict instead of burying it in the body
         // markdown, where it renders smaller than the headings under it.
-        return splitOutcomeHeadline(entry.message as string);
+        // `reported: false` marks it as a stand-in, not the agent's own report:
+        // a failed run must not pass its opening sentence off as a result.
+        return { ...splitOutcomeHeadline(entry.message as string), reported: false };
       }
     }
-    return { body: '' };
+    return { body: '', reported: false };
   }, [orderedLogs]);
+  // A run that ended in failure shows a report only if it actually filed one.
+  // Its first assistant sentence ("I'll start by reading the brand files") is
+  // not a result, and reading as one is how a timed-out run looked finished.
   const hasFinalOutcome = Boolean(finalOutcome.headline || finalOutcome.body);
   const toolCallCount = useMemo(
     () => orderedLogs.reduce((n, e) => n + (e.type === 'tool' ? 1 : 0), 0),
@@ -1906,21 +2029,35 @@ export default function SessionDetail() {
     },
     [orderedLogs]
   );
-  const resultMeta = [
-    approval.timing
-      ? `active ${formatDuration(approval.timing.activeMs)}`
+  // One quiet line of facts about the finished run, replacing the three
+  // bordered tiles: a card inside a card inside a card was three frames to
+  // read three short strings. Only facts the header does not already carry.
+  const judgeBounces = judgeRows.filter((row) => row.verdict === 'fail').length;
+  const lastJudge = judgeRows[judgeRows.length - 1];
+  const decidedGate = [...orderedLogs].reverse().find((e) => e.details?.decisionStatus);
+  const runFacts: string[] = [
+    decidedGate?.details
+      ? `${decidedGate.details.decisionStatus}${decidedGate.details.decisionReviewer ? ` by ${decidedGate.details.decisionReviewer}` : ''} at ${formatLogTime(decidedGate.time)}`
       : undefined,
-    approval.timing
+    lastJudge
+      ? lastJudge.verdict === 'pass'
+        ? judgeBounces > 0 ? `judge passed after ${judgeBounces} bounce${judgeBounces === 1 ? '' : 's'}` : 'judge passed first time'
+        : lastJudge.verdict === 'fail' ? 'judge still failing'
+          : lastJudge.verdict === 'skipped' ? 'not judged' : 'judge error'
+      : undefined,
+    approval.timing && approval.timing.approvalMs > 0
       ? `approval wait ${formatDuration(approval.timing.approvalMs)}`
       : undefined,
-    approval.timing
-      ? `wall ${formatDuration(approval.timing.wallMs)}`
-      : approval.createdAt !== undefined && lastLogTime !== undefined && lastLogTime > approval.createdAt
-      ? `finished in ${formatDuration(lastLogTime - approval.createdAt)}`
-      : undefined,
     toolCallCount > 0 ? `${toolCallCount} tool call${toolCallCount === 1 ? '' : 's'}` : undefined,
-    correctionsShortfall,
-  ].filter(Boolean).join(' · ');
+    tokenUsage && (tokenUsage.input > 0 || tokenUsage.output > 0)
+      ? `${formatTokens(tokenUsage.input)} in / ${formatTokens(tokenUsage.output)} out`
+      : undefined,
+    tokenUsage && tokenUsage.cachedInput > 0 ? `+${formatTokens(tokenUsage.cachedInput)} cached` : undefined,
+    correctionsShortfall ? `${correctionsShortfall} applied` : undefined,
+  ].filter((fact): fact is string => Boolean(fact));
+  const factsLine = runFacts.length > 0 ? (
+    <div class="now-facts">{runFacts.map((fact) => <span key={fact}>{fact}</span>)}</div>
+  ) : null;
   // '' unless the session ended in error; leads the result card so a failed
   // run's outcome is the failure, not a mid-thought final message.
   const resultErrorText = sessionErrorText(approval);
@@ -2000,13 +2137,64 @@ export default function SessionDetail() {
     </div>
   ) : null;
 
-  const logTools = logFilterControl || reasoningToggle || debugToggle ? (
-    <div class="log-tools">{logFilterControl}{reasoningToggle}{debugToggle}</div>
+  // Search belongs to the log, so it lives in the log's own tools row rather
+  // than in the page chrome above it. Cmd/Ctrl+F still reveals and focuses it.
+  const logSearchControl = (
+    <div class={`session-log-search${showLogSearch || logQuery ? '' : ' is-idle'}`} role="search">
+      <svg class="session-log-search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="7" cy="7" r="4.5" /><path d="m11 11 3 3" />
+      </svg>
+      <input
+        ref={logSearchRef}
+        type="search"
+        value={logQuery}
+        placeholder="Search"
+        aria-label="Search session log"
+        onFocus={() => setShowLogSearch(true)}
+        onInput={(event) => {
+          const query = (event.currentTarget as HTMLInputElement).value;
+          setLogQuery(query);
+          if (query && logsTotal !== null && logsRef.current.size < logsTotal) setLogsLimit(5_000);
+          if (query) {
+            document.querySelector<HTMLDetailsElement>('.session-transcript')?.setAttribute('open', '');
+            setTranscriptVisitOpen(true);
+            setTranscriptOpen(true);
+          }
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape') return;
+          event.preventDefault();
+          setLogQuery('');
+          setShowLogSearch(false);
+          (event.currentTarget as HTMLInputElement).blur();
+        }}
+      />
+      {(logQuery || showLogSearch) && (
+        <button
+          type="button"
+          class="session-log-search-clear"
+          aria-label="Clear session log search"
+          title="Clear search"
+          onClick={() => {
+            setLogQuery('');
+            setShowLogSearch(false);
+          }}
+        >
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+            <path d="m4.5 4.5 7 7m0-7-7 7" />
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+
+  const logTools = orderedLogs.length > 0 ? (
+    <div class="log-tools">{logFilterControl}<span class="log-tools-spacer" />{logSearchControl}{reasoningToggle}{debugToggle}</div>
   ) : null;
 
   // Ended with something to show: an outcome, timings, artifacts. Decides
   // result-vs-idle; the card's slots below render the pieces.
-  const hasResult = ended && (hasFinalOutcome || Boolean(resultMeta) || artifacts.length > 0);
+  const hasResult = ended && (hasFinalOutcome || runFacts.length > 0 || artifacts.length > 0);
   const mode = sessionPageMode({
     gate: Boolean(gateEntry),
     ended,
@@ -2208,6 +2396,16 @@ export default function SessionDetail() {
   // Everything else on the page (judge, learnings, the transcript) folds
   // under it.
   const isSuspended = approval.sessionStatus === 'suspended';
+  // The status word, said once, in the header. The sticky bar borrows it while
+  // scrolled; no card, tile or badge repeats it.
+  const { word: statusWord, tone: statusTone } = sessionStatusWord({
+    status: displayStatus,
+    mode,
+    expired,
+    stranded,
+    suspended: isSuspended,
+    ended,
+  });
   const cardLabel = nowCardLabel({
     mode,
     viewOnly: isSubagentView,
@@ -2216,103 +2414,86 @@ export default function SessionDetail() {
     preparing: status === 'preparing',
     escalation: Boolean(gateEntry?.details?.reviewEscalation),
   });
-  const cardAria: Record<SessionPageMode, string> = {
-    decision: 'Pending decision',
-    working: 'In progress',
-    error: 'Session needs attention',
-    result: 'Result',
-    idle: 'Session state',
-  };
-  const gateWaitLabel = gateEntry?.time !== undefined ? `waiting ${formatDuration(Date.now() - gateEntry.time)}` : undefined;
-  const bounces = judgeRows.filter((row) => row.verdict === 'fail').length;
-  const lastJudge = judgeRows[judgeRows.length - 1];
-  const cardMeta = [
-    ...(mode === 'decision'
-      ? [
-        gateWaitLabel,
-        lastJudge?.verdict === 'skipped' && bounces > 0 ? `escalated after ${bounces} automated rejection${bounces === 1 ? '' : 's'}` : undefined,
-        lastJudge?.verdict === 'pass' ? 'judge passed' : undefined,
-      ]
-      : mode === 'working'
-        ? [
-          `${orderedLogs.length} ${orderedLogs.length === 1 ? 'entry' : 'entries'}`,
-          elapsedLabel,
-          'no approval needed yet',
-        ]
-        : [displayStatus, resultMeta]),
-    isSubagentView ? 'view only, decisions are made on the parent' : undefined,
-  ].filter(Boolean).join(' · ');
-
-  // Slot: the note. An idle page with nothing else to say gets a fallback so
-  // the card never opens on an empty body.
+  // Slot: the note. Only a state the page cannot otherwise explain. An idle
+  // card has nothing else to say, so its note becomes its headline.
   const note = cardNote ?? (mode !== 'idle'
     ? undefined
-    : ended
-      ? 'This run ended with nothing to show; the session log below has the details.'
-      : 'This session is not accepting actions right now.');
+    : showParentApproveCta
+      // A sub-agent never takes a decision itself. Say where the question is
+      // and link to it, instead of copying the gate onto a page that cannot
+      // answer it.
+      ? `Waiting for a decision on ${parentLabel}, the parent run. Sub-agents don't take decisions themselves.`
+      : ended
+        ? 'This run ended with nothing to show; the session log below has the details.'
+        : 'This session is not accepting actions right now.');
 
-  // Slot: the focus, the one thing to read or do. The only place the page
-  // still branches on the mode to pick markup.
+  // The row a working card leads with, and the row an error card blames.
   const runningEntry = mode === 'working' ? workingSessionEntry(orderedLogs) : undefined;
   const failedEntry = mode === 'error' ? failedSessionEntry(orderedLogs) : undefined;
   const recentSteps = mode === 'working'
     ? [...orderedLogs].reverse().filter((e) => e.type === 'tool' && e.status === 'completed' && !e.parentCallId).slice(0, 3).reverse()
     : [];
+  // The agent's own words for what it is doing: the intent phrase it declared,
+  // else the row's title. Never the raw tool id.
+  const stepTitleOf = (entry: ApprovalLogEntry | undefined): string =>
+    (entry?.details?.intent ?? entry?.title ?? '').trim();
+  const delegateSession = runningEntry?.subagentSession;
+  const delegateName = delegateSession?.label ?? delegateSession?.agent?.name;
+  const workingHeadline = delegateName
+    ? `Waiting on ${delegateName}, a sub-agent`
+    : stepTitleOf(runningEntry) || workingLabel;
+  const stepNumber = orderedLogs.filter((e) => e.type === 'tool' && !e.parentCallId).length;
+  const workingMeta = [
+    stepNumber > 0 ? `step ${stepNumber}` : undefined,
+    runningEntry?.time !== undefined ? formatDuration(Date.now() - runningEntry.time) : undefined,
+  ].filter(Boolean).join(' · ');
+
+  // The card's headline: the one sentence this page exists to say. A decision
+  // card has none of its own — the gate's question is its headline.
+  const showOutcomeHeadline = Boolean(finalOutcome.headline)
+    && !(resultErrorText && errorHeadline && resultErrorText.includes(errorHeadline));
+  const headline = mode === 'working'
+    ? (
+      <div class="now-headline-row">
+        <span class="log-spinner" aria-hidden="true" />
+        <h2 class="now-headline">{workingHeadline}</h2>
+        {workingMeta && <span class="now-headline-meta">{workingMeta}</span>}
+      </div>
+    )
+    : mode === 'error' && resultErrorText
+      ? (
+        <h2 class="now-headline is-error">{sessionFailureHeadline({
+          errorCode: approval.errorCode,
+          errorMessage: approval.errorMessage,
+          fallback: resultErrorText,
+        })}</h2>
+      )
+      : mode === 'result' && showOutcomeHeadline && finalOutcome.headline
+        ? <h2 class="now-headline"><InlineMarkdown value={finalOutcome.headline} /></h2>
+        : mode === 'idle' && note
+          ? <h2 class="now-headline">{note}</h2>
+          : null;
+
+  // The body under the headline, per mode: the gate, the failed row, the
+  // recent steps, or the agent's report.
   const focus = mode === 'decision'
     ? gatePanel
     : mode === 'working'
-      ? (
-        <>
-          {runningEntry
-            ? <ul class="logs now-running-step" role="list">{renderLogEntry(runningEntry)}</ul>
-            : <div class="now-body"><div class="now-working-label">{workingLabel}<span class="log-dots" aria-hidden="true" /></div></div>}
-          {recentSteps.length > 0 && (
-            <>
-              <div class="now-recent-label">Just before</div>
-              <ul class="logs now-recent" role="list">{recentSteps.map((e) => renderLogEntry(e))}</ul>
-            </>
-          )}
-        </>
-      )
+      ? (recentSteps.length > 0
+        ? <ul class="logs now-recent" role="list">{recentSteps.map((e) => renderLogEntry(e))}</ul>
+        : null)
       : mode === 'error'
-        ? (
-          <>
-            <div class="now-body"><div class="now-error">{resultErrorText}</div></div>
-            {failedEntry && <ul class="logs now-failed-step" role="list">{renderLogEntry(failedEntry)}</ul>}
-          </>
-        )
+        ? (failedEntry ? <ul class="logs now-failed-step" role="list">{renderLogEntry(failedEntry)}</ul> : null)
         : null;
 
-  // Slot: the result. Recorded metrics and the final answer once the run
-  // ended; artifacts as soon as they exist, so a working run shows what it has
-  // written so far. A result page with no answer says so instead of going
-  // blank; a failed run leads with its failure above and skips that line.
-  const showOutcomeHeadline = Boolean(finalOutcome.headline)
-    && !(resultErrorText && errorHeadline && resultErrorText.includes(errorHeadline));
-  const resultSlot = (ended && (recordedMetrics.length > 0 || hasFinalOutcome)) || mode === 'result' || artifactTiles ? (
+  const showOutcomeBody = hasFinalOutcome && (mode !== 'error' || finalOutcome.reported);
+  const resultSlot = (ended && (recordedMetrics.length > 0 || showOutcomeBody)) || mode === 'result' || artifactTiles ? (
     <div class="session-result">
-      {ended && recordedMetrics.length > 0 && (
-        <div class="result-recorded">
-          <span class="label">recorded</span>
-          {recordedMetrics.map((m) => {
-            const amount = recordedMetricAmount(m);
-            return (
-              <a
-                key={m.metric}
-                class="metric-chip"
-                href={`/stores/metrics${projectId ? `?project=${encodeURIComponent(projectId)}` : ''}`}
-                title={m.metric}
-              >
-                <span class="metric-chip-name">{humanizeMetric(m.metric)}</span>
-                {amount && <span class="metric-chip-amount">{amount}</span>}
-              </a>
-            );
-          })}
-        </div>
-      )}
-      {ended && hasFinalOutcome ? (
+      {ended && showOutcomeBody ? (
         <>
-          {showOutcomeHeadline && finalOutcome.headline && (
+          {/* On an error card the headline is the failure, so the agent's own
+              headline drops back into the body rather than competing with it. */}
+          {mode !== 'result' && showOutcomeHeadline && finalOutcome.headline && (
             <p class="result-headline"><InlineMarkdown value={finalOutcome.headline} /></p>
           )}
           {finalOutcome.body && (
@@ -2322,41 +2503,27 @@ export default function SessionDetail() {
       ) : mode === 'result' ? (
         <div class="result-empty">This run ended without a final response; the session log below has the details.</div>
       ) : null}
-      {artifactTiles && (
-        <div class="result-artifacts">
-          <div class="label">artifacts</div>
-          {artifactTiles}
+      {/* Recorded business facts as plain numbers. They were chips, which made
+          a count the agent measured look like a filter control. */}
+      {ended && recordedMetrics.length > 0 && (
+        <div class="result-metrics">
+          {recordedMetrics.map((m) => {
+            const amount = recordedMetricAmount(m);
+            return (
+              <a
+                key={m.metric}
+                class="result-metric"
+                href={`/stores/metrics${projectId ? `?project=${encodeURIComponent(projectId)}` : ''}`}
+                title={m.metric}
+              >
+                {amount && <span class="result-metric-amount">{amount}</span>}
+                <span class="result-metric-name">{humanizeMetric(m.metric)}</span>
+              </a>
+            );
+          })}
         </div>
       )}
-    </div>
-  ) : null;
-
-  // Slot: the tiles, facts about an ended run.
-  const decidedGate = [...orderedLogs].reverse().find((e) => e.details?.decisionStatus);
-  const decisionTile = decidedGate?.details
-    ? `${decidedGate.details.decisionStatus}${decidedGate.details.decisionReviewer ? ` by ${decidedGate.details.decisionReviewer}` : ''}`
-    : undefined;
-  const decisionTileTime = decidedGate ? formatLogTime(decidedGate.time) : undefined;
-  const judgeTile = lastJudge
-    ? lastJudge.verdict === 'pass'
-      ? bounces > 0 ? `passed after ${bounces} bounce${bounces === 1 ? '' : 's'}` : 'passed first time'
-      : lastJudge.verdict === 'fail' ? 'still failing' : lastJudge.verdict === 'skipped' ? 'not judged' : 'judge error'
-    : undefined;
-  const tokensTile = tokenUsage && (tokenUsage.input > 0 || tokenUsage.output > 0)
-    ? `${formatTokens(tokenUsage.input)} in · ${formatTokens(tokenUsage.output)} out`
-    : undefined;
-  const tokensTileSub = tokenUsage && tokenUsage.cachedInput > 0 ? `+${formatTokens(tokenUsage.cachedInput)} cached` : undefined;
-  const resultTiles = ended && (decisionTile || judgeTile || tokensTile) ? (
-    <div class="now-tiles">
-      {decisionTile && (
-        <div class="now-tile"><div class="now-tile-label">Decision</div><div class="now-tile-value">{decisionTile}</div>{decisionTileTime && <div class="now-tile-sub">{decisionTileTime}</div>}</div>
-      )}
-      {judgeTile && (
-        <div class="now-tile"><div class="now-tile-label">Judge</div><div class="now-tile-value">{judgeTile}</div><div class="now-tile-sub">{judgeRows.length} {judgeRows.length === 1 ? 'attempt' : 'attempts'}</div></div>
-      )}
-      {tokensTile && (
-        <div class="now-tile"><div class="now-tile-label">Tokens</div><div class="now-tile-value"><code>{tokensTile}</code></div>{tokensTileSub && <div class="now-tile-sub"><code>{tokensTileSub}</code></div>}</div>
-      )}
+      {artifactTiles && <div class="result-artifacts">{artifactTiles}</div>}
     </div>
   ) : null;
 
@@ -2364,7 +2531,7 @@ export default function SessionDetail() {
   // decisions are made.
   const parentCta = isSubagentView && parentLink ? (
     <div class="now-cta">
-      <a class="debug-prompt-button now-cta-primary" href={parentLink}>{isSuspended ? "Open the parent's pending decision" : `Open ${parentLabel}`}</a>
+      <a class="debug-prompt-button now-cta-primary" href={parentLink}>{isSuspended ? 'Go to the decision' : `Open ${parentLabel}`}</a>
       {isSuspended && <span class="now-cta-note">{parentLabel} is waiting on you</span>}
     </div>
   ) : null;
@@ -2372,20 +2539,16 @@ export default function SessionDetail() {
   const nowCard = (
     <section
       class={`panel now-card is-${mode}`}
-      aria-label={cardAria[mode]}
+      aria-label={cardLabel}
       role={mode === 'error' ? 'alert' : undefined}
     >
-      <div class={`now-head is-${mode}`}>
-        {mode === 'working' && <span class="log-spinner" aria-hidden="true" />}
-        <span class="now-label">{cardLabel}</span>
-        {cardMeta && <span class="now-meta">{cardMeta}</span>}
-      </div>
-      {note && <div class="now-body"><p class="now-note">{note}</p></div>}
+      {headline}
+      {note && mode !== 'idle' && <p class="now-note">{note}</p>}
       {focus}
       {resultSlot}
-      {resultTiles}
       {parentCta}
       {sessionActions}
+      {ended && factsLine}
     </section>
   );
 
@@ -2396,10 +2559,10 @@ export default function SessionDetail() {
       {logsTotal !== null && logsRef.current.size < logsTotal && (
         <button
           type="button"
-          class="attn-more"
+          class="transcript-more"
           onClick={() => setLogsLimit((current) => Math.min(current + 400, 5_000))}
         >
-          load earlier entries ({logsTotal - logsRef.current.size} remaining)
+          Load {logsTotal - logsRef.current.size} earlier {logsTotal - logsRef.current.size === 1 ? 'entry' : 'entries'}
         </button>
       )}
       <ul class="logs" role="log">
@@ -2429,131 +2592,123 @@ export default function SessionDetail() {
   return (
     <div class={`page-approval-detail${isRevisionSession ? ' is-internal-revision' : ''}`}>
       <main>
-        <div class={`session-bar${scrolled ? ' is-scrolled' : ''}`}>
-          <div class="session-bar-lead">
+        {/* A zero-height sticky shell. At rest it draws nothing at all: the
+            header two rows below already carries the status, the name and the
+            one control, and a bar repeating them would be the page's third
+            copy of each. Once the page scrolls past the header, the compact
+            bar inside fades in as the only thing left saying where you are. */}
+        <div class={`session-sticky${scrolled ? ' is-scrolled' : ''}`}>
+          <div class="session-sticky-bar">
+            <span class={`session-status is-${statusTone}`}>
+              <span class="session-status-dot" aria-hidden="true" />
+              {statusWord}
+            </span>
+            <span class="session-sticky-name">{pageAgentLabel}</span>
+            <span class="session-sticky-spacer" />
+            {barControl && (
+              <button
+                type="button"
+                class="session-bar-stop"
+                disabled={barControl.busy}
+                aria-busy={barControl.busy}
+                tabIndex={scrolled ? 0 : -1}
+                onClick={() => runControl(barControl)}
+                title={barControl.title}
+              >
+                {barControl.busy
+                  ? <span class="btn-spinner" aria-hidden="true" />
+                  : (
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
+                      <rect x="5" y="5" width="14" height="14" rx="2" />
+                    </svg>
+                  )}
+                <span>{barControl.label}</span>
+              </button>
+            )}
+            <button
+              type="button"
+              class="session-bar-top"
+              onClick={scrollToTop}
+              aria-label="Scroll to top"
+              title="Scroll to top"
+              tabIndex={scrolled ? 0 : -1}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 19V5" />
+                <path d="m5 12 7-7 7 7" />
+              </svg>
+            </button>
+          </div>
+        </div>
+        <header class="session-header">
+          {/* Row one: where you are, what state it is in, and the one thing to
+              do about it. Everything that used to live in a second sticky bar
+              is here, said once. */}
+          <div class="session-header-controls">
             {isSubagentView && parentLink ? (
               <a class="session-bar-back" href={parentLink} aria-label={`Back to ${parentLabel}`} title={`Back to ${parentLabel}`}>
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="9 14 4 9 9 4" />
-                  <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="15 18 9 12 15 6" />
                 </svg>
+                <span class="session-bar-back-label">{parentLabel}</span>
               </a>
-            ) : !isSubagentView ? (
+            ) : (
               <a class="session-bar-back" href="/sessions" onClick={goBack} aria-label="Back to sessions" title="Back to sessions">
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <polyline points="15 18 9 12 15 6" />
                 </svg>
               </a>
-            ) : null}
-            <span class={`status ${displayStatus}`}>{displayStatus}</span>
-            {approval?.mock && <span class="mock-badge" title="Tool outputs were LLM-generated; no real tools ran">mock</span>}
-            {isRevisionSession && <span class="internal-session-badge">internal revision</span>}
-            <span class="session-bar-name">{pageAgentLabel}</span>
-          </div>
-          {actionable && queueNext && (
-            <div class="session-bar-queue">
-              <span class="session-bar-queue-count">{queueIndex + 1} of {pendingQueue.length} pending</span>
-              <a
-                class="session-bar-queue-next"
-                href={`/sessions/${encodeURIComponent(queueNext.sessionId)}?project=${encodeURIComponent(queueNext.project)}`}
-                title={`Next pending: ${queueNext.agentName}`}
-              >
-                next
-                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="9 6 15 12 9 18" />
-                </svg>
-              </a>
-            </div>
-          )}
-          {showLogSearch && <div class="session-log-search" role="search">
-            <svg class="session-log-search-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="7" cy="7" r="4.5" /><path d="m11 11 3 3" />
-            </svg>
-            <input
-              ref={logSearchRef}
-              type="search"
-              value={logQuery}
-              placeholder="Search session log…"
-              aria-label="Search session log"
-              onInput={(event) => {
-                const query = (event.currentTarget as HTMLInputElement).value;
-                setLogQuery(query);
-                if (query && logsTotal !== null && logsRef.current.size < logsTotal) setLogsLimit(5_000);
-                if (query) {
-                  document.querySelector<HTMLDetailsElement>('.session-transcript')?.setAttribute('open', '');
-                  setTranscriptVisitOpen(true);
-                  setTranscriptOpen(true);
-                }
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== 'Escape') return;
-                event.preventDefault();
-                setLogQuery('');
-                setShowLogSearch(false);
-                (event.currentTarget as HTMLInputElement).blur();
-              }}
-            />
-            <button
-              type="button"
-              class="session-log-search-clear"
-              aria-label="Close session log search"
-              title="Close search"
-              onClick={() => {
-                setLogQuery('');
-                setShowLogSearch(false);
-              }}
-            >
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
-                <path d="m4.5 4.5 7 7m0-7-7 7" />
-              </svg>
-            </button>
-          </div>}
-          {barControl && (
-            <button
-              type="button"
-              class="session-bar-stop"
-              disabled={barControl.busy}
-              aria-busy={barControl.busy}
-              onClick={() => runControl(barControl)}
-              title={barControl.title}
-            >
-              {barControl.busy
-                ? <span class="btn-spinner" aria-hidden="true" />
-                : (
-                  <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
-                    <rect x="5" y="5" width="14" height="14" rx="2" />
+            )}
+            <span class={`session-status is-${statusTone}`}>
+              <span class="session-status-dot" aria-hidden="true" />
+              {statusWord}
+            </span>
+            {approval?.mock && <span class="session-header-tag" title="Tool outputs were LLM-generated; no real tools ran">mock</span>}
+            {isRevisionSession && <span class="session-header-tag">internal</span>}
+            {isSubagentView && <span class="session-header-tag">view only</span>}
+            <span class="session-header-spacer" />
+            {actionable && queueNext && (
+              <div class="session-bar-queue">
+                <span class="session-bar-queue-count">{queueIndex + 1} of {pendingQueue.length} pending</span>
+                <a
+                  class="session-bar-queue-next"
+                  href={`/sessions/${encodeURIComponent(queueNext.sessionId)}?project=${encodeURIComponent(queueNext.project)}`}
+                  title={`Next pending: ${queueNext.agentName}`}
+                >
+                  Next
+                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <polyline points="9 6 15 12 9 18" />
                   </svg>
-                )}
-              <span>{barControl.label}</span>
-            </button>
-          )}
-          <button
-            type="button"
-            class="session-bar-top"
-            onClick={scrollToTop}
-            aria-label="Scroll to top"
-            title="Scroll to top"
-            tabIndex={scrolled ? 0 : -1}
-            aria-hidden={!scrolled}
-          >
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M12 19V5" />
-              <path d="m5 12 7-7 7 7" />
-            </svg>
-          </button>
-        </div>
-        <header class="session-header">
-          <div class="header-title-row">
-            <h1>{pageAgentLabel}</h1>
-            {isRevisionSession && <span class="internal-session-badge">AgentUse Reviser</span>}
-            {!isSubagentView && approval.agent.runPath && sessionProjectId && !isRevisionSession && (
+                </a>
+              </div>
+            )}
+            {barControl && (
+              <button
+                type="button"
+                class="session-bar-stop"
+                disabled={barControl.busy}
+                aria-busy={barControl.busy}
+                onClick={() => runControl(barControl)}
+                title={barControl.title}
+              >
+                {barControl.busy
+                  ? <span class="btn-spinner" aria-hidden="true" />
+                  : (
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
+                      <rect x="5" y="5" width="14" height="14" rx="2" />
+                    </svg>
+                  )}
+                <span>{barControl.label}</span>
+              </button>
+            )}
+            {sessionMenuShown ? (
               <SessionMenu
                 agentName={agentLabel}
-                agentRunPath={approval.agent.runPath}
+                agentRunPath={approval.agent.runPath as string}
                 // The URL's ?project= wins, but push links and direct session
                 // URLs often omit it; the header's stamped project id keeps
                 // "Run new session" working on multi-project daemons.
-                projectId={sessionProjectId}
+                projectId={sessionProjectId as string}
                 diagnosticHref={diagnosticHref}
                 {...(runControlsInMenu ? {
                   runActions: menuControls.map((control) => ({
@@ -2565,8 +2720,7 @@ export default function SessionDetail() {
                   })),
                 } : {})}
               />
-            )}
-            {!sessionMenuShown && (
+            ) : (
               <a class="meta-band-link session-header-diagnostic" href={diagnosticHref}>
                 Diagnostic
                 <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -2575,27 +2729,40 @@ export default function SessionDetail() {
               </a>
             )}
           </div>
-          {/* One line of facts. The old header spent a full screen on the
-              agent's description, a boilerplate "review the request below"
-              paragraph, a five-cell grid and a token strip before any content.
-              Everything a reviewer glances at fits in one wrapping line; the
-              breakdown lives on the diagnostic page. */}
-          {/* Two quiet rows in one typeface. First what changes as the run
-              goes (time, context, cost), then what identifies it (project,
-              model, id). The old single line mixed mono, bold and plain and
-              orphaned the id on its own right-aligned row. */}
+          <div class="header-title-row">
+            <h1>{pageAgentLabel}</h1>
+            {isSubagentView && parentLink && (
+              <span class="session-title-note">
+                sub-agent of <a href={parentLink}>{parentLabel}</a>
+              </span>
+            )}
+            {isRevisionSession && (
+              <span class="session-title-note">
+                by AgentUse
+                {revisionIdentity?.originSessionId && (
+                  <>
+                    {', from '}
+                    <a href={`/sessions/${encodeURIComponent(revisionIdentity.originSessionId)}${projectId ? `?project=${encodeURIComponent(projectId)}` : ''}`}>the originating run</a>
+                  </>
+                )}
+              </span>
+            )}
+          </div>
+          {/* One meta line, in one typeface, read left to right: what this run
+              is, then what it has cost so far. The old page split it in two
+              rows and repeated the elapsed time in the card head. */}
           <div class="session-meta-line">
+            <span title={term('project')}>{projectId ?? approval.project ?? 'default'}</span>
+            {approval.model && <span class="session-meta-model" title="model">{approval.model}</span>}
             {approval.createdAt !== undefined && (
               <span>started {formatApprovalTime(approval.createdAt)}</span>
             )}
             {elapsedLabel && <span>{elapsedLabel}</span>}
-            {contextLeftLabel && <span>context {contextLeftLabel}</span>}
             {costLabel && <span>cost {costLabel}</span>}
-            {approval.expiresAt !== undefined && <span>expires {formatApprovalTime(approval.expiresAt)}</span>}
-          </div>
-          <div class="session-meta-line session-meta-identity">
-            <span title={term('project')}>{projectId ?? approval.project ?? 'default'}</span>
-            {approval.model && <span title="model">{approval.model}</span>}
+            {mode === 'working' && contextLeftLabel && <span>context {contextLeftLabel}</span>}
+            {mode === 'decision' && approval.expiresAt !== undefined && (
+              <span>expires {formatApprovalTime(approval.expiresAt)}</span>
+            )}
             <SessionIdCopy sessionId={approval.sessionId} short />
           </div>
         </header>
@@ -2635,12 +2802,15 @@ export default function SessionDetail() {
           onToggle={(e) => setTranscriptIsOpen((e.currentTarget as HTMLDetailsElement).open)}
         >
           <summary>
-            <span>session log</span>
+            <span class="transcript-title">Log</span>
             {visibleLogs.length > 0 && (
               <span class="count">{visibleLogs.length} {visibleLogs.length === 1 ? 'entry' : 'entries'}</span>
             )}
+            {!showDebug && debugCount > 0 && (
+              <span class="count">{debugCount} debug hidden</span>
+            )}
             {!transcriptIsOpen && (
-              <span class="count">{sessionTranscriptFoldedCopy(mode)} · click to show</span>
+              <span class="count">{sessionTranscriptFoldedCopy(mode)}</span>
             )}
             <span class="rule"></span>
           </summary>

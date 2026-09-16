@@ -21,7 +21,7 @@ import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/c
 import { parseChartSpec } from '../src/cli/serve/web/lib/chart-svg';
 import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { displayAgentName, isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
-import { aggregateToolStats, failedSessionEntry, hasActionableApproval, headerTokenUsage, isActionableApproval, isBackgroundSessionActionFailure, matchesLogFilter, nestedCallIdsToExpand, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, nowCardLabel, sessionPageMode, sessionResumeMode, sessionRunControls, sessionTranscriptFoldedCopy, shouldExpandForNestedSearch, transcriptFoldsPerVisit, shouldShowResultNotice, withoutQueuedApproval, workingSessionEntry } from '../src/cli/serve/web/routes/session-detail';
+import { aggregateToolStats, collapseTrailingRunErrors, failedSessionEntry, hasActionableApproval, headerTokenUsage, isActionableApproval, isBackgroundSessionActionFailure, matchesLogFilter, nestedCallIdsToExpand, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, nowCardLabel, sessionPageMode, sessionFailureHeadline, sessionResumeMode, sessionRunControls, sessionStatusWord, sessionTranscriptFoldedCopy, shouldExpandForNestedSearch, transcriptFoldsPerVisit, shouldShowResultNotice, withoutQueuedApproval, workingSessionEntry } from '../src/cli/serve/web/routes/session-detail';
 import { tokenUsageMetaItems } from '../src/cli/serve/web/components/token-usage-strip';
 import { dayLabel, Highlight, outputPreview, sessionPurposeLabel, sessionRepeatRunPath, SessionListItem, statusDot } from '../src/cli/serve/web/routes/sessions-list';
 import { formatElapsedClock, formatElapsedShort, formatElapsedWithSeconds } from '../src/cli/serve/web/lib/format';
@@ -559,13 +559,13 @@ describe('nested Code Mode log styling', () => {
     expect(css).toContain('.log-item.error > .log-head .log-marker');
     expect(css).toContain('.log-item.completed > .log-head .log-marker');
     expect(css).toContain('.log-item.resuming > .log-head .log-marker');
-    expect(css).toContain('.log-item.running > .log-head .tool-chip');
+    expect(css).toContain('.log-item.error > .log-head .log-title');
     expect(css).toContain('.log-item.streaming > .log-main > .log-content .content-markdown');
     expect(css).toContain('.log-expand-toggle:hover .log-title');
     expect(css).toContain('.log-expand-toggle:focus-visible .log-title');
     expect(css).not.toContain('.log-item.completed .log-marker, .log-item.approved .log-marker');
     expect(css).not.toContain('.log-item.resuming .log-marker');
-    expect(css).not.toContain('.log-item.running .tool-chip');
+    expect(css).not.toContain('.log-item.error .log-title');
     expect(css).not.toContain('.log-item.streaming .log-content .content-markdown');
   });
 
@@ -1748,7 +1748,7 @@ describe('ContinuePanel component', () => {
 describe('DecisionDialog component', () => {
   it('renders comment mode as a required feedback action', () => {
     const html = renderToString(<DecisionDialog open mode="comment" onSubmit={noop} onClose={noop} />);
-    expect(html).toContain('leave a comment');
+    expect(html).toContain('Comment');
     expect(html).toContain('explain your decision');
     expect(html).toContain('Send comment');
     expect(html).not.toContain('Learn from this comment');
@@ -1761,7 +1761,7 @@ describe('DecisionDialog component', () => {
 
   it('renders reject mode with optional reason copy', () => {
     const html = renderToString(<DecisionDialog open mode="reject" onSubmit={noop} onClose={noop} />);
-    expect(html).toContain('reject this request?');
+    expect(html).toContain('Reject this request?');
     expect(html).toContain('configured rejected-state updates');
     expect(html).toContain('optional: which part is wrong is enough');
     expect(html).toContain('>Reject</button>');
@@ -1772,10 +1772,10 @@ describe('DecisionDialog component', () => {
     const comment = renderToString(<DecisionDialog open mode="comment" revisionGuidance onSubmit={noop} onClose={noop} />);
     const reject = renderToString(<DecisionDialog open mode="reject" revisionGuidance onSubmit={noop} onClose={noop} />);
 
-    expect(comment).toContain('guide the next revision');
+    expect(comment).toContain('Guide revision');
     expect(comment).toContain('Your earlier feedback is preserved.');
     expect(comment).toContain('>Revise again</button>');
-    expect(reject).toContain('stop this action?');
+    expect(reject).toContain('Stop this action?');
     expect(reject).toContain('>Stop action</button>');
   });
 });
@@ -1822,6 +1822,59 @@ describe('SessionDetail header', () => {
     for (const [overrides, label] of cases) {
       expect(nowCardLabel({ ...base, ...overrides })).toBe(label);
     }
+  });
+
+  it('says the status in one plain word, with a tone for the dot', () => {
+    const base = { status: 'completed', mode: 'result' as const, expired: false, stranded: false, suspended: false, ended: true };
+    expect(sessionStatusWord(base)).toEqual({ word: 'Completed', tone: 'ok' });
+    expect(sessionStatusWord({ ...base, status: 'timeout', mode: 'error' })).toEqual({ word: 'Timed out', tone: 'bad' });
+    expect(sessionStatusWord({ ...base, status: 'incomplete', mode: 'error' })).toEqual({ word: 'Incomplete', tone: 'bad' });
+    expect(sessionStatusWord({ ...base, status: 'waiting', mode: 'decision', ended: false })).toEqual({ word: 'Needs your decision', tone: 'wait' });
+    expect(sessionStatusWord({ ...base, status: 'waiting', mode: 'decision', ended: false, expired: true })).toEqual({ word: 'Expired', tone: 'wait' });
+    expect(sessionStatusWord({ ...base, status: 'running', mode: 'working', ended: false })).toEqual({ word: 'Working', tone: 'busy' });
+    expect(sessionStatusWord({ ...base, status: 'suspended', mode: 'idle', ended: false, suspended: true })).toEqual({ word: 'Paused', tone: 'wait' });
+    expect(sessionStatusWord({ ...base, status: 'error', mode: 'error', stranded: true })).toEqual({ word: 'Stuck', tone: 'bad' });
+  });
+
+  it('leads a failure with the error sentence, not the wrapper the header already says', () => {
+    expect(sessionFailureHeadline({
+      errorCode: 'TIMEOUT',
+      errorMessage: 'stream aborted - execution timeout or manual cancellation',
+      fallback: 'Session finished with an error: TIMEOUT: stream aborted',
+    })).toBe('Stream aborted - execution timeout or manual cancellation');
+    expect(sessionFailureHeadline({ fallback: 'Session finished with an error.' }))
+      .toBe('Session finished with an error.');
+  });
+
+  it('collapses a trailing run of same-failure rows into one Session failed row', () => {
+    const entries: ApprovalLogEntry[] = [
+      { id: 'step', type: 'tool', tool: 'code_exec', status: 'completed', title: 'Read brand files', time: 1 },
+      { id: 'sub', type: 'tool', tool: 'subagent__research', status: 'error', title: 'subagent', time: 2,
+        subagentSession: { sessionId: 'c1', agent: { id: 'research', name: 'Research' }, status: 'error', displayStatus: 'error', trigger: 'subagent', createdAt: 2, updatedAt: 3, command: '', errorMessage: 'Stream aborted - execution timeout or manual cancellation' } as ApprovalLogEntry['subagentSession'] },
+      { id: 'sub-log', type: 'log', level: 'error', title: '[SubAgent] Research failed: Stream aborted - execution timeout or manual cancellation', time: 4 },
+      { id: 'warn', type: 'log', level: 'warn', title: '⚠️  Stream aborted - likely due to timeout or cancellation (17 steps completed)', time: 5 },
+      { id: 'marker', type: 'session', status: 'error', title: 'Session failed', time: 6 },
+      { id: 'run-error', type: 'error', status: 'error', title: 'Run error (TIMEOUT)', message: 'Stream aborted — execution timeout or manual cancellation', time: 6 },
+    ];
+    const folded = collapseTrailingRunErrors(entries);
+    expect(folded.map((e) => e.id)).toEqual(['step', 'sub', 'run-error']);
+    expect(folded[2].title).toBe('Session failed');
+    // The delegated row keeps its own status; the stored log is untouched.
+    expect(entries).toHaveLength(6);
+    expect(entries[5].title).toBe('Run error (TIMEOUT)');
+  });
+
+  it('leaves a lone trailing error and unrelated failures alone', () => {
+    const one: ApprovalLogEntry[] = [
+      { id: 'a', type: 'tool', status: 'completed', title: 'step', time: 1 },
+      { id: 'b', type: 'error', status: 'error', title: 'Run error', message: 'Disk full', time: 2 },
+    ];
+    expect(collapseTrailingRunErrors(one).map((e) => e.id)).toEqual(['a', 'b']);
+    const distinct: ApprovalLogEntry[] = [
+      { id: 'a', type: 'error', status: 'error', title: 'First', message: 'Rate limited by the provider', time: 1 },
+      { id: 'b', type: 'error', status: 'error', title: 'Second', message: 'Disk full while writing the report', time: 2 },
+    ];
+    expect(collapseTrailingRunErrors(distinct).map((e) => e.id)).toEqual(['a', 'b']);
   });
 
   it('folds the shared transcript card per visit only while the decision or working card is the surface', () => {
