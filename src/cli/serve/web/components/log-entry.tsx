@@ -994,6 +994,25 @@ function isExecutingCardStatus(status: string | undefined): boolean {
     || status === 'continuing' || status === 'run' || status === 'revising';
 }
 
+/** How a delegated child ended, in one word, for its row in the parent's log. */
+export function delegateStatusWord(session: LogSubagentSession): string {
+  if (session.errorMessage || session.status === 'error' || session.displayStatus === 'error') return 'Failed';
+  if (session.report?.status === 'incomplete') return 'Incomplete';
+  if (isExecutingCardStatus(session.status) || isExecutingCardStatus(session.displayStatus)) return 'Working';
+  if (session.status === 'suspended') return 'Paused';
+  if (session.status === 'completed' || session.displayStatus === 'completed') return 'Completed';
+  const raw = session.displayStatus || session.status;
+  return raw.charAt(0).toLocaleUpperCase() + raw.slice(1);
+}
+
+export function delegateStatusTone(session: LogSubagentSession): 'ok' | 'bad' | 'wait' | 'busy' {
+  const word = delegateStatusWord(session);
+  if (word === 'Failed' || word === 'Incomplete') return 'bad';
+  if (word === 'Working') return 'busy';
+  if (word === 'Paused') return 'wait';
+  return 'ok';
+}
+
 function reportPresentation(report: NonNullable<LogSubagentSession['report']>): {
   label: string;
   chipClass: string;
@@ -1576,6 +1595,26 @@ function LogEntryImpl(props: LogEntryProps) {
     if (expandable) props.onToggle(entry.id, !expanded);
   };
 
+  // A delegated call names its child rather than its tool id.
+  const delegateRow = entry.subagentSession
+    ? {
+      name: entry.subagentSession.agent.name || entry.subagentSession.agent.id,
+      status: delegateStatusWord(entry.subagentSession),
+      tone: delegateStatusTone(entry.subagentSession),
+    }
+    : undefined;
+
+  // What the row cost, on the right in muted text: the calls a Code Mode
+  // program fanned out into, and how long a delegated child ran.
+  const headMeta = [
+    nestedCalls.length > 0
+      ? `${nestedCalls.length} ${nestedCalls.length === 1 ? 'call' : 'calls'}`
+      : undefined,
+    entry.subagentSession?.durationMs !== undefined
+      ? formatSessionDuration(entry.subagentSession.durationMs)
+      : undefined,
+  ].filter((part): part is string => Boolean(part));
+
   const header = (
     <>
       <span class="log-time">{formatLogTime(entry.time)}</span>
@@ -1590,11 +1629,33 @@ function LogEntryImpl(props: LogEntryProps) {
       <span class="log-title">
         {corrections
           ? <CorrectionsSummary counts={corrections} />
+          : delegateRow
+            ? (
+              // A sub-agent is a log row like any other, plus a branch icon:
+              // its name, that it is delegated, and how it ended. The raw tool
+              // id ("subagent · research") said none of those.
+              <>
+                <span class="log-intent" title={delegateRow.name}>{delegateRow.name}</span>
+                <span class="log-tool has-intent log-delegate-tag">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M6 3v12" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="6" r="3" /><path d="M18 9a9 9 0 0 1-9 9" />
+                  </svg>
+                  sub-agent
+                </span>
+                <span class={`log-delegate-status is-${delegateRow.tone}`}>
+                  <span class="session-status-dot" aria-hidden="true" />
+                  {delegateRow.status}
+                </span>
+              </>
+            )
           : entry.type === 'tool' && entry.tool && !isApprovalEntry
             ? (
               <>
                 {toolIntent && <span class="log-intent" title={toolIntent}>{toolIntent}</span>}
-                <span class={`tool-chip${toolIntent ? ' has-intent' : ''}`} title={entry.title} aria-label={entry.title}>{toolChipLabel(entry.tool)}</span>
+                {/* The tool's name, in plain grey text. It used to be a bordered
+                    pill that read as a control and out-shouted the sentence the
+                    agent wrote beside it. */}
+                <span class={`log-tool${toolIntent ? ' has-intent' : ''}`} title={entry.title} aria-label={entry.title}>{toolChipLabel(entry.tool)}</span>
               </>
             )
             : entry.title}
@@ -1603,14 +1664,20 @@ function LogEntryImpl(props: LogEntryProps) {
         )}
         {recoveryBadges}
         {props.repeatCount !== undefined && props.repeatCount > 1 && (
-          <span class="log-count-badge">x{props.repeatCount}</span>
+          <span class="log-count-badge">×{props.repeatCount}</span>
         )}
         {warnings.length > 0 && (
           <span class="log-warn-badge" title={`${warnings.length} warning${warnings.length === 1 ? '' : 's'} about this tool call`}>⚠ {warnings.length}</span>
         )}
-        {nestedCalls.length > 0 && !expanded && (
-          <span class="log-nested-badge" title={`${nestedCalls.length} tool call${nestedCalls.length === 1 ? '' : 's'} made by this program`}>
-            {nestedCalls.length} {nestedCalls.length === 1 ? 'call' : 'calls'}
+        {/* Right-aligned, muted: how much work the row stands for. The chevron
+            after it is the only expand affordance; the row itself is the
+            click target, so there is no "show" badge to hunt for. */}
+        {headMeta.length > 0 && <span class="log-head-meta">{headMeta.join(' · ')}</span>}
+        {expandable && (
+          <span class="log-chevron" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 6 15 12 9 18" />
+            </svg>
           </span>
         )}
       </span>
@@ -1642,9 +1709,12 @@ function LogEntryImpl(props: LogEntryProps) {
             it visible even when the row is collapsed; only the tool input/output
             below stays behind the expand toggle. */}
         {entry.subagentSession && <SubagentCard session={entry.subagentSession} expanded={expanded} {...(props.projectId && { projectId: props.projectId })} />}
-        {runOutcome && <RunOutcomeCard outcome={runOutcome} />}
         {savedArtifact && <SavedArtifactCard artifact={savedArtifact} sessionId={props.sessionId} token={props.token} />}
         <div class="log-content">
+          {/* Inside the fold, not above it: the card at the top of the page
+              already leads with this exact headline and body, and a second
+              full-size copy in the log made the page say its answer twice. */}
+          {runOutcome && <RunOutcomeCard outcome={runOutcome} />}
           {storeEvent && <StoreEventBlock event={storeEvent} />}
           {entry.details && (isApprovalEntry
             ? <ApprovalDetailCard

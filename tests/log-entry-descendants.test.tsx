@@ -518,7 +518,10 @@ describe('code mode nested calls', () => {
 
   it('collapses nested calls behind a count until the program row is opened', () => {
     const html = renderParent(undefined);
-    expect(html).toContain('log-nested-badge');
+    // The count is the row's cost, right-aligned and muted, in the one head
+    // slot every row uses. It used to be a bordered badge shown only while
+    // collapsed, which read as a control rather than a measurement.
+    expect(html).toContain('log-head-meta');
     expect(html).toContain('3 calls');
     expect(html).not.toContain('log-nested-calls');
     expect(html).not.toContain('Reading projection a');
@@ -527,7 +530,6 @@ describe('code mode nested calls', () => {
   it('lists every nested call inside the opened program row', () => {
     const html = renderParent(true);
     expect(html).toContain('log-nested-calls');
-    expect(html).not.toContain('log-nested-badge');
     for (const suffix of ['a', 'b', 'c']) expect(html).toContain(`Reading projection ${suffix}`);
     expect(html.match(/is-nested-tool/g)?.length).toBe(3);
   });
