@@ -253,7 +253,13 @@ export function createSubmitChangesTool(
         if (input.outcome === 'no-change') {
           const recommendedAction = input.recommendedAction?.trim();
           if (!recommendedAction) {
-            throw new Error('A no-change outcome requires a recommendedAction. Add it and call submit_changes again.');
+            const buriedInDiagnosis = /<(?:antml:)?parameter\s+name="recommendedAction"/i.test(input.diagnosis ?? '')
+              || /<\/?diagnosis>/.test(input.diagnosis ?? '');
+            throw new Error(
+              buriedInDiagnosis
+                ? 'recommendedAction must be a top-level JSON field next to diagnosis, not XML inside diagnosis. Call submit_changes again with { "diagnosis": "...", "recommendedAction": "..." } and remove the XML from diagnosis.'
+                : 'A no-change outcome requires recommendedAction as its own JSON field, at the same level as diagnosis, summary, and cause. Do not put it inside diagnosis. Add that field and call submit_changes again.',
+            );
           }
           if (!input.cause) {
             throw new Error('A no-change outcome requires a cause: agent, project, setup, or agentuse. Add it and call submit_changes again.');

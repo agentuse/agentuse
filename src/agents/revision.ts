@@ -444,7 +444,13 @@ export function createSubmitAgentRevisionTool(
         return 'Accepted: the revision is valid and ready for operator review. Call report_complete with a short headline and no source in the report.';
       }
       if (!input.recommendedAction?.trim()) {
-        throw new Error('A no-agent-change outcome requires a recommendedAction. Add it and call submit_agent_revision again.');
+        const buriedInDiagnosis = /<(?:antml:)?parameter\s+name="recommendedAction"/i.test(input.diagnosis ?? '')
+          || /<\/?diagnosis>/.test(input.diagnosis ?? '');
+        throw new Error(
+          buriedInDiagnosis
+            ? 'recommendedAction must be a top-level JSON field next to diagnosis, not XML inside diagnosis. Call submit_agent_revision again with { "diagnosis": "...", "recommendedAction": "..." } and remove the XML from diagnosis.'
+            : 'A no-agent-change outcome requires recommendedAction as its own JSON field, at the same level as diagnosis and summary. Do not put it inside diagnosis. Add that field and call submit_agent_revision again.',
+        );
       }
       await writeRecord({
         ...record,

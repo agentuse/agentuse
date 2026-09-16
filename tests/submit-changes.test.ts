@@ -116,6 +116,7 @@ type SubmitInput = {
   diagnosis?: string;
   entry?: string;
   recommendedAction?: string;
+  cause?: 'agent' | 'project' | 'setup' | 'agentuse';
 };
 
 function run(tool: Tool, input: SubmitInput): Promise<string> {
@@ -354,7 +355,20 @@ describe('submit_changes no-change', () => {
     await expect(run(tool(projectRoot), {
       outcome: 'no-change',
       summary: 'Nothing to change.',
-    })).rejects.toThrow('requires a recommendedAction');
+    })).rejects.toThrow('Do not put it inside diagnosis');
+  });
+
+  it('tells the model not to bury recommendedAction inside diagnosis as XML', async () => {
+    const { projectRoot } = await project();
+    await startRecord(projectRoot);
+    await expect(run(tool(projectRoot), {
+      outcome: 'no-change',
+      summary: 'Nothing to change.',
+      diagnosis:
+        'One draft is already waiting.</diagnosis>\n'
+        + '<parameter name="recommendedAction">Approve or reject the waiting draft.',
+      cause: 'agent',
+    })).rejects.toThrow(/top-level JSON field next to diagnosis, not XML inside diagnosis/);
   });
 
   it('requires a cause, so an upstream verdict is never lost in prose', async () => {
