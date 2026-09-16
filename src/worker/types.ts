@@ -25,6 +25,7 @@ export interface ExecuteRequest {
   /** Fresh execution must atomically promote an existing preparing shell. */
   preparedSession?: boolean;
   preparerOwner?: { pid: number; procStartedAt?: string };
+  errorCause?: string;
   errorCode?: string;
   errorMessage?: string;
   toolResult?: unknown;
@@ -220,6 +221,7 @@ export interface ApprovalSummary {
   decisionComment?: string;
   decisionReviewer?: string;
   resumeToken?: string;
+  errorCause?: string;
   errorCode?: string;
   errorMessage?: string;
   channelMessage?: { type?: string; channel?: string; ts?: string; actionTs?: string; url?: string };

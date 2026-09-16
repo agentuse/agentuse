@@ -362,7 +362,7 @@ export async function runRoutes(ctx: ServeContext, rq: ServeRequest): Promise<bo
 
           const errorChunk: AgentChunk = {
             type: "error",
-            error: { code: errorCode, message: errorMessage },
+            error: spawnResult.error,
           };
           res.write(JSON.stringify(errorChunk) + "\n");
           res.end();

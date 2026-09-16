@@ -1,3 +1,4 @@
+import { failureLabel } from '../session/failure-label';
 import { Command } from "commander";
 import fs from "fs/promises";
 import { existsSync } from "fs";
@@ -38,6 +39,7 @@ interface SessionSummary {
   dirPath: string;
   projectRoot: string;
   status?: SessionStatus;
+  errorCause?: string;
   errorCode?: string;
   errorMessage?: string;
   /** Suspended parent parked on a running delegated child; renders as
@@ -114,6 +116,7 @@ function summaryFromIndex(entry: SessionListSummary, sessionDir: string, fallbac
     dirPath: path.join(sessionDir, entry.path),
     projectRoot,
     status: entry.status,
+    ...(entry.error?.cause && { errorCause: entry.error.cause }),
     ...(entry.error?.code && { errorCode: entry.error.code }),
     ...(entry.error?.message && { errorMessage: entry.error.message }),
     ...(entry.mock && { mock: true }),
@@ -229,6 +232,7 @@ async function listLegacyStoredSessions(sessionDir: string): Promise<SessionSumm
       dirPath,
       projectRoot: session.project.root || path.basename(path.dirname(sessionDir)),
       status: session.status,
+      ...(session.error?.cause && { errorCause: session.error.cause }),
       ...(session.error?.code && { errorCode: session.error.code }),
       ...(session.error?.message && { errorMessage: session.error.message }),
       ...(session.mock && { mock: true }),
@@ -385,8 +389,8 @@ function statusLabel(status?: SessionStatus, errorCode?: string): string {
 /** Display status for a summary row, folding in the "running · subagent" state
  *  (a suspended parent parked on a running delegated child) and the mock
  *  marker, so a fabricated test run never reads as a real one. */
-function sessionStatusText(session: Pick<SessionSummary, 'status' | 'errorCode' | 'subagentActive' | 'mock'>): string {
-  const base = session.subagentActive ? 'running · subagent' : statusLabel(session.status, session.errorCode);
+function sessionStatusText(session: Pick<SessionSummary, 'status' | 'errorCode' | 'errorCause' | 'subagentActive' | 'mock'>): string {
+  const base = session.subagentActive ? 'running · subagent' : (failureLabel(session.errorCause) ?? statusLabel(session.status, session.errorCode));
   return session.mock ? `${base} · mock` : base;
 }
 

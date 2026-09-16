@@ -669,6 +669,7 @@ export class AgentWorker {
       success: false,
       error: {
         code: WORKER_PROTOCOL_ERROR_CODE,
+        cause: 'worker_protocol',
         message: `Worker returned an unreadable response. Reload to retry. Diagnostic ID: ${diagnosticId}`,
       },
     });
@@ -695,7 +696,7 @@ export class AgentWorker {
       }
       pending.resolve({
         success: false,
-        error: { code: "WORKER_DIED", message: "Worker process died unexpectedly" },
+        error: { code: "WORKER_DIED", cause: 'worker_interrupted', message: "Worker process died unexpectedly" },
       });
     }
     this.pendingRequests.clear();
@@ -1037,7 +1038,7 @@ export class AgentWorker {
           this.pendingRequests.delete(id);
           pending.resolve({
             success: false,
-            error: { code: "TIMEOUT", message: `Request timed out after ${requestTimeoutSeconds}s` },
+            error: { code: "TIMEOUT", cause: 'request_deadline', message: `Request timed out after ${requestTimeoutSeconds}s` },
           });
         }
       }, timeoutMs);

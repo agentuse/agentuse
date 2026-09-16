@@ -1,3 +1,4 @@
+import { RunAbortError } from '../runner/failure';
 import { createInterface } from 'readline';
 import { logger, LogLevel } from '../utils/logger';
 import { loadGlobalDefaults } from '../utils/global-config';
@@ -102,7 +103,7 @@ export async function runInternalWorker() {
               if (found?.session.error?.code !== 'USER_STOPPED') continue;
               ctx.activeStoppedSessions.add(sessionId);
               stoppedWhileReleased.add(sessionId);
-              controller.abort();
+              controller.abort(new RunAbortError('user_stopped', 'Session stopped by user'));
             }
           } catch {
             // Storage hiccup -- try again on the next tick.
@@ -137,7 +138,7 @@ export async function runInternalWorker() {
           if (found.session.error?.code !== 'USER_STOPPED') {
             await sessionManager.updateSession(sessionId, found.agentId, {
               status: 'error',
-              error: { code: 'USER_STOPPED', message: 'Session stopped by user', time: Date.now() },
+              error: { code: 'USER_STOPPED', cause: 'user_stopped', message: 'Session stopped by user', time: Date.now() },
             } as any);
           }
           stoppedWhileReleased.delete(sessionId);

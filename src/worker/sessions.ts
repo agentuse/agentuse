@@ -1,3 +1,4 @@
+import { RunAbortError } from '../runner/failure';
 import { reconcileOrphanedSessions, reopenSuspendedGate } from '../runner';
 import { findRootSessionId } from '../runner/subagent-cascade';
 import { SessionManager } from '../session/index.js';
@@ -354,7 +355,7 @@ export async function stopSession(ctx: WorkerContext, req: ExecuteRequest) {
     const controller = ctx.activeExecutionControllers.get(req.sessionId);
     if (controller) {
       ctx.activeStoppedSessions.add(req.sessionId);
-      controller.abort();
+      controller.abort(new RunAbortError('user_stopped', 'Session stopped by user'));
     }
 
     await initStorage(req.projectRoot);

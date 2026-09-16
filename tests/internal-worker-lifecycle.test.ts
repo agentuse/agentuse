@@ -123,6 +123,53 @@ function waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs = 5_000): 
 }
 
 describe('internal worker lifecycle', () => {
+  it.each([
+    ['deadline', 'TIMEOUT', 'run_deadline'],
+    ['provider', 'EXECUTION_ERROR', 'provider_request'],
+    ['stop', 'USER_STOPPED', 'user_stopped'],
+  ])('preserves %s classification across runtime, worker IPC, and storage', async (mode, code, cause) => {
+    const api = await startStalledApi();
+    const root = await mkdtemp(join(tmpdir(), 'agentuse-classification-ipc-'));
+    const agentPath = join(root, 'fixture.agentuse');
+    await writeFile(agentPath, '---\nname: Fixture\nmodel: "anthropic:claude-haiku-4-5"\n---\nSay hi.');
+    const originalXdg = process.env.XDG_DATA_HOME;
+    const dataHome = join(root, 'data');
+    process.env.XDG_DATA_HOME = dataHome;
+    const sessionId = `01FAILURE${mode.toUpperCase()}000000000000`;
+    const child = spawn(process.execPath, ['src/index.ts', '--internal-worker'], {
+      cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, HOME: root, XDG_DATA_HOME: dataHome, XDG_CONFIG_HOME: join(root, 'config'), ANTHROPIC_API_KEY: 'test-key', ANTHROPIC_BASE_URL: api.url },
+    });
+    let failTimer: ReturnType<typeof setInterval> | undefined;
+    try {
+      await waitForReady(child);
+      const response = waitForMessage(child, m => m.id === 'classify-run', 15_000);
+      send(child, { id: 'classify-run', type: 'execute', agentPath, projectRoot: root, newSessionId: sessionId, timeout: mode === 'deadline' ? 0.3 : 10, maxSteps: 1 });
+      if (mode === 'provider') failTimer = setInterval(api.failPending, 50);
+      if (mode === 'stop') {
+        await sleep(500);
+        send(child, { id: 'classify-stop', type: 'stop-session', projectRoot: root, sessionId });
+      }
+      const result = await response;
+      expect(result).toMatchObject({ success: false, error: { code, cause } });
+      await initStorage(root);
+      const manager = new SessionManager();
+      expect((await manager.findSession(sessionId))?.session.error).toMatchObject({ code, cause });
+      expect((await manager.listSessionSummaries()).find(row => row.sessionId === sessionId)?.error).toMatchObject({ code, cause });
+    } finally {
+      if (failTimer) clearInterval(failTimer);
+      if (child.exitCode === null) {
+        const exited = waitForExit(child);
+        child.kill('SIGKILL');
+        await exited;
+      }
+      await api.close();
+      if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = originalXdg;
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 20_000);
+
   it('creates and fails a durable preparing session over worker IPC', async () => {
     const originalXdg = process.env.XDG_DATA_HOME;
     const sandbox = await mkdtemp(join(tmpdir(), 'agentuse-preparing-session-'));

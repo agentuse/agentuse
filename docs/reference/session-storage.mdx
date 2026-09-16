@@ -3,6 +3,33 @@ title: Session Storage
 description: Storage structure and data schemas for session logs
 ---
 
+## Failure classification
+
+Terminal execution errors retain their broad `code` and human-readable `message`.
+New failures also carry an evidence-based `cause`, shared by the runtime, CLI
+JSON output, API run responses, and plugin error events. Session-list responses
+expose it as `errorCause`; full session records use `error.cause`.
+
+| Cause | Meaning |
+| --- | --- |
+| `run_deadline` | The execution deadline fired. Broad code remains `TIMEOUT`. |
+| `user_stopped`, `user_interrupt` | Explicit stop or CLI interruption. |
+| `interrupted_unknown` | An abort without evidence of its source. Not a timeout. |
+| `model_stall` | No model progress or model-step hard limit. `phase` and optional `attempts` provide detail. |
+| `model_transport` | The model stream connection dropped. May include `attempts`. |
+| `provider_rate_limit`, `provider_overloaded` | HTTP 429 or a structured provider overload response. |
+| `provider_timeout`, `provider_server` | Provider request timeout or another provider server error, not the run deadline. |
+| `provider_request`, `provider_permission` | Other provider request failure or HTTP 403. |
+| `authentication`, `configuration` | Authentication or validated configuration failure. |
+| `worker_interrupted`, `worker_protocol` | Worker loss or an unreadable worker response. |
+| `request_deadline` | The daemon stopped waiting for a worker response. Does not prove the run stopped. |
+| `unknown` | No more specific classification is supported by the evidence. |
+
+Causes are additive. Consumers must tolerate missing or future values. Historical
+errors are not rewritten or guessed from message text. `INCOMPLETE` remains an
+agent-declared outcome, not a crash. Failure classification does not change retry
+policy or imply that replaying a run with prior side effects is safe.
+
 ## Directory Structure
 
 Sessions are stored under `AGENTUSE_DATA_DIR`, which defaults through XDG

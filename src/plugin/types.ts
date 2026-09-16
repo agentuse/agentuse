@@ -44,7 +44,7 @@ export interface AgentStartEvent {
 export interface AgentErrorEvent {
   agent: AgentReference;
   sessionId?: string;
-  error: { name?: string; message: string; code?: string };
+  error: { name?: string; message: string; code?: string; cause?: string; phase?: string; attempts?: number };
   duration: number;
 }
 

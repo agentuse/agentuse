@@ -76,7 +76,7 @@ export interface SessionListSummary {
   trigger: SessionTrigger;
   createdAt: number;
   updatedAt: number;
-  error?: { code?: string; message?: string };
+  error?: { code?: string; message?: string; cause?: string };
   dismissedAt?: number;
   reviewedAt?: number;
   mock?: boolean;
@@ -284,7 +284,7 @@ function toSessionListSummary(session: SessionInfo, sessionPath: string): Sessio
     trigger: session.trigger ?? 'manual',
     createdAt: session.time.created,
     updatedAt: session.time.updated,
-    ...(session.error && { error: { code: session.error.code, message: session.error.message } }),
+    ...(session.error && { error: { code: session.error.code, message: session.error.message, ...(session.error.cause && { cause: session.error.cause }) } }),
     ...(session.dismissedAt !== undefined && { dismissedAt: session.dismissedAt }),
     ...(session.reviewedAt !== undefined && { reviewedAt: session.reviewedAt }),
     ...(session.mock && { mock: true }),
@@ -1792,6 +1792,7 @@ export class SessionManager {
           error: {
             code,
             message,
+            ...(code === 'USER_STOPPED' && { cause: 'user_stopped' }),
             time: now
           }
         });
@@ -2162,7 +2163,7 @@ export class SessionManager {
   async setSessionError(
     sessionID: string,
     agentId: string,
-    error: { message: string; code: string; statusCode?: number; url?: string; detail?: string }
+    error: Omit<NonNullable<SessionInfo['error']>, 'time'>
   ): Promise<void> {
     await this.updateSession(sessionID, agentId, {
       status: 'error',

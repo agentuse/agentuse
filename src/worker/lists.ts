@@ -173,7 +173,7 @@ export async function listAllApprovals(ctx: WorkerContext, req: ExecuteRequest) 
 
       let status: ApprovalSummaryStatus;
       let errorMessage: string | undefined;
-      const sessionError = sessionErrorFields(session) as { errorCode?: string; errorMessage?: string };
+      const sessionError = sessionErrorFields(session);
       if (isGenericToolApproval && approvalResponse.type === 'tool-approval-response' && approvalResponse.approved === false) {
         status = 'rejected';
       } else if (isGenericToolApproval && approvalResponse.type === 'tool-approval-response' && approvalResponse.approved === true) {
@@ -255,6 +255,7 @@ export async function listAllApprovals(ctx: WorkerContext, req: ExecuteRequest) 
             : {}),
         ...(typeof reviewer.username === 'string' && { decisionReviewer: reviewer.username }),
         ...(typeof resumePayload.resumeToken === 'string' && { resumeToken: resumePayload.resumeToken }),
+        ...(sessionError.errorCause && { errorCause: sessionError.errorCause }),
         ...(sessionError.errorCode && { errorCode: sessionError.errorCode }),
         ...(errorMessage && { errorMessage }),
         ...(Object.keys(channelMessage).length > 0 && {

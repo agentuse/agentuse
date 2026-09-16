@@ -3,9 +3,8 @@ import { announceSessionFinished, announceSessionStarted } from './announce';
 import type { MCPConnection } from '../mcp';
 import type { SessionInfo, SessionManager, SessionTrigger } from '../session';
 import type { AgentCompleteEvent, AgentReference, ModelFallbackEvent, PluginManager } from '../plugin';
-import { AuthenticationError } from '../models';
+import { classifyFailure } from './failure';
 import { logger, runWithLogSink } from '../utils/logger';
-import { toErrorMessage } from '../utils/error-message';
 import { extractLearnings, LearningStore } from '../learning/index.js';
 import { hasAutomaticLearningCapture } from '../learning/types.js';
 import { findProjectRoot } from '../utils/project';
@@ -690,17 +689,14 @@ export async function runAgent(
     // Return metrics for plugin system
     return runResult;
   } catch (error: unknown) {
+    const failure = classifyFailure(error, abortSignal);
     if (pluginManager) {
-      const errorCode = error instanceof AuthenticationError ? 'AUTH_ERROR' :
-        (error instanceof Error && error.name === 'AbortError') ? 'TIMEOUT' :
-        'EXECUTION_ERROR';
       await pluginManager.emit('agent:error', {
         agent: agentReference(agent, agentFilePath),
         ...(sessionID && { sessionId: sessionID }),
         error: {
           ...(error instanceof Error && error.name && { name: error.name }),
-          message: toErrorMessage(error),
-          code: errorCode,
+          ...failure,
         },
         duration: startTime ? (Date.now() - startTime) / 1000 : 0,
       }, abortSignal);
@@ -708,15 +704,12 @@ export async function runAgent(
     // Log error to session if available (for visibility in `agentuse sessions`)
     if (sessionManager && sessionID && agentId) {
       try {
-        const errorCode = error instanceof AuthenticationError ? 'AUTH_ERROR' :
-          (error instanceof Error && error.name === 'AbortError') ? 'TIMEOUT' :
-          'EXECUTION_ERROR';
-        const errorMessage = toErrorMessage(error);
+        const errorCode = failure.code;
+        const errorMessage = failure.message;
         const apiDetail = extractApiErrorDetail(error);
         await sessionManager.setSessionError(sessionID, agentId, {
-          code: errorCode,
-          message: errorMessage,
-          ...apiDetail
+          ...apiDetail,
+          ...failure
         });
         // Also drop a timeline entry so the failure — and the provider response
         // body that says *why* — is visible in the session log itself, not just

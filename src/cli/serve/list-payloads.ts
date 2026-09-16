@@ -40,6 +40,7 @@ export interface ApprovalSummary {
   decisionReviewer?: string;
   resumeToken?: string;
   reviewHref?: string;
+  errorCause?: string;
   errorCode?: string;
   errorMessage?: string;
   /** The parent can resume by retrying its interrupted delegated child. */
@@ -82,6 +83,7 @@ export interface SessionSummary {
   trigger: SessionTrigger;
   createdAt: number;
   updatedAt: number;
+  errorCause?: string;
   errorCode?: string;
   errorMessage?: string;
   /** Reviewer discarded this ended failed run; needs-attention surfaces skip it. */

@@ -547,6 +547,7 @@ export async function reconcileOrphanedSessions(options: {
     if (!dryRun) {
       await sessionManager.setSessionError(session.id, agentId, {
         code: 'WORKER_INTERRUPTED',
+        cause: 'worker_interrupted',
         message: 'Run was interrupted when its serve worker restarted, leaving no live process. If it was waiting on approval, reopen the gate to retry.'
       }).catch(() => {});
     }

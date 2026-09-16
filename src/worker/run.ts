@@ -8,7 +8,7 @@ import { PluginManager } from '../plugin';
 import { applyRunModelOverride, resolveModelString, type RunModelOverride } from '../utils/model-alias';
 import { logger } from '../utils/logger';
 import { resolveProjectContext } from '../utils/project';
-import { toErrorMessage } from '../utils/error-message';
+import { classifyFailure, runDeadline } from '../runner/failure';
 import { validateAgentEnvVars, formatEnvValidationError } from '../utils/env-validation';
 import { SessionManager } from '../session/index.js';
 import { initStorage } from '../storage/index.js';
@@ -251,7 +251,7 @@ export async function executeAgent(ctx: WorkerContext, req: ExecuteRequest) {
     mcp = await connectMCP(agent.config.mcpServers, req.debug ?? false, mcpBasePath, runCwd);
 
     const timeoutSeconds = req.timeout ?? agent.config.timeout ?? 300;
-    const timeoutId = setTimeout(() => abortController.abort(), timeoutSeconds * 1000);
+    const timeoutId = setTimeout(() => abortController.abort(runDeadline(timeoutSeconds)), timeoutSeconds * 1000);
     const projectContext = { projectRoot: req.projectRoot, stateRoot: req.projectRoot, cwd: runCwd };
     let pluginManager: PluginManager | null = null;
     try {
@@ -360,14 +360,14 @@ export async function executeAgent(ctx: WorkerContext, req: ExecuteRequest) {
           id: req.id,
           success: false,
           error: stoppedByUser
-            ? { code: 'USER_STOPPED', message: 'Session stopped by user' }
-            : { code: 'TIMEOUT', message: `Agent execution timed out after ${timeoutSeconds}s` },
+            ? { code: 'USER_STOPPED', cause: 'user_stopped', message: 'Session stopped by user' }
+            : classifyFailure(err, abortController.signal),
         };
       }
       return {
         id: req.id,
         success: false,
-        error: { code: 'EXECUTION_ERROR', message: toErrorMessage(err) },
+        error: classifyFailure(err, abortController.signal),
       };
     }
   } catch (err) {
@@ -376,10 +376,11 @@ export async function executeAgent(ctx: WorkerContext, req: ExecuteRequest) {
         logger.warn(`Failed to restore pending approval after resume error: ${(restoreErr as Error).message}`);
       });
     }
+    const failure = classifyFailure(err, abortController.signal);
     return {
       id: req.id,
       success: false,
-      error: { code: 'INTERNAL_ERROR', message: (err as Error).message },
+      error: { ...failure, ...(failure.cause === 'unknown' && { code: 'INTERNAL_ERROR' }) },
     };
   } finally {
     // Clear both the up-front (req.sessionId) and resolved (activeSessionId)

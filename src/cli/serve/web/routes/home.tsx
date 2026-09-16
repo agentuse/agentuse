@@ -1,3 +1,4 @@
+import { failureLabel } from '../../../../session/failure-label';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import type { ApprovalRow, ProjectInfo, SerializedSchedule, SessionRow } from '../lib/api';
 import { fetchInfo, fetchAgents, fetchProjectChangesets, fetchSchedules, fetchStoreRows, postSessionStop } from '../lib/api';
@@ -110,7 +111,7 @@ function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow) => voi
   const incomplete = isIncompleteOutcome(row.status, row.errorCode);
   const detail = incomplete
     ? errorText(row.errorMessage)
-    : (row.errorCode && row.errorCode !== 'USER_STOPPED' ? row.errorCode : '');
+    : (failureLabel(row.errorCause) ?? (errorText(row.errorMessage) || row.errorCode || ''));
   return (
     <a class="attn-run" href={`/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`}>
       <span class={`feed-dot ${incomplete ? 'incomplete' : 'failed'}`} aria-hidden="true"></span>

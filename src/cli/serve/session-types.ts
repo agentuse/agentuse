@@ -22,6 +22,7 @@ export interface SessionStatusInfo {
     description?: string;
     filePath?: string;
   };
+  errorCause?: string;
   errorCode?: string;
   errorMessage?: string;
   mock?: boolean;

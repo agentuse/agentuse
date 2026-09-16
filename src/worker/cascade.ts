@@ -1,3 +1,4 @@
+import { runDeadline } from '../runner/failure';
 import { dirname, join } from 'path';
 import { parseAgent } from '../parser';
 import { connectMCP } from '../mcp';
@@ -124,7 +125,7 @@ export async function runExistingSession(opts: {
       pluginManager = null;
     }
     const timeoutSeconds = agent.config.timeout ?? 300;
-    timeoutId = setTimeout(() => abortController.abort(), timeoutSeconds * 1000);
+    timeoutId = setTimeout(() => abortController.abort(runDeadline(timeoutSeconds)), timeoutSeconds * 1000);
     ctx.activeExecutionControllers.set(sessionId, abortController);
     const preparedExecution = await prepareAgentExecution({
       agent,

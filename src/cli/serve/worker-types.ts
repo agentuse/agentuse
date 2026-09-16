@@ -66,6 +66,10 @@ export interface WorkerExecuteError {
   workerRssBytes?: number;
   telemetry?: WorkerExecuteResult['telemetry'];
   error: {
+    cause?: string;
+    phase?: string;
+    attempts?: number;
+    statusCode?: number;
     code: string;
     message: string;
   };

@@ -1,4 +1,6 @@
 #!/usr/bin/env bun
+import { failureLabel } from './session/failure-label';
+import { classifyFailure, runDeadline, RunAbortError } from './runner/failure';
 import { registerTestCommands, type RunCommandOptions } from './cli/test';
 import { parseAgent, parseAgentContent, ConfigError } from './parser';
 import { connectMCP } from './mcp';
@@ -37,7 +39,6 @@ import { existsSync } from 'fs';
 import { resolveLocalAgentPath, resolveProjectContext } from './utils/project';
 import { loadGlobalDefaults } from './utils/global-config';
 import { resolveTimeout } from './utils/config';
-import { toErrorMessage } from './utils/error-message';
 import { printLogo, type BrandingStyle } from './utils/branding';
 import { validateAgentEnvVars, formatEnvValidationError } from './utils/env-validation';
 import {
@@ -278,14 +279,19 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
     let sessionManager: SessionManagerType | undefined;
 
     // Helper function for session error logging (needs sessionManager to be set)
-    const logSessionInterrupt = async (errorCode: string = 'USER_INTERRUPT', errorMessage: string = 'Agent execution interrupted by user (Ctrl+C)') => {
+    const logSessionInterrupt = async (errorCode: string = 'USER_INTERRUPT', errorMessage: string = 'Agent execution interrupted by user (Ctrl+C)', failureDetails?: ReturnType<typeof classifyFailure>) => {
       if (sessionErrorLogged) return;
       if (sessionManager && interruptSessionInfo) {
         try {
           await sessionManager.setSessionError(
             interruptSessionInfo.sessionID,
             interruptSessionInfo.agentId,
-            { code: errorCode, message: errorMessage }
+            {
+              ...failureDetails,
+              code: errorCode,
+              message: errorMessage,
+              ...(!failureDetails && errorCode === 'USER_INTERRUPT' ? { cause: 'user_interrupt' } : {}),
+            }
           );
           sessionErrorLogged = true;
         } catch { /* ignore failures */ }
@@ -725,7 +731,7 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
       const abortController = new AbortController();
       let wasInterrupted = false;  // Track if abort was from user interrupt vs timeout
       const timeoutId = setTimeout(() => {
-        abortController.abort();
+        abortController.abort(runDeadline(timeoutMs / 1000));
       }, timeoutMs);
 
       // Handle Ctrl-C gracefully
@@ -736,7 +742,7 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
         if (sigintCount === 1) {
           console.log('\n⚠️  Interrupting...');
           wasInterrupted = true;  // Mark as user interrupt
-          abortController.abort();  // Trigger existing abort mechanism
+          abortController.abort(new RunAbortError('user_interrupt', 'Execution interrupted by user'));
 
           // Log session interrupt immediately (fire and forget)
           logSessionInterrupt();
@@ -763,7 +769,7 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
       const sigtermHandler = () => {
         console.log('\n⚠️  Received SIGTERM, shutting down...');
         wasInterrupted = true;
-        abortController.abort();
+        abortController.abort(new RunAbortError('user_interrupt', 'Execution interrupted by SIGTERM'));
         logSessionInterrupt();
         setTimeout(async () => {
           await logSessionInterrupt();
@@ -888,7 +894,8 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
           }
         }
       } catch (error: unknown) {
-        if (abortController.signal.aborted || (error as Error).name === 'AbortError') {
+        const failure = classifyFailure(error, abortController.signal);
+        if (failure.cause === 'run_deadline' || wasInterrupted) {
           // Clean up sandbox/store before exiting (process.exit skips finally blocks)
           await preparedExecution.cleanup();
 
@@ -916,13 +923,13 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
             if (jsonMode) {
               console.log(JSON.stringify({
                 success: false,
-                error: { code: 'USER_INTERRUPT', message: 'Agent execution interrupted by user' },
+                error: { code: 'USER_INTERRUPT', cause: 'user_interrupt', message: 'Agent execution interrupted by user' },
               }));
             }
             process.exit(130);
           } else {
             // Actual timeout - log session error before exiting
-            await logSessionInterrupt('TIMEOUT', `Agent execution timed out after ${effectiveTimeoutSeconds}s`);
+            await logSessionInterrupt(failure.code, failure.message, failure);
 
             if (!jsonMode) {
               logger.error(`
@@ -962,7 +969,7 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
             if (jsonMode) {
               console.log(JSON.stringify({
                 success: false,
-                error: { code: 'TIMEOUT', message: `Agent execution timed out after ${effectiveTimeoutSeconds}s` },
+                error: failure,
               }));
             }
             process.exit(1);
@@ -1032,7 +1039,7 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
         if (options.json) {
           console.log(JSON.stringify({
             success: false,
-            error: { code, message },
+            error: { ...classifyFailure(error), code, message },
           }));
         }
       };
@@ -1040,7 +1047,7 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
       // Capture telemetry for startup errors (auth, config) or execution errors
       if (error instanceof AuthenticationError) {
         // Log to session if it exists (auth errors can happen during runAgent)
-        await logSessionInterrupt('AUTH_ERROR', error.message);
+        await logSessionInterrupt('AUTH_ERROR', error.message, classifyFailure(error));
 
         telemetry.captureStartupError({
           type: 'auth',
@@ -1084,7 +1091,8 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
       const errorType = categorizeError(error);
 
       // Log to session if it exists
-      await logSessionInterrupt(errorType ?? 'EXECUTION_ERROR', toErrorMessage(error));
+      const failure = classifyFailure(error);
+      await logSessionInterrupt(failure.code, failure.message, failure);
 
       telemetry.captureExecution({
         provider: 'unknown',
@@ -1101,9 +1109,9 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
       await telemetry.shutdown();
 
       if (options.json) {
-        outputJsonError(errorType ?? 'EXECUTION_ERROR', toErrorMessage(error));
+        console.log(JSON.stringify({ success: false, error: failure }));
       } else {
-        logger.error('Error', error as Error);
+        logger.error(`${failureLabel(failure.cause) ?? 'Execution error'}: ${failure.message}`);
       }
       process.exit(1);
     }

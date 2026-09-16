@@ -2796,11 +2796,11 @@ Current step: ${stepCount}/${options.maxSteps}`);
             logger.debug('Stream aborted during suspension drain (expected).');
             break;
           }
-          logger.warn(`⚠️  Stream aborted - likely due to timeout or cancellation (${stepCount} steps completed)`);
-          // Create an AbortError to properly signal timeout
-          const abortError = new Error('Stream aborted - execution timeout or manual cancellation');
+          logger.warn(`⚠️  Stream interrupted (${stepCount} steps completed)`);
+          // Preserve explicit cancellation evidence; an SDK abort alone proves no deadline.
+          const abortError = new Error('Stream interrupted; cancellation reason is unknown');
           abortError.name = 'AbortError';
-          yield { type: 'error', error: abortError };
+          yield { type: 'error', error: effectiveAbortSignal.aborted ? (effectiveAbortSignal.reason ?? abortError) : abortError };
           return;
 
         // Handle other AI SDK chunk types that we don't need to process but shouldn't warn about

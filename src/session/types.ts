@@ -87,7 +87,7 @@ export interface SessionInfo {
     procStartedAt?: string;          // start-time token guarding recycled PIDs
   };
 
-  // Error (for failures before LLM calls - auth, MCP, etc.)
+  // Terminal execution error, including setup and model/runtime failures.
   // Standard error codes:
   //   - AUTH_ERROR: Authentication failure (missing/invalid API key)
   //   - MCP_ERROR: MCP server connection failure
@@ -106,6 +106,9 @@ export interface SessionInfo {
   error?: {
     message: string;
     code: string;
+    cause?: string;                  // Additive, evidence-based failure classification
+    phase?: string;
+    attempts?: number;
     time: number;                    // Unix timestamp (ms)
     // Provider/API call detail, when the failure came from an LLM API call.
     // Captured so a generic message like "Bad Request" is actually diagnosable.

@@ -1,3 +1,4 @@
+import { failureLabel } from '../../../../session/failure-label';
 import { Fragment, type ComponentChildren } from 'preact';
 import { useLocation } from 'preact-iso';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
@@ -227,7 +228,7 @@ export function SessionListItem(props: {
     // is already the dot's colour, and the reason is what a reader acts on.
     lineClass = incomplete ? 'it-line warn' : 'it-line err';
     const detail = errorText(row.errorMessage);
-    const code = incomplete ? displayStatusLabel(row.status, row.errorCode) : row.errorCode;
+    const code = incomplete ? displayStatusLabel(row.status, row.errorCode) : (failureLabel(row.errorCause) ?? row.errorCode);
     line = [code, detail].filter(Boolean).join(' · ') || displayStatusLabel(row.status, row.errorCode);
   } else {
     const preview = outputPreview(row.finalResponse);

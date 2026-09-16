@@ -70,6 +70,7 @@ export interface ApprovalSummary {
   /** The page where this gate is best answered when it is not the session
    *  log: a change set's review page. Absent for ordinary runs. */
   reviewHref?: string;
+  errorCause?: string;
   errorCode?: string;
   errorMessage?: string;
   /** Resume the parent by retrying its interrupted delegated child. */
@@ -102,6 +103,7 @@ export interface SessionSummary {
   trigger: SessionTrigger;
   createdAt: number;
   updatedAt: number;
+  errorCause?: string;
   errorCode?: string;
   errorMessage?: string;
   /** Reviewer discarded this ended failed run; needs-attention surfaces skip it. */
@@ -160,6 +162,7 @@ export interface SessionStatusInfo {
     description?: string;
     filePath?: string;
   };
+  errorCause?: string;
   errorCode?: string;
   errorMessage?: string;
   mock?: boolean;
@@ -369,6 +372,7 @@ export interface ChildSessionSummary {
   trigger: SessionTrigger;
   createdAt: number;
   updatedAt: number;
+  errorCause?: string;
   errorCode?: string;
   errorMessage?: string;
   /** Newest tool step, present only while the child is still executing. */
@@ -453,6 +457,7 @@ export interface ApprovalPageInfo {
     url?: string;
   };
   decision?: unknown;
+  errorCause?: string;
   errorCode?: string;
   errorMessage?: string;
   /** Resume the parent by retrying its interrupted delegated child. */

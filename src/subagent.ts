@@ -26,6 +26,7 @@ import { maybeMockAwaitHuman } from './runner/mock-tools';
 import { createToolsSnapshot } from './runner/tool-snapshot';
 import { SuspendSignal, isSuspendSignal } from './runner/suspend';
 import { extractApiErrorDetail } from './runner/api-error';
+import { classifyFailure } from './runner/failure';
 import { toErrorMessage } from './utils/error-message';
 import { usageToAssistantTokens } from './session/usage';
 import { resolveMaxSteps } from './utils/config';
@@ -665,6 +666,7 @@ export async function createSubAgentTool(
         // Model/provider failures also carry the concrete attempted model in both
         // the persisted child error and the result bubbled to the parent manager.
         const errorMsg = formatSubagentErrorMessage(error, agent.config.model);
+        const failure = classifyFailure(error, abortSignal);
         logger.error(`[SubAgent] ${agent.name} failed: ${errorMsg}`);
 
         if (pluginManager) {
@@ -678,8 +680,8 @@ export async function createSubAgentTool(
             ...(subagentSessionID && { sessionId: subagentSessionID }),
             error: {
               ...(error instanceof Error && error.name && { name: error.name }),
+              ...failure,
               message: errorMsg,
-              code: error instanceof Error && error.name === 'AbortError' ? 'TIMEOUT' : 'EXECUTION_ERROR',
             },
             duration: (Date.now() - startTime) / 1000,
           }, abortSignal);
@@ -689,7 +691,7 @@ export async function createSubAgentTool(
         if (subagentSessionManager && subagentSessionID) {
           try {
             await subagentSessionManager.setSessionError(subagentSessionID, agentId, {
-              code: 'EXECUTION_ERROR',
+              ...failure,
               // Spread first so the explicit top-level message (which carries any
               // retry-wrapper context) wins over the unwrapped provider message.
               ...extractApiErrorDetail(error),
