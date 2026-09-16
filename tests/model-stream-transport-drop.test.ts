@@ -185,6 +185,38 @@ describe('agent loop transport-drop handling', () => {
     expect(textOf(chunks)).toBe('recovered');
   });
 
+  test('partial tool input is not committed before the tool call', async () => {
+    let calls = 0;
+    currentModel = new MockLanguageModelV3({
+      doStream: async () => {
+        calls++;
+        if (calls === 1) {
+          return {
+            stream: droppingStream([
+              { type: 'reasoning-start', id: 'reasoning-1' },
+              { type: 'reasoning-delta', id: 'reasoning-1', delta: 'thinking' },
+              { type: 'tool-input-start', id: 'partial-1', toolName: 'partial_probe' },
+              { type: 'tool-input-delta', id: 'partial-1', delta: '{"query":"par' },
+            ]),
+          };
+        }
+        return { stream: completionStream('recovered') };
+      },
+    });
+
+    const chunks = await runCore({
+      partial_probe: {
+        description: 'partial input probe',
+        inputSchema: z.object({ query: z.string().optional() }),
+        execute: async () => 'never called',
+      },
+    });
+
+    expect(calls).toBe(2);
+    expect(errorMessages(chunks)).toEqual([]);
+    expect(textOf(chunks)).toBe('recovered');
+  });
+
   test('a drop after committed text fails without retrying', async () => {
     let calls = 0;
     currentModel = new MockLanguageModelV3({

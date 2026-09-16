@@ -115,15 +115,13 @@ class GateMachineRejectionLoopError extends Error {
     this.name = 'GateMachineRejectionLoopError';
   }
 }
-// Chunk types that commit externally visible output or begin a tool call in the
-// current step. Their presence makes that step unsafe to retry. Reasoning is
-// deliberately excluded: it is diagnostic-only and has no external effect, so
-// a provider that emits a reasoning preamble and then stalls can safely restart
-// from the same model-step checkpoint.
+// Chunk types that commit externally visible output or have crossed the
+// irreversible tool-call boundary in the current step. Their presence makes
+// that step unsafe to retry. Reasoning and partial tool-input assembly are
+// deliberately excluded: they have no external effect, so a provider that
+// drops after either can safely restart from the same model-step checkpoint.
 const MODEL_COMMITTED_OUTPUT_CHUNK_TYPES = new Set([
   'text-delta',
-  'tool-input-start',
-  'tool-input-delta',
   'tool-call',
   'tool-result',
   'tool-error',
