@@ -119,10 +119,14 @@ or bash configuration; AgentUse intentionally does not expose environment
 secrets to the model.
 
 They are AgentUse placeholders, not shell environment variables. In tool
-configuration, use them only in supported path-valued fields such as
+configuration, use them in supported path-valued fields such as
 `tools.filesystem[].path`, `tools.filesystem[].paths`, and
-`tools.bash.allowedPaths`; they do not make `${root}` inside an arbitrary shell
-command expand. `~` is also accepted by path resolvers where documented, but the
+`tools.bash.allowedPaths`, and in `tools.bash.commands` / `tools.bash.gated`.
+Command patterns resolve before allowlist and approval matching. They do not
+expand placeholders in submitted shell commands. Missing `${agentDir}` or
+replacement paths containing whitespace or shell/wildcard metacharacters fail
+configuration; use a project-relative command in those cases.
+`~` is also accepted by path resolvers where documented, but the
 AgentUse placeholders are clearer and portable across users.
 
 When editing an existing agent, preserve its placeholders exactly unless the

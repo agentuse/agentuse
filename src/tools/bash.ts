@@ -1,4 +1,5 @@
 import type { Tool } from 'ai';
+import { resolveBashPatterns } from './command-patterns.js';
 import { z } from 'zod';
 import { spawn } from 'child_process';
 import { StringDecoder } from 'string_decoder';
@@ -183,6 +184,7 @@ export function createBashTool(
 ): Tool {
   const allowedPaths = config.allowedPaths ?? [];
   const resolverContext: PathResolverContext = context ?? { projectRoot };
+  config = resolveBashPatterns(config, resolverContext);
   const validator = new CommandValidator(config.commands, projectRoot, allowedPaths, resolverContext);
   const timeoutConfigured = config.timeout !== undefined;
   // Bare numbers are rejected outright on this field: it was the one timeout

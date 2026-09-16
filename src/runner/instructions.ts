@@ -1,4 +1,5 @@
 import { dirname } from 'path';
+import { resolveBashPatterns } from '../tools/command-patterns.js';
 import type { ParsedAgent } from '../parser';
 import { findProjectRoot } from '../utils/project';
 import { resolveSafeVariables } from '../tools/index.js';
@@ -16,10 +17,17 @@ export async function buildFreshInstructions(options: {
   recordLearningUsage?: boolean;
 }) {
   const { agent, agentFilePath, projectContext } = options;
+  const approvalConfig = agent.config.tools?.bash ? {
+    ...agent.config,
+    tools: { ...agent.config.tools, bash: resolveBashPatterns(agent.config.tools.bash, {
+      projectRoot: projectContext?.projectRoot ?? process.cwd(),
+      agentDir: agentFilePath ? dirname(agentFilePath) : undefined,
+    }) },
+  } : agent.config;
   let instructions = appendApprovalInstructions(resolveSafeVariables(agent.instructions, {
     projectRoot: projectContext?.projectRoot ?? process.cwd(),
     agentDir: agentFilePath ? dirname(agentFilePath) : undefined,
-  }), agent.config);
+  }), approvalConfig);
   if (projectContext) {
     const names = getExplicitSkillNames(agent.config.skills);
     if (names.length) {

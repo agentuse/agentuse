@@ -363,6 +363,14 @@ When no config timeout is set, the model may pass a per-call `timeout`: a durati
 
 ### Command Patterns
 
+Both `commands` and `gated` support `${root}`, `${agentDir}`, and `${tmpDir}`.
+These resolve from the runtime path context before matching, including approval
+enforcement and gated mocks. For example, `python3 ${agentDir}/check.py *`
+matches the resolved script path. This does not expand shell input or environment
+variables. `${agentDir}` requires an agent loaded from a file. Replacement paths
+containing whitespace or shell/wildcard metacharacters fail configuration rather
+than changing pattern meaning; use a project-relative command for those paths.
+
 Commands use simple wildcard matching:
 
 | Pattern | Matches |

@@ -25,6 +25,26 @@ function createMockAgent(overrides: Partial<ParsedAgent> = {}): ParsedAgent {
   };
 }
 
+it('shares resolved Bash patterns between instructions, tools and approval enforcement', async () => {
+  const agent = createMockAgent({ config: {
+    model: 'anthropic:claude-sonnet-4-0',
+    approval: true,
+    skills: { auto: false, explicit: {} },
+    tools: { bash: {
+      commands: ['python3 ${agentDir}/check.py *'],
+      gated: ['python3 ${agentDir}/publish.py *'],
+    } },
+  } });
+  const result = await prepareAgentExecution({
+    agent, mcpClients: [], agentFilePath: '/tmp/test-project/agents/test.agentuse',
+    projectContext: { projectRoot: '/tmp/test-project', cwd: '/tmp/test-project' },
+  });
+  expect(agent.config.tools?.bash?.gated).toEqual(['python3 /tmp/test-project/agents/publish.py *']);
+  expect(result.userMessage).toContain('python3 /tmp/test-project/agents/publish.py *');
+  expect(result.tools.tools__bash?.description).toContain('python3 /tmp/test-project/agents/check.py *');
+  expect(result.tools.tools__bash?.description).toContain('python3 /tmp/test-project/agents/publish.py *');
+});
+
 describe('buildAutonomousAgentPrompt', () => {
   it('should include the date in the prompt', () => {
     const date = 'Monday, January 1, 2025';

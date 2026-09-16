@@ -1,4 +1,5 @@
 import type { Tool } from 'ai';
+import { resolveBashPatterns } from '../tools/command-patterns.js';
 import { createBuiltinSkillTool } from '../onboarding/builtin-skill-tool';
 import { reviewAuthoredAgentCapabilities } from '../agents/capability-review';
 import { getMCPTools, type MCPConnection } from '../mcp';
@@ -154,6 +155,16 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     effectAudit,
     liveToolOutput,
   } = options;
+
+  // Keep approval enforcement, mocks and tool grants on the same resolved
+  // patterns. This shared loader also covers delegated agents.
+  if (agent.config.tools?.bash) {
+    agent.config = { ...agent.config, tools: { ...agent.config.tools,
+      bash: resolveBashPatterns(agent.config.tools.bash, {
+        projectRoot: projectContext?.projectRoot ?? process.cwd(), agentDir,
+      }),
+    } };
+  }
 
   // Compute agentId relative to the agent's own project (stateRoot) so the
   // id is stable across cwds. Stores still live under projectRoot below.
