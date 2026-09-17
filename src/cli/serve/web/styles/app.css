@@ -11259,6 +11259,27 @@ html[data-page="draft-panel"] .app-route {
   color: var(--muted-2);
 }
 .page-approval-detail .session-meta-line .session-id-copy code { font-size: var(--font-size-micro); }
+.page-approval-detail .session-context-toggle {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.page-approval-detail .session-meta-line .session-context-toggle:hover {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  text-decoration: none;
+}
+.page-approval-detail .session-context-toggle:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+  border-radius: 2px;
+}
 
 /* The now card. One frame, generous padding, no inner frames: the head band,
    the caps state label and the three bordered tiles are all gone. What is

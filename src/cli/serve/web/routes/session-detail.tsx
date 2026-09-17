@@ -11,6 +11,7 @@ import { AgentRevisionLauncher, AgentRevisionSessionPanel, type AgentRevisionSes
 import { ChangesetSessionPanel } from '../components/changeset-session-panel';
 import { SessionMenu } from '../components/session-menu';
 import { Loading } from '../components/loading';
+import { formatTokenCount } from '../components/token-usage-strip';
 import { postSessionDecision, postSessionContinue, postSessionResume, postSessionStop, postSessionReopen, postSessionReviewed, fetchSessionArtifacts, fetchApprovals, type SessionArtifact } from '../lib/api';
 import { syncAppBadge } from '../lib/badge';
 import { writeClipboardText } from '../lib/clipboard';
@@ -425,6 +426,28 @@ export function headerTokenUsage(
   approval: Pick<ApprovalPageInfo, 'sessionStatus' | 'tokenUsage'> | null
 ): ApprovalPageInfo['tokenUsage'] | undefined {
   return approval?.tokenUsage;
+}
+
+function SessionContextUsage({ usage }: { usage: NonNullable<ApprovalPageInfo['tokenUsage']> }) {
+  const [expanded, setExpanded] = useState(false);
+  const context = usage.context;
+  if (!context || !context.contextLimit || context.contextLimit <= 0) return null;
+  const contextLabel = `context ${Math.max(0, Math.min(100, context.usagePercentage)).toFixed(0)}% used`;
+  return (
+    <span>
+      <button
+        type="button"
+        class="session-context-toggle"
+        aria-expanded={expanded}
+        title={`${formatTokenCount(context.activeTokens)} / ${formatTokenCount(context.contextLimit)} context tokens. Click to ${expanded ? 'hide' : 'show'} token usage.`}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        {expanded
+          ? `input (uncached) ${formatTokenCount(Math.max(0, usage.input - usage.cachedInput))} · input (cached) ${formatTokenCount(usage.cachedInput)} · output ${formatTokenCount(usage.output)} · context used ${Math.max(0, Math.min(100, context.usagePercentage)).toFixed(0)}%`
+          : contextLabel}
+      </button>
+    </span>
+  );
 }
 
 /** The ended-session Result card already owns the durable terminal error. Keep
@@ -1981,11 +2004,6 @@ export default function SessionDetail() {
   const tokenUsage = headerTokenUsage(approval);
   const estimatedCost = pricing ? pricing.estimateSessionCostUsd(approval.model, tokenUsage) : undefined;
   const costLabel = estimatedCost !== undefined && pricing ? pricing.formatUsd(estimatedCost) : undefined;
-  const contextLeftLabel = (() => {
-    const context = tokenUsage?.context;
-    if (!context || typeof context.contextLimit !== 'number' || context.contextLimit <= 0) return undefined;
-    return `${Math.max(0, 100 - context.usagePercentage).toFixed(0)}% left`;
-  })();
   // Resolved theme currently applied to the document (set by the theme toggle).
   // Threaded into artifact links so a new-tab markdown/text artifact renders in
   // the same theme as the app rather than the default.
@@ -2770,7 +2788,7 @@ export default function SessionDetail() {
             )}
             {elapsedLabel && <span>{elapsedLabel}</span>}
             {costLabel && <span>cost {costLabel}</span>}
-            {mode === 'working' && contextLeftLabel && <span>context {contextLeftLabel}</span>}
+            {tokenUsage && <SessionContextUsage key={approval.sessionId} usage={tokenUsage} />}
             {mode === 'decision' && approval.expiresAt !== undefined && (
               <span>expires {formatApprovalTime(approval.expiresAt)}</span>
             )}
