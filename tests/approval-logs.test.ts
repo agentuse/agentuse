@@ -1,8 +1,28 @@
 import { describe, expect, it } from 'bun:test';
-import { buildApprovalLogs, normalizeReviewEscalation } from '../src/worker/approval-logs';
+import { buildApprovalLogs, groupParallelToolCalls, normalizeReviewEscalation } from '../src/worker/approval-logs';
 import { completeApprovalValueDisplay } from '../src/utils/approval-value';
 
 describe('buildApprovalLogs', () => {
+  it('keeps incomplete groups, single calls, and pending approvals flat', () => {
+    const row = { id: 'a', callId: 'a', type: 'tool', tool: 'results', title: 'Read', status: 'completed',
+      details: { modelStepId: 's', tokenUsage: { input: 100, output: 10, cachedInput: 0, sharedCalls: 2 } } };
+    expect(groupParallelToolCalls([row])).toEqual([row]);
+    const gate = { ...row, id: 'b', callId: 'b', tool: 'await_human', status: 'pending' };
+    expect(groupParallelToolCalls([row, gate])).toEqual([row, gate]);
+  });
+
+  it('preserves nested Code Mode children when grouping their parent calls', () => {
+    const usage = { input: 100, output: 10, cachedInput: 0, sharedCalls: 2 };
+    const rows = [
+      { id: 'a', callId: 'a', type: 'tool', tool: 'code_exec', title: 'Program', status: 'completed', details: { modelStepId: 's', tokenUsage: usage } },
+      { id: 'nested', callId: 'nested', parentCallId: 'a', type: 'tool', tool: 'bash', title: 'Child', status: 'completed' },
+      { id: 'b', callId: 'b', type: 'tool', tool: 'results', title: 'Read', status: 'error', details: { modelStepId: 's' } },
+    ];
+    const grouped = groupParallelToolCalls(rows);
+    expect(grouped[0]?.status).toBe('error');
+    expect(grouped.find(row => row.id === 'nested')?.parentCallId).toBe('a');
+    expect(grouped.find(row => row.id === 'a')?.parentCallId).toBe('model-step:s');
+  });
   it('shows model usage once per step and preserves each tool result size', () => {
     const make = (id: string, stepId?: string) => ({
       id, type: 'tool', callID: id, tool: 'results',
@@ -17,9 +37,13 @@ describe('buildApprovalLogs', () => {
         make('c', explicit ? 'step2' : undefined),
         make('d', explicit ? 'step2' : undefined),
       ]);
-      expect(logs.map(row => Boolean(row.details?.tokenUsage))).toEqual([true, false, true, false]);
-      expect(logs.map(row => row.details?.returnedBytes)).toEqual([2, 2, 2, 2]);
-      expect(logs).toHaveLength(4);
+      const parents = logs.filter(row => row.title === 'Parallel tool calls');
+      const children = logs.filter(row => row.parentCallId);
+      expect(parents).toHaveLength(2);
+      expect(parents.every(row => row.details?.tokenUsage?.input === 18347)).toBe(true);
+      expect(children.every(row => !row.details?.tokenUsage)).toBe(true);
+      expect(children.map(row => row.details?.returnedBytes)).toEqual([2, 2, 2, 2]);
+      expect(logs).toHaveLength(6);
     }
   });
   it('projects a strict-review escalation only from valid pending metadata', () => {

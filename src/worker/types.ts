@@ -135,6 +135,7 @@ export interface ApprovalLogDetails {
   input?: string;
   output?: string;
   returnedBytes?: number;
+  modelStepId?: string;
   /** Bounded tail of a still-running tool call, replaced by `output` when it finishes. */
   liveOutput?: string;
   tokenUsage?: {

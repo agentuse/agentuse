@@ -336,6 +336,7 @@ export function buildApprovalLogs(parts: any[]): Array<{ id: string; type: strin
   const seenSteps = new Set<string>();
   let legacyKey = '';
   let legacyRemaining = 0;
+  let legacyStepId = '';
   const partsById = new Map(parts.map((part: any) => [String(part.id), part]));
   for (const entry of entries) {
     if (entry.type !== 'tool' || ('parentCallId' in entry && entry.parentCallId)) continue;
@@ -344,15 +345,19 @@ export function buildApprovalLogs(parts: any[]): Array<{ id: string; type: strin
     if (!usage) { legacyRemaining = 0; continue; }
     const raw = partsById.get(entry.id)?.state?.metadata?.modelStepUsage;
     if (typeof raw?.stepId === 'string') {
+      details.modelStepId = raw.stepId;
       if (seenSteps.has(raw.stepId)) delete details.tokenUsage;
       seenSteps.add(raw.stepId);
       legacyRemaining = 0;
     } else {
       const key = JSON.stringify(usage);
       if (legacyRemaining > 0 && key === legacyKey) {
+        details.modelStepId = legacyStepId;
         delete details.tokenUsage;
         legacyRemaining--;
       } else {
+        legacyStepId = entry.id;
+        details.modelStepId = legacyStepId;
         legacyKey = key;
         legacyRemaining = Math.max(0, (usage.sharedCalls ?? 1) - 1);
       }
@@ -428,7 +433,45 @@ export function buildApprovalLogs(parts: any[]): Array<{ id: string; type: strin
       };
     }
   }
-  return entries;
+  return groupParallelToolCalls(entries);
+}
+
+/** Presentation-only grouping. Persisted calls and their tool outputs stay intact. */
+export function groupParallelToolCalls<T extends { id: string; type: string; tool?: string; callId?: string; parentCallId?: string; status?: string; title: string; time?: number; details?: ApprovalLogDetails }>(entries: T[]): T[] {
+  const groups = new Map<string, T[]>();
+  for (const entry of entries) {
+    const step = entry.details?.modelStepId;
+    if (entry.type !== 'tool' || entry.parentCallId || !step) continue;
+    const group = groups.get(step) ?? [];
+    group.push(entry);
+    groups.set(step, group);
+  }
+  const parents = new Map<string, T>();
+  for (const [step, calls] of groups) {
+    // Decisions and outcomes retain their dedicated surfaces. Never hide an
+    // actionable gate inside a display-only parent.
+    if (calls.length < 2 || calls.some(call => call.status === 'pending' || call.tool === 'await_human' || call.tool?.startsWith('report_') || call.details?.toolApproval)) continue;
+    const usage = calls.find(call => call.details?.tokenUsage)?.details?.tokenUsage;
+    if (!usage || calls.length !== usage.sharedCalls) continue;
+    const first = calls[0]!;
+    parents.set(step, { id: `model-step:${step}`, callId: `model-step:${step}`, type: 'tool',
+      title: 'Parallel tool calls', time: first.time,
+      status: calls.some(call => call.status === 'error') ? 'error' : calls.some(call => call.status === 'running') ? 'running' : 'completed',
+      details: { tokenUsage: usage },
+    } as T);
+  }
+  const emitted = new Set<string>();
+  return entries.flatMap(entry => {
+    const step = entry.details?.modelStepId;
+    const parent = step && !entry.parentCallId ? parents.get(step) : undefined;
+    if (!parent || !step) return [entry];
+    const details = { ...entry.details };
+    delete details.tokenUsage;
+    const child = { ...entry, parentCallId: parent.callId, details };
+    if (emitted.has(step)) return [child];
+    emitted.add(step);
+    return [parent, child];
+  });
 }
 
 export function approvalLogTitle(state: any): string {

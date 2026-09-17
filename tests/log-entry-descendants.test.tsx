@@ -304,9 +304,8 @@ describe('delegated call expansion', () => {
       output: 'document', returnedBytes: 20000,
       tokenUsage: { input: 18347, cachedInput: 14720, output: 1066, sharedCalls: 8 },
     } }), true);
-    expect(html).toContain('model input (uncached)');
-    expect(html).toContain('model output');
-    expect(html).toContain('one model step');
+    expect(html).toContain('cached input');
+    expect(html).not.toContain('one model step');
     expect(html).toContain('tool returned');
     expect(html).toContain('20,000');
   });

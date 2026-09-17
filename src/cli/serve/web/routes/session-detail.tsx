@@ -2283,6 +2283,7 @@ export default function SessionDetail() {
         repeatCount={entry.repeatCount}
         warnings={entry.callId ? toolWarnings.get(entry.callId) : undefined}
         nestedCalls={nestedCalls}
+        nestedCallsByParent={nestedToolCalls}
         nestedWarnings={toolWarnings}
         expanded={expandedNestedCallIds.size > 0 ? true : expandOverrides.get(entry.id)}
         expandOverrides={expandOverrides}

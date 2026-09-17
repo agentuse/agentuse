@@ -1312,11 +1312,10 @@ function ToolTokenUsageStrip(props: { usage: NonNullable<ApprovalLogDetails['tok
   const input = Math.max(0, props.usage.input - cached);
   const output = Math.max(0, props.usage.output);
   const metrics = [
-    { label: 'model input (uncached)', value: toolTokenFmt.format(input) },
-    { label: 'model output', value: toolTokenFmt.format(output) },
+    { label: 'input', value: toolTokenFmt.format(input) },
+    { label: 'output', value: toolTokenFmt.format(output) },
     { label: 'cached input', value: toolTokenFmt.format(cached) },
   ];
-  const sharedCalls = props.usage.sharedCalls ?? 1;
 
   return (
     <div class="tool-token-usage" aria-label="Model step token usage">
@@ -1326,12 +1325,6 @@ function ToolTokenUsageStrip(props: { usage: NonNullable<ApprovalLogDetails['tok
           <span class="tool-token-value">{metric.value}</span>
         </span>
       ))}
-      {sharedCalls > 1 && (
-        <span
-          class="tool-token-shared"
-          title="These counters cover the model step that emitted all of these tool calls; they are not charged once per tool."
-        >one model step · {sharedCalls} tool calls</span>
-      )}
     </div>
   );
 }
@@ -1516,6 +1509,7 @@ export interface LogEntryProps {
    *  inside this row and only when it is expanded; collapsed, the row carries a
    *  count so the fan-out is visible without the noise. */
   nestedCalls?: ApprovalLogEntry[] | undefined;
+  nestedCallsByParent?: Map<string, ApprovalLogEntry[]> | undefined;
   /** Warnings keyed by call id, so nested rows can show their own badges. */
   nestedWarnings?: Map<string, ApprovalLogEntry[]> | undefined;
   /** Reviewer expand/collapse state for every row, so nested rows honour theirs. */
@@ -1835,6 +1829,11 @@ function LogEntryImpl(props: LogEntryProps) {
               <LogEntry
                 key={call.id}
                 entry={call}
+                nestedCalls={call.callId ? props.nestedCallsByParent?.get(call.callId) : undefined}
+                nestedCallsByParent={props.nestedCallsByParent}
+                nestedWarnings={props.nestedWarnings}
+                expandOverrides={props.expandOverrides}
+                forceExpandedNestedCallIds={props.forceExpandedNestedCallIds}
                 warnings={call.callId ? props.nestedWarnings?.get(call.callId) : undefined}
                 expanded={props.forceExpandedNestedCallIds?.has(call.id) ? true : props.expandOverrides?.get(call.id)}
                 showActions={false}
@@ -1920,6 +1919,7 @@ const nestedSignature = (props: LogEntryProps): string =>
 /** Keep a mounted parent in sync when a nested-only search or error match
  * changes which child must be temporarily opened. */
 export const logEntryPropsEqual = (prev: LogEntryProps, next: LogEntryProps): boolean =>
+  prev.nestedCallsByParent === next.nestedCallsByParent &&
   logEntrySignature(prev.entry) === logEntrySignature(next.entry) &&
   warningsSignature(prev.warnings) === warningsSignature(next.warnings) &&
   nestedSignature(prev) === nestedSignature(next) &&

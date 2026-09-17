@@ -108,6 +108,7 @@ export interface ApprovalLogDetails {
   input?: string;
   output?: string;
   returnedBytes?: number;
+  modelStepId?: string;
   tokenUsage?: {
     input: number;
     output: number;
