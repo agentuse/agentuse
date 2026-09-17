@@ -54,3 +54,29 @@ additional diagnostics, add cache breakpoints, or change cache options. Raw
 stream events are inspected transiently through the SDK; raw response bodies,
 headers, and model output are not copied into the metadata records. The metadata
 is also exposed in structured session-log details; the analyzer displays it.
+
+## Direct Codex backend probes
+
+Run the bounded synthetic probes using the existing AgentUse Codex OAuth login:
+
+```bash
+bun benchmarks/cache-input/probe-backend.ts capabilities /tmp/cache-capabilities.json
+bun benchmarks/cache-input/probe-backend.ts retention /tmp/cache-retention.json
+bun benchmarks/cache-input/probe-backend.ts reuse /tmp/cache-reuse.json
+```
+
+These make real model requests. `capabilities` checks the documented mode, TTL,
+comparison ID, and user/tool-result breakpoint fields, including an invalid-mode
+control. `retention` checks default and legacy retention values. `reuse` sends
+36 requests in two rounds with reversed arm order: identical repeated requests,
+append-only synthetic function-call history, and that history with a stable
+cache key. Each arm starts with a unique instruction prefix. Requests start at
+least 4.5 seconds apart to keep this probe below 15 requests/minute; other
+account traffic is not controlled. No tool is executed, and generated replies
+are not appended: the history is deterministic fixture data, not a full agent
+behavior benchmark.
+
+Results contain request fingerprints, response IDs, allowlisted usage and
+cache diagnostics, and status/error information. They exclude credentials,
+account IDs, prompt bodies, and model output. Each request has a 60-second
+transport timeout. Production configuration and SDK versions are unchanged.

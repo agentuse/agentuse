@@ -1,0 +1,1061 @@
+[
+  {
+    "runId": "8b878fe9-0904-4225-bec7-6ecee50287cc",
+    "mode": "capabilities",
+    "endpoint": "https://chatgpt.com/backend-api/codex/responses",
+    "created": "2026-09-17T22:33:36.248Z",
+    "rows": [
+      {
+        "label": "baseline",
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_066f4dc020344893016aac6abc336887d096da75538aadd1c9",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 2874,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 2874
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1417
+      },
+      {
+        "label": "mode-implicit",
+        "requestedOptions": {
+          "mode": "implicit"
+        },
+        "httpStatus": 400,
+        "error": "Unsupported parameter: prompt_cache_options",
+        "elapsedMs": 283
+      },
+      {
+        "label": "ttl-30m",
+        "requestedOptions": {
+          "ttl": "30m"
+        },
+        "httpStatus": 400,
+        "error": "Unsupported parameter: prompt_cache_options",
+        "elapsedMs": 398
+      },
+      {
+        "label": "comparison",
+        "requestedOptions": {
+          "comparison_response_id": "resp_066f4dc020344893016aac6abc336887d096da75538aadd1c9"
+        },
+        "httpStatus": 400,
+        "error": "Unsupported parameter: prompt_cache_options",
+        "elapsedMs": 376
+      },
+      {
+        "label": "implicit-ttl-comparison",
+        "requestedOptions": {
+          "mode": "implicit",
+          "ttl": "30m",
+          "comparison_response_id": "resp_066f4dc020344893016aac6abc336887d096da75538aadd1c9"
+        },
+        "httpStatus": 400,
+        "error": "Unsupported parameter: prompt_cache_options",
+        "elapsedMs": 330
+      },
+      {
+        "label": "mode-explicit-no-breakpoint",
+        "requestedOptions": {
+          "mode": "explicit"
+        },
+        "httpStatus": 400,
+        "error": "Unsupported parameter: prompt_cache_options",
+        "elapsedMs": 233
+      },
+      {
+        "label": "invalid-mode-control",
+        "requestedOptions": {
+          "mode": "invalid-probe-value"
+        },
+        "httpStatus": 400,
+        "error": "Unsupported parameter: prompt_cache_options",
+        "elapsedMs": 427
+      },
+      {
+        "label": "user-breakpoint",
+        "httpStatus": 400,
+        "error": "prompt_cache_breakpoint is not supported on this model",
+        "elapsedMs": 428
+      },
+      {
+        "label": "tool-breakpoint",
+        "httpStatus": 400,
+        "error": "prompt_cache_breakpoint is not supported on this model",
+        "elapsedMs": 466
+      }
+    ],
+    "responseFieldNames": [
+      "id",
+      "object",
+      "created_at",
+      "status",
+      "background",
+      "completed_at",
+      "error",
+      "frequency_penalty",
+      "incomplete_details",
+      "instructions",
+      "max_output_tokens",
+      "max_tool_calls",
+      "model",
+      "moderation",
+      "output",
+      "parallel_tool_calls",
+      "presence_penalty",
+      "previous_response_id",
+      "prompt_cache_key",
+      "prompt_cache_retention",
+      "reasoning",
+      "safety_identifier",
+      "service_tier",
+      "store",
+      "temperature",
+      "text",
+      "tool_choice",
+      "tool_usage",
+      "tools",
+      "top_logprobs",
+      "top_p",
+      "truncation",
+      "usage",
+      "user",
+      "metadata"
+    ]
+  },
+  {
+    "runId": "b9a1f531-8aee-4cfa-840f-dc5f6243be67",
+    "mode": "retention",
+    "endpoint": "https://chatgpt.com/backend-api/codex/responses",
+    "created": "2026-09-17T22:34:15.106Z",
+    "rows": [
+      {
+        "label": "retention-default",
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_0aaa037a9803bcf2016aac6ae4cacc87d0ac11d82464ef8a4b",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 2877,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 2877
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 2968
+      },
+      {
+        "label": "retention-24h",
+        "requestedRetention": "24h",
+        "httpStatus": 400,
+        "error": "Unsupported parameter: prompt_cache_retention",
+        "elapsedMs": 266
+      },
+      {
+        "label": "retention-in_memory",
+        "requestedRetention": "in_memory",
+        "httpStatus": 400,
+        "error": "Unsupported parameter: prompt_cache_retention",
+        "elapsedMs": 260
+      }
+    ],
+    "responseFieldNames": [
+      "id",
+      "object",
+      "created_at",
+      "status",
+      "background",
+      "completed_at",
+      "error",
+      "frequency_penalty",
+      "incomplete_details",
+      "instructions",
+      "max_output_tokens",
+      "max_tool_calls",
+      "model",
+      "moderation",
+      "output",
+      "parallel_tool_calls",
+      "presence_penalty",
+      "previous_response_id",
+      "prompt_cache_key",
+      "prompt_cache_retention",
+      "reasoning",
+      "safety_identifier",
+      "service_tier",
+      "store",
+      "temperature",
+      "text",
+      "tool_choice",
+      "tool_usage",
+      "tools",
+      "top_logprobs",
+      "top_p",
+      "truncation",
+      "usage",
+      "user",
+      "metadata"
+    ]
+  },
+  {
+    "runId": "9adf97e4-2a0c-4877-a96a-b84b3fe27f66",
+    "mode": "reuse",
+    "endpoint": "https://chatgpt.com/backend-api/codex/responses",
+    "created": "2026-09-17T22:37:08.533Z",
+    "rows": [
+      {
+        "label": "1/repeat/1",
+        "fingerprint": {
+          "sequence": 1,
+          "allHash": "3a5c7ed5401250f132235ab032830ad5904b8d610250a0da54451510616f81f2"
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_0fd72380b30c2ce2016aac6af5b90c87d080f54c5b0f42639d",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 2881,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 2881
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1496
+      },
+      {
+        "label": "1/repeat/2",
+        "fingerprint": {
+          "sequence": 2,
+          "allHash": "3a5c7ed5401250f132235ab032830ad5904b8d610250a0da54451510616f81f2",
+          "prefixHash": "3a5c7ed5401250f132235ab032830ad5904b8d610250a0da54451510616f81f2",
+          "previousAllHash": "3a5c7ed5401250f132235ab032830ad5904b8d610250a0da54451510616f81f2",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_0db7474297703df8016aac6afa471487d09afc38c2cf45664f",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 2881,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 2881
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1349
+      },
+      {
+        "label": "1/repeat/3",
+        "fingerprint": {
+          "sequence": 3,
+          "allHash": "3a5c7ed5401250f132235ab032830ad5904b8d610250a0da54451510616f81f2",
+          "prefixHash": "3a5c7ed5401250f132235ab032830ad5904b8d610250a0da54451510616f81f2",
+          "previousAllHash": "3a5c7ed5401250f132235ab032830ad5904b8d610250a0da54451510616f81f2",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_01ed0787bedcdb53016aac6afed5fc87d0916d9fbef879df41",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 2881,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 2881
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1574
+      },
+      {
+        "label": "1/repeat/4",
+        "fingerprint": {
+          "sequence": 4,
+          "allHash": "3a5c7ed5401250f132235ab032830ad5904b8d610250a0da54451510616f81f2",
+          "prefixHash": "3a5c7ed5401250f132235ab032830ad5904b8d610250a0da54451510616f81f2",
+          "previousAllHash": "3a5c7ed5401250f132235ab032830ad5904b8d610250a0da54451510616f81f2",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_08a087481ff2a278016aac6b033e3487d0ad1dd9ed0a232da9",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 2881,
+          "cachedInputTokens": 2816,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 65
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1753
+      },
+      {
+        "label": "1/repeat/5",
+        "fingerprint": {
+          "sequence": 5,
+          "allHash": "3a5c7ed5401250f132235ab032830ad5904b8d610250a0da54451510616f81f2",
+          "prefixHash": "3a5c7ed5401250f132235ab032830ad5904b8d610250a0da54451510616f81f2",
+          "previousAllHash": "3a5c7ed5401250f132235ab032830ad5904b8d610250a0da54451510616f81f2",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_048f4e920ee30392016aac6b07de4487d0bcac7d78f4935304",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 2881,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 2881
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 2060
+      },
+      {
+        "label": "1/repeat/6",
+        "fingerprint": {
+          "sequence": 6,
+          "allHash": "3a5c7ed5401250f132235ab032830ad5904b8d610250a0da54451510616f81f2",
+          "prefixHash": "3a5c7ed5401250f132235ab032830ad5904b8d610250a0da54451510616f81f2",
+          "previousAllHash": "3a5c7ed5401250f132235ab032830ad5904b8d610250a0da54451510616f81f2",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_02ca43ba8ab8dc1f016aac6b0c366c87d0af3fdfb271f47bb9",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 2881,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 2881
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1325
+      },
+      {
+        "label": "1/linear/1",
+        "fingerprint": {
+          "sequence": 1,
+          "allHash": "5b4789320a844dc73760e5fff41230936927671ef28c07a4a6d1a73d4f320abb"
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_0eeb7bfc39718986016aac6b10b0f087d0b71f8ebac0671237",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 2881,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 2881
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1986
+      },
+      {
+        "label": "1/linear/2",
+        "fingerprint": {
+          "sequence": 2,
+          "allHash": "db28671fa0c4c3e508b3bf044b7d03ee15217af4d4c1d95ce2520932814e98c5",
+          "prefixHash": "5b4789320a844dc73760e5fff41230936927671ef28c07a4a6d1a73d4f320abb",
+          "previousAllHash": "5b4789320a844dc73760e5fff41230936927671ef28c07a4a6d1a73d4f320abb",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_0b3da71747242d6b016aac6b15373087d0b3a6052a1b742609",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 3240,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 3240
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 2092
+      },
+      {
+        "label": "1/linear/3",
+        "fingerprint": {
+          "sequence": 3,
+          "allHash": "cdff2fd412d14e87c88dcb14515a6b38bf95cbfb092653cd67d52eaf51f32787",
+          "prefixHash": "db28671fa0c4c3e508b3bf044b7d03ee15217af4d4c1d95ce2520932814e98c5",
+          "previousAllHash": "db28671fa0c4c3e508b3bf044b7d03ee15217af4d4c1d95ce2520932814e98c5",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_09e2d20e8053b20a016aac6b19d08487d0b0953a494594b9a3",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 3599,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 3599
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 2167
+      },
+      {
+        "label": "1/linear/4",
+        "fingerprint": {
+          "sequence": 4,
+          "allHash": "b060a76ad6577faed61fa9b8b0891ec72ada5edac0d2f67e7a5c9f9e56babe6d",
+          "prefixHash": "cdff2fd412d14e87c88dcb14515a6b38bf95cbfb092653cd67d52eaf51f32787",
+          "previousAllHash": "cdff2fd412d14e87c88dcb14515a6b38bf95cbfb092653cd67d52eaf51f32787",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_0de6aed8aca07929016aac6b1e4f4087d0aa22ed41220684fb",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 3958,
+          "cachedInputTokens": 2688,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 1270
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 2608
+      },
+      {
+        "label": "1/linear/5",
+        "fingerprint": {
+          "sequence": 5,
+          "allHash": "f8b5b3276d24649f0622992d7a125a975343097a25e2068ee5f29dea9e6aa0a2",
+          "prefixHash": "b060a76ad6577faed61fa9b8b0891ec72ada5edac0d2f67e7a5c9f9e56babe6d",
+          "previousAllHash": "b060a76ad6577faed61fa9b8b0891ec72ada5edac0d2f67e7a5c9f9e56babe6d",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_053d03509ebbe9cf016aac6b22b59c87d0ad50f4a793d16f21",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 4317,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 4317
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1187
+      },
+      {
+        "label": "1/linear/6",
+        "fingerprint": {
+          "sequence": 6,
+          "allHash": "c270eba6e93dc25b8b0d8c1b9caf26c9918cd414efcb018c220442b7360962d7",
+          "prefixHash": "f8b5b3276d24649f0622992d7a125a975343097a25e2068ee5f29dea9e6aa0a2",
+          "previousAllHash": "f8b5b3276d24649f0622992d7a125a975343097a25e2068ee5f29dea9e6aa0a2",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_07040401ed382e3d016aac6b2738f887d0b7bb55dc971010f5",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 4676,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 4676
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1892
+      },
+      {
+        "label": "1/linear-key/1",
+        "fingerprint": {
+          "sequence": 1,
+          "allHash": "da89a800f62d29330d25fe56c81d55309065c95c511eee83698084c6480850f2"
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_038fdb5283f9bf1e016aac6b2bc23887d0a8179dcc8faaa680",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 2882,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 2882
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1513
+      },
+      {
+        "label": "1/linear-key/2",
+        "fingerprint": {
+          "sequence": 2,
+          "allHash": "c49cca3a988d8041ce269259bffcd6bca6a12a936adbd858f7863bf2ecc7be9b",
+          "prefixHash": "da89a800f62d29330d25fe56c81d55309065c95c511eee83698084c6480850f2",
+          "previousAllHash": "da89a800f62d29330d25fe56c81d55309065c95c511eee83698084c6480850f2",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_0b862e617aeda3c5016aac6b30d5d887d0903f8414e16d7d5e",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 3241,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 3241
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 3153
+      },
+      {
+        "label": "1/linear-key/3",
+        "fingerprint": {
+          "sequence": 3,
+          "allHash": "0f8c69a7188bedca37d64a84571d13824061ed42c7961d39f3745c3e363eaca5",
+          "prefixHash": "c49cca3a988d8041ce269259bffcd6bca6a12a936adbd858f7863bf2ecc7be9b",
+          "previousAllHash": "c49cca3a988d8041ce269259bffcd6bca6a12a936adbd858f7863bf2ecc7be9b",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_0ef7d6dede2c7040016aac6b34cd9487d09784b85f6e540343",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 3600,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 3600
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1828
+      },
+      {
+        "label": "1/linear-key/4",
+        "fingerprint": {
+          "sequence": 4,
+          "allHash": "30c5f838428fb0526de00a22d0e636a1502d0939e2f2d24ee51821b8a34a1329",
+          "prefixHash": "0f8c69a7188bedca37d64a84571d13824061ed42c7961d39f3745c3e363eaca5",
+          "previousAllHash": "0f8c69a7188bedca37d64a84571d13824061ed42c7961d39f3745c3e363eaca5",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_0d296e974988c00e016aac6b39628087d096874a49848d8c49",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 3959,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 3959
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 2329
+      },
+      {
+        "label": "1/linear-key/5",
+        "fingerprint": {
+          "sequence": 5,
+          "allHash": "74d0d1e22af20a110d774bd5e0367560b33a2ab7a2624e60da58e27fe00c6f34",
+          "prefixHash": "30c5f838428fb0526de00a22d0e636a1502d0939e2f2d24ee51821b8a34a1329",
+          "previousAllHash": "30c5f838428fb0526de00a22d0e636a1502d0939e2f2d24ee51821b8a34a1329",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_01b4135f09079d46016aac6b3dbc7087d0aa0d8c6fe1e204cf",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 4318,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 4318
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1950
+      },
+      {
+        "label": "1/linear-key/6",
+        "fingerprint": {
+          "sequence": 6,
+          "allHash": "97726ee4cd9503e229481ef1f1940c315f8322fe7abae3c9a8fe7da7c325d2dc",
+          "prefixHash": "74d0d1e22af20a110d774bd5e0367560b33a2ab7a2624e60da58e27fe00c6f34",
+          "previousAllHash": "74d0d1e22af20a110d774bd5e0367560b33a2ab7a2624e60da58e27fe00c6f34",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_05ed56bbccd4f969016aac6b4252b887d09023083990634d9b",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 4677,
+          "cachedInputTokens": 2688,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 1989
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1469
+      },
+      {
+        "label": "2/linear-key/1",
+        "fingerprint": {
+          "sequence": 1,
+          "allHash": "683576a60b51c0b7286fe148a51d3a2f6cee6fe5f733a5a3718e53245cb38e6c"
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_062358139ca55fa1016aac6b46c27887d0b732a60da084b992",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 2882,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 2882
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1185
+      },
+      {
+        "label": "2/linear-key/2",
+        "fingerprint": {
+          "sequence": 2,
+          "allHash": "639cc7fd4944d946c855173d8d483b0d2d7abac979885d607c381289d109a4ce",
+          "prefixHash": "683576a60b51c0b7286fe148a51d3a2f6cee6fe5f733a5a3718e53245cb38e6c",
+          "previousAllHash": "683576a60b51c0b7286fe148a51d3a2f6cee6fe5f733a5a3718e53245cb38e6c",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_0168ed42d036a2a3016aac6b4b3e6c87d0b699fb6a677fac34",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 3241,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 3241
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1157
+      },
+      {
+        "label": "2/linear-key/3",
+        "fingerprint": {
+          "sequence": 3,
+          "allHash": "f2a6708561cf6561a04756b4b0976bdc0c63bef625ea91ad879234080a0b658d",
+          "prefixHash": "639cc7fd4944d946c855173d8d483b0d2d7abac979885d607c381289d109a4ce",
+          "previousAllHash": "639cc7fd4944d946c855173d8d483b0d2d7abac979885d607c381289d109a4ce",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_001028e1438f11b8016aac6b4fcb5087d0ad310d5ecfaa57e2",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 3600,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 3600
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1436
+      },
+      {
+        "label": "2/linear-key/4",
+        "fingerprint": {
+          "sequence": 4,
+          "allHash": "77a8d19414d1f70ef922b43141de063a557c67ca5ab50ebe6a4bd4849ee8d4e8",
+          "prefixHash": "f2a6708561cf6561a04756b4b0976bdc0c63bef625ea91ad879234080a0b658d",
+          "previousAllHash": "f2a6708561cf6561a04756b4b0976bdc0c63bef625ea91ad879234080a0b658d",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_0ff96c429812e352016aac6b544e8887d0b70b821e8b9e4e97",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 3959,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 3959
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1212
+      },
+      {
+        "label": "2/linear-key/5",
+        "fingerprint": {
+          "sequence": 5,
+          "allHash": "957fff243394c247917dbfa21abb3dbf39e96f33ae5cd3ade2a0f741ad780745",
+          "prefixHash": "77a8d19414d1f70ef922b43141de063a557c67ca5ab50ebe6a4bd4849ee8d4e8",
+          "previousAllHash": "77a8d19414d1f70ef922b43141de063a557c67ca5ab50ebe6a4bd4849ee8d4e8",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_08c98615e9772dd3016aac6b58c51087d0817300bdb5f180b0",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 4318,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 4318
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1640
+      },
+      {
+        "label": "2/linear-key/6",
+        "fingerprint": {
+          "sequence": 6,
+          "allHash": "7d975611cc4423dcca9b330582917bd5287141b0de1a5fa2bb1dc7e113f191a7",
+          "prefixHash": "957fff243394c247917dbfa21abb3dbf39e96f33ae5cd3ade2a0f741ad780745",
+          "previousAllHash": "957fff243394c247917dbfa21abb3dbf39e96f33ae5cd3ade2a0f741ad780745",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_0738a23566079d1b016aac6b5d465487d0a1b26f81c8dbe12d",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 4677,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 4677
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1297
+      },
+      {
+        "label": "2/linear/1",
+        "fingerprint": {
+          "sequence": 1,
+          "allHash": "6475f6b50083f90b5a4177189023948254c1a7101336962bc07a5d034aee919d"
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_00d7b9df139f0890016aac6b61e16487d0b15ee7a87d2a7333",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 2881,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 2881
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1318
+      },
+      {
+        "label": "2/linear/2",
+        "fingerprint": {
+          "sequence": 2,
+          "allHash": "de34de9af3c740d092a30eafac7845c02d25fb663db12bfd5270e380bb63a67d",
+          "prefixHash": "6475f6b50083f90b5a4177189023948254c1a7101336962bc07a5d034aee919d",
+          "previousAllHash": "6475f6b50083f90b5a4177189023948254c1a7101336962bc07a5d034aee919d",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_02bfdaed3b817355016aac6b663e7c87d08c13fe305e2965d4",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 3240,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 3240
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1814
+      },
+      {
+        "label": "2/linear/3",
+        "fingerprint": {
+          "sequence": 3,
+          "allHash": "fe6a9b8f6a6424a5ec384f4e5fe2c96a39245b83b93ef08052d3ad6cfab4e922",
+          "prefixHash": "de34de9af3c740d092a30eafac7845c02d25fb663db12bfd5270e380bb63a67d",
+          "previousAllHash": "de34de9af3c740d092a30eafac7845c02d25fb663db12bfd5270e380bb63a67d",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_0c6ee694dc7b3f4b016aac6b6ad14887d09105c22ab786942e",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 3599,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 3599
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1230
+      },
+      {
+        "label": "2/linear/4",
+        "fingerprint": {
+          "sequence": 4,
+          "allHash": "da5385ff77ad2f89914114426683f33b0706dbf3ac23f332d5e87a0a246c1f34",
+          "prefixHash": "fe6a9b8f6a6424a5ec384f4e5fe2c96a39245b83b93ef08052d3ad6cfab4e922",
+          "previousAllHash": "fe6a9b8f6a6424a5ec384f4e5fe2c96a39245b83b93ef08052d3ad6cfab4e922",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_002043e633275628016aac6b6f43b087d0b8a471a60b1b24de",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 3958,
+          "cachedInputTokens": 2688,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 1270
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1552
+      },
+      {
+        "label": "2/linear/5",
+        "fingerprint": {
+          "sequence": 5,
+          "allHash": "2aa23d3209b979bc20d2a930b2b7e230839bce6a23d53836313b9cd7efb4c57f",
+          "prefixHash": "da5385ff77ad2f89914114426683f33b0706dbf3ac23f332d5e87a0a246c1f34",
+          "previousAllHash": "da5385ff77ad2f89914114426683f33b0706dbf3ac23f332d5e87a0a246c1f34",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_07a099e94be9d267016aac6b73d8e087d0928045f67eda0927",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 4317,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 4317
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1640
+      },
+      {
+        "label": "2/linear/6",
+        "fingerprint": {
+          "sequence": 6,
+          "allHash": "1547bafb56575e3aa0e5c59b9c7619d591bcb5fc4c906cada9382dc95fb8973d",
+          "prefixHash": "2aa23d3209b979bc20d2a930b2b7e230839bce6a23d53836313b9cd7efb4c57f",
+          "previousAllHash": "2aa23d3209b979bc20d2a930b2b7e230839bce6a23d53836313b9cd7efb4c57f",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_087b470aac2d8345016aac6b7844c087d0b34f8abda99b003a",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 4676,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 4676
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1482
+      },
+      {
+        "label": "2/repeat/1",
+        "fingerprint": {
+          "sequence": 1,
+          "allHash": "039dadca48b4fc955c291ea4f0e66cf7e4bcc0f79dbe7801c864345a4f0c4363"
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_09b58a10168965e7016aac6b7cc99c87d08023c011976b479b",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 2881,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 2881
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 3427
+      },
+      {
+        "label": "2/repeat/2",
+        "fingerprint": {
+          "sequence": 2,
+          "allHash": "039dadca48b4fc955c291ea4f0e66cf7e4bcc0f79dbe7801c864345a4f0c4363",
+          "prefixHash": "039dadca48b4fc955c291ea4f0e66cf7e4bcc0f79dbe7801c864345a4f0c4363",
+          "previousAllHash": "039dadca48b4fc955c291ea4f0e66cf7e4bcc0f79dbe7801c864345a4f0c4363",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_07a30f974b958854016aac6b82960c87d087ddab81509789a2",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 2881,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 2881
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 4246
+      },
+      {
+        "label": "2/repeat/3",
+        "fingerprint": {
+          "sequence": 3,
+          "allHash": "039dadca48b4fc955c291ea4f0e66cf7e4bcc0f79dbe7801c864345a4f0c4363",
+          "prefixHash": "039dadca48b4fc955c291ea4f0e66cf7e4bcc0f79dbe7801c864345a4f0c4363",
+          "previousAllHash": "039dadca48b4fc955c291ea4f0e66cf7e4bcc0f79dbe7801c864345a4f0c4363",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_07585d3835244649016aac6b85c51c87d0984f2eabce7da57a",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 2881,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 2881
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1273
+      },
+      {
+        "label": "2/repeat/4",
+        "fingerprint": {
+          "sequence": 4,
+          "allHash": "039dadca48b4fc955c291ea4f0e66cf7e4bcc0f79dbe7801c864345a4f0c4363",
+          "prefixHash": "039dadca48b4fc955c291ea4f0e66cf7e4bcc0f79dbe7801c864345a4f0c4363",
+          "previousAllHash": "039dadca48b4fc955c291ea4f0e66cf7e4bcc0f79dbe7801c864345a4f0c4363",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_03b29f1bd5fb2af7016aac6b8a4ac887d0a73da28e55314e1c",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 2881,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 2881
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1257
+      },
+      {
+        "label": "2/repeat/5",
+        "fingerprint": {
+          "sequence": 5,
+          "allHash": "039dadca48b4fc955c291ea4f0e66cf7e4bcc0f79dbe7801c864345a4f0c4363",
+          "prefixHash": "039dadca48b4fc955c291ea4f0e66cf7e4bcc0f79dbe7801c864345a4f0c4363",
+          "previousAllHash": "039dadca48b4fc955c291ea4f0e66cf7e4bcc0f79dbe7801c864345a4f0c4363",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_0c491ad218cce90b016aac6b8ecba087d09f7ffcaf3d9f6fb4",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 2881,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 2881
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1768
+      },
+      {
+        "label": "2/repeat/6",
+        "fingerprint": {
+          "sequence": 6,
+          "allHash": "039dadca48b4fc955c291ea4f0e66cf7e4bcc0f79dbe7801c864345a4f0c4363",
+          "prefixHash": "039dadca48b4fc955c291ea4f0e66cf7e4bcc0f79dbe7801c864345a4f0c4363",
+          "previousAllHash": "039dadca48b4fc955c291ea4f0e66cf7e4bcc0f79dbe7801c864345a4f0c4363",
+          "prefixUnchanged": true
+        },
+        "httpStatus": 200,
+        "metadata": {
+          "responseId": "resp_08127f8a92ddbcc5016aac6b93558c87d0b3d3634dff7577c8",
+          "model": "gpt-5.6-sol",
+          "serviceTier": "default",
+          "inputTokens": 2881,
+          "cachedInputTokens": 0,
+          "cacheWriteTokens": 0,
+          "uncachedInputTokens": 2881
+        },
+        "responseStatus": "completed",
+        "returnedRetention": "24h",
+        "elapsedMs": 1541
+      }
+    ],
+    "responseFieldNames": [
+      "id",
+      "object",
+      "created_at",
+      "status",
+      "background",
+      "completed_at",
+      "error",
+      "frequency_penalty",
+      "incomplete_details",
+      "instructions",
+      "max_output_tokens",
+      "max_tool_calls",
+      "model",
+      "moderation",
+      "output",
+      "parallel_tool_calls",
+      "presence_penalty",
+      "previous_response_id",
+      "prompt_cache_key",
+      "prompt_cache_retention",
+      "reasoning",
+      "safety_identifier",
+      "service_tier",
+      "store",
+      "temperature",
+      "text",
+      "tool_choice",
+      "tool_usage",
+      "tools",
+      "top_logprobs",
+      "top_p",
+      "truncation",
+      "usage",
+      "user",
+      "metadata"
+    ]
+  }
+]
