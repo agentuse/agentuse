@@ -1382,18 +1382,22 @@ function ToolDetails(props: { details: ApprovalLogDetails; sessionId: string; to
         <div class="log-detail" key={row.label}>
           <div class="log-detail-label">
             <span>{row.label}</span>
+          </div>
+          <div class="log-detail-box">
+            <div class="log-detail-value"><LogContent value={row.value} /></div>
             <ClipboardButton class="log-detail-copy" text={row.value} label={row.label.toLowerCase()} />
           </div>
-          <div class="log-detail-value"><LogContent value={row.value} /></div>
         </div>
       ))}
       {details.liveOutput && (
         <div class="log-detail log-detail-live">
           <div class="log-detail-label">
             <span>Output</span><span class="live-tag">live</span>
+          </div>
+          <div class="log-detail-box">
+            <div class="log-detail-value"><LiveOutput value={details.liveOutput} /></div>
             <ClipboardButton class="log-detail-copy" text={details.liveOutput} label="live output" />
           </div>
-          <div class="log-detail-value"><LiveOutput value={details.liveOutput} /></div>
         </div>
       )}
       {artifact && (

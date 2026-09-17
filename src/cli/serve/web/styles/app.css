@@ -2412,8 +2412,30 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   text-transform: none;
   margin-bottom: 4px;
 }
-.log-detail-copy {
-  margin-left: auto;
+.log-detail-box {
+  position: relative;
+  min-width: 0;
+}
+.log-detail-box .log-detail-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  background: var(--panel);
+  box-shadow: 0 0 0 1px var(--line);
+  opacity: 0;
+  pointer-events: none;
+}
+.log-detail-box:hover .log-detail-copy,
+.log-detail-box:focus-within .log-detail-copy {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .log-detail-box .log-detail-copy {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 /* Height-capped with its own scroller. A tool that read forty files printed
    its whole payload into the page and buried every row after it; the cap
