@@ -420,6 +420,21 @@ runtime changed.
   a leaf's prior-run corrections actually reach it; rely on that instead of
   hand-restating past corrections in the prompt.
 
+## Reuse Existing Workflow Dependencies
+
+Before writing new instructions or helpers, inspect the skills, reference files,
+and scripts that already implement the needed behavior. Reuse those dependencies
+by default rather than replacing them with rewritten summaries or parallel
+implementations. Keep the agent body focused on the job, inputs, orchestration,
+approval boundaries, and completion criteria; keep reusable guidance at its
+canonical source.
+
+Declare required skills using the scoping guidance below, reference the existing
+files, and grant the tools and resolved filesystem paths needed to use them.
+Check that dependencies are available in the target runtime, not just in the
+authoring session. If reuse is incompatible with the job or unavailable, explain
+the limitation and proposed adaptation instead of silently substituting it.
+
 ## Scope Skills Deliberately
 
 When an agent relies on known skills, list them explicitly and prefer a closed

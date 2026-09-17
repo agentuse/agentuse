@@ -24,6 +24,11 @@ Ask one concise question only when a missing choice materially changes the
 agent or its safety boundary. Do not expand a focused workflow into a general
 automation system.
 
+Identify the skills, reference files, and scripts used in the originating manual
+workflow, including those documented in the repository. Preserve them using the
+creator skill's "Reuse Existing Workflow Dependencies" guidance rather than
+reconstructing the workflow from its outcome alone.
+
 ## Choose the execution mode
 
 Choose the freshest available AgentUse command prefix:
