@@ -2,11 +2,13 @@ import type { ComponentChildren } from 'preact';
 import { useState } from 'preact/hooks';
 import { writeClipboardText } from '../lib/clipboard';
 
-function CopyIcon() {
+function CopyIcon(props: { copied: boolean }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <rect x="9" y="9" width="11" height="11" rx="2" />
-      <path d="M5 15V5h10" />
+      {props.copied ? <path d="m5 12 4 4 10-10" /> : <>
+        <rect x="9" y="9" width="11" height="11" rx="2" />
+        <path d="M5 15V5h10" />
+      </>}
     </svg>
   );
 }
@@ -45,7 +47,7 @@ export function CopyButton(props: {
         });
       }}
     >
-      <CopyIcon />
+      <CopyIcon copied={copied} />
       {props.children && <span>{copied ? 'Copied' : props.children}</span>}
     </button>
   );
