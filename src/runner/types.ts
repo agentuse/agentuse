@@ -158,6 +158,7 @@ export interface AgentChunk {
   finishReason?: string;
   usage?: LanguageModelUsage;
   usageKind?: UsageKind;
+  requestFingerprint?: import('../telemetry/request-fingerprint').RequestFingerprint;
   contextUsage?: ActiveContextUsage;
   contextSnapshot?: ContextSnapshot;
   toolStartTime?: number;  // Track when tool started

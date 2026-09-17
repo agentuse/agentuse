@@ -326,6 +326,7 @@ export async function processAgentStream(
     const tokens = usageToAssistantTokens(chunk.usage);
     const modelStepUsage = {
       stepId: callIDs[0],
+      ...(chunk.requestFingerprint && { requestFingerprint: chunk.requestFingerprint }),
       input: tokens.input,
       output: tokens.output,
       cachedInput: tokens.cache.read,

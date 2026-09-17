@@ -1379,6 +1379,19 @@ function ToolDetails(props: { details: ApprovalLogDetails; sessionId: string; to
       {details.tokenUsage && (
         <ToolTokenUsageStrip usage={details.tokenUsage} contextAddedTokens={details.contextAddedTokens} returnedBytes={details.returnedBytes} />
       )}
+      {details.requestFingerprint && (
+        <div class="tool-token-usage" aria-label="Request fingerprints">
+          <span class="tool-token-metric" title={details.requestFingerprint.prefixHash ? `Current request truncated to the previous request's input-item count, including current settings. Compare with previous ALL: ${details.requestFingerprint.previousAllHash}. Full PREFIX: ${details.requestFingerprint.prefixHash}` : 'First request in this model invocation; no previous prefix to compare.'}>
+            <span class="tool-token-label">prefix</span>
+            <span class="tool-token-value">{details.requestFingerprint.prefixHash?.slice(0, 16) ?? 'first request'}</span>
+          </span>
+          <span class="tool-token-metric" title={`Full SHA-256 fingerprint of canonical request body: ${details.requestFingerprint.allHash}`}>
+            <span class="tool-token-label">all</span>
+            <span class="tool-token-value">{details.requestFingerprint.allHash.slice(0, 16)}</span>
+          </span>
+          {details.requestFingerprint.prefixUnchanged !== undefined && <span class="tool-token-shared">{details.requestFingerprint.prefixUnchanged ? 'prefix unchanged' : 'prefix changed'}</span>}
+        </div>
+      )}
       {rows.map((row) => (
         <div class="log-detail" key={row.label}>
           <div class="log-detail-label">

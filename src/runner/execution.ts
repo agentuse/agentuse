@@ -983,8 +983,13 @@ async function* executeAgentAttempt(
   // v7 telemetry integration). Idempotent; complements the effect WAL.
   registerSDKTelemetryOnce();
 
+  const requestFingerprints = new Map<string, import('../telemetry/request-fingerprint').RequestFingerprint>();
   const model = await createModel(agent.config.model, {
     ...(options.sessionID && { sessionId: options.sessionID }),
+    onRequestFingerprint: (id, fingerprint) => {
+      requestFingerprints.set(id, fingerprint);
+      if (requestFingerprints.size > 32) requestFingerprints.delete(requestFingerprints.keys().next().value!);
+    },
   });
 
   // Internal abort: tripped the instant a suspension begins so the AI SDK stops
@@ -2807,6 +2812,10 @@ Current step: ${stepCount}/${options.maxSteps}`);
 
         // Handle other AI SDK chunk types that we don't need to process but shouldn't warn about
         case 'finish-step': {
+          const headers = chunk.response?.headers;
+          const requestId = headers?.['x-request-id'] ?? headers?.['x-oai-request-id'];
+          const requestFingerprint = requestId ? requestFingerprints.get(requestId) : undefined;
+          if (requestId) requestFingerprints.delete(requestId);
           const { usage, usageKind } = usageFromStreamChunk(chunk);
           if (usage) {
             completedStepUsageInSegment = addLanguageModelUsage(completedStepUsageInSegment, usage);
@@ -2817,6 +2826,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
           if (usage || contextManager) {
             yield {
               type: 'usage',
+              ...(requestFingerprint && { requestFingerprint }),
               ...(usage && { usage }),
               ...(usageKind && { usageKind }),
               ...(contextManager && { contextUsage: contextManager.getStats() }),

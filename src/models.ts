@@ -1,4 +1,5 @@
 import { fetchWithProviderHealth } from './auth/provider-health';
+import { createRequestFingerprinter, type RequestFingerprint } from './telemetry/request-fingerprint';
 import { apiHealthSubject, oauthHealthSubject } from './auth/provider-health-identity';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
@@ -240,7 +241,16 @@ export function parseModelConfig(modelString: string): ModelConfig {
 /**
  * Create AI model instance based on configuration
  */
-export async function createModel(modelString: string, options: { sessionId?: string } = {}) {
+export async function createModel(modelString: string, options: { sessionId?: string; onRequestFingerprint?: (requestId: string, fingerprint: RequestFingerprint) => void } = {}) {
+  const fingerprint = createRequestFingerprinter();
+  const traceFetch = (fetcher: typeof fetch): typeof fetch => (async (input, init) => {
+    const diagnostic = fingerprint(init?.body);
+    if (diagnostic) logger.debug(`[RequestFingerprint] ${JSON.stringify(diagnostic)}`);
+    const response = await fetcher(input, init);
+    const requestId = response.headers.get('x-request-id') ?? response.headers.get('x-oai-request-id');
+    if (diagnostic && requestId && response.ok) options.onRequestFingerprint?.(requestId, diagnostic);
+    return response;
+  }) as typeof fetch;
   // Provider registration is async (plugins may discover models during
   // activation), so complete it before synchronous registry helpers run.
   await loadProviderPlugins();
@@ -389,7 +399,7 @@ export async function createModel(modelString: string, options: { sessionId?: st
         apiKey: 'codex-oauth', // Placeholder, custom fetch overrides auth
         baseURL: providerPatch?.baseURL ?? 'https://chatgpt.com/backend-api/codex',
         ...(providerPatch?.headers && { headers: providerPatch.headers }),
-        fetch: codexFetch as typeof fetch,
+        fetch: traceFetch(codexFetch as typeof fetch),
       });
 
       // Use openai.responses() which speaks the Responses API format natively
@@ -456,7 +466,7 @@ export async function createModel(modelString: string, options: { sessionId?: st
     if (baseURL) {
       openaiOptions.baseURL = baseURL;
     }
-    openaiOptions.fetch = ((input: RequestInfo | URL, init?: RequestInit) => fetchWithProviderHealth(apiHealthSubject('openai', apiKey!, baseURL), input, init)) as typeof fetch;
+    openaiOptions.fetch = traceFetch(((input: RequestInfo | URL, init?: RequestInit) => fetchWithProviderHealth(apiHealthSubject('openai', apiKey!, baseURL), input, init)) as typeof fetch);
     const openai = createOpenAI(openaiOptions);
     // Native OpenAI speaks the Responses API (richer tool-result content, incl.
     // images/PDFs in tool results). A custom base URL implies an OpenAI-compatible

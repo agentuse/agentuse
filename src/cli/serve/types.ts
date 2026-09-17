@@ -658,6 +658,7 @@ export interface ApprovalLogDetails {
   tokenUsage?: ToolTokenUsage;
   returnedBytes?: number;
   contextAddedTokens?: number;
+  requestFingerprint?: import('../../telemetry/request-fingerprint').RequestFingerprint;
   modelStepId?: string;
   summary?: string;
   context?: string;

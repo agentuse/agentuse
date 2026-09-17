@@ -464,6 +464,7 @@ export function groupParallelToolCalls<T extends { id: string; type: string; too
       status: calls.some(call => call.status === 'error') ? 'error' : calls.some(call => call.status === 'running') ? 'running' : 'completed',
       details: {
         tokenUsage: usage,
+        ...(first.details?.requestFingerprint && { requestFingerprint: first.details.requestFingerprint }),
         ...(first.details?.contextAddedTokens !== undefined && { contextAddedTokens: first.details.contextAddedTokens }),
         // Only direct responses enter this batch total. Descendant executions
         // may already be represented in a Code Mode response. Unknown sizes
@@ -482,6 +483,7 @@ export function groupParallelToolCalls<T extends { id: string; type: string; too
     const details = { ...entry.details };
     delete details.tokenUsage;
     delete details.contextAddedTokens;
+    delete details.requestFingerprint;
     const child = { ...entry, parentCallId: parent.callId, details };
     if (emitted.has(step)) return [child];
     emitted.add(step);
@@ -785,6 +787,15 @@ export function buildToolDetails(state: any, tool?: string): ApprovalLogDetails 
     if (serialized !== undefined) fields.returnedBytes = Buffer.byteLength(serialized, 'utf8');
   }
   const usage = valueAsRecord(valueAsRecord(state?.metadata).modelStepUsage);
+  const fingerprint = valueAsRecord(usage.requestFingerprint);
+  if (typeof fingerprint.allHash === 'string' && /^[a-f0-9]{64}$/.test(fingerprint.allHash) && typeof fingerprint.sequence === 'number') {
+    fields.requestFingerprint = {
+      sequence: fingerprint.sequence, allHash: fingerprint.allHash,
+      ...(typeof fingerprint.prefixHash === 'string' && /^[a-f0-9]{64}$/.test(fingerprint.prefixHash) && { prefixHash: fingerprint.prefixHash }),
+      ...(typeof fingerprint.previousAllHash === 'string' && /^[a-f0-9]{64}$/.test(fingerprint.previousAllHash) && { previousAllHash: fingerprint.previousAllHash }),
+      ...(typeof fingerprint.prefixUnchanged === 'boolean' && { prefixUnchanged: fingerprint.prefixUnchanged }),
+    };
+  }
   const inputTokens = usage.input;
   const outputTokens = usage.output;
   const cachedInputTokens = usage.cachedInput;
