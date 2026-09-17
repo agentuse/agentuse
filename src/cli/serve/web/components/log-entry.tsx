@@ -1762,6 +1762,9 @@ function LogEntryImpl(props: LogEntryProps) {
         // list item into an interactive container around nested rows.
         const target = event.target as Element;
         if (target.closest('a') || target.closest('button')) return;
+        // Expanded details are reading/copying surfaces. A click also fires
+        // after dragging a text selection, so leave collapsing to the header.
+        if (expanded && target.closest('.log-main')) return;
         toggle();
       }}
     >
