@@ -18,8 +18,11 @@ import { useApprovalStream } from '../hooks/use-approval-stream';
 import { useGlobalApprovals } from '../hooks/use-global-approvals';
 import { useTitle } from '../hooks/use-title';
 import { useSmartBack } from '../hooks/use-smart-back';
+import { useNow } from '../hooks/use-now';
+import { activeDuration, type ActiveTiming } from '../../../../session/timing';
 import {
   formatTokens,
+  formatElapsedClock,
   formatApprovalTime,
   formatLogTime,
   humanizeMetric,
@@ -37,6 +40,19 @@ import { term } from '../lib/terms';
 import { ONBOARDING_AGENT_NAME, ONBOARDING_MODEL } from '../../../../onboarding';
 
 type ApprovalHeader = Omit<ApprovalPageInfo, 'logs'>;
+
+export function WorkingStepMeta({ step, timing }: { step: number; timing?: ActiveTiming | undefined }) {
+  const now = useNow(timing?.running === true && timing.activeMs != null);
+  const activeMs = activeDuration(timing, now);
+  return (
+    <span class="now-headline-meta">
+      {step > 0 && <>step {step} · </>}
+      <span title="Active processing time, excluding idle and approval waits">
+        {activeMs === null ? 'Time unavailable' : `${formatElapsedClock(activeMs)} active`}
+      </span>
+    </span>
+  );
+}
 
 // A render-time entry that may carry a collapsed repeat count. Produced only when
 // preparing entries for display; the underlying logsRef entries are never mutated.
@@ -2442,10 +2458,6 @@ export default function SessionDetail() {
     ? `Waiting on ${delegateName}, a sub-agent`
     : stepTitleOf(runningEntry) || workingLabel;
   const stepNumber = orderedLogs.filter((e) => e.type === 'tool' && !e.parentCallId).length;
-  const workingMeta = [
-    stepNumber > 0 ? `step ${stepNumber}` : undefined,
-    runningEntry?.time !== undefined ? formatDuration(Date.now() - runningEntry.time) : undefined,
-  ].filter(Boolean).join(' · ');
 
   // The card's headline: the one sentence this page exists to say. A decision
   // card has none of its own — the gate's question is its headline.
@@ -2456,7 +2468,7 @@ export default function SessionDetail() {
       <div class="now-headline-row">
         <span class="log-spinner" aria-hidden="true" />
         <h2 class="now-headline">{workingHeadline}</h2>
-        {workingMeta && <span class="now-headline-meta">{workingMeta}</span>}
+        <WorkingStepMeta step={stepNumber} timing={approval.timing} />
       </div>
     )
     : mode === 'error' && resultErrorText
