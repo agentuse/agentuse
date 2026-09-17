@@ -213,6 +213,18 @@ export class SessionRecorder {
     await this.finalizeText();
   }
 
+  async recordModelStep(tokens: AssistantTokens, modelStepUsage: import('../session/types').StepFinishPart['modelStepUsage']): Promise<void> {
+    const binding = this.binding;
+    if (!binding || !this.messageID) return;
+    try {
+      await binding.manager.addPart(binding.sessionID, binding.agentId, this.messageID, {
+        type: 'step-finish', tokens, modelStepUsage,
+      } as import('../session/types').StepFinishPart);
+    } catch (error) {
+      logger.debug(`Failed to persist model response metadata: ${(error as Error).message}`);
+    }
+  }
+
   recordUsage(tokens?: AssistantTokens, context?: ActiveContextUsage): void {
     const binding = this.binding;
     const messageID = this.messageID;

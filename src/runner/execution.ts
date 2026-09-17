@@ -1,3 +1,4 @@
+import { responseMetadataFromRaw, responseMetadataFromStep, type ResponseMetadata } from '../telemetry/response-metadata';
 import { streamText, isStepCount, asSchema, type ModelMessage, type ToolSet } from 'ai';
 import { readResultBytePage } from '../tools/results';
 import { repairSmuggledXmlToolCall } from './tool-call-repair';
@@ -983,6 +984,7 @@ async function* executeAgentAttempt(
   // v7 telemetry integration). Idempotent; complements the effect WAL.
   registerSDKTelemetryOnce();
 
+  let rawResponseMetadata: ResponseMetadata | undefined;
   const requestFingerprints = new Map<string, import('../telemetry/request-fingerprint').RequestFingerprint>();
   const model = await createModel(agent.config.model, {
     ...(options.sessionID && { sessionId: options.sessionID }),
@@ -1504,6 +1506,7 @@ async function* executeAgentAttempt(
     stallWatchdog = watchdog;
 
     const streamConfig: any = {
+      include: { rawChunks: true },
       model,
       messages,
       // Our message pipeline carries system-role messages inside `messages`
@@ -2437,6 +2440,12 @@ Error: ${errorMessage}`);
         return;
       }
       switch (chunk.type) {
+        case 'start-step':
+          rawResponseMetadata = undefined;
+          break;
+        case 'raw':
+          rawResponseMetadata = responseMetadataFromRaw(chunk.rawValue) ?? rawResponseMetadata;
+          break;
         case 'tool-call': {
           // A model-stream idle window measures whether the provider can emit.
           // Tool execution is a separate phase and may legitimately exceed that
@@ -2817,6 +2826,8 @@ Current step: ${stepCount}/${options.maxSteps}`);
 
         // Handle other AI SDK chunk types that we don't need to process but shouldn't warn about
         case 'finish-step': {
+          const responseMetadata = responseMetadataFromStep(chunk, rawResponseMetadata);
+          rawResponseMetadata = undefined;
           const headers = chunk.response?.headers;
           const requestId = headers?.['x-request-id'] ?? headers?.['x-oai-request-id'];
           const requestFingerprint = requestId ? requestFingerprints.get(requestId) : undefined;
@@ -2828,10 +2839,11 @@ Current step: ${stepCount}/${options.maxSteps}`);
           if (contextManager && usage) {
             contextManager.updateUsage(usage, usageKind);
           }
-          if (usage || contextManager) {
+          if (usage || contextManager || responseMetadata) {
             yield {
               type: 'usage',
               ...(requestFingerprint && { requestFingerprint }),
+              ...(responseMetadata && { responseMetadata }),
               ...(usage && { usage }),
               ...(usageKind && { usageKind }),
               ...(contextManager && { contextUsage: contextManager.getStats() }),
@@ -2887,7 +2899,6 @@ Current step: ${stepCount}/${options.maxSteps}`);
         }
 
         case 'start':
-        case 'start-step':
         case 'tool-approval-request': {
           const requested = (chunk as any).toolCall ?? chunk;
           const toolCallId = requested.toolCallId ?? (chunk as any).toolCallId;

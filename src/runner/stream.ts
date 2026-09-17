@@ -319,13 +319,14 @@ export async function processAgentStream(
     }, LIVE_OUTPUT_INTERVAL_MS));
   });
 
-  const persistCurrentStepToolUsage = async (chunk: AgentChunk): Promise<void> => {
-    if (chunk.usageKind !== 'step' || !chunk.usage || currentStepToolCallIds.size === 0) return;
+  const persistCurrentStepUsage = async (chunk: AgentChunk): Promise<void> => {
+    if (chunk.usageKind !== 'step' || !chunk.usage) return;
 
     const callIDs = [...currentStepToolCallIds];
     const tokens = usageToAssistantTokens(chunk.usage);
     const modelStepUsage = {
-      stepId: callIDs[0],
+      ...(callIDs[0] && { stepId: callIDs[0] }),
+      ...(chunk.responseMetadata && { responseMetadata: chunk.responseMetadata }),
       ...(chunk.requestFingerprint && { requestFingerprint: chunk.requestFingerprint }),
       input: tokens.input,
       output: tokens.output,
@@ -333,6 +334,7 @@ export async function processAgentStream(
       sharedCalls: callIDs.length,
     };
 
+    await recorder.recordModelStep(tokens, modelStepUsage);
     await Promise.all(callIDs.map(async (callID) => {
       const state = toolStates.get(callID);
       if (!state) return;
@@ -866,7 +868,7 @@ export async function processAgentStream(
         // Finalize any pending reasoning/text part
         await recorder.finalizeStreaming();
 
-        await persistCurrentStepToolUsage(chunk);
+        await persistCurrentStepUsage(chunk);
         recordUsage(chunk);
 
         finishReasons.push(chunk.finishReason ?? 'unknown');
@@ -896,7 +898,7 @@ export async function processAgentStream(
         break;
 
       case 'usage':
-        await persistCurrentStepToolUsage(chunk);
+        await persistCurrentStepUsage(chunk);
         recordUsage(chunk);
         break;
 

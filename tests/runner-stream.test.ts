@@ -377,8 +377,12 @@ describe('processAgentStream session logging', () => {
 
   it('attaches model-step usage to every parallel tool call without multiplying it', async () => {
     const partUpdates: any[] = [];
+    const steps: any[] = [];
     const sessionManager = {
-      addPart: async (_s: string, _a: string, _m: string, part: any) => part.callID,
+      addPart: async (_s: string, _a: string, _m: string, part: any) => {
+        if (part.type === 'step-finish') steps.push(part);
+        return part.callID;
+      },
       updatePart: async (...args: any[]) => {
         partUpdates.push(args);
       },
@@ -417,6 +421,7 @@ describe('processAgentStream session logging', () => {
       yield {
         type: 'usage',
         usageKind: 'step',
+        responseMetadata: { responseId: 'resp_parallel', cacheWriteTokens: 0 },
         usage: {
           inputTokens: 1_200,
           outputTokens: 90,
@@ -434,6 +439,8 @@ describe('processAgentStream session logging', () => {
       quiet: true
     });
 
+    expect(steps).toHaveLength(1);
+    expect(steps[0].modelStepUsage.responseMetadata).toEqual({ responseId: 'resp_parallel', cacheWriteTokens: 0 });
     for (const callID of ['call-1', 'call-2']) {
       const finalUpdate = partUpdates.filter((update) => update[3] === callID).at(-1);
       expect(finalUpdate?.[4].state).toMatchObject({
@@ -444,6 +451,7 @@ describe('processAgentStream session logging', () => {
             output: 90,
             cachedInput: 800,
             sharedCalls: 2,
+            responseMetadata: { responseId: 'resp_parallel', cacheWriteTokens: 0 },
           },
         },
       });
@@ -657,5 +665,29 @@ describe('processAgentStream session logging', () => {
       error: expect.stringContaining('execution aborted'),
       metadata: expect.objectContaining({ exitCode: null, aborted: true }),
     }));
+  });
+});
+
+describe('per-response metadata persistence', () => {
+  it('records text-only turns separately and ignores cumulative finish usage', async () => {
+    const parts: any[] = [];
+    const usage = { inputTokens: 100, outputTokens: 2, totalTokens: 102,
+      inputTokenDetails: { cacheReadTokens: 40 } } as any;
+    async function* chunks(): AsyncGenerator<AgentChunk> {
+      yield { type: 'text', text: 'Done' };
+      yield { type: 'usage', usageKind: 'step', usage,
+        responseMetadata: { responseId: 'resp_text', inputTokens: 100, cachedInputTokens: 40 } };
+      yield { type: 'finish', usageKind: 'cumulative', usage };
+    }
+    await processAgentStream(chunks(), {
+      sessionManager: { addPart: async (...args: any[]) => { parts.push(args[3]); return 'part'; },
+        updatePart: async () => {}, updateMessage: async () => {} } as any,
+      sessionID: 'session', agentId: 'agent', messageID: 'message', quiet: true,
+    });
+    const steps = parts.filter(part => part.type === 'step-finish');
+    expect(steps).toHaveLength(1);
+    expect(steps[0].modelStepUsage).toEqual({ input: 100, output: 2, cachedInput: 40, sharedCalls: 0,
+      responseMetadata: { responseId: 'resp_text', inputTokens: 100, cachedInputTokens: 40 } });
+    expect(JSON.stringify(steps[0])).not.toContain('cacheWriteTokens');
   });
 });

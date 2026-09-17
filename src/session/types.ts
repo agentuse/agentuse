@@ -648,7 +648,16 @@ export interface StepStartPart extends PartBase {
 
 export interface StepFinishPart extends PartBase {
   type: 'step-finish';
-  cost: number;
+  modelStepUsage?: {
+    stepId?: string;
+    input: number;
+    output: number;
+    cachedInput: number;
+    sharedCalls: number;
+    requestFingerprint?: import('../telemetry/request-fingerprint').RequestFingerprint;
+    responseMetadata?: import('../telemetry/response-metadata').ResponseMetadata;
+  };
+  cost?: number;
   tokens: {
     input: number;
     output: number;

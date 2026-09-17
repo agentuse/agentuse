@@ -158,6 +158,7 @@ export interface AgentChunk {
   finishReason?: string;
   usage?: LanguageModelUsage;
   usageKind?: UsageKind;
+  responseMetadata?: import('../telemetry/response-metadata').ResponseMetadata;
   requestFingerprint?: import('../telemetry/request-fingerprint').RequestFingerprint;
   contextUsage?: ActiveContextUsage;
   contextSnapshot?: ContextSnapshot;

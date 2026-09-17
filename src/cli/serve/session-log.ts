@@ -109,6 +109,7 @@ export interface ApprovalLogDetails {
   output?: string;
   returnedBytes?: number;
   contextAddedTokens?: number;
+  responseMetadata?: import('../../telemetry/response-metadata').ResponseMetadata;
   requestFingerprint?: import('../../telemetry/request-fingerprint').RequestFingerprint;
   modelStepId?: string;
   tokenUsage?: {

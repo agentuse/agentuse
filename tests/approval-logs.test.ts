@@ -365,3 +365,17 @@ describe('buildApprovalLogs', () => {
     expect(logs[4]?.details?.recoversCallId).toBeUndefined();
   });
 });
+
+it('keeps metadata in session log projections without duplicate tool-step rows', () => {
+  const metadata = { responseId: 'resp_1', cacheWriteTokens: 0 };
+  const usage = { stepId: 'call-1', input: 100, output: 2, cachedInput: 30, sharedCalls: 1, responseMetadata: metadata };
+  const logs = buildApprovalLogs([
+    { id: 'tool', type: 'tool', tool: 'read', callID: 'call-1', state: { status: 'completed', output: 'ok', metadata: { modelStepUsage: usage } } },
+    { id: 'step-1', type: 'step-finish', modelStepUsage: usage },
+    { id: 'step-2', type: 'step-finish', modelStepUsage: { ...usage, stepId: undefined, sharedCalls: 0,
+      responseMetadata: { responseId: 'resp_2' } } },
+  ]);
+  expect(logs).toHaveLength(2);
+  expect(logs[0]?.details?.responseMetadata).toEqual(metadata);
+  expect(logs[1]?.details?.responseMetadata).toEqual({ responseId: 'resp_2' });
+});

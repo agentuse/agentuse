@@ -1,3 +1,4 @@
+import { readResponseMetadata } from '../telemetry/response-metadata';
 import { describeErrorPart, describeLogPart } from '../runner';
 import { describeLearningOutcome } from '../learning';
 import { extractToolIntent, extractToolRecovery, withoutToolIntent } from '../runner/tool-intent';
@@ -141,7 +142,12 @@ export function buildApprovalLogs(parts: any[]): Array<{ id: string; type: strin
   // that report on the tool row that produced it, so keeping the text part
   // too would print the whole report twice — once as the report, once as an
   // "Assistant response" the model never wrote.
-  const entries = parts.filter((part: any) => !deliveredTextIds.has(String(part?.id))).map((part: any) => {
+  const entries = parts.filter((part: any) => !deliveredTextIds.has(String(part?.id))
+    && !(part?.type === 'step-finish' && part.modelStepUsage?.sharedCalls > 0)).map((part: any) => {
+    if (part?.type === 'step-finish' && part.modelStepUsage) {
+      return { id: String(part.id), type: 'step-finish', title: 'Model response',
+        details: buildToolDetails({ metadata: { modelStepUsage: part.modelStepUsage } }) };
+    }
     if (part?.type === 'log') {
       const view = describeLogPart(part);
       return {
@@ -464,6 +470,7 @@ export function groupParallelToolCalls<T extends { id: string; type: string; too
       status: calls.some(call => call.status === 'error') ? 'error' : calls.some(call => call.status === 'running') ? 'running' : 'completed',
       details: {
         tokenUsage: usage,
+        ...(first.details?.responseMetadata && { responseMetadata: first.details.responseMetadata }),
         ...(first.details?.requestFingerprint && { requestFingerprint: first.details.requestFingerprint }),
         ...(first.details?.contextAddedTokens !== undefined && { contextAddedTokens: first.details.contextAddedTokens }),
         // Only direct responses enter this batch total. Descendant executions
@@ -484,6 +491,7 @@ export function groupParallelToolCalls<T extends { id: string; type: string; too
     delete details.tokenUsage;
     delete details.contextAddedTokens;
     delete details.requestFingerprint;
+    delete details.responseMetadata;
     const child = { ...entry, parentCallId: parent.callId, details };
     if (emitted.has(step)) return [child];
     emitted.add(step);
@@ -787,6 +795,8 @@ export function buildToolDetails(state: any, tool?: string): ApprovalLogDetails 
     if (serialized !== undefined) fields.returnedBytes = Buffer.byteLength(serialized, 'utf8');
   }
   const usage = valueAsRecord(valueAsRecord(state?.metadata).modelStepUsage);
+  const responseMetadata = readResponseMetadata(usage.responseMetadata);
+  if (responseMetadata) fields.responseMetadata = responseMetadata;
   const fingerprint = valueAsRecord(usage.requestFingerprint);
   if (typeof fingerprint.allHash === 'string' && /^[a-f0-9]{64}$/.test(fingerprint.allHash) && typeof fingerprint.sequence === 'number') {
     fields.requestFingerprint = {

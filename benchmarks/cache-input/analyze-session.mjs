@@ -23,10 +23,15 @@ if (!messageDirName) throw new Error('Primary message directory not found');
 const partDir = join(sessionDir, messageDirName, 'part');
 
 const rows = new Map();
+const parts = [];
+for (const file of (await readdir(partDir)).filter(file => file.endsWith('.json')).sort()) {
+  parts.push(JSON.parse(await readFile(join(partDir, file), 'utf8')));
+}
+const recordedStepIds = new Set(parts
+  .filter(part => part.type === 'step-finish' && part.modelStepUsage?.stepId)
+  .map(part => part.modelStepUsage.stepId));
 const fixtureCalls = [];
-for (const file of await readdir(partDir)) {
-  if (!file.endsWith('.json')) continue;
-  const part = JSON.parse(await readFile(join(partDir, file), 'utf8'));
+for (const part of parts) {
   const command = part?.state?.input?.command;
   const label = typeof command === 'string' ? command.match(/--label\s+([a-z0-9-]+)/i)?.[1] : undefined;
   if (label) {
@@ -36,16 +41,27 @@ for (const file of await readdir(partDir)) {
       completedAt: part?.state?.time?.end ?? null,
     });
   }
-  const usage = part?.state?.metadata?.modelStepUsage;
-  const fingerprint = usage?.requestFingerprint;
-  if (!fingerprint || rows.has(fingerprint.sequence)) continue;
-  rows.set(fingerprint.sequence, {
-    request: fingerprint.sequence,
+  const isStepRecord = part.type === 'step-finish';
+  const usage = isStepRecord ? part.modelStepUsage : part?.state?.metadata?.modelStepUsage;
+  if (!usage || (!isStepRecord && recordedStepIds.has(usage.stepId))) continue;
+  const fingerprint = usage.requestFingerprint;
+  const metadata = usage.responseMetadata;
+  const key = isStepRecord ? part.id : usage.stepId ?? fingerprint?.allHash ?? part.id;
+  if (rows.has(key)) continue;
+  rows.set(key, {
+    request: rows.size + 1,
     input: usage.input,
-    cached: usage.cachedInput,
+    cached: metadata ? metadata.cachedInputTokens : usage.cachedInput,
+    cacheWrite: metadata?.cacheWriteTokens,
+    ordinaryUncached: metadata?.uncachedInputTokens,
+    responseId: metadata?.responseId,
+    model: metadata?.model,
+    serviceTier: metadata?.serviceTier,
+    diagnosticType: metadata?.diagnosticType,
+    diagnosticReason: metadata?.diagnosticReason,
     output: usage.output,
-    prefix: fingerprint.prefixUnchanged ?? null,
-    all: fingerprint.allHash.slice(0, 12),
+    prefix: fingerprint?.prefixUnchanged ?? null,
+    all: fingerprint?.allHash?.slice(0, 12),
   });
 }
 
@@ -63,8 +79,11 @@ console.log(JSON.stringify({
   requests: ordered.length,
   totals: {
     input: totalInput,
-    cachedInput: totalCached,
-    uncachedInput: totalInput - totalCached,
+    cachedInput: ordered.every(row => row.cached !== undefined) ? totalCached : null,
+    // Includes writes; not the ordinary uncached category.
+    uncachedInput: ordered.every(row => row.cached !== undefined) ? totalInput - totalCached : null,
+    cacheWriteTokens: ordered.every(row => row.cacheWrite !== undefined) ? sum('cacheWrite') : null,
+    ordinaryUncachedInput: ordered.every(row => row.ordinaryUncached !== undefined) ? sum('ordinaryUncached') : null,
     output: sum('output'),
   },
   unchangedPrefixes: comparisons.filter(row => row.prefix === true).length,

@@ -41,3 +41,24 @@ Prompt caching should therefore be treated as an optimization, not a bound on
 long-run input cost. Durable mitigation needs fewer model turns, smaller retained
 history, deliberate compaction or stage boundaries, or a stateful continuation
 transport. Reordering the local session history would not fix this result.
+
+## Response metadata persistence verification
+
+Live source run: `01M2RQKZN1K74JY71CZ08SRBMP` (2026-09-17), using the unchanged
+`cache-timing.agentuse` against the Codex ChatGPT backend.
+
+- All 7 responses persisted an ID, returned model `gpt-5.6-sol`, service tier
+  `default`, and input/cache-read/cache-write counts.
+- All 7 responses reported `cache_write_tokens: 0` explicitly.
+- Total input: 85,860; cache reads: 25,856; ordinary uncached input: 60,004.
+- Hits occurred on requests 1, 5, and 7; all 6 prefix transitions were exact.
+- No cache diagnostic type or reason was returned. No diagnostic request
+  options were enabled, so this does not establish support for those options.
+- The updated analyzer also reproduced the earlier cold timing run's 7 requests
+  and 9,600 cached tokens, with the new unavailable fields left unknown.
+
+This verifies metadata collection and persistence, not a caching improvement.
+The earlier attribution to best-effort cache availability is a hypothesis:
+exact local prefixes rule out the observed local ordering issue, but cannot
+identify provider breakpoint eligibility, availability, or another miss reason.
+The returned model and service tier stayed constant in this run.
