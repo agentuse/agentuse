@@ -449,8 +449,7 @@ function metricChipLabel(agg: MetricAgg): { big: string; name: string } {
  * Home's Results section: one row per agent, so the eye scans agent names
  * instead of a grid of same-looking tiles. Chips carry that agent's metrics
  * (lead metric first, with its bars for the window); the row leads to the
- * agent's Recent jobs tab. Customize hides or shows individual metrics, sharing
- * the same per-viewer prefs as the tile view.
+ * agent's Recent jobs tab. All metrics remain visible in this overview.
  */
 export function AgentResultsRows(props: {
   payload: StoreRowsPayload | null | undefined;
@@ -474,12 +473,6 @@ export function AgentResultsRows(props: {
     () => (metricsWindow === 30 ? groups : aggregateMetricsByAgent(payload, 30)).length > 0,
     [payload, metricsWindow, groups]
   );
-  const metricPrefs = useMetricPrefs();
-  const [editing, setEditing] = useState(false);
-  const hidden = metricPrefs.prefs.hidden;
-  const shown = editing
-    ? groups
-    : groups.map((g) => ({ ...g, metrics: g.metrics.filter((agg) => !hidden.includes(agg.metric)) })).filter((g) => g.metrics.length > 0);
   const now = Date.now();
 
   if (!hasAny) return null;
@@ -505,26 +498,16 @@ export function AgentResultsRows(props: {
           ))}
         </div>
         <span class="rule"></span>
-        <button
-          type="button"
-          class={`metric-edit-btn${editing ? ' on' : ''}`}
-          aria-pressed={editing}
-          onClick={() => setEditing((on) => !on)}
-        >
-          {editing ? 'done' : 'customize'}
-        </button>
       </h2>
-      {shown.length === 0
+      {groups.length === 0
         ? (
           <div class="metric-empty">
-            {groups.length > 0
-              ? <>All metrics are hidden. <button type="button" class="metric-empty-link" onClick={() => setEditing(true)}>Customize</button> to bring them back.</>
-              : <>No results in the last {metricsWindow === 1 ? 'day' : `${metricsWindow} days`}.</>}
+            No results in the last {metricsWindow === 1 ? 'day' : `${metricsWindow} days`}.
           </div>
         )
         : (
           <div class="metric-rows surface">
-            {shown.map((group) => {
+            {groups.map((group) => {
               const agent = findAgent(group.source);
               const name = agent
                 ? displayAgentName(agent.name, agent.path, group.source.agentId)
@@ -538,26 +521,11 @@ export function AgentResultsRows(props: {
                 <div class="metric-row-chips">
                   {group.metrics.map((agg, i) => {
                     const { big, name: metricName } = metricChipLabel(agg);
-                    const isHidden = hidden.includes(agg.metric);
-                    const cls = `metric-chip-pill${i === 0 ? ' lead' : ''}${isHidden ? ' is-hidden' : ''}${big === '0' ? ' zero' : ''}`;
-                    if (!editing) {
-                      return (
-                        <span class={cls} key={agg.metric} title={agg.note ? `${agg.metric} · ${agg.note}` : agg.metric}>
-                          <strong>{big}</strong><span>{metricName}</span>
-                        </span>
-                      );
-                    }
+                    const cls = `metric-chip-pill${i === 0 ? ' lead' : ''}${big === '0' ? ' zero' : ''}`;
                     return (
-                      <button
-                        type="button"
-                        class={cls}
-                        key={agg.metric}
-                        aria-pressed={!isHidden}
-                        title={isHidden ? `Show ${metricName}` : `Hide ${metricName}`}
-                        onClick={() => metricPrefs.toggleHidden(agg.metric)}
-                      >
+                      <span class={cls} key={agg.metric} title={agg.note ? `${agg.metric} · ${agg.note}` : agg.metric}>
                         <strong>{big}</strong><span>{metricName}</span>
-                      </button>
+                      </span>
                     );
                   })}
                 </div>
@@ -574,9 +542,7 @@ export function AgentResultsRows(props: {
                 </>
               );
               const key = `${group.source.projectId}/${group.source.agentId}`;
-              return editing
-                ? <div class="metric-row is-editing" key={key}>{body}</div>
-                : <a class="metric-row" key={key} href={href} title={`${name} · open its recent jobs`}>{body}</a>;
+              return <a class="metric-row" key={key} href={href} title={`${name} · open its recent jobs`}>{body}</a>;
             })}
           </div>
         )}

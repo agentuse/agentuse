@@ -5175,9 +5175,6 @@ a.metric-row:hover .metric-row-open { opacity: 1; }
 .metric-chip-pill.zero { opacity: 0.5; }
 .metric-row .metric-spark { width: 96px; height: 24px; margin: 0; }
 .metric-row-open { color: var(--muted-2); opacity: 0; transition: opacity 120ms ease; }
-.metric-row.is-editing .metric-chip-pill { cursor: pointer; }
-.metric-row.is-editing .metric-chip-pill:hover { border-color: var(--line-strong); }
-.metric-row.is-editing .metric-chip-pill.is-hidden { opacity: 0.35; text-decoration: line-through; }
 /* Layout keys off the card's own width (sidebar + tablet = narrow content
    even at a wide viewport): mid widths drop the spark and let the chip
    column breathe; narrow widths stack chips under the agent name. */
