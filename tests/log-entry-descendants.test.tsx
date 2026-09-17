@@ -308,6 +308,7 @@ describe('delegated call expansion', () => {
     expect(html).not.toContain('one model step');
     expect(html).toContain('tool returned');
     expect(html).toContain('20,000');
+    expect(html.match(/class="tool-token-usage"/g)).toHaveLength(1);
   });
 
   it('opens a running ordinary tool so its live output is visible', () => {

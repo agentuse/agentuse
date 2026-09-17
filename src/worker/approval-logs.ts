@@ -457,7 +457,15 @@ export function groupParallelToolCalls<T extends { id: string; type: string; too
     parents.set(step, { id: `model-step:${step}`, callId: `model-step:${step}`, type: 'tool',
       title: 'Parallel tool calls', time: first.time,
       status: calls.some(call => call.status === 'error') ? 'error' : calls.some(call => call.status === 'running') ? 'running' : 'completed',
-      details: { tokenUsage: usage },
+      details: {
+        tokenUsage: usage,
+        // Only direct responses enter this batch total. Descendant executions
+        // may already be represented in a Code Mode response. Unknown sizes
+        // must not masquerade as zero or a complete aggregate.
+        ...(calls.every(call => typeof call.details?.returnedBytes === 'number') && {
+          returnedBytes: calls.reduce((sum, call) => sum + call.details!.returnedBytes!, 0),
+        }),
+      },
     } as T);
   }
   const emitted = new Set<string>();

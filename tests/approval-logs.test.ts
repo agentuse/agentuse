@@ -14,14 +14,17 @@ describe('buildApprovalLogs', () => {
   it('preserves nested Code Mode children when grouping their parent calls', () => {
     const usage = { input: 100, output: 10, cachedInput: 0, sharedCalls: 2 };
     const rows = [
-      { id: 'a', callId: 'a', type: 'tool', tool: 'code_exec', title: 'Program', status: 'completed', details: { modelStepId: 's', tokenUsage: usage } },
-      { id: 'nested', callId: 'nested', parentCallId: 'a', type: 'tool', tool: 'bash', title: 'Child', status: 'completed' },
-      { id: 'b', callId: 'b', type: 'tool', tool: 'results', title: 'Read', status: 'error', details: { modelStepId: 's' } },
+      { id: 'a', callId: 'a', type: 'tool', tool: 'code_exec', title: 'Program', status: 'completed', details: { modelStepId: 's', tokenUsage: usage, returnedBytes: 100 } },
+      { id: 'nested', callId: 'nested', parentCallId: 'a', type: 'tool', tool: 'bash', title: 'Child', status: 'completed', details: { returnedBytes: 999 } },
+      { id: 'b', callId: 'b', type: 'tool', tool: 'results', title: 'Read', status: 'error', details: { modelStepId: 's', returnedBytes: 20 } },
     ];
     const grouped = groupParallelToolCalls(rows);
     expect(grouped[0]?.status).toBe('error');
     expect(grouped.find(row => row.id === 'nested')?.parentCallId).toBe('a');
     expect(grouped.find(row => row.id === 'a')?.parentCallId).toBe('model-step:s');
+    expect(grouped[0]?.details?.returnedBytes).toBe(120);
+    const missing = rows.map(row => row.id === 'b' ? { ...row, details: { modelStepId: 's' } } : row);
+    expect(groupParallelToolCalls(missing)[0]?.details?.returnedBytes).toBeUndefined();
   });
   it('shows model usage once per step and preserves each tool result size', () => {
     const make = (id: string, stepId?: string) => ({
@@ -41,6 +44,7 @@ describe('buildApprovalLogs', () => {
       const children = logs.filter(row => row.parentCallId);
       expect(parents).toHaveLength(2);
       expect(parents.every(row => row.details?.tokenUsage?.input === 18347)).toBe(true);
+      expect(parents.map(row => row.details?.returnedBytes)).toEqual([4, 4]);
       expect(children.every(row => !row.details?.tokenUsage)).toBe(true);
       expect(children.map(row => row.details?.returnedBytes)).toEqual([2, 2, 2, 2]);
       expect(logs).toHaveLength(6);

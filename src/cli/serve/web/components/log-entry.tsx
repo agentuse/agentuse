@@ -1307,20 +1307,25 @@ function RunOutcomeCard(props: { outcome: NonNullable<ApprovalLogDetails['runOut
 
 const toolTokenFmt = new Intl.NumberFormat('en-US');
 
-function ToolTokenUsageStrip(props: { usage: NonNullable<ApprovalLogDetails['tokenUsage']> }) {
-  const cached = Math.max(0, props.usage.cachedInput);
-  const input = Math.max(0, props.usage.input - cached);
-  const output = Math.max(0, props.usage.output);
-  const metrics = [
-    { label: 'input', value: toolTokenFmt.format(input) },
-    { label: 'output', value: toolTokenFmt.format(output) },
-    { label: 'cached input', value: toolTokenFmt.format(cached) },
-  ];
+function ToolTokenUsageStrip(props: { usage?: ApprovalLogDetails['tokenUsage']; returnedBytes?: number | undefined }) {
+  const metrics: Array<{ label: string; value: string; title?: string }> = [];
+  if (props.usage) {
+    const cached = Math.max(0, props.usage.cachedInput);
+    metrics.push(
+      { label: 'input', value: toolTokenFmt.format(Math.max(0, props.usage.input - cached)) },
+      { label: 'output', value: toolTokenFmt.format(Math.max(0, props.usage.output)) },
+      { label: 'cached input', value: toolTokenFmt.format(cached) },
+    );
+  }
+  if (props.returnedBytes !== undefined) metrics.push({
+    label: 'tool returned', value: `${toolTokenFmt.format(props.returnedBytes)} bytes`,
+    title: 'Serialized tool response size in UTF-8 bytes, not model output tokens or the size of a referenced artifact.',
+  });
 
   return (
-    <div class="tool-token-usage" aria-label="Model step token usage">
+    <div class="tool-token-usage" aria-label="Model usage and tool result size">
       {metrics.map((metric) => (
-        <span class="tool-token-metric" key={metric.label}>
+        <span class="tool-token-metric" key={metric.label} title={metric.title}>
           <span class="tool-token-label">{metric.label}</span>
           <span class="tool-token-value">{metric.value}</span>
         </span>
@@ -1367,17 +1372,11 @@ function ToolDetails(props: { details: ApprovalLogDetails; sessionId: string; to
     details.errorMessage ? { label: 'Error', value: details.errorMessage } : undefined,
   ].filter((row): row is { label: string; value: string } => Boolean(row));
   const artifact = details.toolOutputArtifact;
-  if (rows.length === 0 && !artifact && !details.tokenUsage && !details.liveOutput) return null;
+  if (rows.length === 0 && !artifact && !details.tokenUsage && details.returnedBytes === undefined && !details.liveOutput) return null;
   return (
     <div class="log-details">
-      {details.tokenUsage && <ToolTokenUsageStrip usage={details.tokenUsage} />}
-      {details.returnedBytes !== undefined && (
-        <div class="tool-token-usage" aria-label="Tool result size">
-          <span class="tool-token-metric" title="Serialized tool response size in UTF-8 bytes, not model output tokens or the size of a referenced artifact.">
-            <span class="tool-token-label">tool returned</span>
-            <span class="tool-token-value">{toolTokenFmt.format(details.returnedBytes)} bytes</span>
-          </span>
-        </div>
+      {(details.tokenUsage || details.returnedBytes !== undefined) && (
+        <ToolTokenUsageStrip usage={details.tokenUsage} returnedBytes={details.returnedBytes} />
       )}
       {rows.map((row) => (
         <div class="log-detail" key={row.label}>
