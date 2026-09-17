@@ -67,6 +67,9 @@ export async function completeText(modelString: string, options: CompleteTextOpt
   // available resolves to the Responses API against the ChatGPT backend.
   const usesCodexBackend = resolveModelProvider(modelString) === 'openai' && Boolean(await CodexAuth.access());
   options.abortSignal?.throwIfAborted();
+  const codexInstructions = options.extraSystem
+    ? `${options.instructions}\n\n${options.extraSystem}`
+    : options.instructions;
 
   // Stall watchdog: a helper stream that opens and then never emits would
   // otherwise hang until the session timeout. Combined with (never replacing)
@@ -99,9 +102,15 @@ export async function completeText(modelString: string, options: CompleteTextOpt
     maxRetries: options.maxRetries ?? 2,
     // Codex rejects max_output_tokens; honor the cap on every other provider.
     ...(!usesCodexBackend && options.maxOutputTokens !== undefined && { maxOutputTokens: options.maxOutputTokens }),
-    // Codex requires the top-level instructions field; the system message in
-    // `messages` alone is not enough.
-    ...(usesCodexBackend && { providerOptions: { openai: { instructions: options.instructions, store: false } } }),
+    // Codex requires the top-level instructions field. The AI SDK also turns
+    // `instructions` and any system messages into developer input items, so
+    // remove those provider-side copies after preserving their order in the
+    // single required field.
+    ...(usesCodexBackend && { providerOptions: { openai: {
+      instructions: codexInstructions,
+      systemMessageMode: 'remove',
+      store: false,
+    } } }),
     abortSignal: watchdog.signal,
     // Swallow the SDK's own error logging. Its default `onError` prints the raw
     // error object to the console, so a helper call that failed and was handled

@@ -333,7 +333,10 @@ describe('executeAgentCore Anthropic cache control', () => {
       {},
       {
         userMessage: 'Run',
-        systemMessages: [{ role: 'system', content: 'primary instructions' }],
+        systemMessages: [
+          { role: 'system', content: 'primary instructions' },
+          { role: 'system', content: 'secondary policy' },
+        ],
         maxSteps: 3,
       }
     )) {
@@ -343,9 +346,17 @@ describe('executeAgentCore Anthropic cache control', () => {
     const streamConfig = streamTextMock.mock.calls[0][0] as any;
     expect(streamConfig.maxOutputTokens).toBeUndefined();
     expect(streamConfig.providerOptions.openai).toMatchObject({
-      instructions: 'primary instructions',
+      instructions: 'primary instructions\n\nsecondary policy',
+      systemMessageMode: 'remove',
       store: false,
     });
+    expect(streamConfig.messages.map((message: any) => [message.role, message.content])).toEqual([
+      ['system', 'primary instructions'],
+      ['system', 'secondary policy'],
+      ['user', 'Run'],
+    ]);
+    const prepared = await streamConfig.prepareStep({ messages: streamConfig.messages });
+    expect(prepared.messages).toEqual(streamConfig.messages);
   });
 
   it('keeps OpenCode Go Responses tool turns stateless', async () => {

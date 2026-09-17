@@ -1433,17 +1433,22 @@ async function* executeAgentAttempt(
       const codexAccess = await CodexAuth.access();
       if (codexAccess) {
         usesCodexBackend = true;
-        // Codex OAuth uses Responses API which requires `instructions` field
-        const systemMessage = messages.find(m => m.role === 'system');
-        const instructions = typeof systemMessage?.content === 'string'
-          ? systemMessage.content
-          : 'You are a helpful assistant.';
+        // Codex OAuth uses the Responses API, which requires a top-level
+        // `instructions` field. Keep system messages in AgentUse's internal
+        // history for persistence/resume, but collapse them into that field in
+        // their existing order and tell the OpenAI provider not to emit the
+        // same content again as developer input items.
+        const instructions = messages
+          .filter(message => message.role === 'system' && typeof message.content === 'string')
+          .map(message => message.content as string)
+          .join('\n\n') || 'You are a helpful assistant.';
 
         providerOptions = {
           openai: {
+            ...openaiOptions,
             instructions,
+            systemMessageMode: 'remove',
             store: false,
-            ...openaiOptions
           }
         };
       } else {

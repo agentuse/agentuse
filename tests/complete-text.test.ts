@@ -78,6 +78,7 @@ describe("completeText", () => {
         providerOptions: {
           openai: {
             instructions: "system rules",
+            systemMessageMode: "remove",
             store: false,
           },
         },
@@ -85,6 +86,31 @@ describe("completeText", () => {
       expect(calls[0]).not.toHaveProperty("maxOutputTokens");
     });
   }
+
+  it("keeps multiple Codex system blocks ordered in one instructions field", async () => {
+    codexAccess.mockImplementation(async () => "oauth-token");
+
+    await completeText("openai:gpt-5", {
+      instructions: "runtime identity",
+      extraSystem: "helper role",
+      prompt: "hi",
+    });
+
+    expect(calls[0]).toMatchObject({
+      instructions: "runtime identity",
+      messages: [
+        { role: "system", content: "helper role" },
+        { role: "user", content: "hi" },
+      ],
+      providerOptions: {
+        openai: {
+          instructions: "runtime identity\n\nhelper role",
+          systemMessageMode: "remove",
+          store: false,
+        },
+      },
+    });
+  });
 
   // Anthropic OAuth takes the identity line only as an exact, standalone system
   // block — appending the role to it comes back as a 429 whose body says
