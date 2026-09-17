@@ -47,22 +47,22 @@ describe('autonomous agent system prompt', () => {
     expect(enabled).toContain('subagent delegation, binary or provider-native result delivery');
     expect(enabled).toContain('transport-sensitive tool may also appear in the Code Mode catalog');
     expect(enabled).toContain('Direct JSON/text results over 10,240 bytes are stored outside model context');
-    expect(enabled).toContain('Use the results tool for one bounded lookup');
+    expect(enabled).toContain('Use the results tool for lookups');
     expect(enabled).toContain('up to 20,480 bytes');
-    expect(enabled).toContain('"read" returns a byte page and nextOffset for continuation');
+    expect(enabled).toContain('"read" returns numbered text pages');
     expect(enabled).toContain('never raw lists or whole records');
     expect(enabled).toContain('Completed JSON-serializable nested calls are listed as reusableResults, including oversized results');
     expect(enabled).toContain('inspect results.list() for the result kind and capabilities');
     expect(enabled).toContain('Use results.read(resultId)');
     expect(enabled).toContain('results.grep(resultId');
     expect(enabled).toContain('results.jq(resultId');
-    expect(enabled).toContain('Refresh it only when current external state is required');
+    expect(enabled).toContain('Refresh the source only when current external state is required');
     expect(enabled).toContain('query its keys and one element with results.jq() instead of repeating the tool');
     expect(enabled).toContain('Do not create or ask the user to maintain a helper script');
     expect(enabled).toContain('shell artifact, commands or scripts may contain the calculations the artifact itself needs');
     expect(disabled).not.toContain('Tool composition:');
     expect(disabled).not.toContain('code_exec');
-    expect(disabled).toContain('Use the results tool for one bounded lookup');
+    expect(disabled).toContain('Use the results tool for lookups');
   });
 
   it('quotes the configured tool output cap in the Code Mode guidance', () => {

@@ -8,19 +8,31 @@ AgentUse provides built-in tools for file operations, command execution, and ses
 ## Reusable results
 
 Successful direct JSON and text results larger than 10KB are stored outside the
-model conversation. The first response contains a `resultId`, capabilities,
-and one bounded `preview` of the original value. Its `omitted` map uses jq-style
-paths to report the bytes, array items, or object keys left out. Text and JSON
-use this same format, and the complete stored value does not enter model
-context.
+model conversation. The first response contains the original `resultId`,
+capabilities, and the first contiguous text page in `content`. `pagination`
+contains `page`, `totalPages`, `pageSizeBytes`, `totalBytes`, and `hasMore`.
+Follow the returned `next` call unchanged; the last page has `next: null`.
 
 The model can use the read-only `results` tool with `list`, `read`, `grep`, or
-`jq`. `read` is available only for bounded results; large text and JSON must be
-narrowed with `grep` or `jq`. Structured command results advertise `grep` when
-their `output` text is searchable. Payload queries return only the requested
-data and never another preview or result handle; `list` returns reference
-metadata only. Result queries have a separate 20KB inline budget and never
-create another result handle. A larger lookup asks for a narrower query.
+`jq`. Direct `read` uses numbered pages; legacy `offset`/`maxBytes` calls still
+return byte pages with `nextOffset`. Do not mix the two pagination modes.
+Small `jq` responses retain `{values, truncated}`. Oversized responses, or explicit
+`page`/`pageSizeBytes` requests, page the serialized `{values, truncated}` response.
+The query expression and optional stream `limit` stay in every continuation, using
+the same original result ID. Queries execute again on each page, within existing
+time/memory/output limits; no derived result is stored. A query's stream-limit
+`truncated` flag is separate from page availability and survives reconstruction.
+The continuation carries a `contentHash` so a time-dependent query cannot silently
+mix different outputs across pages; a mismatch requires restarting with a stable query.
+
+Pages are UTF-8-safe text chunks, not necessarily valid JSON individually.
+Concatenate `content` before parsing. The default requested size is 16,384 bytes;
+JSON escaping and envelope overhead can reduce it. Actual boundaries determine
+`totalPages`, and `next` preserves the effective size. Result responses remain
+within the configured 20KB wire budget. Exceptionally small budgets or large query
+metadata can still fail explicitly when the envelope itself cannot fit.
+Structured command results also support `grep` on their searchable output text;
+`list` returns reference metadata only. Code Mode's typed results API is unchanged.
 
 References are immutable and scoped to one session and agent. Reading one never
 replays its tool or side effect. Refresh the original tool only when current

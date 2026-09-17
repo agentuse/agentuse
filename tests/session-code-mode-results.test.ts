@@ -478,8 +478,8 @@ describe('direct reusable results', () => {
       });
 
       const directResults = createResultsTool({ manager, sessionId, agentId });
-      expect(directResults.description).toContain('1,024-byte response limit');
-      expect(directResults.description).toContain('use code_exec');
+      expect(directResults.description).toContain('Response limit: 1,024 bytes');
+      expect(directResults.description).toContain('Legacy read offset/maxBytes remains supported');
       await expect((directResults.execute as any)({ action: 'list', limit: 1 })).resolves.toEqual([
         expect.objectContaining({
           resultId,
@@ -611,9 +611,9 @@ describe('direct reusable results', () => {
     expect(listed[0]).not.toHaveProperty('hint');
   });
 
-  it('searches structured output text and rejects an oversized follow-up query', async () => {
+  it('searches structured output text and pages an oversized follow-up query', async () => {
     const previousQueryLimit = process.env.AGENTUSE_RESULT_QUERY_BYTES;
-    process.env.AGENTUSE_RESULT_QUERY_BYTES = '256';
+    process.env.AGENTUSE_RESULT_QUERY_BYTES = '768';
     originalXdg = process.env.XDG_DATA_HOME;
     testRoot = await mkdtemp(join(tmpdir(), 'agentuse-direct-output-results-'));
     process.env.XDG_DATA_HOME = testRoot;
@@ -652,11 +652,21 @@ describe('direct reusable results', () => {
         }],
         truncated: false,
       });
-      await expect((resultsTool.execute as any)({
+      const firstPage = await (resultsTool.execute as any)({
         action: 'jq',
         resultId: reference.resultId,
         expression: '.output',
-      })).rejects.toThrow('RESULT_QUERY_TOO_LARGE: jq returned');
+      });
+      expect(firstPage.pagination.totalPages).toBeGreaterThan(1);
+      let page = firstPage;
+      let content = page.content;
+      while (page.next) {
+        expect(page.next.resultId).toBe(reference.resultId);
+        page = await (resultsTool.execute as any)(page.next);
+        expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(768);
+        content += page.content;
+      }
+      expect(JSON.parse(content)).toEqual({ values: [output.output], truncated: false });
     } finally {
       if (previousQueryLimit === undefined) delete process.env.AGENTUSE_RESULT_QUERY_BYTES;
       else process.env.AGENTUSE_RESULT_QUERY_BYTES = previousQueryLimit;

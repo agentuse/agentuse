@@ -4,6 +4,7 @@ import type { SessionManager } from '../session';
 import type { CodeModeResultPage } from '../session/manager';
 import type { CodeModeResultReference } from '../session/code-mode-results';
 import { getToolOutputLimits } from './tool-output-limits.js';
+import { resultPage } from './result-pages.js';
 
 export const RESULTS_TOOL = 'results';
 
@@ -20,6 +21,12 @@ const ResultsInputSchema = z.object({
     .describe('Earlier failed tool-call ID this call is correcting.'),
   action: z.enum(['list', 'read', 'grep', 'jq']),
   resultId: resultId.optional(),
+  page: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional()
+    .describe('One-based page for read or jq. Follow the returned next call unchanged.'),
+  pageSizeBytes: z.number().int().min(4).max(1_000_000).optional()
+    .describe('Maximum UTF-8 content bytes per page; response escaping may reduce each page.'),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/).optional()
+    .describe('Copy from next unchanged; rejects jq output that changes between pages.'),
   offset: z.number().int().min(0).optional()
     .describe('Byte offset. Use nextOffset from the previous page.'),
   maxBytes: z.number().int().min(1).optional()
@@ -119,7 +126,7 @@ export function createResultsTool(options: {
 }): Tool {
   const resultQueryBytes = getToolOutputLimits().resultQueryBytes;
   return {
-    description: `Query stored results. read returns byte pages within the configured ${resultQueryBytes.toLocaleString('en-US')}-byte response limit; use code_exec for typed or composed reads.`,
+    description: `Query stored results. read and oversized jq return text pages with totalPages and a next call using the same resultId. Concatenate content to reconstruct the output; JSON pages need not parse individually. Response limit: ${resultQueryBytes.toLocaleString('en-US')} bytes. Legacy read offset/maxBytes remains supported.`,
     inputSchema: ResultsInputSchema,
     execute: async (input: ResultsInput, callOptions?: { abortSignal?: AbortSignal }) => {
       switch (input.action) {
@@ -131,6 +138,15 @@ export function createResultsTool(options: {
             resultQueryBytes,
           );
         case 'read':
+          if (input.page !== undefined || input.pageSizeBytes !== undefined ||
+              (input.offset === undefined && input.maxBytes === undefined)) {
+            if (input.offset !== undefined || input.maxBytes !== undefined) {
+              throw new Error('RESULT_PAGE_INPUT: do not mix page and byte-offset pagination');
+            }
+            return resultPage(await options.manager.resultPageText(options.sessionId,
+              options.agentId, requiredResultId(input)), { ...input, action: 'read',
+              resultId: requiredResultId(input), expression: undefined, limit: undefined }, resultQueryBytes);
+          }
           return boundedLookup(
             input.action,
             fitReadPage(await options.manager.pageCodeModeResult(
@@ -155,19 +171,21 @@ export function createResultsTool(options: {
             }),
             resultQueryBytes,
           );
-        case 'jq':
-          return boundedLookup(
-            input.action,
-            await options.manager.jqCodeModeResult(
+        case 'jq': {
+          const value = await options.manager.jqCodeModeResult(
               options.sessionId,
               options.agentId,
               requiredResultId(input),
               requiredExpression(input),
               input.limit === undefined ? undefined : { limit: input.limit },
               callOptions?.abortSignal,
-            ),
-            resultQueryBytes,
-          );
+            );
+          const serialized = JSON.stringify(value);
+          if (input.page === undefined && input.pageSizeBytes === undefined &&
+              Buffer.byteLength(serialized) <= resultQueryBytes) return value;
+          return resultPage(serialized, { ...input, action: 'jq',
+            resultId: requiredResultId(input), expression: requiredExpression(input) }, resultQueryBytes);
+        }
       }
     },
   };

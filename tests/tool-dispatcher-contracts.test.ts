@@ -764,8 +764,8 @@ describe('direct reusable results', () => {
 
   it('returns a compact handle for output above the inline limit', async () => {
     const previous = process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
-    process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = '512';
-    const fullOutput = { items: Array.from({ length: 20 }, (_, index) => ({ id: index, text: 'x'.repeat(20) })) };
+    process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = '1024';
+    const fullOutput = { items: Array.from({ length: 40 }, (_, index) => ({ id: index, text: 'x'.repeat(20) })) };
     const writeReusableResult = mock(async () => ({
       resultId: 'result_01J00000000000000000000000_01J00000000000000000000001',
       tool: 'load',
@@ -803,11 +803,10 @@ describe('direct reusable results', () => {
         capabilities: { read: true, grep: false, jq: true },
       });
       expect(result).not.toHaveProperty('hint');
-      expect(result.preview).toEqual({
-        items: [{ id: 0, text: 'x'.repeat(20) }],
-      });
-      expect(result.omitted).toEqual({ '.items': '19 items' });
-      expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBeLessThanOrEqual(512);
+      expect(JSON.stringify(fullOutput).startsWith(result.content as string)).toBe(true);
+      expect(result.pagination).toMatchObject({ page: 1, hasMore: true });
+      expect(result.next).toMatchObject({ action: 'read', resultId: result.resultId, page: 2 });
+      expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBeLessThanOrEqual(1024);
     } finally {
       if (previous === undefined) delete process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
       else process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = previous;
@@ -861,8 +860,8 @@ describe('direct reusable results', () => {
 
   it('uses the available inline budget for the beginning of a text result', async () => {
     const previous = process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
-    process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = '512';
-    const fullOutput = `first-line\n${'x'.repeat(1_000)}\nlast-line`;
+    process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = '1024';
+    const fullOutput = `first-line\n${'x'.repeat(2_000)}\nlast-line`;
     const writeReusableResult = mock(async () => ({
       resultId: 'result_01J00000000000000000000000_01J00000000000000000000001',
       tool: 'load',
@@ -885,15 +884,10 @@ describe('direct reusable results', () => {
       }) as Record<string, unknown>;
 
       expect(result.truncated).toBe(true);
-      expect(result.preview).toBeTypeOf('string');
-      expect(result.preview as string).toStartWith('first-line\n');
-      expect(result.preview as string).toEndWith('…');
-      expect(result.preview as string).not.toContain('last-line');
-      expect((result.preview as string).length).toBeGreaterThan(200);
-      expect(result.omitted).toEqual({
-        '.': `${Buffer.byteLength(fullOutput, 'utf8') - Buffer.byteLength((result.preview as string).slice(0, -1), 'utf8')} bytes`,
-      });
-      expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBeLessThanOrEqual(512);
+      expect(result.content as string).toStartWith('first-line\n');
+      expect(fullOutput.startsWith(result.content as string)).toBe(true);
+      expect(result.next).toMatchObject({ action: 'read', resultId: result.resultId, page: 2 });
+      expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBeLessThanOrEqual(1024);
     } finally {
       if (previous === undefined) delete process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;
       else process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES = previous;
@@ -977,18 +971,11 @@ describe('direct reusable results', () => {
       }) as Record<string, unknown>;
       expect(result.capabilities).toEqual({ read: true, grep: true, jq: true });
       expect(result).not.toHaveProperty('hint');
-      expect(result.preview).toMatchObject({
-        metadata: {
-          exitCode: 0,
-        },
-      });
-      const outputHead = (result.preview as any).output as string;
-      expect(outputHead).toStartWith('header\n');
+      const outputHead = result.content as string;
+      expect(JSON.stringify(fullOutput).startsWith(outputHead)).toBe(true);
       expect(outputHead).not.toContain('Total cost: $1.14');
       expect(outputHead.length).toBeGreaterThan(6_000);
-      expect(result.omitted).toEqual({
-        '.output': `${Buffer.byteLength(fullOutput.output, 'utf8') - Buffer.byteLength(outputHead.slice(0, -1), 'utf8')} bytes`,
-      });
+      expect(result.pagination).toMatchObject({ page: 1, hasMore: true });
       expect(Buffer.byteLength(JSON.stringify(result), 'utf8')).toBeLessThanOrEqual(7_168);
     } finally {
       if (previous === undefined) delete process.env.AGENTUSE_TOOL_INLINE_RESULT_BYTES;

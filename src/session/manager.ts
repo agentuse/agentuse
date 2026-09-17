@@ -1297,6 +1297,12 @@ export class SessionManager {
     return result.output;
   }
 
+  /** Access-checked text for the direct pager, independent of Code Mode read caps. */
+  async resultPageText(sessionID: string, agentId: string, resultId: string): Promise<string> {
+    const { output } = await this.resolveCodeModeResult(sessionID, agentId, resultId);
+    return typeof output === 'string' ? output : JSON.stringify(output);
+  }
+
   /** Serialize and page a result for the bounded direct results tool. */
   async pageCodeModeResult(
     sessionID: string,

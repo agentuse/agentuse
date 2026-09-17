@@ -54,7 +54,7 @@ Writing:
   const reusableResultAddition = `
 
 Reusable results:
-- Direct JSON/text results over ${resultCap} are stored outside model context and returned with a resultId, one bounded preview, and a jq-style omitted map. Use the preview first. Use the results tool for one bounded lookup up to ${resultQueryCap}; it returns only the requested data: action "list" discovers handles, "read" returns a byte page and nextOffset for continuation, "grep" searches case-insensitive literal text by default without regex escaping (including structured output when capabilities.grep is true), and "jq" selects JSON. Do not retry the original tool merely to recover omitted output. Refresh it only when current external state is required or an intervening mutation may have made the stored snapshot stale.`;
+- Direct JSON/text results over ${resultCap} are stored outside model context and returned with a resultId and the first text page. pagination gives page/totalPages; follow next unchanged to continue using the same resultId. Use the results tool for lookups up to ${resultQueryCap}: "list" discovers handles, "read" returns numbered text pages (legacy offset/maxBytes reads still return nextOffset), "grep" searches literal text, and "jq" selects JSON. Small jq results retain their typed shape; oversized jq results become numbered text pages of the serialized query response. Concatenate content across pages before parsing JSON. Do not narrow or rerun the original tool merely because a page has more content. Query execution limits still apply. Refresh the source only when current external state is required or a mutation made the snapshot stale.`;
   const codeModeAddition = codeModeEnabled
     ? `
 

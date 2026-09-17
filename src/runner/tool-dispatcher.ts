@@ -7,8 +7,8 @@ import { sanitizeWALInput, type EffectWAL } from './effect-wal';
 import {
   clampToolResultForModel,
   getToolOutputLimits,
-  previewReusableResult,
 } from '../tools/tool-output-limits.js';
+import { resultPage } from '../tools/result-pages.js';
 import { logger } from '../utils/logger';
 import { toErrorMessage } from '../utils/error-message';
 import type {
@@ -256,11 +256,10 @@ function reusableResultHandle(output: unknown, reference: CodeModeResultReferenc
     capabilities: { ...reference.capabilities, read: true },
   });
   const inlineLimit = getToolOutputLimits().inlineResultBytes;
-  const emptyPayload = { preview: null, omitted: {} };
-  const emptyHandleBytes = jsonBytes(makeHandle(emptyPayload.preview, emptyPayload.omitted));
-  const previewBudget = Math.max(0, inlineLimit - emptyHandleBytes + jsonBytes(emptyPayload));
-  const payload = previewReusableResult(output, previewBudget);
-  return makeHandle(payload.preview, payload.omitted);
+  const handle = makeHandle(null, {});
+  const page = resultPage(typeof output === 'string' ? output : JSON.stringify(output),
+    { action: 'read', resultId: reference.resultId }, inlineLimit - jsonBytes(handle) - 32);
+  return { ...handle, ...page };
 }
 
 type JsonSchemaObject = Record<string, unknown>;
