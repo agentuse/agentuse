@@ -1307,7 +1307,7 @@ function RunOutcomeCard(props: { outcome: NonNullable<ApprovalLogDetails['runOut
 
 const toolTokenFmt = new Intl.NumberFormat('en-US');
 
-function ToolTokenUsageStrip(props: { usage?: ApprovalLogDetails['tokenUsage']; returnedBytes?: number | undefined }) {
+function ToolTokenUsageStrip(props: { usage?: ApprovalLogDetails['tokenUsage']; contextAddedTokens?: number | undefined; returnedBytes?: number | undefined }) {
   const metrics: Array<{ label: string; value: string; title?: string }> = [];
   if (props.usage) {
     const cached = Math.max(0, props.usage.cachedInput);
@@ -1317,13 +1317,14 @@ function ToolTokenUsageStrip(props: { usage?: ApprovalLogDetails['tokenUsage']; 
       { label: 'cached input', value: toolTokenFmt.format(cached) },
     );
   }
-  if (props.returnedBytes !== undefined) metrics.push({
-    label: 'tool returned', value: `${toolTokenFmt.format(props.returnedBytes)} bytes`,
-    title: 'Serialized tool response size in UTF-8 bytes, not model output tokens or the size of a referenced artifact.',
+  if (props.contextAddedTokens !== undefined) metrics.push({
+    label: props.contextAddedTokens < 0 ? 'context change' : 'context added',
+    value: `${props.contextAddedTokens >= 0 ? '+' : ''}${toolTokenFmt.format(props.contextAddedTokens)}`,
+    title: 'Total model input minus the previous recorded model step’s total input, including cached tokens. Not a measurement of this tool’s output.',
   });
 
   return (
-    <div class="tool-token-usage" aria-label="Model usage and tool result size">
+    <div class="tool-token-usage" aria-label="Model token usage" title={props.returnedBytes !== undefined ? `Tool returned ${toolTokenFmt.format(props.returnedBytes)} bytes (serialized UTF-8 response, not tokens).` : undefined}>
       {metrics.map((metric) => (
         <span class="tool-token-metric" key={metric.label} title={metric.title}>
           <span class="tool-token-label">{metric.label}</span>
@@ -1375,13 +1376,13 @@ function ToolDetails(props: { details: ApprovalLogDetails; sessionId: string; to
   if (rows.length === 0 && !artifact && !details.tokenUsage && details.returnedBytes === undefined && !details.liveOutput) return null;
   return (
     <div class="log-details">
-      {(details.tokenUsage || details.returnedBytes !== undefined) && (
-        <ToolTokenUsageStrip usage={details.tokenUsage} returnedBytes={details.returnedBytes} />
+      {details.tokenUsage && (
+        <ToolTokenUsageStrip usage={details.tokenUsage} contextAddedTokens={details.contextAddedTokens} returnedBytes={details.returnedBytes} />
       )}
       {rows.map((row) => (
         <div class="log-detail" key={row.label}>
           <div class="log-detail-label">
-            <span>{row.label}</span>
+            <span title={row.label === 'Output' && details.returnedBytes !== undefined ? `Tool returned ${toolTokenFmt.format(details.returnedBytes)} bytes (serialized UTF-8 response).` : undefined}>{row.label}</span>
           </div>
           <div class="log-detail-box">
             <div class="log-detail-value"><LogContent value={row.value} /></div>

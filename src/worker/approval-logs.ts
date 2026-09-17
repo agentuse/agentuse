@@ -337,12 +337,13 @@ export function buildApprovalLogs(parts: any[]): Array<{ id: string; type: strin
   let legacyKey = '';
   let legacyRemaining = 0;
   let legacyStepId = '';
+  let previousInput: number | undefined;
   const partsById = new Map(parts.map((part: any) => [String(part.id), part]));
   for (const entry of entries) {
     if (entry.type !== 'tool' || ('parentCallId' in entry && entry.parentCallId)) continue;
     const details = 'details' in entry ? entry.details : undefined;
     const usage = details?.tokenUsage;
-    if (!usage) { legacyRemaining = 0; continue; }
+    if (!usage) { legacyRemaining = 0; previousInput = undefined; continue; }
     const raw = partsById.get(entry.id)?.state?.metadata?.modelStepUsage;
     if (typeof raw?.stepId === 'string') {
       details.modelStepId = raw.stepId;
@@ -361,6 +362,10 @@ export function buildApprovalLogs(parts: any[]): Array<{ id: string; type: strin
         legacyKey = key;
         legacyRemaining = Math.max(0, (usage.sharedCalls ?? 1) - 1);
       }
+    }
+    if (details.tokenUsage) {
+      if (previousInput !== undefined) details.contextAddedTokens = usage.input - previousInput;
+      previousInput = usage.input;
     }
   }
   // Second pass: hand every gate the verdict that preceded it. The judge runs
@@ -459,6 +464,7 @@ export function groupParallelToolCalls<T extends { id: string; type: string; too
       status: calls.some(call => call.status === 'error') ? 'error' : calls.some(call => call.status === 'running') ? 'running' : 'completed',
       details: {
         tokenUsage: usage,
+        ...(first.details?.contextAddedTokens !== undefined && { contextAddedTokens: first.details.contextAddedTokens }),
         // Only direct responses enter this batch total. Descendant executions
         // may already be represented in a Code Mode response. Unknown sizes
         // must not masquerade as zero or a complete aggregate.
@@ -475,6 +481,7 @@ export function groupParallelToolCalls<T extends { id: string; type: string; too
     if (!parent || !step) return [entry];
     const details = { ...entry.details };
     delete details.tokenUsage;
+    delete details.contextAddedTokens;
     const child = { ...entry, parentCallId: parent.callId, details };
     if (emitted.has(step)) return [child];
     emitted.add(step);

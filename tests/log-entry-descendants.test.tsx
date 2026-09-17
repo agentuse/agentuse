@@ -301,12 +301,15 @@ describe('delegated call expansion', () => {
 
   it('distinguishes model-step tokens from returned tool bytes', () => {
     const html = renderTool(toolEntry({ status: 'completed', details: {
-      output: 'document', returnedBytes: 20000,
+      output: 'document', returnedBytes: 20000, contextAddedTokens: 29368,
       tokenUsage: { input: 18347, cachedInput: 14720, output: 1066, sharedCalls: 8 },
     } }), true);
     expect(html).toContain('cached input');
     expect(html).not.toContain('one model step');
-    expect(html).toContain('tool returned');
+    expect(html).toContain('context added');
+    expect(html).toContain('+29,368');
+    expect(html).not.toContain('>tool returned<');
+    expect(html).toContain('Tool returned 20,000 bytes');
     expect(html).toContain('20,000');
     expect(html.match(/class="tool-token-usage"/g)).toHaveLength(1);
   });

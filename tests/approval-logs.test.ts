@@ -3,6 +3,22 @@ import { buildApprovalLogs, groupParallelToolCalls, normalizeReviewEscalation } 
 import { completeApprovalValueDisplay } from '../src/utils/approval-value';
 
 describe('buildApprovalLogs', () => {
+  it('measures context growth once across parallel calls, including cached input', () => {
+    const make = (id: string, stepId: string, input: number, sharedCalls: number, cachedInput = 0) => ({
+      id, type: 'tool', callID: id, tool: 'results',
+      state: { status: 'completed', input: {}, output: 'text', metadata: {
+        modelStepUsage: { stepId, input, output: 1066, cachedInput, sharedCalls },
+      } },
+    });
+    const logs = buildApprovalLogs([
+      make('a', 'first', 18347, 2, 14720), make('b', 'first', 18347, 2, 14720),
+      make('c', 'next', 47715, 1), make('d', 'smaller', 20000, 1),
+    ]);
+    expect(logs[0]?.details?.contextAddedTokens).toBeUndefined();
+    expect(logs.find(row => row.id === 'b')?.details?.contextAddedTokens).toBeUndefined();
+    expect(logs.find(row => row.id === 'c')?.details?.contextAddedTokens).toBe(29368);
+    expect(logs.find(row => row.id === 'd')?.details?.contextAddedTokens).toBe(-27715);
+  });
   it('keeps incomplete groups, single calls, and pending approvals flat', () => {
     const row = { id: 'a', callId: 'a', type: 'tool', tool: 'results', title: 'Read', status: 'completed',
       details: { modelStepId: 's', tokenUsage: { input: 100, output: 10, cachedInput: 0, sharedCalls: 2 } } };
