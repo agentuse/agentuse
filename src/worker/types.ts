@@ -134,9 +134,11 @@ export interface ApprovalLogDetails {
   recoveryInferred?: boolean;
   input?: string;
   output?: string;
+  returnedBytes?: number;
   /** Bounded tail of a still-running tool call, replaced by `output` when it finishes. */
   liveOutput?: string;
   tokenUsage?: {
+    // Model request usage, displayed once per step.
     input: number;
     output: number;
     cachedInput: number;

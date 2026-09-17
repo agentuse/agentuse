@@ -325,6 +325,7 @@ export async function processAgentStream(
     const callIDs = [...currentStepToolCallIds];
     const tokens = usageToAssistantTokens(chunk.usage);
     const modelStepUsage = {
+      stepId: callIDs[0],
       input: tokens.input,
       output: tokens.output,
       cachedInput: tokens.cache.read,

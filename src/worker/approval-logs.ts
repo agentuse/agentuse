@@ -330,6 +330,34 @@ export function buildApprovalLogs(parts: any[]): Array<{ id: string; type: strin
       title: String(part?.type ?? 'Session event')
     };
   });
+  // Counters belong to model steps, not individual tool executions. For old
+  // sessions without a step id, consume only the recorded number of adjacent
+  // top-level calls with identical usage. Never count nested Code Mode calls.
+  const seenSteps = new Set<string>();
+  let legacyKey = '';
+  let legacyRemaining = 0;
+  const partsById = new Map(parts.map((part: any) => [String(part.id), part]));
+  for (const entry of entries) {
+    if (entry.type !== 'tool' || ('parentCallId' in entry && entry.parentCallId)) continue;
+    const details = 'details' in entry ? entry.details : undefined;
+    const usage = details?.tokenUsage;
+    if (!usage) { legacyRemaining = 0; continue; }
+    const raw = partsById.get(entry.id)?.state?.metadata?.modelStepUsage;
+    if (typeof raw?.stepId === 'string') {
+      if (seenSteps.has(raw.stepId)) delete details.tokenUsage;
+      seenSteps.add(raw.stepId);
+      legacyRemaining = 0;
+    } else {
+      const key = JSON.stringify(usage);
+      if (legacyRemaining > 0 && key === legacyKey) {
+        delete details.tokenUsage;
+        legacyRemaining--;
+      } else {
+        legacyKey = key;
+        legacyRemaining = Math.max(0, (usage.sharedCalls ?? 1) - 1);
+      }
+    }
+  }
   // Second pass: hand every gate the verdict that preceded it. The judge runs
   // before await_human suspends, so a bounced draft's reason is already in the
   // log — just far above the card the reviewer is actually looking at.
@@ -694,6 +722,10 @@ export function subagentResultFromState(state: any, tool?: string): ApprovalLogD
 
 export function buildToolDetails(state: any, tool?: string): ApprovalLogDetails | undefined {
   const fields: ApprovalLogDetails = {};
+  if (state?.status === 'completed' && state.output !== undefined) {
+    const serialized = typeof state.output === 'string' ? state.output : JSON.stringify(state.output);
+    if (serialized !== undefined) fields.returnedBytes = Buffer.byteLength(serialized, 'utf8');
+  }
   const usage = valueAsRecord(valueAsRecord(state?.metadata).modelStepUsage);
   const inputTokens = usage.input;
   const outputTokens = usage.output;

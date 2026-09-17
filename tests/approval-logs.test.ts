@@ -3,6 +3,25 @@ import { buildApprovalLogs, normalizeReviewEscalation } from '../src/worker/appr
 import { completeApprovalValueDisplay } from '../src/utils/approval-value';
 
 describe('buildApprovalLogs', () => {
+  it('shows model usage once per step and preserves each tool result size', () => {
+    const make = (id: string, stepId?: string) => ({
+      id, type: 'tool', callID: id, tool: 'results',
+      state: { status: 'completed', input: {}, output: 'é', metadata: {
+        modelStepUsage: { input: 18347, output: 1066, cachedInput: 14720, sharedCalls: 2, ...(stepId && { stepId }) },
+      } },
+    });
+    for (const explicit of [false, true]) {
+      const logs = buildApprovalLogs([
+        make('a', explicit ? 'step1' : undefined),
+        make('b', explicit ? 'step1' : undefined),
+        make('c', explicit ? 'step2' : undefined),
+        make('d', explicit ? 'step2' : undefined),
+      ]);
+      expect(logs.map(row => Boolean(row.details?.tokenUsage))).toEqual([true, false, true, false]);
+      expect(logs.map(row => row.details?.returnedBytes)).toEqual([2, 2, 2, 2]);
+      expect(logs).toHaveLength(4);
+    }
+  });
   it('projects a strict-review escalation only from valid pending metadata', () => {
     const escalation = {
       kind: 'fresh-review-exhausted',

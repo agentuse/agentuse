@@ -299,6 +299,18 @@ describe('delegated call expansion', () => {
     />);
   }
 
+  it('distinguishes model-step tokens from returned tool bytes', () => {
+    const html = renderTool(toolEntry({ status: 'completed', details: {
+      output: 'document', returnedBytes: 20000,
+      tokenUsage: { input: 18347, cachedInput: 14720, output: 1066, sharedCalls: 8 },
+    } }), true);
+    expect(html).toContain('model input (uncached)');
+    expect(html).toContain('model output');
+    expect(html).toContain('one model step');
+    expect(html).toContain('tool returned');
+    expect(html).toContain('20,000');
+  });
+
   it('opens a running ordinary tool so its live output is visible', () => {
     expect(renderTool(toolEntry({}))).toContain('aria-expanded="true"');
   });

@@ -107,6 +107,7 @@ export interface ApprovalLogDetails {
   recoveryInferred?: boolean;
   input?: string;
   output?: string;
+  returnedBytes?: number;
   tokenUsage?: {
     input: number;
     output: number;

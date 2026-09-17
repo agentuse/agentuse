@@ -1312,9 +1312,9 @@ function ToolTokenUsageStrip(props: { usage: NonNullable<ApprovalLogDetails['tok
   const input = Math.max(0, props.usage.input - cached);
   const output = Math.max(0, props.usage.output);
   const metrics = [
-    { label: 'input', value: toolTokenFmt.format(input) },
-    { label: 'output', value: toolTokenFmt.format(output) },
-    { label: 'cached', value: `+${toolTokenFmt.format(cached)}` },
+    { label: 'model input (uncached)', value: toolTokenFmt.format(input) },
+    { label: 'model output', value: toolTokenFmt.format(output) },
+    { label: 'cached input', value: toolTokenFmt.format(cached) },
   ];
   const sharedCalls = props.usage.sharedCalls ?? 1;
 
@@ -1330,7 +1330,7 @@ function ToolTokenUsageStrip(props: { usage: NonNullable<ApprovalLogDetails['tok
         <span
           class="tool-token-shared"
           title="These counters cover the model step that emitted all of these tool calls; they are not charged once per tool."
-        >shared across {sharedCalls} calls</span>
+        >one model step · {sharedCalls} tool calls</span>
       )}
     </div>
   );
@@ -1378,6 +1378,14 @@ function ToolDetails(props: { details: ApprovalLogDetails; sessionId: string; to
   return (
     <div class="log-details">
       {details.tokenUsage && <ToolTokenUsageStrip usage={details.tokenUsage} />}
+      {details.returnedBytes !== undefined && (
+        <div class="tool-token-usage" aria-label="Tool result size">
+          <span class="tool-token-metric" title="Serialized tool response size in UTF-8 bytes, not model output tokens or the size of a referenced artifact.">
+            <span class="tool-token-label">tool returned</span>
+            <span class="tool-token-value">{toolTokenFmt.format(details.returnedBytes)} bytes</span>
+          </span>
+        </div>
+      )}
       {rows.map((row) => (
         <div class="log-detail" key={row.label}>
           <div class="log-detail-label">

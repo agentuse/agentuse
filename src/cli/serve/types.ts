@@ -656,6 +656,7 @@ export interface ApprovalLogDetails {
    */
   liveOutput?: string;
   tokenUsage?: ToolTokenUsage;
+  returnedBytes?: number;
   summary?: string;
   context?: string;
   risk?: string;
