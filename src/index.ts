@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
+import { ExecutionBudget } from './runner/execution-budget';
 import { failureLabel } from './session/failure-label';
-import { classifyFailure, runDeadline, RunAbortError } from './runner/failure';
+import { classifyFailure, RunAbortError } from './runner/failure';
 import { registerTestCommands, type RunCommandOptions } from './cli/test';
 import { parseAgent, parseAgentContent, ConfigError } from './parser';
 import { connectMCP } from './mcp';
@@ -730,9 +731,7 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
       // Create abort controller for timeout
       const abortController = new AbortController();
       let wasInterrupted = false;  // Track if abort was from user interrupt vs timeout
-      const timeoutId = setTimeout(() => {
-        abortController.abort(runDeadline(timeoutMs / 1000));
-      }, timeoutMs);
+      const executionBudget = new ExecutionBudget(timeoutMs, { controller: abortController });
 
       // Handle Ctrl-C gracefully
       let sigintCount = 0;
@@ -977,7 +976,7 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
         }
         throw error;
       } finally {
-        clearTimeout(timeoutId);
+        await executionBudget.finish();
         process.off('SIGINT', sigintHandler);
         process.off('SIGTERM', sigtermHandler);
       }

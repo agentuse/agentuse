@@ -1,3 +1,4 @@
+import { ExecutionBudget } from './runner/execution-budget';
 import type { Tool } from 'ai';
 import { z } from 'zod';
 import { parseAgent } from './parser';
@@ -178,6 +179,9 @@ export async function createSubAgentTool(
     }),
     execute: async ({ task, context }) => {
       const startTime = Date.now();
+      const parentSignal = abortSignal;
+      const budget = new ExecutionBudget((agent.config.timeout ?? 300) * 1000, { ...(parentSignal && { parentSignal }) });
+      const childSignal = budget.signal;
 
       // Compute agentId relative to the agent's stateRoot (file-path-based,
       // stable across cwds) for session/store naming.
@@ -327,6 +331,7 @@ export async function createSubAgentTool(
               });
 
               subagentSessionID = sessionResult.sessionID;
+              await budget.bind(subagentSessionManager, subagentSessionID, agentId);
               subagentMsgID = sessionResult.messageID;
 
               try {
@@ -383,7 +388,7 @@ export async function createSubAgentTool(
               subagentSessionID,
               agentId,
               projectContext,
-              abortSignal,  // Pass parent's abort signal to nested subagents
+              childSignal,  // Ancestor cancellation plus this child's own deadline
               pluginManager
             );
 
@@ -424,7 +429,7 @@ export async function createSubAgentTool(
                   task: agent.instructions,
                   agentFilePath: resolvedPath,
                   projectContext,
-                  abortSignal,
+                  abortSignal: childSignal,
                   sessionManager: subagentSessionManager,
                   sessionID: subagentSessionID,
                   agentId,
@@ -457,7 +462,7 @@ export async function createSubAgentTool(
               agent: subagentReference,
               ...(subagentSessionID && { sessionId: subagentSessionID }),
               trigger: 'manual',
-            }, abortSignal);
+            }, childSignal);
           }
 
           // Mirror this sub-agent's operational logs into ITS OWN session view.
@@ -478,7 +483,8 @@ export async function createSubAgentTool(
                 ...(cacheableUserMessage !== undefined && { cacheableUserMessage }),
                 systemMessages,
                 maxSteps: effectiveMaxSteps,
-                ...(abortSignal && { abortSignal }),  // Pass parent's abort signal
+                abortSignal: childSignal,
+                executionBudget: budget,
                 subAgentNames: new Set(Object.keys(nestedSubAgentTools)),  // Track nested sub-agent names for logging
                 ...(subagentSessionManager && { sessionManager: subagentSessionManager }),
                 ...(subagentSessionID && { sessionID: subagentSessionID }),
@@ -554,7 +560,7 @@ export async function createSubAgentTool(
                 sessionId: subagentSessionID,
                 reason: 'approval',
                 ...(result.approvalUrl && { approvalUrl: result.approvalUrl }),
-              }, abortSignal);
+              }, childSignal);
             }
             // Bubble a pointer to this child only. The human-facing URL/token are
             // resolved at the root by getApprovalInfo descending childSessionID — we
@@ -565,6 +571,8 @@ export async function createSubAgentTool(
               childAgentName: agent.name,
             });
           }
+
+          await budget.finish(true);
 
           // Update session message with final token usage and mark session completed.
           // A sub-agent that declared itself incomplete (report_incomplete) is
@@ -621,7 +629,7 @@ export async function createSubAgentTool(
               },
               isSubAgent: true,
               consoleOutput: '',
-            }, abortSignal);
+            }, childSignal);
             output = completionEvent.result.text;
           }
 
@@ -666,8 +674,8 @@ export async function createSubAgentTool(
         // with a plain object, and String() on it yields the useless "[object Object]".
         // Model/provider failures also carry the concrete attempted model in both
         // the persisted child error and the result bubbled to the parent manager.
-        const errorMsg = formatSubagentErrorMessage(error, agent.config.model);
-        const failure = classifyFailure(error, abortSignal);
+        const errorMsg = childSignal.aborted ? String(childSignal.reason?.message ?? childSignal.reason) : formatSubagentErrorMessage(error, agent.config.model);
+        const failure = classifyFailure(error, childSignal);
         logger.error(`[SubAgent] ${agent.name} failed: ${errorMsg}`);
 
         if (pluginManager) {
@@ -685,7 +693,7 @@ export async function createSubAgentTool(
               message: errorMsg,
             },
             duration: (Date.now() - startTime) / 1000,
-          }, abortSignal);
+          }, childSignal);
         }
 
         // Mark session as error if we have session info
@@ -703,16 +711,17 @@ export async function createSubAgentTool(
           }
         }
 
-        // An abort is the parent's cancellation/timeout, not a recoverable
-        // sub-agent failure. Swallowing it into a text result would let the
-        // parent keep running past its own timeout, so re-throw to propagate.
-        if (error instanceof Error && error.name === 'AbortError') {
+        // Only ancestor cancellation unwinds the parent. A child's own
+        // deadline returns a failed outcome so its parent can still respond.
+        if (parentSignal?.aborted) {
           throw error;
         }
 
         return {
           output: `Sub-agent ${agent.name} failed: ${errorMsg}`
         };
+      } finally {
+        await budget.finish();
       }
     }
   };

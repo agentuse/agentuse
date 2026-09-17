@@ -394,6 +394,7 @@ export interface SessionTokenUsage {
 
 
 export interface ApprovalPageInfo {
+  executionBudget?: import('../../runner/execution-budget').ExecutionBudgetState;
   sessionId: string;
   sessionStatus: string;
   approvalKind?: 'await_human' | 'tool_approval';

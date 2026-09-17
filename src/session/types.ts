@@ -72,6 +72,8 @@ export interface SessionInfo {
     cwd: string;                     // Working directory when agent started
   };
 
+  executionBudget?: import('../runner/execution-budget').ExecutionBudgetState;
+
   // Timing
   time: {
     created: number;                 // Unix timestamp (ms)

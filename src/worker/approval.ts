@@ -228,6 +228,7 @@ export async function getApprovalInfoUncached(req: ExecuteRequest) {
         approval: {
           sessionId: req.sessionId,
           sessionStatus: found.session.status,
+          ...(found.session.executionBudget && { executionBudget: found.session.executionBudget }),
           ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
           model: found.session.model,
           ...mockField(found.session),
@@ -304,6 +305,7 @@ export async function getApprovalInfoUncached(req: ExecuteRequest) {
         approval: {
           sessionId: req.sessionId,
           sessionStatus,
+          ...(found.session.executionBudget && { executionBudget: found.session.executionBudget }),
           ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
           model: found.session.model,
           ...mockField(found.session),
@@ -453,6 +455,7 @@ export async function getApprovalInfoUncached(req: ExecuteRequest) {
       approval: {
         sessionId: req.sessionId,
         sessionStatus,
+        ...(found.session.executionBudget && { executionBudget: found.session.executionBudget }),
         approvalKind: isGenericToolApproval ? 'tool_approval' : 'await_human',
         ...(typeof found.session.time?.created === 'number' && { createdAt: found.session.time.created }),
         model: found.session.model,

@@ -94,6 +94,24 @@ Additional instructions or context.
 
   This prevents runaway agents and provides a safety ceiling for execution time.
 
+  Execution receives one wrap-up notice at the next model boundary after 80% of
+  its effective budget. The agent should return established findings and identify
+  unfinished work; verification and approval requirements still apply. A running
+  tool is not interrupted by the notice, so delivery can be later than 80%.
+  The hard deadline remains in force.
+
+  A delegated agent has its own timeout (300 seconds when omitted), constrained
+  by its parent's remaining budget. A child timeout returns a failed outcome to
+  the parent; parent cancellation stops descendants. Active time is preserved
+  across approval suspension and resume, excluding human waiting time. A new
+  follow-up on an ended session starts a new budget. Historical sessions without
+  a saved budget begin accounting on their next execution.
+
+  Session details show “Wrapping up” after delivery. A returned incomplete
+  response is labelled “Wrapped up before timeout”; a hard expiry still reads
+  “Timed out.” A completed task remains “Completed,” with the notice in its
+  details. Receiving a notice alone never counts as graceful completion.
+
   **Precedence:** CLI `--timeout` flag overrides this value.
 
   ```yaml

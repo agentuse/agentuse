@@ -1,4 +1,5 @@
 import { responseMetadataFromRaw, responseMetadataFromStep, type ResponseMetadata } from '../telemetry/response-metadata';
+import type { ExecutionBudget } from './execution-budget';
 import { streamText, isStepCount, asSchema, type ModelMessage, type ToolSet } from 'ai';
 import { readResultBytePage } from '../tools/results';
 import { repairSmuggledXmlToolCall } from './tool-call-repair';
@@ -764,6 +765,7 @@ type ExecuteAgentCoreOptions = {
   messages?: ModelMessage[];
   maxSteps: number;
   abortSignal?: AbortSignal;
+  executionBudget?: ExecutionBudget | undefined;
   subAgentNames?: Set<string>;
   sessionManager?: SessionManager;
   sessionID?: string;
@@ -1535,6 +1537,10 @@ async function* executeAgentAttempt(
       repairToolCall: repairSmuggledXmlToolCall,
       ...(providerOptions && { providerOptions }),
       prepareStep: async ({ messages: stepMessages }: { messages: ModelMessage[] }) => {
+        const wrapUpNotice = await options.executionBudget?.takeNotice();
+        if (wrapUpNotice) logger.info('Wrapping up: execution budget nearly used.');
+        const budgetNotice = options.executionBudget?.notice;
+        if (budgetNotice) stepMessages = [...stepMessages, { role: 'system', content: budgetNotice }];
         preparedStepInputs.push([...stepMessages]);
 
         // Measurement + cache annotation only. Compaction runs BETWEEN

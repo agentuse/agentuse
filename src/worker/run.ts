@@ -1,3 +1,4 @@
+import { ExecutionBudget } from '../runner/execution-budget';
 import { resolve, dirname } from 'path';
 import { existsSync } from 'fs';
 import * as dotenv from 'dotenv';
@@ -8,7 +9,7 @@ import { PluginManager } from '../plugin';
 import { applyRunModelOverride, resolveModelString, type RunModelOverride } from '../utils/model-alias';
 import { logger } from '../utils/logger';
 import { resolveProjectContext } from '../utils/project';
-import { classifyFailure, runDeadline } from '../runner/failure';
+import { classifyFailure } from '../runner/failure';
 import { validateAgentEnvVars, formatEnvValidationError } from '../utils/env-validation';
 import { SessionManager } from '../session/index.js';
 import { initStorage } from '../storage/index.js';
@@ -26,6 +27,7 @@ export async function executeAgent(ctx: WorkerContext, req: ExecuteRequest) {
   let prebuiltResumeMessages: Awaited<ReturnType<typeof applyResumeToolResult>>['resumedMessages'] | undefined;
   let continuationSession: { sessionId: string; agentId: string } | undefined;
   let activeSessionId: string | undefined;
+  let executionBudget: ExecutionBudget | undefined;
 
   const abortController = new AbortController();
   // Register the abort handle under the known session id up front, before the
@@ -251,7 +253,7 @@ export async function executeAgent(ctx: WorkerContext, req: ExecuteRequest) {
     mcp = await connectMCP(agent.config.mcpServers, req.debug ?? false, mcpBasePath, runCwd);
 
     const timeoutSeconds = req.timeout ?? agent.config.timeout ?? 300;
-    const timeoutId = setTimeout(() => abortController.abort(runDeadline(timeoutSeconds)), timeoutSeconds * 1000);
+    executionBudget = new ExecutionBudget(timeoutSeconds * 1000, { controller: abortController });
     const projectContext = { projectRoot: req.projectRoot, stateRoot: req.projectRoot, cwd: runCwd };
     let pluginManager: PluginManager | null = null;
     try {
@@ -322,7 +324,7 @@ export async function executeAgent(ctx: WorkerContext, req: ExecuteRequest) {
         req.trigger
       );
 
-      clearTimeout(timeoutId);
+      await executionBudget.finish();
       resumeRollback = undefined;
       const duration = Date.now() - startTime;
 
@@ -332,7 +334,7 @@ export async function executeAgent(ctx: WorkerContext, req: ExecuteRequest) {
 
       return workerRunResponse(req.id, result, duration);
     } catch (err) {
-      clearTimeout(timeoutId);
+      await executionBudget.finish();
       // Once the agent run has started, keep the reviewer's decision durable.
       // Rolling the await_human part back here makes an accepted approval look
       // pending again after a downstream model/tool error, which is both
@@ -383,6 +385,7 @@ export async function executeAgent(ctx: WorkerContext, req: ExecuteRequest) {
       error: { ...failure, ...(failure.cause === 'unknown' && { code: 'INTERNAL_ERROR' }) },
     };
   } finally {
+    await executionBudget?.finish();
     // Clear both the up-front (req.sessionId) and resolved (activeSessionId)
     // registrations; they usually coincide for resume/continue but may differ
     // defensively, and a stale entry would wrongly abort a later run reusing

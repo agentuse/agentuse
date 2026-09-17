@@ -1,3 +1,4 @@
+import { ExecutionBudget } from '../runner/execution-budget';
 import { failureLabel } from '../session/failure-label';
 import { Command } from "commander";
 import fs from "fs/promises";
@@ -1749,6 +1750,7 @@ async function resumeSession(
       buildResumedMessages: true,
     });
     let enteredRunAgent = false;
+    let executionBudget: ExecutionBudget | undefined;
     try {
       if (!resumed.resumedMessages) {
         throw new Error(`RESUME_HISTORY_INVALID: no resolved history was built for session ${summary.id}`);
@@ -1763,7 +1765,9 @@ async function resumeSession(
         path.dirname(agentPath),
         cwd
       );
+      executionBudget = new ExecutionBudget((agent.config.timeout ?? 300) * 1000);
       const preparedExecution = await prepareAgentExecution({
+        abortSignal: executionBudget.signal,
         agent,
         mcpClients: mcp,
         agentFilePath: agentPath,
@@ -1782,7 +1786,7 @@ async function resumeSession(
         agent,
         mcp,
         options.debug ?? false,
-        undefined,
+        executionBudget.signal,
         Date.now(),
         options.debug ?? false,
         agentPath,
@@ -1821,6 +1825,8 @@ async function resumeSession(
         });
       }
       throw err;
+    } finally {
+      await executionBudget?.finish();
     }
 
     // Resume + run succeeded above; persist the optional manual rule now so a
@@ -1851,11 +1857,12 @@ async function resumeSession(
     await sessionManager.getLastAssistantText(summary.id, found.agentId),
     options.prompt
   );
+  const executionBudget = new ExecutionBudget((agent.config.timeout ?? 300) * 1000);
   const result = await runAgent(
     agent,
     mcp,
     options.debug ?? false,
-    undefined,
+    executionBudget.signal,
     Date.now(),
     options.debug ?? false,
     found.session.agent.filePath,

@@ -1,5 +1,6 @@
 import { activeTimingForTree, sessionTimingRow } from '../session/timing';
-import { runDeadline } from '../runner/failure';
+import { classifyFailure } from '../runner/failure';
+import { ExecutionBudget } from '../runner/execution-budget';
 import { dirname, join } from 'path';
 import { parseAgent } from '../parser';
 import { connectMCP } from '../mcp';
@@ -106,7 +107,7 @@ export async function runExistingSession(opts: {
     return error;
   };
   let mcp: Awaited<ReturnType<typeof connectMCP>> = [];
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let executionBudget: ExecutionBudget | undefined;
   let enteredRunAgent = false;
   try {
     const found = await sessionManager.findSession(sessionId);
@@ -127,7 +128,7 @@ export async function runExistingSession(opts: {
       pluginManager = null;
     }
     const timeoutSeconds = agent.config.timeout ?? 300;
-    timeoutId = setTimeout(() => abortController.abort(runDeadline(timeoutSeconds)), timeoutSeconds * 1000);
+    executionBudget = new ExecutionBudget(timeoutSeconds * 1000, { parentSignal: abortController.signal });
     ctx.activeExecutionControllers.set(sessionId, abortController);
     const preparedExecution = await prepareAgentExecution({
       agent,
@@ -137,7 +138,7 @@ export async function runExistingSession(opts: {
       sessionManager,
       projectContext,
       userPrompt: continuationPrompt,
-      abortSignal: abortController.signal,
+      abortSignal: executionBudget.signal,
       pluginManager,
       verbose: debug ?? false,
       existingSessionId: sessionId,
@@ -145,7 +146,7 @@ export async function runExistingSession(opts: {
     });
     enteredRunAgent = true;
     return await runAgent(
-      agent, mcp, debug ?? false, abortController.signal, startTime, false, agentPath,
+      agent, mcp, debug ?? false, executionBudget.signal, startTime, false, agentPath,
       maxSteps, sessionManager, projectContext, continuationPrompt, preparedExecution, true,
       pluginManager, true, sessionId, undefined, continuationPrompt,
     );
@@ -155,9 +156,14 @@ export async function runExistingSession(opts: {
     for (const conn of mcp) {
       try { await conn.client.close(); } catch { /* ignore */ }
     }
+    if (enteredRunAgent && executionBudget?.signal.aborted) {
+      if (executionBudget.parentAborted) throw executionBudget.signal.reason;
+      const failure = classifyFailure(err, executionBudget.signal);
+      return { status: 'failed', text: failure.message, toolCallCount: 0, hasTextOutput: false };
+    }
     throw enteredRunAgent ? err : markPreRunError(err);
   } finally {
-    if (timeoutId) clearTimeout(timeoutId);
+    await executionBudget?.finish();
     ctx.activeExecutionControllers.delete(sessionId);
   }
 }

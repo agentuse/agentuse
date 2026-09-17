@@ -37,6 +37,7 @@ mock.module('../src/complete-text', () => ({
 import { initStorage } from '../src/storage';
 import { SessionManager } from '../src/session';
 import { executeAgentCore } from '../src/runner/execution';
+import { ExecutionBudget, executionBudgetFor, BUDGET_WRAP_UP_NOTICE } from '../src/runner/execution-budget';
 import { EffectWAL, EFFECT_WAL_FILENAME } from '../src/runner/effect-wal';
 import { LeaseStore, LEASE_FILENAME } from '../src/runner/approval-lease';
 import { createAwaitHumanTool } from '../src/tools/await-human';
@@ -131,7 +132,7 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
     };
   }
 
-  async function runCore(tools: Record<string, unknown>, pluginEvents?: any): Promise<AgentChunk[]> {
+  async function runCore(tools: Record<string, unknown>, pluginEvents?: any, abortSignal?: AbortSignal): Promise<AgentChunk[]> {
     const chunks: AgentChunk[] = [];
     const generator = executeAgentCore(agent, tools as any, {
       userMessage: 'go',
@@ -141,6 +142,7 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
       sessionID,
       agentId,
       effectWal: wal,
+      ...(abortSignal && { abortSignal, executionBudget: executionBudgetFor(abortSignal) }),
       ...(pluginEvents && { pluginEvents }),
     });
     for await (const chunk of generator) {
@@ -225,6 +227,31 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
       label: 'Exact gated command',
       content: `touch ${marker}`,
     });
+  });
+
+  test('a budget wrap-up notice cannot bypass the publication gate', async () => {
+    const marker = path.join(projectRoot, 'budget-ghost-marker.txt');
+    const { model, promptAt } = makeModel([
+      turn([
+        toolCallPart('gate-budget', 'await_human', { prompt: 'Approve this action?' }),
+        toolCallPart('bash-budget', 'tools__bash', { command: `touch ${marker}` }),
+      ]),
+    ]);
+    currentModel = model;
+    await sessionManager.updateSession(sessionID, agentId, {
+      executionBudget: { configuredMs: 100_000, elapsedMs: 80_000, effectiveMs: 100_000 },
+    });
+    const budget = new ExecutionBudget(100_000);
+    try {
+      await budget.bind(sessionManager, sessionID, agentId, true);
+      const chunks = await runCore(makeTools(), undefined, budget.signal);
+      expect(JSON.stringify(promptAt(0))).toContain(BUDGET_WRAP_UP_NOTICE);
+      expect(fs.existsSync(marker)).toBe(false);
+      expect(chunks.at(-1)?.type).toBe('suspended');
+      expect(readWAL().some(record => record.event === 'bash-spawn')).toBe(false);
+      await budget.finish();
+      expect(budget.snapshot().wrappedUpAt).toBeUndefined();
+    } finally { await budget.finish(); }
   });
 
   test('malformed attached command is rejected before suspension or lease creation', async () => {

@@ -7,6 +7,7 @@ import type { ActiveContextUsage, ReviewEscalation } from "../../session/types";
 import { ApprovalLogEntry, ChildSessionSummary } from "./session-log";
 
 export interface ApprovalPageInfo {
+  executionBudget?: import('../../runner/execution-budget').ExecutionBudgetState;
   sessionId: string;
   sessionStatus: string;
   approvalKind?: 'await_human' | 'tool_approval';

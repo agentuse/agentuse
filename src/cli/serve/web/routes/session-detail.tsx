@@ -1,3 +1,4 @@
+import { budgetLabel } from '../../../../session/budget-label';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation, useRoute } from 'preact-iso';
 import type { ApprovalLogEntry, ApprovalPageInfo, LogSubagentSession, LogVerifySummary } from '../../types';
@@ -2508,6 +2509,8 @@ export default function SessionDetail() {
     suspended: isSuspended,
     ended,
   });
+  const wrappingUp = mode === 'working' && approval.sessionStatus === 'running' && approval.executionBudget?.noticeDeliveredAt !== undefined;
+  const budgetNote = budgetLabel(approval.sessionStatus, approval.errorCode, approval.executionBudget);
   const cardLabel = nowCardLabel({
     mode,
     viewOnly: isSubagentView,
@@ -2699,7 +2702,7 @@ export default function SessionDetail() {
           <div class="session-sticky-bar">
             <span class={`session-status is-${statusTone}`}>
               <span class="session-status-dot" aria-hidden="true" />
-              {statusWord}
+              {wrappingUp ? 'Wrapping up' : statusWord}
             </span>
             <span class="session-sticky-name">{pageAgentLabel}</span>
             <span class="session-sticky-spacer" />
@@ -2740,8 +2743,11 @@ export default function SessionDetail() {
             )}
             <span class={`session-status is-${statusTone}`}>
               <span class="session-status-dot" aria-hidden="true" />
-              {statusWord}
+              {wrappingUp ? 'Wrapping up' : statusWord}
             </span>
+            {budgetNote && <span class="session-header-tag" title={approval.executionBudget
+              ? `Execution budget: ${Math.round(approval.executionBudget.configuredMs / 1000)}s configured; ${Math.round(approval.executionBudget.effectiveMs / 1000)}s effective. Limiting session: ${approval.executionBudget.limitingSessionId ?? sessionId}`
+              : undefined}>{approval.sessionStatus === 'running' ? 'Execution budget nearly used' : budgetNote}</span>}
             {approval?.mock && <span class="session-header-tag" title="Tool outputs were LLM-generated; no real tools ran">mock</span>}
             {isRevisionSession && <span class="session-header-tag">internal</span>}
             {isSubagentView && <span class="session-header-tag">view only</span>}

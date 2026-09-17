@@ -1,3 +1,4 @@
+import { executionBudgetFor } from './execution-budget';
 import { dirname } from 'path';
 import { buildFreshInstructions } from './instructions';
 import { computeAgentId } from '../utils/agent-id';
@@ -288,6 +289,10 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
         logger.debug(`Session creation error stack: ${(error as Error).stack}`);
       }
     }
+  }
+
+  if (sessionManager && sessionID) {
+    await executionBudgetFor(abortSignal)?.bind(sessionManager, sessionID, agentId, !!existingSessionId && !rebuildMissingToolsSnapshot);
   }
 
   // Load all agent tools (MCP, configured, skill, store, sandbox)

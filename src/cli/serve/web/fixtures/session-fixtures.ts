@@ -139,6 +139,23 @@ function gate(ago: number, extra: Partial<NonNullable<ApprovalLogEntry['details'
 export function buildSessionFixtures(): SessionFixture[] {
   return [
     {
+      id: 'wrapping-up', label: 'Wrapping up', hint: 'Budget notice delivered; current work can finish safely.',
+      status: 'running',
+      approval: header('wrapping-up', 'running', 4 * MINUTE, {
+        executionBudget: { configuredMs: 5 * MINUTE, elapsedMs: 4 * MINUTE, effectiveMs: 5 * MINUTE, noticeDeliveredAt: Date.now() - 1000 },
+      }),
+      logs: warmup(4 * MINUTE),
+    },
+    {
+      id: 'wrapped-up-incomplete', label: 'Wrapped up incomplete', hint: 'An ordinary incomplete response before the hard deadline.',
+      status: 'error',
+      approval: header('wrapped-up-incomplete', 'error', 5 * MINUTE, {
+        errorCode: 'INCOMPLETE', errorMessage: 'Verified the primary claim; the secondary comparison remains unchecked.',
+        executionBudget: { configuredMs: 5 * MINUTE, elapsedMs: 4.5 * MINUTE, effectiveMs: 5 * MINUTE, noticeDeliveredAt: Date.now() - MINUTE, wrappedUpAt: Date.now() - 30_000 },
+      }),
+      logs: warmup(5 * MINUTE),
+    },
+    {
       id: 'working',
       label: 'Working',
       hint: 'Spinner in the head, the running step as the focus, three recent steps under it, transcript folded, Stop in the bar.',

@@ -1,3 +1,4 @@
+import { executionBudgetFor } from './execution-budget';
 import type { ParsedAgent } from '../parser';
 import { announceSessionFinished, announceSessionStarted } from './announce';
 import type { MCPConnection } from '../mcp';
@@ -336,6 +337,7 @@ export async function runAgent(
 
     // Execute using the core generator
     const coreOptions = {
+      executionBudget: executionBudgetFor(abortSignal),
       userMessage,
       ...(cacheableUserMessage !== undefined && { cacheableUserMessage }),
       systemMessages,
@@ -687,6 +689,7 @@ export async function runAgent(
     });
 
     // Return metrics for plugin system
+    await executionBudgetFor(abortSignal)?.finish(true);
     return runResult;
   } catch (error: unknown) {
     const failure = classifyFailure(error, abortSignal);
@@ -751,6 +754,7 @@ export async function runAgent(
     logger.error('Agent execution failed', error as Error);
     throw error;
   } finally {
+    await executionBudgetFor(abortSignal)?.finish();
     // Clean up preparation resources (store locks, etc.)
     if (captureActive) {
       logger.stopCapture();
