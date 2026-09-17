@@ -119,6 +119,22 @@ function fitReadPage(page: CodeModeResultPage, responseLimit: number): CodeModeR
   return fitted;
 }
 
+/** Shared byte-page reader for direct results and the Code Mode bridge. */
+export async function readResultBytePage(
+  manager: SessionManager,
+  sessionId: string,
+  agentId: string,
+  resultId: string,
+  options: { offset?: number; maxBytes?: number },
+): Promise<CodeModeResultPage> {
+  const input = ResultsInputSchema.pick({ offset: true, maxBytes: true }).parse(options);
+  const limit = getToolOutputLimits().resultQueryBytes;
+  return boundedLookup('read', fitReadPage(await manager.pageCodeModeResult(
+    sessionId, agentId, resultId,
+    { ...(input.offset !== undefined && { offset: input.offset }), maxBytes: Math.min(input.maxBytes ?? limit, limit) },
+  ), limit), limit);
+}
+
 export function createResultsTool(options: {
   manager: SessionManager;
   sessionId: string;
@@ -147,19 +163,11 @@ export function createResultsTool(options: {
               options.agentId, requiredResultId(input)), { ...input, action: 'read',
               resultId: requiredResultId(input), expression: undefined, limit: undefined }, resultQueryBytes);
           }
-          return boundedLookup(
-            input.action,
-            fitReadPage(await options.manager.pageCodeModeResult(
-              options.sessionId,
-              options.agentId,
-              requiredResultId(input),
-              {
-                ...(input.offset !== undefined && { offset: input.offset }),
-                maxBytes: Math.min(input.maxBytes ?? resultQueryBytes, resultQueryBytes),
-              },
-            ), resultQueryBytes),
-            resultQueryBytes,
-          );
+          return readResultBytePage(options.manager, options.sessionId, options.agentId,
+            requiredResultId(input), {
+              ...(input.offset !== undefined && { offset: input.offset }),
+              ...(input.maxBytes !== undefined && { maxBytes: input.maxBytes }),
+            });
         case 'grep':
           return boundedLookup(
             input.action,

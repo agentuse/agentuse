@@ -1,4 +1,5 @@
 import { streamText, isStepCount, asSchema, type ModelMessage, type ToolSet } from 'ai';
+import { readResultBytePage } from '../tools/results';
 import { repairSmuggledXmlToolCall } from './tool-call-repair';
 import { createHash, randomBytes } from 'crypto';
 import type { ParsedAgent } from '../parser';
@@ -696,6 +697,7 @@ export function buildCodeModeTraceHooks(options: {
     },
     resultAccess: {
       read: (resultId) => manager.readCodeModeResult(sessionID, agentId, resultId),
+      page: (resultId, options) => readResultBytePage(manager, sessionID, agentId, resultId, options),
       list: (limit) => manager.listCodeModeResults(sessionID, agentId, limit),
       grep: (resultId, options) => manager.grepCodeModeResult(sessionID, agentId, resultId, options),
       jq: (resultId, expression, options, signal) => manager.jqCodeModeResult(

@@ -3,6 +3,7 @@ import { transform } from 'esbuild';
 import { getQuickJS, type QuickJSContext, type QuickJSHandle } from 'quickjs-emscripten';
 import { z } from 'zod';
 import type { Tool } from 'ai';
+import type { CodeModeResultPage } from '../session/manager';
 import { ToolDispatchPostEffectError, type ToolDispatcher } from './tool-dispatcher';
 import { toErrorMessage } from '../utils/error-message';
 import {
@@ -141,6 +142,7 @@ export interface NestedToolTrace {
 
 export interface CodeModeResultAccess {
   read(resultId: string): Promise<unknown>;
+  page?(resultId: string, options: { offset?: number; maxBytes?: number }): Promise<CodeModeResultPage>;
   list(limit?: number): Promise<CodeModeResultReference[]>;
   grep?(resultId: string, options: CodeModeGrepOptions): Promise<CodeModeGrepResult>;
   jq?(
@@ -1080,9 +1082,12 @@ export async function executeCodeModeDetailed(
     const operationName = context.getString(operationHandle);
     const argument = context.getString(argumentHandle);
     const operation = (async () => {
+      // Hand the guest its live promise handle before a synchronous validation
+      // failure can settle and dispose the host-side deferred.
+      await Promise.resolve();
       try {
         let value: unknown;
-        const isDataAccess = operationName === 'read' || operationName === 'grep' || operationName === 'jq';
+        const isDataAccess = operationName === 'read' || operationName === 'page' || operationName === 'grep' || operationName === 'jq';
         if (isDataAccess && resultReadCount + resultGrepCount + resultJqCount >= limits.resultReads) {
           throw new Error(`RESULT_TOO_LARGE: Code Mode permits at most ${limits.resultReads} result operations per program`);
         }
@@ -1093,6 +1098,16 @@ export async function executeCodeModeDetailed(
             throw new Error('RESULTS_UNAVAILABLE: this Code Mode invocation has no durable session');
           }
           value = await options.resultAccess.read(argument);
+        } else if (operationName === 'page') {
+          if (!options.resultAccess?.page) throw new Error('RESULTS_UNAVAILABLE: paged reads are unavailable');
+          const request = JSON.parse(argument);
+          const pageOptions = z.object({ offset: z.number().int().nonnegative().optional(),
+            maxBytes: z.number().int().positive().optional() }).strict().parse(request.options);
+          if (typeof request.resultId !== 'string' || !request.resultId) throw new Error('RESULT_READ_INPUT: resultId is required');
+          value = await options.resultAccess.page(request.resultId, {
+            ...(pageOptions.offset !== undefined && { offset: pageOptions.offset }),
+            ...(pageOptions.maxBytes !== undefined && { maxBytes: pageOptions.maxBytes }),
+          });
         } else if (operationName === 'grep') {
           if (!options.resultAccess?.grep) {
             throw new Error('RESULTS_UNAVAILABLE: text result search is unavailable for this Code Mode invocation');
@@ -1126,7 +1141,7 @@ export async function executeCodeModeDetailed(
           ) {
             throw new Error('RESULT_TOO_LARGE: stored result operation exceeds the Code Mode read budget');
           }
-          if (operationName === 'read') {
+          if (operationName === 'read' || operationName === 'page') {
             resultReadCount++;
             resultReadBytes += bytes;
           } else if (operationName === 'grep') {
@@ -1487,11 +1502,12 @@ export async function executeCodeModeDetailed(
         });
         Object.defineProperty(globalThis, 'results', {
           value: Object.freeze({
-            read: (resultId) => {
+            read: (resultId, options) => {
               if (typeof resultId !== 'string' || resultId.length === 0) {
                 return TrackedPromise.reject(new TypeError('results.read resultId must be a non-empty string'));
               }
-              return invokeResult('read', resultId);
+              return options === undefined ? invokeResult('read', resultId)
+                : invokeResult('page', JSON.stringify({ resultId, options }));
             },
             list: () => invokeResult('list'),
             grep: (resultId, options) => {
@@ -1776,12 +1792,12 @@ export function createCodeExecTool(options: {
       'never do that math in prose, in your head, or in bash. When the user asks for a shell artifact, commands or scripts may contain the calculations the artifact itself needs; bash is forbidden only as private scratch space for working out an answer. Date, Math, JSON, and standard string methods are available and the clock is real. URL, Intl, locale-aware formatting, and host timezone services are unavailable. ' +
       'The program has no direct filesystem, network, environment, process, package, or import access; it can reach only host capabilities exposed as permitted tools. Dynamic code construction through eval or Function constructors is unavailable. ' +
       'Call permitted tools as await tools.<name>({ ... }) using the same input object as a direct tool call. A transport-sensitive tool may also remain separately visible for binary or provider-native result delivery. Await or return every async operation; detached async work is rejected during preflight. ' +
-      'tools.tools__bash runs only commands from the agent auto-run allowlist and returns structured output for composition. Gated commands are rejected here and must use the separately visible direct Bash tool after approval. Time awaiting an authorized Bash process is governed by the Bash timeout instead of consuming the guest computation timeout. ' +
+      'tools.tools__bash runs only commands from the agent auto-run allowlist and returns { output: string, metadata?: { exitCode?: number | null, timedOut?: boolean, aborted?: boolean, truncated?: boolean } }. Read r.output, not r.value; inspect metadata for command exit status. Refusal errors are JSON text in output. Gated commands are rejected here and must use the separately visible direct Bash tool after approval. Time awaiting an authorized Bash process is governed by the Bash timeout instead of consuming the guest computation timeout. ' +
       'When a needed tool is absent from the quick index, use await catalog.search(query), call handle.describe(), or inspect API.list("tools") and API.read("tools/<name>.d.ts") in a first code_exec. Catalog handles are callable and use the same dispatch policy as tools.<name>. ' +
-      'For targeted file discovery, prefer tools__filesystem_search with an exact file or glob and bounded context, then use tools__filesystem_read with line offset/limit for any additional excerpt. The read limit is lines, not characters. Do not return several raw file bodies from one program; return only the matches, excerpts, fields, or decisions the next step needs. When complete reading is required, retrieve bounded chunks across later calls. ' +
-      'Completed JSON-serializable nested tool calls are recorded as same-session immutable results. The response lists recent reusableResults; use await results.list() to inspect each result kind and capabilities. Use await results.read(resultId) for bounded payloads, await results.grep(resultId, { pattern, limit, contextLines }) for literal text search, or await results.jq(resultId, { expression, limit }) for real jq queries over JSON, including oversized results. Reuse an earlier result only when its freshness is still valid. ' +
+      'For targeted file discovery, prefer tools__filesystem_search with an exact file or glob and bounded context (context_lines from 0 to 5; for example { file_path: "/authorized/guide.md", query: "target", context_lines: 2 }), then use tools__filesystem_read with line offset/limit for any additional excerpt. The read limit is lines, not characters. Do not return several raw file bodies from one program; return only the matches, excerpts, fields, or decisions the next step needs. When complete reading is required, retrieve bounded chunks across later calls. ' +
+      'Completed JSON-serializable nested tool calls are recorded as same-session immutable results. The response lists recent reusableResults; use await results.list() to inspect each result kind and capabilities. Use await results.read(resultId) for bounded payloads, await results.read(resultId, { offset: 0, maxBytes: 6000 }) for a UTF-8 text page (use nextOffset to continue; JSON pages may not parse individually), await results.grep(resultId, { pattern, limit, contextLines }) for literal text search, or await results.jq(resultId, { expression, limit }) for real jq queries over JSON, including oversized results. Reuse an earlier result only when its freshness is still valid. ' +
       'Return one JSON-serializable result. You may also emit multiple ordered, bounded progress entries with text(value), json(value), or console.log/info/warn/error/debug. ' +
-      'Code is strictly type-checked before any nested tool starts. For `-> ?` outputs, do not guess fields: return one element and its keys, observe, then narrow with runtime checks in a later code_exec before dependent logic. ' +
+      'Code is strictly type-checked before any nested tool starts. Annotate helper parameters (for example function summarize(r: unknown)) and narrow unknown values before accessing fields. For `-> ?` outputs, do not guess fields: return one element and its keys, observe, then narrow with runtime checks in a later code_exec before dependent logic. ' +
       `Nested tool catalog: ${catalogSummary}.\n\n${quickIndex}`,
     inputSchema: z.object({
       code: z.string().min(1).max(DEFAULT_CODE_MODE_LIMITS.sourceChars)

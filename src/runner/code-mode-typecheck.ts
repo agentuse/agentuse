@@ -31,12 +31,53 @@ export function codeModeTypecheckHeapMb(maxBytes: number): number {
   return Math.max(64, Math.ceil(maxBytes / MIB) * 2);
 }
 
+/** Self-contained because the same formatter runs in the isolated compiler child. */
+function formatPreflightDiagnostics(ts: typeof import('typescript'), program: import('typescript').Program): string | undefined {
+  const errors = ts.getPreEmitDiagnostics(program).filter(d => d.category === ts.DiagnosticCategory.Error);
+  if (!errors.length) return undefined;
+  const checker = program.getTypeChecker();
+  const lines = errors.slice(0, 8).map(d => {
+    const point = d.file && d.start !== undefined ? d.file.getLineAndCharacterOfPosition(d.start) : undefined;
+    const location = d.file?.fileName === 'user.ts' && point
+      ? `agentuse-code-mode:user.ts:${Math.max(1, point.line)}:${point.character + 1}: ` : '';
+    let hint = '';
+    if (d.code === 7006) hint = 'Annotate the helper parameter, e.g. r: unknown, then narrow it before accessing fields.';
+    if (d.code === 18046 || d.code === 2571) hint = 'Narrow unknown results with runtime checks before accessing fields; do not assume a value wrapper.';
+    if (d.file && d.start !== undefined) {
+      let node: import('typescript').Node = d.file;
+      const find = (candidate: import('typescript').Node): void => {
+        if (candidate.getStart(d.file) <= d.start! && candidate.end > d.start!) {
+          node = candidate;
+          ts.forEachChild(candidate, find);
+        }
+      };
+      find(d.file);
+      let call: import('typescript').Node | undefined = node;
+      while (call && !ts.isCallExpression(call)) call = call.parent;
+      if (call && ts.isCallExpression(call) && [2554, 2345, 2769, 2322].includes(d.code)) {
+        const signatures = checker.getTypeAtLocation(call.expression).getCallSignatures();
+        if (signatures.length) hint += ' Expected: ' + signatures.slice(0, 3)
+          .map(signature => checker.signatureToString(signature)).join(' | ').slice(0, 700);
+      }
+      if (d.code === 2339 && node.parent && ts.isPropertyAccessExpression(node.parent)) {
+        const fields = checker.getTypeAtLocation(node.parent.expression).getProperties().slice(0, 12).map(p => p.name);
+        if (fields.length) hint += ' Available fields: ' + fields.join(', ') + '.';
+      }
+    }
+    return location + `TS${d.code}: ` + ts.flattenDiagnosticMessageText(d.messageText, ' ').slice(0, 600)
+      + (hint ? ' ' + hint.trim() : '');
+  });
+  if (errors.length > 8) lines.push(`${errors.length - 8} additional diagnostics omitted.`);
+  return ('Code Mode TypeScript preflight failed: ' + lines.join('\n')).slice(0, 6000);
+}
+
 // Deliberately self-contained: the production bundle has no separate source
 // file beside it that a child process could import.
 const TYPECHECK_CHILD_SOURCE = String.raw`
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+const formatPreflightDiagnostics = ${formatPreflightDiagnostics.toString()};
 let payload = ''; for await (const chunk of process.stdin) payload += chunk;
 const { source, declarations, maxBytes, typeScriptPath, libDir } = JSON.parse(payload);
 try {
@@ -54,8 +95,8 @@ try {
   const visit = node => { if (detachedAsyncIife) return; if (ts.isCallExpression(node)) { const callee = unwrap(node.expression); if ((ts.isArrowFunction(callee) || ts.isFunctionExpression(callee)) && callee.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword)) { let current = node; let parent = current.parent; while (parent && (ts.isParenthesizedExpression(parent) || ts.isAsExpression(parent) || ts.isTypeAssertionExpression(parent) || ts.isNonNullExpression(parent) || (ts.isSatisfiesExpression && ts.isSatisfiesExpression(parent)))) { current = parent; parent = parent.parent; } if (parent && (ts.isVoidExpression(parent) || ts.isExpressionStatement(parent))) detachedAsyncIife = node; } } ts.forEachChild(node, visit); };
   if (userFile) visit(userFile);
   if (detachedAsyncIife && userFile) { const point = userFile.getLineAndCharacterOfPosition(detachedAsyncIife.getStart(userFile)); throw new Error('Code Mode TypeScript preflight failed: agentuse-code-mode:user.ts:' + Math.max(1, point.line) + ':' + (point.character + 1) + ': Detached async work can hide tool failures; await or return this async call.'); }
-  const failure = ts.getPreEmitDiagnostics(program).find(diagnostic => diagnostic.category === ts.DiagnosticCategory.Error);
-  if (failure) { const point = failure.file && failure.start !== undefined ? failure.file.getLineAndCharacterOfPosition(failure.start) : undefined; const location = failure.file?.fileName === 'user.ts' && point ? 'agentuse-code-mode:user.ts:' + Math.max(1, point.line) + ':' + (point.character + 1) + ': ' : ''; throw new Error('Code Mode TypeScript preflight failed: ' + location + ts.flattenDiagnosticMessageText(failure.messageText, '\n')); }
+  const failure = formatPreflightDiagnostics(ts, program);
+  if (failure) throw new Error(failure);
   const locations = []; const seenLocations = new Set();
   const addLocation = expression => { if (!userFile || !expression) return; const start = expression.getStart(userFile) - sourcePrefix.length; const end = expression.end - sourcePrefix.length; if (start < 0 || end > source.length || start >= end) return; const key = start + ':' + end; if (seenLocations.has(key)) return; seenLocations.add(key); const point = userFile.getLineAndCharacterOfPosition(expression.getStart(userFile)); locations.push({ start, end, line: Math.max(1, point.line), column: point.character + 1 }); };
   const collectLocations = node => { if (ts.isExpressionStatement(node) || ts.isReturnStatement(node) || ts.isThrowStatement(node) || ts.isIfStatement(node) || ts.isWhileStatement(node) || ts.isDoStatement(node) || ts.isSwitchStatement(node)) addLocation(node.expression); else if (ts.isVariableDeclaration(node) || ts.isPropertyDeclaration(node) || ts.isPropertyAssignment(node) || ts.isParameter(node)) addLocation(node.initializer); else if (ts.isForStatement(node)) { if (node.initializer && ts.isExpression(node.initializer)) addLocation(node.initializer); addLocation(node.condition); addLocation(node.incrementor); } else if (ts.isForInStatement(node) || ts.isForOfStatement(node)) addLocation(node.expression); else if (ts.isArrowFunction(node) && !ts.isBlock(node.body)) addLocation(node.body); ts.forEachChild(node, collectLocations); };
@@ -247,17 +288,6 @@ export async function typecheckCodeModeLocal(
       + 'Detached async work can hide tool failures; await or return this async call.'
     );
   }
-  const failure = ts.getPreEmitDiagnostics(program)
-    .find(diagnostic => diagnostic.category === ts.DiagnosticCategory.Error);
-  if (!failure) return;
-
-  const point = failure.file && failure.start !== undefined
-    ? failure.file.getLineAndCharacterOfPosition(failure.start)
-    : undefined;
-  const location = failure.file?.fileName === 'user.ts' && point
-    ? `agentuse-code-mode:user.ts:${Math.max(1, point.line)}:${point.character + 1}: `
-    : '';
-  throw new Error(
-    `Code Mode TypeScript preflight failed: ${location}${ts.flattenDiagnosticMessageText(failure.messageText, '\n')}`
-  );
+  const failure = formatPreflightDiagnostics(ts, program);
+  if (failure) throw new Error(failure);
 }

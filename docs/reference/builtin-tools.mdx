@@ -74,7 +74,7 @@ effect WAL, and session tracing.
 
 Before any nested tool starts, the runtime strictly type-checks the program
 against declarations generated from the effective tool schemas. AgentUse-owned
-tools can publish trusted output contracts, and the built-in store tools do, so
+tools can publish trusted output contracts, including the built-in store and Bash tools, so
 misspelled inputs, unhandled result variants, and invalid result paths fail
 before an effect occurs. External provider and MCP output schemas remain
 untrusted and appear as `-> ?`. Inspect an unknown result first, then narrow it
@@ -105,6 +105,30 @@ if (reference.kind === "json") {
   });
 }
 ```
+
+For a text page of a larger stored payload, supply byte options:
+
+```typescript
+const page = await results.read(reference.resultId, { offset: 0, maxBytes: 6000 });
+return { content: page.content, nextOffset: page.nextOffset };
+```
+
+Continue from `nextOffset` until it is `null`. Pages preserve UTF-8 characters
+and share the direct results tool's response limits. JSON pages need not parse
+individually. The one-argument `results.read(resultId)` still returns the original
+bounded value. Both forms count toward Code Mode's result-read budget.
+
+Bash returns `{ output, metadata? }`: `output` is a string, and metadata can
+include `exitCode`, `timedOut`, `aborted`, and `truncated`. Refusal errors remain
+JSON text in `output`; there is no `value` field. Search declarations retain
+parameter descriptions and small integer ranges, including `context_lines`
+from 0 to 5 for filesystem search.
+
+Preflight reports up to eight diagnostics, bounded to 6,000 characters, with
+source locations, TypeScript error codes, and relevant signatures or repair
+hints. Annotate helper parameters, such as `function summarize(r: unknown)`,
+and narrow unknown values before reading their fields. A failed preflight
+executes no nested tools.
 
 Use these references for immediate retries and continued analysis instead of
 repeating the same tool call. Refresh the tool when current external state is

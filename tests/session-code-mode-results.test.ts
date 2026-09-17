@@ -486,6 +486,29 @@ describe('direct reusable results', () => {
           capabilities: { read: true, grep: true, jq: true },
         }),
       ]);
+      const guestPage = await codeExec.execute!({
+        code: `return results.read(${JSON.stringify(resultId)}, { offset: 0, maxBytes: 1024 });`,
+      }, { toolCallId: 'guest-page' }) as any;
+      const directPage = await (directResults.execute as any)({ action: 'read', resultId, offset: 0, maxBytes: 1024 });
+      expect(guestPage.value).toEqual(directPage);
+      expect(guestPage.telemetry.resultReads).toBe(1);
+      const guestNext = await codeExec.execute!({
+        code: `return results.read(${JSON.stringify(resultId)}, { offset: ${directPage.nextOffset}, maxBytes: 1024 });`,
+      }, { toolCallId: 'guest-page-next' }) as any;
+      expect(guestNext.value).toEqual(await (directResults.execute as any)({
+        action: 'read', resultId, offset: directPage.nextOffset, maxBytes: 1024,
+      }));
+      const other = await createSession(manager, testRoot!, agentId);
+      const otherCodeExec = createCodeExecTool({ dispatcher, toolNames: [],
+        ...buildCodeModeTraceHooks({ sessionManager: manager, sessionID: other.sessionId,
+          agentId, messageID: other.messageId }),
+      });
+      const foreignRead = await otherCodeExec.execute!({
+        code: `return results.read(${JSON.stringify(resultId)}, { offset: 0 });`,
+      }, { toolCallId: 'foreign-page' }) as any;
+      expect(foreignRead.status).toBe('failed');
+      expect(foreignRead.value).toBeUndefined();
+
       const pages: string[] = [];
       let offset = 0;
       while (true) {

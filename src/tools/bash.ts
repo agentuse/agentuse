@@ -21,6 +21,17 @@ import { parseDurationMs } from '../utils/duration.js';
 import { telemetry } from '../telemetry/index.js';
 import type { ModelToolOutputArtifactRef, ToolOutputArtifactRef, ToolOutputArtifactStream } from '../session/types.js';
 import { toErrorMessage } from '../utils/error-message';
+import { trustedOutputTool } from './tool-contract';
+
+export const BashOutputSchema = z.object({
+  output: z.string(),
+  metadata: z.object({
+    exitCode: z.number().int().nullable().optional(),
+    timedOut: z.boolean().optional(),
+    truncated: z.boolean().optional(),
+    aborted: z.boolean().optional(),
+  }).passthrough().optional(),
+});
 
 const DEFAULT_TIMEOUT = 120000; // 2 minutes
 
@@ -287,9 +298,10 @@ Commands not matching these patterns will be rejected.`;
     }
   }
 
-  return {
+  return trustedOutputTool({
     description,
     inputSchema,
+    outputSchema: BashOutputSchema,
     execute: async ({ command, workdir, timeout }: {
       command: string;
       workdir?: string;
@@ -655,5 +667,5 @@ Commands not matching these patterns will be rejected.`;
         });
       });
     },
-  };
+  });
 }

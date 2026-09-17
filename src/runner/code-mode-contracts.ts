@@ -83,7 +83,10 @@ function renderObject(
     if (!(key in properties)) return undefined;
     const rendered = renderSchema(properties[key], depth + 1, state) ?? 'unknown';
     const name = IDENTIFIER.test(key) ? key : JSON.stringify(key);
-    fields.push(`${name}${required.has(key) ? '' : '?'}: ${rendered}`);
+    const property = properties[key];
+    const description = isRecord(property) && typeof property.description === 'string'
+      ? property.description.replace(/\*\//g, '* /').replace(/[\r\n]/g, ' ').slice(0, 180) : '';
+    fields.push(`${description ? `/** ${description} */ ` : ''}${name}${required.has(key) ? '' : '?'}: ${rendered}`);
   }
 
   if (schema.additionalProperties !== false) {
@@ -137,7 +140,15 @@ function renderSchema(schema: unknown, depth = 0, state: RenderState = { nodes: 
       const item = renderSchema(schema.items ?? {}, depth + 1, state) ?? 'unknown';
       return `Array<${item}>`;
     }
-    case 'integer':
+    case 'integer': {
+      const min = schema.minimum, max = schema.maximum;
+      if (Number.isSafeInteger(min) && Number.isSafeInteger(max)
+        && typeof min === 'number' && typeof max === 'number' && max >= min && max - min <= 15
+        && schema.exclusiveMinimum === undefined && schema.exclusiveMaximum === undefined) {
+        return Array.from({ length: max - min + 1 }, (_, i) => String(min + i)).join(' | ');
+      }
+      return 'number';
+    }
     case 'number':
       return 'number';
     case 'string':
@@ -332,6 +343,7 @@ export function codeModeDeclarations(contracts: readonly CodeModeToolContract[])
     `};\n` +
     `declare const results: {\n` +
     `  read(resultId: string): Promise<unknown>;\n` +
+    `  read(resultId: string, options: { offset?: number; maxBytes?: number }): Promise<{ kind: "text" | "json" | "unknown"; content: string; offset: number; bytes: number; totalBytes: number; truncated: boolean; nextOffset: number | null }>;\n` +
     `  list(): Promise<readonly CodeModeResultReference[]>;\n` +
     `  grep(resultId: string, options: { pattern: string; caseSensitive?: boolean; limit?: number; contextLines?: number }): Promise<CodeModeGrepResult>;\n` +
     `  jq(resultId: string, query: { expression: string; limit?: number }): Promise<CodeModeJqResult>;\n` +
@@ -355,7 +367,8 @@ export function codeModeQuickIndex(contracts: readonly CodeModeToolContract[]): 
     'Available nested tools (`name input -> output`; `-> ?` means unknown output):',
   ];
   const lines = contracts.map(contract => {
-    const input = contract.input.length <= MAX_QUICK_INPUT_CHARS ? contract.input : 'unknown';
+    const compactInput = contract.input.replace(/\/\*.*?\*\/\s*/g, '');
+    const input = compactInput.length <= MAX_QUICK_INPUT_CHARS ? compactInput : 'unknown';
     const output = contract.outputKnown && contract.output.length <= MAX_QUICK_OUTPUT_CHARS
       ? contract.output
       : '?';
