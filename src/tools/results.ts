@@ -25,8 +25,6 @@ const ResultsInputSchema = z.object({
     .describe('One-based page for read or jq. Follow the returned next call unchanged.'),
   pageSizeBytes: z.number().int().min(4).max(1_000_000).optional()
     .describe('Maximum UTF-8 content bytes per page; response escaping may reduce each page.'),
-  contentHash: z.string().regex(/^[a-f0-9]{64}$/).optional()
-    .describe('Copy from next unchanged; rejects jq output that changes between pages.'),
   offset: z.number().int().min(0).optional()
     .describe('Byte offset. Use nextOffset from the previous page.'),
   maxBytes: z.number().int().min(1).optional()

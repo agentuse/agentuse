@@ -38,9 +38,14 @@ describe('numbered result pages', () => {
     expect(() => resultPage('x', { action: 'read', resultId: 'x', page: 0 }, 1024)).toThrow('RESULT_PAGE_INPUT');
     expect(() => resultPage('x', { action: 'jq', resultId: 'x', expression: 'x'.repeat(1000) }, 256)).toThrow('RESULT_PAGE_METADATA');
   });
-  it('rejects changing query output without creating another result ID', () => {
+  it('continues using the original result ID and query without a content hash', () => {
     const first = resultPage('a'.repeat(2000), { action: 'jq', resultId: 'original', expression: '.' }, 1024);
-    expect(() => resultPage('b'.repeat(2000), first.next!, 1024)).toThrow('RESULT_PAGE_CHANGED');
+    expect(first).not.toHaveProperty('contentHash');
+    expect(first.next).toEqual({ action: 'jq', resultId: 'original', expression: '.',
+      page: 2, pageSizeBytes: first.pagination.pageSizeBytes });
+    const second = resultPage('a'.repeat(2000), first.next!, 1024);
+    expect(second.pagination.page).toBe(2);
+    expect(second).not.toHaveProperty('contentHash');
   });
   it('does not emit empty pages at the minimum page size with escaped characters', () => {
     const text = '\u0000😀\u0000';

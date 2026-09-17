@@ -22,8 +22,8 @@ The query expression and optional stream `limit` stay in every continuation, usi
 the same original result ID. Queries execute again on each page, within existing
 time/memory/output limits; no derived result is stored. A query's stream-limit
 `truncated` flag is separate from page availability and survives reconstruction.
-The continuation carries a `contentHash` so a time-dependent query cannot silently
-mix different outputs across pages; a mismatch requires restarting with a stable query.
+Use deterministic expressions when paging: the stored source is immutable, but
+time-dependent expressions such as `now` can change when the query executes again.
 
 Pages are UTF-8-safe text chunks, not necessarily valid JSON individually.
 Concatenate `content` before parsing. The default requested size is 16,384 bytes;

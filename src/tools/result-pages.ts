@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 /** Stateless UTF-8 pages over an immutable result (or stable jq projection). */
 export interface ResultPageRequest {
   action: 'read' | 'jq';
@@ -8,7 +6,6 @@ export interface ResultPageRequest {
   limit?: number | undefined;
   page?: number | undefined;
   pageSizeBytes?: number | undefined;
-  contentHash?: string | undefined;
 }
 
 export function resultPage(text: string, request: ResultPageRequest, responseLimit: number) {
@@ -18,14 +15,9 @@ export function resultPage(text: string, request: ResultPageRequest, responseLim
     throw new Error('RESULT_PAGE_INPUT: page must be positive and pageSizeBytes must be at least 4');
   }
   const totalBytes = Buffer.byteLength(text);
-  const contentHash = request.action === 'jq' ? createHash('sha256').update(text).digest('hex') : undefined;
-  if (request.contentHash !== undefined && request.contentHash !== contentHash) {
-    throw new Error('RESULT_PAGE_CHANGED: query output changed; restart at page 1 with a deterministic expression');
-  }
   const base = { action: request.action, resultId: request.resultId,
     ...(request.expression !== undefined && { expression: request.expression }),
-    ...(request.limit !== undefined && { limit: request.limit }),
-    ...(contentHash !== undefined && { contentHash }) };
+    ...(request.limit !== undefined && { limit: request.limit }) };
   const envelope = (content: string, current: number, total: number, size: number) => ({
     ...base, content,
     pagination: { page: current, totalPages: total, pageSizeBytes: size, totalBytes, hasMore: current < total },
