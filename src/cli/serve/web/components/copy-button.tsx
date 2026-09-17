@@ -33,7 +33,7 @@ export function CopyButton(props: {
     <button
       type="button"
       class={`copy-btn ${variant}${copied ? ' copied' : ''}${props.class ? ` ${props.class}` : ''}`}
-      title={what}
+      title={copied ? 'Copied' : what}
       aria-label={copied ? `${what} — copied` : what}
       onClick={(event) => {
         event.stopPropagation();

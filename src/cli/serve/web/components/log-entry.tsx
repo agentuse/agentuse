@@ -9,6 +9,7 @@ import { formatLogTime, isJsonLikeContent, logEntrySignature, storeItemPreview, 
 import type { StoreItem } from '../../../../store/types';
 import { LogContent, InlineMarkdown } from './content';
 import { useNow } from '../hooks/use-now';
+import { CopyButton as ClipboardButton } from './copy-button';
 
 interface StoreEvent {
   store?: string;
@@ -1379,13 +1380,19 @@ function ToolDetails(props: { details: ApprovalLogDetails; sessionId: string; to
       {details.tokenUsage && <ToolTokenUsageStrip usage={details.tokenUsage} />}
       {rows.map((row) => (
         <div class="log-detail" key={row.label}>
-          <div class="log-detail-label">{row.label}</div>
+          <div class="log-detail-label">
+            <span>{row.label}</span>
+            <ClipboardButton class="log-detail-copy" text={row.value} label={row.label.toLowerCase()} />
+          </div>
           <div class="log-detail-value"><LogContent value={row.value} /></div>
         </div>
       ))}
       {details.liveOutput && (
         <div class="log-detail log-detail-live">
-          <div class="log-detail-label">Output<span class="live-tag">live</span></div>
+          <div class="log-detail-label">
+            <span>Output</span><span class="live-tag">live</span>
+            <ClipboardButton class="log-detail-copy" text={details.liveOutput} label="live output" />
+          </div>
           <div class="log-detail-value"><LiveOutput value={details.liveOutput} /></div>
         </div>
       )}

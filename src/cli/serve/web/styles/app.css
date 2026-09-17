@@ -2402,12 +2402,18 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 /* "Input" and "Output": two plain blocks. The label is a word, not a
    tracked-out all-caps field name. */
 .log-detail-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   color: var(--muted);
   font-size: var(--font-size-caption);
   font-weight: var(--weight-normal);
   letter-spacing: normal;
   text-transform: none;
   margin-bottom: 4px;
+}
+.log-detail-copy {
+  margin-left: auto;
 }
 /* Height-capped with its own scroller. A tool that read forty files printed
    its whole payload into the page and buried every row after it; the cap
