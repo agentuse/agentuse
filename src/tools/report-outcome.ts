@@ -20,7 +20,7 @@ import { logger } from '../utils/logger';
  * of which call came last.
  */
 export interface RunOutcome {
-  incomplete?: { reason: string };
+  incomplete?: { reason: string; rejectionOnly?: boolean };
   complete?: { headline: string; details?: string; artifacts?: string[] };
 }
 
@@ -70,11 +70,12 @@ export function createReportIncompleteTool(outcome: RunOutcome): Tool {
       'Call once the blocker is confirmed. The run remains active only so you can finish required bookkeeping and add concise context that is not already in the reason; do not resume core work or call report_complete later. ' +
       'Do not call this when a successful evaluation legitimately found nothing to act on — call report_complete instead.',
     inputSchema: z.object({
-      reason: z.string().describe('One or two sentences: what blocked the run and what a human must fix before the next attempt (e.g. "Substack session logged out; needs re-auth").')
+      reason: z.string().describe('One or two sentences: what remains blocked and what a human must fix. When there are independent failures alongside a human rejection, describe only those unresolved failures.'),
+      rejectionOnly: z.boolean().optional().describe('Set true only when a human rejection in this run or a delegated child is the sole reason for non-delivery. Set false if any independent failure or pending approval remains. Rejection-only runs are automatically dismissed after verifying the recorded human decision.')
     }),
-    execute: async ({ reason }: { reason: string }) => {
+    execute: async ({ reason, rejectionOnly }: { reason: string; rejectionOnly?: boolean }) => {
       // Last call wins: an agent may refine the reason as it learns more.
-      outcome.incomplete = { reason };
+      outcome.incomplete = { reason, ...(rejectionOnly !== undefined && { rejectionOnly }) };
       return 'Recorded: this run will end marked incomplete. Finish only required bookkeeping and concise non-duplicative context, then stop without another outcome call.';
     }
   };
@@ -183,6 +184,7 @@ export interface SubagentResult {
     headline?: string;
     artifacts?: string[];
     incomplete?: string;
+    rejectionOnly?: boolean;
   };
 }
 
@@ -216,7 +218,10 @@ export function composeSubagentResult(params: {
     const body = stripLeadingOutcomeLine(text, incomplete.reason);
     return {
       output: body ? `${opener}\n\n${body}` : opener,
-      metadata: { agent: params.agent, incomplete: incomplete.reason }
+      metadata: {
+        agent: params.agent, incomplete: incomplete.reason,
+        ...(incomplete.rejectionOnly !== undefined && { rejectionOnly: incomplete.rejectionOnly }),
+      }
     };
   }
 

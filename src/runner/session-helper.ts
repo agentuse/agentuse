@@ -539,27 +539,43 @@ export async function gatherHumanApprovalHistory(
   }
 }
 
-/**
- * A run that ends incomplete because the reviewer said no has already been
- * reviewed: asking them to dismiss it afterwards is the same decision twice.
- * Stamp it dismissed at the moment it ends, so it never enters a needs-a-look
- * surface — the same standing a run the reviewer stopped themselves already
- * has. Only a human reject counts (machine bounces are filtered upstream), and
- * a run that went incomplete on its own, with no reject, is left alone: nobody
- * has looked at that one yet.
- *
- * Best-effort: a failure here leaves the run un-dismissed, never un-recorded.
+/** Dismiss acknowledged non-delivery, without hiding independent failures.
+ * Legacy reports without rejectionOnly retain same-session rejection handling.
+ * Parent propagation requires an explicit rejection-only verdict and evidence.
  */
 export async function dismissIfReviewerRejected(
   sessionManager: SessionManager,
   sessionID: string,
   agentId: string,
+  outcome?: { rejectionOnly?: boolean },
 ): Promise<boolean> {
-  // Every gate, not the recent-eight window the judge reads: the reject may
-  // have been the first of many.
-  const decisions = await gatherHumanApprovalHistory(sessionManager, sessionID, agentId, { limit: Number.MAX_SAFE_INTEGER });
-  if (!decisions.some((decision) => decision.status === 'rejected')) return false;
   try {
+    if (outcome?.rejectionOnly === false) return false;
+    const descendants = await sessionManager.listDescendantSessions(sessionID);
+    const rejected = new Map<string, boolean>();
+    for (const entry of [...descendants].reverse()) {
+      const child = entry.session;
+      const messages = await sessionManager.getSessionMessages(child.id, child.agent.id);
+      let rejectionOnly: boolean | undefined;
+      for (const message of messages) {
+        for (const part of await sessionManager.getMessageParts(child.id, child.agent.id, message.id)) {
+          if (part.type === 'tool' && part.tool === 'report_incomplete' && part.state.status === 'completed') {
+            rejectionOnly = (part.state.input as { rejectionOnly?: boolean }).rejectionOnly;
+          }
+        }
+      }
+      const decisions = await gatherHumanApprovalHistory(sessionManager, child.id, child.agent.id, { limit: Number.MAX_SAFE_INTEGER });
+      const ownReject = decisions.some((decision) => decision.status === 'rejected');
+      const childReject = descendants.some((entry) => entry.session.parentSessionID === child.id && rejected.get(entry.session.id));
+      const acknowledged = rejectionOnly !== false && (ownReject || (rejectionOnly === true && childReject));
+      // A manual dismissal is not proof that an unrelated failure was caused
+      // by rejection. Active children also mean the parent's work is not closed.
+      if (child.status !== 'completed' && !(child.status === 'error' && child.error?.code === 'INCOMPLETE' && acknowledged)) return false;
+      rejected.set(child.id, acknowledged);
+    }
+    const decisions = await gatherHumanApprovalHistory(sessionManager, sessionID, agentId, { limit: Number.MAX_SAFE_INTEGER });
+    const ownReject = decisions.some((decision) => decision.status === 'rejected');
+    if (!ownReject && !(outcome?.rejectionOnly === true && [...rejected.values()].some(Boolean))) return false;
     await sessionManager.updateSession(sessionID, agentId, { dismissedAt: Date.now() });
     return true;
   } catch (error) {

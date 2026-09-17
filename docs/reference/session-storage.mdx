@@ -30,6 +30,22 @@ errors are not rewritten or guessed from message text. `INCOMPLETE` remains an
 agent-declared outcome, not a crash. Failure classification does not change retry
 policy or imply that replaying a run with prior side effects is safe.
 
+## Reviewer-rejected incomplete runs
+
+A human rejection can leave a run `error/INCOMPLETE` while automatically setting
+`dismissedAt`, which removes it from attention queues without erasing history.
+`report_incomplete` accepts an optional `rejectionOnly` boolean: set it to `true`
+when a human rejection in the run or a delegated child is the sole blocker. The
+runtime verifies the recorded human decision and leaves the run visible if any
+descendant is still active or has an independent failure. Machine review
+rejections and manually dismissed failures do not establish human rejection.
+
+When independent failures remain, set `rejectionOnly: false` and describe those
+unresolved failures in `reason`, rather than repeating the rejected action.
+Older declarations without the field retain same-session rejection handling;
+propagating dismissal to a parent requires an explicit rejection-only declaration.
+Existing historical sessions are not rewritten.
+
 ## Directory Structure
 
 Sessions are stored under `AGENTUSE_DATA_DIR`, which defaults through XDG

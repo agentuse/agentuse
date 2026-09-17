@@ -4,7 +4,7 @@ import { parseAgent } from './parser';
 import { connectMCP, type MCPServersConfig } from './mcp';
 import { logger, runWithLogSink } from './utils/logger';
 import { executeAgentCore, processAgentStream } from './runner';
-import { createSessionLogSink, type SessionLogSink } from './runner/session-helper';
+import { createSessionLogSink, dismissIfReviewerRejected, type SessionLogSink } from './runner/session-helper';
 import { DoomLoopDetector } from './tools/index.js';
 import { resolve, dirname } from 'path';
 import { agentBaseName, computeAgentId } from './utils/agent-id';
@@ -585,6 +585,7 @@ export async function createSubAgentTool(
                   code: 'INCOMPLETE',
                   message: subagentIncomplete.reason
                 });
+                await dismissIfReviewerRejected(subagentSessionManager, subagentSessionID, agentId, subagentIncomplete);
               } else {
                 await subagentSessionManager.setSessionCompleted(subagentSessionID, agentId);
               }

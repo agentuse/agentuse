@@ -1,3 +1,4 @@
+import { loadStoredSubagentResult } from '../src/runner/subagent-cascade';
 import { describe, it, expect } from 'bun:test';
 import {
   createReportCompleteTool,
@@ -87,6 +88,15 @@ describe('normalizeHeadline', () => {
 });
 
 describe('outcome precedence: one slot, two writers', () => {
+  it('records whether rejection is the only blocker without changing the incomplete outcome', async () => {
+    const outcome: RunOutcome = {};
+    const tool = createReportIncompleteTool(outcome) as any;
+    await tool.execute({ reason: 'Human declined', rejectionOnly: true });
+    expect(outcome.incomplete).toEqual({ reason: 'Human declined', rejectionOnly: true });
+    await tool.execute({ reason: 'Scoreboard failed', rejectionOnly: false });
+    expect(outcome.incomplete).toEqual({ reason: 'Scoreboard failed', rejectionOnly: false });
+  });
+
   it('lets both tools write the same slot', async () => {
     const outcome: RunOutcome = {};
     await (createReportCompleteTool(outcome) as any).execute({ headline: 'Looked done' });
@@ -390,6 +400,20 @@ describe('composeSubagentResult', () => {
 
     expect(result.metadata.artifacts).toEqual(['/tmp/a.txt', 'https://example.com/pr/1']);
   });
+
+  for (const rejectionOnly of [true, false]) {
+    it(`preserves rejectionOnly=${rejectionOnly} when recovering a child after restart`, async () => {
+      const stored = await loadStoredSubagentResult({
+        getSessionMessages: async () => [{ id: 'message' }],
+        getMessageParts: async () => [{ type: 'tool', tool: 'report_incomplete',
+          state: { status: 'completed', input: { reason: 'Not delivered', rejectionOnly } } }],
+        getLastAssistantText: async () => '',
+      } as any, 'child', 'reply');
+      const result = composeSubagentResult({ agent: 'reply', outcome: stored, text: stored.text });
+      expect(result.metadata.rejectionOnly).toBe(rejectionOnly);
+      expect(result.metadata.incomplete).toBe('Not delivered');
+    });
+  }
 
   it('leads with the blocker when the child could not deliver', () => {
     const result = composeSubagentResult({

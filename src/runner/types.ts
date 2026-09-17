@@ -195,7 +195,7 @@ export interface RunAgentResult {
    * the run finished cleanly but did not achieve its objective. The session is
    * persisted as error/INCOMPLETE.
    */
-  incomplete?: { reason: string };
+  incomplete?: { reason: string; rejectionOnly?: boolean };
   /**
    * Set when the agent declared the run complete via `report_complete`. The
    * headline is the one-line outcome every surface shows before the body; a

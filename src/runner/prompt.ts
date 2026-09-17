@@ -72,7 +72,7 @@ Tool composition and computation:
 
 Run outcome — declare exactly ONE outcome. Judge the outcome against the requested objective, not whether the run stopped cleanly, behaved responsibly, or recorded its state correctly:
 - COMPLETE: The requested objective was achieved. A valid empty result is complete when you successfully evaluated the task and found nothing to change or act on. Call report_complete.
-- INCOMPLETE: A required outcome was not delivered because a required precondition, input, access path, login/session, dependency, or action failed. Call report_incomplete with the blocker and what a human must fix. Use Incomplete even when stopping was correct or secondary work succeeded.
+- INCOMPLETE: A required outcome was not delivered because a required precondition, input, access path, login/session, dependency, or action failed. Call report_incomplete with the blocker and what a human must fix. Use Incomplete even when stopping was correct or secondary work succeeded. Set rejectionOnly true only if a human rejection in this run or a delegated child is the sole blocker. If any independent failure remains, set rejectionOnly false and describe only the unresolved failure in reason, not the already-reviewed rejection.
 
 Do not call report_complete merely because the run ended without an exception. The core objective must not be skipped, blocked, failed, or only partially delivered. Do not call report_incomplete merely because a successful evaluation found nothing.
 

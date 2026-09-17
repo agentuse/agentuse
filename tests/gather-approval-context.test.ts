@@ -315,6 +315,62 @@ describe('dismissIfReviewerRejected', () => {
     });
   });
 
+  it('keeps independent failures visible even after a direct human rejection', async () => {
+    await withSession('agentuse-dismiss-mixed-', async ({ sessionManager, sessionID, messageID }) => {
+      await sessionManager.addPart(sessionID, AGENT_ID, messageID, gate('g1', { status: 'reject' }));
+      expect(await dismissIfReviewerRejected(sessionManager, sessionID, AGENT_ID, { rejectionOnly: false })).toBe(false);
+      expect((await sessionManager.getSession(sessionID, AGENT_ID))?.dismissedAt).toBeUndefined();
+    });
+  });
+
+  for (const scenario of ['rejection', 'mixed-parent', 'failed-sibling', 'machine-rejection', 'pending-child', 'nested-rejection', 'mixed-child', 'unclassified-parent', 'unverified'] as const) {
+    it(`handles delegated ${scenario} without hiding unrelated work`, async () => {
+      await withSession('agentuse-dismiss-tree-', async ({ sessionManager, sessionID }) => {
+        const root = (await sessionManager.getSession(sessionID, AGENT_ID))!;
+        const createChild = async (parent: SessionManager, parentId: string, id: string) => {
+          const manager = new SessionManager();
+          manager.setParentPath(parent.getFullPath()!);
+          const childId = await manager.createSession({
+            agent: { id, name: id, isSubAgent: true }, parentSessionID: parentId,
+            model: 'demo:test', version: 'test', config: {}, project: root.project,
+          });
+          const messageId = await manager.createMessage(childId, id, {
+            user: { prompt: { task: 'reply' } },
+            assistant: { system: [], modelID: 'demo:test', providerID: 'demo', mode: 'build',
+              path: root.project, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } },
+          });
+          await manager.setSessionError(childId, id, { code: 'INCOMPLETE', message: 'Not delivered' });
+          return { manager, childId, messageId, id };
+        };
+        const child = await createChild(sessionManager, sessionID, 'reply');
+        const leaf = scenario === 'nested-rejection'
+          ? await createChild(child.manager, child.childId, 'nested-reply') : child;
+        if (scenario !== 'unverified') {
+          await leaf.manager.addPart(leaf.childId, leaf.id, leaf.messageId, gate('reject', {
+            status: 'reject', ...(scenario === 'machine-rejection' && { source: 'pre-review' }),
+          }));
+        }
+        if (scenario === 'nested-rejection' || scenario === 'mixed-child') {
+          await child.manager.addPart(child.childId, child.id, child.messageId, {
+            type: 'tool', callID: 'outcome', tool: 'report_incomplete',
+            state: { status: 'completed', input: { reason: 'Not delivered', rejectionOnly: scenario !== 'mixed-child' }, output: 'Recorded', time: { start: 1, end: 2 } },
+          } as any);
+        }
+        if (scenario === 'failed-sibling') {
+          const sibling = await createChild(sessionManager, sessionID, 'measure');
+          // A prior manual dismissal must not turn this into a rejected task.
+          await sibling.manager.updateSession(sibling.childId, sibling.id, { dismissedAt: Date.now() });
+        }
+        if (scenario === 'pending-child') await child.manager.setSessionSuspended(child.childId, child.id);
+        const expected = scenario === 'rejection' || scenario === 'nested-rejection';
+        expect(await dismissIfReviewerRejected(sessionManager, sessionID, AGENT_ID, {
+          ...(scenario !== 'unclassified-parent' && { rejectionOnly: scenario !== 'mixed-parent' }),
+        })).toBe(expected);
+        expect(Boolean((await sessionManager.getSession(sessionID, AGENT_ID))?.dismissedAt)).toBe(expected);
+      });
+    });
+  }
+
   it('leaves a run alone when it went incomplete with no human reject', async () => {
     await withSession('agentuse-dismiss-none-', async ({ sessionManager, sessionID, messageID }) => {
       // An approval plus a machine bounce: neither is the reviewer saying no.

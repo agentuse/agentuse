@@ -188,7 +188,7 @@ export interface CascadeResultReader extends CascadeSessionReader {
 export interface StoredSubagentResult {
   text: string;
   complete?: { headline: string; details?: string; artifacts?: string[] };
-  incomplete?: { reason: string };
+  incomplete?: { reason: string; rejectionOnly?: boolean };
 }
 
 /**
@@ -215,7 +215,10 @@ export async function loadStoredSubagentResult(
   const text = (await reader.getLastAssistantText(sessionId, agentId)) ?? '';
   const incompleteInput = lastToolInput('report_incomplete');
   if (typeof incompleteInput?.reason === 'string') {
-    return { text, incomplete: { reason: incompleteInput.reason } };
+    return { text, incomplete: {
+      reason: incompleteInput.reason,
+      ...(typeof incompleteInput.rejectionOnly === 'boolean' && { rejectionOnly: incompleteInput.rejectionOnly }),
+    } };
   }
   const completeInput = lastToolInput('report_complete');
   if (typeof completeInput?.headline === 'string') {

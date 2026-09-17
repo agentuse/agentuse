@@ -640,7 +640,7 @@ export async function runAgent(
             message: incomplete.reason
           });
           // "Reviewer rejected" is a review already given; don't ask for it twice.
-          await dismissIfReviewerRejected(sessionManager, prepSessionID, prepAgentId);
+          await dismissIfReviewerRejected(sessionManager, prepSessionID, prepAgentId, incomplete);
         } else {
           await sessionManager.setSessionCompleted(prepSessionID, prepAgentId);
         }
