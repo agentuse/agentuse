@@ -90,7 +90,8 @@ export interface ApprovalPageInfo {
   timing?: {
     calculatedAt: number;
     wallMs: number;
-    activeMs: number;
+    activeMs: number | null;
+    running: boolean;
     approvalMs: number;
     approvalCount: number;
   };

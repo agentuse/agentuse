@@ -1,3 +1,4 @@
+import type { ActiveTiming } from '../../session/timing';
 /**
  * The session and approval list payloads the dashboard polls and the SSE hubs
  * stream, with the row and filter shapes they carry. Moved out of serve.ts.
@@ -83,6 +84,7 @@ export interface SessionSummary {
   trigger: SessionTrigger;
   createdAt: number;
   updatedAt: number;
+  timing?: ActiveTiming;
   errorCause?: string;
   errorCode?: string;
   errorMessage?: string;

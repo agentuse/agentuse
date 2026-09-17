@@ -1,3 +1,4 @@
+import { activeTimingsForForest, transitionExecution, type ActiveTiming } from './timing';
 import { decodeTime, ulid } from 'ulid';
 import fs from 'fs/promises';
 import { createWriteStream } from 'fs';
@@ -76,6 +77,8 @@ export interface SessionListSummary {
   trigger: SessionTrigger;
   createdAt: number;
   updatedAt: number;
+  execution?: SessionInfo['time']['execution'];
+  timing?: ActiveTiming;
   error?: { code?: string; message?: string; cause?: string };
   dismissedAt?: number;
   reviewedAt?: number;
@@ -284,6 +287,7 @@ function toSessionListSummary(session: SessionInfo, sessionPath: string): Sessio
     trigger: session.trigger ?? 'manual',
     createdAt: session.time.created,
     updatedAt: session.time.updated,
+    ...(session.time.execution && { execution: session.time.execution }),
     ...(session.error && { error: { code: session.error.code, message: session.error.message, ...(session.error.cause && { cause: session.error.cause }) } }),
     ...(session.dismissedAt !== undefined && { dismissedAt: session.dismissedAt }),
     ...(session.reviewedAt !== undefined && { reviewedAt: session.reviewedAt }),
@@ -759,6 +763,7 @@ export class SessionManager {
     await this.serializedWrite(key, () => this.withSessionIndexMutation(async () => {
       const session = await readJSON<SessionInfo>(key);
       if (!session) return;
+      transitionExecution(session, updates.status, Date.now());
       Object.assign(session, updates);
       // touch:false = bookkeeping only (a reviewer looked), not activity: the
       // run must not resurface as "updated" in windows and feeds because of it.
@@ -865,7 +870,8 @@ export class SessionManager {
           // Promotion is one lifecycle, not a new run. Preserve the time the
           // operator started preparation while refreshing the transition time.
           created: existing?.time.created ?? now,
-          updated: now
+          updated: now,
+          execution: status === 'running' ? [{ start: now }] : [],
         }
       };
       await writeJSON(`${sessionPath}/session`, session);
@@ -1023,6 +1029,7 @@ export class SessionManager {
             session.errorHistory = [...history, session.error].slice(-20);
           }
         }
+        transitionExecution(session, updates.status, Date.now());
         Object.assign(session, updates);
         // Whichever process flips a session (back) to 'running' owns its
         // execution now; re-stamp so the orphan sweep probes the right process.
@@ -1857,6 +1864,7 @@ export class SessionManager {
     // filtered, so computing after the filter would always miss it.
     const all = Object.values(index.sessions);
     const activeIds = computeSubagentActiveIds(all);
+    const timings = activeTimingsForForest(all);
 
     return all
       .filter((session) => options.includeSubagents || (!session.parentSessionId && !session.agent.isSubAgent))
@@ -1865,7 +1873,10 @@ export class SessionManager {
         || session.updatedAt >= options.updatedAfter
         || (options.includeLiveBeforeUpdatedAfter && (isExecutingSessionStatus(session.status) || activeIds.has(session.sessionId))))
       .sort((a, b) => b.createdAt - a.createdAt || b.sessionId.localeCompare(a.sessionId))
-      .map((session) => activeIds.has(session.sessionId) ? { ...session, subagentActive: true } : session);
+      .map((session) => ({ ...session,
+        timing: timings.get(session.sessionId)!,
+        ...(activeIds.has(session.sessionId) && { subagentActive: true }),
+      }));
   }
 
   /** Generation token for the durable approval projection. Ordinary runs do

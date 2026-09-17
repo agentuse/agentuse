@@ -1,3 +1,4 @@
+import { activeDuration } from '../../../../session/timing';
 import type { SessionRow } from '../lib/api';
 import { formatApprovalTime, formatRelativeTime, displayStatusLabel, runTone } from '../lib/format';
 import { formatApproximateDuration } from '../../../../utils/duration';
@@ -44,8 +45,8 @@ const RUNSPARK_MAX_PX = 16;
 export function RunHistorySpark({ runs, limit = RUNSPARK_LIMIT }: { runs: SessionRow[]; limit?: number }) {
   if (runs.length === 0) return null;
   const shown = runs.slice(0, limit).reverse();
-  const durations = shown.map((s) => Math.max(0, (s.updatedAt || s.createdAt) - s.createdAt));
-  const max = Math.max(1, ...durations);
+  const durations = shown.map((s) => activeDuration(s.timing));
+  const max = Math.max(1, ...durations.map(value => value ?? 0));
   const failed = shown.filter((s) => runTone(s.status) === 'failed').length;
   return (
     <span
@@ -57,8 +58,8 @@ export function RunHistorySpark({ runs, limit = RUNSPARK_LIMIT }: { runs: Sessio
         <span
           key={s.sessionId}
           class={`runspark-bar ${runTone(s.status)}`}
-          style={{ height: `${Math.max(3, Math.round((durations[i]! / max) * RUNSPARK_MAX_PX))}px` }}
-          title={`${displayStatusLabel(s.status, s.errorCode)} · ${formatRelativeTime(s.createdAt)} · ${formatApproximateDuration(durations[i]!)}`}
+          style={{ height: `${Math.max(3, Math.round(((durations[i] ?? 0) / max) * RUNSPARK_MAX_PX))}px` }}
+          title={`${displayStatusLabel(s.status, s.errorCode)} · ${formatRelativeTime(s.createdAt)} · ${durations[i] === null ? 'Active time unavailable' : `${formatApproximateDuration(durations[i]!)} active`}`}
         ></span>
       ))}
     </span>

@@ -1,3 +1,4 @@
+import type { ActiveTiming } from '../../session/timing';
 import type { ActiveContextUsage, ReviewEscalation, SessionTrigger } from "../../session/types";
 import type { SessionTimingSummary } from "../../session/timing";
 import type { DescendantActivity, DescendantBreadcrumb, DescendantReport, ImportantDescendantEvent, ImportantDescendantKind, ImportantDescendantSummary, VerifyCandidateSummary } from '../../session/important-descendants';
@@ -103,6 +104,7 @@ export interface SessionSummary {
   trigger: SessionTrigger;
   createdAt: number;
   updatedAt: number;
+  timing?: ActiveTiming;
   errorCause?: string;
   errorCode?: string;
   errorMessage?: string;
@@ -372,6 +374,7 @@ export interface ChildSessionSummary {
   trigger: SessionTrigger;
   createdAt: number;
   updatedAt: number;
+  timing?: ActiveTiming;
   errorCause?: string;
   errorCode?: string;
   errorMessage?: string;

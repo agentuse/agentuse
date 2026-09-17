@@ -1,3 +1,4 @@
+import { activeDuration } from '../../../../session/timing';
 import { failureLabel } from '../../../../session/failure-label';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import type { ApprovalRow, ProjectInfo, SerializedSchedule, SessionRow } from '../lib/api';
@@ -62,6 +63,7 @@ function FeedRow(props: { event: ActivityEvent }) {
 function RunningRow(props: { row: SessionRow; now: number; ticker: boolean }) {
   const { row, now } = props;
   const href = sessionDestinationHref(row);
+  const activeMs = activeDuration(row.timing, now);
   // Live one-line tail of what the agent is doing right now. Capped upstream
   // (`ticker`) so a busy daemon doesn't exhaust the browser's per-host
   // connection budget; capless rows keep the static description.
@@ -83,7 +85,7 @@ function RunningRow(props: { row: SessionRow; now: number; ticker: boolean }) {
             </div>
           : <div class="now-desc">{row.agent.description || displayStatusLabel(row.status, row.errorCode)}</div>}
       </div>
-      <span class="now-elapsed">{formatElapsedClock(now - row.createdAt)}</span>
+      <span class="now-elapsed" title="Active processing time">{activeMs === null ? 'Time unavailable' : formatElapsedClock(activeMs)}</span>
     </a>
   );
 }

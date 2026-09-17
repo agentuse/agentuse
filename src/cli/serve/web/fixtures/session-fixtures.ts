@@ -160,7 +160,7 @@ export function buildSessionFixtures(): SessionFixture[] {
         currentResumeToken: RESUME_TOKEN,
         expiresAt: Date.now() + 3 * 60 * MINUTE,
         suspendedAt: Date.now() - 12 * MINUTE,
-        timing: { calculatedAt: Date.now(), wallMs: 25 * MINUTE, activeMs: 9 * MINUTE, approvalMs: 12 * MINUTE, approvalCount: 1 },
+        timing: { running: false, calculatedAt: Date.now(), wallMs: 25 * MINUTE, activeMs: 9 * MINUTE, approvalMs: 12 * MINUTE, approvalCount: 1 },
       }),
       logs: [
         ...warmup(25 * MINUTE),
@@ -202,7 +202,7 @@ export function buildSessionFixtures(): SessionFixture[] {
       hint: 'Green Result head, headline and body from report_complete, recorded metric chips, tiles under it, transcript open.',
       status: 'completed',
       approval: header('result', 'completed', 40 * MINUTE, {
-        timing: { calculatedAt: Date.now(), wallMs: 11 * MINUTE, activeMs: 9 * MINUTE, approvalMs: 2 * MINUTE, approvalCount: 1 },
+        timing: { running: false, calculatedAt: Date.now(), wallMs: 11 * MINUTE, activeMs: 9 * MINUTE, approvalMs: 2 * MINUTE, approvalCount: 1 },
       }),
       logs: [
         ...warmup(40 * MINUTE),
@@ -252,7 +252,7 @@ export function buildSessionFixtures(): SessionFixture[] {
       approval: header('error', 'error', 50 * MINUTE, {
         errorCode: 'TOOL_ERROR',
         errorMessage: 'tools__fetch failed twice in a row: upstream returned 502 Bad Gateway.',
-        timing: { calculatedAt: Date.now(), wallMs: 7 * MINUTE, activeMs: 7 * MINUTE, approvalMs: 0, approvalCount: 0 },
+        timing: { running: false, calculatedAt: Date.now(), wallMs: 7 * MINUTE, activeMs: 7 * MINUTE, approvalMs: 0, approvalCount: 0 },
       }),
       logs: [
         ...warmup(50 * MINUTE),
@@ -276,7 +276,7 @@ export function buildSessionFixtures(): SessionFixture[] {
       approval: header('incomplete', 'error', 50 * MINUTE, {
         errorCode: 'INCOMPLETE',
         errorMessage: 'The change feed was empty for the week, so there is nothing to digest.',
-        timing: { calculatedAt: Date.now(), wallMs: 3 * MINUTE, activeMs: 3 * MINUTE, approvalMs: 0, approvalCount: 0 },
+        timing: { running: false, calculatedAt: Date.now(), wallMs: 3 * MINUTE, activeMs: 3 * MINUTE, approvalMs: 0, approvalCount: 0 },
       }),
       logs: [
         ...warmup(50 * MINUTE),
@@ -329,7 +329,7 @@ export function buildSessionFixtures(): SessionFixture[] {
         additionalInstruction: 'Write the digest for the three themes listed. Keep it under 200 words.',
         approvalKind: 'await_human',
         suspendedAt: Date.now() - 12 * MINUTE,
-        timing: { calculatedAt: Date.now(), wallMs: 30 * MINUTE, activeMs: 6 * MINUTE, approvalMs: 12 * MINUTE, approvalCount: 1 },
+        timing: { running: false, calculatedAt: Date.now(), wallMs: 30 * MINUTE, activeMs: 6 * MINUTE, approvalMs: 12 * MINUTE, approvalCount: 1 },
       }),
       logs: [
         ...warmup(30 * MINUTE),
@@ -347,7 +347,7 @@ export function buildSessionFixtures(): SessionFixture[] {
         parentSessionId: `${FIXTURE_SESSION_PREFIX}result`,
         parentAgentName: 'Weekly Digest',
         parentHref: `/sessions/${FIXTURE_SESSION_PREFIX}result`,
-        timing: { calculatedAt: Date.now(), wallMs: 4 * MINUTE, activeMs: 4 * MINUTE, approvalMs: 0, approvalCount: 0 },
+        timing: { running: false, calculatedAt: Date.now(), wallMs: 4 * MINUTE, activeMs: 4 * MINUTE, approvalMs: 0, approvalCount: 0 },
       }),
       logs: [
         ...warmup(30 * MINUTE),

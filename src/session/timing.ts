@@ -1,12 +1,9 @@
 import type { Part, SessionInfo } from './types';
 import { isTerminalSessionStatus } from './status';
 
-export interface SessionTimingSummary {
-  calculatedAt: number;
+export interface SessionTimingSummary extends ActiveTiming {
   /** Root-session wall clock, including time parked at human gates. */
   wallMs: number;
-  /** Wall clock with all human-approval intervals removed. */
-  activeMs: number;
   /** Union of human-approval intervals across the root and descendants. */
   approvalMs: number;
   approvalCount: number;
@@ -53,7 +50,7 @@ function unionDuration(intervals: Interval[]): number {
 }
 
 /**
- * Split one root run's wall time into active execution and human approval wait.
+ * Report recorded active execution alongside wall time and human approval wait.
  * Descendant gates participate because a manager is suspended while its leaf
  * waits. Intervals are unioned so concurrent gates never double-count time.
  */
@@ -85,10 +82,91 @@ export function summarizeSessionTiming(
   const wallMs = end - start;
   const approvalMs = Math.min(wallMs, unionDuration(intervals));
   return {
-    calculatedAt: now,
     wallMs,
-    activeMs: Math.max(0, wallMs - approvalMs),
+    ...activeTimingForTree(root.id, [sessionTimingRow(root), ...evidence.filter(item => item.session.id !== root.id).map(item => sessionTimingRow(item.session))], now),
     approvalMs,
     approvalCount,
   };
+}
+
+export interface ActiveTiming {
+  calculatedAt: number;
+  /** Union of recorded execution intervals, or null for historical sessions. */
+  activeMs: number | null;
+  running: boolean;
+}
+
+type TimingRow = {
+  sessionId: string;
+  parentSessionId?: string | undefined;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+  execution?: Array<{ start: number; end?: number }> | undefined;
+};
+
+/** Persist only status transitions. Metadata writes never restart the clock. */
+export function transitionExecution(session: SessionInfo, status: SessionInfo['status'] | undefined, now: number): void {
+  if (!status || status === session.status || !session.time.execution) return;
+  const last = session.time.execution.at(-1);
+  if (last && last.end === undefined) last.end = Math.max(last.start, now);
+  if (status === 'running') session.time.execution.push({ start: now });
+}
+
+/** One clock for lists, details and CLI. Parallel descendants count once. */
+export function activeTimingForTree(rootId: string, rows: TimingRow[], now = Date.now()): ActiveTiming {
+  const byId = new Map(rows.map(row => [row.sessionId, row]));
+  const root = byId.get(rootId);
+  if (!root) return { calculatedAt: now, activeMs: null, running: false };
+  const end = isTerminalSessionStatus(root.status) ? root.updatedAt : now;
+  const intervals: Interval[] = [];
+  let known = true;
+  let running = false;
+  for (const row of rows) {
+    let current: TimingRow | undefined = row;
+    const seen = new Set<string>();
+    while (current && current.sessionId !== rootId && !seen.has(current.sessionId)) {
+      seen.add(current.sessionId);
+      current = current.parentSessionId ? byId.get(current.parentSessionId) : undefined;
+    }
+    if (current?.sessionId !== rootId) continue;
+    if (!row.execution) known = false;
+    for (const interval of row.execution ?? []) {
+      const open = interval.end === undefined && row.status === 'running';
+      const start = Math.max(root.createdAt, interval.start);
+      const stop = Math.min(end, interval.end ?? (open ? now : row.updatedAt));
+      if (stop >= start) intervals.push({ start, end: stop });
+      if (open && !isTerminalSessionStatus(root.status)) running = true;
+    }
+  }
+  return { calculatedAt: now, activeMs: known ? unionDuration(intervals) : null, running };
+}
+
+export function sessionTimingRow(session: SessionInfo): TimingRow {
+  return { sessionId: session.id, parentSessionId: session.parentSessionID, status: session.status,
+    createdAt: session.time.created, updatedAt: session.time.updated, execution: session.time.execution };
+}
+
+/** Advance a server snapshot only while execution is active. Never infer from age. */
+export function activeDuration(timing: ActiveTiming | undefined, now = Date.now()): number | null {
+  if (timing?.activeMs == null) return null;
+  return timing.activeMs + (timing.running ? Math.max(0, now - timing.calculatedAt) : 0);
+}
+
+/** Group descendants before calculating, avoiding a full-history scan per list row. */
+export function activeTimingsForForest(rows: TimingRow[], now = Date.now()): Map<string, ActiveTiming> {
+  const byId = new Map(rows.map(row => [row.sessionId, row]));
+  const groups = new Map<string, TimingRow[]>();
+  for (const row of rows) {
+    let current: TimingRow | undefined = row;
+    const seen = new Set<string>();
+    while (current && !seen.has(current.sessionId)) {
+      seen.add(current.sessionId);
+      const group = groups.get(current.sessionId) ?? [];
+      group.push(row);
+      groups.set(current.sessionId, group);
+      current = current.parentSessionId ? byId.get(current.parentSessionId) : undefined;
+    }
+  }
+  return new Map(rows.map(row => [row.sessionId, activeTimingForTree(row.sessionId, groups.get(row.sessionId)!, now)]));
 }

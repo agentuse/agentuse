@@ -346,6 +346,7 @@ export async function listSessions(ctx: WorkerContext, req: ExecuteRequest) {
         trigger: session.trigger ?? 'manual',
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
+        timing: session.timing,
         ...sessionErrorFields(session),
         ...dismissedAtField(session),
         ...mockField(session),

@@ -76,6 +76,8 @@ export interface SessionInfo {
   time: {
     created: number;                 // Unix timestamp (ms)
     updated: number;                 // Unix timestamp (ms)
+    /** Execution intervals; absent on historical sessions with unknown active time. */
+    execution?: Array<{ start: number; end?: number }>;
   };
 
   // Process currently executing this run (single-machine storage). Stamped at

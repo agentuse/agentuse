@@ -2011,16 +2011,9 @@ export default function SessionDetail() {
           ? (approval.errorMessage ?? 'This run is waiting on a delegated sub-agent that has already ended, so it can no longer be resumed.')
           : undefined;
 
-  // Verdict line for the result card. Prefer the runtime's
-  // root+descendant timing split so a reviewer taking 30 minutes does not make
-  // the agent look 30 minutes slower. Historical sessions fall back to wall
-  // time derived from their log.
-  const lastLogTime = orderedLogs.length > 0 ? orderedLogs[orderedLogs.length - 1].time : undefined;
-  const elapsedLabel = approval.timing
+  const elapsedLabel = approval.timing?.activeMs != null
     ? `active ${formatDuration(approval.timing.activeMs)}`
-    : approval.createdAt !== undefined && lastLogTime !== undefined && lastLogTime > approval.createdAt
-      ? `${ended ? 'finished in' : 'running'} ${formatDuration(lastLogTime - approval.createdAt)}`
-      : undefined;
+    : 'Active time unavailable';
   // The corrections row lives in the session log, which is collapsed by default.
   // A run that silently applied 10 of its 26 corrections would stay silent until
   // someone expanded it, so the count is repeated here where it cannot be

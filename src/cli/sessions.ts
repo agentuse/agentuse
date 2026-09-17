@@ -1009,7 +1009,7 @@ async function showSession(
     : '⋯';
   const statusText = isIncomplete ? 'incomplete' : subagentActive ? 'running · subagent' : (s.status || 'unknown');
   process.stdout.write(`Status:      ${statusIcon} ${statusText}\n`);
-  process.stdout.write(`Timing:      active ${formatCompactDuration(timing.activeMs)} · approval wait ${formatCompactDuration(timing.approvalMs)} · wall ${formatCompactDuration(timing.wallMs)}\n`);
+  process.stdout.write(`Timing:      active ${timing.activeMs === null ? 'unavailable' : formatCompactDuration(timing.activeMs)} · approval wait ${formatCompactDuration(timing.approvalMs)} · wall ${formatCompactDuration(timing.wallMs)}\n`);
   if (s.mock) {
     process.stdout.write(`Mock:        ⚠ mock run: some or all tool results were fabricated, not executed\n`);
   }

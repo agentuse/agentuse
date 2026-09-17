@@ -1237,7 +1237,7 @@ function SubagentCard(props: { session: LogSubagentSession; projectId?: string; 
           {contextLabel && <strong>{contextLabel}</strong>}
           {breadcrumb && <span>{breadcrumb}</span>}
           {s.createdAt && <time dateTime={new Date(s.createdAt).toISOString()}>{formatLogTime(s.createdAt)}</time>}
-          {duration && <span>{duration}</span>}
+          {duration && <span>{duration} active</span>}
         </span>
       )}
       <SubagentActivity session={s} {...(props.projectId && { projectId: props.projectId })} />
@@ -1677,7 +1677,7 @@ function LogEntryImpl(props: LogEntryProps) {
       ? `${nestedCalls.length} ${nestedCalls.length === 1 ? 'call' : 'calls'}`
       : undefined,
     entry.subagentSession?.durationMs !== undefined
-      ? formatSessionDuration(entry.subagentSession.durationMs)
+      ? `${formatSessionDuration(entry.subagentSession.durationMs)} active`
       : undefined,
   ].filter((part): part is string => Boolean(part));
 

@@ -1,3 +1,4 @@
+import { activeTimingForTree, sessionTimingRow } from '../session/timing';
 import { runDeadline } from '../runner/failure';
 import { dirname, join } from 'path';
 import { parseAgent } from '../parser';
@@ -39,6 +40,7 @@ export async function sessionHierarchySummaries(
     trigger: session.trigger ?? 'manual',
     createdAt: session.time.created,
     updatedAt: session.time.updated,
+    timing: activeTimingForTree(session.id, evidence.map(item => sessionTimingRow(item.session))),
     ...sessionErrorFields(session),
     ...(() => {
       const activity = buildDescendantActivity(session, parts ?? []);

@@ -48,11 +48,13 @@ describe('session status transitions', () => {
     const prepared = await manager.findSession(sessionId);
     expect(prepared?.session.status).toBe('preparing');
     expect(prepared?.session.owner).toBeUndefined();
+    expect(prepared?.session.time.execution).toEqual([]);
     const createdAt = prepared?.session.time.created;
 
     await manager.createSession({ ...base, id: sessionId, promotePrepared: true });
     const running = await manager.findSession(sessionId);
     expect(running?.session.status).toBe('running');
+    expect(running?.session.time.execution).toEqual([{ start: running?.session.time.updated }]);
     expect(running?.session.time.created).toBe(createdAt);
     expect(running?.session.owner?.pid).toBe(process.pid);
     expect((running?.session as Record<string, unknown>).initialStatus).toBeUndefined();
@@ -102,4 +104,23 @@ describe('session status transitions', () => {
     await manager.setSessionSuspended(sessionId, agentId);
     expect((await manager.findSession(sessionId))?.session.error).toBeUndefined();
   });
+});
+
+
+it('persists execution intervals through suspension, restart, completion and index reads', async () => {
+  const { manager, agentId, sessionId } = await setup();
+  await manager.setSessionSuspended(sessionId, agentId);
+  const suspended = (await manager.findSession(sessionId))!.session;
+  expect(suspended.time.execution).toHaveLength(1);
+  expect(suspended.time.execution![0]!.end).toBeNumber();
+  const reloaded = new SessionManager();
+  await reloaded.setSessionRunning(sessionId, agentId);
+  await reloaded.setSessionRunning(sessionId, agentId);
+  await reloaded.setSessionCompleted(sessionId, agentId);
+  const finished = (await reloaded.findSession(sessionId))!.session;
+  expect(finished.time.execution).toHaveLength(2);
+  expect(finished.time.execution!.every(interval => interval.end !== undefined)).toBe(true);
+  const [row] = await reloaded.listSessionSummaries();
+  expect(row!.timing!.activeMs).toBe(finished.time.execution!.reduce((sum, interval) => sum + interval.end! - interval.start, 0));
+  expect(row!.timing!.running).toBe(false);
 });

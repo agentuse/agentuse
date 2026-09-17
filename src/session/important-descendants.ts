@@ -1,3 +1,4 @@
+import { activeTimingForTree, sessionTimingRow } from './timing';
 import type { Part, SessionInfo, SessionTrigger } from './types';
 import { isExecutingSessionStatus, isTerminalSessionStatus } from './status';
 
@@ -535,7 +536,10 @@ export function buildImportantDescendants(
       trigger: session.trigger ?? 'manual',
       createdAt: session.time.created,
       updatedAt: session.time.updated,
-      ...(terminal && session.time.updated >= session.time.created && { durationMs: session.time.updated - session.time.created }),
+      ...(() => {
+        const timing = activeTimingForTree(session.id, evidence.map(item => sessionTimingRow(item.session)));
+        return terminal && timing.activeMs !== null ? { durationMs: timing.activeMs } : {};
+      })(),
       ...errorFields(session),
       kinds,
       important,

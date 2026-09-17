@@ -59,14 +59,6 @@ export function groupDraftTurns(
   }));
 }
 
-function stepDuration(steps: readonly ApprovalLogEntry[]): string | null {
-  const times = steps.map((step) => step.time).filter((time): time is number => typeof time === 'number');
-  if (times.length < 2) return null;
-  const seconds = Math.round((Math.max(...times) - Math.min(...times)) / 1000);
-  if (seconds <= 0) return null;
-  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-}
-
 /**
  * Seconds since the newest step landed, ticking once a second while the turn
  * is live. A long silence while the author drafts a big reply or approval card
@@ -132,14 +124,13 @@ function DraftSteps(props: {
   }
   const actionable = props.steps.some((entry) => isDraftApprovalActionable(entry, props.approval, props.status));
   const visible = open || actionable;
-  const duration = stepDuration(props.steps);
   const label = `${props.steps.length} ${props.steps.length === 1 ? 'step' : 'steps'}`;
 
   return (
     <div class={`draft-steps${visible ? ' is-open' : ''}`}>
       <button type="button" class="draft-steps-summary" aria-expanded={visible} onClick={() => setOpen((value) => !value)}>
         <span class="draft-steps-caret" aria-hidden="true">{visible ? '▾' : '▸'}</span>
-        <span>{label}{duration ? ` · ${duration}` : ''}</span>
+        <span>{label}</span>
       </button>
       {visible && (
         <ul class="draft-steps-list">

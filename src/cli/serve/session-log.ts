@@ -1,3 +1,4 @@
+import type { ActiveTiming } from '../../session/timing';
 /**
  * Folding a session's subagent activity into its own log.
  *
@@ -22,6 +23,7 @@ export interface ChildSessionSummary {
   trigger: SessionTrigger;
   createdAt: number;
   updatedAt: number;
+  timing?: ActiveTiming;
   errorCode?: string;
   errorMessage?: string;
   /** Newest tool step, present only while the child is still executing. */
@@ -224,7 +226,7 @@ export function importantDescendantTree(
   for (const child of childSessions) {
     const terminal = isTerminalSessionStatus(child.status);
     nodes.set(child.sessionId, enrichChildSessionForLog(child, childSessionHref, {
-      ...(terminal && child.updatedAt >= child.createdAt && { durationMs: child.updatedAt - child.createdAt }),
+      ...(terminal && child.timing?.activeMs != null && { durationMs: child.timing.activeMs }),
       ...(root && {
         parentSessionId: root.sessionId,
         depth: 1,

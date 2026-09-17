@@ -1,3 +1,4 @@
+import { activeDuration } from '../../../../session/timing';
 import { failureLabel } from '../../../../session/failure-label';
 import { Fragment, type ComponentChildren } from 'preact';
 import { useLocation } from 'preact-iso';
@@ -219,7 +220,8 @@ export function SessionListItem(props: {
   let lineClass = 'it-line';
   if (running) {
     lineClass = 'it-line live';
-    line = `Working · ${formatElapsedShort(now - row.createdAt)}`;
+    const activeMs = activeDuration(row.timing, now);
+    line = activeMs === null ? 'Working' : `Working · ${formatElapsedShort(activeMs)} active`;
   } else if (dot === 'waiting') {
     lineClass = 'it-line live';
     line = 'Waiting on you';
@@ -360,7 +362,7 @@ export function SessionReader(props: {
             {purposeLabel && <span class="chip internal">{purposeLabel}</span>}
             <span class="chip trigger">{row.trigger}</span>
             <span>{formatApprovalTime(row.createdAt)}</span>
-            <span>{formatElapsedShort(Math.max(0, row.updatedAt - row.createdAt))}</span>
+            <span>{activeDuration(row.timing) === null ? 'Active time unavailable' : `${formatElapsedShort(activeDuration(row.timing)!)} active`}</span>
             <code>{row.sessionId}</code>
           </div>
         </div>
