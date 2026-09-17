@@ -195,6 +195,13 @@ The session page supports these review fields:
 - `risk`: known risks, unresolved questions, or reviewer attention areas
 - Session logs before and after the decision
 
+Review bodies support Markdown, including headings, emphasis, links, blockquotes,
+numbered lists (`1.` or `1)`), bullet lists, tables, and fenced code. This includes
+`changes[].displayContent`, individual thread posts, and `reference.excerpt`.
+Preserve the exact submitted body and original quote, including any existing
+Markdown. Copy buttons retain the source text; rendering does not change the
+approved payload or executable command. Raw HTML is escaped.
+
 ### The original is mandatory on a response gate
 
 When the gate approves a reply, comment, answer, or any other response to

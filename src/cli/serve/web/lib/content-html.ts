@@ -110,6 +110,9 @@ function renderMarkdownTextBlock(value: string): string {
     const line = lines[index];
     const trimmed = line.trim();
     if (!trimmed) {
+      // Blank lines between numbered items do not restart the list at one.
+      const nextLine = lines.slice(index + 1).find(candidate => candidate.trim());
+      if (listItems.length > 0 && nextLine && /^\s*(?:[-*+]|\d+[.)])\s+/.test(nextLine)) continue;
       flushAll();
       continue;
     }
@@ -137,7 +140,7 @@ function renderMarkdownTextBlock(value: string): string {
       html.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
       continue;
     }
-    const listMatch = line.match(/^(\s*)(?:([-*+])|(\d+\.))\s+(.+)$/);
+    const listMatch = line.match(/^(\s*)(?:([-*+])|(\d+[.)]))\s+(.+)$/);
     if (listMatch) {
       flushParagraph();
       flushQuote();

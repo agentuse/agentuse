@@ -95,7 +95,7 @@ export function isJsonLikeContent(value: string): boolean {
 export function looksLikeMarkdown(value: string): boolean {
   const trimmed = value.trim();
   if (!trimmed) return false;
-  return /(^|\n)(#{1,6}\s|\s*[-*+]\s|\s*\d+\.\s|>\s|```|\|.+\|)/.test(trimmed) ||
+  return /(^|\n)(#{1,6}\s|\s*[-*+]\s|\s*\d+[.)]\s|>\s|```|\|.+\|)/.test(trimmed) ||
     /\[[^\]]+\]\([^)]+\)/.test(trimmed) ||
     /\*\*[^*]+\*\*/.test(trimmed) ||
     /https?:\/\/[^\s)]+/.test(trimmed) ||

@@ -2207,6 +2207,14 @@ describe('content-html', () => {
     expect(html).toContain('code()');
   });
 
+  it('renders parenthesized numbered lists in approval bodies and auto-detected logs', () => {
+    const source = '1) **Agents** build software\n\n2) Humans retain authority';
+    for (const html of [renderMarkdownBlock(source), renderLogContentValue(source)]) {
+      expect(html).toContain('<ol><li><strong>Agents</strong> build software</li><li>Humans retain authority</li></ol>');
+    }
+    expect(renderMarkdownBlock('Version 1) stays prose')).toContain('<p>Version 1) stays prose</p>');
+  });
+
   it('renders nested lists with real nesting', () => {
     const html = renderMarkdownBlock([
       '- Scope:',
