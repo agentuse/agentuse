@@ -2421,6 +2421,13 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   top: 6px;
   right: 6px;
   z-index: 1;
+  /* Override the session page's 40px minimum for full-size action buttons. */
+  width: 22px;
+  height: 22px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
   background: var(--panel);
   box-shadow: 0 0 0 1px var(--line);
   opacity: 0;
