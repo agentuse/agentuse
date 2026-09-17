@@ -48,7 +48,7 @@ export function WorkingStepMeta({ step, timing }: { step: number; timing?: Activ
     <span class="now-headline-meta">
       {step > 0 && <>step {step} · </>}
       <span title="Active processing time, excluding idle and approval waits">
-        {activeMs === null ? 'Time unavailable' : `${formatElapsedClock(activeMs)} active`}
+        {activeMs === null ? 'Time unavailable' : formatElapsedClock(activeMs)}
       </span>
     </span>
   );

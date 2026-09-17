@@ -20,10 +20,10 @@ describe('active duration displays', () => {
     const clock = spyOn(Date, 'now').mockReturnValue(14_430_000);
     try {
       expect(renderToString(<WorkingStepMeta step={45} timing={row.timing} />)).toContain('step 45 · <span');
-      expect(renderToString(<WorkingStepMeta step={45} timing={row.timing} />)).toContain('1:30 active');
+      expect(renderToString(<WorkingStepMeta step={45} timing={row.timing} />)).toContain('1:30</span>');
       clock.mockReturnValue(14_431_000);
-      expect(renderToString(<WorkingStepMeta step={45} timing={row.timing} />)).toContain('1:31 active');
-      expect(renderToString(<WorkingStepMeta step={45} timing={{ ...row.timing!, running: false }} />)).toContain('1:00 active');
+      expect(renderToString(<WorkingStepMeta step={45} timing={row.timing} />)).toContain('1:31</span>');
+      expect(renderToString(<WorkingStepMeta step={45} timing={{ ...row.timing!, running: false }} />)).toContain('1:00</span>');
     } finally {
       clock.mockRestore();
     }
@@ -31,7 +31,7 @@ describe('active duration displays', () => {
   it('shows unavailable historical timing and supports working before the first step', () => {
     expect(renderToString(<WorkingStepMeta step={45} />)).toContain('Time unavailable');
     const html = renderToString(<WorkingStepMeta step={0} timing={{ calculatedAt: 0, activeMs: 0, running: false }} />);
-    expect(html).toContain('0:00 active');
+    expect(html).toContain('0:00</span>');
     expect(html).not.toContain('step 0');
   });
   it('shows processing time instead of four hours of session age', () => {
