@@ -1,6 +1,7 @@
 import { memo } from 'preact/compat';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useSmoothText } from '../hooks/use-smooth-text';
+import { useDeveloperDebug } from '../hooks/use-developer-debug';
 import { useSessionTail } from '../hooks/use-session-tail';
 import { useTailSlot } from '../hooks/use-tail-slot';
 import type { ApprovalChange, ApprovalLogDetails, ApprovalLogEntry, ApprovalOption, ApprovalReference, LogSubagentEvent, LogSubagentSession, LogVerifySummary } from '../../types';
@@ -1366,6 +1367,7 @@ function LiveOutput(props: { value: string }) {
 }
 
 function ToolDetails(props: { details: ApprovalLogDetails; sessionId: string; token: string | undefined }) {
+  const { showDeveloperDebug } = useDeveloperDebug();
   const details = props.details;
   const rows = [
     details.input ? { label: 'Input', value: details.input } : undefined,
@@ -1379,7 +1381,7 @@ function ToolDetails(props: { details: ApprovalLogDetails; sessionId: string; to
       {details.tokenUsage && (
         <ToolTokenUsageStrip usage={details.tokenUsage} contextAddedTokens={details.contextAddedTokens} returnedBytes={details.returnedBytes} />
       )}
-      {details.requestFingerprint && (
+      {showDeveloperDebug && details.requestFingerprint && (
         <div class="tool-token-usage" aria-label="Request fingerprints">
           <span class="tool-token-metric" title={details.requestFingerprint.prefixHash ? `Current request truncated to the previous request's input-item count, including current settings. Compare with previous ALL: ${details.requestFingerprint.previousAllHash}. Full PREFIX: ${details.requestFingerprint.prefixHash}` : 'First request in this model invocation; no previous prefix to compare.'}>
             <span class="tool-token-label">prefix</span>
