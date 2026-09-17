@@ -1,0 +1,27 @@
+---
+name: cache-volume
+model: openai:gpt-5.6-sol
+description: "Measure prompt-cache behavior as deterministic tool results grow"
+reasoning: high
+maxSteps: 10
+timeout: "4m"
+skills:
+  auto: false
+tools:
+  bash:
+    timeout: "20s"
+    commands:
+      - "node benchmarks/cache-input/fixture.mjs *"
+---
+
+Run these commands in exact order, with exactly one Bash tool call per model
+turn. Never combine or parallelize them. Do not inspect, page, query, or restate
+the payloads.
+
+1. `node benchmarks/cache-input/fixture.mjs --label volume-1k --bytes 1024 --delay 1000`
+2. `node benchmarks/cache-input/fixture.mjs --label volume-8k --bytes 8192 --delay 1000`
+3. `node benchmarks/cache-input/fixture.mjs --label volume-24k --bytes 24576 --delay 1000`
+4. `node benchmarks/cache-input/fixture.mjs --label volume-60k --bytes 61440 --delay 1000`
+5. `node benchmarks/cache-input/fixture.mjs --label volume-marker --bytes 1024 --delay 1000`
+
+After all five succeed, report completion with only the ordered labels.

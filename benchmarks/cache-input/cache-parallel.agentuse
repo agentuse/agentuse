@@ -1,0 +1,30 @@
+---
+name: cache-parallel
+model: openai:gpt-5.6-sol
+description: "Test whether out-of-order parallel completion changes model payload order"
+reasoning: high
+maxSteps: 8
+timeout: "3m"
+skills:
+  auto: false
+tools:
+  bash:
+    timeout: "20s"
+    commands:
+      - "node benchmarks/cache-input/fixture.mjs *"
+---
+
+In one model turn, issue these four Bash calls in the written A-B-C-D order.
+They must be sibling tool calls in one response and run in parallel. Do not use
+`code_exec` and do not wait between calls.
+
+1. `node benchmarks/cache-input/fixture.mjs --label parallel-a --bytes 4096 --delay 6000`
+2. `node benchmarks/cache-input/fixture.mjs --label parallel-b --bytes 4096 --delay 0`
+3. `node benchmarks/cache-input/fixture.mjs --label parallel-c --bytes 4096 --delay 3000`
+4. `node benchmarks/cache-input/fixture.mjs --label parallel-d --bytes 4096 --delay 1000`
+
+After all four return, make one separate Bash call:
+`node benchmarks/cache-input/fixture.mjs --label parallel-marker --bytes 1024 --delay 0`
+
+Do not inspect or restate payloads. Report completion with only the intended
+call order: parallel-a, parallel-b, parallel-c, parallel-d, parallel-marker.
