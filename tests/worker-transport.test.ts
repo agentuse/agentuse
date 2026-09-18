@@ -1,6 +1,9 @@
 import { describe, expect, it, spyOn } from 'bun:test';
+import { EventEmitter } from 'events';
+import { spawn, type ChildProcess } from 'child_process';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
+import { PassThrough } from 'stream';
 import { AgentWorker } from '../src/cli/serve.js';
 import { logger } from '../src/utils/logger.js';
 
@@ -18,6 +21,42 @@ type TestableAgentWorker = {
 };
 
 describe('serve worker response transport', () => {
+  it('retries when a worker exits before becoming ready', async () => {
+    let spawnCount = 0;
+    const children: ChildProcess[] = [];
+    const fakeSpawn = (() => {
+      const child = new EventEmitter() as ChildProcess;
+      child.stdin = new PassThrough();
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.kill = (() => true) as ChildProcess['kill'];
+      child.unref = (() => child) as ChildProcess['unref'];
+      children.push(child);
+      spawnCount += 1;
+
+      if (spawnCount === 1) {
+        queueMicrotask(() => child.emit('exit', 0));
+      } else {
+        queueMicrotask(() => child.stdout?.write('{"type":"ready"}\n'));
+      }
+      return child;
+    }) as typeof spawn;
+    const worker = new AgentWorker({}, fakeSpawn);
+
+    try {
+      await expect(worker.spawn()).rejects.toThrow('Worker process died before becoming ready');
+      await new Promise((resolve) => setTimeout(resolve, 650));
+      expect(spawnCount).toBe(2);
+    } finally {
+      worker.shutdown();
+      for (const child of children) {
+        child.stdin?.destroy();
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      }
+    }
+  });
+
   it('fails the matching request immediately when a framed response is invalid JSON', async () => {
     const worker = new AgentWorker() as unknown as TestableAgentWorker;
     const secretPayload = 'private-session-content';

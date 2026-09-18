@@ -516,7 +516,10 @@ export class AgentWorker {
    *  dead worker left stuck as 'running'. Must never throw. */
   onReady?: (readyAt: number) => void;
 
-  constructor(private envOverrides: NodeJS.ProcessEnv = {}) {}
+  constructor(
+    private envOverrides: NodeJS.ProcessEnv = {},
+    private spawnProcess: typeof spawn = spawn,
+  ) {}
 
   /**
    * Spawn the worker process. Must be called during server startup (sync context).
@@ -559,7 +562,7 @@ export class AgentWorker {
     });
 
     this.spawnedAt = Date.now();
-    const child = spawn(process.execPath, [cliPath, "--internal-worker"], {
+    const child = this.spawnProcess(process.execPath, [cliPath, "--internal-worker"], {
       stdio: ["pipe", "pipe", "pipe"],
       env: {
         ...process.env,
@@ -599,6 +602,11 @@ export class AgentWorker {
       })
       .finally(() => {
         this.spawnPromise = null;
+        // A child that dies before its ready signal reaches handleWorkerDeath
+        // while spawnPromise is still set. scheduleRespawn deliberately ignores
+        // that in-flight attempt, so retry once the rejected attempt has fully
+        // settled or this project is left without a worker forever.
+        if (!this.ready) this.scheduleRespawn();
       });
     return this.spawnPromise;
   }
