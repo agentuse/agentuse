@@ -21,6 +21,7 @@ import { useTitle } from '../hooks/use-title';
 import { useSmartBack } from '../hooks/use-smart-back';
 import { useNow } from '../hooks/use-now';
 import { activeDuration, type ActiveTiming } from '../../../../session/timing';
+import { isExecutingSessionStatus } from '../../../../session/status';
 import {
   formatTokens,
   formatElapsedClock,
@@ -720,9 +721,11 @@ function actionableGateTarget(): Element | null {
   return gate.querySelector('.approval-card') ?? gate;
 }
 
-// error + USER_STOPPED / TIMEOUT / INCOMPLETE surface as their own pill, matching the server.
-function displaySessionStatus(status: string, header: ApprovalHeader | null): string {
-  if ((status === 'error' || header?.sessionStatus === 'error')) {
+// error + USER_STOPPED / TIMEOUT / INCOMPLETE surface as their own pill,
+// matching the server. The projected page status wins during a resume because
+// the durable header can still describe the preceding terminal attempt.
+export function displaySessionStatus(status: string, header: ApprovalHeader | null): string {
+  if (status === 'error') {
     if (header?.errorCode === 'USER_STOPPED') return 'stopped';
     if (header?.errorCode === 'TIMEOUT') return 'timeout';
     if (header?.errorCode === 'INCOMPLETE') return 'incomplete';
@@ -862,6 +865,49 @@ export function isBackgroundSessionActionFailure(message: string | undefined): b
   if (!message) return false;
   return message.startsWith("Couldn't continue this session:")
     || /^Couldn't (?:approve|reject|send your comment on|act on) this request:/.test(message);
+}
+
+type SessionNotice = { text: string; error: boolean };
+
+/**
+ * Reconcile the bottom action notice with the latest authoritative page status.
+ *
+ * A continuation is projected as `continuing` before its durable session record
+ * flips from the previous terminal state to `running`. An older status response
+ * can therefore put that terminal error into local notice state after the resume
+ * request was accepted. Once the page reports execution again, that error is
+ * history: keeping it below a live transcript makes the resumed attempt read as
+ * both running and failed.
+ *
+ * `undefined` means keep the current transient action notice. This preserves
+ * useful success feedback while clearing only an obsolete error.
+ */
+export function reconcileSessionNotice(
+  current: SessionNotice,
+  nextStatus: string,
+  header: ApprovalHeader,
+): SessionNotice | undefined {
+  const transitionResult = /submitting decision|decision recorded|resuming the session|continuing session|follow-up recorded|stopping session/.test(current.text);
+  const transitionFailure = isBackgroundSessionActionFailure(header.errorMessage);
+  if (transitionFailure) {
+    return { text: header.errorMessage as string, error: true };
+  }
+  // `nextStatus` includes the server's in-flight continuation projection and is
+  // authoritative for the page. `header.sessionStatus` can still be `error`
+  // until the resumed worker has persisted its first running transition.
+  if (nextStatus === 'error') {
+    return {
+      text: sessionErrorText(header) || 'Session finished with an error. Check the latest log entry for details.',
+      error: true,
+    };
+  }
+  if (nextStatus === 'completed' && transitionResult) {
+    return { text: '✓ session completed.', error: false };
+  }
+  if (isExecutingSessionStatus(nextStatus) && current.error) {
+    return { text: '', error: false };
+  }
+  return undefined;
 }
 
 /** The streamed header and the local pending flag can update on different
@@ -1097,19 +1143,12 @@ export default function SessionDetail() {
       setPendingActionable(Boolean(nextToken && approvalWaiting));
     }
 
-    const transitionResult = /submitting decision|decision recorded|resuming the session|continuing session|follow-up recorded|stopping session/.test(resultRef.current.text);
     const transitionFailure = isBackgroundSessionActionFailure(header.errorMessage);
+    const nextNotice = reconcileSessionNotice(resultRef.current, nextStatus, header);
+    if (nextNotice) setResult(nextNotice);
     if (transitionFailure) {
-      setResult({ text: header.errorMessage as string, error: true });
       setSubmittingContinue(false);
       setSubmittingDecision(null);
-    } else if (nextStatus === 'error' || header.sessionStatus === 'error') {
-      setResult({
-        text: sessionErrorText(header) || 'Session finished with an error. Check the latest log entry for details.',
-        error: true,
-      });
-    } else if (nextStatus === 'completed' && transitionResult) {
-      setResult({ text: '✓ session completed.', error: false });
     }
   }, []);
 
@@ -1520,7 +1559,10 @@ export default function SessionDetail() {
   const tailTyping = (tailEntry?.type === 'text' || tailEntry?.type === 'reasoning') && tailEntry?.status === 'streaming';
   const showWorking = isWorkingStatus(status, orderedLogs) && !tailTyping;
   const workingLabel = status === 'preparing' ? 'Preparing project context' : 'Agent is running';
-  const ended = isEndedStatus(approval?.sessionStatus);
+  // `status` carries the server's active resume/continuation projection. The
+  // durable header intentionally lags during that handoff and can still say
+  // `error`, which is historical as soon as execution is active again.
+  const ended = isEndedStatus(status);
   // Opening a finished run is reviewing it: stamp it so Home's "results you
   // haven't opened" and the unseen marks drop it. Once per page load; the
   // server ignores repeats. Best-effort, a miss only leaves the mark on.
@@ -1537,7 +1579,7 @@ export default function SessionDetail() {
   // Parked on a delegated sub-agent that already ended: still raw-status
   // suspended, but nothing will ever carry it forward. Without its own copy line
   // the page reads "live view of this run" indefinitely.
-  const stranded = approval?.errorCode === 'CASCADE_ORPHANED';
+  const stranded = status === 'error' && approval?.errorCode === 'CASCADE_ORPHANED';
   const displayStatus = status === 'waiting' && expired ? 'expired' : displaySessionStatus(status, approval);
   const actionable = isActionableApproval({
     pending: pendingActionable,
@@ -2093,7 +2135,7 @@ export default function SessionDetail() {
   ) : null;
   // '' unless the session ended in error; leads the result card so a failed
   // run's outcome is the failure, not a mid-thought final message.
-  const resultErrorText = sessionErrorText(approval);
+  const resultErrorText = status === 'error' ? sessionErrorText(approval) : '';
   // Older outcome records can contain an ellipsized copy of the full error.
   // Keep distinct headlines, but avoid repeating the failure as a large title.
   const errorHeadline = finalOutcome.headline?.replace(/(?:\.{3}|…)$/, '').trim();

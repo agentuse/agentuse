@@ -21,7 +21,7 @@ import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from '../src/c
 import { parseChartSpec } from '../src/cli/serve/web/lib/chart-svg';
 import { highlightJsonSource } from '../src/cli/serve/web/lib/json-highlight';
 import { displayAgentName, isDebugLog, latestReviewerComment, logEntrySignature } from '../src/cli/serve/web/lib/format';
-import { aggregateToolStats, collapseTrailingRunErrors, failedSessionEntry, hasActionableApproval, headerTokenUsage, isActionableApproval, isBackgroundSessionActionFailure, matchesLogFilter, nestedCallIdsToExpand, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, nowCardLabel, sessionPageMode, sessionFailureHeadline, sessionResumeMode, sessionRunControls, sessionStatusWord, sessionTranscriptFoldedCopy, shouldExpandForNestedSearch, transcriptFoldsPerVisit, shouldShowResultNotice, withoutQueuedApproval, workingSessionEntry } from '../src/cli/serve/web/routes/session-detail';
+import { aggregateToolStats, collapseTrailingRunErrors, displaySessionStatus, failedSessionEntry, hasActionableApproval, headerTokenUsage, isActionableApproval, isBackgroundSessionActionFailure, matchesLogFilter, nestedCallIdsToExpand, reconcileSessionNotice, SessionIdCopy, sessionLogMatches, sessionLogSearchTerms, nowCardLabel, sessionPageMode, sessionFailureHeadline, sessionResumeMode, sessionRunControls, sessionStatusWord, sessionTranscriptFoldedCopy, shouldExpandForNestedSearch, transcriptFoldsPerVisit, shouldShowResultNotice, withoutQueuedApproval, workingSessionEntry } from '../src/cli/serve/web/routes/session-detail';
 import { tokenUsageMetaItems } from '../src/cli/serve/web/components/token-usage-strip';
 import { dayLabel, Highlight, outputPreview, sessionPurposeLabel, sessionRepeatRunPath, SessionListItem, statusDot } from '../src/cli/serve/web/routes/sessions-list';
 import { formatElapsedClock, formatElapsedShort, formatElapsedWithSeconds } from '../src/cli/serve/web/lib/format';
@@ -2105,6 +2105,55 @@ describe('SessionDetail header', () => {
     expect(isBackgroundSessionActionFailure("Couldn't reject this request: resume failed; the gate is still open, try again.")).toBe(true);
     expect(isBackgroundSessionActionFailure("Couldn't continue this session: resume failed")).toBe(true);
     expect(isBackgroundSessionActionFailure('Session finished with an error.')).toBe(false);
+  });
+
+  it('clears a prior terminal error once a resumed session is executing', () => {
+    const timeout = {
+      text: 'Session finished with an error: TIMEOUT: Agent execution timed out after 600s',
+      error: true,
+    };
+    const runningHeader = {
+      sessionId: 'session-1',
+      sessionStatus: 'running',
+      agent: { id: 'agent-1', name: 'Agent' },
+    };
+
+    expect(reconcileSessionNotice(timeout, 'running', runningHeader)).toEqual({ text: '', error: false });
+    // During the resume handoff, durable storage can still carry the old error.
+    // The projected `continuing` status is the current page state.
+    expect(reconcileSessionNotice(timeout, 'continuing', {
+      ...runningHeader,
+      sessionStatus: 'error',
+      errorCode: 'TIMEOUT',
+      errorMessage: 'Agent execution timed out after 600s',
+    })).toEqual({ text: '', error: false });
+    expect(displaySessionStatus('continuing', {
+      ...runningHeader,
+      sessionStatus: 'error',
+      errorCode: 'TIMEOUT',
+    })).toBe('continuing');
+    expect(displaySessionStatus('error', {
+      ...runningHeader,
+      sessionStatus: 'error',
+      errorCode: 'TIMEOUT',
+    })).toBe('timeout');
+  });
+
+  it('keeps useful resume feedback and still surfaces a new terminal failure', () => {
+    const header = {
+      sessionId: 'session-1',
+      sessionStatus: 'error',
+      agent: { id: 'agent-1', name: 'Agent' },
+      errorCode: 'TIMEOUT',
+      errorMessage: 'Agent execution timed out after 600s',
+    };
+    const accepted = { text: '✓ follow-up recorded — agentuse is continuing the session.', error: false };
+
+    expect(reconcileSessionNotice(accepted, 'continuing', header)).toBeUndefined();
+    expect(reconcileSessionNotice(accepted, 'error', header)).toEqual({
+      text: 'Session finished with an error: TIMEOUT: Agent execution timed out after 600s',
+      error: true,
+    });
   });
 
   it('groups tool calls by tool, busiest first, tallying failures', () => {
