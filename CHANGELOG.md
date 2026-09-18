@@ -17,7 +17,7 @@
 ### Changed
 
 - **Session and approval review is more action-focused and inspectable.** The session page centers the current action, keeps run controls in one menu, renders approval discussion as individual posts, and previews supported media beside the action it belongs to. Active timers, expandable context and byte usage, and copy controls expose operational details without clutter. Changeset review, session results, approval navigation, agent creation, menus, dialogs, and Home results also adapt to phone and tablet widths while preserving keyboard focus, tab semantics, live status, and complete assistant drafts.
-- **Mac releases now build separate signed and notarized Apple Silicon and Intel artifacts in GitHub Actions.** Architecture-specific downloads remain close to the existing app size, while one merged updater manifest routes each installation to the correct ZIP.
+- **v0.22.0 is the first AgentUse release whose Mac app is built in GitHub Actions.** The workflow produces separate signed and notarized Apple Silicon and Intel artifacts. Architecture-specific downloads remain close to the existing app size, while one merged updater manifest routes each installation to the correct ZIP.
 - **Coding-assistant integration archives are no longer attached to GitHub Releases.** Install the supported AgentUse skill with `npx skills add agentuse/agentuse`; Codex, Claude Code, Pi, and portable skill packages remain available as local-development build outputs.
 
 ### Fixed
