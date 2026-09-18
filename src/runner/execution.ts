@@ -3214,6 +3214,10 @@ Current step: ${stepCount}/${options.maxSteps}`);
     // behavior: free text, no headline.
     if (
       !runAnotherSegment &&
+      // Legacy resumed snapshots can omit outcome tools. Requiring a tool
+      // call with an empty tool set is rejected by the SDK.
+      (modelFacingTools[REPORT_COMPLETE_TOOL] !== undefined ||
+        modelFacingTools[REPORT_INCOMPLETE_TOOL] !== undefined) &&
       // A plugin's terminal policy ends the run after the current SDK step.
       // Do not spend the reserved outcome-only segment afterward: it would
       // invoke the model again despite the explicit termination request.

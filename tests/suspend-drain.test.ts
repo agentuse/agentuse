@@ -62,7 +62,7 @@ function turn(parts: unknown[], finishReason = 'tool-calls') {
     { type: 'stream-start', warnings: [] },
     { type: 'response-metadata', id: 'resp', modelId: 'mock-model', timestamp: new Date(0) },
     ...parts,
-    { type: 'finish', finishReason, usage: USAGE },
+    { type: 'finish', finishReason: { unified: finishReason, raw: finishReason }, usage: USAGE },
   ];
 }
 

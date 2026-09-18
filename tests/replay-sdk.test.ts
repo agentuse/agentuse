@@ -17,7 +17,7 @@ function model(turns: unknown[][], finalReason = 'tool-calls') {
     return { stream: convertArrayToReadableStream([
       { type: 'stream-start', warnings: [] },
       ...turn,
-      { type: 'finish', finishReason: count === turns.length ? finalReason : 'tool-calls', usage },
+      { type: 'finish', finishReason: { unified: count === turns.length ? finalReason : 'tool-calls', raw: undefined }, usage },
     ] as any) };
   } });
   return { calls: () => count, prompts };

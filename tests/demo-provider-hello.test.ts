@@ -1,7 +1,35 @@
 import { describe, expect, it } from 'bun:test';
 import { createDemoModel } from '../src/providers/demo';
+import { generateText, streamText, tool } from 'ai';
+import { z } from 'zod';
+
+const completionTool = tool({
+  inputSchema: z.object({ headline: z.string(), details: z.string() }),
+});
 
 describe('hello demo model', () => {
+  it('honors required completion through the real SDK without losing demo content', async () => {
+    const result = await generateText({
+      model: createDemoModel('onboarding'),
+      prompt: 'Declare the demo outcome',
+      tools: { report_complete: completionTool },
+      toolChoice: 'required',
+    });
+    expect(result.finishReason).toBe('tool-calls');
+    expect(result.toolCalls[0]?.input.details).toContain('# Project pulse');
+  });
+
+  it('streams the requested completion tool through the real SDK', async () => {
+    const result = streamText({
+      model: createDemoModel('hello'),
+      prompt: 'Declare the demo outcome',
+      tools: { report_complete: completionTool },
+      toolChoice: { type: 'tool', toolName: 'report_complete' },
+    });
+    expect(await result.finishReason).toBe('tool-calls');
+    expect((await result.toolCalls)[0]?.input.details).toContain('Create your first AgentUse agent');
+  });
+
   it('returns the skill install command and a copy-ready first-agent prompt', async () => {
     const result = await createDemoModel('hello').doGenerate({} as never);
     const text = result.content

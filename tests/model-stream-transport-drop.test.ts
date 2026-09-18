@@ -83,7 +83,7 @@ function completionStream(text: string) {
     { type: 'text-start', id: 'text-1' },
     { type: 'text-delta', id: 'text-1', delta: text },
     { type: 'text-end', id: 'text-1' },
-    { type: 'finish', finishReason: 'stop', usage: USAGE },
+    { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: USAGE },
   ] as any);
 }
 
@@ -272,7 +272,7 @@ describe('agent loop transport-drop handling', () => {
             stream: convertArrayToReadableStream([
               { type: 'stream-start', warnings: [] },
               { type: 'tool-call', toolCallId: 'checkpoint-1', toolName: 'checkpoint_tool', input: '{}' },
-              { type: 'finish', finishReason: 'tool-calls', usage: USAGE },
+              { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool-calls' }, usage: USAGE },
             ] as any),
           };
         }

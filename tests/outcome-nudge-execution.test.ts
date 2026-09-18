@@ -103,6 +103,19 @@ beforeEach(() => {
 });
 
 describe('missing-outcome recovery segment', () => {
+  it('does not require an unavailable outcome tool in a legacy resumed snapshot', async () => {
+    const outcome: RunOutcome = {};
+    for await (const _ of executeAgentCore(
+      { name: 'legacy-agent', config: { model: 'demo:test' } } as any,
+      {},
+      { userMessage: 'Finish the saved run', systemMessages: [], maxSteps: 3, runOutcome: outcome },
+    )) { /* consume */ }
+
+    expect(streamConfigs).toHaveLength(1);
+    expect(streamConfigs[0].toolChoice).toBe('auto');
+    expect(outcome.complete).toBeUndefined();
+  });
+
   it('reserves a constrained outcome turn after parallel calls overshoot maxSteps', async () => {
     streamTextMock.mockImplementation((config: any) => {
       streamConfigs.push(config);

@@ -105,22 +105,42 @@ export function createDemoModel(modelId: string): LanguageModelV2 {
   // than the tiny test responses, so use a brisker type-on cadence.
   const streamDelayMs = modelId === 'hello' || modelId === 'onboarding' ? 5 : 20;
 
+  // The SDK now rejects text-only responses when a tool call is required.
+  // Honor the runner's completion turn without invoking arbitrary demo tools.
+  function completionCall(options: LanguageModelV2CallOptions) {
+    const choice = options.toolChoice;
+    if (
+      (choice?.type === 'required' ||
+        (choice?.type === 'tool' && choice.toolName === 'report_complete')) &&
+      options.tools?.some(tool => tool.type === 'function' && tool.name === 'report_complete')
+    ) {
+      return {
+        type: 'tool-call' as const,
+        toolCallId: 'demo-report-complete',
+        toolName: 'report_complete',
+        input: JSON.stringify({ headline: 'Demo run completed', details: responseText }),
+      };
+    }
+    return undefined;
+  }
+
   return {
     specificationVersion: 'v2',
     provider: 'demo',
     modelId: `demo:${modelId}`,
     supportedUrls: {},
 
-    async doGenerate(_options: LanguageModelV2CallOptions) {
+    async doGenerate(options: LanguageModelV2CallOptions) {
       // Simulate a small delay for realism
       await new Promise((resolve) => setTimeout(resolve, 100));
 
       const outputTokens = responseText.split(/\s+/).length;
       const inputTokens = 10;
+      const completion = completionCall(options);
 
       return {
-        content: [{ type: 'text' as const, text: responseText }],
-        finishReason: 'stop' as const,
+        content: completion ? [completion] : [{ type: 'text' as const, text: responseText }],
+        finishReason: completion ? 'tool-calls' as const : 'stop' as const,
         usage: {
           inputTokens,
           outputTokens,
@@ -136,10 +156,23 @@ export function createDemoModel(modelId: string): LanguageModelV2 {
       const outputTokens = words.filter((w) => w.trim()).length;
       const inputTokens = 10;
       const textId = 'demo-text-0';
+      const completion = completionCall(options);
 
       // Create a ReadableStream that yields text chunks word by word
       const stream = new ReadableStream<LanguageModelV2StreamPart>({
         async start(controller) {
+          if (completion) {
+            if (!abortSignal?.aborted) {
+              controller.enqueue(completion);
+              controller.enqueue({
+                type: 'finish',
+                finishReason: 'tool-calls',
+                usage: { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens },
+              });
+            }
+            controller.close();
+            return;
+          }
           // Emit text-start
           controller.enqueue({
             type: 'text-start',

@@ -46,7 +46,7 @@ function toolCallTurn(toolCallId: string, toolName: string, input: unknown): unk
     { type: 'stream-start', warnings: [] },
     { type: 'response-metadata', id: 'resp', modelId: 'mock-model', timestamp: new Date(0) },
     { type: 'tool-call', toolCallId, toolName, input: JSON.stringify(input) },
-    { type: 'finish', finishReason: 'tool-calls', usage: USAGE },
+    { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool-calls' }, usage: USAGE },
   ];
 }
 
@@ -60,7 +60,7 @@ function twoToolCallTurn(calls: Array<{ toolCallId: string; toolName: string; in
       toolName: call.toolName,
       input: JSON.stringify(call.input),
     })),
-    { type: 'finish', finishReason: 'tool-calls', usage: USAGE },
+    { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool-calls' }, usage: USAGE },
   ];
 }
 
@@ -71,7 +71,7 @@ function stopTurn(): unknown[] {
     { type: 'text-start', id: 'text-1' },
     { type: 'text-delta', id: 'text-1', delta: 'done' },
     { type: 'text-end', id: 'text-1' },
-    { type: 'finish', finishReason: 'stop', usage: USAGE },
+    { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: USAGE },
   ];
 }
 

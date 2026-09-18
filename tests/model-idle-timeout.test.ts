@@ -240,14 +240,14 @@ describe('agent loop stall handling', () => {
             ? [
                 { type: 'stream-start', warnings: [] },
                 { type: 'tool-call', toolCallId: 'slow-1', toolName: 'slow_tool', input: '{}' },
-                { type: 'finish', finishReason: 'tool-calls', usage: USAGE },
+                { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool-calls' }, usage: USAGE },
               ]
             : [
                 { type: 'stream-start', warnings: [] },
                 { type: 'text-start', id: 'text-1' },
                 { type: 'text-delta', id: 'text-1', delta: 'done' },
                 { type: 'text-end', id: 'text-1' },
-                { type: 'finish', finishReason: 'stop', usage: USAGE },
+                { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: USAGE },
               ]) as any),
         };
       },
@@ -291,7 +291,7 @@ describe('agent loop stall handling', () => {
             stream: convertArrayToReadableStream([
               { type: 'stream-start', warnings: [] },
               { type: 'tool-call', toolCallId: 'checkpoint-1', toolName: 'checkpoint_tool', input: '{}' },
-              { type: 'finish', finishReason: 'tool-calls', usage: USAGE },
+              { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool-calls' }, usage: USAGE },
             ] as any),
           };
         }
@@ -304,7 +304,7 @@ describe('agent loop stall handling', () => {
             { type: 'text-start', id: 'text-1' },
             { type: 'text-delta', id: 'text-1', delta: 'recovered' },
             { type: 'text-end', id: 'text-1' },
-            { type: 'finish', finishReason: 'stop', usage: USAGE },
+            { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: USAGE },
           ] as any),
         };
       },
@@ -374,7 +374,7 @@ describe('agent loop stall handling', () => {
             { type: 'text-start', id: 'text-1' },
             { type: 'text-delta', id: 'text-1', delta: 'recovered' },
             { type: 'text-end', id: 'text-1' },
-            { type: 'finish', finishReason: 'stop', usage: USAGE },
+            { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: USAGE },
           ] as any),
         };
       },
@@ -419,7 +419,7 @@ describe('agent loop stall handling', () => {
                 controller.enqueue({ type: 'text-delta', id: 'text-1', delta: `chunk ${i} ` });
               }
               controller.enqueue({ type: 'text-end', id: 'text-1' });
-              controller.enqueue({ type: 'finish', finishReason: 'stop', usage: USAGE });
+              controller.enqueue({ type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: USAGE });
               controller.close();
             },
           }),
@@ -450,7 +450,7 @@ describe('agent loop stall handling', () => {
               controller.enqueue({ type: 'stream-start', warnings: [] });
               // Longer than any of the enabled windows used above.
               await Bun.sleep(600);
-              controller.enqueue({ type: 'finish', finishReason: 'stop', usage: USAGE });
+              controller.enqueue({ type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: USAGE });
               controller.close();
             },
           }),
@@ -527,7 +527,7 @@ describe('completeText stall handling', () => {
             controller.enqueue({ type: 'text-start', id: 'text-1' });
             controller.enqueue({ type: 'text-delta', id: 'text-1', delta: 'decided' });
             controller.enqueue({ type: 'text-end', id: 'text-1' });
-            controller.enqueue({ type: 'finish', finishReason: 'stop', usage: USAGE });
+            controller.enqueue({ type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: USAGE });
             controller.close();
           },
         }),
@@ -552,7 +552,7 @@ describe('completeText stall handling', () => {
           { type: 'text-start', id: 'text-1' },
           { type: 'text-delta', id: 'text-1', delta: 'hello' },
           { type: 'text-end', id: 'text-1' },
-          { type: 'finish', finishReason: 'stop', usage: USAGE },
+          { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: USAGE },
         ] as any),
       }),
     });
