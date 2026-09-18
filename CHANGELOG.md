@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-09-18
+
 ### Added
 
 - **Code Mode gives agents a typed, sandboxed TypeScript workspace for tool-heavy work.** The runtime exposes one generated catalog of the tools available to the session, including input-dependent output types, so agents can filter, join, calculate, and orchestrate calls without moving large intermediate payloads through the model. It can compose commands from the agent's effective Bash auto-run allowlist through the same dispatcher, validation, plugin policy, mock boundary, cancellation path, and effect journal as direct Bash. Gated commands remain direct-only and require their existing one-shot approval. Declarations and successful results are reused within a session, nested calls appear under the Code Mode program in the session log, oversized outputs receive queryable handles, and contract failures are journaled with actionable recovery guidance.
