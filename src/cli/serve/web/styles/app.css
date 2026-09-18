@@ -948,7 +948,7 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
    that appears once the page is scrolled. --topbar-h is measured in JS so the
    offset follows the toolbar height on Mac and mobile layouts. */
 /* A zero-height sticky shell. It draws nothing at rest, because the header
-   right below it already carries the status, the name and the one control; a
+   right below it already carries the status, the name and its immediate controls; a
    bar repeating them was the page's third copy of each fact. The compact bar
    inside is pulled out of flow and fades in only once the page scrolls. */
 .page-approval-detail .session-sticky {
@@ -1183,32 +1183,40 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   .page-approval-detail .session-bar-top { transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease; transform: none; }
   .page-approval-detail .session-bar-top:hover { transform: none; }
 }
-/* Stop, in the bar, only while the agent or a delegated sub-agent is working:
-   the one control worth reaching without a scroll. A red pill so it is never
-   mistaken for navigation. */
-.page-approval-detail .session-bar-stop {
+/* Run actions that stay reachable in the header and its sticky counterpart.
+   Failed and incomplete runs place recovery immediately before dismissal. */
+.page-approval-detail .session-bar-action {
   flex: none;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   min-height: 0;
   padding: 5px 11px;
-  border: 1px solid var(--red);
   border-radius: 6px;
-  background: var(--red);
-  color: var(--bg);
   font-family: var(--sans);
   font-size: var(--font-size-caption);
   font-weight: var(--weight-medium);
   line-height: 1.2;
   cursor: pointer;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
-  transition: filter 0.15s ease, box-shadow 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, filter 0.15s ease, box-shadow 0.15s ease;
 }
-.page-approval-detail .session-bar-stop:hover { filter: brightness(1.08); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18); }
-.page-approval-detail .session-bar-stop:active { filter: brightness(0.94); box-shadow: none; }
+.page-approval-detail .session-bar-action:hover { filter: brightness(1.08); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18); }
+.page-approval-detail .session-bar-action:active { filter: brightness(0.94); box-shadow: none; }
+.page-approval-detail .session-bar-action:disabled { cursor: default; opacity: 0.7; filter: none; box-shadow: none; }
+.page-approval-detail .session-bar-resume {
+  border: 1px solid var(--primary-bg);
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+}
+.page-approval-detail .session-bar-resume:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); }
+.page-approval-detail .session-bar-resume:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 2px; }
+.page-approval-detail .session-bar-stop {
+  border: 1px solid var(--red);
+  background: var(--red);
+  color: var(--bg);
+}
 .page-approval-detail .session-bar-stop:focus-visible { outline: 2px solid var(--red-border); outline-offset: 2px; }
-.page-approval-detail .session-bar-stop:disabled { cursor: default; opacity: 0.7; filter: none; box-shadow: none; }
 /* Back-to-parent: an icon-only control on sub-agent runs. The parent name lives in
    its tooltip/aria-label rather than inline, keeping the bar compact. */
 .page-approval-detail .session-bar-back {
@@ -11234,8 +11242,8 @@ html[data-page="draft-panel"] .app-route {
    timings and the cost live here and nowhere else. */
 .page-approval-detail header.session-header { margin: 0 0 20px; }
 .page-approval-detail .session-header h1 { margin: 0; }
-/* Row one: back, status, labels, then the queue, the one ending control and
-   the menu pushed to the right edge. */
+/* Row one: back, status, labels, then the queue, immediate run controls and the
+   menu pushed to the right edge. */
 .page-approval-detail .session-header-controls {
   display: flex;
   align-items: center;

@@ -2045,10 +2045,16 @@ describe('SessionDetail header', () => {
     // Parked at a gate: stop stays in the bar and revise appears in the menu.
     expect(sessionRunControls({ ...base, atGate: true }).map((c) => `${c.id}:${c.placement}`))
       .toEqual(['revise:menu', 'stop:bar']);
-    // Ended and resumable: retry, revise, resume in the menu; a failed run offers discard in the bar.
+    // Ended with an error or incomplete result: recovery sits immediately left
+    // of discard, while the less frequent actions stay in the menu.
     expect(sessionRunControls({
       ...base, ended: true, live: false, stoppable: false, dismissable: true, reopenable: true, resume: 'continue',
-    }).map((c) => `${c.id}:${c.placement}`)).toEqual(['retry:menu', 'revise:menu', 'resume:menu', 'discard:bar']);
+    }).map((c) => `${c.id}:${c.placement}`)).toEqual(['retry:menu', 'revise:menu', 'resume:bar', 'discard:bar']);
+    // Completed runs can still take a follow-up, but have no discard action to
+    // pair it with, so Resume remains in the overflow menu.
+    expect(sessionRunControls({
+      ...base, ended: true, live: false, stoppable: false, resume: 'continue',
+    }).map((c) => `${c.id}:${c.placement}`)).toEqual(['revise:menu', 'resume:menu']);
     // A busy control stays listed, disabled, instead of vanishing mid-click.
     const stopping = sessionRunControls({ ...base, busy: { reopen: false, resume: false, stop: true } });
     expect(stopping).toHaveLength(1);

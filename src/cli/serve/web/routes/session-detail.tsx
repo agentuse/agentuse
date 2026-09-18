@@ -225,8 +225,9 @@ export type SessionRunControl = {
   title: string;
   icon: 'retry' | 'edit' | 'resume' | 'stop';
   busy: boolean;
-  /** `bar`: pinned in the sticky session bar (the one ending control a run
-   *  offers: Stop while it runs, Discard once it is parked or failed).
+  /** `bar`: pinned in the sticky session bar. This is normally the one ending
+   *  control a run offers (Stop or Discard); failed runs can pair Resume with
+   *  Discard so recovery is visible before dismissal.
    *  `menu`: the header ⋯ menu, or the inline row on a page that has no menu. */
   placement: 'bar' | 'menu';
 };
@@ -276,7 +277,10 @@ export function sessionRunControls(options: {
       title: 'Continue this run with a new instruction',
       icon: 'resume',
       busy: false,
-      placement: 'menu',
+      // Failed and incomplete runs pair recovery with dismissal in the header.
+      // The control list is ordered, so Resume renders immediately before
+      // Discard in both the full and sticky session bars.
+      placement: options.dismissable ? 'bar' : 'menu',
     });
   } else if (options.resume === 'cascade') {
     controls.push({
@@ -285,7 +289,7 @@ export function sessionRunControls(options: {
       title: 'Resume this run where its delegated sub-agent left off',
       icon: 'resume',
       busy: options.busy.resume,
-      placement: 'menu',
+      placement: options.dismissable ? 'bar' : 'menu',
     });
   }
   if (options.stoppable && options.live) {
@@ -2056,10 +2060,11 @@ export default function SessionDetail() {
   // shows a breadcrumb back to its parent and the page has no decision controls of
   // its own (the gate is acted on at the parent).
   const isSubagentView = Boolean(approval.viewOnly);
-  // Run controls (retry, revise, resume, stop) live in the header's ⋯ menu
-  // whenever that menu is rendered, on every state: the card is for reading
-  // and deciding, not a second button row. Views with no menu (a sub-agent's
-  // view-only page, a revision session) keep the inline row.
+  // Secondary run controls (retry, revise, follow up after success) live in the
+  // header's ⋯ menu whenever it is rendered. Immediate run-state actions stay
+  // visible in the bar: Stop, Discard, and Resume beside Discard after failure.
+  // Views with no menu (a sub-agent's view-only page, a revision session) keep
+  // the secondary controls in the inline row.
   const sessionMenuShown = !isSubagentView && Boolean(approval.agent.runPath) && Boolean(sessionProjectId) && !isRevisionSession;
   const runControlsInMenu = sessionMenuShown;
   const parentLabel = approval.parentAgentName ?? 'parent run';
@@ -2303,12 +2308,33 @@ export default function SessionDetail() {
     }
   };
   const menuControls = runControls.filter((control) => control.placement === 'menu');
-  const barControl = runControls.find((control) => control.placement === 'bar');
+  const barControls = runControls.filter((control) => control.placement === 'bar');
   const controlIcon = (icon: SessionRunControl['icon']) => icon === 'edit'
     ? <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
     : icon === 'stop'
       ? <rect x="6" y="6" width="12" height="12" rx="2" />
       : <><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 4v5h-5" /></>;
+  const renderBarControl = (control: SessionRunControl, tabIndex?: number) => (
+    <button
+      key={control.id}
+      type="button"
+      class={`session-bar-action session-bar-${control.icon === 'stop' ? 'stop' : 'resume'}`}
+      disabled={control.busy}
+      aria-busy={control.busy}
+      {...(tabIndex === undefined ? {} : { tabIndex })}
+      onClick={() => runControl(control)}
+      title={control.title}
+    >
+      {control.busy
+        ? <span class="btn-spinner" aria-hidden="true" />
+        : (
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            {controlIcon(control.icon)}
+          </svg>
+        )}
+      <span>{control.label}</span>
+    </button>
+  );
 
   const renderLogEntry = (entry: PreparedLogEntry, extra?: { priorReview?: PriorReview | undefined }) => {
     const entryActionable = actionable && entry.status === 'pending' && Boolean(entry.details) &&
@@ -2666,7 +2692,7 @@ export default function SessionDetail() {
       <main>
         {/* A zero-height sticky shell. At rest it draws nothing at all: the
             header two rows below already carries the status, the name and the
-            one control, and a bar repeating them would be the page's third
+            immediate controls, and a bar repeating them would be the page's third
             copy of each. Once the page scrolls past the header, the compact
             bar inside fades in as the only thing left saying where you are. */}
         <div class={`session-sticky${scrolled ? ' is-scrolled' : ''}`}>
@@ -2677,26 +2703,7 @@ export default function SessionDetail() {
             </span>
             <span class="session-sticky-name">{pageAgentLabel}</span>
             <span class="session-sticky-spacer" />
-            {barControl && (
-              <button
-                type="button"
-                class="session-bar-stop"
-                disabled={barControl.busy}
-                aria-busy={barControl.busy}
-                tabIndex={scrolled ? 0 : -1}
-                onClick={() => runControl(barControl)}
-                title={barControl.title}
-              >
-                {barControl.busy
-                  ? <span class="btn-spinner" aria-hidden="true" />
-                  : (
-                    <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
-                      <rect x="5" y="5" width="14" height="14" rx="2" />
-                    </svg>
-                  )}
-                <span>{barControl.label}</span>
-              </button>
-            )}
+            {barControls.map((control) => renderBarControl(control, scrolled ? 0 : -1))}
             <button
               type="button"
               class="session-bar-top"
@@ -2754,25 +2761,7 @@ export default function SessionDetail() {
                 </a>
               </div>
             )}
-            {barControl && (
-              <button
-                type="button"
-                class="session-bar-stop"
-                disabled={barControl.busy}
-                aria-busy={barControl.busy}
-                onClick={() => runControl(barControl)}
-                title={barControl.title}
-              >
-                {barControl.busy
-                  ? <span class="btn-spinner" aria-hidden="true" />
-                  : (
-                    <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor" aria-hidden="true">
-                      <rect x="5" y="5" width="14" height="14" rx="2" />
-                    </svg>
-                  )}
-                <span>{barControl.label}</span>
-              </button>
-            )}
+            {barControls.map((control) => renderBarControl(control))}
             {sessionMenuShown ? (
               <SessionMenu
                 agentName={agentLabel}
