@@ -38,6 +38,18 @@ distort the picture of what production is doing. They are still stored in full
 and remain inspectable: a mock session's page is reachable by id at any time, and
 the sessions list can show them on request.
 
+## Review results
+
+Home's **Results** section groups the metrics recorded by each agent over the
+selected time window. Opening an agent row leads to the recent jobs behind
+those metrics. Each agent page also has a **Results** tab with that agent's own
+metric tiles; opening a tile shows the matching records in the metrics store.
+
+Recent jobs and the Sessions page mark finished runs whose result has not been
+opened yet. Opening the run clears that state. Completed, incomplete, and
+failed runs remain distinct, so partial work is not presented as a successful
+report.
+
 Sessions, Agents, Approvals, Schedules, Stores, and Dashboard preferences remain directly
 addressable routes. A session page is the durable record for one run: its
 activity, approval gate, tool output, result, metrics, verification verdict,

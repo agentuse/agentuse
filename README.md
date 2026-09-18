@@ -359,19 +359,20 @@ results mocked:
 
 ```bash
 agentuse doctor my-agent.agentuse
-agentuse test my-agent.agentuse --scope all --mock-model anthropic:claude-haiku-4-5
+agentuse test workflow my-agent.agentuse --mock-model anthropic:claude-haiku-4-5
 ```
 
 Use a mock model available through your configured provider. Testing still
-makes model calls; `--scope all` fabricates tool results, isolates stores, and
-resolves approval gates automatically. You can also exercise rejection and
-request-changes paths. Test runs stay out of production operational views by
-default.
+makes model calls; workflow tests fabricate all tool results by default,
+isolate stores, and resolve approval gates automatically. You can also exercise
+rejection and request-changes paths. Test runs stay out of production
+operational views by default.
 
-The explicit scope matters: agents with gated bash commands otherwise default
-to mocking only those commands, while other tools run for real. See
-[Testing Agents](https://docs.agentuse.io/guides/testing-agents) for scope and
-approval options.
+Use `--scope gated` only when you intentionally want non-gated tools to run
+live. To compare updated instructions against evidence from a past real job,
+run `agentuse test result my-agent.agentuse --session <id>`. See [Testing
+Agents](https://docs.agentuse.io/guides/testing-agents) for scope, comparison,
+and approval options.
 
 ## Documentation
 
