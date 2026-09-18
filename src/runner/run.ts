@@ -890,3 +890,9 @@ export async function runPostLifecycle(options: {
     }
   }
 }
+
+export const __testing = {
+  mergeSlackRunChannelHandles,
+  persistRunChannelHandles,
+  sessionRunChannelHandles,
+};

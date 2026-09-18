@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'bun:test';
-import { buildApprovalLogs, groupParallelToolCalls, normalizeReviewEscalation } from '../src/worker/approval-logs';
+import {
+  approvalWasRolledBackAfterResume,
+  buildApprovalLogs,
+  formatGenericToolApprovalValue,
+  groupParallelToolCalls,
+  logsWithRecoveredApprovalDecision,
+  logsWithSessionError,
+  normalizeApprovalChanges,
+  normalizeApprovalOptions,
+  normalizeApprovalReference,
+  normalizeReviewEscalation,
+  normalizeToolOutputArtifact,
+  toolOutputArtifactFromState,
+} from '../src/worker/approval-logs';
 import { completeApprovalValueDisplay } from '../src/utils/approval-value';
 
 describe('buildApprovalLogs', () => {
@@ -378,4 +391,135 @@ it('keeps metadata in session log projections without duplicate tool-step rows',
   expect(logs).toHaveLength(2);
   expect(logs[0]?.details?.responseMetadata).toEqual(metadata);
   expect(logs[1]?.details?.responseMetadata).toEqual({ responseId: 'resp_2' });
+});
+
+describe('approval log recovery and normalization', () => {
+  it('normalizes review changes while dropping empty content and unsafe media URLs', () => {
+    expect(normalizeApprovalChanges([
+      {
+        label: '  Announcement  ',
+        content: 'Ship it',
+        displayContent: [' Summary ', '', ' Details '],
+        media_urls: ['https://example.com/a.png', 'javascript:alert(1)', 'https://example.com/a.png'],
+        optionId: ' approve ',
+      },
+      { label: 'ignored', content: '   ' },
+    ])).toEqual([{
+      label: 'Announcement',
+      content: 'Ship it',
+      displayContent: 'Summary\n\nDetails',
+      displayParts: ['Summary', 'Details'],
+      mediaUrls: ['https://example.com/a.png'],
+      optionId: 'approve',
+    }]);
+    expect(normalizeApprovalChanges({ content: 'not an array' })).toBeUndefined();
+  });
+
+  it('requires two unique, well-formed approval choices', () => {
+    expect(normalizeApprovalOptions([
+      { id: 'ship', label: ' Ship ', recommended: true },
+      { id: 'ship', label: 'Duplicate' },
+      { id: 'revise', label: 'Revise', description: '  Request changes  ' },
+      { id: '', label: 'Invalid' },
+    ])).toEqual([
+      { id: 'ship', label: 'Ship', recommended: true },
+      { id: 'revise', label: 'Revise', description: 'Request changes' },
+    ]);
+    expect(normalizeApprovalOptions([{ id: 'only', label: 'Only choice' }])).toBeUndefined();
+  });
+
+  it('keeps reference text but rejects non-HTTP URLs', () => {
+    expect(normalizeApprovalReference({
+      label: ' Source ',
+      title: 'Launch notes',
+      url: 'file:///private/secret',
+    })).toEqual({ label: 'Source', title: 'Launch notes' });
+    expect(normalizeApprovalReference({ url: 'https://example.com/notes' })).toEqual({
+      url: 'https://example.com/notes',
+    });
+    expect(normalizeApprovalReference(null)).toBeUndefined();
+  });
+
+  it('normalizes tool artifacts from metadata before falling back to output text', () => {
+    expect(normalizeToolOutputArtifact({
+      kind: 'tool-output', path: ' logs/full.txt ', bytes: 42, originalChars: 100,
+    })).toEqual({ path: 'logs/full.txt', bytes: 42, originalChars: 100 });
+    expect(normalizeToolOutputArtifact({ kind: 'other', path: 'ignored' })).toBeUndefined();
+
+    expect(toolOutputArtifactFromState({
+      metadata: { fullOutputArtifact: { kind: 'tool-output', path: 'preferred.json', bytes: 9 } },
+      output: 'full tool output saved to session artifact: fallback.txt (12 bytes)',
+    })).toEqual({ path: 'preferred.json', bytes: 9 });
+    expect(toolOutputArtifactFromState({
+      output: 'Full output saved to session artifact: nested/output.log (512 bytes)',
+    })).toEqual({ path: 'nested/output.log', bytes: 512 });
+  });
+
+  it('recovers a rolled-back approval decision without leaking its resume token', () => {
+    const approvalPart = {
+      id: 'gate-1',
+      type: 'tool',
+      state: { status: 'pending', suspendedAt: 100 },
+    };
+    const session = { error: { code: 'FAILED', message: 'Resume failed' } } as any;
+    expect(approvalWasRolledBackAfterResume(session, approvalPart, [
+      approvalPart,
+      { id: 'later', type: 'tool', state: { status: 'completed', time: { start: 101 } } },
+    ])).toBe(true);
+    expect(approvalWasRolledBackAfterResume(session, approvalPart, [approvalPart])).toBe(false);
+
+    const recovered = logsWithRecoveredApprovalDecision([{
+      id: 'gate-1',
+      type: 'tool',
+      status: 'pending',
+      title: 'Pending for approval',
+      details: { resumeToken: 'secret-token', prompt: 'Publish?' },
+    }], approvalPart);
+    expect(recovered[0]).toMatchObject({
+      status: 'completed',
+      title: 'Approved',
+      details: { prompt: 'Publish?', decisionStatus: 'approved' },
+    });
+    expect(recovered[0]?.details?.resumeToken).toBeUndefined();
+  });
+
+  it('merges current and historical session errors with stable, non-duplicated ids', () => {
+    const base = [{ id: 'tool-1', type: 'tool', title: 'Worked', time: 10 }];
+    const session = {
+      id: 'session-1',
+      time: { updated: 20 },
+      errorHistory: [{ code: 'FIRST', message: 'First failure', time: 15 }],
+      error: { code: 'SECOND', message: 'Second failure', time: 25 },
+    } as any;
+    const once = logsWithSessionError(base as any, session);
+    expect(once.slice(1)).toEqual([
+      {
+        id: 'session-error:session-1',
+        type: 'session',
+        status: 'error',
+        title: 'Session failed',
+        time: 15,
+        details: { errorMessage: 'First failure' },
+      },
+      {
+        id: 'session-error:session-1:2',
+        type: 'session',
+        status: 'error',
+        title: 'Session failed',
+        time: 25,
+        details: { errorMessage: 'Second failure' },
+      },
+    ]);
+    expect(logsWithSessionError(once, session)).toEqual(once);
+  });
+
+  it('formats malformed generic approval values safely and caps display size', () => {
+    const cyclic: any = { value: 'kept' };
+    cyclic.self = cyclic;
+    expect(formatGenericToolApprovalValue(cyclic)).toBe('[object Object]');
+    const large = formatGenericToolApprovalValue('x'.repeat(20_000));
+    expect(large.length).toBeLessThan(20_000);
+    expect(large).toEndWith('\n… [truncated for display]');
+    expect(formatGenericToolApprovalValue(undefined)).toBe('undefined');
+  });
 });

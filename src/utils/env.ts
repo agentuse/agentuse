@@ -16,29 +16,12 @@ export function unescapeJsonEnvVar(value: string): string {
     return value;
   }
 
-  // Common escape sequences that might appear in .env files
-  // Handle double-escaped sequences first (\\n -> \n in the JSON string)
-  let result = value
-    .replace(/\\"/g, '"');      // Unescape quotes first
-  
-  // Check if we have double-escaped sequences (e.g., \\\\n)
-  if (result.includes('\\\\')) {
-    // This means we have double escaping, handle it carefully
-    result = result
-      .replace(/\\\\n/g, '\\n')   // \\n -> \n (literal backslash-n in JSON)
-      .replace(/\\\\r/g, '\\r')   // \\r -> \r
-      .replace(/\\\\t/g, '\\t')   // \\t -> \t
-      .replace(/\\\\/g, '\\');     // \\ -> \ (do this last)
-  } else {
-    // Single escaping
-    result = result
-      .replace(/\\n/g, '\n')      // \n -> newline character
-      .replace(/\\r/g, '\r')      // \r -> carriage return
-      .replace(/\\t/g, '\t')      // \t -> tab
-      .replace(/\\\\/g, '\\');     // \\ -> \
-  }
-  
-  return result;
+  // Remove one transport-escaping layer. Keep single JSON escapes such as
+  // `\n` intact: turning them into literal control characters before
+  // JSON.parse would make an otherwise valid JSON string invalid.
+  return value
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, '\\');
 }
 
 /**
