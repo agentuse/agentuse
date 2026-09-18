@@ -12,6 +12,7 @@
 - **Recorded sessions can be reused as fixed-input experiments.** Replay commands extract durable inputs from earlier runs, preserve store projections while isolating writes, test current instructions against the same evidence, and support repeated output loops for comparing prompt or model changes without re-running upstream work.
 - **Fresh verification can require a new evidence-backed gate review.** Verification can distinguish a previously accepted result from a fresh assessment, making release and operational checks explicit when the underlying work needs to be reviewed again. Unchanged candidates reuse durable passes, while exhausted fresh reviews escalate to a feedback-only human gate for guidance instead of silently approving or deadlocking the run.
 - **Model aliases can set reasoning effort for each fallback candidate.** Aliases accept existing string entries or model-and-effort pairs, preserve the selected effort across overrides and resumed sessions, display it in model listings, and reject conflicting settings for the same concrete model.
+- **The bundled model registry recognizes newly published provider models.** The release refresh adds current OpenRouter, OpenCode Go, and Amazon Bedrock IDs, including DeepSeek V4.1 Flash and regional inference profiles, updates limits and pricing from live catalogs, and keeps curated suggestions focused on flagship lines instead of older free variants.
 
 ### Changed
 
@@ -31,6 +32,7 @@
 - **Sandboxed and child processes receive the paths and session context they need.** Bind mounts support colons, missing mount sources are prepared safely, shared containment and home-expansion checks cover tool paths consistently, and Bash child commands inherit their session identity.
 - **Workflow and result tests preserve explicit scope and source evidence.** Mock mode keeps terminal outcome tools real, stopped test runs reach their workers, gated scopes do not silently widen, and result comparisons keep the selected source task and evidence stable across attempts.
 - **The dashboard preserves interaction state and accessibility during live updates.** Narrow layouts keep result chips intact, palette searches retain their groups, tabs expose complete semantics, inline failures are announced, and approval shortcuts land on the active question without duplicating controls already on screen.
+- **Escaped JSON environment values preserve their control sequences.** MCP configuration values with env-file-escaped quotes and JSON newline, carriage-return, or tab escapes now parse without converting those escapes into invalid literal control characters.
 
 ## [0.21.1] - 2026-09-08
 

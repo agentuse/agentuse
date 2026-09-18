@@ -101,3 +101,18 @@ describe('dated curated model aliases', () => {
     expect(Object.keys(registry.openrouter)).toEqual(['qwen/qwen3.8-max-0902']);
   });
 });
+
+describe('curated flagship variants', () => {
+  it('keeps free OpenRouter variants valid without recommending them as flagships', () => {
+    const registry = buildRegistry({
+      openrouter: {
+        models: {
+          'z-ai/glm-5.3': { id: 'z-ai/glm-5.3', name: 'GLM 5.3', release_date: '2026-09-10' },
+          'z-ai/glm-5.2:free': { id: 'z-ai/glm-5.2:free', name: 'GLM 5.2 Free', release_date: '2026-09-17' },
+        },
+      },
+    });
+
+    expect(Object.keys(registry.openrouter)).toEqual(['z-ai/glm-5.3']);
+  });
+});

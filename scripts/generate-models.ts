@@ -100,7 +100,7 @@ const SERIES: SeriesDef[] = [
   // but NOT size-suffixed base builds like glm-4-32b / glm-4-9b (the `-\d+-` shape).
   {
     source: 'openrouter', ourProvider: 'openrouter', series: 'glm',
-    filter: id => id.startsWith('z-ai/glm-') && !/^z-ai\/glm-\d+-/.test(id),
+    filter: id => id.startsWith('z-ai/glm-') && !/^z-ai\/glm-\d+-/.test(id) && !id.includes(':'),
   },
   // MiniMax (m-series flagship): minimax-m2.1, minimax-m3, ...
   {
@@ -646,6 +646,40 @@ reference it with the \`@\` sigil (see [Configuration Files](/reference/configur
 model: "@fast"
 ---
 \`\`\`
+
+Aliases can include a reasoning preset. Use \`reasoning\`, the same field as
+agent frontmatter, and give each fallback its own setting:
+
+\`\`\`json
+{
+  "models": {
+    "aliases": {
+      "astra-high": { "model": "openai:gpt-6-astra", "reasoning": "high" },
+      "deep": {
+        "candidates": [
+          "@astra-high",
+          { "model": "anthropic:claude-opus", "reasoning": "high" },
+          { "model": "openai:gpt", "reasoning": "medium" }
+        ],
+        "cooldown": "1m"
+      }
+    }
+  }
+}
+\`\`\`
+
+Select this chain with \`model: "@deep"\`. A candidate's explicit reasoning takes
+precedence over agent frontmatter. Candidates without a preset use the agent's
+reasoning setting, or the model default when that is omitted. Effort is never
+inherited from the previous candidate. Existing model-specific reasoning
+compatibility rules still apply.
+
+Presets support \`none\`, \`minimal\`, \`low\`, \`medium\`, \`high\`, \`xhigh\`, and \`max\`.
+\`agentuse models\` shows configured effort alongside each resolved candidate.
+The resolved settings are captured with the session for approval resume and
+with run-wide model overrides. If a preset references another fallback alias,
+its reasoning override applies only to that alias's primary candidate. Repeating
+a concrete model with conflicting reasoning settings is a configuration error.
 
 Named aliases may also define ordered fallback candidates and an in-memory
 cooldown. See [Model defaults and aliases](/reference/configuration-files#model-defaults-and-aliases).
