@@ -638,15 +638,15 @@ describe('needsApproval canonical input resume', () => {
   });
 
   test('rejects plugin-added array metadata before it can survive an approval resume', async () => {
-    const rawInput = [{ title: 'provider draft' }];
+    const rawInput = { drafts: [{ title: 'provider draft' }] };
     const transformed: unknown[] = [];
     let executions = 0;
     const tools = {
       publish: {
         // Deliberately inspect the non-JSON property so this proves a digest
         // cannot silently authorize a different canonical input than history.
-        inputSchema: z.any().transform(input => {
-          const canonical = { title: input[0].title, reviewed: input.reviewed === true };
+        inputSchema: z.object({ drafts: z.any() }).transform(({ drafts }) => {
+          const canonical = { title: drafts[0].title, reviewed: drafts.reviewed === true };
           transformed.push(canonical);
           return canonical;
         }),
@@ -657,15 +657,17 @@ describe('needsApproval canonical input resume', () => {
     };
     const policy = {
       toolCall: async (event: any) => {
-        // Arrays are carried through plugin events in a `{ value }` wrapper.
-        Object.defineProperty(event.input.value, 'reviewed', { value: true, enumerable: false });
+        // Keep a provider-compatible object root while adding hidden array state.
+        Object.defineProperty(event.input.drafts, 'reviewed', { value: true, enumerable: false });
         return {};
       },
     };
 
     currentModel = modelWithTurns([toolCallTurn('array-metadata', 'publish', rawInput), stopTurn()]);
-    await run(tools, undefined, policy);
+    const chunks = await run(tools, undefined, policy);
     expect(transformed).toEqual([{ title: 'provider draft', reviewed: true }]);
+    expect(chunks.find(chunk => chunk.type === 'error')?.error.message)
+      .toContain('nonordinary array property');
     expect(executions).toBe(0);
     const sessionDir = await sessionManager.getSessionDirectory(sessionID, agentId);
     const ledgerDir = path.join(sessionDir, APPROVAL_INPUT_LEDGER_DIR);

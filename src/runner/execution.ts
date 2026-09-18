@@ -1126,7 +1126,9 @@ async function* executeAgentAttempt(
     abortSignal: effectiveAbortSignal,
     ...(writeToolOutputArtifact && { writeToolOutputArtifact }),
     ...(writeReusableResult && { writeReusableResult }),
-    bashPermission,
+    // Replay tools only read frozen recordings and capture proposals. Live
+    // execution permits must not prevent calls from reaching that boundary.
+    ...(!options.replay && { bashPermission }),
     onPluginTerminate: () => { pluginTerminateRequested = true; },
   });
   for (const rejected of rejectedHistoricalToolCalls(options.messages)) {

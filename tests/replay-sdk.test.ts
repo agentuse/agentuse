@@ -22,9 +22,9 @@ function model(turns: unknown[][], finalReason = 'tool-calls') {
   } });
   return { calls: () => count, prompts };
 }
-function dispatcher() {
+function dispatcher(command = 'read source') {
   const recording: ReplayRecording = { sessionId: 'old', model: 'demo:test', createdAt: 1, cwd: '/project', sourceTask: 'OLD INSTRUCTIONS', original: { text: 'OLD DRAFT' },
-    calls: [{ id: 'old-read', type: 'tool', tool: 'tools__bash', state: { status: 'completed', input: { command: 'read source' }, output: { output: 'fixed external source' }, time: { start: 1, end: 2 } } } as any],
+    calls: [{ id: 'old-read', type: 'tool', tool: 'tools__bash', state: { status: 'completed', input: { command }, output: { output: 'fixed external source' }, time: { start: 1, end: 2 } } } as any],
     tools: { tools: ['tools__bash', 'await_human', 'report_complete'].map(name => ({ name, inputSchema: { type: 'object', additionalProperties: true } })) } };
   return new ReplayDispatcher(recording, [], '/project');
 }
@@ -35,6 +35,18 @@ async function run(replay: ReplayDispatcher) {
   return chunks;
 }
 describe('replay through the real AI SDK loop', () => {
+  it('replays a recorded gated command without requiring a live execution permit', async () => {
+    const replay = dispatcher('publish recorded');
+    const m = model([[call('recorded', 'tools__bash', { command: 'publish recorded' })],
+      [call('gate', 'await_human', { changes: [{ content: 'publish next' }] })]]);
+    const chunks = await run(replay);
+    expect(m.calls()).toBe(2);
+    expect(replay.trace.map(c => c.source)).toEqual(['recording', 'proposal']);
+    expect(replay.stop?.kind).toBe('proposal');
+    expect(chunks.find(c => c.type === 'tool-result' && c.toolCallId === 'recorded'))
+      .toMatchObject({ toolSuccess: true, toolResult: 'fixed external source' });
+    expect(JSON.stringify(m.prompts)).not.toContain('APPROVAL_REQUIRED');
+  });
   it('replays a read then captures the first proposal and blocks its sibling', async () => {
     const replay = dispatcher();
     const m = model([[call('read', 'tools__bash', { command: 'read source' })],

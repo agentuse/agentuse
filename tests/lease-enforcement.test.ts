@@ -26,7 +26,10 @@ mock.module('../src/models', () => ({
 
 // The gated-scope mock fabricates gated-command output via completeText; stub
 // it so these tests never hit a real model.
-const completeTextMock = mock(async () => 'fabricated-gated-output');
+const completeTextMock = mock(async () => JSON.stringify({
+  output: 'fabricated-gated-output',
+  metadata: { exitCode: 0 },
+}));
 mock.module('../src/complete-text', () => ({
   completeText: completeTextMock,
 }));
@@ -165,7 +168,11 @@ describe('lease enforcement (agentuse-lab#165 Phase 2)', () => {
       },
       toolResult: async (event: any) => {
         observedResults.push(event);
-        return { ...event, output: 'plugin-visible-result', isError: false };
+        return {
+          ...event,
+          output: { ...event.output, output: 'plugin-visible-result' },
+          isError: false,
+        };
       },
     });
 

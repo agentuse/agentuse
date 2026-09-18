@@ -313,7 +313,8 @@ describe('draft Changes thread', () => {
     />);
 
     expect(html).toContain('2 steps');
-    expect(html).toContain('11s');
+    // Gaps between log timestamps are not a measure of active execution.
+    expect(html).not.toContain('11s');
     expect(html).toContain('Created it');
   });
 
@@ -931,13 +932,21 @@ describe('Session list item', () => {
     expect(html).not.toContain('##');
   });
 
-  it('shows a live working line with elapsed time instead of an output line', () => {
-    const html = render({ ...base, status: 'running' });
+  it('shows a live working line with active time instead of an output line', () => {
+    const html = render({ ...base, status: 'running', timing: {
+      activeMs: 60_000, calculatedAt: base.createdAt + 60_000, running: true,
+    } });
 
     expect(html).toContain('class="dot running"');
     expect(html).toContain('it-line live');
-    expect(html).toContain('Working · 6m');
+    expect(html).toContain('Working · 6m active');
     expect(html).toContain('now');
+  });
+
+  it('does not infer active time from the creation timestamp when timing is unavailable', () => {
+    const html = render({ ...base, status: 'running' });
+    expect(html).toContain('>Working<');
+    expect(html).not.toContain('6m');
   });
 
   it('puts the failure on the line in mono red, not a generic status word', () => {
@@ -1260,14 +1269,13 @@ describe('LogEntry component', () => {
 
     expect(html).toContain('expanded');
     expect(html).toContain('tool-token-usage');
-    expect(html).toContain('Model step token usage');
+    expect(html).toContain('Model token usage');
     expect(html).toContain('>input<');
     expect(html).toContain('>400<');
     expect(html).toContain('>output<');
     expect(html).toContain('>90<');
-    expect(html).toContain('>cached<');
-    expect(html).toContain('>+800<');
-    expect(html).toContain('shared across 2 calls');
+    expect(html).toContain('>cached input<');
+    expect(html).toContain('>800<');
   });
 
   it('renders full tool output artifact links', () => {
@@ -1584,7 +1592,7 @@ describe('LogEntry component', () => {
     expect(html).toContain(`href="${url}"`);
     expect(html).toContain(`<video`);
     expect(html.indexOf('approval-section approval-artifact')).toBeLessThan(html.indexOf('<summary>Draft</summary>'));
-    expect(html).toContain('Open artifact:');
+    expect(html).toContain('>Open artifact</a>');
   });
 
   it('keeps hosted document links visible without requiring media support', () => {
@@ -1592,7 +1600,8 @@ describe('LogEntry component', () => {
       id: 'hosted-doc', type: 'approval', title: 'Approval requested', status: 'pending',
       details: { artifactUrl: 'https://docs.example.test/proposal', summary: 'Background only' },
     }, { showActions: true });
-    expect(html).toContain('Open artifact: https://docs.example.test/proposal');
+    expect(html).toContain('href="https://docs.example.test/proposal"');
+    expect(html).toContain('>Open artifact</a>');
     expect(html).toContain('Why this request');
     expect(html).not.toContain('approval-section-title">Review');
   });
