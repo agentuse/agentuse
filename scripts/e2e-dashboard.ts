@@ -1,44 +1,80 @@
 /**
- * Browser smoke test for the real `agentuse serve` dashboard.
+ * Functional smoke test for the real `agentuse serve` dashboard.
  *
- * The daemon, project, global config, and XDG state are all disposable. The
- * fixture agents have no schedules and the browser never submits a run or an
- * approval. Agent authoring uses a disposable loopback OpenAI-compatible mock,
- * so this cannot call an external provider or perform an external action.
+ * Most assertions exercise daemon contracts through HTTP so routine UI copy,
+ * layout, and component changes cannot break the release signal. The browser
+ * is only a bundle canary: it loads the dashboard and reports runtime errors.
+ * Agent authoring uses a disposable loopback OpenAI-compatible mock, so this
+ * cannot call an external provider or perform an external action.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { initStorage } from '../src/storage';
-import { SessionManager } from '../src/session';
-import { ONBOARDING_AGENT_ID, ONBOARDING_AGENT_NAME, ONBOARDING_MODEL } from '../src/onboarding';
+import type { AgentCreationProvider } from '../src/agents/create';
+import type { AgentDraftRecord } from '../src/agents/draft';
+import type { AgentSummary } from '../src/cli/serve/types';
 
 const root = resolve(import.meta.dir, '..');
-const evidenceDir = join(root, 'tmp', 'e2e');
 const browserSession = `agentuse-dashboard-${process.pid}`;
+const disposableKey = 'e2e-disposable-key';
 let daemon: ChildProcess | undefined;
 let authorDaemon: ChildProcess | undefined;
 let workspace: string | undefined;
+let browserStarted = false;
 let daemonOutput = '';
 let authorDaemonOutput = '';
 let authorBaseUrl = '';
 
-function fail(message: string): never {
-  throw new Error(message);
+interface InfoPayload {
+  default: string | null;
+  projects: Array<{ id: string; path: string }>;
 }
 
-function browser(args: string[], input?: string): string {
+interface AgentsPayload {
+  success: true;
+  agents: AgentSummary[];
+  errors: Array<{ projectId: string; path: string; message: string }>;
+}
+
+interface AgentCreationOptionsPayload {
+  success: true;
+  providers: AgentCreationProvider[];
+  projects: Array<{ id: string; path: string }>;
+  default: string | null;
+}
+
+interface StartAgentPayload {
+  success: true;
+  job: { id: string; projectId: string; status: string };
+}
+
+interface AgentDraftPayload extends AgentDraftRecord {
+  sessionHref: string;
+}
+
+function diagnostics(): string {
+  const sections: string[] = [];
+  if (daemonOutput.trim()) sections.push(`Daemon output:\n${daemonOutput.slice(-12_000)}`);
+  if (authorDaemonOutput.trim()) sections.push(`Author output:\n${authorDaemonOutput.slice(-12_000)}`);
+  return sections.length > 0 ? `\n\n${sections.join('\n\n')}` : '';
+}
+
+function fail(message: string): never {
+  throw new Error(`${message}${diagnostics()}`);
+}
+
+function check(condition: unknown, message: string): asserts condition {
+  if (!condition) fail(message);
+  console.log(`  ✓ ${message}`);
+}
+
+function browser(args: string[]): string {
   const result = spawnSync('agent-browser', ['--session', browserSession, ...args], {
     cwd: root,
     encoding: 'utf8',
-    input,
-    env: {
-      ...process.env,
-      AGENT_BROWSER_HEADED: 'false',
-      AGENT_BROWSER_SCREENSHOT_DIR: evidenceDir,
-    },
+    env: { ...process.env, AGENT_BROWSER_HEADED: 'false' },
     timeout: 30_000,
   });
   if (result.error?.message.includes('ENOENT')) {
@@ -49,12 +85,6 @@ function browser(args: string[], input?: string): string {
     fail(`agent-browser ${args.join(' ')} failed${timeoutHint}:\n${result.stderr || result.stdout}`);
   }
   return result.stdout.trim();
-}
-
-function expectBrowser(expression: string, message: string): void {
-  const result = browser(['eval', '--stdin'], expression);
-  if (result !== 'true') fail(`${message}\nBrowser result: ${result}`);
-  console.log(`  ✓ ${message}`);
 }
 
 async function freePort(): Promise<number> {
@@ -76,24 +106,22 @@ async function freePort(): Promise<number> {
 async function waitForDaemon(baseUrl: string): Promise<void> {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
-    if (daemon?.exitCode !== null) {
-      fail(`serve exited before it became ready:\n${daemonOutput}`);
-    }
+    if (daemon?.exitCode !== null) fail('serve exited before it became ready');
     try {
-      const response = await fetch(`${baseUrl}/api/agents`);
+      const response = await fetch(`${baseUrl}/api`);
       if (response.ok) return;
     } catch {
       // The socket is expected to refuse connections during startup.
     }
     await Bun.sleep(100);
   }
-  fail(`serve did not become ready within 20 seconds:\n${daemonOutput}`);
+  fail('serve did not become ready within 20 seconds');
 }
 
 async function waitForAuthorDaemon(): Promise<void> {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    if (authorDaemon?.exitCode !== null) fail(`author server exited before startup:\n${authorDaemonOutput}`);
+    if (authorDaemon?.exitCode !== null) fail('author server exited before startup');
     try {
       if ((await fetch(`${authorBaseUrl}/requests`)).ok) return;
     } catch {
@@ -101,15 +129,60 @@ async function waitForAuthorDaemon(): Promise<void> {
     }
     await Bun.sleep(50);
   }
-  fail(`author server did not become ready:\n${authorDaemonOutput}`);
+  fail('author server did not become ready within 10 seconds');
+}
+
+async function requestJson<T>(baseUrl: string, path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    headers: {
+      Accept: 'application/json',
+      ...(init?.body && { 'Content-Type': 'application/json' }),
+      ...init?.headers,
+    },
+  });
+  const text = await response.text();
+  let payload: unknown;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    fail(`${init?.method ?? 'GET'} ${path} returned non-JSON (${response.status}):\n${text}`);
+  }
+  if (!response.ok) {
+    fail(`${init?.method ?? 'GET'} ${path} failed (${response.status}):\n${JSON.stringify(payload, null, 2)}`);
+  }
+  return payload as T;
+}
+
+async function postJson<T>(baseUrl: string, path: string, body: Record<string, unknown>): Promise<T> {
+  return requestJson<T>(baseUrl, path, { method: 'POST', body: JSON.stringify(body) });
+}
+
+async function waitForDraft(baseUrl: string, projectId: string, jobId: string): Promise<AgentDraftPayload> {
+  const deadline = Date.now() + 60_000;
+  let last: AgentDraftPayload | undefined;
+  while (Date.now() < deadline) {
+    const payload = await requestJson<{ success: true; draft: AgentDraftPayload }>(
+      baseUrl,
+      `/api/agents/drafts/${encodeURIComponent(jobId)}?project=${encodeURIComponent(projectId)}`,
+    );
+    last = payload.draft;
+    if (last.status === 'drafted') return last;
+    if (last.status === 'error') {
+      fail(`Agent creator failed: ${last.error?.code ?? 'UNKNOWN'}: ${last.error?.message ?? 'No message'}`);
+    }
+    await Bun.sleep(150);
+  }
+  fail(`Agent creator did not produce a draft within 60 seconds. Last state: ${JSON.stringify(last, null, 2)}`);
 }
 
 async function authorRequestCount(): Promise<number> {
   const response = await fetch(`${authorBaseUrl}/requests`);
-  return ((await response.json()) as { requests: number }).requests;
+  const payload = await response.json() as { requests: number };
+  return payload.requests;
 }
 
-async function seedProject(projectRoot: string): Promise<string> {
+async function seedProject(projectRoot: string): Promise<void> {
   const agentsDir = join(projectRoot, 'agents');
   await mkdir(agentsDir, { recursive: true });
   await writeFile(join(projectRoot, 'ABOUT.md'), `---
@@ -126,107 +199,112 @@ model: demo:test
 description: Collects account changes
 metadata:
   owner: Data Operations
-  tier: upstream
 ---
 
 Summarize new account changes.
 `);
-  const reviewFile = join(agentsDir, 'review.agentuse');
-  await writeFile(reviewFile, `---
+  await writeFile(join(agentsDir, 'review.agentuse'), `---
 name: Renewal Review
 model: demo:test
 description: Reviews renewal recommendations
 dependsOn: ./source.agentuse
 metadata:
   owner: Customer Success
-  tier: decision
 ---
 
-Review renewal recommendations and request approval before acting.
+Review renewal recommendations before acting.
 `);
-
-  await initStorage(projectRoot);
-  const manager = new SessionManager();
-  const agentId = 'agents/review';
-  const sessionId = await manager.createSession({
-    agent: {
-      id: agentId,
-      name: 'Renewal Review',
-      description: 'Reviews renewal recommendations',
-      filePath: reviewFile,
-      isSubAgent: false,
-    },
-    model: 'demo:test',
-    version: 'e2e',
-    config: {},
-    project: { root: projectRoot, cwd: projectRoot },
-  });
-  const messageId = await manager.createMessage(sessionId, agentId, {
-    user: { prompt: { task: 'Prepare a renewal recommendation.' } },
-    assistant: {
-      system: [],
-      modelID: 'demo:test',
-      providerID: 'demo',
-      mode: 'build',
-      path: { cwd: projectRoot, root: projectRoot },
-      cost: 0,
-      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-    },
-  });
-  await manager.addPart(sessionId, agentId, messageId, {
-    type: 'tool',
-    callID: 'call-e2e-approval',
-    tool: 'await_human',
-    state: {
-      status: 'pending',
-      input: {
-        prompt: 'Which renewal plan should we use?',
-        summary: 'Choose the plan that should be presented to the customer.',
-        options: [
-          {
-            id: 'fast',
-            label: 'Fast renewal',
-            description: 'Keep the current scope and renew this week.',
-            recommended: true,
-          },
-          {
-            id: 'thorough',
-            label: 'Thorough review',
-            description: 'Revisit scope and pricing before renewal.',
-          },
-        ],
-      },
-      suspendedAt: Date.now(),
-      resumePayload: {
-        kind: 'await_human',
-        prompt: 'Which renewal plan should we use?',
-        resumeToken: 'e2e-resume-token',
-      },
-    },
-  } as any);
-  await manager.setSessionSuspended(sessionId, agentId);
-  return sessionId;
 }
 
-async function seedOnboardingProject(projectRoot: string): Promise<string> {
-  await mkdir(projectRoot, { recursive: true });
-  await writeFile(join(projectRoot, 'ABOUT.md'), `---\nname: Getting Started\ndescription: Empty onboarding workspace\n---\n`);
-  await initStorage(projectRoot);
-  const manager = new SessionManager();
-  const onboardingSessionId = await manager.createSession({
-    agent: {
-      id: ONBOARDING_AGENT_ID,
-      name: ONBOARDING_AGENT_NAME,
-      isSubAgent: false,
-    },
-    model: ONBOARDING_MODEL,
-    version: 'e2e',
-    config: {},
-    project: { root: projectRoot, cwd: projectRoot },
-    trigger: 'onboarding',
+async function runFunctionalSmoke(baseUrl: string, projectRoot: string): Promise<void> {
+  console.log('Dashboard functional smoke');
+
+  const info = await requestJson<InfoPayload>(baseUrl, '/api');
+  check(info.projects.length === 1, 'real daemon exposes the disposable project');
+  const projectId = info.projects[0]!.id;
+
+  const initialAgents = await requestJson<AgentsPayload>(baseUrl, '/api/agents');
+  const source = initialAgents.agents.find((agent) => agent.name === 'Source Monitor');
+  const review = initialAgents.agents.find((agent) => agent.name === 'Renewal Review');
+  check(
+    initialAgents.errors.length === 0
+      && source?.metadata?.owner === 'Data Operations'
+      && review?.dependsOn?.includes(source.path) === true,
+    'agent discovery preserves metadata and dependency relationships',
+  );
+
+  const providerResult = await postJson<Record<string, unknown>>(baseUrl, '/api/providers/api-key', {
+    provider: 'openai',
+    key: disposableKey,
   });
-  await manager.setSessionCompleted(onboardingSessionId, ONBOARDING_AGENT_ID);
-  return onboardingSessionId;
+  check(
+    providerResult.success === true && !JSON.stringify(providerResult).includes(disposableKey),
+    'provider setup persists a credential without returning its value',
+  );
+
+  const providers = await requestJson<Record<string, unknown>>(baseUrl, '/api/providers?readiness=defer');
+  check(
+    providers.success === true && !JSON.stringify(providers).includes(disposableKey),
+    'provider status remains redacted when read back',
+  );
+
+  const options = await requestJson<AgentCreationOptionsPayload>(
+    baseUrl,
+    `/api/agents/create?project=${encodeURIComponent(projectId)}`,
+  );
+  const openai = options.providers.find((provider) => provider.id === 'openai');
+  const authoringModel = openai?.defaultModel ?? openai?.models[0];
+  check(Boolean(authoringModel), 'agent creation exposes a configured authoring model');
+
+  const started = await postJson<StartAgentPayload>(baseUrl, '/api/agents', {
+    project: projectId,
+    objective: 'Summarize new support tickets every morning and highlight urgent replies.',
+    model: authoringModel!,
+    reasoning: 'medium',
+  });
+  check(
+    started.success && started.job.projectId === projectId && started.job.status === 'running',
+    'agent creation starts a real creator session',
+  );
+
+  const createdPath = join(projectRoot, 'agents', 'summarize-new-support-tickets-every-morning.agentuse');
+  const draft = await waitForDraft(baseUrl, projectId, started.job.id);
+  const latest = draft.drafts.at(-1);
+  check(
+    latest?.fileName === 'summarize-new-support-tickets-every-morning.agentuse'
+      && latest.source.includes('Summarize new support tickets'),
+    'mocked creator produces a valid draft through the real worker',
+  );
+  check(!(await Bun.file(createdPath).exists()), 'creator keeps the project unchanged until Save');
+
+  const saved = await postJson<{ success: true; agent: AgentSummary }>(
+    baseUrl,
+    `/api/agents/drafts/${encodeURIComponent(started.job.id)}/save?project=${encodeURIComponent(projectId)}`,
+    {},
+  );
+  const savedSource = await readFile(createdPath, 'utf8');
+  check(
+    saved.success
+      && saved.agent.projectId === projectId
+      && saved.agent.runPath.endsWith('summarize-new-support-tickets-every-morning.agentuse')
+      && savedSource.includes('Summarize new support tickets'),
+    'Save persists the reviewed draft as a discoverable agent',
+  );
+  check((await authorRequestCount()) >= 2, 'creator and capability review use the loopback model server');
+}
+
+function runBrowserCanary(baseUrl: string): void {
+  console.log('Dashboard browser canary');
+  browserStarted = true;
+  browser(['open', `${baseUrl}/agents`]);
+  browser(['wait', '--load', 'domcontentloaded']);
+  const ready = browser(['eval', "document.readyState === 'interactive' || document.readyState === 'complete'"]);
+  check(ready === 'true', 'built dashboard loads in a real browser');
+  const pageErrors = browser(['errors']);
+  check(
+    !pageErrors.trim() || /No page errors found/i.test(pageErrors) || pageErrors.trim() === '[]',
+    `dashboard reports no browser runtime errors${pageErrors.trim() ? `: ${pageErrors}` : ''}`,
+  );
 }
 
 async function main(): Promise<void> {
@@ -236,50 +314,38 @@ async function main(): Promise<void> {
   }
 
   workspace = await mkdtemp(join(tmpdir(), 'agentuse-dashboard-e2e-'));
-  await mkdir(evidenceDir, { recursive: true });
   const projectRoot = join(workspace, 'project');
-  const onboardingProjectRoot = join(workspace, 'onboarding');
   const stateRoot = join(workspace, 'state');
   const configDir = join(workspace, 'config');
-  const configPath = join(configDir, 'config.json');
   await mkdir(projectRoot, { recursive: true });
   await mkdir(stateRoot, { recursive: true });
   await mkdir(configDir, { recursive: true });
-  await writeFile(configPath, JSON.stringify({
-    serve: {
-      brand: { name: 'AgentUse Control Room' },
-      terms: { project: 'workspace', folder: 'team' },
-    },
-  }));
+  await seedProject(projectRoot);
 
-  process.env.AGENTUSE_DATA_DIR = stateRoot;
-  const approvalSessionId = await seedProject(projectRoot);
-  const onboardingSessionId = await seedOnboardingProject(onboardingProjectRoot);
-  const port = await freePort();
-  const baseUrl = `http://127.0.0.1:${port}`;
   const authorPort = await freePort();
   authorBaseUrl = `http://127.0.0.1:${authorPort}`;
   authorDaemon = spawn(process.execPath, ['scripts/e2e-author-server.ts', String(authorPort)], {
     cwd: root,
-    env: process.env,
+    env: { ...process.env, AGENTUSE_DATA_DIR: stateRoot, AGENTUSE_CONFIG_DIR: configDir },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   authorDaemon.stdout?.on('data', (chunk) => { authorDaemonOutput += String(chunk); });
   authorDaemon.stderr?.on('data', (chunk) => { authorDaemonOutput += String(chunk); });
   await waitForAuthorDaemon();
+
+  const port = await freePort();
+  const baseUrl = `http://127.0.0.1:${port}`;
   daemon = spawn(process.execPath, [
     'src/index.ts',
     'serve',
     '--port', String(port),
     '--directory', projectRoot,
-    '--directory', onboardingProjectRoot,
     '--no-auth',
     '--no-log-file',
   ], {
     cwd: root,
     env: {
       ...process.env,
-      HOME: workspace,
       AGENTUSE_DATA_DIR: stateRoot,
       AGENTUSE_CONFIG_DIR: configDir,
       OPENAI_BASE_URL: `${authorBaseUrl}/v1`,
@@ -292,233 +358,19 @@ async function main(): Promise<void> {
   daemon.stderr?.on('data', (chunk) => { daemonOutput += String(chunk); });
   await waitForDaemon(baseUrl);
 
-  console.log('Dashboard browser smoke');
-  browser(['set', 'viewport', '1440', '1000']);
-  browser(['open', `${baseUrl}/agents`]);
-  browser(['wait', '--text', 'Renewal Review']);
-  expectBrowser(
-    `document.querySelector('.sidebar-brand .brand-wordmark svg') !== null && !document.querySelector('.sidebar-brand')?.textContent.includes('AgentUse Control Room')`,
-    'sidebar uses the AgentUse wordmark without the organization name',
-  );
-  expectBrowser(
-    `document.body.innerText.toLowerCase().includes('revenue operations')`,
-    'ABOUT.md identity renders on the Agents page',
-  );
-
-  browser(['select', 'select[aria-label="Add column"]', 'meta:owner']);
-  expectBrowser(
-    `document.body.innerText.includes('Customer Success') && JSON.parse(localStorage.getItem('agentuse-agents-columns-v2')).includes('meta:owner')`,
-    'custom metadata column renders and persists',
-  );
-  browser(['reload']);
-  browser(['wait', '--text', 'Customer Success']);
-  expectBrowser(
-    `document.body.innerText.includes('Customer Success')`,
-    'persisted metadata column survives reload',
-  );
-
-  browser(['find', 'role', 'button', 'click', '--name', 'Graph']);
-  expectBrowser(
-    `document.body.innerText.includes('depends on') && document.body.innerText.includes('Renewal Review') && document.body.innerText.includes('Source Monitor')`,
-    'graph view exposes dependsOn relationships',
-  );
-  browser(['screenshot', join(evidenceDir, 'agents-graph.png'), '--full']);
-
-  browser(['open', `${baseUrl}/sessions/${encodeURIComponent(approvalSessionId)}`]);
-  browser(['wait', '1200']);
-  const sessionBody = browser(['eval', 'document.body.innerText']);
-  if (!sessionBody.toLowerCase().includes('pick one')) {
-    fail(`Session approval UI did not render. Page text:\n${sessionBody}\nDaemon output:\n${daemonOutput}`);
-  }
-  expectBrowser(
-    `document.querySelector('input[value="fast"]')?.checked === true && document.body.innerText.toLowerCase().includes('recommended')`,
-    'recommended approval option is selected by default',
-  );
-  browser(['click', 'input[value="thorough"]']);
-  expectBrowser(
-    `[...document.querySelectorAll('button')].some((button) => button.innerText.includes('Approve') && button.innerText.includes('Thorough review'))`,
-    'approval action tracks the reviewer’s selected option',
-  );
-  browser(['screenshot', join(evidenceDir, 'approval-options.png'), '--full']);
-
-  browser(['open', `${baseUrl}/sessions/${encodeURIComponent(onboardingSessionId)}?project=onboarding`]);
-  browser(['wait', '1200']);
-  const onboardingBody = browser(['eval', 'document.body.innerText']);
-  if (!onboardingBody.includes('Create my first agent')) {
-    fail(`Completed onboarding session did not render its first-agent handoff. Page text:\n${onboardingBody}\nDaemon output:\n${daemonOutput}`);
-  }
-  browser(['eval', `(() => { const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.includes('Create my first agent')); button?.click(); return Boolean(button); })()`]);
-  browser(['wait', '--text', 'Connect a model provider']);
-  expectBrowser(
-    `document.querySelector('.provider-setup-dialog[open]') !== null && document.querySelector('.cca-dialog[open]') === null`,
-    'completed sample handoff gates agent creation on provider setup',
-  );
-  browser(['screenshot', join(evidenceDir, 'onboarding-provider-gate.png')]);
-  browser(['click', '.provider-setup-dialog .dialog-close']);
-
-  expectBrowser(
-    `fetch('/api/providers/api-key', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: 'openai', key: 'e2e-disposable-key' }) }).then((response) => response.json()).then((payload) => payload.success === true && !JSON.stringify(payload).includes('e2e-disposable-key'))`,
-    'provider setup persists a credential without returning its value',
-  );
-  browser(['eval', `(() => { const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.includes('Create my first agent')); button?.click(); return Boolean(button); })()`]);
-  browser(['wait', '--text', 'Describe the job']);
-  expectBrowser(
-    `document.querySelector('.agent-create-dialog[open]') !== null && document.querySelector('.cca-dialog[open]') === null`,
-    'provider-ready onboarding opens native persistent agent creation',
-  );
-  expectBrowser(
-    `document.querySelector('.agent-create-dialog input[placeholder="Support Ticket Triage"]') === null && document.querySelector('.agent-create-dialog [aria-label="Creator provider model"]') !== null && document.querySelector('.agent-create-dialog [aria-label="Thinking effort"]')?.innerText.includes('Medium') === true && document.querySelector('.agent-create-dialog [aria-label="Creator provider"]') === null && document.querySelector('.agent-create-handoff')?.innerText.includes('scripts, dependencies, or project-specific code') === true`,
-    'agent creation derives the name and exposes combined model and thinking controls',
-  );
-  browser(['click', '.agent-create-dialog .dashboard-select-trigger[aria-label="Creator provider model"]']);
-  expectBrowser(
-    `(() => { const menu = document.querySelector('.agent-create-dialog .dashboard-select-menu'); const options = menu?.querySelectorAll('[role="option"]') ?? []; return Boolean(menu) && options.length > 1 && getComputedStyle(menu).backgroundColor !== 'rgb(255, 255, 255)' && getComputedStyle(menu).overscrollBehaviorY === 'contain' && getComputedStyle(document.documentElement).overflow === 'hidden'; })()`,
-    'agent creation contains listbox scrolling and locks the background page',
-  );
-  browser(['screenshot', join(evidenceDir, 'onboarding-create-agent-model-picker.png')]);
-  browser(['click', '.agent-create-dialog .dashboard-select-trigger[aria-label="Creator provider model"]']);
-  browser(['eval', `(() => {
-    const set = (selector, value) => { const element = document.querySelector(selector); if (!element) return false; element.value = value; element.dispatchEvent(new Event('input', { bubbles: true })); return true; };
-    return set('.agent-create-field textarea', 'Summarize new support tickets every morning and highlight urgent replies.');
-  })()`]);
-  browser(['click', '.agent-create-escape']);
-  browser(['wait', '--text', 'Preview instructions']);
-  expectBrowser(
-    `document.querySelector('.cca-dialog[open]') !== null && document.querySelector('.cca-dialog textarea')?.value.includes('Summarize new support tickets') === true && !document.querySelector('.cca-dialog textarea')?.value.includes('Preferred model')`,
-    'coding-agent escape hatch preserves the native creation draft',
-  );
-  browser(['screenshot', join(evidenceDir, 'create-agent-coding-escape.png')]);
-  browser(['click', '.cca-dialog .dialog-close']);
-  browser(['eval', `(() => { const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.includes('Create my first agent')); button?.click(); return Boolean(button); })()`]);
-  browser(['wait', '--text', 'Describe the job']);
-  browser(['screenshot', join(evidenceDir, 'onboarding-create-agent.png')]);
-  browser(['click', '.agent-create-primary']);
-  browser(['wait', '--text', 'Save agent']);
-  expectBrowser(
-    `(() => {
-      return location.pathname === '/agents/draft'
-        && document.querySelector('.agent-create-dialog[open]') === null
-        && document.querySelector('.page-draft') !== null;
-    })()`,
-    'agent creation hands off from the modal to the draft workspace',
-  );
-  browser(['screenshot', join(evidenceDir, 'onboarding-create-agent-draft.png')]);
-  try {
-    browser(['wait', '--text', 'Summarize New Support Tickets Every Morning']);
-  } catch {
-    const onboardingDraftBody = browser(['eval', 'document.body.innerText']);
-    fail(`Creator did not produce the onboarding draft. Page text:\n${onboardingDraftBody}\nDaemon output:\n${daemonOutput}\nAuthor output:\n${authorDaemonOutput}`);
-  }
-  expectBrowser(
-    `document.body.innerText.includes('Summarize New Support Tickets Every Morning') && !document.querySelector('.draft-primary')?.hasAttribute('disabled')`,
-    'creator finishes the first draft without writing it to the project',
-  );
-  const onboardingAgentPath = join(onboardingProjectRoot, 'agents', 'summarize-new-support-tickets-every-morning.agentuse');
-  if (await Bun.file(onboardingAgentPath).exists()) fail('Onboarding agent was written before the operator saved its draft');
-  browser(['click', '.draft-header-actions .draft-primary']);
-  browser(['wait', '--text', 'Summarize New Support Tickets Every Morning']);
-  expectBrowser(
-    `location.pathname.includes('/agents/onboarding/') && document.body.innerText.includes('Summarize New Support Tickets Every Morning')`,
-    'saving the onboarding draft opens the persistent agent',
-  );
-  const onboardingAgentSource = await readFile(onboardingAgentPath, 'utf8');
-  if (!onboardingAgentSource.includes('model: openai:gpt-5.4-mini') || !onboardingAgentSource.includes('Summarize new support tickets')) {
-    fail(`Onboarding agent source was not persisted correctly:\n${onboardingAgentSource}`);
-  }
-
-  browser(['open', `${baseUrl}/agents/onboarding`]);
-  browser(['wait', '--text', 'Summarize New Support Tickets Every Morning']);
-  expectBrowser(`document.body.innerText.includes('New agent')`, 'Agents view exposes the persistent New agent action');
-  browser(['click', '.new-agent-button']);
-  browser(['wait', '--text', 'Describe the job']);
-  browser(['eval', `(() => {
-    const set = (selector, value) => { const element = document.querySelector(selector); if (!element) return false; element.value = value; element.dispatchEvent(new Event('input', { bubbles: true })); return true; };
-    return set('.agent-create-field textarea', 'Review yesterday’s work and identify the most important follow-up.');
-  })()`]);
-  browser(['click', '.agent-create-primary']);
-  browser(['wait', '--text', 'Review Yesterday Work']);
-  expectBrowser(
-    `location.pathname === '/agents/draft' && document.body.innerText.includes('Review Yesterday Work')`,
-    'normal Agents view opens the new draft workspace',
-  );
-  const normalAgentPath = join(onboardingProjectRoot, 'agents', 'review-yesterday-work.agentuse');
-  if (await Bun.file(normalAgentPath).exists()) fail('Normal agent was written before the operator saved its draft');
-  browser(['click', '.draft-header-actions .draft-primary']);
-  browser(['wait', '--text', 'Review Yesterday Work']);
-  expectBrowser(
-    `location.pathname.includes('/agents/onboarding/') && document.body.innerText.includes('Review Yesterday Work')`,
-    'saving a normal Agents-view draft opens the persistent agent',
-  );
-  const normalAgentSource = await readFile(normalAgentPath, 'utf8');
-  if (!normalAgentSource.includes('Review yesterday’s work')) fail(`Normal agent source was not persisted correctly:\n${normalAgentSource}`);
-  const authorRequests = await authorRequestCount();
-  if (authorRequests < 2) fail(`Expected both native creations to call the selected model; observed ${authorRequests} author request(s)`);
-  console.log('  ✓ native creation uses the selected creator model and persists its independently chosen runtime model');
-
-  browser(['open', `${baseUrl}/settings`]);
-  browser(['wait', '1200']);
-  expectBrowser(
-    `document.body.innerText.toLowerCase().includes('pending approvals') && document.body.innerText.toLowerCase().includes('session completions')`,
-    'PWA notification preferences are visible',
-  );
-  browser(['click', '#settings-tab-providers']);
-  expectBrowser(
-    `document.body.innerText.toLowerCase().includes('providers') && document.body.innerText.includes('Anthropic') && document.body.innerText.includes('OpenRouter')`,
-    'provider status is integrated into Preferences',
-  );
-  expectBrowser(
-    `fetch('/api/providers').then((response) => response.json()).then((payload) => payload.success === true && payload.catalog.length >= 4 && !JSON.stringify(payload).includes('access_token'))`,
-    'provider API returns a redacted catalog and status snapshot',
-  );
-  expectBrowser(
-    `(() => { const rows = [...document.querySelectorAll('.provider-row')]; const row = rows.find((item) => item.querySelector('.provider-row-name')?.textContent === 'OpenRouter'); const button = row?.querySelector('.provider-row-head'); button?.click(); return Boolean(button); })()`,
-    'OpenRouter provider row expands',
-  );
-  browser(['wait', '300']);
-  expectBrowser(
-    `(() => { const rows = [...document.querySelectorAll('.provider-row')]; const row = rows.find((item) => item.querySelector('.provider-row-name')?.textContent === 'OpenRouter'); const button = row && [...row.querySelectorAll('button')].find((item) => item.textContent?.trim() === 'Connect'); button?.click(); return Boolean(button); })()`,
-    'OpenRouter provider row exposes its connection action',
-  );
-  try {
-    browser(['wait', '--text', 'Connect a model provider']);
-  } catch {
-    const settingsBody = browser(['eval', 'document.body.innerText']);
-    fail(`Provider setup dialog did not open. Page text:\n${settingsBody}`);
-  }
-  expectBrowser(
-    `document.querySelector('.provider-setup-dialog[open]') !== null && document.querySelector('.provider-setup-dialog input[type="password"]') !== null`,
-    'provider setup dialog opens from Preferences without writing credentials',
-  );
-  browser(['screenshot', join(evidenceDir, 'settings-provider-dialog.png')]);
-  browser(['click', '.provider-setup-dialog .dialog-close']);
-  expectBrowser(
-    `document.querySelector('link[rel="manifest"]')?.getAttribute('href') === '/manifest.webmanifest'`,
-    'dashboard shell links the web app manifest',
-  );
-  expectBrowser(
-    `fetch('/manifest.webmanifest').then((response) => response.json()).then((manifest) => Boolean(manifest.name && manifest.icons?.length))`,
-    'web app manifest is fetchable and declares install icons',
-  );
-  expectBrowser(
-    `navigator.serviceWorker.ready.then((registration) => registration.scope === location.origin + '/')`,
-    'root-scoped service worker registers successfully',
-  );
-  browser(['screenshot', join(evidenceDir, 'settings-pwa.png'), '--full']);
-
-  const pageErrors = browser(['errors']);
-  if (pageErrors.trim() && !/No page errors found/i.test(pageErrors) && pageErrors.trim() !== '[]') {
-    fail(`Browser page errors were reported:\n${pageErrors}`);
-  }
-  console.log(`  ✓ no browser page errors\n  evidence: ${evidenceDir}`);
+  await runFunctionalSmoke(baseUrl, projectRoot);
+  runBrowserCanary(baseUrl);
 }
 
 try {
   await main();
 } finally {
-  try {
-    browser(['close']);
-  } catch {
-    // Cleanup must not hide the original assertion or startup failure.
+  if (browserStarted) {
+    try {
+      browser(['close']);
+    } catch {
+      // Cleanup must not hide the original assertion or startup failure.
+    }
   }
   if (daemon && daemon.exitCode === null) {
     daemon.kill('SIGTERM');

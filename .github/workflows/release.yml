@@ -156,13 +156,11 @@ jobs:
             apps/desktop/dist/*.blockmap
             apps/desktop/dist/latest-mac.yml
 
-  # Advisory. Drives a real browser, and by decision it never blocks a release,
-  # so it is deliberately absent from publish's `needs`. A red X here is
-  # information for the reviewer, not a stop sign.
+  # Functional dashboard smoke through the real daemon and a loopback model.
+  # The browser only verifies that the built bundle loads without runtime errors.
   e2e:
     if: github.repository == 'agentuse/agentuse' || vars.RELEASE_REHEARSAL == 'true'
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: ./.github/actions/setup
@@ -175,7 +173,7 @@ jobs:
   # the repo it is running in.
   publish:
     if: github.repository == 'agentuse/agentuse' && github.event_name == 'push'
-    needs: [verify, desktop]
+    needs: [verify, desktop, e2e]
     runs-on: ubuntu-latest
     environment: release
     permissions:
