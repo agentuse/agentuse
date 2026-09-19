@@ -1,7 +1,7 @@
 import { budgetLabel } from '../../../../session/budget-label';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation, useRoute } from 'preact-iso';
-import { ArrowUp, RotateCw, Square, SquarePen } from 'lucide-preact';
+import { ArrowUp, ChevronLeft, ChevronRight, RotateCw, Square, SquarePen } from 'lucide-preact';
 import type { ApprovalLogEntry, ApprovalPageInfo, LogSubagentSession, LogVerifySummary } from '../../types';
 import { CandidateVerdictList, LogEntry, artifactKind, toolChipLabel, type PriorReview } from '../components/log-entry';
 import { InlineMarkdown, LogContent } from '../components/content';
@@ -28,6 +28,7 @@ import {
   formatTokens,
   formatElapsedClock,
   formatApprovalTime,
+  formatClockTime,
   formatLogTime,
   humanizeMetric,
   isDebugLog,
@@ -435,13 +436,19 @@ export function headerTokenUsage(
   return approval?.tokenUsage;
 }
 
+/** Context is the one fact in the header that is a fraction of a budget, so it
+ *  gets the header's one piece of shape: a 28px capacity track beside the
+ *  number. Everything else on the row is a plain word. */
 function SessionContextUsage({ usage }: { usage: NonNullable<ApprovalPageInfo['tokenUsage']> }) {
   const [expanded, setExpanded] = useState(false);
   const context = usage.context;
   if (!context || !context.contextLimit || context.contextLimit <= 0) return null;
-  const contextLabel = `context ${Math.max(0, Math.min(100, context.usagePercentage)).toFixed(0)}% used`;
+  const percent = Math.max(0, Math.min(100, context.usagePercentage));
   return (
-    <span>
+    // A flex wrapper, not a plain span: the toggle is an inline-flex box whose
+    // first item is the meter, so in a normal line box the browser aligns the
+    // meter's baseline to the text and the line grows to twice its height.
+    <span class="session-context">
       <button
         type="button"
         class="session-context-toggle"
@@ -450,8 +457,15 @@ function SessionContextUsage({ usage }: { usage: NonNullable<ApprovalPageInfo['t
         onClick={() => setExpanded((value) => !value)}
       >
         {expanded
-          ? `input (uncached) ${formatTokenCount(Math.max(0, usage.input - usage.cachedInput))} · input (cached) ${formatTokenCount(usage.cachedInput)} · output ${formatTokenCount(usage.output)} · context used ${Math.max(0, Math.min(100, context.usagePercentage)).toFixed(0)}%`
-          : contextLabel}
+          ? `input (uncached) ${formatTokenCount(Math.max(0, usage.input - usage.cachedInput))} · input (cached) ${formatTokenCount(usage.cachedInput)} · output ${formatTokenCount(usage.output)} · context used ${percent.toFixed(0)}%`
+          : (
+            <>
+              <span class="session-context-meter" aria-hidden="true">
+                <span class="session-context-meter-fill" style={{ width: `${percent}%` }} />
+              </span>
+              {`${percent.toFixed(0)}% context`}
+            </>
+          )}
       </button>
     </span>
   );
@@ -2094,9 +2108,12 @@ export default function SessionDetail() {
           ? (approval.errorMessage ?? 'This run is waiting on a delegated sub-agent that has already ended, so it can no longer be resumed.')
           : undefined;
 
+  // Value first, unit after: the fact row is read as a run of numbers, and a
+  // row that opens every item with a label word reads as a form. A run with no
+  // timing says nothing here rather than spending a slot on its absence.
   const elapsedLabel = approval.timing?.activeMs != null
-    ? `active ${formatDuration(approval.timing.activeMs)}`
-    : 'Active time unavailable';
+    ? formatDuration(approval.timing.activeMs)
+    : undefined;
   // The corrections row lives in the session log, which is collapsed by default.
   // A run that silently applied 10 of its 26 corrections would stay silent until
   // someone expanded it, so the count is repeated here where it cannot be
@@ -2347,6 +2364,7 @@ export default function SessionDetail() {
       // "Run new session" working on multi-project daemons.
       projectId={sessionProjectId as string}
       diagnosticHref={diagnosticHref}
+      sessionId={approval.sessionId}
       {...(tabIndex === undefined ? {} : { tabIndex })}
       {...(runControlsInMenu ? {
         runActions: menuControls.map((control) => ({
@@ -2709,21 +2727,60 @@ export default function SessionDetail() {
     </div>
   );
 
+  // ---- The header, and its pinned stand-in ----
+  // One identity row (back, state dot, name, the immediate actions, ⋯) over one
+  // fact row, at every width. The state is a coloured dot beside the name and a
+  // coloured word leading the facts, so the name and its state read as one
+  // thing instead of sitting a row apart. The pinned bar is that same identity
+  // row with the state word folded back in and the live facts appended, so
+  // scrolling compacts the header rather than swapping in a different, smaller
+  // set of facts.
+  // These render into both the header and the pinned bar, so they are
+  // functions rather than shared elements: Preact hangs per-instance state off
+  // a vnode, and the same vnode object mounted in two trees fights over it.
+  const statusText = wrappingUp ? 'Wrapping up' : statusWord;
+  const statusDot = () => <span class={`session-status-dot is-${statusTone}`} aria-hidden="true" />;
+  // The facts that tick while a run is alive. They survive at every width and
+  // ride along in the pinned bar; the lookup keys below them do not.
+  const liveFacts = () => (
+    <>
+      {elapsedLabel && (
+        <span class="session-facts-num" title="Time this run spent working">
+          {elapsedLabel}<span class="session-facts-word"> active</span>
+        </span>
+      )}
+      {costLabel && <span class="session-facts-num" title="Estimated cost so far">{costLabel}</span>}
+      {tokenUsage && <SessionContextUsage key={approval.sessionId} usage={tokenUsage} />}
+      {budgetNote && <span title={approval.executionBudget
+        ? `Execution budget: ${Math.round(approval.executionBudget.configuredMs / 1000)}s configured; ${Math.round(approval.executionBudget.effectiveMs / 1000)}s effective. Limiting session: ${approval.executionBudget.limitingSessionId ?? sessionId}`
+        : undefined}>{approval.sessionStatus === 'running' ? 'Execution budget nearly used' : budgetNote}</span>}
+      {approval?.mock && <span title="Tool outputs were LLM-generated; no real tools ran">mock</span>}
+      {isSubagentView && <span>view only</span>}
+    </>
+  );
+  const backLink = () => isSubagentView && parentLink ? (
+    <a class="session-bar-back" href={parentLink} aria-label={`Back to ${parentLabel}`} title={`Back to ${parentLabel}`}>
+      <ChevronLeft size={16} aria-hidden="true" />
+      <span class="session-bar-back-label">{parentLabel}</span>
+    </a>
+  ) : (
+    <a class="session-bar-back" href="/sessions" onClick={goBack} aria-label="Back to sessions" title="Back to sessions">
+      <ChevronLeft size={16} aria-hidden="true" />
+    </a>
+  );
+
   return (
     <div class={`page-approval-detail${isRevisionSession ? ' is-internal-revision' : ''}`}>
       <main>
         {/* A zero-height sticky shell. At rest it draws nothing at all: the
-            header two rows below already carries the status, the name and the
-            immediate controls, and a bar repeating them would be the page's third
-            copy of each. Once the page scrolls past the header, the compact
-            bar inside fades in as the only thing left saying where you are. */}
+            header right below already carries the same row. Once the page
+            scrolls past the header, the bar inside fades in. */}
         <div class={`session-sticky${scrolled ? ' is-scrolled' : ''}`}>
           <div class="session-sticky-bar">
-            <span class={`session-status is-${statusTone}`}>
-              <span class="session-status-dot" aria-hidden="true" />
-              {wrappingUp ? 'Wrapping up' : statusWord}
-            </span>
+            {statusDot()}
+            <span class={`session-status-word is-${statusTone}`}>{statusText}</span>
             <span class="session-sticky-name">{pageAgentLabel}</span>
+            <span class="session-facts is-inline">{liveFacts()}</span>
             <span class="session-sticky-spacer" />
             {barControls.map((control) => renderBarControl(control, scrolled ? 0 : -1))}
             {sessionMenuShown && renderSessionMenu(scrolled ? 0 : -1)}
@@ -2740,35 +2797,10 @@ export default function SessionDetail() {
           </div>
         </div>
         <header class="session-header">
-          {/* Row one: where you are, what state it is in, and the one thing to
-              do about it. Everything that used to live in a second sticky bar
-              is here, said once. */}
-          <div class="session-header-controls">
-            {isSubagentView && parentLink ? (
-              <a class="session-bar-back" href={parentLink} aria-label={`Back to ${parentLabel}`} title={`Back to ${parentLabel}`}>
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="15 18 9 12 15 6" />
-                </svg>
-                <span class="session-bar-back-label">{parentLabel}</span>
-              </a>
-            ) : (
-              <a class="session-bar-back" href="/sessions" onClick={goBack} aria-label="Back to sessions" title="Back to sessions">
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <polyline points="15 18 9 12 15 6" />
-                </svg>
-              </a>
-            )}
-            <span class={`session-status is-${statusTone}`}>
-              <span class="session-status-dot" aria-hidden="true" />
-              {wrappingUp ? 'Wrapping up' : statusWord}
-            </span>
-            {budgetNote && <span class="session-header-tag" title={approval.executionBudget
-              ? `Execution budget: ${Math.round(approval.executionBudget.configuredMs / 1000)}s configured; ${Math.round(approval.executionBudget.effectiveMs / 1000)}s effective. Limiting session: ${approval.executionBudget.limitingSessionId ?? sessionId}`
-              : undefined}>{approval.sessionStatus === 'running' ? 'Execution budget nearly used' : budgetNote}</span>}
-            {approval?.mock && <span class="session-header-tag" title="Tool outputs were LLM-generated; no real tools ran">mock</span>}
-            {isRevisionSession && <span class="session-header-tag">internal</span>}
-            {isSubagentView && <span class="session-header-tag">view only</span>}
-            <span class="session-header-spacer" />
+          <div class="session-identity">
+            {backLink()}
+            {statusDot()}
+            <h1 title={pageAgentLabel}>{pageAgentLabel}</h1>
             {actionable && queueNext && (
               <div class="session-bar-queue">
                 <span class="session-bar-queue-count">{queueIndex + 1} of {pendingQueue.length} pending</span>
@@ -2778,9 +2810,7 @@ export default function SessionDetail() {
                   title={`Next pending: ${queueNext.agentName}`}
                 >
                   Next
-                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <polyline points="9 6 15 12 9 18" />
-                  </svg>
+                  <ChevronRight size={12} aria-hidden="true" />
                 </a>
               </div>
             )}
@@ -2788,21 +2818,17 @@ export default function SessionDetail() {
             {sessionMenuShown ? renderSessionMenu() : (
               <a class="meta-band-link session-header-diagnostic" href={diagnosticHref}>
                 Diagnostic
-                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                  <path d="M6 3.5 10.5 8 6 12.5" />
-                </svg>
+                <ChevronRight size={12} aria-hidden="true" />
               </a>
             )}
           </div>
-          <div class="header-title-row">
-            <h1>{pageAgentLabel}</h1>
-            {isSubagentView && parentLink && (
-              <span class="session-title-note">
-                sub-agent of <a href={parentLink}>{parentLabel}</a>
-              </span>
-            )}
+          {/* One fact row, one fixed order: the state, then what the run is
+              spending, then the keys you look a run up by. Under 700px the
+              keys group is the one thing that goes. */}
+          <div class="session-facts">
+            <span class={`session-status-word is-${statusTone}`}>{statusText}</span>
             {isRevisionSession && (
-              <span class="session-title-note">
+              <span>
                 by AgentUse
                 {revisionIdentity?.originSessionId && (
                   <>
@@ -2812,23 +2838,18 @@ export default function SessionDetail() {
                 )}
               </span>
             )}
-          </div>
-          {/* One meta line, in one typeface, read left to right: what this run
-              is, then what it has cost so far. The old page split it in two
-              rows and repeated the elapsed time in the card head. */}
-          <div class="session-meta-line">
-            <span title={term('project')}>{projectId ?? approval.project ?? 'default'}</span>
-            {approval.model && <span class="session-meta-model" title="model">{approval.model}</span>}
-            {approval.createdAt !== undefined && (
-              <span>started {formatApprovalTime(approval.createdAt)}</span>
-            )}
-            {elapsedLabel && <span>{elapsedLabel}</span>}
-            {costLabel && <span>cost {costLabel}</span>}
-            {tokenUsage && <SessionContextUsage key={approval.sessionId} usage={tokenUsage} />}
-            {mode === 'decision' && approval.expiresAt !== undefined && (
-              <span>expires {formatApprovalTime(approval.expiresAt)}</span>
-            )}
-            <SessionIdCopy sessionId={approval.sessionId} short />
+            {liveFacts()}
+            <span class="session-facts-keys">
+              <span title={term('project')}>{projectId ?? approval.project ?? 'default'}</span>
+              {approval.model && <span class="session-meta-model" title="model">{approval.model}</span>}
+              {approval.createdAt !== undefined && (
+                <span title={`Started ${formatApprovalTime(approval.createdAt)}`}>started {formatClockTime(approval.createdAt)}</span>
+              )}
+              {mode === 'decision' && approval.expiresAt !== undefined && (
+                <span title={`Expires ${formatApprovalTime(approval.expiresAt)}`}>expires {formatClockTime(approval.expiresAt)}</span>
+              )}
+              <SessionIdCopy sessionId={approval.sessionId} short />
+            </span>
           </div>
         </header>
 

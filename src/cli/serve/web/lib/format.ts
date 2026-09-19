@@ -21,6 +21,14 @@ export function formatApprovalTime(value?: number): string {
   return value ? new Date(value).toLocaleString() : 'Unknown';
 }
 
+/** Clock only, no date and no seconds ("9:20 AM"). The session header's fact
+ * row is one line at every width, and a full locale timestamp is most of a
+ * phone's width for a fact nobody reads to the second; the full stamp stays in
+ * the item's title. */
+export function formatClockTime(value?: number): string {
+  return value ? new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Unknown';
+}
+
 /** Prefer the configured human name; otherwise show the agent filename rather
  * than an opaque normalized id. */
 export function displayAgentName(name: string | undefined, filePath: string | undefined, id: string): string {

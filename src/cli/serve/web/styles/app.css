@@ -963,9 +963,10 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 .page-approval-detail .session-sticky-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-height: 44px;
   padding: 8px 16px;
+  font-size: var(--font-size-caption);
   background: var(--bg);
   border-bottom: 1px solid var(--line);
   opacity: 0;
@@ -998,6 +999,9 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 }
 .page-approval-detail .session-sticky-spacer { flex: 1 1 auto; }
 .page-approval-detail .session-sticky-name {
+  /* Sized to the name, with the spacer after it taking the slack, so the facts
+     stay snug against the name instead of drifting to mid-bar. */
+  flex: 0 1 auto;
   font-family: var(--sans);
   font-size: var(--font-size-supporting);
   font-weight: var(--weight-medium);
@@ -1007,17 +1011,32 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   text-overflow: ellipsis;
   min-width: 0;
 }
-/* The status: a dot and a word, said once, in plain English. It replaced a
-   coloured pill shouting a raw status token in capitals. */
-.page-approval-detail .session-status {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: var(--font-size-caption);
-  font-weight: var(--weight-medium);
-  white-space: nowrap;
+/* Separators inside the pinned bar hang off the item before them, never off the
+   name: the name is the one thing here allowed to truncate, and a dot living in
+   its text box would truncate with it. */
+.page-approval-detail .session-sticky-bar .session-status-word::after,
+.page-approval-detail .session-sticky-bar .session-facts.is-inline:has(> *)::before {
+  content: "·";
+  color: var(--muted-2);
 }
+.page-approval-detail .session-sticky-bar .session-status-word::after { margin-left: 8px; }
+.page-approval-detail .session-sticky-bar .session-facts.is-inline:has(> *)::before { margin-right: 8px; }
+/* The bar is a fixed 44px, so its copy of the row never takes the wrap. */
+.page-approval-detail .session-facts.is-inline { flex-wrap: nowrap; row-gap: 0; }
+/* The live facts ride along in the pinned bar, and give way before the name
+   does when the window is too narrow for both — hence the lopsided shrink
+   factor, which only matters in the band between the phone rules and a window
+   wide enough for everything. */
+.page-approval-detail .session-facts.is-inline {
+  flex: 0 100 auto;
+  margin: 0;
+  overflow: hidden;
+}
+/* The state, in two places that read as one: a coloured dot against the name in
+   the identity row, and the same colour's word leading the fact row directly
+   under it. The dot carries its own tone class rather than inheriting a
+   parent's colour, so the element that needs the colour is the one that
+   declares it and the dot works standing alone. */
 .page-approval-detail .session-status-dot {
   width: 8px;
   height: 8px;
@@ -1025,13 +1044,22 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   background: currentColor;
   flex: none;
 }
-.page-approval-detail .session-status.is-ok { color: var(--green); }
-.page-approval-detail .session-status.is-bad { color: var(--red); }
-.page-approval-detail .session-status.is-wait { color: var(--amber); }
-.page-approval-detail .session-status.is-busy { color: var(--cyan); }
-.page-approval-detail .session-status.is-busy .session-status-dot {
+.page-approval-detail .session-status-dot.is-ok { background: var(--green); }
+.page-approval-detail .session-status-dot.is-bad { background: var(--red); }
+.page-approval-detail .session-status-dot.is-wait { background: var(--amber); }
+.page-approval-detail .session-status-dot.is-busy {
+  background: var(--cyan);
   animation: pulse 1.8s ease-in-out infinite;
 }
+.page-approval-detail .session-status-word {
+  flex: none;
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+}
+.page-approval-detail .session-status-word.is-ok { color: var(--green); }
+.page-approval-detail .session-status-word.is-bad { color: var(--red); }
+.page-approval-detail .session-status-word.is-wait { color: var(--amber); }
+.page-approval-detail .session-status-word.is-busy { color: var(--cyan); }
 /* Pending-queue position, shown only while other gates are also waiting. Lives in
    the sticky bar so a reviewer working a backlog can advance from anywhere in a
    long card without scrolling back for a control. */
@@ -1219,29 +1247,17 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
 }
 .page-approval-detail .session-bar-resume:hover { background: var(--primary-bg-hover); border-color: var(--primary-bg-hover); }
 .page-approval-detail .session-bar-resume:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 2px; }
+/* One filled button per row. Discard is outlined, not filled: a solid red
+   button beside a red state word put two loud reds in one row competing to be
+   the thing you look at, and the state should win that. */
 .page-approval-detail .session-bar-stop {
-  border: 1px solid var(--red);
-  background: var(--red);
-  color: var(--bg);
+  border: 1px solid var(--red-border);
+  background: transparent;
+  color: var(--red);
+  box-shadow: none;
 }
+.page-approval-detail .session-bar-stop:hover { background: var(--red-soft); border-color: var(--red); box-shadow: none; }
 .page-approval-detail .session-bar-stop:focus-visible { outline: 2px solid var(--red-border); outline-offset: 2px; }
-/* Phone: the labels go, the icons stay. Two full-width buttons used to push the
-   ⋯ menu onto a second row, which is how the row's last actions disappeared
-   below the fold. Colour and tooltip still say which button is which. */
-@media (max-width: 700px) {
-  .page-approval-detail .session-header-controls,
-  .page-approval-detail .session-sticky-bar { flex-wrap: nowrap; gap: 6px; }
-  .page-approval-detail .session-bar-action {
-    padding: 6px;
-    min-width: 30px;
-    justify-content: center;
-    gap: 0;
-  }
-  .page-approval-detail .session-bar-action-label { display: none; }
-  /* Only the run's own name should give ground when the row runs out of it. */
-  .page-approval-detail .session-status,
-  .page-approval-detail .session-header-tag { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-}
 /* Back-to-parent: an icon-only control on sub-agent runs. The parent name lives in
    its tooltip/aria-label rather than inline, keeping the bar compact. */
 .page-approval-detail .session-bar-back {
@@ -1272,16 +1288,8 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
    topbar chrome); .menu-btn re-skins the pill. The item selectors go through
    .session-header so they outrank that broad rule (0,4,0 vs its 0,3,1) —
    plain 3-class selectors here would lose to it. The menu sits in the
-   header's controls row now, not beside the h1, so the scope is the header
-   rather than the title row. */
-.page-approval-detail .header-title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 18px;
-}
-.page-approval-detail .header-title-row h1 { margin-bottom: 0; min-width: 0; }
+   header's identity row and in the pinned bar, so the scope is those two
+   rather than a title row. */
 .page-approval-detail .session-menu { flex: none; display: inline-flex; }
 .page-approval-detail .session-menu .menu-btn {
   width: 30px;
@@ -4277,9 +4285,6 @@ html[data-route-loading] body::after {
   .log-chevron { position: absolute; right: 10px; }
   .log-item { position: relative; padding-right: 32px; }
   .log-delegate-status, .log-delegate-tag { font-size: var(--font-size-micro); }
-  /* The model belongs to the run, not to the glance: on a phone it costs a
-     whole line, so it stays in the menu and the diagnostic page. */
-  .page-approval-detail .session-meta-model { display: none; }
   .page-approval-detail .now-card { padding: 18px 16px; gap: 14px; }
   .page-approval-detail .now-headline { font-size: var(--font-size-subtitle); }
   .page-approval-detail .now-headline-row { flex-wrap: wrap; }
@@ -11270,25 +11275,28 @@ html[data-page="draft-panel"] .app-route {
    Rule one of this page: say each fact once. The status, the agent name, the
    timings and the cost live here and nowhere else. */
 .page-approval-detail header.session-header { margin: 0 0 20px; }
-.page-approval-detail .session-header h1 { margin: 0; }
-/* Row one: back, status, labels, then the queue, immediate run controls and the
-   menu pushed to the right edge. */
-.page-approval-detail .session-header-controls {
+/* Row one: back, the state dot, the name, then the queue, the immediate run
+   controls and the ⋯ menu pushed to the right edge. The name takes the slack,
+   so there is no spacer element, and the row never wraps at any width: the
+   name truncates instead, and it is the only thing here that may. */
+.page-approval-detail .session-identity {
   display: flex;
   align-items: center;
   gap: 10px;
   min-height: 36px;
-  margin-bottom: 6px;
 }
-.page-approval-detail .session-header-spacer { flex: 1 1 auto; }
-/* A label, not a badge: "mock", "internal", "view only" are qualifiers on the
-   status beside them, so they read as quiet grey words. */
-.page-approval-detail .session-header-tag {
-  flex: none;
-  font-size: var(--font-size-caption);
-  color: var(--muted);
-  letter-spacing: normal;
-  text-transform: none;
+.page-approval-detail .session-identity h1 {
+  margin: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  font-family: var(--sans);
+  font-size: var(--font-size-title);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--tracking-tight);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .page-approval-detail .session-bar-back-label {
   font-size: var(--font-size-caption);
@@ -11300,48 +11308,89 @@ html[data-page="draft-panel"] .app-route {
 }
 .page-approval-detail .session-bar-back:has(.session-bar-back-label) { padding: 4px 8px 4px 4px; gap: 4px; }
 .page-approval-detail .session-header-diagnostic { flex: none; }
-/* Row two: the name, once, with whose sub-agent or whose revision it is. */
-.page-approval-detail .session-header .header-title-row {
+/* Row two: one line, one order, never wrapped. It opens with the state word in
+   the state's colour, continues with what the run is spending, and ends with
+   the keys you look a run up by — the group that leaves at phone width. */
+.page-approval-detail .session-facts {
   display: flex;
-  align-items: baseline;
-  justify-content: flex-start;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 8px;
-}
-.page-approval-detail .session-title-note {
-  font-size: var(--font-size-supporting);
-  color: var(--muted);
-}
-/* Row three: one line, one typeface, one colour. It used to be two rows that
-   mixed mono, bold and plain and repeated the elapsed time into the card. */
-.page-approval-detail .session-meta-line {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 0;
+  /* Centred, not baseline-aligned: the context item is a flex box whose first
+     child is the meter, so baseline alignment synthesises its baseline from a
+     3px bar and pushes the row taller than its text. Every item here is one
+     line of the same size, so centring reads identically and measures true. */
+  align-items: center;
+  min-width: 0;
+  margin-top: 6px;
   font-size: var(--font-size-caption);
+  line-height: var(--lh-snug);
   color: var(--muted);
 }
-/* Separators drawn, not typed. They trail their own item so a line that
-   wraps opens on a word rather than on a stranded dot. */
-.page-approval-detail .session-meta-line > *:not(:last-child)::after {
+/* The row is one line in the ordinary case, and wrapping is its safety valve,
+   not its layout: a long state word ("Needs your decision") on a narrow phone
+   has to go somewhere, and a second line costs 20px where clipping costs the
+   reader a fact. Each item stays whole; only the gaps between them break. */
+.page-approval-detail .session-facts > *,
+.page-approval-detail .session-facts-keys > * { white-space: nowrap; }
+.page-approval-detail .session-facts { flex-wrap: wrap; row-gap: 2px; }
+/* Separators drawn, not typed. They trail their own item so a line that wraps
+   opens on a word rather than on a stranded dot; the phone rules below take
+   care of the one that would trail the hidden keys group. */
+.page-approval-detail .session-facts > *:not(:last-child)::after,
+.page-approval-detail .session-facts-keys > *:not(:last-child)::after {
   content: "·";
   margin: 0 8px;
   color: var(--muted-2);
 }
-.page-approval-detail .session-meta-line .session-id-copy code { font-size: var(--font-size-micro); }
+/* A group for one purpose only — being hidden as a unit at phone width. For
+   layout it is transparent, so on a wide screen its items pack into the row
+   one by one and take the wrap individually. As a flex item of its own it was
+   atomic, and a gate's longer fact set pushed the whole group onto a second
+   line while 200px of the first sat empty. */
+.page-approval-detail .session-facts-keys {
+  display: contents;
+}
+/* Numbers a reader compares between runs, so their digits line up. */
+.page-approval-detail .session-facts-num { font-variant-numeric: tabular-nums; }
+.page-approval-detail .session-facts .session-id-copy code { font-size: var(--font-size-micro); }
+.page-approval-detail .session-context {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
 .page-approval-detail .session-context-toggle {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   border: 0;
+  /* Same escape .session-id-copy takes: the page's broad button rule sets a
+     tap-target min-height, which an inline button ignored and this one, now a
+     flex box, would obey — doubling the fact row's height. */
+  min-height: 0;
   padding: 0;
   background: transparent;
   color: inherit;
   font: inherit;
+  font-variant-numeric: tabular-nums;
   text-align: left;
   cursor: pointer;
 }
-.page-approval-detail .session-meta-line .session-context-toggle:hover {
+/* Context is the one fact on the row that is a fraction of a budget, so it
+   gets the row's one piece of shape. Everything else stays a plain word. */
+.page-approval-detail .session-context-meter {
+  width: 28px;
+  height: 3px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--line-strong);
+  overflow: hidden;
+}
+.page-approval-detail .session-context-meter-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--cyan);
+}
+.page-approval-detail .session-facts .session-context-toggle:hover {
   background: transparent;
   border: 0;
   color: inherit;
@@ -11351,6 +11400,37 @@ html[data-page="draft-panel"] .app-route {
   outline: 2px solid currentColor;
   outline-offset: 3px;
   border-radius: 2px;
+}
+/* Every phone rule this header has, in one place, after the sizes they
+   override. The name steps down the scale; the tail of each row goes — the
+   lookup keys in the header, the state word and the live numbers in the
+   pinned bar, which still has the dot and the name; and the buttons keep
+   their icon and drop their label. Nothing reflows, reorders or wraps: the
+   name truncates and the rows stay one line each. */
+@media (max-width: 700px) {
+  .page-approval-detail .session-identity h1 { font-size: var(--font-size-subtitle); }
+  .page-approval-detail .session-facts-keys { display: none; }
+  /* The item that was in front of the keys group is now the end of the row,
+     so it must stop trailing a separator into nothing. */
+  .page-approval-detail .session-facts > *:has(+ .session-facts-keys)::after { content: none; }
+  /* The queue's position reads as a count in a list the phone is not showing;
+     the arrow to the next pending gate is the part worth the width. */
+  .page-approval-detail .session-bar-queue-count { display: none; }
+  /* Same idea as the buttons: the number stays, the word explaining it goes,
+     and the title carries it. Without this the ordinary row lands a few pixels
+     over a phone's width and takes a whole second line for one word. */
+  .page-approval-detail .session-facts-word { display: none; }
+  .page-approval-detail .session-sticky-bar .session-status-word,
+  .page-approval-detail .session-sticky-bar .session-facts.is-inline { display: none; }
+  .page-approval-detail .session-bar-action-label { display: none; }
+  .page-approval-detail .session-bar-action {
+    padding: 6px;
+    min-width: 30px;
+    justify-content: center;
+    gap: 0;
+  }
+  .page-approval-detail .session-identity,
+  .page-approval-detail .session-sticky-bar { gap: 6px; }
 }
 
 /* The now card. One frame, generous padding, no inner frames: the head band,

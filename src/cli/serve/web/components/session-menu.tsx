@@ -1,7 +1,8 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ComponentChildren } from 'preact';
 import { useRunAgent } from '../hooks/use-run-agent';
 import { agentDetailHref } from '../lib/links';
+import { writeClipboardText } from '../lib/clipboard';
 import { RunCustomDialog } from './run-custom-dialog';
 import { MenuPopover } from './menu-popover';
 
@@ -58,11 +59,27 @@ export function SessionMenu(props: {
   runActions?: SessionMenuRunAction[];
   /** This run's diagnostic page (context, tokens, timings). */
   diagnosticHref?: string;
+  /** This run's session id, offered here as "Copy session ID". */
+  sessionId?: string;
   /** Kept out of the tab order while the sticky copy of the bar is hidden. */
   tabIndex?: number;
 }) {
   const [runOpen, setRunOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const { run, busy, error } = useRunAgent(props.agentRunPath, props.projectId);
+
+  const copyResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (copyResetTimer.current !== null) clearTimeout(copyResetTimer.current);
+  }, []);
+
+  const copyId = async () => {
+    if (!props.sessionId) return;
+    if (!await writeClipboardText(props.sessionId)) return;
+    setCopied(true);
+    if (copyResetTimer.current !== null) clearTimeout(copyResetTimer.current);
+    copyResetTimer.current = setTimeout(() => setCopied(false), 1_600);
+  };
 
   return (
     <>
@@ -135,6 +152,23 @@ export function SessionMenu(props: {
               </svg>
               <span>Diagnostic</span>
             </a>
+          )}
+          {props.sessionId && (
+            // The id left the header's fact row at phone width, where it was
+            // four wrapped words of hex nobody reads. Copying it is the only
+            // thing anyone did with it, so it lives here as that verb.
+            <button
+              type="button"
+              class="menu-item"
+              role="menuitem"
+              title={`Copy session ID ${props.sessionId}`}
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); void copyId(); }}
+            >
+              <svg class="menu-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="6" y="6" width="7.5" height="7.5" rx="1.5" /><path d="M10 6V4a1.5 1.5 0 0 0-1.5-1.5h-4A1.5 1.5 0 0 0 3 4v4A1.5 1.5 0 0 0 4.5 9.5h1.5" />
+              </svg>
+              <span>{copied ? 'Session ID copied' : 'Copy session ID'}</span>
+            </button>
           )}
             {error && !runOpen && <p class="menu-error" role="alert">{error}</p>}
             {props.runActions && props.runActions.length > 0 && (
