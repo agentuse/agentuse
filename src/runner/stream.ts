@@ -23,15 +23,19 @@ import { sanitizeWALInput } from './effect-wal';
 
 /**
  * Session history is the source of truth for an approval card. Unlike ordinary
- * tool telemetry, an await_human input must remain complete so the reviewer can
- * inspect exactly what approval would authorize. The tool schema has already
- * normalized this value to plain JSON before it reaches the stream.
+ * tool telemetry, an await_human input must survive whole so the reviewer can
+ * inspect exactly what approval would authorize, so it gets a much higher
+ * ceiling than the WAL default. It stays bounded and normalized: the part is
+ * replayed into the model on every resume.
  *
- * Keep the bounded WAL projection for every other tool. The effect WAL is an
+ * Keep the default WAL projection for every other tool. The effect WAL is an
  * audit trail, not a review artifact, and one giant argument must not bloat it.
  */
+const MAX_AWAIT_HUMAN_INPUT_CHARS = 262_144;
 function sessionToolInput(toolName: string, input: unknown): unknown {
-  return toolName === 'await_human' ? input : sanitizeWALInput(input);
+  return toolName === 'await_human'
+    ? sanitizeWALInput(input, MAX_AWAIT_HUMAN_INPUT_CHARS)
+    : sanitizeWALInput(input);
 }
 
 type SlackRunChannelHandle = {

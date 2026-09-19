@@ -84,6 +84,12 @@ describe('EffectWAL', () => {
 });
 
 describe('sanitizeWALInput', () => {
+  test('honors a caller-supplied ceiling and still truncates past it', () => {
+    const large = { draft: 'x'.repeat(40_000) };
+    expect(sanitizeWALInput(large, 262_144)).toBe(large);
+    expect(sanitizeWALInput({ draft: 'x'.repeat(300_000) }, 262_144)).toMatchObject({ __truncated: true });
+  });
+
   test('passes small inputs through untouched', () => {
     const input = { command: 'echo hi' };
     expect(sanitizeWALInput(input)).toBe(input);

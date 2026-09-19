@@ -25,7 +25,6 @@ import {
 } from '../runner/session-helper.js';
 import { open, realpath, stat } from 'fs/promises';
 import { resolve } from 'path';
-import { createHash } from 'crypto';
 import { isBlockedReviewPath, isPathInside } from '../utils/path-policy.js';
 import { isSuspendSignal } from '../runner/suspend.js';
 import type { ReviewEscalation } from '../session/types.js';
@@ -42,56 +41,6 @@ export function resolveVerifyPlacements(
 
 const MAX_EMBEDDED_ARTIFACT_BYTES = 12_000;
 const MAX_TOTAL_ARTIFACT_BYTES = 24_000;
-
-/**
- * Fingerprint the exact surface and evaluation contract a gate judge saw.
- * Human review history is deliberately excluded: a presentation-only comment
- * must not invalidate a pass when the work itself is unchanged.
- */
-function gateReviewFingerprint(options: {
-  renderedPayload: string;
-  judgeName: string;
-  agentModel: string;
-  task: string;
-  config: CanonicalVerifyConfig;
-}): string {
-  const contract = JSON.stringify({
-    version: 1,
-    renderedPayload: options.renderedPayload,
-    judgeName: options.judgeName,
-    agentModel: options.agentModel,
-    task: options.task,
-    criteria: options.config.criteria ?? null,
-    judge: options.config.judge ?? null,
-    model: options.config.model ?? null,
-  });
-  return `sha256:${createHash('sha256').update(contract).digest('hex')}`;
-}
-
-/** Find a durable pass from an earlier suspension of this same session. */
-async function hasRecordedGatePass(options: {
-  sessionManager?: SessionManager;
-  sessionID?: string;
-  agentId?: string;
-  gateFingerprint: string;
-}): Promise<boolean> {
-  const { sessionManager, sessionID, agentId, gateFingerprint } = options;
-  if (!sessionManager || !sessionID || !agentId) return false;
-  try {
-    const messages = await sessionManager.getSessionMessages(sessionID, agentId);
-    for (const message of [...messages].reverse()) {
-      const parts = await sessionManager.getMessageParts(sessionID, agentId, message.id);
-      for (const part of [...parts].reverse()) {
-        if (part.type === 'verify' && part.verdict === 'pass' && part.gateFingerprint === gateFingerprint) {
-          return true;
-        }
-      }
-    }
-  } catch (error) {
-    logger.debug(`[Verify] Failed to inspect prior gate passes: ${(error as Error).message}`);
-  }
-  return false;
-}
 
 function renderHumanReviewHistory(decisions: HumanApprovalDecision[]): string | undefined {
   if (decisions.length === 0) return undefined;
@@ -332,10 +281,9 @@ export interface GateVerifyOptions {
 }
 
 /**
- * Wrap an await_human tool with a pre-suspension judge. A byte-identical gate
- * reuses a durable prior pass across suspension. A changed gate immediately
- * following a real human Comment bypasses the judge in non-fresh mode so the
- * requested revision returns directly to that reviewer. Otherwise, the
+ * Wrap an await_human tool with a pre-suspension judge. A gate immediately
+ * following a real human Comment bypasses the judge in every review mode so
+ * the requested revision returns directly to that reviewer. Otherwise, the
  * rejection counter lives in the closure: it spans all judge-bounces within
  * one stream segment (no suspension happens between them) and resets on resume.
  */
@@ -348,9 +296,6 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
   const freshReview = config.gateReview === 'fresh';
   const freshReviewAttempts = Math.max(1, config.maxRedos);
   let lastFreshCritique: string | undefined;
-  // Fast path for repeated calls on the same wrapper. The durable VerifyPart
-  // lookup below provides the same guarantee after suspension recreates it.
-  const passedGateFingerprints = new Set<string>();
   const rejectFreshReview = (critique: string) => ({
     status: 'rejected',
     source: 'pre-review',
@@ -401,51 +346,14 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
         ? await gatherHumanApprovalHistory(sessionManager, sessionID, agentId)
         : [];
       const candidates = extractGateCandidates(input);
-      const renderedPayload = await renderGatePayload(input, projectContext?.projectRoot);
-      const gateFingerprint = gateReviewFingerprint({
-        renderedPayload,
-        judgeName,
-        agentModel,
-        task,
-        config,
-      });
-      const passedUnchanged = passedGateFingerprints.has(gateFingerprint)
-        || await hasRecordedGatePass({
-          ...(sessionManager && { sessionManager }),
-          ...(sessionID && { sessionID }),
-          ...(agentId && { agentId }),
-          gateFingerprint,
-        });
-
-      if (passedUnchanged) {
-        passedGateFingerprints.add(gateFingerprint);
-        logger.info('[Verify] Gate payload unchanged since a recorded pass; requesting human approval without another judge call');
-        await recordVerifyPart({
-          type: 'verify', verdict: 'pass', attempt: gateRejections, maxRedos: config.maxRedos,
-          critique: 'Exact gate unchanged since the previous pass; carried forward without a new judge call.',
-          gateFingerprint,
-          ...(candidates.length > 0 && {
-            candidates: candidates.map((candidate) => ({
-              id: candidate.id,
-              pass: true,
-              settled: true,
-              fingerprint: fingerprintText(candidate.text),
-            })),
-          }),
-          judge: judgeName, time: { start: Date.now() },
-        });
-        return suspend();
-      }
-
       // A gate that reaches the human without a judge look gets a marker
       // saying so. Without it the card shows the previous verdict as if it
       // were about the text now on screen, which it is not.
-      if (!freshReview && shouldDeferGateReviewToHuman(humanDecisions)) {
+      if (shouldDeferGateReviewToHuman(humanDecisions)) {
         logger.info('[Verify] Gate pre-review skipped after a human reviewer comment; returning the revision directly to the reviewer');
         await recordVerifyPart({
           type: 'verify', verdict: 'skipped', attempt: gateRejections, maxRedos: config.maxRedos,
           critique: 'Not judged: returned straight to the reviewer who commented.',
-          gateFingerprint,
           judge: judgeName, time: { start: Date.now() },
         });
         return suspend();
@@ -456,7 +364,6 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
         await recordVerifyPart({
           type: 'verify', verdict: 'skipped', attempt: gateRejections, maxRedos: config.maxRedos,
           critique: 'Not judged again: review budget exhausted; returned to the human for revision guidance.',
-          gateFingerprint,
           judge: judgeName, time: { start: Date.now() },
         });
         return suspend({
@@ -474,7 +381,6 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
         await recordVerifyPart({
           type: 'verify', verdict: 'skipped', attempt: gateRejections, maxRedos: config.maxRedos,
           critique: 'Not judged: pre-review budget spent, escalated to you.',
-          gateFingerprint,
           judge: judgeName, time: { start: Date.now() },
         });
         return suspend();
@@ -490,12 +396,12 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
         await recordVerifyPart({
           type: 'verify', verdict: 'pass', attempt, maxRedos: config.maxRedos,
           critique: 'Unchanged since the previous pass; carried forward without a new judge call.',
-          gateFingerprint,
           candidates: candidates.map((candidate) => ({ id: candidate.id, pass: true, settled: true, fingerprint: fingerprintText(candidate.text) })),
           judge: judgeName, time: { start: Date.now() },
         });
         return suspend();
       }
+      const renderedPayload = await renderGatePayload(input, projectContext?.projectRoot);
       const reviewHistory = renderHumanReviewHistory(humanDecisions);
       const changedIds = candidates
         .filter((candidate) => lastText.has(candidate.id) && lastText.get(candidate.id) !== candidate.text)
@@ -528,7 +434,7 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
         logger.warn(`[Verify] Gate pre-review judge failed (${outcome.detail}); ${freshReview ? 'blocking the unreviewed request' : 'escalating to the human reviewer unjudged'}`);
         await recordVerifyPart({
           type: 'verify', verdict: 'error', attempt, maxRedos: config.maxRedos,
-          critique: outcome.detail, gateFingerprint, judge: judgeName, time: { start: Date.now() },
+          critique: outcome.detail, judge: judgeName, time: { start: Date.now() },
         });
         if (freshReview) {
           gateRejections++;
@@ -560,11 +466,9 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
       }
 
       if (verdict.pass) {
-        passedGateFingerprints.add(gateFingerprint);
         logger.info('[Verify] Gate draft passed pre-review; requesting human approval');
         await recordVerifyPart({
           type: 'verify', verdict: 'pass', attempt, maxRedos: config.maxRedos,
-          gateFingerprint,
           ...(verdict.critique && { critique: verdict.critique }),
           ...(candidateVerdicts && { candidates: candidateVerdicts }),
           judge: judgeName, time: { start: Date.now() },
@@ -577,7 +481,7 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
       if (freshReview) lastFreshCritique = critique;
       await recordVerifyPart({
         type: 'verify', verdict: 'fail', attempt, maxRedos: config.maxRedos,
-        critique, gateFingerprint, ...(candidateVerdicts && { candidates: candidateVerdicts }),
+        critique, ...(candidateVerdicts && { candidates: candidateVerdicts }),
         judge: judgeName, time: { start: Date.now() },
       });
       // Zero redos still judges the initial candidate. A failure has no

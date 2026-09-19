@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **A reviewer's Comment always routes the revision straight back to that reviewer, including under `gateReview: fresh`.** Fresh mode previously sent every post-comment revision through the judge again, so a reviewer who was already in the loop waited on a model before seeing the change they had just asked for. The judge now runs before the reviewer's first look at a gate and stays out after a Comment in both review modes; the gate records a `skipped` marker so the card says the revision was not judged. Fresh mode still never reuses verdicts or judge sessions and still blocks a request when the judge fails or the review budget is spent.
+
+### Removed
+
+- **The durable gate-pass cache is gone.** It fingerprinted the rendered gate and reused a recorded pass after suspension, but the only case it could ever hit was an unchanged gate resubmitted after a reviewer Comment, which the rule above now handles without a session scan. Removing it also removes a way to escape an exhausted fresh-review budget by resubmitting an earlier passing payload, and a fingerprint that could not see artifact content past the 24KB preview limit.
+
+### Fixed
+
+- **Stored `await_human` inputs are bounded again.** Approval cards need the whole request, so these inputs keep a much higher ceiling than ordinary tool arguments (256K characters instead of 16K), but they are once more normalized and capped rather than persisted and replayed without limit.
+
 ## [0.22.0] - 2026-09-18
 
 ### Added

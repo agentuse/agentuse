@@ -29,8 +29,8 @@ export interface CanonicalVerifyConfig {
   judge?: string | undefined;
   at?: VerifyPlacement | undefined;
   maxRedos: number;
-  /** Fresh gate reviews recheck every candidate whenever any part of the gate
-   * changes. An exact full-gate match may reuse a durable prior pass. */
+  /** Fresh gate reviews never reuse verdicts or judge sessions, and block
+   * unreviewed requests. A gate right after a human Comment still skips the judge. */
   gateReview?: 'fresh' | undefined;
   model?: string | undefined; // built-in judge model override; invalid with `judge`
 }

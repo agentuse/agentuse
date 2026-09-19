@@ -598,25 +598,30 @@ describe('judge session reuse across attempts', () => {
 describe('fresh gate review', () => {
   const freshOptions = { ...baseOptions, config: { ...baseOptions.config, maxRedos: 2, gateReview: 'fresh' as const } };
 
-  it('reviews the revised copy after a human comment', async () => {
+  it('returns the revised copy straight to the reviewer after a human comment', async () => {
     judgeOutputMock.mockResolvedValue({ status: 'verdict', verdict: { pass: true } });
+    const recorded: any[] = [];
     const sessionManager = {
       getSessionMessages: async () => [{ id: 'm1' }],
       getMessageParts: async () => [{ type: 'tool', tool: 'await_human', state: {
         status: 'completed', input: gateInput,
         output: { status: 'commented', comment: 'Mention my product', reviewer: { username: 'web' } },
       } }],
-      addPart: async () => 'part',
+      addPart: async (_session: string, _agent: string, _message: string, part: unknown) => {
+        recorded.push(part);
+        return 'part';
+      },
     } as any;
     const { tool, suspend } = makeGateTool();
     const gate = withGateVerify(tool, { ...freshOptions, sessionManager, sessionID: 's', agentId: 'a', messageID: 'm2' });
     const revised = { ...gateInput, changes: [{ label: 'Reply to post', content: 'The revised reply text mentions the product.' }] };
     await expect((gate.execute as any)(revised, {})).rejects.toThrow('SUSPENDED');
-    expect(judgeOutputMock).toHaveBeenCalledTimes(1);
+    expect(judgeOutputMock).not.toHaveBeenCalled();
     expect(suspend).toHaveBeenCalledTimes(1);
+    expect(recorded.at(-1)).toMatchObject({ type: 'verify', verdict: 'skipped' });
   });
 
-  it('reuses a durable pass after suspension when the complete gate is unchanged', async () => {
+  it('does not judge an unchanged gate again after a human comment', async () => {
     judgeOutputMock.mockResolvedValue({ status: 'verdict', verdict: { pass: true } });
     const parts: any[] = [];
     const sessionManager = {
@@ -661,13 +666,8 @@ describe('fresh gate review', () => {
 
     expect(judgeOutputMock).toHaveBeenCalledTimes(1);
     expect(resumedTool.suspend).toHaveBeenCalledTimes(1);
-    const carried = parts.filter((part) => part.type === 'verify').at(-1);
-    expect(carried).toMatchObject({
-      verdict: 'pass',
-      critique: expect.stringContaining('Exact gate unchanged'),
-      gateFingerprint: expect.stringMatching(/^sha256:/),
-    });
-    expect(carried.candidates.every((candidate: any) => candidate.settled === true)).toBe(true);
+    const marker = parts.filter((part) => part.type === 'verify').at(-1);
+    expect(marker).toMatchObject({ verdict: 'skipped' });
   });
 
   it('does not carry a pass or judge session into a revised slate', async () => {

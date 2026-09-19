@@ -91,7 +91,7 @@ export class EffectWAL implements EffectAuditSink {
 }
 
 /** JSON-safe copy of a tool input, capped so the journal stays readable. */
-export function sanitizeWALInput(input: unknown): unknown {
+export function sanitizeWALInput(input: unknown, maxChars: number = MAX_INPUT_CHARS): unknown {
   // Preserve ordinary JSON-compatible inputs exactly for existing consumers,
   // but only after proving the whole graph is plain data. JSON.stringify turns
   // nested Map/Set/typed values into `{}`, which would silently erase the very
@@ -115,7 +115,7 @@ export function sanitizeWALInput(input: unknown): unknown {
   if (isPlainJsonGraph(input)) {
     try {
       const direct = JSON.stringify(input);
-      if (direct !== undefined && direct.length <= MAX_INPUT_CHARS) return input;
+      if (direct !== undefined && direct.length <= maxChars) return input;
     } catch { /* use the tagged audit projection below */ }
   }
   const seen = new WeakSet<object>();
@@ -148,7 +148,7 @@ export function sanitizeWALInput(input: unknown): unknown {
   const output = convert(input);
   let serialized: string;
   try { serialized = JSON.stringify(output); } catch { return { __truncated: true, preview: '[unserializable audit value]' }; }
-  return serialized.length <= MAX_INPUT_CHARS ? output : { __truncated: true, preview: serialized.slice(0, MAX_INPUT_CHARS) };
+  return serialized.length <= maxChars ? output : { __truncated: true, preview: serialized.slice(0, maxChars) };
 }
 
 /**

@@ -125,16 +125,21 @@ verify:
   maxRedos: 2
 ```
 
-Each gate gets a fresh judge session and all candidates are checked again,
-including after human comments. Human feedback remains available as review
-context, but no previous candidate verdict is carried forward. This also
-rechecks unchanged wording when the source or evidence changes.
+Each judged gate gets a fresh judge session and all candidates are checked
+again. No previous candidate verdict is carried forward, so unchanged wording is
+rechecked when the source or evidence changes.
 
-Fresh mode never lets an unreviewed replacement reach approval. When failed
+A gate that directly follows a human Comment skips the judge, exactly as in the
+default mode: the revision returns straight to the reviewer who asked for it,
+with a `skipped` marker saying it was not judged. The judge filters what reaches
+the reviewer's first look; it does not second-guess a reviewer who is already
+in the loop.
+
+Fresh mode never lets an agent's own unreviewed replacement reach approval. When failed
 verdicts or reviewer errors consume the review budget, the current draft returns
 to the human in a feedback-only gate with the latest critique. Approval stays
-unavailable. The reviewer can comment with guidance to resume the same session
-and start a fresh revision-and-review cycle, or reject to stop the action. The
+unavailable. The reviewer can comment with guidance to resume the same session,
+which returns the revision straight to them, or reject to stop the action. The
 current draft, prior human comments, and automated critique remain in the
 session rather than being discarded by a terminal failure.
 
