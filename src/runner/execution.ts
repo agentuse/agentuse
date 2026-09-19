@@ -1540,7 +1540,13 @@ async function* executeAgentAttempt(
         const wrapUpNotice = await options.executionBudget?.takeNotice();
         if (wrapUpNotice) logger.info('Wrapping up: execution budget nearly used.');
         const budgetNotice = options.executionBudget?.notice;
-        if (budgetNotice) stepMessages = [...stepMessages, { role: 'system', content: budgetNotice }];
+        // Tail placement so the model cannot miss it, but USER role on purpose.
+        // A second system message after the conversation has started makes
+        // Bedrock throw (UnsupportedFunctionalityError), and it would also steal
+        // the system cache breakpoint below -- applyAnthropicCacheControlToMessages
+        // scans backwards for the last system message -- onto a tail position
+        // that shifts every step, which kills prompt-cache reads outright.
+        if (budgetNotice) stepMessages = [...stepMessages, { role: 'user', content: budgetNotice }];
         preparedStepInputs.push([...stepMessages]);
 
         // Measurement + cache annotation only. Compaction runs BETWEEN

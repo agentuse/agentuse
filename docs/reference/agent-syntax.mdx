@@ -100,8 +100,10 @@ Additional instructions or context.
   tool is not interrupted by the notice, so delivery can be later than 80%.
   The hard deadline remains in force.
 
-  A delegated agent has its own timeout (300 seconds when omitted), constrained
-  by its parent's remaining budget. A child timeout returns a failed outcome to
+  A delegated agent that sets its own `timeout` is held to it, constrained by
+  its parent's remaining budget. One that omits `timeout` inherits the parent's
+  remaining budget rather than taking a shorter deadline of its own. A child
+  timeout returns a failed outcome to
   the parent; parent cancellation stops descendants. Active time is preserved
   across approval suspension and resume, excluding human waiting time. A new
   follow-up on an ended session starts a new budget. Historical sessions without

@@ -1,4 +1,4 @@
-import { ExecutionBudget } from './runner/execution-budget';
+import { ExecutionBudget, executionBudgetFor } from './runner/execution-budget';
 import type { Tool } from 'ai';
 import { z } from 'zod';
 import { parseAgent } from './parser';
@@ -180,7 +180,16 @@ export async function createSubAgentTool(
     execute: async ({ task, context }) => {
       const startTime = Date.now();
       const parentSignal = abortSignal;
-      const budget = new ExecutionBudget((agent.config.timeout ?? 300) * 1000, { ...(parentSignal && { parentSignal }) });
+      // A child that declares no `timeout:` inherits the parent's remaining
+      // budget instead of taking a 300s deadline of its own. Deployed child
+      // agent files have always run on the parent's clock; a shorter private
+      // deadline would kill them mid-run while the parent still has time.
+      // The 300s fallback applies only when there is no parent budget at all.
+      const parentBudget = parentSignal ? executionBudgetFor(parentSignal) : undefined;
+      const budgetMs = agent.config.timeout !== undefined
+        ? agent.config.timeout * 1000
+        : parentBudget?.remainingMs ?? 300 * 1000;
+      const budget = new ExecutionBudget(budgetMs, { ...(parentSignal && { parentSignal }) });
       const childSignal = budget.signal;
 
       // Compute agentId relative to the agent's stateRoot (file-path-based,

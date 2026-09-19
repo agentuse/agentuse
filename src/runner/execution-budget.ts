@@ -1,4 +1,4 @@
-import { runDeadline } from './failure';
+import { runDeadline, RunAbortError } from './failure';
 import { logger } from '../utils/logger';
 import type { SessionManager } from '../session';
 import type { SessionInfo } from '../session/types';
@@ -24,7 +24,7 @@ export class ExecutionBudget {
   private timer?: ReturnType<typeof setTimeout>;
   private stopped = false;
   private deliveredAt: number | undefined;
-  private wrappedUpAt?: number;
+  private wrappedUpAt: number | undefined;
   private parent: ExecutionBudget | undefined;
   private parentSignal: AbortSignal | undefined;
   private removeParentListener?: () => void;
@@ -44,6 +44,15 @@ export class ExecutionBudget {
   get signal(): AbortSignal { return this.controller.signal; }
   get elapsedMs(): number { return this.priorElapsed + (this.stopped ? 0 : Date.now() - this.started); }
   get parentAborted(): boolean { return this.parentSignal?.aborted ?? false; }
+  /**
+   * True when the abort came from a deadline -- this budget's own or a restored
+   * ancestor's -- rather than an operator stop. bind() folds ancestor signals
+   * into parentSignal, so parentAborted alone cannot tell the two apart.
+   */
+  get abortedByDeadline(): boolean {
+    const reason = this.signal.aborted ? this.signal.reason : undefined;
+    return reason instanceof RunAbortError && reason.causeCode === 'run_deadline';
+  }
   get remainingMs(): number { return Math.max(0, Math.min(this.configuredMs - this.elapsedMs, this.parent?.remainingMs ?? Infinity)); }
   private setParent(signal?: AbortSignal) {
     this.removeParentListener?.();
@@ -60,7 +69,10 @@ export class ExecutionBudget {
     const ownRemaining = this.configuredMs - this.elapsedMs;
     const parentRemaining = this.parent?.remainingMs ?? Infinity;
     this.effectiveMs = this.elapsedMs + Math.max(0, Math.min(ownRemaining, parentRemaining));
-    this.limitingSessionId = parentRemaining < ownRemaining
+    // A tie means the parent is the real limit: a child that inherited the
+    // parent's remaining budget tracks it exactly, so `<` would credit the
+    // child for a deadline it did not set.
+    this.limitingSessionId = parentRemaining <= ownRemaining
       ? this.parent?.snapshot().limitingSessionId
       : this.sessionId;
     const remaining = Math.max(0, ownRemaining);
@@ -79,9 +91,15 @@ export class ExecutionBudget {
     };
   }
   private restore(state: ExecutionBudgetState) {
-    this.configuredMs = state.configuredMs;
+    // configuredMs is deliberately NOT restored: the caller built this budget
+    // from the live `--timeout` flag / agent config, and the docs promise the
+    // flag wins. bind()'s ancestor loop passes state.configuredMs into the
+    // constructor, so a restored ancestor still gets its own recorded budget.
     this.priorElapsed = state.elapsedMs;
     this.deliveredAt = state.noticeDeliveredAt;
+    // Without this a restored ancestor snapshot would persist wrappedUpAt:
+    // undefined back over a parent that had already wrapped up cleanly.
+    this.wrappedUpAt = state.wrappedUpAt;
     // A continuation gets a new budget; an approval resume retains the notice.
     this.started = Date.now();
     this.arm();

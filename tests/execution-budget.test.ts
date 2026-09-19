@@ -72,7 +72,7 @@ describe('execution budgets', () => {
     await first.takeNotice();
     await first.finish();
     now += 60_000; // Human approval wait is excluded.
-    const resumed = budget(9000);
+    const resumed = budget(1000);
     await resumed.bind(manager, 'leaf', 'leaf', true);
     expect(resumed.remainingMs).toBe(200);
     expect(resumed.snapshot().configuredMs).toBe(1000);
@@ -80,6 +80,29 @@ describe('execution budgets', () => {
     expect(resumed.notice).toBeDefined();
     await resumed.finish(true);
     expect(sessions.get('leaf').executionBudget.wrappedUpAt).toBe(now);
+  });
+  it('honors a new configured timeout on resume while still charging consumed time', async () => {
+    const { sessions, manager } = storage();
+    sessions.set('leaf', { id: 'leaf' });
+    const first = budget(1000);
+    await first.bind(manager, 'leaf', 'leaf');
+    now += 800;
+    await first.finish();
+    // `agentuse run --session <id> --timeout 9`: the caller's value is the live
+    // one, and the docs promise the flag overrides the agent's configured value.
+    const resumed = budget(9000);
+    await resumed.bind(manager, 'leaf', 'leaf', true);
+    expect(resumed.snapshot().configuredMs).toBe(9000);
+    expect(resumed.remainingMs).toBe(8200);
+  });
+  it('keeps an ancestor wrapped-up marker when a descendant resumes', async () => {
+    const { sessions, manager } = storage();
+    sessions.set('parent', { id: 'parent', executionBudget: { configuredMs: 10_000, elapsedMs: 100, effectiveMs: 10_000, noticeDeliveredAt: 900, wrappedUpAt: 950 } });
+    sessions.set('child', { id: 'child', parentSessionID: 'parent', executionBudget: { configuredMs: 2000, elapsedMs: 0, effectiveMs: 2000 } });
+    const child = budget(2000);
+    await child.bind(manager, 'child', 'child', true);
+    await child.finish();
+    expect(sessions.get('parent').executionBudget.wrappedUpAt).toBe(950);
   });
   it('charges resumed delegated work to ancestors without charging human wait', async () => {
     const { sessions, manager } = storage();

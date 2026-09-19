@@ -157,7 +157,11 @@ export async function runExistingSession(opts: {
       try { await conn.client.close(); } catch { /* ignore */ }
     }
     if (enteredRunAgent && executionBudget?.signal.aborted) {
-      if (executionBudget.parentAborted) throw executionBudget.signal.reason;
+      // An operator stop must keep unwinding so the whole cascade halts. A
+      // deadline must not: a restored ancestor's clock expiring is folded into
+      // parentSignal by bind(), and that reads identically to a self-deadline,
+      // which the caller expects back as a graceful failed result.
+      if (executionBudget.parentAborted && !executionBudget.abortedByDeadline) throw executionBudget.signal.reason;
       const failure = classifyFailure(err, executionBudget.signal);
       return { status: 'failed', text: failure.message, toolCallCount: 0, hasTextOutput: false };
     }
