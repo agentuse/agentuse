@@ -200,6 +200,29 @@ describe('withGateVerify', () => {
     expect(judgeOutputMock).toHaveBeenCalledTimes(0);
   });
 
+  it('never lets a pass stored in the session skip the judge on a later gate', async () => {
+    judgeOutputMock.mockResolvedValue({ status: 'verdict', verdict: { pass: true } });
+    const sessionManager = {
+      getSessionMessages: async () => [{ id: 'message-1' }],
+      getMessageParts: async () => [
+        { type: 'verify', verdict: 'pass', attempt: 0, maxRedos: 2 },
+        { type: 'tool', tool: 'await_human', state: {
+          status: 'completed', input: gateInput,
+          output: { status: 'approved', reviewer: { username: 'web' } },
+        } },
+      ],
+      addPart: async () => 'verify-part',
+    } as any;
+    const { tool, suspend } = makeGateTool();
+    const wrapped = withGateVerify(tool, {
+      ...baseOptions, sessionManager, sessionID: 'session-1', agentId: 'agents/reply', messageID: 'message-2',
+    });
+
+    await expect((wrapped.execute as any)(gateInput, {})).rejects.toThrow('SUSPENDED');
+    expect(judgeOutputMock).toHaveBeenCalledTimes(1);
+    expect(suspend).toHaveBeenCalledTimes(1);
+  });
+
   it('does not let a machine pre-review bounce bypass the next judge', async () => {
     judgeOutputMock.mockImplementation(async () => ({ status: 'verdict', verdict: { pass: true } }));
     const sessionManager = {
