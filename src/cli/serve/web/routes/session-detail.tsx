@@ -1,6 +1,7 @@
 import { budgetLabel } from '../../../../session/budget-label';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useLocation, useRoute } from 'preact-iso';
+import { ArrowUp, RotateCw, Square, SquarePen } from 'lucide-preact';
 import type { ApprovalLogEntry, ApprovalPageInfo, LogSubagentSession, LogVerifySummary } from '../../types';
 import { CandidateVerdictList, LogEntry, artifactKind, toolChipLabel, type PriorReview } from '../components/log-entry';
 import { InlineMarkdown, LogContent } from '../components/content';
@@ -2310,11 +2311,12 @@ export default function SessionDetail() {
   };
   const menuControls = runControls.filter((control) => control.placement === 'menu');
   const barControls = runControls.filter((control) => control.placement === 'bar');
-  const controlIcon = (icon: SessionRunControl['icon']) => icon === 'edit'
-    ? <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z" />
-    : icon === 'stop'
-      ? <rect x="6" y="6" width="12" height="12" rx="2" />
-      : <><path d="M21 12a9 9 0 1 1-3-6.7" /><path d="M21 4v5h-5" /></>;
+  const ControlIcon = (props: { icon: SessionRunControl['icon'] }) => {
+    const Icon = props.icon === 'edit' ? SquarePen : props.icon === 'stop' ? Square : RotateCw;
+    return <Icon size={14} aria-hidden="true" />;
+  };
+  // The label is hidden at phone widths (icon-only buttons keep the row on one
+  // line), so it has to reach a screen reader through aria-label too.
   const renderBarControl = (control: SessionRunControl, tabIndex?: number) => (
     <button
       key={control.id}
@@ -2322,19 +2324,40 @@ export default function SessionDetail() {
       class={`session-bar-action session-bar-${control.icon === 'stop' ? 'stop' : 'resume'}`}
       disabled={control.busy}
       aria-busy={control.busy}
+      aria-label={control.label}
       {...(tabIndex === undefined ? {} : { tabIndex })}
       onClick={() => runControl(control)}
       title={control.title}
     >
       {control.busy
         ? <span class="btn-spinner" aria-hidden="true" />
-        : (
-          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            {controlIcon(control.icon)}
-          </svg>
-        )}
-      <span>{control.label}</span>
+        : <ControlIcon icon={control.icon} />}
+      <span class="session-bar-action-label">{control.label}</span>
     </button>
+  );
+  // One menu, rendered twice: in the header and in its sticky stand-in. The
+  // header scrolls away, and a bar that keeps Resume and Discard but drops the
+  // ⋯ would silently take the rest of the run's actions off the page.
+  const renderSessionMenu = (tabIndex?: number) => (
+    <SessionMenu
+      agentName={agentLabel}
+      agentRunPath={approval.agent.runPath as string}
+      // The URL's ?project= wins, but push links and direct session
+      // URLs often omit it; the header's stamped project id keeps
+      // "Run new session" working on multi-project daemons.
+      projectId={sessionProjectId as string}
+      diagnosticHref={diagnosticHref}
+      {...(tabIndex === undefined ? {} : { tabIndex })}
+      {...(runControlsInMenu ? {
+        runActions: menuControls.map((control) => ({
+          label: control.label,
+          title: control.title,
+          icon: control.icon,
+          busy: control.busy,
+          onSelect: () => runControl(control),
+        })),
+      } : {})}
+    />
   );
 
   const renderLogEntry = (entry: PreparedLogEntry, extra?: { priorReview?: PriorReview | undefined }) => {
@@ -2412,11 +2435,7 @@ export default function SessionDetail() {
             >
               {control.busy
                 ? <span class="btn-spinner" aria-hidden="true" />
-                : (
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    {controlIcon(control.icon)}
-                  </svg>
-                )}
+                : <ControlIcon icon={control.icon} />}
               <span>{control.label}</span>
             </button>
           ))}
@@ -2707,6 +2726,7 @@ export default function SessionDetail() {
             <span class="session-sticky-name">{pageAgentLabel}</span>
             <span class="session-sticky-spacer" />
             {barControls.map((control) => renderBarControl(control, scrolled ? 0 : -1))}
+            {sessionMenuShown && renderSessionMenu(scrolled ? 0 : -1)}
             <button
               type="button"
               class="session-bar-top"
@@ -2715,10 +2735,7 @@ export default function SessionDetail() {
               title="Scroll to top"
               tabIndex={scrolled ? 0 : -1}
             >
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M12 19V5" />
-                <path d="m5 12 7-7 7 7" />
-              </svg>
+              <ArrowUp size={14} aria-hidden="true" />
             </button>
           </div>
         </div>
@@ -2768,26 +2785,7 @@ export default function SessionDetail() {
               </div>
             )}
             {barControls.map((control) => renderBarControl(control))}
-            {sessionMenuShown ? (
-              <SessionMenu
-                agentName={agentLabel}
-                agentRunPath={approval.agent.runPath as string}
-                // The URL's ?project= wins, but push links and direct session
-                // URLs often omit it; the header's stamped project id keeps
-                // "Run new session" working on multi-project daemons.
-                projectId={sessionProjectId as string}
-                diagnosticHref={diagnosticHref}
-                {...(runControlsInMenu ? {
-                  runActions: menuControls.map((control) => ({
-                    label: control.label,
-                    title: control.title,
-                    icon: control.icon,
-                    busy: control.busy,
-                    onSelect: () => runControl(control),
-                  })),
-                } : {})}
-              />
-            ) : (
+            {sessionMenuShown ? renderSessionMenu() : (
               <a class="meta-band-link session-header-diagnostic" href={diagnosticHref}>
                 Diagnostic
                 <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

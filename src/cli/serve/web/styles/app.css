@@ -976,12 +976,21 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   opacity: 1;
   visibility: visible;
 }
-/* backdrop-filter makes an element a containing block for fixed-position
-   descendants, so it is only safe on a bar that has none. This one has none:
-   the session menu whose popover is position: fixed lives in the header
-   below, outside the bar. Re-check that before adding anything fixed here. */
+/* backdrop-filter makes its element a containing block for fixed-position
+   descendants, and this bar now carries the ⋯ menu, whose popover is
+   position: fixed at viewport coordinates measured off the trigger. So the
+   blur lives on a painted-behind pseudo-element instead of on the bar itself,
+   leaving the bar a plain static ancestor. Keep it that way. */
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .page-approval-detail .session-sticky-bar {
+    position: relative;
+    background: transparent;
+  }
+  .page-approval-detail .session-sticky-bar::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
     background: color-mix(in srgb, var(--bg) 60%, transparent);
     backdrop-filter: blur(18px) saturate(115%);
     -webkit-backdrop-filter: blur(18px) saturate(115%);
@@ -1140,7 +1149,6 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   color: inherit;
 }
 @media (max-width: 700px) {
-  .page-approval-detail .session-header-controls { flex-wrap: wrap; }
   .page-approval-detail .session-log-search {
     order: 3;
     flex-basis: 100%;
@@ -1217,6 +1225,23 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   color: var(--bg);
 }
 .page-approval-detail .session-bar-stop:focus-visible { outline: 2px solid var(--red-border); outline-offset: 2px; }
+/* Phone: the labels go, the icons stay. Two full-width buttons used to push the
+   ⋯ menu onto a second row, which is how the row's last actions disappeared
+   below the fold. Colour and tooltip still say which button is which. */
+@media (max-width: 700px) {
+  .page-approval-detail .session-header-controls,
+  .page-approval-detail .session-sticky-bar { flex-wrap: nowrap; gap: 6px; }
+  .page-approval-detail .session-bar-action {
+    padding: 6px;
+    min-width: 30px;
+    justify-content: center;
+    gap: 0;
+  }
+  .page-approval-detail .session-bar-action-label { display: none; }
+  /* Only the run's own name should give ground when the row runs out of it. */
+  .page-approval-detail .session-status,
+  .page-approval-detail .session-header-tag { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+}
 /* Back-to-parent: an icon-only control on sub-agent runs. The parent name lives in
    its tooltip/aria-label rather than inline, keeping the bar compact. */
 .page-approval-detail .session-bar-back {
@@ -1287,7 +1312,8 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   overflow-wrap: anywhere;
 }
 .page-approval-detail .session-menu .menu-sep { height: 1px; margin: 10px -14px 6px; background: var(--line); }
-.page-approval-detail .session-header .session-menu .menu-item {
+.page-approval-detail .session-header .session-menu .menu-item,
+.page-approval-detail .session-sticky .session-menu .menu-item {
   appearance: none;
   cursor: pointer;
   width: calc(100% + 28px);
@@ -1310,9 +1336,12 @@ a.pending-row:focus-visible { outline: 2px solid var(--cyan-border); outline-off
   text-decoration: none;
   line-height: normal;
 }
-.page-approval-detail .session-header .session-menu .menu-item:hover { background: var(--panel-hover); border-color: transparent; opacity: 1; }
-.page-approval-detail .session-header .session-menu .menu-item:disabled { cursor: default; color: var(--muted); }
-.page-approval-detail .session-header .session-menu .menu-item .menu-icon { width: 14px; height: 14px; flex: 0 0 auto; color: var(--cyan); }
+.page-approval-detail .session-header .session-menu .menu-item:hover,
+.page-approval-detail .session-sticky .session-menu .menu-item:hover { background: var(--panel-hover); border-color: transparent; opacity: 1; }
+.page-approval-detail .session-header .session-menu .menu-item:disabled,
+.page-approval-detail .session-sticky .session-menu .menu-item:disabled { cursor: default; color: var(--muted); }
+.page-approval-detail .session-header .session-menu .menu-item .menu-icon,
+.page-approval-detail .session-sticky .session-menu .menu-item .menu-icon { width: 14px; height: 14px; flex: 0 0 auto; color: var(--cyan); }
 .page-approval-detail .session-menu .menu-error {
   margin: 4px 0 6px;
   font-family: var(--sans);

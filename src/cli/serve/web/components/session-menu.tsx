@@ -58,6 +58,8 @@ export function SessionMenu(props: {
   runActions?: SessionMenuRunAction[];
   /** This run's diagnostic page (context, tokens, timings). */
   diagnosticHref?: string;
+  /** Kept out of the tab order while the sticky copy of the bar is hidden. */
+  tabIndex?: number;
 }) {
   const [runOpen, setRunOpen] = useState(false);
   const { run, busy, error } = useRunAgent(props.agentRunPath, props.projectId);
@@ -68,6 +70,7 @@ export function SessionMenu(props: {
         wrapClass="session-menu"
         label="Session actions"
         title="Session actions"
+        {...(props.tabIndex === undefined ? {} : { tabIndex: props.tabIndex })}
         // icon-btn opts out of the page's broad `button` styling (see the
         // .page-approval-detail button rule in app.css); menu-btn re-skins it.
         triggerClass={(open) => (open ? 'icon-btn menu-btn open' : 'icon-btn menu-btn')}

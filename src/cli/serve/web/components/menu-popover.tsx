@@ -27,6 +27,8 @@ export function MenuPopover(props: {
   triggerClass: (open: boolean) => string;
   label: string;
   title?: string;
+  /** Kept out of the tab order while the bar holding it is still hidden. */
+  tabIndex?: number;
   children: (close: () => void) => ComponentChildren;
 }) {
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -106,6 +108,7 @@ export function MenuPopover(props: {
         aria-expanded={pos ? 'true' : 'false'}
         aria-label={props.label}
         {...(props.title ? { title: props.title } : {})}
+        {...(props.tabIndex === undefined ? {} : { tabIndex: props.tabIndex })}
         onClick={toggle}
       >
         <DotsIcon />
