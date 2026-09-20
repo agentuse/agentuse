@@ -10,7 +10,6 @@ import {
   LIVE_OUTPUT_MIN_RUNTIME_MS,
   ToolConfigError,
   type BashConfig,
-  type ToolOutput,
   type ToolErrorOutput,
 } from './types.js';
 import { resolveAllowedPath, resolveRealPath, type PathResolverContext } from './path-validator.js';
@@ -24,7 +23,9 @@ import { toErrorMessage } from '../utils/error-message';
 import { trustedOutputTool } from './tool-contract';
 
 export const BashOutputSchema = z.object({
-  output: z.string(),
+  output: z.string().describe('Combined display output, including stderr and runtime diagnostics. Parse stdout for structured data.'),
+  stdout: z.string().optional().describe('Captured stdout without stderr or runtime diagnostics. Absent when execution did not produce a process result; check metadata.truncated before parsing.'),
+  stderr: z.string().optional().describe('Captured stderr without runtime diagnostics. Absent when execution did not produce a process result.'),
   metadata: z.object({
     exitCode: z.number().int().nullable().optional(),
     timedOut: z.boolean().optional(),
@@ -32,6 +33,8 @@ export const BashOutputSchema = z.object({
     aborted: z.boolean().optional(),
   }).passthrough().optional(),
 });
+
+type BashOutput = z.infer<typeof BashOutputSchema>;
 
 const DEFAULT_TIMEOUT = 120000; // 2 minutes
 
@@ -247,6 +250,8 @@ export function createBashTool(
 
   const description = `Execute a shell command. Only commands matching the configured allowlist patterns are permitted.
 
+On process completion, returns separate stdout and stderr strings plus metadata (exitCode, timedOut, truncated, aborted). Parse stdout for JSON or other structured data only after checking the exit status and that metadata.truncated is false. The output field remains combined display text with stderr and runtime diagnostics; do not parse it as command JSON. Refusals and startup errors may have only output, with no stream fields.
+
 Allowed command patterns:
 ${allowedCommandsList}
 
@@ -306,7 +311,7 @@ Commands not matching these patterns will be rejected.`;
       command: string;
       workdir?: string;
       timeout?: number | string;
-    }, callOptions?: { abortSignal?: AbortSignal; toolCallId?: string }): Promise<ToolOutput> => {
+    }, callOptions?: { abortSignal?: AbortSignal; toolCallId?: string }): Promise<BashOutput> => {
       const abortSignal = callOptions?.abortSignal;
       const callId = callOptions?.toolCallId;
       const audit = resolverContext.effectAudit;
@@ -318,7 +323,7 @@ Commands not matching these patterns will be rejected.`;
       const stopWatchingPreSpawn = () => {
         abortSignal?.removeEventListener('abort', onPreSpawnAbort);
       };
-      const refusedAborted = (): ToolOutput => {
+      const refusedAborted = (): BashOutput => {
         audit?.append({
           event: 'bash-refused-aborted',
           ...(callId && { callId }),
@@ -636,6 +641,8 @@ Commands not matching these patterns will be rejected.`;
 
           resolve({
             output: output || '(no output)',
+            stdout,
+            stderr,
             metadata: {
               exitCode: code,
               timedOut,

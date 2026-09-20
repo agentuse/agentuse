@@ -118,9 +118,14 @@ and share the direct results tool's response limits. JSON pages need not parse
 individually. The one-argument `results.read(resultId)` still returns the original
 bounded value. Both forms count toward Code Mode's result-read budget.
 
-Bash returns `{ output, metadata? }`: `output` is a string, and metadata can
-include `exitCode`, `timedOut`, `aborted`, and `truncated`. Refusal errors remain
-JSON text in `output`; there is no `value` field. Search declarations retain
+Bash returns `{ output, stdout?, stderr?, metadata? }`. Completed processes have
+separate `stdout` and `stderr` strings, including empty strings for empty streams.
+Parse `stdout` for JSON or other structured command output after checking
+`metadata.exitCode`, `timedOut`, `aborted`, and `truncated`. The compatible `output`
+field remains combined display text with stderr and runtime diagnostics; it is
+not a machine-readable stdout field. Refusals, startup errors, and historical
+stored results may lack stream fields. Refusal errors remain JSON text in
+`output`; there is no `value` field. Search declarations retain
 parameter descriptions and small integer ranges, including `context_lines`
 from 0 to 5 for filesystem search.
 
@@ -467,6 +472,13 @@ The Bash tool retains at most **4MB** (`AGENTUSE_BASH_CAPTURE_BYTES`) as canonic
 Independently, any direct JSON or text result over **10KB** (`AGENTUSE_TOOL_INLINE_RESULT_BYTES`) becomes a reusable result handle before it reaches the model. This smaller limit prevents a large result from being re-sent on every subsequent model step.
 
 Queries through the `results` tool can return up to **20KB** (`AGENTUSE_RESULT_QUERY_BYTES`) inline. They never create recursive result handles.
+
+Bash stream fields use the same bounded captures as `output`. Check
+`metadata.truncated` before parsing them. Keeping `output` for compatibility
+means the serialized result also contains a combined copy of the streams, so it
+can reach the inline-result limit sooner. Stored results preserve the separate
+fields: use a query such as `.stdout | fromjson | .items` to inspect JSON stdout
+without including stderr diagnostics.
 
 Provider-native and binary results with native model-output conversion are excluded from this inline-result limit.
 

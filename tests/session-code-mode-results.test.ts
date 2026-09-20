@@ -46,6 +46,35 @@ async function createSession(manager: SessionManager, projectRoot: string, agent
 }
 
 describe('session Code Mode results', () => {
+  it('queries complete JSON stdout from stored Bash output containing stderr', async () => {
+    originalXdg = process.env.XDG_DATA_HOME;
+    testRoot = await mkdtemp(join(tmpdir(), 'agentuse-bash-stream-results-'));
+    process.env.XDG_DATA_HOME = testRoot;
+    await initStorage(testRoot);
+    const manager = new SessionManager();
+    const agentId = 'agents/review';
+    const { sessionId, messageId } = await createSession(manager, testRoot, agentId);
+    const bash = createBashTool({ commands: ['node -e *'] }, testRoot);
+    const dispatcher = new ToolDispatcher({ tools__bash: bash }, {
+      writeReusableResult: (tool, toolInput, output, completedAt) => manager.recordDirectToolResult(
+        sessionId, agentId, messageId, { tool, toolInput, output, completedAt },
+      ),
+    });
+    const reference = await dispatcher.dispatch('tools__bash', {
+      command: `node -e 'process.stdout.write(JSON.stringify({tweets:[{id:"one",text:"x".repeat(40000)}]})); process.stderr.write("Fetching tweets...")'`,
+    }, { toolCallId: 'bash-streams', origin: 'direct', modelFacing: true });
+    const { resultId } = z.object({ resultId: z.string(), truncated: z.literal(true) }).parse(reference);
+    // A fresh manager exercises the persisted payload, not an in-memory value.
+    const results = createResultsTool({ manager: new SessionManager(), sessionId, agentId });
+    const query = results.execute!;
+    await expect(query({ action: 'jq', resultId, expression: '.stdout | fromjson | .tweets | map({id, length: (.text | length)})' }, {
+      toolCallId: 'query-stdout', messages: [],
+    })).resolves.toEqual({ values: [[{ id: 'one', length: 40000 }]], truncated: false });
+    await expect(query({ action: 'jq', resultId, expression: '{stderr, exitCode: .metadata.exitCode, truncated: .metadata.truncated}' }, {
+      toolCallId: 'query-stderr', messages: [],
+    })).resolves.toEqual({ values: [{ stderr: 'Fetching tweets...', exitCode: 0, truncated: false }], truncated: false });
+  });
+
   it('persists complete Bash JSON above the model preview limit', async () => {
     const previousOutputLimit = process.env.AGENTUSE_TOOL_MAX_OUTPUT_BYTES;
     const previousCaptureLimit = process.env.AGENTUSE_BASH_CAPTURE_BYTES;
