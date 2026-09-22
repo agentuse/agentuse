@@ -2,6 +2,34 @@ import { describe, expect, it } from 'bun:test';
 import { processAgentStream, type AgentChunk, type TerminalPresenter } from '../src/runner';
 
 describe('processAgentStream session logging', () => {
+  it('retains a filtered tool step even when a later response completes', async () => {
+    const updates: any[] = [];
+    const steps: any[] = [];
+    const sessionManager = {
+      addPart: async (_s: string, _a: string, _m: string, part: any) => {
+        if (part.type === 'step-finish') steps.push(part);
+        return part.callID || 'text';
+      },
+      updatePart: async (...args: any[]) => { updates.push(args); },
+      updateMessage: async () => {},
+    };
+    async function* chunks(): AsyncGenerator<AgentChunk> {
+      yield { type: 'tool-call', toolName: 'tools__read', toolCallId: 'filtered', toolInput: {} };
+      yield { type: 'tool-result', toolName: 'tools__read', toolCallId: 'filtered', toolResult: 'Invalid JSON', toolSuccess: false };
+      yield { type: 'usage', finishReason: 'content-filter', usageKind: 'step',
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 } as any };
+      yield { type: 'text', text: 'The operation remains incomplete.' };
+      yield { type: 'finish', finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } as any };
+    }
+    await processAgentStream(chunks(), { sessionManager: sessionManager as any,
+      sessionID: 'session', agentId: 'agent', messageID: 'message', quiet: true });
+    expect(steps[0].modelStepUsage.finishReason).toBe('content-filter');
+    const last = updates.filter(u => u[3] === 'filtered').at(-1)[4].state;
+    expect(last.metadata.modelStepUsage.finishReason).toBe('content-filter');
+    expect(last.error).toContain('Provider content filter');
+    expect(last.error).toContain('Invalid JSON');
+  });
+
   it('finalizes very short text replies even when part creation resolves after finish', async () => {
     const updates: any[] = [];
     const sessionManager = {

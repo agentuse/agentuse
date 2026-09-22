@@ -27,6 +27,34 @@ function storage() {
 }
 
 describe('execution budgets', () => {
+  it('reserves a final model turn using observed latency without extending the deadline', async () => {
+    const b = budget(300000);
+    b.observeModelDuration(64000);
+    now += 180000;
+    expect(await b.takeNotice()).toBe(BUDGET_WRAP_UP_NOTICE);
+    expect(b.remainingMs).toBe(120000);
+    expect(b.snapshot().effectiveMs).toBe(300000);
+    expect(b.snapshot().wrappedUpAt).toBeUndefined();
+  });
+  it('retains latency through suspension and respects the earlier parent deadline', async () => {
+    const { sessions, manager } = storage();
+    sessions.set('leaf', { id: 'leaf' });
+    const first = budget(300000);
+    await first.bind(manager, 'leaf', 'leaf');
+    first.observeModelDuration(60000);
+    now += 150000;
+    await first.finish();
+    now += 60000;
+    const resumed = budget(300000);
+    await resumed.bind(manager, 'leaf', 'leaf', true);
+    expect(await resumed.takeNotice()).toBeUndefined();
+    now += 30000;
+    expect(await resumed.takeNotice()).toBeDefined();
+    const child = budget(300000, resumed.signal);
+    child.observeModelDuration(60000);
+    expect(await child.takeNotice()).toBeDefined();
+  });
+
   it('delivers once at 80%, never claims completion from the notice', async () => {
     const b = budget(1000);
     now += 799;

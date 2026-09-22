@@ -343,6 +343,7 @@ export function codeModeDeclarations(contracts: readonly CodeModeToolContract[])
     `};\n` +
     `declare const results: {\n` +
     `  read(resultId: string): Promise<unknown>;\n` +
+    `  page(request: { action: "read" | "jq"; resultId: string; page?: number; pageSizeBytes?: number; expression?: string; limit?: number }): Promise<{ content: string; pagination: { page: number; totalPages: number; pageSizeBytes: number; totalBytes: number; hasMore: boolean }; next: { action: "read" | "jq"; resultId: string; page: number; pageSizeBytes: number; expression?: string; limit?: number } | null }>;\n` +
     `  read(resultId: string, options: { offset?: number; maxBytes?: number }): Promise<{ kind: "text" | "json" | "unknown"; content: string; offset: number; bytes: number; totalBytes: number; truncated: boolean; nextOffset: number | null }>;\n` +
     `  list(): Promise<readonly CodeModeResultReference[]>;\n` +
     `  grep(resultId: string, options: { pattern: string; caseSensitive?: boolean; limit?: number; contextLines?: number }): Promise<CodeModeGrepResult>;\n` +

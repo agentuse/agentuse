@@ -324,11 +324,13 @@ export async function processAgentStream(
   });
 
   const persistCurrentStepUsage = async (chunk: AgentChunk): Promise<void> => {
-    if (chunk.usageKind !== 'step' || !chunk.usage) return;
+    if (chunk.usageKind !== 'step' || (!chunk.usage && !chunk.finishReason)) return;
 
     const callIDs = [...currentStepToolCallIds];
-    const tokens = usageToAssistantTokens(chunk.usage);
+    const tokens = chunk.usage ? usageToAssistantTokens(chunk.usage)
+      : { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
     const modelStepUsage = {
+      ...(chunk.finishReason && { finishReason: chunk.finishReason }),
       ...(callIDs[0] && { stepId: callIDs[0] }),
       ...(chunk.responseMetadata && { responseMetadata: chunk.responseMetadata }),
       ...(chunk.requestFingerprint && { requestFingerprint: chunk.requestFingerprint }),
@@ -344,6 +346,9 @@ export async function processAgentStream(
       if (!state) return;
       await persistToolState(callID, {
         ...state,
+        ...(state.status === 'error' && chunk.finishReason === 'content-filter' && {
+          error: `Provider content filter truncated this model response. ${state.error}`,
+        }),
         metadata: { ...state.metadata, modelStepUsage },
       } as ToolState);
     }));

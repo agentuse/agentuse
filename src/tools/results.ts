@@ -4,7 +4,7 @@ import type { SessionManager } from '../session';
 import type { CodeModeResultPage } from '../session/manager';
 import type { CodeModeResultReference } from '../session/code-mode-results';
 import { getToolOutputLimits } from './tool-output-limits.js';
-import { resultPage } from './result-pages.js';
+import { resultPage, type ResultPageRequest } from './result-pages.js';
 
 export const RESULTS_TOOL = 'results';
 
@@ -26,9 +26,9 @@ const ResultsInputSchema = z.object({
   pageSizeBytes: z.number().int().min(4).max(1_000_000).optional()
     .describe('Maximum UTF-8 content bytes per page; response escaping may reduce each page.'),
   offset: z.number().int().min(0).optional()
-    .describe('Byte offset. Use nextOffset from the previous page.'),
+    .describe('Legacy byte offset, used only when page and pageSizeBytes are absent. Prefer numbered pages.'),
   maxBytes: z.number().int().min(1).optional()
-    .describe('Maximum source bytes before the configured response limit is applied.'),
+    .describe('Legacy byte limit, ignored when page or pageSizeBytes is supplied.'),
   pattern: z.string().min(1).max(4_096).optional()
     .describe('Literal text, not a regular expression.'),
   caseSensitive: z.boolean().optional().describe('Defaults to false.'),
@@ -133,6 +133,18 @@ export async function readResultBytePage(
   ), limit), limit);
 }
 
+/** Shared numbered-page contract for direct calls and Code Mode continuations. */
+export async function readNumberedResultPage(
+  manager: SessionManager, sessionId: string, agentId: string,
+  request: ResultPageRequest, signal?: AbortSignal,
+): Promise<ReturnType<typeof resultPage>> {
+  const text = request.action === 'read'
+    ? await manager.resultPageText(sessionId, agentId, request.resultId)
+    : JSON.stringify(await manager.jqCodeModeResult(sessionId, agentId, request.resultId,
+      requiredExpression(request), request.limit === undefined ? undefined : { limit: request.limit }, signal));
+  return resultPage(text, request, getToolOutputLimits().resultQueryBytes);
+}
+
 export function createResultsTool(options: {
   manager: SessionManager;
   sessionId: string;
@@ -140,7 +152,7 @@ export function createResultsTool(options: {
 }): Tool {
   const resultQueryBytes = getToolOutputLimits().resultQueryBytes;
   return {
-    description: `Query stored results. read and oversized jq return text pages with totalPages and a next call using the same resultId. Concatenate content to reconstruct the output; JSON pages need not parse individually. Response limit: ${resultQueryBytes.toLocaleString('en-US')} bytes. Legacy read offset/maxBytes remains supported.`,
+    description: `Query stored results. read and oversized jq return text pages with totalPages and a next call using the same resultId. Concatenate content to reconstruct the output; JSON pages need not parse individually. Response limit: ${resultQueryBytes.toLocaleString('en-US')} bytes. Follow next unchanged. Numbered page fields take precedence over legacy offsets. Legacy read offset/maxBytes remains supported.`,
     inputSchema: ResultsInputSchema,
     execute: async (input: ResultsInput, callOptions?: { abortSignal?: AbortSignal }) => {
       switch (input.action) {
@@ -154,12 +166,8 @@ export function createResultsTool(options: {
         case 'read':
           if (input.page !== undefined || input.pageSizeBytes !== undefined ||
               (input.offset === undefined && input.maxBytes === undefined)) {
-            if (input.offset !== undefined || input.maxBytes !== undefined) {
-              throw new Error('RESULT_PAGE_INPUT: do not mix page and byte-offset pagination');
-            }
-            return resultPage(await options.manager.resultPageText(options.sessionId,
-              options.agentId, requiredResultId(input)), { ...input, action: 'read',
-              resultId: requiredResultId(input), expression: undefined, limit: undefined }, resultQueryBytes);
+            return readNumberedResultPage(options.manager, options.sessionId, options.agentId,
+              { action: 'read', resultId: requiredResultId(input), page: input.page, pageSizeBytes: input.pageSizeBytes });
           }
           return readResultBytePage(options.manager, options.sessionId, options.agentId,
             requiredResultId(input), {

@@ -1806,6 +1806,7 @@ export class SessionManager {
             code,
             message,
             ...(code === 'USER_STOPPED' && { cause: 'user_stopped' }),
+            ...(code === 'CLIENT_DISCONNECT' && { cause: 'client_disconnect' }),
             time: now
           }
         });

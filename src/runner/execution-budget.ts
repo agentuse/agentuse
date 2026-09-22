@@ -10,6 +10,7 @@ export interface ExecutionBudgetState {
   limitingSessionId?: string;
   noticeDeliveredAt?: number;
   wrappedUpAt?: number;
+  modelLatencyMs?: number;
 }
 
 export const BUDGET_WRAP_UP_NOTICE = 'Execution budget nearly used. Stop starting new work, finish the current useful operation, and return what you have established through the normal response path. Clearly identify unfinished or uncertain work. All verification, approval, and publication safety checks still apply. If required work is unfinished, report incomplete; never declare success merely to meet the deadline.';
@@ -21,6 +22,7 @@ export const executionBudgetFor = (signal?: AbortSignal): ExecutionBudget | unde
 export class ExecutionBudget {
   private started = Date.now();
   private priorElapsed = 0;
+  private modelLatencyMs = 0;
   private timer?: ReturnType<typeof setTimeout>;
   private stopped = false;
   private deliveredAt: number | undefined;
@@ -82,8 +84,12 @@ export class ExecutionBudget {
       this.timer.unref?.();
     }
   }
+  observeModelDuration(ms: number): void {
+    if (Number.isFinite(ms) && ms > 0) this.modelLatencyMs = Math.max(this.modelLatencyMs, ms);
+  }
   snapshot(): ExecutionBudgetState {
     return {
+      ...(this.modelLatencyMs > 0 && { modelLatencyMs: this.modelLatencyMs }),
       configuredMs: this.configuredMs, elapsedMs: this.elapsedMs, effectiveMs: this.effectiveMs,
       ...(this.limitingSessionId && { limitingSessionId: this.limitingSessionId }),
       ...(this.deliveredAt !== undefined && { noticeDeliveredAt: this.deliveredAt }),
@@ -96,6 +102,7 @@ export class ExecutionBudget {
     // flag wins. bind()'s ancestor loop passes state.configuredMs into the
     // constructor, so a restored ancestor still gets its own recorded budget.
     this.priorElapsed = state.elapsedMs;
+    this.modelLatencyMs = state.modelLatencyMs ?? 0;
     this.deliveredAt = state.noticeDeliveredAt;
     // Without this a restored ancestor snapshot would persist wrappedUpAt:
     // undefined back over a parent that had already wrapped up cleanly.
@@ -148,7 +155,10 @@ export class ExecutionBudget {
   /** Called only at a safe model boundary; never interrupts a tool or opens a gate. */
   get notice(): string | undefined { return this.deliveredAt !== undefined ? BUDGET_WRAP_UP_NOTICE : undefined; }
   async takeNotice(): Promise<string | undefined> {
-    if (this.stopped || this.signal.aborted || this.deliveredAt !== undefined || this.elapsedMs < this.effectiveMs * 0.8) return undefined;
+    // Reserve one ordinary model turn plus a final response at the slowest
+    // observed latency. The original 80% boundary remains the no-sample fallback.
+    const reserve = Math.max(this.effectiveMs * 0.2, this.modelLatencyMs * 2);
+    if (this.stopped || this.signal.aborted || this.deliveredAt !== undefined || this.remainingMs > reserve) return undefined;
     this.deliveredAt = Date.now();
     await this.persist?.(this.snapshot());
     return BUDGET_WRAP_UP_NOTICE;

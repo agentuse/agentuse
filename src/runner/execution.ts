@@ -1,7 +1,8 @@
+import { ProviderContentFilterError } from './failure';
 import { responseMetadataFromRaw, responseMetadataFromStep, type ResponseMetadata } from '../telemetry/response-metadata';
 import type { ExecutionBudget } from './execution-budget';
 import { streamText, isStepCount, asSchema, type ModelMessage, type ToolSet } from 'ai';
-import { readResultBytePage } from '../tools/results';
+import { readNumberedResultPage, readResultBytePage } from '../tools/results';
 import { repairSmuggledXmlToolCall } from './tool-call-repair';
 import { createHash, randomBytes } from 'crypto';
 import type { ParsedAgent } from '../parser';
@@ -698,6 +699,7 @@ export function buildCodeModeTraceHooks(options: {
       return undefined;
     },
     resultAccess: {
+      numberedPage: (request, signal) => readNumberedResultPage(manager, sessionID, agentId, request, signal),
       read: (resultId) => manager.readCodeModeResult(sessionID, agentId, resultId),
       page: (resultId, options) => readResultBytePage(manager, sessionID, agentId, resultId, options),
       list: (limit) => manager.listCodeModeResults(sessionID, agentId, limit),
@@ -2478,6 +2480,7 @@ Error: ${errorMessage}`);
           // Complete the current LLM generation segment before tool call
           if (llmGenerationStartTime) {
             const llmDuration = Date.now() - llmGenerationStartTime;
+            options.executionBudget?.observeModelDuration(llmDuration);
             // Emit a finish event for the LLM segment
             yield {
               type: 'finish',
@@ -2784,6 +2787,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
           // Complete final LLM segment if exists
           if (llmGenerationStartTime) {
             const llmDuration = Date.now() - llmGenerationStartTime;
+            options.executionBudget?.observeModelDuration(llmDuration);
             yield {
               type: 'finish',
               finishReason: chunk.finishReason,
@@ -2803,6 +2807,11 @@ Current step: ${stepCount}/${options.maxSteps}`);
               ...(usageKind && { usageKind }),
               ...(contextManager && { contextUsage: contextManager.getStats() })
             };
+          }
+
+          if (finishReason === 'content-filter') {
+            yield { type: 'error', error: new ProviderContentFilterError() };
+            return;
           }
 
           // We can't directly detect step limit from finishReason alone
@@ -2853,13 +2862,14 @@ Current step: ${stepCount}/${options.maxSteps}`);
           if (contextManager && usage) {
             contextManager.updateUsage(usage, usageKind);
           }
-          if (usage || contextManager || responseMetadata) {
+          if (usage || contextManager || responseMetadata || chunk.finishReason) {
             yield {
               type: 'usage',
+              finishReason: chunk.finishReason,
               ...(requestFingerprint && { requestFingerprint }),
               ...(responseMetadata && { responseMetadata }),
               ...(usage && { usage }),
-              ...(usageKind && { usageKind }),
+              usageKind: 'step',
               ...(contextManager && { contextUsage: contextManager.getStats() }),
             };
           }

@@ -1,3 +1,4 @@
+import { sessionStopReason } from '../src/runner/failure';
 import { describe, expect, it, spyOn } from 'bun:test';
 import { EventEmitter } from 'events';
 import { spawn, type ChildProcess } from 'child_process';
@@ -21,6 +22,44 @@ type TestableAgentWorker = {
 };
 
 describe('serve worker response transport', () => {
+  it('preserves a typed disconnect even before a worker request starts', async () => {
+    const worker = new AgentWorker();
+    const controller = new AbortController();
+    controller.abort(sessionStopReason(undefined, 'client_disconnect'));
+    const response = await worker.execute({ agentPath: 'fixture.agentuse', projectRoot: '/tmp', signal: controller.signal });
+    expect(response).toMatchObject({ success: false, error: { code: 'CLIENT_DISCONNECT', cause: 'client_disconnect' } });
+  });
+
+  it('carries observed exit evidence into pending failures and reconciliation', async () => {
+    const child = new EventEmitter() as ChildProcess;
+    child.stdin = new PassThrough();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.kill = (() => true) as ChildProcess['kill'];
+    child.unref = (() => child) as ChildProcess['unref'];
+    Object.defineProperty(child, 'pid', { value: process.pid });
+    const worker = new AgentWorker({}, (() => {
+      queueMicrotask(() => child.stdout?.write('{"type":"ready"}\n'));
+      return child;
+    }) as typeof spawn);
+    const internals = worker as unknown as TestableAgentWorker & {
+      lastWorkerDeath: { pid: number; procStartedAt?: string; event: string; signal: string; exitCode: number | null; observedAt: number };
+    };
+    try {
+      await worker.spawn();
+      const pending = new Promise<PendingResponse>(resolve => internals.pendingRequests.set('req-99', { resolve }));
+      child.emit('exit', null, 'SIGKILL');
+      const response = await pending;
+      expect(response).toMatchObject({ success: false, error: { code: 'WORKER_DIED', detail: JSON.stringify(internals.lastWorkerDeath) } });
+      expect(internals.lastWorkerDeath).toMatchObject({ pid: process.pid, event: 'exit', signal: 'SIGKILL', exitCode: null });
+      expect(internals.lastWorkerDeath.procStartedAt).toBeString();
+      expect(internals.lastWorkerDeath.observedAt).toBeGreaterThan(0);
+    } finally {
+      worker.shutdown();
+      child.stdin?.destroy(); child.stdout?.destroy(); child.stderr?.destroy();
+    }
+  });
+
   it('retries when a worker exits before becoming ready', async () => {
     let spawnCount = 0;
     const children: ChildProcess[] = [];

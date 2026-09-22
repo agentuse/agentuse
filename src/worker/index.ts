@@ -63,7 +63,7 @@ export async function runInternalWorker() {
   /** Project roots seen on run requests. A worker only ever serves one. */
   const inFlightProjectRoots = new Set<string>();
   /** Runs this worker aborted because the user stopped them after release. */
-  const stoppedWhileReleased = new Set<string>();
+  const stoppedWhileReleased = new Map<string, RunAbortError>();
   let releasedStopWatch: NodeJS.Timeout | undefined;
   /**
    * Longest timeout any in-flight run was given, so the release backstop below
@@ -100,10 +100,11 @@ export async function runInternalWorker() {
             for (const [sessionId, controller] of ctx.activeExecutionControllers) {
               if (ctx.activeStoppedSessions.has(sessionId)) continue;
               const found = await sessionManager.findSession(sessionId);
-              if (found?.session.error?.code !== 'USER_STOPPED') continue;
+              if (!['USER_STOPPED', 'CLIENT_DISCONNECT'].includes(found?.session.error?.code ?? '')) continue;
               ctx.activeStoppedSessions.add(sessionId);
-              stoppedWhileReleased.add(sessionId);
-              controller.abort(new RunAbortError('user_stopped', 'Session stopped by user'));
+              const reason = new RunAbortError(found?.session.error?.code === 'CLIENT_DISCONNECT' ? 'client_disconnect' : 'user_stopped', found!.session.error!.message);
+              stoppedWhileReleased.set(sessionId, reason);
+              controller.abort(reason);
             }
           } catch {
             // Storage hiccup -- try again on the next tick.
@@ -132,13 +133,14 @@ export async function runInternalWorker() {
       try {
         await initStorage(projectRoot);
         const sessionManager = new SessionManager();
-        for (const sessionId of [...stoppedWhileReleased]) {
+        for (const [sessionId, reason] of stoppedWhileReleased) {
           const found = await sessionManager.findSession(sessionId);
           if (!found) continue;
-          if (found.session.error?.code !== 'USER_STOPPED') {
+          const code = reason.causeCode === 'client_disconnect' ? 'CLIENT_DISCONNECT' : 'USER_STOPPED';
+          if (found.session.error?.code !== code) {
             await sessionManager.updateSession(sessionId, found.agentId, {
               status: 'error',
-              error: { code: 'USER_STOPPED', cause: 'user_stopped', message: 'Session stopped by user', time: Date.now() },
+              error: { code, cause: reason.causeCode, message: reason.message, time: Date.now() },
             } as any);
           }
           stoppedWhileReleased.delete(sessionId);

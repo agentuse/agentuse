@@ -70,6 +70,7 @@ export interface WorkerExecuteError {
     phase?: string;
     attempts?: number;
     statusCode?: number;
+    detail?: string;
     code: string;
     message: string;
   };

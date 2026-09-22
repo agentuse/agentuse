@@ -15,6 +15,21 @@ const noTools = { dispatcher: { dispatch: async () => { throw new Error('unexpec
   toolNames: [], parentCallId: 'compatibility' };
 
 describe('Code Mode session regression cases', () => {
+  it('passes cancellation to numbered jq continuations and counts the operation', async () => {
+    let observed: AbortSignal | undefined;
+    const result = await executeCodeModeDetailed('return results.page({action:"jq",resultId:"saved",expression:".",page:1});', {
+      ...noTools, resultAccess: { read: async () => ({}), list: async () => [],
+        numberedPage: async (request, signal) => {
+          observed = signal;
+          expect(request.action).toBe('jq');
+          return { action: 'jq', resultId: 'saved', content: '{}', pagination: { page: 1, totalPages: 1, pageSizeBytes: 6000, totalBytes: 2, hasMore: false }, next: null };
+        } },
+    });
+    expect(observed).toBeInstanceOf(AbortSignal);
+    expect(result.value).toMatchObject({ content: '{}' });
+    expect(result.telemetry.resultJqQueries).toBe(1);
+  });
+
   it('accepts the observed paged-read form and charges reads to the shared budget', async () => {
     const page = { kind: 'text' as const, content: 'hello', offset: 6500, bytes: 5,
       totalBytes: 7000, truncated: true, nextOffset: 6505 };

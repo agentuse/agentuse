@@ -1,4 +1,4 @@
-import { RunAbortError } from '../runner/failure';
+import { sessionStopReason, classifyFailure } from '../runner/failure';
 import { reconcileOrphanedSessions, reopenSuspendedGate } from '../runner';
 import { findRootSessionId } from '../runner/subagent-cascade';
 import { SessionManager } from '../session/index.js';
@@ -300,7 +300,7 @@ export async function reconcileOrphanSessions(req: ExecuteRequest) {
     await initStorage(req.projectRoot);
     const sessionManager = new SessionManager();
     const cutoff = typeof req.reconcileCutoff === 'number' ? req.reconcileCutoff : Date.now();
-    const reconciled = await reconcileOrphanedSessions({ sessionManager, cutoff });
+    const reconciled = await reconcileOrphanedSessions({ sessionManager, cutoff, ...(req.workerDeath && { workerDeath: req.workerDeath }) });
     if (reconciled.length > 0) invalidateListCaches(req.projectRoot);
     return { id: req.id, success: true as const, reconciled };
   } catch (err) {
@@ -352,18 +352,20 @@ export async function stopSession(ctx: WorkerContext, req: ExecuteRequest) {
       };
     }
 
+    const stopReason = sessionStopReason(req.reason, req.stopCause);
+    const stopFailure = classifyFailure(stopReason);
     const controller = ctx.activeExecutionControllers.get(req.sessionId);
     if (controller) {
       ctx.activeStoppedSessions.add(req.sessionId);
-      controller.abort(new RunAbortError('user_stopped', 'Session stopped by user'));
+      controller.abort(stopReason);
     }
 
     await initStorage(req.projectRoot);
     invalidateListCaches(req.projectRoot);
     const sessionManager = new SessionManager();
     const stopped = await sessionManager.stopSessionTree(req.sessionId, {
-      code: 'USER_STOPPED',
-      message: req.reason || 'Session stopped by user',
+      code: stopFailure.code,
+      message: stopFailure.message,
       ...(req.dismissEnded === true && { dismissEnded: true })
     });
     if (stopped.length === 0) {

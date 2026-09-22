@@ -118,7 +118,7 @@ export interface SessionInfo {
     // Captured so a generic message like "Bad Request" is actually diagnosable.
     statusCode?: number;             // HTTP status from the provider (e.g. 400)
     url?: string;                    // Endpoint that rejected the request
-    detail?: string;                 // Provider response body (truncated)
+    detail?: string;                 // Bounded provider response or observed worker-exit evidence
   };
 
   /** Terminal errors from earlier attempts of this same resumable session.
@@ -648,6 +648,7 @@ export interface StepStartPart extends PartBase {
 export interface StepFinishPart extends PartBase {
   type: 'step-finish';
   modelStepUsage?: {
+    finishReason?: string;
     stepId?: string;
     input: number;
     output: number;

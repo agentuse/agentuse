@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { APICallError, RetryError } from 'ai';
-import { classifyFailure, RunAbortError, runDeadline } from '../src/runner/failure';
+import { classifyFailure, RunAbortError, runDeadline, sessionStopReason, ProviderContentFilterError } from '../src/runner/failure';
 import { ModelStreamStallError, ModelStreamTransportError } from '../src/runner/model-stall';
 import { ConfigError } from '../src/parser';
 import { failureLabel } from '../src/session/failure-label';
@@ -12,6 +12,22 @@ function provider(statusCode: number, responseBody = '{}') {
 }
 
 describe('failure classification', () => {
+  it('classifies terminal content filters without inferring them from parser errors', () => {
+    expect(classifyFailure(new ProviderContentFilterError())).toMatchObject({ code: 'CONTENT_FILTER', cause: 'provider_content_filter' });
+    expect(classifyFailure(new Error('Invalid JSON')).cause).toBe('unknown');
+  });
+
+  it('uses trusted disconnect evidence while preserving free-form operator reasons', () => {
+    const controller = new AbortController();
+    controller.abort(sessionStopReason(undefined, 'client_disconnect'));
+    expect(classifyFailure(new DOMException('aborted', 'AbortError'), controller.signal))
+      .toEqual({ code: 'CLIENT_DISCONNECT', cause: 'client_disconnect', message: 'Attached client disconnected' });
+    expect(classifyFailure(sessionStopReason('Change set cancelled by operator')))
+      .toMatchObject({ cause: 'user_stopped', message: 'Change set cancelled by operator' });
+    expect(classifyFailure(sessionStopReason('client-disconnect')).cause).toBe('user_stopped');
+    expect(failureLabel('client_disconnect')).toBe('Attached client disconnected');
+  });
+
   it.each([
     [401, 'authentication', 'AUTH_ERROR'],
     [403, 'provider_permission', 'EXECUTION_ERROR'],

@@ -1,3 +1,5 @@
+import { classifyFailure, RunAbortError } from '../runner/failure';
+import { workerDeathDetail, type WorkerDeath } from '../worker/death';
 import { Command } from "commander";
 import { ApprovalListPayload, ApprovalRow, ApprovalSessionFilter, ApprovalSummary, ApprovalSummaryStatus, SessionStatusCounts, SessionStatusFilter, SessionSummary, SessionTriageFilter, SessionWindowFilter, SessionsPayload } from "./serve/list-payloads";
 import { ApprovalPageInfo } from "./serve/approval-page";
@@ -115,7 +117,7 @@ import {
 } from "../onboarding/internal-job-store.js";
 import { openBrowser } from "../utils/open-browser";
 import { resolveAgentModel } from "../utils/model-alias";
-import { currentProcessRef, isProcessRefAliveAsync, type ProcessRef } from "../utils/process-info";
+import { currentProcessRef, getProcessStartTime, isProcessRefAliveAsync, type ProcessRef } from "../utils/process-info";
 import {
   createIdempotentShutdown,
   DESKTOP_LIFETIME_FD_ENV,
@@ -489,6 +491,7 @@ interface WorkerReconcileResult {
  * contexts (HTTP handlers, scheduler callbacks) in bundled Node.js code.
  */
 export class AgentWorker {
+  private lastWorkerDeath?: WorkerDeath;
   private process: ChildProcess | null = null;
   private readline: ReadlineInterface | null = null;
   private forceKillTimer: NodeJS.Timeout | null = null;
@@ -570,6 +573,7 @@ export class AgentWorker {
       },
     });
     this.process = child;
+    const procStartedAt = child.pid ? getProcessStartTime(child.pid) : undefined;
 
     this.readline = createInterface({
       input: child.stdout!,
@@ -587,13 +591,13 @@ export class AgentWorker {
     child.on("error", (err) => {
       if (this.process !== child) return;
       logger.error(`Worker process error: ${err.message}`);
-      this.handleWorkerDeath();
+      this.handleWorkerDeath({ ...(child.pid && { pid: child.pid }), ...(procStartedAt && { procStartedAt }), event: 'error', errorMessage: err.message, observedAt: Date.now() });
     });
 
-    child.on("exit", (code) => {
+    child.on("exit", (code, signal) => {
       if (this.process !== child) return;
       logger.warn(`Worker process exited with code ${code}`);
-      this.handleWorkerDeath();
+      this.handleWorkerDeath({ ...(child.pid && { pid: child.pid }), ...(procStartedAt && { procStartedAt }), event: 'exit', exitCode: code, signal, observedAt: Date.now() });
     });
 
     this.spawnPromise = this.readyPromise
@@ -683,7 +687,8 @@ export class AgentWorker {
     });
   }
 
-  private handleWorkerDeath() {
+  private handleWorkerDeath(evidence: WorkerDeath) {
+    this.lastWorkerDeath = evidence;
     if (this.forceKillTimer) {
       clearTimeout(this.forceKillTimer);
       this.forceKillTimer = null;
@@ -704,7 +709,7 @@ export class AgentWorker {
       }
       pending.resolve({
         success: false,
-        error: { code: "WORKER_DIED", cause: 'worker_interrupted', message: "Worker process died unexpectedly" },
+        error: { code: "WORKER_DIED", cause: 'worker_interrupted', message: "Worker process died unexpectedly", detail: workerDeathDetail(evidence) },
       });
     }
     this.pendingRequests.clear();
@@ -792,6 +797,7 @@ export class AgentWorker {
     projectRoot: string;
     sessionId: string;
     reason?: string | undefined;
+    stopCause?: 'user_stopped' | 'client_disconnect';
     /** Reviewer-initiated stop: an already-ended failed session is stamped
      *  dismissedAt (reviewed) instead of being a no-op. Never set on automatic
      *  stops (client-disconnect, timeouts) — those must not acknowledge
@@ -803,6 +809,7 @@ export class AgentWorker {
       projectRoot: options.projectRoot,
       sessionId: options.sessionId,
       reason: options.reason,
+      ...(options.stopCause && { stopCause: options.stopCause }),
       ...(options.dismissEnded && { dismissEnded: true }),
       timeout: 30,
     }) as Promise<WorkerStopSessionResult | WorkerExecuteError>;
@@ -935,6 +942,7 @@ export class AgentWorker {
       type: "reconcile-orphans",
       projectRoot,
       reconcileCutoff: cutoff,
+      ...(this.lastWorkerDeath && { workerDeath: this.lastWorkerDeath }),
       timeout: 30,
     }) as Promise<WorkerReconcileResult | WorkerExecuteError>;
   }
@@ -1021,7 +1029,9 @@ export class AgentWorker {
       if (requestOptions.signal?.aborted) {
         resolve({
           success: false,
-          error: { code: "ABORTED", message: "Request aborted" },
+          error: requestOptions.signal?.reason instanceof RunAbortError
+            ? classifyFailure(requestOptions.signal.reason)
+            : { code: "ABORTED", message: "Request aborted" },
         });
         return;
       }
@@ -1058,7 +1068,9 @@ export class AgentWorker {
         this.pendingRequests.delete(id);
         pending.resolve({
           success: false,
-          error: { code: "ABORTED", message: "Request aborted" },
+          error: requestOptions.signal?.reason instanceof RunAbortError
+            ? classifyFailure(requestOptions.signal.reason)
+            : { code: "ABORTED", message: "Request aborted" },
         });
       };
       requestOptions.signal?.addEventListener("abort", abortHandler, { once: true });

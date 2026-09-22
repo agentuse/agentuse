@@ -97,6 +97,21 @@ async function makeDelegatingPair(childStatus: 'running' | 'error' | 'suspended'
 }
 
 describe('reconcileOrphanedSessions', () => {
+  it('persists matching worker-exit evidence without changing the reconciliation decision', async () => {
+    const { projectRoot, sessionManager, sessionID, agentId } = await makeSession();
+    try {
+      await sessionManager.updateSession(sessionID, agentId, { owner: { pid: DEAD_PID } });
+      const workerDeath = { pid: DEAD_PID, event: 'exit' as const, exitCode: null, signal: 'SIGKILL', observedAt: Date.now() + 1000 };
+      await reconcileOrphanedSessions({ sessionManager, cutoff: Date.now() + 60000, workerDeath });
+      const error = (await sessionManager.findSession(sessionID))!.session.error!;
+      expect(error.cause).toBe('worker_interrupted');
+      expect(JSON.parse(error.detail!)).toEqual(workerDeath);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
   it('marks an abandoned preparing session as interrupted before any model run', async () => {
     const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-reconcile-'));
     process.env.XDG_DATA_HOME = projectRoot;

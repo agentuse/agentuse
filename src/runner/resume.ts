@@ -1,3 +1,4 @@
+import { matchingWorkerDeath, type WorkerDeath } from '../worker/death';
 import type { ModelMessage } from 'ai';
 import { assertResolvedToolCall, rehydrateMessages, type SessionManager } from '../session';
 import type { SessionInfo, ToolState } from '../session/types';
@@ -517,6 +518,7 @@ export async function reconcileOrphanedSessions(options: {
   sessionManager: SessionManager;
   cutoff: number;
   lookbackMs?: number;
+  workerDeath?: WorkerDeath;
   /** Report what would be reconciled without writing anything. */
   dryRun?: boolean;
 }): Promise<ReconciledOrphan[]> {
@@ -544,10 +546,12 @@ export async function reconcileOrphanedSessions(options: {
     // another daemon's worker) are not orphans, however stale their header.
     // Sessions from older versions carry no owner and keep the cutoff-only rule.
     if (session.owner && await isProcessRefAliveAsync(session.owner)) continue;
+    const deathDetail = matchingWorkerDeath(session.owner, session.time.updated, options.workerDeath);
     if (!dryRun) {
       await sessionManager.setSessionError(session.id, agentId, {
         code: 'WORKER_INTERRUPTED',
         cause: 'worker_interrupted',
+        ...(deathDetail && { detail: deathDetail }),
         message: 'Run was interrupted when its serve worker restarted, leaving no live process. If it was waiting on approval, reopen the gate to retry.'
       }).catch(() => {});
     }

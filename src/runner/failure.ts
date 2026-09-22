@@ -10,14 +10,24 @@ export type ClassifiedFailure = Omit<NonNullable<SessionInfo['error']>, 'time' |
 
 /** Explicit run cancellation evidence. Keep AbortError semantics for unwinding. */
 export class RunAbortError extends Error {
-  constructor(readonly causeCode: 'run_deadline' | 'user_stopped' | 'user_interrupt', message: string) {
+  constructor(readonly causeCode: 'run_deadline' | 'user_stopped' | 'user_interrupt' | 'client_disconnect', message: string) {
     super(message);
     this.name = 'AbortError';
   }
 }
 
+export class ProviderContentFilterError extends Error {
+  constructor() { super('Provider content filter truncated the model response'); this.name = 'ProviderContentFilterError'; }
+}
+
 export function runDeadline(seconds: number): RunAbortError {
   return new RunAbortError('run_deadline', `Agent execution timed out after ${seconds}s`);
+}
+
+export function sessionStopReason(reason?: string, cause: 'user_stopped' | 'client_disconnect' = 'user_stopped'): RunAbortError {
+  return cause === 'client_disconnect'
+    ? new RunAbortError('client_disconnect', 'Attached client disconnected')
+    : new RunAbortError('user_stopped', reason || 'Session stopped by user');
 }
 
 /** Classification is diagnostic only. It must not grant permission to retry. */
@@ -26,7 +36,7 @@ export function classifyFailure(error: unknown, signal?: AbortSignal): Classifie
   const explicit = reason instanceof RunAbortError ? reason : error instanceof RunAbortError ? error : undefined;
   if (explicit) {
     return {
-      code: explicit.causeCode === 'run_deadline' ? 'TIMEOUT' : explicit.causeCode === 'user_stopped' ? 'USER_STOPPED' : 'USER_INTERRUPT',
+      code: { run_deadline: 'TIMEOUT', user_stopped: 'USER_STOPPED', client_disconnect: 'CLIENT_DISCONNECT', user_interrupt: 'USER_INTERRUPT' }[explicit.causeCode],
       cause: explicit.causeCode,
       message: explicit.message,
     };
@@ -41,6 +51,7 @@ export function classifyFailure(error: unknown, signal?: AbortSignal): Classifie
     seen.add(current);
     if (current instanceof RunAbortError) return classifyFailure(current);
     aborted ||= current.name === 'AbortError';
+    if (current instanceof ProviderContentFilterError) return { ...base, code: 'CONTENT_FILTER', cause: 'provider_content_filter' };
     if (current instanceof ConfigError) return { ...base, code: 'CONFIG_ERROR', cause: 'configuration' };
     if (current instanceof AuthenticationError) return { ...base, code: 'AUTH_ERROR', cause: 'authentication' };
     if (current instanceof ModelStreamStallError) {

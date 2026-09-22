@@ -1,3 +1,4 @@
+import { sessionStopReason } from '../../../runner/failure';
 import { parseModel } from "../../../telemetry";
 import { parseAgent } from "../../../parser";
 import type { AgentChunk } from "../../../runner";
@@ -203,13 +204,14 @@ export async function runRoutes(ctx: ServeContext, rq: ServeRequest): Promise<bo
           projectRoot: project.root,
           sessionId: requestSessionId,
           reason: "client-disconnect",
+          stopCause: "client_disconnect",
         }).catch(() => {});
       };
       res.on("finish", () => {
         responseFinished = true;
       });
       res.on("close", () => {
-        if (!responseFinished) abortController.abort();
+        if (!responseFinished) abortController.abort(sessionStopReason(undefined, 'client_disconnect'));
       });
       abortController.signal.addEventListener("abort", requestStop, { once: true });
 

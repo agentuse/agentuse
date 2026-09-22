@@ -46,6 +46,32 @@ async function createSession(manager: SessionManager, projectRoot: string, agent
 }
 
 describe('session Code Mode results', () => {
+  it('prefers numbered pagination and reuses its exact continuation in Code Mode', async () => {
+    originalXdg = process.env.XDG_DATA_HOME;
+    testRoot = await mkdtemp(join(tmpdir(), 'agentuse-numbered-results-'));
+    process.env.XDG_DATA_HOME = testRoot;
+    await initStorage(testRoot);
+    const manager = new SessionManager();
+    const agentId = 'agents/review';
+    const { sessionId, messageId } = await createSession(manager, testRoot, agentId);
+    const reference = await manager.recordDirectToolResult(sessionId, agentId, messageId, {
+      tool: 'load', toolInput: {}, output: 'hello😀'.repeat(2000), completedAt: Date.now(),
+    });
+    const direct = createResultsTool({ manager, sessionId, agentId });
+    const input = { action: 'read', resultId: reference.resultId, page: 2, pageSizeBytes: 600,
+      pattern: 'unused', caseSensitive: false, limit: 1, contextLines: 0, expression: '.' };
+    const call = { toolCallId: 'numbered-page', messages: [] };
+    const page = await direct.execute!(input, call);
+    // Historical providers filled every optional field. Canonical page wins on replay.
+    expect(await direct.execute!({ ...input, offset: 0, maxBytes: 1 }, call)).toEqual(page);
+    const hooks = buildCodeModeTraceHooks({ sessionManager: manager, sessionID: sessionId, agentId, messageID: messageId });
+    const dispatcher = new ToolDispatcher({});
+    const code = createCodeExecTool({ dispatcher, toolNames: [], ...hooks });
+    const result = await code.execute!({ code: `let p = await results.page({action:"read",resultId:${JSON.stringify(reference.resultId)},pageSizeBytes:600});
+      let content = p.content; while(p.next) { p = await results.page(p.next); content += p.content; } return content;` }, call) as { value: string };
+    expect(result.value).toBe(await manager.resultPageText(sessionId, agentId, reference.resultId));
+  });
+
   it('queries complete JSON stdout from stored Bash output containing stderr', async () => {
     originalXdg = process.env.XDG_DATA_HOME;
     testRoot = await mkdtemp(join(tmpdir(), 'agentuse-bash-stream-results-'));

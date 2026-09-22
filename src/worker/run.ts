@@ -9,7 +9,7 @@ import { PluginManager } from '../plugin';
 import { applyRunModelOverride, resolveModelString, type RunModelOverride } from '../utils/model-alias';
 import { logger } from '../utils/logger';
 import { resolveProjectContext } from '../utils/project';
-import { classifyFailure } from '../runner/failure';
+import { classifyFailure, RunAbortError } from '../runner/failure';
 import { validateAgentEnvVars, formatEnvValidationError } from '../utils/env-validation';
 import { SessionManager } from '../session/index.js';
 import { initStorage } from '../storage/index.js';
@@ -352,17 +352,20 @@ export async function executeAgent(ctx: WorkerContext, req: ExecuteRequest) {
             ? req.sessionId
             : undefined;
         const stoppedByUser = stoppedSessionId !== undefined;
+        const stoppedFailure = abortController.signal.reason instanceof RunAbortError
+          ? classifyFailure(abortController.signal.reason)
+          : { code: 'USER_STOPPED', cause: 'user_stopped', message: 'Session stopped by user' };
         if (stoppedByUser && sessionManager) {
           await sessionManager.stopSessionTree(stoppedSessionId, {
-            code: 'USER_STOPPED',
-            message: 'Session stopped by user'
+            code: stoppedFailure.code,
+            message: stoppedFailure.message
           }).catch(() => {});
         }
         return {
           id: req.id,
           success: false,
           error: stoppedByUser
-            ? { code: 'USER_STOPPED', cause: 'user_stopped', message: 'Session stopped by user' }
+            ? stoppedFailure
             : classifyFailure(err, abortController.signal),
         };
       }

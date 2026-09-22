@@ -41,6 +41,7 @@ export interface ExecuteRequest {
   /** reconcile-orphans: only sessions last touched before this timestamp (the
    *  reconciling worker's ready time) are treated as orphans of a dead worker. */
   reconcileCutoff?: number;
+  workerDeath?: import('./death').WorkerDeath;
   // Trusted, server-set only: when the serve process has already authorized
   // the viewer (session token / api key / local), it asks for full approval
   // info regardless of the gate resumeToken. Never derived from client input.
@@ -48,6 +49,8 @@ export interface ExecuteRequest {
   trigger?: SessionTrigger;
   runChannelHandles?: Array<{ channel: string; ts: string; channelId?: string; events: Array<'approval' | 'completion' | 'failure'> }>;
   reason?: string;
+  /** Trusted lifecycle evidence, separate from the operator's display text. */
+  stopCause?: 'user_stopped' | 'client_disconnect';
   /** stop-session: reviewer-initiated, so an already-ended failed session is
    *  stamped dismissedAt (reviewed) instead of being a no-op. */
   dismissEnded?: boolean;
