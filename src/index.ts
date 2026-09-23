@@ -278,6 +278,7 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
     let interruptSessionInfo: { sessionID: string; agentId: string } | null = null;
     let sessionErrorLogged = false;
     let sessionManager: SessionManagerType | undefined;
+    let runAbortSignal: AbortSignal | undefined;
 
     // Helper function for session error logging (needs sessionManager to be set)
     const logSessionInterrupt = async (errorCode: string = 'USER_INTERRUPT', errorMessage: string = 'Agent execution interrupted by user (Ctrl+C)', failureDetails?: ReturnType<typeof classifyFailure>) => {
@@ -731,7 +732,9 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
       // Create abort controller for timeout
       const abortController = new AbortController();
       let wasInterrupted = false;  // Track if abort was from user interrupt vs timeout
-      const executionBudget = new ExecutionBudget(timeoutMs, { controller: abortController });
+      runAbortSignal = abortController.signal;
+      const timeoutSource = timeoutWasExplicit ? 'cli' : agent.config.timeout !== undefined ? 'agent' : 'default';
+      const executionBudget = new ExecutionBudget(timeoutMs, { controller: abortController, source: timeoutSource });
 
       // Handle Ctrl-C gracefully
       let sigintCount = 0;
@@ -1090,7 +1093,7 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
       const errorType = categorizeError(error);
 
       // Log to session if it exists
-      const failure = classifyFailure(error);
+      const failure = classifyFailure(error, runAbortSignal);
       await logSessionInterrupt(failure.code, failure.message, failure);
 
       telemetry.captureExecution({

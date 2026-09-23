@@ -27,6 +27,18 @@ function storage() {
 }
 
 describe('execution budgets', () => {
+  it('persists the effective timeout source through suspension and resume', async () => {
+    const { sessions, manager } = storage();
+    sessions.set('leaf', { id: 'leaf' });
+    const first = new ExecutionBudget(180_000, { source: 'cli' });
+    active.push(first);
+    await first.bind(manager, 'leaf', 'leaf');
+    expect(sessions.get('leaf').executionBudget).toMatchObject({ configuredMs: 180_000, source: 'cli' });
+    await first.finish();
+    const resumed = budget(180_000);
+    await resumed.bind(manager, 'leaf', 'leaf', true);
+    expect(resumed.snapshot().source).toBe('cli');
+  });
   it('reserves a final model turn using observed latency without extending the deadline', async () => {
     const b = budget(300000);
     b.observeModelDuration(64000);

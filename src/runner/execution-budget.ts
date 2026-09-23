@@ -5,6 +5,8 @@ import type { SessionInfo } from '../session/types';
 
 export interface ExecutionBudgetState {
   configuredMs: number;
+  /** Where the effective deadline came from; old sessions may not have this. */
+  source?: 'cli' | 'agent' | 'default';
   elapsedMs: number;
   effectiveMs: number;
   limitingSessionId?: string;
@@ -34,10 +36,12 @@ export class ExecutionBudget {
   private restoredAncestors: ExecutionBudget[] = [];
   private sessionId?: string;
   private effectiveMs: number;
+  private source: ExecutionBudgetState['source'];
   private limitingSessionId: string | undefined;
   readonly controller: AbortController;
-  constructor(private configuredMs: number, options: { controller?: AbortController; parentSignal?: AbortSignal } = {}) {
+  constructor(private configuredMs: number, options: { controller?: AbortController; parentSignal?: AbortSignal; source?: ExecutionBudgetState['source'] } = {}) {
     this.controller = options.controller ?? new AbortController();
+    this.source = options.source;
     this.effectiveMs = configuredMs;
     budgets.set(this.signal, this);
     this.setParent(options.parentSignal);
@@ -89,6 +93,7 @@ export class ExecutionBudget {
   }
   snapshot(): ExecutionBudgetState {
     return {
+      ...(this.source && { source: this.source }),
       ...(this.modelLatencyMs > 0 && { modelLatencyMs: this.modelLatencyMs }),
       configuredMs: this.configuredMs, elapsedMs: this.elapsedMs, effectiveMs: this.effectiveMs,
       ...(this.limitingSessionId && { limitingSessionId: this.limitingSessionId }),
@@ -102,6 +107,11 @@ export class ExecutionBudget {
     // flag wins. bind()'s ancestor loop passes state.configuredMs into the
     // constructor, so a restored ancestor still gets its own recorded budget.
     this.priorElapsed = state.elapsedMs;
+    // A resumed run may receive a new effective deadline; its new provenance
+    // must not inherit the old one merely because the caller omitted source.
+    if (this.source === undefined && this.configuredMs === state.configuredMs) {
+      this.source = state.source;
+    }
     this.modelLatencyMs = state.modelLatencyMs ?? 0;
     this.deliveredAt = state.noticeDeliveredAt;
     // Without this a restored ancestor snapshot would persist wrappedUpAt:
