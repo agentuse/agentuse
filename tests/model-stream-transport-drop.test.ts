@@ -15,6 +15,7 @@ import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 
 process.env.CONTEXT_COMPACTION = 'false';
 
+import { StreamProviderError } from 'ai';
 import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
 import { z } from 'zod';
 
@@ -26,6 +27,7 @@ mock.module('../src/models', () => ({
 import { executeAgentCore } from '../src/runner/execution';
 import {
   isModelStreamTransportDrop,
+  isRetryableModelStreamFailure,
   ModelStreamStallError,
   ModelStreamTransportError,
 } from '../src/runner/model-stall';
@@ -324,6 +326,119 @@ describe('agent loop transport-drop handling', () => {
     for await (const chunk of generator) chunks.push(chunk);
 
     expect(errorMessages(chunks).some((message) => message.includes('connection dropped'))).toBe(false);
+  });
+});
+
+const OVERLOADED = 'Our servers are currently overloaded. Please try again later.';
+
+function overloaded(): StreamProviderError {
+  return new StreamProviderError({
+    message: OVERLOADED, type: 'server_error', code: 'server_is_overloaded', statusCode: 503, isRetryable: true,
+  });
+}
+
+/** A stream that emits `parts`, then reports `error` as an error chunk the way OpenAI's Responses stream does. */
+function providerFailureStream(parts: unknown[], error: unknown) {
+  return convertArrayToReadableStream([
+    { type: 'stream-start', warnings: [] },
+    ...parts,
+    { type: 'error', error },
+    { type: 'finish', finishReason: { unified: 'error', raw: 'error' }, usage: USAGE },
+  ] as any);
+}
+
+describe('mid-stream provider failures', () => {
+  // Production 2026-09-22..24: email-alerts and blog production runs ended on
+  // "Our servers are currently overloaded" delivered inside an open stream,
+  // which the SDK's pre-output retry never sees.
+  test('only a retryable provider failure is claimed', () => {
+    expect(isRetryableModelStreamFailure(overloaded())).toBe(true);
+    expect(isRetryableModelStreamFailure(undiciTerminated())).toBe(true);
+    expect(isRetryableModelStreamFailure(new StreamProviderError({
+      message: 'Invalid schema', type: 'invalid_request_error', statusCode: 400, isRetryable: false,
+    }))).toBe(false);
+    expect(isRetryableModelStreamFailure(new Error(OVERLOADED))).toBe(false);
+  });
+
+  test('an overload before any committed output retries and the run completes', async () => {
+    let calls = 0;
+    currentModel = new MockLanguageModelV3({
+      doStream: async () => {
+        calls++;
+        if (calls === 1) {
+          return {
+            stream: providerFailureStream([
+              { type: 'reasoning-start', id: 'reasoning-1' },
+              { type: 'reasoning-delta', id: 'reasoning-1', delta: 'thinking' },
+            ], overloaded()),
+          };
+        }
+        return { stream: completionStream('recovered') };
+      },
+    });
+
+    const chunks = await runCore();
+
+    expect(calls).toBe(2);
+    expect(errorMessages(chunks)).toEqual([]);
+    expect(textOf(chunks)).toBe('recovered');
+  });
+
+  test('an overload after committed text fails without retrying', async () => {
+    let calls = 0;
+    currentModel = new MockLanguageModelV3({
+      doStream: async () => {
+        calls++;
+        return {
+          stream: providerFailureStream([
+            { type: 'text-start', id: 'text-1' },
+            { type: 'text-delta', id: 'text-1', delta: 'half an answer' },
+          ], overloaded()),
+        };
+      },
+    });
+
+    const chunks = await runCore();
+
+    expect(calls).toBe(1);
+    expect(errorMessages(chunks)).toEqual([OVERLOADED]);
+  });
+
+  test('repeated overloads spend the budget, then fail with the provider error', async () => {
+    let calls = 0;
+    currentModel = new MockLanguageModelV3({
+      doStream: async () => {
+        calls++;
+        return { stream: providerFailureStream([], overloaded()) };
+      },
+    });
+
+    const chunks = await runCore();
+
+    expect(calls).toBe(3);
+    const errors = chunks.filter((chunk) => chunk.type === 'error').map((chunk) => (chunk as { error: unknown }).error);
+    expect(errors).toHaveLength(1);
+    expect(StreamProviderError.isInstance(errors[0])).toBe(true);
+    expect((errors[0] as Error).message).toBe(OVERLOADED);
+  });
+
+  test('a non-retryable provider failure ends the run on the first attempt', async () => {
+    let calls = 0;
+    currentModel = new MockLanguageModelV3({
+      doStream: async () => {
+        calls++;
+        return {
+          stream: providerFailureStream([], new StreamProviderError({
+            message: 'Invalid schema', type: 'invalid_request_error', statusCode: 400, isRetryable: false,
+          })),
+        };
+      },
+    });
+
+    const chunks = await runCore();
+
+    expect(calls).toBe(1);
+    expect(errorMessages(chunks)).toEqual(['Invalid schema']);
   });
 });
 

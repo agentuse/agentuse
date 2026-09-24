@@ -1,3 +1,4 @@
+import { StreamProviderError } from 'ai';
 import { logger } from '../utils/logger';
 
 /**
@@ -148,6 +149,21 @@ export function isModelStreamTransportDrop(error: unknown): boolean {
     current = candidate.cause;
   }
   return false;
+}
+
+/**
+ * Can the active step be restarted after this mid-stream failure?
+ *
+ * A transport drop, or a provider that reports a retryable failure inside a
+ * stream it already opened: OpenAI's "Our servers are currently overloaded"
+ * and `server_error` events arrive as error chunks after the SDK's own
+ * pre-output retry has passed, so they ended runs outright. Production
+ * 2026-09-22..24: five scheduled runs (email-alerts, blog production) lost
+ * this way, all classified `unknown`.
+ */
+export function isRetryableModelStreamFailure(error: unknown): boolean {
+  if (isModelStreamTransportDrop(error)) return true;
+  return StreamProviderError.isInstance(error) && error.isRetryable;
 }
 
 /**

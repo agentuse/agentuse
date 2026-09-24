@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, mock } from "bun:test";
+import { aiSdkErrorMocks } from "./helpers/ai-sdk-mock";
 
 // Ensure no module mocks leak from other files
 mock.restore();
@@ -24,7 +25,7 @@ const streamText = mock((opts: Record<string, unknown>) => {
   return { stream: gen() };
 });
 
-mock.module("ai", () => ({ streamText }));
+mock.module("ai", () => ({ streamText, ...aiSdkErrorMocks() }));
 
 let completeText: typeof import("../src/complete-text").completeText;
 

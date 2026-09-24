@@ -27,6 +27,7 @@ import {
   ModelStreamTransportError,
   MODEL_TRANSPORT_MAX_ATTEMPTS,
   isModelStreamTransportDrop,
+  isRetryableModelStreamFailure,
   modelStallRetryDelayMs,
   resolveModelStallPolicy,
   waitForModelStallRetry,
@@ -2269,26 +2270,31 @@ async function* executeAgentAttempt(
     logger.warn(`⚠️  ${error.message}`);
     return { retry: false, error };
   };
-  // Decide what a mid-stream transport drop means. Same checkpoint contract as
-  // a stall: the active step is safe to restart only while it has committed no
-  // visible text and begun no tool call, so a retry can never double an effect.
+  // Decide what a mid-stream transport drop or retryable provider failure
+  // means. Same checkpoint contract as a stall: the active step is safe to
+  // restart only while it has committed no visible text and begun no tool
+  // call, so a retry can never double an effect. A provider failure that runs
+  // out of attempts keeps its own error, so the session records the provider's
+  // reason rather than a dropped connection.
   const classifyTransportDrop = (
     error: unknown,
     producedOutput: boolean
-  ): { retry: true } | { retry: false; error: ModelStreamTransportError } => {
+  ): { retry: true } | { retry: false; error: unknown } => {
     const detail = toErrorMessage(error);
     if (!producedOutput && transportAttempt + 1 < MODEL_TRANSPORT_MAX_ATTEMPTS) {
       transportAttempt++;
       const delayMs = modelStallRetryDelayMs(transportAttempt);
       logger.warn(
-        `Model stream connection dropped (${detail}); retrying ` +
+        `Model stream failed mid-flight (${detail}); retrying ` +
         `in ${Math.round(delayMs / 100) / 10}s ` +
         `(attempt ${transportAttempt + 1} of ${MODEL_TRANSPORT_MAX_ATTEMPTS})`
       );
       return { retry: true };
     }
-    const failure = new ModelStreamTransportError(detail, transportAttempt + 1);
-    logger.warn(`⚠️  ${failure.message}`);
+    const failure = isModelStreamTransportDrop(error)
+      ? new ModelStreamTransportError(detail, transportAttempt + 1)
+      : error;
+    logger.warn(`⚠️  ${toErrorMessage(failure)}`);
     return { retry: false, error: failure };
   };
   while (runAnotherSegment) {
@@ -2434,15 +2440,15 @@ Error: ${errorMessage}`);
         yield { type: 'error', error: decision.error };
         return;
       }
-      // Some providers report a dead socket as an error chunk rather than
-      // throwing out of the iterator. Claim it before `case 'error'` yields it
-      // as a run-ending verdict, since the connection dying says nothing about
-      // the request.
+      // Some providers report a dead socket, or a retryable server failure such
+      // as an overload, as an error chunk rather than throwing out of the
+      // iterator. Claim it before `case 'error'` yields it as a run-ending
+      // verdict, since neither says anything about the request itself.
       if (
         chunk.type === 'error'
         && !suspendState
         && !effectiveAbortSignal.aborted
-        && isModelStreamTransportDrop((chunk as { error?: unknown }).error)
+        && isRetryableModelStreamFailure((chunk as { error?: unknown }).error)
       ) {
         const droppedStep = stalledStepState();
         const decision = classifyTransportDrop((chunk as { error?: unknown }).error, droppedStep.producedOutput);
@@ -3304,7 +3310,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
     // terminated`, quora-engage-answer 2026-09-09, and 16 more in eight weeks).
     // Excluded by design: a run the caller cancelled, and a suspension drain,
     // where a dead socket is the intended consequence rather than a fault.
-    if (isModelStreamTransportDrop(error) && !suspendState && !effectiveAbortSignal.aborted) {
+    if (isRetryableModelStreamFailure(error) && !suspendState && !effectiveAbortSignal.aborted) {
       const droppedStep = stalledStepState();
       const decision = classifyTransportDrop(error, droppedStep.producedOutput);
       if (decision.retry) {

@@ -1,4 +1,4 @@
-import { APICallError, RetryError } from 'ai';
+import { APICallError, RetryError, StreamProviderError } from 'ai';
 
 /** Cap on how much provider response body we persist into the session error. */
 const MAX_ERROR_DETAIL_CHARS = 4000;
@@ -13,17 +13,20 @@ export interface ApiErrorDetail {
   message?: string;
 }
 
+/** A provider rejection: a failed HTTP call, or a failure reported inside an open stream. */
+type ProviderCallError = APICallError | StreamProviderError;
+
 /**
- * Find the underlying provider {@link APICallError}, unwrapping the AI SDK
+ * Find the underlying provider error, unwrapping the AI SDK
  * {@link RetryError} (whose own message is only "Failed after N attempts. Last
  * error: …") and any `cause` chain. The deepest API error is where the status
  * code and response body live — i.e. the actual reason the provider rejected
  * the call. Without this, a rate-limited or 400'd helper call (mock execution,
  * compaction, judges) collapses to a useless "Error" in the session log.
  */
-function findApiCallError(error: unknown, depth = 0): APICallError | undefined {
+function findApiCallError(error: unknown, depth = 0): ProviderCallError | undefined {
   if (error == null || depth > MAX_UNWRAP_DEPTH) return undefined;
-  if (APICallError.isInstance(error)) return error;
+  if (APICallError.isInstance(error) || StreamProviderError.isInstance(error)) return error;
   if (RetryError.isInstance(error)) {
     // Walk attempts newest-first: the last failure is the most representative.
     const attempts = error.errors ?? [];
@@ -50,13 +53,13 @@ function findApiCallError(error: unknown, depth = 0): APICallError | undefined {
 export function extractApiErrorDetail(error: unknown): ApiErrorDetail | undefined {
   const apiError = findApiCallError(error);
   if (!apiError) return undefined;
-  const body = apiError.responseBody;
+  const body = APICallError.isInstance(apiError) ? apiError.responseBody : JSON.stringify(apiError.data);
   const detail = typeof body === 'string' && body.length > 0
     ? body.slice(0, MAX_ERROR_DETAIL_CHARS)
     : undefined;
   return {
     ...(typeof apiError.statusCode === 'number' && { statusCode: apiError.statusCode }),
-    ...(apiError.url && { url: apiError.url }),
+    ...(APICallError.isInstance(apiError) && apiError.url && { url: apiError.url }),
     ...(detail !== undefined && { detail }),
     ...(typeof apiError.message === 'string' && apiError.message.length > 0 && { message: apiError.message }),
   };

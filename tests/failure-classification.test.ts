@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { APICallError, RetryError } from 'ai';
+import { APICallError, RetryError, StreamProviderError } from 'ai';
 import { classifyFailure, RunAbortError, runDeadline, sessionStopReason, ProviderContentFilterError } from '../src/runner/failure';
 import { ModelStreamStallError, ModelStreamTransportError } from '../src/runner/model-stall';
 import { ConfigError } from '../src/parser';
@@ -45,6 +45,24 @@ describe('failure classification', () => {
     expect(classifyFailure(provider(529, '{"error":{"type":"overloaded_error"}}')).cause).toBe('provider_overloaded');
     expect(classifyFailure(new Error('Our servers are currently overloaded')).cause).toBe('unknown');
     expect(classifyFailure(provider(503, 'not JSON')).cause).toBe('provider_server');
+  });
+
+  it('classifies a provider failure reported inside an open stream by its structured fields', () => {
+    // OpenAI's Responses stream reports an overload as an error event after the
+    // request was accepted; the AI SDK surfaces it as StreamProviderError.
+    const overloaded = new StreamProviderError({
+      message: 'Our servers are currently overloaded. Please try again later.',
+      type: 'server_error', code: 'server_is_overloaded', statusCode: 503, isRetryable: true,
+      data: { type: 'error', error: { type: 'server_error', code: 'server_is_overloaded' } },
+    });
+    expect(classifyFailure(overloaded)).toMatchObject({
+      code: 'EXECUTION_ERROR', cause: 'provider_server', statusCode: 503,
+      message: 'Our servers are currently overloaded. Please try again later.',
+    });
+    const anthropicOverload = new StreamProviderError({
+      message: 'Overloaded', statusCode: 529, isRetryable: true, data: { type: 'error', error: { type: 'overloaded_error' } },
+    });
+    expect(classifyFailure(anthropicOverload).cause).toBe('provider_overloaded');
   });
 
   it('unwraps provider retry errors', () => {
