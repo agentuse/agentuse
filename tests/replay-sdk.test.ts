@@ -3,7 +3,10 @@ import { MockLanguageModelV3, convertArrayToReadableStream } from 'ai/test';
 import { ReplayDispatcher, type ReplayRecording } from '../src/replay/recording';
 process.env.CONTEXT_COMPACTION = 'false';
 let currentModel: MockLanguageModelV3;
-mock.module('../src/models', () => ({ createModel: async () => currentModel }));
+mock.module('../src/models', () => ({
+  createModel: async () => currentModel,
+  AuthenticationError: class AuthenticationError extends Error {},
+}));
 const { executeAgentCore } = await import('../src/runner/execution');
 const usage = { inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 5, text: 5, reasoning: 0 } };
 const call = (id: string, toolName: string, input: unknown) => ({ type: 'tool-call', toolCallId: id, toolName, input: JSON.stringify(input) });

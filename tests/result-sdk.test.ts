@@ -13,7 +13,10 @@ const model = new MockLanguageModelV3({ doStream: async (options: any) => {
     { type: 'finish', finishReason: { unified: 'stop', raw: 'stop' }, usage: { inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 10, text: 10, reasoning: 0 } } },
   ] as any) };
 } });
-mock.module('../src/models', () => ({ createModel: async () => model }));
+mock.module('../src/models', () => ({
+  createModel: async () => model,
+  AuthenticationError: class AuthenticationError extends Error {},
+}));
 const { executeAgentCore } = await import('../src/runner/execution');
 const { processAgentStream } = await import('../src/runner/stream');
 it('closed result generation uses the real SDK without Code Mode, workflow tools, or outcome recovery', async () => {
