@@ -528,7 +528,7 @@ names like `data` instead of `values`):
   its body: the runtime passes it `Apply the evaluation standard defined in your
   own instructions.` as the criteria. The runtime also injects a `submit_verdict`
   tool and the instructions for calling it, so do NOT restate that protocol in
-  the judge body (same rule as `report_incomplete` below) - write only the
+  the judge body (same rule as `report_outcome` below) - write only the
   domain bar the runtime cannot know. A judge must not carry `approval:` (a
   suspended judge counts as a judge error).
 
@@ -581,15 +581,15 @@ names like `data` instead of `values`):
   "what's new" feel without state, scope by data (items dated in the last N days),
   not by remembered deltas. Pin the store with `-C <path>` when cron'ing a URL run.
 
-- **Blocked runs declare themselves incomplete automatically.** The runtime
-  system prompt already tells every agent to call the always-on
-  `report_incomplete` tool at a blocker (dead login, missing precondition) and
-  to open its final output with "✅ Complete:" / "⚠️ Incomplete:". Do NOT
-  restate that mechanic in the agent body. Only add the domain judgment the
-  runtime cannot know: which conditions count as blocked for THIS agent, and
-  which empty results are an honest `completed` (e.g. "a sweep that scored
-  notes but queued none is Complete; a sweep that never got to score because
-  the session was logged out is Incomplete").
+- **Runs declare their own outcome automatically.** The runtime system prompt
+  already tells every agent to end with the always-on `report_outcome` tool as
+  complete, idle (checked, nothing to do), or incomplete (a blocker, including
+  due work it could not move). Do NOT restate that mechanic in the agent body.
+  Only add the domain judgment the runtime cannot know: which conditions count
+  as blocked for THIS agent, and which empty results are honestly idle
+  (illustrative: "a sweep that scored notes and found none worth queuing is
+  idle; a sweep that found due items stuck behind a failed check, or never got
+  to score because the session was logged out, is incomplete").
 
 - **Validate models against `agentuse models`.** The catalog moves; check it
   before calling a name invalid. Don't infer limits from other providers'

@@ -34,7 +34,7 @@ policy or imply that replaying a run with prior side effects is safe.
 
 A human rejection can leave a run `error/INCOMPLETE` while automatically setting
 `dismissedAt`, which removes it from attention queues without erasing history.
-`report_incomplete` accepts an optional `rejectionOnly` boolean: set it to `true`
+An incomplete `report_outcome` accepts an optional `rejectionOnly` boolean: set it to `true`
 when a human rejection in the run or a delegated child is the sole blocker. The
 runtime verifies the recorded human decision and leaves the run visible if any
 descendant is still active or has an independent failure. Machine review

@@ -106,7 +106,7 @@ A judge that itself errors (model/auth/parse failure) never blocks the run: the 
 - Each verification is one extra LLM call; each redo is a continuation of the existing session (prompt caching keeps it near generation-only cost). Redo steps count against `maxSteps`.
 - On a gate with a judge agent, the judge's own session is resumed across attempts, so raising `maxRedos` on a slate agent is cheaper than the count suggests: later attempts re-read a cached prefix and re-judge only the candidates that changed.
 - The built-in judge defaults to the agent's own model so authentication always works; set `model` to use a cheaper judge.
-- Verify requires session storage (the default), it is skipped when no session substrate is available, and skipped for runs that declared themselves incomplete via `report_incomplete`.
+- Verify requires session storage (the default), it is skipped when no session substrate is available, and skipped for runs that declared themselves incomplete via `report_outcome`.
 - If a redo hits an approval gate, the run suspends normally; verification resolves at the end of the resumed run.
 
 ## Verify vs. Learning

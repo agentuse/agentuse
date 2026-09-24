@@ -514,24 +514,31 @@ Paths inside the container mirror the host (no `/workspace/` alias). Changes mad
 
 ## Run Outcome Tool
 
-The `report_incomplete` tool is always available, no configuration needed. It lets an agent declare that the run finished cleanly but **did not achieve its objective**, a blocked precondition, an expired login, a dead dependency.
+The `report_outcome` tool is always available, no configuration needed. Every agent ends its run by calling it once with one of three statuses.
 
-### `report_incomplete`
+### `report_outcome`
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `reason` | `string` | Required | What blocked the run and what a human must fix before the next attempt |
+| `status` | `"complete" \| "idle" \| "incomplete"` | Required | How the run ended, judged against the requested objective |
+| `headline` | `string` | Required | One line. Complete: what the run achieved. Idle: what it checked and why nothing was due. Incomplete: the blocker and what a human must fix |
+| `details` | `string` | Optional | Markdown body, only when the headline cannot carry the substance |
+| `artifacts` | `string[]` | Required | Every path or URL the run produced or changed. `[]` when it changed nothing |
+| `rejectionOnly` | `boolean` | Optional | Incomplete only. `true` when a human rejection is the sole blocker |
 
-Calling it does **not** stop the run: the agent continues (store writes, final report) and the tool call is just recorded. When the run ends, the session is persisted as `error` with code `INCOMPLETE` instead of `completed`:
+What each status does:
 
-- Session list (CLI and web) shows an `incomplete` status instead of a green `completed`
-- Channel notifications fire the `failure` event, not `completion`
-- `agentuse sessions show` displays the reason under the error section
+- **`complete`**: the objective was achieved. The call is the run's answer and ends the run. The session is `completed`.
+- **`idle`**: the agent checked and there was genuinely nothing to do. `artifacts` must be `[]`. It ends the run and the session is still `completed`, but the outcome is marked idle: the run JSON carries `result.idle: true`, and the session view shows the verdict in grey instead of green. A stretch of idle runs from an agent that usually ships is a sign something upstream is stuck.
+- **`incomplete`**: a required outcome was not delivered because something failed, including due work the agent found but could not move. The run keeps going only for bookkeeping. When it ends, the session is persisted as `error` with code `INCOMPLETE`:
+  - Session list (CLI and web) shows an `incomplete` status instead of a green `completed`
+  - Channel notifications fire the `failure` event, not `completion`
+  - `agentuse sessions show` displays the headline under the error section
 
-The runtime system prompt instructs every agent to call this tool at a blocker and to open its final output with a skimmable status line: `✅ Complete: <one-line outcome>` or `⚠️ Incomplete: <reason>`. Agent files should not restate this mechanic; only add domain judgment about what counts as blocked vs. legitimately empty.
+The runtime system prompt already teaches every agent these statuses and tells it to choose `incomplete` when unsure between idle and incomplete. Agent files should not restate this mechanic; only add domain judgment about what counts as blocked, done, or genuinely empty for that agent.
 
 <Note>
-  Use it for "ran fine but delivered nothing because something is broken" (e.g. a scraper whose login session died). Do not use it for a legitimately empty result, a sweep that found nothing to act on is still `completed`.
+  Sessions recorded before `report_outcome` used two tools, `report_complete` and `report_incomplete`. They still display and reconcile the same way, and a session suspended before the change resumes with those tools. An old `report_complete` never reads as idle, since it cannot say whether the run did anything.
 </Note>
 
 ## Security Considerations
