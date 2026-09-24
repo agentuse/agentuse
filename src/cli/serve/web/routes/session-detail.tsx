@@ -1385,7 +1385,7 @@ export default function SessionDetail() {
   }, [visibleLogs]);
   const reviewerComment = useMemo(() => latestReviewerComment(orderedLogs), [orderedLogs]);
   // The outcome for the summary-first ended layout. An agent that declared its
-  // verdict through `report_complete` delivered the run's answer there, so read
+  // verdict through `report_outcome` delivered the run's answer there, so read
   // it off that row (already split into headline + body by the server); a run
   // that never called an outcome tool falls back to its last completed
   // assistant text, which is then split here. Derived client-side from the

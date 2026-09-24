@@ -467,7 +467,7 @@ export async function runAgent(
           ...(agentFilePath !== undefined && { agentFilePath }),
           ...(projectContext !== undefined && { projectContext }),
           ...(abortSignal && { abortSignal }),
-          // Judge the real output: a run that delivered via report_complete
+          // Judge the real output: a run that delivered via report_outcome
           // streamed no prose for the judge to read.
           ...(preparation.runOutcome && { runOutcome: preparation.runOutcome }),
           quiet
@@ -549,11 +549,11 @@ export async function runAgent(
     }
 
     // The agent may have declared the run incomplete (ran clean but did not
-    // deliver — e.g. a dead login) via the report_incomplete tool. That verdict
+    // deliver — e.g. a dead login) via report_outcome. That verdict
     // flips the terminal status to error/INCOMPLETE so the run is skimmable as
     // a failure, while the run itself still finished without throwing.
     const incomplete = preparation.runOutcome?.incomplete;
-    // The agent's own one-line verdict (report_complete). Suppressed when the
+    // The agent's own one-line verdict (complete or idle). Suppressed when the
     // run is incomplete so no surface can pair a failure with a "here's what
     // landed" headline; classifyRunResult applies the same precedence.
     const complete = incomplete ? undefined : preparation.runOutcome?.complete;
@@ -593,7 +593,7 @@ export async function runAgent(
       ...(preparation.projectSuggestionsSubmission?.result && {
         projectDiscovery: preparation.projectSuggestionsSubmission.result,
       }),
-      // report_complete IS the report, so its headline + details become the
+      // A complete or idle report_outcome IS the report, so its headline + details become the
       // run's output for every consumer. Streamed prose is the fallback for a
       // run that never called it.
       text: composeFinalOutput(complete, result.text),

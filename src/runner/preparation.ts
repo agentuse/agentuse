@@ -31,6 +31,7 @@ import { buildAutonomousAgentPrompt } from './prompt';
 import { isCodeModeEnabled } from './code-mode';
 import { createSessionAndMessage } from './session-helper';
 import { bindToolsToSnapshot, createToolsSnapshot } from './tool-snapshot';
+import { REPORT_OUTCOME_TOOL } from '../tools/report-outcome.js';
 import { rehydrateMessages, ensureTrailingUserTurn } from '../session';
 import type { AssistantTokens } from '../session/usage';
 import { resolveVerifyPlacements, withGateVerify } from '../verify/gate.js';
@@ -376,7 +377,21 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
           `Session ${sessionID} had no tools snapshot; rebuilt it from the current agent definition for this continuation`
         );
       }
-      tools = bindToolsToSnapshot(tools, snapshot);
+      tools = bindToolsToSnapshot({ ...tools, ...loadedTools.legacyOutcomeTools }, snapshot);
+      // A session suspended before `report_outcome` existed resumes with the
+      // legacy pair from its snapshot, but the runtime prompt is rebuilt on
+      // every resume and names only the new tool. Add it, and record it in
+      // the snapshot so later resumes present the same list.
+      // Snapshots with no outcome tool at all predate outcome tools entirely
+      // and keep running without one, as they always have.
+      const currentOutcome = loadedTools.all[REPORT_OUTCOME_TOOL];
+      const hasLegacyOutcome = Object.keys(loadedTools.legacyOutcomeTools).some((name) => name in tools);
+      if (hasLegacyOutcome && !(REPORT_OUTCOME_TOOL in tools) && currentOutcome) {
+        tools = { ...tools, [REPORT_OUTCOME_TOOL]: currentOutcome };
+        if (typeof sessionManager.writeToolsSnapshot === 'function') {
+          await sessionManager.writeToolsSnapshot(sessionID, agentId, createToolsSnapshot(tools));
+        }
+      }
     } else {
       await sessionManager.writeToolsSnapshot(sessionID, agentId, createToolsSnapshot(tools));
     }

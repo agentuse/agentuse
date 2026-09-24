@@ -283,8 +283,8 @@ export function humanizeMetric(name: string): string {
 /**
  * Split a run's final response into its verdict headline and the report body.
  *
- * An agent that declares its outcome through `report_complete` delivers
- * "Complete: <headline>" followed by an optional Markdown body. Rendered as one
+ * An agent that declares its outcome through `report_outcome` delivers
+ * "Complete: <headline>" (or "Idle: <headline>") followed by an optional Markdown body. Rendered as one
  * blob the headline reads as an ordinary paragraph, smaller than the headings
  * beneath it and repeating the status pill's own icon. Split here so the card
  * can lead with the headline and let the body be the body.
@@ -295,7 +295,7 @@ export function humanizeMetric(name: string): string {
  * and fall through with their whole text as `body`.
  */
 export function splitOutcomeHeadline(text: string): { headline?: string; body: string } {
-  const match = /^\s*(?:✅\s*Complete|⚠️?\s*Incomplete)\s*:\s*(.+?)\s*(?:\n|$)/.exec(text);
+  const match = /^\s*(?:✅\s*Complete|💤\s*Idle|⚠️?\s*Incomplete)\s*:\s*(.+?)\s*(?:\n|$)/.exec(text);
   if (!match) return { body: text };
   const headline = match[1]!.trim();
   if (!headline) return { body: text };

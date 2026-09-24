@@ -5,7 +5,7 @@ import { dirname, join } from 'path';
 import { parseAgent } from '../parser';
 import { connectMCP } from '../mcp';
 import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, workerRunResponse } from '../runner';
-import { composeSubagentResult } from '../tools/report-outcome';
+import { composeSubagentResult, type RunOutcome } from '../tools/report-outcome';
 import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, describeStaleCascade, isRecoverableCascadeFailure, isFinishableStale, loadStoredSubagentResult, CASCADE_ORPHANED_CODE, CASCADE_RECOVERABLE_CODE, MAX_CASCADE_DEPTH } from '../runner/subagent-cascade';
 import { currentProcessRef } from '../utils/process-info';
 import { withOwnershipLock } from '../utils/ownership-lock';
@@ -181,7 +181,7 @@ export function isExistingSessionPreRunError(error: unknown): boolean {
 // which is what lets the recovery path share the exact same walk-up code.
 export interface CascadeChildResult {
   text?: string | undefined;
-  complete?: { headline: string; details?: string; artifacts?: string[] } | undefined;
+  complete?: RunOutcome['complete'] | undefined;
   incomplete?: { reason: string } | undefined;
   usage?: { totalTokens?: number | undefined } | undefined;
 }
@@ -311,7 +311,7 @@ export async function claimCascadeChain(
 // Shared by the live approval cascade (resumeApprovalCascade) and the
 // storage-driven recovery path (finishCascadeFromStorage) so they can't drift.
 //
-// NOTE: an intermediate child's `report_incomplete` deliberately does NOT stop
+// NOTE: an intermediate child's incomplete verdict deliberately does NOT stop
 // the walk. It is the child's own verdict on its product outcome, not a
 // control-flow signal: in an ungated run the parent's `subagent__*` tool still
 // returns the child's text and the manager keeps going (see subagent.ts).
@@ -449,7 +449,7 @@ export async function resumeApprovalCascade(opts: {
   // 3. Walk up: complete each ancestor's bookmark with the child's output,
   //    resume it, stopping if it re-suspends. The final response reports
   //    whatever the ROOT ended as (see walkUpCascadeChain for the
-  //    report_incomplete semantics at each hop).
+  //    incomplete-verdict semantics at each hop).
   const walked = await walkUpCascadeChain({
       ctx,
     sessionManager,

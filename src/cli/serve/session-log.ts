@@ -135,6 +135,7 @@ export interface ApprovalLogDetails {
   subagentResult?: {
     headline?: string;
     incomplete?: string;
+    idle?: true;
     artifacts?: string[];
     body?: string;
   };
@@ -341,7 +342,7 @@ export function fallbackSubagentSession(entry: ApprovalLogEntry): LogSubagentSes
 
 /** Compatibility adapter for sessions written before child summaries carried
  * their own durable report. New sessions derive this from the child's
- * report_complete/report_incomplete part; old ones can still use the result
+ * outcome-call part; old ones can still use the result
  * returned on the parent subagent__* call. */
 export function reportFromSubagentResult(
   result: ApprovalLogDetails['subagentResult'] | undefined
@@ -350,7 +351,7 @@ export function reportFromSubagentResult(
   const headline = result.incomplete ?? result.headline;
   if (!headline) return undefined;
   return {
-    status: result.incomplete ? 'incomplete' : 'complete',
+    status: result.incomplete ? 'incomplete' : result.idle ? 'idle' : 'complete',
     headline,
     ...(result.body && { body: result.body }),
     ...(result.artifacts?.length && { artifacts: result.artifacts }),

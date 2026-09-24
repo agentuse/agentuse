@@ -584,7 +584,7 @@ export async function createSubAgentTool(
           await budget.finish(true);
 
           // Update session message with final token usage and mark session completed.
-          // A sub-agent that declared itself incomplete (report_incomplete) is
+          // A sub-agent that declared itself incomplete is
           // persisted as error/INCOMPLETE instead, so its child-session pill reads
           // as a failure in the parent's log.
           const subagentIncomplete = preparedTools.runOutcome.incomplete;
@@ -613,7 +613,7 @@ export async function createSubAgentTool(
 
           // The child's own verdict, so the parent can act on the outcome
           // without re-reading (or re-summarizing) the whole report body. Same
-          // rule as a top-level run: the child's report_complete IS its report,
+          // rule as a top-level run: the child's report_outcome IS its report,
           // and its streamed prose is the fallback. Shared with the resume path
           // (completeSubagentBookmark) so both hand the parent one shape.
           const composed = composeSubagentResult({

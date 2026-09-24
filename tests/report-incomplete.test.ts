@@ -125,17 +125,17 @@ describe('loadAgentTools outcome wiring', () => {
     config: { model: 'anthropic:claude-sonnet-4-0' }
   };
 
-  it('always exposes report_incomplete, even with no tools configured', async () => {
+  it('always exposes report_outcome, even with no tools configured', async () => {
     const loaded = await loadAgentTools({ agent, mcpConnections: [] });
 
-    expect(loaded.all.report_incomplete).toBeDefined();
+    expect(loaded.all.report_outcome).toBeDefined();
     expect(loaded.runOutcome).toEqual({});
   });
 
   it('shares the runOutcome ref with the exposed tool', async () => {
     const loaded = await loadAgentTools({ agent, mcpConnections: [] });
 
-    await (loaded.all.report_incomplete as any).execute({ reason: 'blocked precondition' });
+    await (loaded.all.report_outcome as any).execute({ status: 'incomplete', headline: 'blocked precondition', artifacts: [] });
 
     expect(loaded.runOutcome.incomplete).toEqual({ reason: 'blocked precondition' });
   });

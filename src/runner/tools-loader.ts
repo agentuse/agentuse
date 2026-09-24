@@ -14,7 +14,15 @@ import {
 } from '../skill/index.js';
 import { discoverSkills } from '../skill/discovery.js';
 import { createStore, createStoreTools, type Store } from '../store/index.js';
-import { createReportIncompleteTool, createReportCompleteTool, type RunOutcome } from '../tools/report-outcome.js';
+import {
+  createReportCompleteTool,
+  createReportIncompleteTool,
+  createReportOutcomeTool,
+  REPORT_COMPLETE_TOOL,
+  REPORT_INCOMPLETE_TOOL,
+  REPORT_OUTCOME_TOOL,
+  type RunOutcome,
+} from '../tools/report-outcome.js';
 import { createSandbox, createSandboxTools, type SandboxInstance } from '../sandbox.js';
 import { resolveFilesystemMounts, type ResolvedMount } from '../tools/path-validator.js';
 import { resolveModelInfo } from '../utils/model-utils';
@@ -106,7 +114,13 @@ export interface LoadedAgentTools {
   /** All tools merged together */
   all: Record<string, Tool>;
   /**
-   * Per-run outcome the always-on `report_incomplete` tool writes into. The
+   * `report_complete` / `report_incomplete`, writing the same `runOutcome`.
+   * Not in `all`: bound only for a resumed session whose tool snapshot predates
+   * `report_outcome`.
+   */
+  legacyOutcomeTools: Record<string, Tool>;
+  /**
+   * Per-run outcome the always-on `report_outcome` tool writes into. The
    * caller (runner/subagent) reads it after a clean finish to decide between
    * marking the session completed or error/INCOMPLETE.
    */
@@ -378,12 +392,12 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     }
   }
 
-  // Always-on run-outcome tools, one per verdict. `report_incomplete` lets any
-  // agent declare "ran clean but did not deliver" (blocked login, dead
-  // precondition) so the run ends error/INCOMPLETE instead of a misleading
-  // completed; `report_complete` carries the run's one-line headline for every
-  // surface that shows an outcome before the body. They share one mutable ref,
-  // read by the caller after the stream finishes.
+  // Always-on run-outcome tool. `report_outcome` lets any agent declare
+  // "ran clean but did not deliver" (blocked login, dead precondition) so the
+  // run ends error/INCOMPLETE instead of a misleading completed, "had nothing to
+  // do" so an idle run is not mistaken for delivered work, and carries the
+  // run's one-line headline for every surface that shows an outcome before the
+  // body. It writes one mutable ref, read by the caller after the stream ends.
   const runOutcome: RunOutcome = {};
   const agentSourceContract = agentSourceSubmissionContract(agent.config.metadata);
   const agentSourceSubmission: AgentSourceSubmission | undefined = agentSourceContract ? {} : undefined;
@@ -393,30 +407,30 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
   const agentRevisionSubmission: AgentRevisionSubmission | undefined = agentRevisionContract ? {} : undefined;
   const changesetContract = changesetSubmissionContract(agent.config.metadata);
   const changesetSubmission: ChangesetSubmission | undefined = changesetContract ? {} : undefined;
-  const baseReportComplete = createReportCompleteTool(runOutcome);
-  const guardedReportComplete: Tool = agentSourceSubmission || projectSuggestionsSubmission || agentRevisionSubmission || changesetSubmission
-    ? {
-        ...baseReportComplete,
-        execute: async (input: unknown, options: unknown) => {
-          if (agentSourceSubmission && !agentSourceSubmission.source) {
-            throw new Error('No valid agent name, filename, and source have been submitted. Call submit_agent_source first, correct any validation error, and only then call report_complete.');
-          }
-          if (projectSuggestionsSubmission && !projectSuggestionsSubmission.result) {
-            throw new Error('No valid project suggestions have been submitted. Call submit_project_suggestions first, correct any validation error, and only then call report_complete.');
-          }
-          if (agentRevisionSubmission && !agentRevisionSubmission.outcome) {
-            throw new Error('No validated revision outcome has been submitted. Call submit_agent_revision first, correct any validation error, and only then call report_complete.');
-          }
-          if (changesetSubmission && !changesetSubmission.outcome) {
-            throw new Error('No validated change set has been submitted. Call submit_changes first, correct any validation error, and only then call report_complete.');
-          }
-          return (baseReportComplete.execute as (input: unknown, options: unknown) => unknown)(input, options);
-        },
-      }
-    : baseReportComplete;
+  // A delivered verdict with its required structured submission missing is a
+  // run with nothing in it: refuse it as a tool error the model can correct.
+  const assertDeliverable = (): void => {
+    if (agentSourceSubmission && !agentSourceSubmission.source) {
+      throw new Error('No valid agent name, filename, and source have been submitted. Call submit_agent_source first, correct any validation error, and only then report the outcome.');
+    }
+    if (projectSuggestionsSubmission && !projectSuggestionsSubmission.result) {
+      throw new Error('No valid project suggestions have been submitted. Call submit_project_suggestions first, correct any validation error, and only then report the outcome.');
+    }
+    if (agentRevisionSubmission && !agentRevisionSubmission.outcome) {
+      throw new Error('No validated revision outcome has been submitted. Call submit_agent_revision first, correct any validation error, and only then report the outcome.');
+    }
+    if (changesetSubmission && !changesetSubmission.outcome) {
+      throw new Error('No validated change set has been submitted. Call submit_changes first, correct any validation error, and only then report the outcome.');
+    }
+  };
   const outcomeTools: Record<string, Tool> = {
-    report_incomplete: createReportIncompleteTool(runOutcome),
-    report_complete: guardedReportComplete,
+    [REPORT_OUTCOME_TOOL]: createReportOutcomeTool(runOutcome, { assertDeliverable }),
+  };
+  // Never offered to a new run. Bound only when a resumed session's tool
+  // snapshot still names them (see bindToolsToSnapshot in preparation).
+  const legacyOutcomeTools: Record<string, Tool> = {
+    [REPORT_INCOMPLETE_TOOL]: createReportIncompleteTool(runOutcome),
+    [REPORT_COMPLETE_TOOL]: createReportCompleteTool(runOutcome, { assertDeliverable }),
   };
   const internalSubmissionTools: Record<string, Tool> = {
     ...(agentSourceContract && agentSourceSubmission && {
@@ -496,6 +510,10 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
   // runs before the tools snapshot in preparation.ts, so suspended sessions
   // resume with the same extended schemas they were created with.
   const all = agent.config.intent === false ? withMocks : withIntentParam(withMocks);
+  // Same intent wrapping as `all`, so a legacy snapshot that carries the intent
+  // parameter still has it stripped before execute. Never mocked: outcome tools
+  // are bookkeeping (see mockExclusions).
+  const legacyOutcome = agent.config.intent === false ? legacyOutcomeTools : withIntentParam(legacyOutcomeTools);
 
   return {
     mcpTools,
@@ -504,6 +522,7 @@ export async function loadAgentTools(options: LoadAgentToolsOptions): Promise<Lo
     storeTools,
     sandboxTools,
     all,
+    legacyOutcomeTools: legacyOutcome,
     runOutcome,
     ...(agentSourceSubmission && { agentSourceSubmission }),
     ...(projectSuggestionsSubmission && { projectSuggestionsSubmission }),

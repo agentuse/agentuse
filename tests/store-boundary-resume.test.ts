@@ -341,14 +341,94 @@ describe('missing tools snapshots on continuation', () => {
     });
     try {
       const snapshot = writtenSnapshot as { tools: Array<{ name: string }> };
-      expect(snapshot.tools.map(tool => tool.name).sort()).toEqual([
-        'report_complete',
-        'report_incomplete',
-      ]);
-      expect(Object.keys(prepared.tools).sort()).toEqual([
-        'report_complete',
-        'report_incomplete',
-      ]);
+      expect(snapshot.tools.map(tool => tool.name).sort()).toEqual(['report_outcome']);
+      expect(Object.keys(prepared.tools).sort()).toEqual(['report_outcome']);
+    } finally {
+      await prepared.cleanup();
+    }
+  });
+});
+
+describe('sessions suspended before report_outcome', () => {
+  const objectSchema = (properties: Record<string, unknown>, required: string[]) => ({
+    type: 'object', properties, required, additionalProperties: false,
+  });
+  const legacySnapshot = {
+    tools: [
+      {
+        name: 'report_complete',
+        description: 'Declare that this run achieved its objective.',
+        inputSchema: objectSchema({ headline: { type: 'string' }, artifacts: { type: 'array', items: { type: 'string' } } }, ['headline']),
+      },
+      {
+        name: 'report_incomplete',
+        description: 'Declare that a required outcome was not delivered.',
+        inputSchema: objectSchema({ reason: { type: 'string' } }, ['reason']),
+      },
+    ],
+  };
+
+  function legacyResume() {
+    let writtenSnapshot: { tools: Array<{ name: string }> } | undefined;
+    const sessionManager = {
+      findSession: async () => ({
+        agentId: 'resumed-worker',
+        session: { model: agent.config.model, config: {} },
+      }),
+      getPrimaryMessage: async () => ({
+        id: 'message-1',
+        user: { prompt: { task: agent.instructions } },
+        assistant: {
+          system: ['existing system prompt'],
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        },
+      }),
+      readToolsSnapshot: async () => writtenSnapshot ?? legacySnapshot,
+      writeToolsSnapshot: async (_sessionId: string, _agentId: string, snapshot: any) => {
+        writtenSnapshot = snapshot;
+      },
+      getSessionDirectory: async () => '/definitely/not/a/session-directory',
+    };
+    return {
+      written: () => writtenSnapshot,
+      prepare: () => prepareAgentExecution({
+        agent: { ...agent, config: { model: agent.config.model } },
+        mcpClients: [],
+        sessionManager: sessionManager as any,
+        existingSessionId: 'session-1',
+        prebuiltMessages: [{ role: 'user', content: 'Continue.' }],
+      }),
+    };
+  }
+
+  it('keeps the legacy pair callable and adds report_outcome for the rebuilt prompt', async () => {
+    const fixture = legacyResume();
+    const prepared = await fixture.prepare();
+    try {
+      expect(Object.keys(prepared.tools).sort()).toEqual(['report_complete', 'report_incomplete', 'report_outcome']);
+      // The model keeps seeing the schema its history was written against.
+      expect(JSON.stringify((prepared.tools.report_incomplete as any).inputSchema)).toContain('reason');
+
+      await (prepared.tools.report_complete as any).execute({ headline: 'Finished after approval' });
+      expect(prepared.runOutcome?.complete?.headline).toBe('Finished after approval');
+      await (prepared.tools.report_outcome as any).execute({ status: 'incomplete', headline: 'Login expired', artifacts: [] });
+      expect(prepared.runOutcome?.incomplete?.reason).toBe('Login expired');
+
+      expect(fixture.written()?.tools.map(tool => tool.name).sort()).toEqual(['report_complete', 'report_incomplete', 'report_outcome']);
+    } finally {
+      await prepared.cleanup();
+    }
+  });
+
+  it('presents the same list on a second resume without rewriting the snapshot', async () => {
+    const fixture = legacyResume();
+    await (await fixture.prepare()).cleanup();
+    const first = fixture.written()!;
+
+    const prepared = await fixture.prepare();
+    try {
+      expect(Object.keys(prepared.tools).sort()).toEqual(['report_complete', 'report_incomplete', 'report_outcome']);
+      expect(fixture.written()).toBe(first);
     } finally {
       await prepared.cleanup();
     }

@@ -223,13 +223,13 @@ describe('shouldRequestOutcome', () => {
   });
 
   it('asks for the verdict without inviting a second copy of the report', () => {
-    expect(OUTCOME_NUDGE_PROMPT).toContain('report_complete');
-    expect(OUTCOME_NUDGE_PROMPT).toContain('report_incomplete');
+    expect(OUTCOME_NUDGE_PROMPT).toContain('report_outcome');
+    expect(OUTCOME_NUDGE_PROMPT).toMatch(/"complete"[\s\S]*"idle"[\s\S]*"incomplete"/);
     expect(OUTCOME_NUDGE_PROMPT).toContain('may have reached its normal work-step limit after returning a tool result');
     expect(OUTCOME_NUDGE_PROMPT).toContain('does not authorize more work');
     expect(OUTCOME_NUDGE_PROMPT).toContain('full preceding task and tool trace');
     expect(OUTCOME_NUDGE_PROMPT).toContain('do not invent a blocker');
-    expect(OUTCOME_NUDGE_PROMPT).toContain('successful evaluation that found nothing');
+    expect(OUTCOME_NUDGE_PROMPT).toContain('nothing was waiting at all');
     expect(OUTCOME_NUDGE_PROMPT).toContain('skipped, blocked, failed, or only partially delivered');
     expect(OUTCOME_NUDGE_PROMPT).toMatch(/do not repeat/i);
   });
@@ -243,21 +243,24 @@ describe('loadAgentTools outcome wiring', () => {
     config: { model: 'anthropic:claude-sonnet-4-0' }
   } as unknown as ParsedAgent;
 
-  it('always exposes both outcome tools', async () => {
+  it('exposes report_outcome and keeps the legacy pair out of the model-facing set', async () => {
     const loaded = await loadAgentTools({ agent, mcpConnections: [] });
 
-    expect(loaded.all.report_complete).toBeDefined();
-    expect(loaded.all.report_incomplete).toBeDefined();
+    expect(loaded.all.report_outcome).toBeDefined();
+    expect(loaded.all.report_complete).toBeUndefined();
+    expect(loaded.all.report_incomplete).toBeUndefined();
+    expect(loaded.legacyOutcomeTools.report_complete).toBeDefined();
+    expect(loaded.legacyOutcomeTools.report_incomplete).toBeDefined();
     expect(loaded.runOutcome).toEqual({});
   });
 
-  it('shares one runOutcome ref across both tools', async () => {
+  it('shares one runOutcome ref across the new and legacy tools', async () => {
     const loaded = await loadAgentTools({ agent, mcpConnections: [] });
 
-    await (loaded.all.report_complete as any).execute({ headline: 'Swept 40 files, nothing to act on' });
-    expect(loaded.runOutcome.complete?.headline).toBe('Swept 40 files, nothing to act on');
+    await (loaded.all.report_outcome as any).execute({ status: 'complete', headline: 'Swept 40 files, fixed 3', artifacts: ['a.md'] });
+    expect(loaded.runOutcome.complete?.headline).toBe('Swept 40 files, fixed 3');
 
-    await (loaded.all.report_incomplete as any).execute({ reason: 'blocked precondition' });
+    await (loaded.legacyOutcomeTools.report_incomplete as any).execute({ reason: 'blocked precondition' });
     expect(loaded.runOutcome.incomplete?.reason).toBe('blocked precondition');
     // Same object, so the runner sees both and applies incomplete-wins itself.
     expect(loaded.runOutcome.complete).toBeDefined();
@@ -267,9 +270,16 @@ describe('loadAgentTools outcome wiring', () => {
 describe('system prompt outcome contract', () => {
   const prompt = buildAutonomousAgentPrompt('2026-08-04');
 
-  it('routes both verdicts through a tool call', () => {
-    expect(prompt).toContain('report_complete');
-    expect(prompt).toContain('report_incomplete');
+  it('routes every verdict through the one outcome tool', () => {
+    expect(prompt).toContain('report_outcome');
+    expect(prompt).not.toContain('report_complete');
+    expect(prompt).not.toContain('report_incomplete');
+  });
+
+  it('tells idle from a blocked sweep', () => {
+    expect(prompt).toMatch(/- idle: You checked and nothing was waiting at all/);
+    expect(prompt).toContain('even when your instructions told you to skip such items');
+    expect(prompt).toContain('Unsure between idle and incomplete? Choose incomplete.');
   });
 
   it('puts the outcome call outside the guidance precedence ladder', () => {
@@ -278,7 +288,7 @@ describe('system prompt outcome contract', () => {
   });
 
   it('makes the call the answer and the details body optional', () => {
-    expect(prompt).toContain('report_complete carries the final answer');
+    expect(prompt).toContain('complete and idle carry the final answer');
     expect(prompt).toMatch(/OPTIONAL Markdown body, and NOT the default/);
   });
 
@@ -290,10 +300,10 @@ describe('system prompt outcome contract', () => {
   });
 
   it('matches each outcome tool lifecycle', () => {
-    expect(prompt).toContain('The calls have different lifecycles');
-    expect(prompt).toMatch(/report_complete carries the final answer[\s\S]*final action, then STOP/);
-    expect(prompt).toMatch(/report_incomplete records the blocker[\s\S]*finish required bookkeeping/);
-    expect(prompt).toContain('Do not resume core work, call report_complete later');
+    expect(prompt).toContain('The statuses have different lifecycles');
+    expect(prompt).toMatch(/complete and idle carry the final answer[\s\S]*final action, then STOP/);
+    expect(prompt).toMatch(/incomplete records the blocker[\s\S]*finish required bookkeeping/);
+    expect(prompt).toContain('Do not resume core work, report again');
   });
 });
 

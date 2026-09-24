@@ -885,7 +885,7 @@ async function runCommandAction(file: string, promptArgs: string[], options: Run
         } else if (!result.hasTextOutput) {
           logger.warn('Agent completed without producing a final response.');
         } else if (result.complete) {
-          // report_complete is the terminal move: the step loop ends on that
+          // A complete or idle report_outcome is the terminal move: the step loop ends on that
           // tool call by design, so the provider's last finish reason is
           // 'tool-calls' even though the run delivered its outcome in full.
         } else if (result.finishReason && result.finishReason !== 'stop') {

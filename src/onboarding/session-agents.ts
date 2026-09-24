@@ -107,9 +107,9 @@ A strong suggestion owns a useful outcome. Reporting is appropriate only when so
 ## Required delivery
 
 - Submit the one-sentence project summary and exactly three final suggestions through submit_project_suggestions.
-- Do not stream JSON or the suggestions as a normal assistant response and do not put them in report_complete.details.
+- Do not stream JSON or the suggestions as a normal assistant response and do not put them in report_outcome.details.
 - If submit_project_suggestions rejects the payload, correct the reported problem and call it again.
-- Only after the submission is accepted, call report_complete with a short headline such as "Proposed three agents for ${xmlText(input.projectName)}" and omit details.`);
+- Only after the submission is accepted, call report_outcome with status complete and a short headline such as "Proposed three agents for ${xmlText(input.projectName)}" and omit details.`);
 }
 
 function stripRuntimeCompletionPrefix(value: string): string {
@@ -210,10 +210,10 @@ Skill authoring workflow:
 
 Final delivery contract:
 
-- Submit the human-facing agent name, its separate lowercase kebab-case .agentuse filename, and the complete raw file through submit_agent_source. Do not stream the source as a normal assistant message and do not put it in report_complete.details.
+- Submit the human-facing agent name, its separate lowercase kebab-case .agentuse filename, and the complete raw file through submit_agent_source. Do not stream the source as a normal assistant message and do not put it in report_outcome.details.
 - The host also reviews whether the finished agent can fulfill the objective with its declared tools. Exact parser errors, test results, and live external data need a real callable mechanism; filesystem reads and skill instructions alone do not provide execution. Match each required operation to a narrow declared capability grounded in the inspected project or builtin/installed guidance. Do not invent validation results or silently weaken the objective to pass review.
 - If submit_agent_source rejects the draft, use its validation error to correct the source and submit it again.
-- Only after submit_agent_source accepts the file, call report_complete with a short one-line headline such as "Created the agent" and omit details.
+- Only after submit_agent_source accepts the file, call report_outcome with status complete and a short one-line headline such as "Created the agent" and omit details.
 
 Source constraints:
 
@@ -340,10 +340,10 @@ Skill authoring workflow:
 
 Final delivery contract:
 
-- Write every file with the filesystem tools first, then call submit_changes with outcome proposed, a one-line summary of what the change does, and entry set to the project-relative path of the agent the operator should run. Do not stream file content as a normal assistant message and do not put it in report_complete.details.
+- Write every file with the filesystem tools first, then call submit_changes with outcome proposed, a one-line summary of what the change does, and entry set to the project-relative path of the agent the operator should run. Do not stream file content as a normal assistant message and do not put it in report_outcome.details.
 - The host also reviews whether the finished agents can fulfill the objective with their declared tools. Exact parser errors, test results, and live external data need a real callable mechanism; filesystem reads and skill instructions alone do not provide execution. Match each required operation to a narrow declared capability grounded in the inspected project or builtin/installed guidance. Do not invent validation results or silently weaken the objective to pass review.
 - If submit_changes rejects the proposal, correct the files with the filesystem tools using its validation error, then call submit_changes again.
-- Only after submit_changes accepts the proposal, call report_complete with a short one-line headline such as "Created the agent" and omit details.
+- Only after submit_changes accepts the proposal, call report_outcome with status complete and a short one-line headline such as "Created the agent" and omit details.
 
 Source constraints:
 

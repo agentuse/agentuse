@@ -630,7 +630,7 @@ class Logger {
   }
 
   /**
-   * The run's declared outcome (report_complete / report_incomplete). Routed
+   * The run's declared outcome (report_outcome). Routed
    * through `response` so it lands on stdout beside streamed prose and clears
    * the spinner the same way: when an agent delivers its report through the
    * tool instead of writing it, this line IS the answer.

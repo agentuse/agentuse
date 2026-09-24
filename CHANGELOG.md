@@ -4,6 +4,7 @@
 
 ### Changed
 
+- **Agents end every run with one `report_outcome` tool: complete, idle, or incomplete.** It replaces `report_complete` and `report_incomplete`. The new `idle` status is for a run that checked and found genuinely nothing to do. Before, that case was reported as complete, so a scheduled agent stuck behind a blocker could look green for days. Idle stays a successful run, but it is flagged in the run JSON (`result.idle`) and shown grey in the session view, and the prompt tells agents that due work they could not move is incomplete, not idle. `artifacts` is now required and an empty list is kept, so a run says explicitly when it changed nothing. Stored sessions that used the old tools render and reconcile unchanged, and a session suspended before this change resumes with the old tools still working.
 - **A reviewer's Comment always routes the revision straight back to that reviewer, including under `gateReview: fresh`.** Fresh mode previously sent every post-comment revision through the judge again, so a reviewer who was already in the loop waited on a model before seeing the change they had just asked for. The judge now runs before the reviewer's first look at a gate and stays out after a Comment in both review modes; the gate records a `skipped` marker so the card says the revision was not judged. Fresh mode still never reuses verdicts or judge sessions and still blocks a request when the judge fails or the review budget is spent.
 
 ### Removed

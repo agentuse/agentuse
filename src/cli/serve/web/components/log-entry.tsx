@@ -1060,6 +1060,7 @@ function isExecutingCardStatus(status: string | undefined): boolean {
 export function delegateStatusWord(session: LogSubagentSession): string {
   if (session.errorMessage || session.status === 'error' || session.displayStatus === 'error') return 'Failed';
   if (session.report?.status === 'incomplete') return 'Incomplete';
+  if (session.report?.status === 'idle') return 'Idle';
   if (isExecutingCardStatus(session.status) || isExecutingCardStatus(session.displayStatus)) return 'Working';
   if (session.status === 'suspended') return 'Paused';
   if (session.status === 'completed' || session.displayStatus === 'completed') return 'Completed';
@@ -1083,6 +1084,7 @@ function reportPresentation(report: NonNullable<LogSubagentSession['report']>): 
 } {
   switch (report.status) {
     case 'complete': return { label: 'completed', chipClass: 'completed', toneClass: 'is-success', mark: '✓' };
+    case 'idle': return { label: 'idle', chipClass: 'idle', toneClass: 'is-idle', mark: '–' };
     case 'pass': return { label: 'passed', chipClass: 'completed', toneClass: 'is-success', mark: '✓' };
     case 'incomplete': return { label: 'incomplete', chipClass: 'error', toneClass: 'is-warning', mark: '⚠' };
     case 'skipped': return { label: 'not judged', chipClass: 'skipped', toneClass: 'is-warning', mark: '⚠' };
@@ -1271,7 +1273,7 @@ function SubagentCard(props: { session: LogSubagentSession; projectId?: string; 
 }
 
 /**
- * The run's own report, on the `report_complete` / `report_incomplete` row that
+ * The run's own report, on the outcome-call row that
  * delivered it. Rendered outside the expand toggle on purpose: this call is the
  * run's answer rather than a step of the work, so the reader who scrolls to the
  * end of the log must land on the report itself, not on a collapsed row whose
@@ -1280,12 +1282,12 @@ function SubagentCard(props: { session: LogSubagentSession; projectId?: string; 
  */
 function RunOutcomeCard(props: { outcome: NonNullable<ApprovalLogDetails['runOutcome']> }) {
   const outcome = props.outcome;
-  const incomplete = outcome.kind === 'incomplete';
   const artifacts = outcome.artifacts ?? [];
+  const mark = outcome.kind === 'incomplete' ? '⚠' : outcome.kind === 'idle' ? '–' : '✓';
   return (
-    <div class={`run-outcome${incomplete ? ' is-incomplete' : ''}`}>
+    <div class={`run-outcome${outcome.kind === 'complete' ? '' : ` is-${outcome.kind}`}`}>
       <p class="run-outcome-verdict">
-        <span class="run-outcome-mark" aria-hidden="true">{incomplete ? '⚠' : '✓'}</span>
+        <span class="run-outcome-mark" aria-hidden="true">{mark}</span>
         <InlineMarkdown value={outcome.headline} />
       </p>
       {outcome.body && (

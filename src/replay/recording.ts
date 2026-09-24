@@ -7,6 +7,7 @@ import type { Message, Part, ToolsSnapshot, ToolPart } from '../session/types';
 import type { SessionManager } from '../session';
 import { resolveSafeVariables } from '../tools/path-validator';
 import { getToolOutputLimits, truncateEnd } from '../tools/tool-output-limits';
+import { isOutcomeTool, readOutcomeCall } from '../tools/report-outcome';
 import { expandHome } from '../utils/path.js';
 
 export interface ReplayRecording {
@@ -245,8 +246,8 @@ export class ReplayDispatcher {
       this.trace.push({ tool, input, source: 'proposal' });
       return { replay: true, captured: true, approved: false };
     }
-    if (tool === 'report_complete' || tool === 'report_incomplete') {
-      this.stop = { kind: tool === 'report_complete' ? 'complete' : 'incomplete', output: structuredClone(input) };
+    if (isOutcomeTool(tool)) {
+      this.stop = { kind: readOutcomeCall(tool, input)?.status === 'incomplete' ? 'incomplete' : 'complete', output: structuredClone(input) };
       this.trace.push({ tool, input, source: 'outcome' });
       return { replay: true, captured: true };
     }

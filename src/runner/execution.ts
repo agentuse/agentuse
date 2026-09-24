@@ -80,7 +80,7 @@ import { createResultsTool, RESULTS_TOOL } from '../tools/results.js';
 import { messagesContainInlineMedia } from '../session/media-cache.js';
 import { stripToolBlocks, hasReasoningParts, lastAssistantMessage } from '../session/message-utils';
 import { OUTCOME_NUDGE_PROMPT, shouldRequestOutcome } from './outcome';
-import { REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL } from '../tools/report-outcome.js';
+import { isOutcomeTool, OUTCOME_TOOL_NAMES, readOutcomeCall } from '../tools/report-outcome.js';
 import type { RunOutcome } from '../tools/report-outcome.js';
 import {
   SUBMIT_AGENT_SOURCE_NUDGE_PROMPT,
@@ -132,14 +132,14 @@ const MODEL_COMMITTED_OUTPUT_CHUNK_TYPES = new Set([
   'tool-error',
 ]);
 // Agent creation has the same two-phase contract as project discovery. Keep
-// three turns for submit/validation repair and one for report_complete so a
+// three turns for submit/validation repair and one for report_outcome so a
 // model cannot spend the entire budget browsing the project and then lose the
 // only accepted delivery path.
 const AGENT_SOURCE_DELIVERY_RESERVE = 4;
 const AGENT_SOURCE_OUTCOME_RESERVE = 1;
 // Project discovery must retain enough model turns to hand its findings back
 // through the validated tool. Exploration gets the main budget; delivery keeps
-// three turns for submit/validation repair and one for report_complete.
+// three turns for submit/validation repair and one for report_outcome.
 const PROJECT_SUGGESTIONS_DELIVERY_RESERVE = 4;
 const PROJECT_SUGGESTIONS_OUTCOME_RESERVE = 1;
 
@@ -1313,33 +1313,31 @@ async function* executeAgentAttempt(
     return used > 0 && used >= contextManager.compactionThresholdTokens();
   };
 
-  // `stopWhen` predicate: end the run the moment report_complete lands and its
-  // execute function actually records a completed outcome. Checking the shared
-  // slot matters for guarded completion tools: a rejected report_complete call
-  // must return its tool error to the model and leave room for correction.
-  // During
-  // the outcome-recovery segment, either verdict ends the run: that segment is
-  // mechanically restricted to the two outcome tools and has no bookkeeping
-  // left to perform. The tool executes before this runs, so its result is still
-  // streamed and journaled.
+  // `stopWhen` predicate: end the run the moment a complete or idle verdict
+  // lands and its execute function actually records it. Checking the shared
+  // slot matters for guarded completion: a rejected call must return its tool
+  // error to the model and leave room for correction. During the
+  // outcome-recovery segment, any verdict ends the run: that segment is
+  // mechanically restricted to the outcome tools and has no bookkeeping left to
+  // perform. The tool executes before this runs, so its result is still
+  // streamed and journaled. Legacy tool names count too: a session resumed
+  // from a pre-`report_outcome` snapshot can still call them.
   //
-  // Outside recovery, deliberately NOT report_incomplete: that path is told to
-  // finish bookkeeping after declaring, so it must keep stepping.
+  // Outside recovery, deliberately NOT an incomplete verdict: that path is told
+  // to finish bookkeeping after declaring, so it must keep stepping.
   const stopOnDeliveredOutcome = ({ steps }: { steps: Array<{ content?: unknown }> }): boolean => {
     const content = steps[steps.length - 1]?.content;
     if (!Array.isArray(content)) return false;
-    return content.some((part: any) =>
-      (part?.type === 'tool-result' || part?.type === 'tool-call') &&
-      (
-        (part?.toolName === REPORT_COMPLETE_TOOL && !!options.runOutcome?.complete) ||
-        (outcomeNudgeSpent && part?.toolName === REPORT_INCOMPLETE_TOOL)
-      )
-    );
+    return content.some((part: any) => {
+      if ((part?.type !== 'tool-result' && part?.type !== 'tool-call') || !isOutcomeTool(String(part?.toolName ?? ''))) return false;
+      if (outcomeNudgeSpent) return true;
+      return readOutcomeCall(part.toolName, part.input)?.status !== 'incomplete' && !!options.runOutcome?.complete;
+    });
   };
 
   // The creator recovery segment exposes one schema-backed delivery tool. End
   // that segment as soon as its execute function accepts a valid source, then
-  // let the ordinary outcome recovery ask for report_complete separately.
+  // let the ordinary outcome recovery ask for report_outcome separately.
   const stopOnDeliveredAgentSource = ({ steps }: { steps: Array<{ content?: unknown }> }): boolean => {
     if (!agentSourceSubmissionRecoveryActive || !options.agentSourceSubmission?.source) return false;
     const content = steps[steps.length - 1]?.content;
@@ -1600,7 +1598,7 @@ async function* executeAgentAttempt(
         ) as ToolSet
       : outcomeNudgeSpent
       ? Object.fromEntries(
-          [REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL]
+          OUTCOME_TOOL_NAMES
             .filter((name) => modelFacingTools[name] !== undefined)
             .map((name) => [name, modelFacingTools[name]])
         ) as ToolSet
@@ -3149,7 +3147,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
 
     // A replay measures the first completed generation, not a synthesized
     // outcome or revision. Compaction may continue a still-active turn, but a
-    // finished turn ends the test even without report_complete.
+    // finished turn ends the test even without report_outcome.
     if (options.replay) {
       if (runAnotherSegment) continue;
       return;
@@ -3160,7 +3158,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
     // tool is absent and declare the run incomplete without trying it. The
     // runtime knows the toolset authoritatively, so recover that narrow case in
     // the same conversation with only submit_agent_source exposed. Unrelated
-    // report_incomplete reasons remain terminal and are never overwritten.
+    // incomplete reasons remain terminal and are never overwritten.
     const justRanAgentSourceRecovery = agentSourceSubmissionRecoveryActive;
     agentSourceSubmissionRecoveryActive = false;
     const incompleteReason = options.runOutcome?.incomplete?.reason ?? '';
@@ -3244,8 +3242,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
       !runAnotherSegment &&
       // Legacy resumed snapshots can omit outcome tools. Requiring a tool
       // call with an empty tool set is rejected by the SDK.
-      (modelFacingTools[REPORT_COMPLETE_TOOL] !== undefined ||
-        modelFacingTools[REPORT_INCOMPLETE_TOOL] !== undefined) &&
+      OUTCOME_TOOL_NAMES.some((name) => modelFacingTools[name] !== undefined) &&
       // A plugin's terminal policy ends the run after the current SDK step.
       // Do not spend the reserved outcome-only segment afterward: it would
       // invoke the model again despite the explicit termination request.
@@ -3275,7 +3272,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
         // duplicate. A silent first segment keeps its voice.
         suppressTextAfterNudge = sawText;
         runAnotherSegment = true;
-        logger.debug('Run ended with no outcome declared; asking once for report_complete/report_incomplete.');
+        logger.debug('Run ended with no outcome declared; asking once for report_outcome.');
       } catch (nudgeError) {
         // Best-effort: never fail a finished run over its own headline.
         logger.debug(`Outcome nudge skipped: ${(nudgeError as Error).message}`);

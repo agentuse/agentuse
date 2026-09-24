@@ -226,7 +226,7 @@ export function createSubmitChangesTool(
       'Submit the files you already wrote in this project as one change set for operator review, or report that nothing should change. '
       + 'Do not paste file content into this call: the host reads the files from the project itself. '
       + 'The host validates every file and its cross-file references; if the call is rejected, correct the files and call this tool again. '
-      + 'After it is accepted, call report_complete with a short headline and no source.',
+      + 'After it is accepted, call report_outcome with status complete and a short headline and no source.',
     inputSchema: changesetSubmissionSchema,
     execute: async (input: ChangesetSubmissionInput, options?: { abortSignal?: AbortSignal }) => {
       if (submissionInProgress) {
@@ -273,7 +273,7 @@ export function createSubmitChangesTool(
             ...(externalReads.length > 0 && { externalReads }),
           });
           submission.outcome = 'no-change';
-          return 'Accepted: the no-change diagnosis is ready for operator review. Call report_complete with a short headline and no source.';
+          return 'Accepted: the no-change diagnosis is ready for operator review. Call report_outcome with status complete and a short headline and no source.';
         }
 
         const entry = input.entry?.trim();
@@ -333,7 +333,7 @@ export function createSubmitChangesTool(
         });
         submission.outcome = 'proposed';
         const names = files.map((file) => `${file.op === 'add' ? '+' : '~'}${file.path}`).join(', ');
-        return `Accepted: ${files.length} file${files.length === 1 ? '' : 's'} passed validation (${names}) and are ready for operator review. Call report_complete with a short headline and no source.`;
+        return `Accepted: ${files.length} file${files.length === 1 ? '' : 's'} passed validation (${names}) and are ready for operator review. Call report_outcome with status complete and a short headline and no source.`;
       } finally {
         submissionInProgress = false;
       }

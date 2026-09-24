@@ -421,7 +421,7 @@ export function buildRunTraffic(parts: Part[]): {
  */
 function describeSystemMessage(content: string, index: number): { label: string; note?: string } {
   if (content.startsWith('You are an autonomous AI agent')) {
-    return { label: 'AgentUse system prompt', note: 'Built in. Output style, tool discipline, and the report_complete contract.' };
+    return { label: 'AgentUse system prompt', note: 'Built in. Output style, tool discipline, and the report_outcome contract.' };
   }
   if (content.startsWith('You are a team manager agent')) {
     return { label: 'Manager instructions', note: 'Added because this agent is `type: manager`. Lists its subagents.' };

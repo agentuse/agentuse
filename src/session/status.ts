@@ -42,7 +42,7 @@ export function isLiveSessionStatus(status: string | undefined): boolean {
 
 /**
  * An agent-declared non-delivery: the run finished cleanly and said it could
- * not deliver (report_incomplete), persisted as an error carrying the
+ * not deliver (an incomplete report_outcome), persisted as an error carrying the
  * INCOMPLETE code. Operator surfaces separate this from a crash, so the
  * definition lives here instead of being re-spelled per surface.
  */

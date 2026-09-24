@@ -4,7 +4,7 @@ import { generateText, streamText, tool } from 'ai';
 import { z } from 'zod';
 
 const completionTool = tool({
-  inputSchema: z.object({ headline: z.string(), details: z.string() }),
+  inputSchema: z.object({ status: z.string(), headline: z.string(), details: z.string(), artifacts: z.array(z.string()) }),
 });
 
 describe('hello demo model', () => {
@@ -12,7 +12,7 @@ describe('hello demo model', () => {
     const result = await generateText({
       model: createDemoModel('onboarding'),
       prompt: 'Declare the demo outcome',
-      tools: { report_complete: completionTool },
+      tools: { report_outcome: completionTool },
       toolChoice: 'required',
     });
     expect(result.finishReason).toBe('tool-calls');
@@ -23,8 +23,8 @@ describe('hello demo model', () => {
     const result = streamText({
       model: createDemoModel('hello'),
       prompt: 'Declare the demo outcome',
-      tools: { report_complete: completionTool },
-      toolChoice: { type: 'tool', toolName: 'report_complete' },
+      tools: { report_outcome: completionTool },
+      toolChoice: { type: 'tool', toolName: 'report_outcome' },
     });
     expect(await result.finishReason).toBe('tool-calls');
     expect((await result.toolCalls)[0]?.input.details).toContain('Create your first AgentUse agent');

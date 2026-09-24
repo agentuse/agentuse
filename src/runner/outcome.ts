@@ -13,8 +13,8 @@ import { aggregateToolCalls, countSteps } from '../telemetry/metrics.js';
 export const OUTCOME_NUDGE_PROMPT =
   '[runtime] This run is ending without a declared outcome. The preceding turn may have reached its normal work-step limit after returning a tool result; this reserved outcome-only turn does not authorize more work. ' +
   'Review the full preceding task and tool trace, and do not invent a blocker or claim work was skipped when the trace shows it was performed. ' +
-  'Call report_complete now with a one-line headline if the requested objective was achieved (a successful evaluation that found nothing still counts as complete), ' +
-  'or report_incomplete only if the trace shows a required outcome was skipped, blocked, failed, or only partially delivered. ' +
+  'Call report_outcome now with a one-line headline: status "complete" if the requested objective was achieved, "idle" if the trace shows you checked and nothing was waiting at all, ' +
+  'or "incomplete" if the trace shows a required outcome was skipped, blocked, failed, or only partially delivered, including waiting items you could not act on. ' +
   'Emit ONLY that tool call: do not redo any work, and do not repeat, extend, or rewrite the report you already wrote.';
 
 /**
@@ -71,11 +71,12 @@ export type RunResultDisposition =
     };
 
 /**
- * One mapping for every external surface. `report_incomplete` is a clean
+ * One mapping for every external surface. An incomplete verdict is a clean
  * runtime finish but a failed product outcome: persistence, JSON/IPC/API,
  * telemetry, notifications, and the process exit code must all say failure.
+ * An idle verdict is a success; it travels as `result.idle`, not a status.
  *
- * `report_complete` and `report_incomplete` write one shared slot, so an agent
+ * Complete and incomplete verdicts write one shared slot, so an agent
  * can set both (it usually learned late that a "done" run was actually
  * blocked). Incomplete is checked FIRST and wins unconditionally: a run that
  * hit a real blocker is not complete, whichever call landed last.
@@ -115,14 +116,16 @@ export function runResultJson(result: RunAgentResult, duration: number) {
     ...(disposition.kind === 'incomplete' && { error: disposition.error }),
     result: {
       text: result.text || '',
-      // Only present when the agent called report_complete. Consumers that show
+      // Only present on a complete or idle verdict. Consumers that show
       // an outcome before the body (Slack, feed rows, session lists) read this
       // and fall back to `text` when it is absent. Suppressed alongside an
       // incomplete verdict so no payload can pair a failure with a success
       // headline, matching classifyRunResult's precedence.
       ...(result.complete && !result.incomplete && {
         headline: result.complete.headline,
-        ...(result.complete.artifacts?.length && { artifacts: result.complete.artifacts }),
+        // Kept when empty: [] is the agent saying it changed nothing.
+        ...(result.complete.artifacts && { artifacts: result.complete.artifacts }),
+        ...(result.complete.idle && { idle: true as const }),
       }),
       ...(result.agentSource && { agentSource: result.agentSource }),
       ...(result.authoredAgentName && { authoredAgentName: result.authoredAgentName }),

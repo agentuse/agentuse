@@ -8668,10 +8668,11 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-approval-detail .subagent-tree-node > .verify-event { border-left: 3px solid var(--cyan-border); }
 .page-approval-detail .subagent-tree-node > .verify-event.is-failure { border-left-color: var(--red); }
 /* All descendant roles use the same report rail. The runtime maps both ordinary
-   report_complete outcomes and typed Judge verdicts onto these tones. */
+   report_outcome verdicts and typed Judge verdicts onto these tones. */
 .page-approval-detail .subagent-card.is-success { border-left: 3px solid var(--cyan-border); }
 .page-approval-detail .subagent-card.is-warning { border-left: 3px solid var(--amber-border); }
 .page-approval-detail .subagent-card.is-failure { border-left: 3px solid var(--red); }
+.page-approval-detail .subagent-card.is-idle { border-left: 3px solid var(--line-strong); }
 .page-approval-detail .verify-event-critique {
   grid-column: 1 / -1;
   color: var(--fg);
@@ -8722,6 +8723,7 @@ a.lastrun.waiting { color: var(--cyan); }
 .judge-row.is-skipped { border-left-color: var(--amber-border); }
 .judge-row.is-skipped .judge-row-mark { color: var(--amber); }
 .chip.status.skipped { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
+.chip.status.idle { color: var(--muted); border-color: var(--line-strong); background: none; }
 .page-approval-detail .approval-judge-meta {
   flex: none;
   margin-left: auto;
@@ -8814,7 +8816,7 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-approval-detail .subagent-artifacts li { overflow-wrap: anywhere; }
 .page-approval-detail .subagent-artifacts code { color: var(--muted-3); }
 .page-approval-detail .subagent-artifacts a { color: var(--cyan); }
-/* The run's own report on its report_complete row. Sits outside .log-content,
+/* The run's own report on its report_outcome row. Sits outside .log-content,
    so it stays readable while the row's raw input/output stay collapsed. */
 .page-approval-detail .run-outcome {
   margin: 2px 0 6px;
@@ -8825,6 +8827,9 @@ a.lastrun.waiting { color: var(--cyan); }
   background: var(--panel);
 }
 .page-approval-detail .run-outcome.is-incomplete { border-left-color: var(--amber); }
+/* Idle: the run checked and found nothing to do. Grey, not green, so a stretch
+   of them does not read as delivered work. */
+.page-approval-detail .run-outcome.is-idle { border-left-color: var(--line-strong); }
 .page-approval-detail .run-outcome-verdict {
   display: flex;
   gap: 8px;
@@ -8838,6 +8843,7 @@ a.lastrun.waiting { color: var(--cyan); }
 }
 .page-approval-detail .run-outcome-mark { color: var(--green); flex: none; font-weight: var(--weight-normal); }
 .page-approval-detail .run-outcome.is-incomplete .run-outcome-mark { color: var(--amber); }
+.page-approval-detail .run-outcome.is-idle .run-outcome-mark { color: var(--muted); }
 /* Same typography as the result card at the top of the page: it is the same
    report, and reading it twice in two different voices is disorienting. */
 .page-approval-detail .run-outcome-body {

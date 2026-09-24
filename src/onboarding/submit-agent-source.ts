@@ -10,7 +10,7 @@ export const SUBMIT_AGENT_SOURCE_TOOL = 'submit_agent_source';
 export const SUBMIT_AGENT_SOURCE_NUDGE_PROMPT =
   '[runtime] The submit_agent_source tool is available in this session. Your preceding claim that it was missing or unavailable was incorrect. ' +
   'Use the work and project context already in this conversation to choose a human-facing name, a separate lowercase kebab-case .agentuse filename, and the complete file now, then call submit_agent_source with all three values. ' +
-  'Do not write prose and do not call report_incomplete. This recovery turn exposes only submit_agent_source, and the runtime will validate the source immediately.';
+  'Do not write prose and do not call report_outcome. This recovery turn exposes only submit_agent_source, and the runtime will validate the source immediately.';
 
 export interface AgentSourceSubmission {
   source?: string;
@@ -79,7 +79,7 @@ export function createSubmitAgentSourceTool(
     description:
       'Submit the friendly agent name, safe filename, and complete AgentUse file you authored. This is the only accepted handoff for the internal creator. ' +
       'The host validates the file and checks that its declared capabilities can deliver the requested outcome; if the call is rejected, correct the reported problem and call this tool again. ' +
-      'After it is accepted, call report_complete with a short headline and no source in details.',
+      'After it is accepted, call report_outcome with status complete and a short headline and no source in details.',
     inputSchema: z.object({
       name: z.string().min(1).max(120).describe(
         'The concise human-facing agent name. Use readable title-style words with spaces, not a filename or kebab-case slug. It must exactly match the name field in the source frontmatter.'
@@ -134,7 +134,7 @@ export function createSubmitAgentSourceTool(
           model: authored.model,
           loadedSkills,
         });
-        return `Accepted: ${authored.name} passed source validation${reviewCapabilities ? ' and capability review' : ''} and will be saved as ${fileName}. Call report_complete now with a short confirmation headline and omit details.`;
+        return `Accepted: ${authored.name} passed source validation${reviewCapabilities ? ' and capability review' : ''} and will be saved as ${fileName}. Call report_outcome now with status complete, a short confirmation headline, and no details.`;
       } catch (error) {
         if (error instanceof AgentCreationError) {
           throw new Error(`Source rejected: ${error.message}. Correct the source and call submit_agent_source again.`);

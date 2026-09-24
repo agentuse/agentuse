@@ -95,7 +95,7 @@ export async function runVerifyLoop(params: {
   abortSignal?: AbortSignal | undefined;
   quiet?: boolean;
   /**
-   * Live outcome slot. An agent that delivers via `report_complete` streams no
+   * Live outcome slot. An agent that delivers via `report_outcome` streams no
    * prose, so judging `result.text` alone would judge an empty string. Read per
    * attempt because a redo can call the tool again with a better answer.
    */

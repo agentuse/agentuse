@@ -23,7 +23,7 @@ export interface TerminalPresenter {
   warning(message: string): void;
   /**
    * The run's declared outcome, rendered in place of the generic tool call.
-   * `report_complete` delivers the report rather than writing it as prose, so
+   * `report_outcome` delivers the report rather than writing it as prose, so
    * without this the terminal would show a tool call and no report at all.
    */
   outcome(line: string, details?: string): void;

@@ -691,25 +691,27 @@ export interface ApprovalLogDetails {
    * the child session to find out what came back.
    */
   subagentResult?: {
-    /** One-line verdict from the child's `report_complete`. */
+    /** One-line verdict from the child's complete or idle outcome. */
     headline?: string;
     /** Set instead of `headline` when the child declared itself blocked. */
     incomplete?: string;
+    /** The child checked and found nothing to do. */
+    idle?: true;
     /** Paths and URLs the child produced or changed. */
     artifacts?: string[];
     /** The report body, verdict line already stripped. Markdown. */
     body?: string;
   };
   /**
-   * The run's own verdict and report, as delivered through `report_complete` /
-   * `report_incomplete`. That call IS the run's answer, not a step of the work,
+   * The run's own verdict and report, as delivered through `report_outcome`.
+   * That call IS the run's answer, not a step of the work,
    * so the row renders this inline instead of leaving the report one expand
    * click deep inside a JSON input dump. The raw input/output stay behind the
    * toggle.
    */
   runOutcome?: {
-    kind: 'complete' | 'incomplete';
-    /** One-line verdict: `headline` on complete, `reason` on incomplete. */
+    kind: 'complete' | 'idle' | 'incomplete';
+    /** One-line verdict: `headline`, or a legacy incomplete call's `reason`. */
     headline: string;
     /**
      * The report body as the runtime composed it — the attached `details`

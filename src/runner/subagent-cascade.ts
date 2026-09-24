@@ -1,4 +1,5 @@
 import type { SessionInfo } from '../session/types';
+import { readOutcomeCall, type RunOutcome } from '../tools/report-outcome';
 
 /**
  * Read-side helpers for the delegated sub-agent approval cascade.
@@ -163,8 +164,8 @@ export function isRecoverableCascadeFailure(
 
 /**
  * Whether an ended child left a durable result its parked parent can be
- * finished from. A `completed` child did; so did one that ended
- * `report_incomplete` (session status 'error' with code INCOMPLETE) — its
+ * finished from. A `completed` child did; so did one that ended with
+ * an incomplete verdict (session status 'error' with code INCOMPLETE) — its
  * report is on disk and the live walk-up deliberately folds incomplete
  * children in rather than stopping (see resumeApprovalCascade). Any other
  * error, or a missing record, leaves nothing to fold in, so parents parked on
@@ -187,18 +188,19 @@ export interface CascadeResultReader extends CascadeSessionReader {
  *  result that completeSubagentBookmark consumes. */
 export interface StoredSubagentResult {
   text: string;
-  complete?: { headline: string; details?: string; artifacts?: string[] };
-  incomplete?: { reason: string; rejectionOnly?: boolean };
+  complete?: NonNullable<RunOutcome['complete']>;
+  incomplete?: NonNullable<RunOutcome['incomplete']>;
 }
 
 /**
  * Rebuild what a child's `subagent__*` step would have returned, from the
  * child's stored session alone: its final assistant text plus the outcome it
- * declared via report_complete / report_incomplete. This is what makes a
- * cascade whose worker died between the child ending and the parent's bookmark
- * completing finishable after the fact — nothing the walk-up needs exists only
- * in the dead worker's memory. Same precedence as classifyRunResult: a child
- * that declared a real blocker is incomplete, whichever call landed last.
+ * declared (via report_outcome, or the legacy report_complete /
+ * report_incomplete). This is what makes a cascade whose worker died between
+ * the child ending and the parent's bookmark completing finishable after the
+ * fact — nothing the walk-up needs exists only in the dead worker's memory.
+ * Same precedence as classifyRunResult: a child that declared a real blocker is
+ * incomplete, whichever call landed last.
  */
 export async function loadStoredSubagentResult(
   reader: CascadeResultReader,
@@ -206,28 +208,28 @@ export async function loadStoredSubagentResult(
   agentId: string
 ): Promise<StoredSubagentResult> {
   const parts = await loadSessionPartsFlat(reader, sessionId, agentId);
-  const lastToolInput = (tool: string): any => {
-    const part = [...parts].reverse().find((p: any) =>
-      p?.type === 'tool' && p?.tool === tool && p?.state?.status === 'completed'
-    ) as any;
-    return part?.state?.input;
-  };
+  const calls = parts.flatMap((p: any) => {
+    if (p?.type !== 'tool' || p?.state?.status !== 'completed') return [];
+    const call = readOutcomeCall(String(p.tool ?? ''), p.state.input);
+    return call ? [call] : [];
+  });
   const text = (await reader.getLastAssistantText(sessionId, agentId)) ?? '';
-  const incompleteInput = lastToolInput('report_incomplete');
-  if (typeof incompleteInput?.reason === 'string') {
+  const incomplete = [...calls].reverse().find((call) => call.status === 'incomplete');
+  if (incomplete) {
     return { text, incomplete: {
-      reason: incompleteInput.reason,
-      ...(typeof incompleteInput.rejectionOnly === 'boolean' && { rejectionOnly: incompleteInput.rejectionOnly }),
+      reason: incomplete.headline,
+      ...(incomplete.rejectionOnly !== undefined && { rejectionOnly: incomplete.rejectionOnly }),
     } };
   }
-  const completeInput = lastToolInput('report_complete');
-  if (typeof completeInput?.headline === 'string') {
+  const complete = [...calls].reverse().find((call) => call.status !== 'incomplete');
+  if (complete) {
     return {
       text,
       complete: {
-        headline: completeInput.headline,
-        ...(typeof completeInput.details === 'string' && completeInput.details.trim() && { details: completeInput.details }),
-        ...(Array.isArray(completeInput.artifacts) && completeInput.artifacts.length > 0 && { artifacts: completeInput.artifacts }),
+        headline: complete.headline,
+        ...(complete.details?.trim() && { details: complete.details }),
+        ...(complete.artifacts && { artifacts: complete.artifacts }),
+        ...(complete.status === 'idle' && { idle: true as const }),
       },
     };
   }

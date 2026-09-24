@@ -421,7 +421,7 @@ Create the agent.
 `, 'onboarding-agent-creator');
     const loaded = await loadAgentTools({ agent, mcpConnections: [] });
     expect(loaded.all.submit_agent_source).toBeDefined();
-    await expect((loaded.all.report_complete!.execute as any)({ headline: 'Created Docs drift' }))
+    await expect((loaded.all.report_outcome!.execute as any)({ status: 'complete', headline: 'Created Docs drift', artifacts: [] }))
       .rejects.toThrow('Call submit_agent_source first');
 
     const source = '---\nname: Docs drift\nmodel: openai:gpt-5.6-luna\ndescription: Find drift\nschedule: 0 9 * * 1\n---\n\n## Goal\nReport drift.\n';
@@ -430,7 +430,7 @@ Create the agent.
       await expect((loaded.all.submit_agent_source!.execute as any)({
         name: 'Docs drift', filename: 'docs-drift.agentuse', source,
       })).rejects.toThrow('Capability review unavailable');
-      await expect((loaded.all.report_complete!.execute as any)({ headline: 'Created Docs drift' }))
+      await expect((loaded.all.report_outcome!.execute as any)({ status: 'complete', headline: 'Created Docs drift', artifacts: [] }))
         .rejects.toThrow('Call submit_agent_source first');
       expect(loaded.agentSourceSubmission?.source).toBeUndefined();
       review.mockResolvedValue();
@@ -438,7 +438,7 @@ Create the agent.
         name: 'Docs drift', filename: 'docs-drift.agentuse', source,
       });
     } finally { review.mockRestore(); }
-    await expect((loaded.all.report_complete!.execute as any)({ headline: 'Created Docs drift' }))
+    await expect((loaded.all.report_outcome!.execute as any)({ status: 'complete', headline: 'Created Docs drift', artifacts: [] }))
       .resolves.toContain('Recorded and delivered');
     expect(loaded.agentSourceSubmission?.source).toBe(source);
     expect(loaded.agentSourceSubmission?.name).toBe('Docs drift');
@@ -514,11 +514,11 @@ Discover useful work.
 `, 'onboarding-project-discovery');
     const loaded = await loadAgentTools({ agent, mcpConnections: [] });
     expect(loaded.all.submit_project_suggestions).toBeDefined();
-    await expect((loaded.all.report_complete!.execute as any)({ headline: 'Found ideas' }))
+    await expect((loaded.all.report_outcome!.execute as any)({ status: 'complete', headline: 'Found ideas', artifacts: [] }))
       .rejects.toThrow('Call submit_project_suggestions first');
 
     await (loaded.all.submit_project_suggestions!.execute as any)(JSON.parse(suggestions));
-    await expect((loaded.all.report_complete!.execute as any)({ headline: 'Found three ideas' }))
+    await expect((loaded.all.report_outcome!.execute as any)({ status: 'complete', headline: 'Found three ideas', artifacts: [] }))
       .resolves.toContain('Recorded and delivered');
     expect(loaded.projectSuggestionsSubmission?.result?.suggestions).toHaveLength(3);
   });

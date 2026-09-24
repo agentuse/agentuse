@@ -251,7 +251,7 @@ describe('prepareAgentExecution', () => {
       });
 
       // The outcome tools are always on (the agent's own verdict on the run).
-      expect(Object.keys(result.tools).sort()).toEqual(['report_complete', 'report_incomplete']);
+      expect(Object.keys(result.tools).sort()).toEqual(['report_outcome']);
     });
 
     it('should include configured tools when project context is provided', async () => {
@@ -547,7 +547,7 @@ describe('prepareAgentExecution - Edge Cases', () => {
     });
 
     // Only the always-on outcome tools remain.
-    expect(Object.keys(result.tools).sort()).toEqual(['report_complete', 'report_incomplete']);
+    expect(Object.keys(result.tools).sort()).toEqual(['report_outcome']);
   });
 
   it('should handle special characters in instructions', async () => {

@@ -4,7 +4,7 @@ import { describeLearningOutcome } from '../learning';
 import { extractToolIntent, extractToolRecovery, withoutToolIntent } from '../runner/tool-intent';
 import { resolveToolRecoveryLinks } from '../runner/tool-recovery';
 import { LIVE_OUTPUT_METADATA_KEY } from '../tools/types';
-import { formatOutcomeLine, normalizeHeadline, stripLeadingOutcomeLine, REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL } from '../tools/report-outcome';
+import { formatOutcomeLine, normalizeHeadline, readOutcomeCall, stripLeadingOutcomeLine } from '../tools/report-outcome';
 import { repairEscapedText } from '../utils/display-text';
 import { safeHttpUrl } from '../utils/url';
 import type { LogPartLevel, SessionInfo } from '../session';
@@ -12,7 +12,8 @@ import { formatApprovalLogValue, formatTokenCount, valueAsRecord } from './helpe
 import type { ApprovalChange, ApprovalLogDetails, ApprovalOption, ApprovalReference, LogVerifySummary } from './types.js';
 
 /**
- * Pair each `report_complete` / `report_incomplete` call with the assistant
+ * Pair each outcome call (`report_outcome`, or a legacy `report_complete` /
+ * `report_incomplete`) with the assistant
  * text part the runtime wrote to deliver it, so the session view can render
  * the report on the call's own row and drop the duplicate text row.
  *
@@ -37,25 +38,19 @@ export function collectRunOutcomes(parts: any[]): {
   for (const part of parts) {
     if (part?.type !== 'tool') continue;
     const tool = String(part.tool ?? '');
-    if (tool !== REPORT_COMPLETE_TOOL && tool !== REPORT_INCOMPLETE_TOOL) continue;
-    const input = valueAsRecord(part.state?.input);
-    const opener = formatOutcomeLine(tool, input);
-    if (!opener) continue;
-    const kind = tool === REPORT_COMPLETE_TOOL ? 'complete' as const : 'incomplete' as const;
-    const artifacts = Array.isArray(input.artifacts)
-      ? input.artifacts.filter((a): a is string => typeof a === 'string' && a.trim().length > 0)
-      : [];
+    const call = readOutcomeCall(tool, valueAsRecord(part.state?.input));
+    if (!call) continue;
+    const opener = formatOutcomeLine(tool, part.state?.input)!;
     // Stands in until the delivered text is found below: during a live run the
     // call lands a tick before the text part that delivers it.
-    const attached = typeof input.details === 'string' ? repairEscapedText(input.details).trim() : '';
-    const raw = kind === 'complete' ? input.headline : input.reason;
+    const attached = call.details ? repairEscapedText(call.details).trim() : '';
     outcomeByPartId.set(String(part.id), {
-      kind,
+      kind: call.status,
       // The row draws its own verdict mark, so the headline arrives bare
       // rather than carrying the opener's "✅ Complete: " prefix.
-      headline: normalizeHeadline(typeof raw === 'string' ? repairEscapedText(raw) : ''),
+      headline: normalizeHeadline(repairEscapedText(call.headline)),
       ...(attached && { body: attached }),
-      ...(artifacts.length > 0 && { artifacts })
+      ...(call.artifacts?.length && { artifacts: call.artifacts })
     });
     openerToPartId.set(opener, String(part.id));
   }
@@ -774,6 +769,7 @@ export function subagentResultFromState(state: any, tool?: string): ApprovalLogD
 
   const headline = typeof metadata.headline === 'string' ? metadata.headline : undefined;
   const incomplete = typeof metadata.incomplete === 'string' ? metadata.incomplete : undefined;
+  const idle = metadata.idle === true && !incomplete;
   const artifacts = Array.isArray(metadata.artifacts)
     ? metadata.artifacts.filter((a): a is string => typeof a === 'string' && a.trim().length > 0)
     : [];
@@ -783,6 +779,7 @@ export function subagentResultFromState(state: any, tool?: string): ApprovalLogD
   return {
     ...(headline && { headline }),
     ...(incomplete && { incomplete }),
+    ...(idle && { idle: true as const }),
     ...(artifacts.length > 0 && { artifacts }),
     ...(body && { body }),
   };

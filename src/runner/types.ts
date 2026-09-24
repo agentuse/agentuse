@@ -81,9 +81,10 @@ export interface PreparedAgentExecution {
   /** Agent ID (file-path-based identifier for session directory naming) */
   agentId?: string | undefined;
   /**
-   * Per-run outcome written by the `report_incomplete` / `report_complete`
-   * tools. Checked after a clean finish: when `incomplete` is set the session is
-   * marked error/INCOMPLETE and failure channels fire instead of completion;
+   * Per-run outcome written by the `report_outcome` tool (or, on a legacy
+   * resumed session, `report_incomplete` / `report_complete`). Checked after a
+   * clean finish: when `incomplete` is set the session is marked
+   * error/INCOMPLETE and failure channels fire instead of completion;
    * `complete.headline` becomes the run's one-line outcome. Optional so
    * hand-built preparations (tests) stay valid; prepareAgentExecution always
    * sets it.
@@ -193,19 +194,19 @@ export interface RunAgentResult {
   approvalUrl?: string;
   contextUsage?: ActiveContextUsage;
   /**
-   * Set when the agent declared the run incomplete via `report_incomplete`:
+   * Set when the agent declared the run incomplete:
    * the run finished cleanly but did not achieve its objective. The session is
    * persisted as error/INCOMPLETE.
    */
-  incomplete?: { reason: string; rejectionOnly?: boolean };
+  incomplete?: NonNullable<RunOutcome['incomplete']>;
   /**
-   * Set when the agent declared the run complete via `report_complete`. The
+   * Set when the agent declared the run complete or idle. The
    * headline is the one-line outcome every surface shows before the body; a
    * parent reads it (with `artifacts`) instead of parsing a sub-agent's report.
    * Absent when the agent never called the tool, so consumers must fall back to
    * `text`.
    */
-  complete?: { headline: string; details?: string; artifacts?: string[] };
+  complete?: NonNullable<RunOutcome['complete']>;
   /** Validated source delivered through the creator-only submit tool. */
   agentSource?: string;
   /** Human-facing name delivered with creator-only source. */

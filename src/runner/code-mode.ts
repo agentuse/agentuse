@@ -17,6 +17,7 @@ import {
 } from './code-mode-contracts';
 import { typecheckCodeMode, type CodeModeSourceLocation } from './code-mode-typecheck';
 import { mapCodeModeStack } from './code-mode-source-map';
+import { OUTCOME_TOOL_NAMES } from '../tools/report-outcome';
 import {
   describeCodeModeResultFromSerialized,
   isIncompleteCapturedResult,
@@ -377,8 +378,7 @@ const DIRECT_ONLY_TOOL_NAMES = new Set([
   CODE_EXEC_TOOL,
   'results',
   'await_human',
-  'report_complete',
-  'report_incomplete',
+  ...OUTCOME_TOOL_NAMES,
   'submit_agent_source',
   'submit_project_suggestions',
   'submit_agent_revision',

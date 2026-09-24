@@ -111,14 +111,14 @@ export function createDemoModel(modelId: string): LanguageModelV2 {
     const choice = options.toolChoice;
     if (
       (choice?.type === 'required' ||
-        (choice?.type === 'tool' && choice.toolName === 'report_complete')) &&
-      options.tools?.some(tool => tool.type === 'function' && tool.name === 'report_complete')
+        (choice?.type === 'tool' && choice.toolName === 'report_outcome')) &&
+      options.tools?.some(tool => tool.type === 'function' && tool.name === 'report_outcome')
     ) {
       return {
         type: 'tool-call' as const,
-        toolCallId: 'demo-report-complete',
-        toolName: 'report_complete',
-        input: JSON.stringify({ headline: 'Demo run completed', details: responseText }),
+        toolCallId: 'demo-report-outcome',
+        toolName: 'report_outcome',
+        input: JSON.stringify({ status: 'complete', headline: 'Demo run completed', details: responseText, artifacts: [] }),
       };
     }
     return undefined;

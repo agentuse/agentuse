@@ -13,7 +13,7 @@ export const SUBMIT_PROJECT_SUGGESTIONS_TOOL = 'submit_project_suggestions';
 export const SUBMIT_PROJECT_SUGGESTIONS_NUDGE_PROMPT =
   '[runtime] The submit_project_suggestions tool is available in this session. ' +
   'Use the project evidence already gathered in this conversation and call it now with exactly three suggestions. ' +
-  'Do not write JSON or prose and do not call report_incomplete. The runtime validates the submission immediately.';
+  'Do not write JSON or prose and do not call report_outcome. The runtime validates the submission immediately.';
 
 export interface ProjectSuggestionsSubmission {
   result?: ProjectDiscoveryResult;
@@ -92,7 +92,7 @@ export function createSubmitProjectSuggestionsTool(
     description:
       'Submit the final project analysis and exactly three evidence-backed recurring agent suggestions. ' +
       'This is the only accepted handoff for onboarding project discovery. The host validates every field and schedule immediately. ' +
-      'If rejected, correct the reported problem and call this tool again. After acceptance, call report_complete with a short headline.',
+      'If rejected, correct the reported problem and call this tool again. After acceptance, call report_outcome with status complete and a short headline.',
     inputSchema: z.object({
       summary: z.string().min(1).max(320).describe('One sentence describing the project and its current work.'),
       suggestions: z.array(suggestionSchema).length(3).describe(
@@ -121,7 +121,7 @@ export function createSubmitProjectSuggestionsTool(
           kind: 'project-suggestions',
           result: submission.result,
         });
-        return 'Accepted: three valid project suggestions were submitted. Call report_complete now with a short confirmation headline and omit details.';
+        return 'Accepted: three valid project suggestions were submitted. Call report_outcome now with status complete, a short confirmation headline, and no details.';
       } catch (error) {
         throw new Error(`Suggestions rejected: ${(error as Error).message}. Correct the submission and call submit_project_suggestions again.`);
       }

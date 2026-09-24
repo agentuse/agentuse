@@ -1,6 +1,7 @@
 import { activeTimingForTree, sessionTimingRow } from './timing';
 import type { Part, SessionInfo, SessionTrigger } from './types';
 import { isExecutingSessionStatus, isTerminalSessionStatus } from './status';
+import { readOutcomeCall } from '../tools/report-outcome';
 
 export type ImportantDescendantKind = 'judge' | 'verification' | 'approval' | 'failure' | 'mutation' | 'report' | 'active' | 'context';
 
@@ -12,10 +13,10 @@ export interface DescendantReportItem {
 }
 
 /** One presentation contract for the terminal report owned by any descendant
- * session. Ordinary agents populate it from report_complete/report_incomplete;
+ * session. Ordinary agents populate it from their outcome call (readOutcomeCall);
  * Judge sessions adapt their typed verify marker into the same shape. */
 export interface DescendantReport {
-  status: 'complete' | 'incomplete' | 'pass' | 'fail' | 'error' | 'skipped';
+  status: 'complete' | 'idle' | 'incomplete' | 'pass' | 'fail' | 'error' | 'skipped';
   headline: string;
   body?: string;
   artifacts?: string[];
@@ -152,12 +153,6 @@ function toolStateInput(part: Part): Record<string, unknown> | undefined {
   return state.input as Record<string, unknown>;
 }
 
-function reportArtifacts(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-    : [];
-}
-
 function reportHeadline(value: unknown): string | undefined {
   if (typeof value !== 'string' || !value.trim()) return undefined;
   const oneLine = value.trim().replace(/\s+/g, ' ');
@@ -171,30 +166,29 @@ export function buildDescendantReport(parts: Part[]): DescendantReport | undefin
   type CompletedToolPart = Extract<Part, { type: 'tool' }> & {
     state: Extract<Extract<Part, { type: 'tool' }>['state'], { status: 'completed' }>;
   };
-  const outcomeParts = parts
-    .filter((part): part is CompletedToolPart =>
-      part.type === 'tool'
-      && part.state.status === 'completed'
-      && (part.tool === 'report_complete' || part.tool === 'report_incomplete'))
-    .sort((a, b) => a.state.time.start - b.state.time.start || a.id.localeCompare(b.id));
+  const calls = parts
+    .filter((part): part is CompletedToolPart => part.type === 'tool' && part.state.status === 'completed')
+    .sort((a, b) => a.state.time.start - b.state.time.start || a.id.localeCompare(b.id))
+    .flatMap((part) => {
+      const call = readOutcomeCall(part.tool, toolStateInput(part));
+      return call ? [call] : [];
+    });
 
   // Match runtime outcome precedence: any declared blocker wins over success.
-  const incomplete = [...outcomeParts].reverse().find((part) => part.tool === 'report_incomplete');
+  const incomplete = [...calls].reverse().find((call) => call.status === 'incomplete');
   if (incomplete) {
-    const input = toolStateInput(incomplete);
-    const headline = reportHeadline(input?.reason);
+    const headline = reportHeadline(incomplete.headline);
     if (headline) return { status: 'incomplete', headline };
   }
 
-  const complete = [...outcomeParts].reverse().find((part) => part.tool === 'report_complete');
+  const complete = [...calls].reverse().find((call) => call.status !== 'incomplete');
   if (!complete) return undefined;
-  const input = toolStateInput(complete);
-  const headline = reportHeadline(input?.headline);
+  const headline = reportHeadline(complete.headline);
   if (!headline) return undefined;
-  const body = typeof input?.details === 'string' && input.details.trim() ? input.details.trim() : undefined;
-  const artifacts = reportArtifacts(input?.artifacts);
+  const body = complete.details?.trim();
+  const artifacts = complete.artifacts ?? [];
   return {
-    status: 'complete',
+    status: complete.status,
     headline,
     ...(body && { body }),
     ...(artifacts.length > 0 && { artifacts }),

@@ -220,7 +220,7 @@ describe("approval gate exclusion", () => {
 
 describe("mockExclusions", () => {
   it("always keeps the outcome tools real so a mock run can end", () => {
-    for (const name of ["report_complete", "report_incomplete"]) {
+    for (const name of ["report_outcome", "report_complete", "report_incomplete"]) {
       expect(mod.mockExclusions().has(name)).toBe(true);
       process.env.AGENTUSE_MOCK_APPROVAL = "approve";
       expect(mod.mockExclusions().has(name)).toBe(true);
@@ -232,7 +232,7 @@ describe("mockExclusions", () => {
     expect(mod.mockExclusions().has("await_human")).toBe(true);
     process.env.AGENTUSE_MOCK_APPROVAL = "1";
     expect(mod.mockExclusions().has("await_human")).toBe(false);
-    expect(mod.mockExclusions().size).toBe(2);
+    expect(mod.mockExclusions().size).toBe(3);
   });
 });
 

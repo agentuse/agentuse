@@ -4,6 +4,7 @@ import { aiSdkErrorMocks } from './helpers/ai-sdk-mock';
 import {
   createReportCompleteTool,
   createReportIncompleteTool,
+  createReportOutcomeTool,
   type RunOutcome,
 } from '../src/tools/report-outcome';
 import { OUTCOME_NUDGE_PROMPT } from '../src/runner/outcome';
@@ -322,6 +323,81 @@ describe('missing-outcome recovery segment', () => {
           typeof predicate === 'function' && Boolean((predicate as Function)(incompleteStep))
       )
     ).toBe(true);
+  });
+});
+
+describe('report_outcome in the execution loop', () => {
+  const stops = (config: any, step: unknown): boolean =>
+    config.stopWhen.some((predicate: unknown) =>
+      typeof predicate === 'function' && Boolean((predicate as Function)({ steps: [step] })));
+  const outcomeStep = (input: unknown) => ({
+    content: [{ type: 'tool-result', toolName: 'report_outcome', input }],
+  });
+
+  it('asks with only report_outcome and ends on an idle verdict', async () => {
+    streamTextMock.mockImplementation((config: any) => {
+      streamConfigs.push(config);
+      if (streamConfigs.length === 1) return defaultStreamTextImplementation(streamConfigs.pop());
+      return {
+        stream: (async function* () {
+          const input = { status: 'idle', headline: 'Both inboxes empty; nothing due', artifacts: [] };
+          const output = await config.tools.report_outcome.execute(input);
+          yield { type: 'tool-call', toolCallId: 'outcome-1', toolName: 'report_outcome', input };
+          yield { type: 'tool-result', toolCallId: 'outcome-1', toolName: 'report_outcome', output };
+          yield { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } };
+        })(),
+        response: Promise.resolve({ messages: [] }),
+        responseMessages: Promise.resolve([]),
+      };
+    });
+    const outcome: RunOutcome = {};
+    const tools = {
+      read_mail: { description: 'Read mail' },
+      report_outcome: createReportOutcomeTool(outcome),
+    } as any;
+
+    for await (const _ of executeAgentCore(
+      { name: 'outcome-agent', config: { model: 'demo:test' } } as any,
+      tools,
+      { userMessage: 'Sweep both mailboxes', systemMessages: [{ role: 'system', content: 'You are an agent' }], maxSteps: 10, runOutcome: outcome },
+    )) { /* consume */ }
+
+    expect(streamConfigs).toHaveLength(2);
+    expect(Object.keys(streamConfigs[1].tools)).toEqual(['report_outcome']);
+    expect(streamConfigs[1].toolChoice).toBe('required');
+    expect(outcome.complete).toEqual({ headline: 'Both inboxes empty; nothing due', artifacts: [], idle: true });
+  });
+
+  it('stops on a delivered complete or idle verdict but keeps an incomplete run stepping', async () => {
+    const outcome: RunOutcome = {};
+    const tools = {
+      read_mail: { description: 'Read mail' },
+      report_outcome: createReportOutcomeTool(outcome),
+    } as any;
+    streamTextMock.mockImplementation((config: any) => {
+      streamConfigs.push(config);
+      return {
+        stream: (async function* () {
+          yield { type: 'finish', finishReason: 'tool-calls', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } };
+        })(),
+        response: Promise.resolve({ messages: [] }),
+        responseMessages: Promise.resolve([]),
+      };
+    });
+    for await (const _ of executeAgentCore(
+      { name: 'outcome-agent', config: { model: 'demo:test' } } as any,
+      tools,
+      { userMessage: 'Sweep', systemMessages: [{ role: 'system', content: 'You are an agent' }], maxSteps: 10, runOutcome: outcome },
+    )) { /* consume */ }
+    const work = streamConfigs[0];
+
+    const incomplete = { status: 'incomplete', headline: 'PR #12 blocked on failing CI', artifacts: [] };
+    await tools.report_outcome.execute(incomplete);
+    expect(stops(work, outcomeStep(incomplete))).toBe(false);
+
+    const idle = { status: 'idle', headline: 'Nothing due', artifacts: [] };
+    await tools.report_outcome.execute(idle);
+    expect(stops(work, outcomeStep(idle))).toBe(true);
   });
 });
 

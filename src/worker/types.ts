@@ -173,14 +173,15 @@ export interface ApprovalLogDetails {
   subagentResult?: {
     headline?: string;
     incomplete?: string;
+    idle?: true;
     artifacts?: string[];
     body?: string;
   };
-  /** The run's own verdict and report as delivered through `report_complete` /
-   *  `report_incomplete` (see collectRunOutcomes), rendered on that call's row
+  /** The run's own verdict and report as delivered through `report_outcome`
+   *  (see collectRunOutcomes), rendered on that call's row
    *  instead of behind its expand toggle. */
   runOutcome?: {
-    kind: 'complete' | 'incomplete';
+    kind: 'complete' | 'idle' | 'incomplete';
     headline: string;
     body?: string;
     artifacts?: string[];

@@ -5,6 +5,7 @@ import type { ApprovalReview, LearningOutcome } from '../learning/types';
 import { computeAgentId } from '../utils/agent-id';
 import { resolveModelProvider } from '../utils/model-utils';
 import { isMockMode } from './mock-tools';
+import { readOutcomeCall } from '../tools/report-outcome.js';
 import { logger, withoutLogSink, type LogRecord } from '../utils/logger';
 import type { ModelFallbackPolicy, RunModelOverride } from '../utils/model-alias';
 
@@ -559,9 +560,9 @@ export async function dismissIfReviewerRejected(
       let rejectionOnly: boolean | undefined;
       for (const message of messages) {
         for (const part of await sessionManager.getMessageParts(child.id, child.agent.id, message.id)) {
-          if (part.type === 'tool' && part.tool === 'report_incomplete' && part.state.status === 'completed') {
-            rejectionOnly = (part.state.input as { rejectionOnly?: boolean }).rejectionOnly;
-          }
+          if (part.type !== 'tool' || part.state.status !== 'completed') continue;
+          const call = readOutcomeCall(part.tool, part.state.input);
+          if (call?.status === 'incomplete') rejectionOnly = call.rejectionOnly;
         }
       }
       const decisions = await gatherHumanApprovalHistory(sessionManager, child.id, child.agent.id, { limit: Number.MAX_SAFE_INTEGER });

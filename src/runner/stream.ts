@@ -18,7 +18,7 @@ import { LIVE_OUTPUT_INTERVAL_MS, LIVE_OUTPUT_METADATA_KEY } from '../tools/type
 import { RESULTS_TOOL } from '../tools/results.js';
 import { withoutToolIntent } from './tool-intent';
 import { defaultTerminalPresenter, type TerminalPresenter } from './terminal-presenter';
-import { formatOutcomeLine, mergeReportBodies, stripLeadingOutcomeLine, REPORT_COMPLETE_TOOL, REPORT_INCOMPLETE_TOOL } from '../tools/report-outcome.js';
+import { formatOutcomeLine, isOutcomeTool, mergeReportBodies, readOutcomeCall, stripLeadingOutcomeLine } from '../tools/report-outcome.js';
 import { sanitizeWALInput } from './effect-wal';
 
 /**
@@ -477,15 +477,12 @@ export async function processAgentStream(
             // agent that streamed its deliverable and attached a briefing must
             // not have the deliverable dropped from the record this text part
             // becomes — the session view's result card reads exactly this string
-            // (agentuse-lab#198). Only for report_complete: a run that declares
-            // itself blocked keeps working and writes its report afterwards, so
-            // there is nothing yet to fold in.
-            const rawHeadline = (chunk.toolInput as { headline?: unknown } | undefined)?.headline;
-            const body = chunk.toolName === REPORT_COMPLETE_TOOL
-              ? mergeReportBodies(
-                  details ?? '',
-                  stripLeadingOutcomeLine(finalText, typeof rawHeadline === 'string' ? rawHeadline : '')
-                )
+            // (agentuse-lab#198). Only for a complete or idle verdict: a run that
+            // declares itself blocked keeps working and writes its report
+            // afterwards, so there is nothing yet to fold in.
+            const call = readOutcomeCall(chunk.toolName!, chunk.toolInput);
+            const body = call && call.status !== 'incomplete'
+              ? mergeReportBodies(details ?? '', stripLeadingOutcomeLine(finalText, call.headline))
               : details ?? '';
             // Held until the tool-call bookkeeping below has run, so the text
             // part lands after the call it came from.
@@ -664,7 +661,7 @@ export async function processAgentStream(
             ...(toolDuration !== undefined && { duration: toolDuration }),
             success: toolSuccess
           });
-        } else if (chunk.toolName === REPORT_COMPLETE_TOOL || chunk.toolName === REPORT_INCOMPLETE_TOOL) {
+        } else if (isOutcomeTool(chunk.toolName!)) {
           // Already rendered as the run's outcome at call time; the tool's
           // bookkeeping acknowledgement is not something a reader needs.
         } else {

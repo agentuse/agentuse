@@ -45,7 +45,7 @@ export interface WorkerExecuteResult {
     toolCalls: number;
     sessionId?: string;
     approvalUrl?: string;
-    /** One-line outcome from report_complete, when the run called it. */
+    /** One-line outcome from a complete or idle report_outcome, when the run called it. */
     headline?: string;
     /** Validated source returned by the creator-only submission tool. */
     agentSource?: string;
@@ -74,6 +74,6 @@ export interface WorkerExecuteError {
     code: string;
     message: string;
   };
-  /** Final output remains useful when report_incomplete ends the run. */
+  /** Final output remains useful when an incomplete verdict ends the run. */
   result?: WorkerExecuteResult['result'];
 }
