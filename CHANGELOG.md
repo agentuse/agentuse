@@ -2,9 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Runs receive a chance to wrap up before their execution timeout.** A single notice asks the agent to finish its current useful operation, return established findings, and identify unfinished work. It arrives at a model boundary near the end of the budget, with room reserved for observed model latency. Active execution time survives approval suspension and resume without counting the human wait, and delegated agents inherit the parent's remaining budget unless they declare a shorter timeout. Session details distinguish wrapping up, an incomplete result returned before timeout, and a hard timeout; the deadline and verification and approval requirements still apply.
+
 ### Changed
 
 - **Agents end every run with one `report_outcome` tool: complete, idle, or incomplete.** It replaces `report_complete` and `report_incomplete`. The new `idle` status is for a run that checked and found genuinely nothing to do. Before, that case was reported as complete, so a scheduled agent stuck behind a blocker could look green for days. Idle stays a successful run, but it is flagged in the run JSON (`result.idle`) and shown grey in the session view, and the prompt tells agents that due work they could not move is incomplete, not idle. `artifacts` is now required and an empty list is kept, so a run says explicitly when it changed nothing. Stored sessions that used the old tools render and reconcile unchanged, and a session suspended before this change resumes with the old tools still working.
+- **Session headers keep run identity, status, and controls together on desktop and phones.** A compact identity row sits above elapsed time, cost, and context usage. The pinned header retains live numbers and the run menu while scrolling, narrow layouts use accessible icon buttons, and the menu includes **Copy session ID**.
+- **The bundled model catalog includes GPT-6 Sol and Luna, Claude Opus 5.5, Grok 4.7, GLM 5.3 Prime and FlashX, and MiMo V2.6 Pro.** Version aliases and recommended-model tables follow the refreshed registry, along with updated provider limits and pricing.
+- **The AI SDK and provider adapters use updated patch releases.** Demo completion and historical session resumes remain compatible with required-tool validation.
 - **A reviewer's Comment always routes the revision straight back to that reviewer, including under `gateReview: fresh`.** Fresh mode previously sent every post-comment revision through the judge again, so a reviewer who was already in the loop waited on a model before seeing the change they had just asked for. The judge now runs before the reviewer's first look at a gate and stays out after a Comment in both review modes; the gate records a `skipped` marker so the card says the revision was not judged. Fresh mode still never reuses verdicts or judge sessions and still blocks a request when the judge fails or the review budget is spent.
 
 ### Removed
@@ -13,6 +20,11 @@
 
 ### Fixed
 
+- **Retryable provider failures during a stream can recover without ending the run.** Server and overload errors retry the active step within the existing three-attempt limit, provided it has emitted no visible text and started no tool call. Exhausted retries retain the provider's actual error and classification instead of reporting an unknown failure or dropped connection.
+- **Bash results preserve separate `stdout` and `stderr` fields.** Agents can parse structured stdout without mixing in progress messages or diagnostics, including through stored-result queries and Code Mode. The combined `output` field remains available, and stream captures retain their existing bounds and truncation metadata.
+- **Large result continuations work consistently in direct calls and Code Mode.** Both use the same numbered-page contract, and Code Mode exposes `results.page()` so agents can pass back the returned `next` request unchanged. Numbered page fields take precedence over legacy byte offsets.
+- **Failure records preserve the evidence behind interrupted runs.** Provider content filtering, attached-client disconnects, observed worker exits, and execution deadlines keep their distinct causes through session persistence. CLI timeout records also retain whether the budget came from an explicit flag, agent configuration, or the default.
+- **The server retries workers that exit before becoming ready.** A transient startup failure no longer leaves the project permanently unavailable after the first respawn attempt.
 - **Stored `await_human` inputs are bounded again.** Approval cards need the whole request, so these inputs keep a much higher ceiling than ordinary tool arguments (256K characters instead of 16K), but they are once more normalized and capped rather than persisted and replayed without limit.
 
 ## [0.22.0] - 2026-09-18
