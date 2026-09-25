@@ -20,6 +20,7 @@
 
 ### Fixed
 
+- **Long runs keep tool access after 128 cumulative Code Mode calls.** The nested-call allowance now applies to each program, so later programs can continue unfinished work. Concurrent tool calls and guest memory retain their shared run-wide limits.
 - **Retryable provider failures during a stream can recover without ending the run.** Server and overload errors retry the active step within the existing three-attempt limit, provided it has emitted no visible text and started no tool call. Exhausted retries retain the provider's actual error and classification instead of reporting an unknown failure or dropped connection.
 - **Bash results preserve separate `stdout` and `stderr` fields.** Agents can parse structured stdout without mixing in progress messages or diagnostics, including through stored-result queries and Code Mode. The combined `output` field remains available, and stream captures retain their existing bounds and truncation metadata.
 - **Large result continuations work consistently in direct calls and Code Mode.** Both use the same numbered-page contract, and Code Mode exposes `results.page()` so agents can pass back the returned `next` request unchanged. Numbered page fields take precedence over legacy byte offsets.

@@ -68,6 +68,7 @@ export interface CodeModeLimits {
   timeoutMs: number;
   memoryBytes: number;
   maxStackBytes: number;
+  /** Maximum nested tool-call attempts per program. */
   nestedCalls: number;
   concurrency: number;
 }
@@ -172,7 +173,7 @@ export interface CodeModeOptions {
   parentCallId: string;
   abortSignal?: AbortSignal;
   limits?: Partial<CodeModeLimits>;
-  /** Shared by sibling code_exec calls created for one agent run. */
+  /** Active concurrency and guest memory shared by sibling code_exec calls. */
   runBudget?: CodeModeRunBudget;
   onNestedToolStart?(trace: Omit<NestedToolTrace, 'output' | 'error' | 'endedAt'>): void | Promise<void>;
   onNestedToolFinish?(trace: NestedToolTrace): CodeModeResultReference | void | Promise<CodeModeResultReference | void>;
@@ -180,12 +181,10 @@ export interface CodeModeOptions {
 }
 
 /**
- * The code_exec tool is reusable during one model run.  Keep its expensive
- * guest heaps and its effect budget run-scoped, rather than granting each
- * sibling invocation a fresh copy of every limit.
+ * Sibling code_exec programs share active tool-call slots and guest memory.
+ * Completed work releases capacity; each program owns its nested-call allowance.
  */
 export class CodeModeRunBudget {
-  private nestedCallCount = 0;
   private activeNestedCalls = 0;
   private activeRuntimes = 0;
   private reservedMemoryBytes = 0;
@@ -210,7 +209,6 @@ export class CodeModeRunBudget {
       return Promise.reject(new Error('Code Mode requested more than its run-scoped guest-memory limit'));
     }
     if (signal?.aborted) {
-      this.nestedCallCount--;
       return Promise.reject(abortError(signal));
     }
 
@@ -267,11 +265,6 @@ export class CodeModeRunBudget {
   }
 
   acquireNestedCall(signal?: AbortSignal): Promise<() => void> {
-    this.nestedCallCount++;
-    if (this.nestedCallCount > this.limits.nestedCalls) {
-      this.nestedCallCount--;
-      return Promise.reject(new Error(`Code Mode exceeded its ${this.limits.nestedCalls} nested-call limit`));
-    }
     if (signal?.aborted) return Promise.reject(abortError(signal));
 
     return new Promise<() => void>((resolve, reject) => {
@@ -284,7 +277,6 @@ export class CodeModeRunBudget {
         const index = this.nestedCallWaiters.indexOf(waiter);
         if (index < 0) return;
         this.nestedCallWaiters.splice(index, 1);
-        this.nestedCallCount--;
         signal?.removeEventListener('abort', waiter.onAbort!);
         reject(signal ? abortError(signal) : new Error('Code Mode execution aborted'));
         this.drainNestedCallWaiters();
@@ -299,7 +291,6 @@ export class CodeModeRunBudget {
     while (this.nestedCallWaiters.length > 0 && this.activeNestedCalls < this.limits.concurrency) {
       const waiter = this.nestedCallWaiters.shift()!;
       if (waiter.signal?.aborted) {
-        this.nestedCallCount--;
         waiter.signal.removeEventListener('abort', waiter.onAbort!);
         waiter.reject(abortError(waiter.signal));
         continue;
@@ -967,6 +958,9 @@ export async function executeCodeModeDetailed(
         return (await raceWithAbort(Promise.resolve(options.onNestedToolFinish(trace)), signal)) ?? undefined;
       };
       try {
+        if (callCount > limits.nestedCalls) {
+          throw new Error(`Code Mode exceeded its ${limits.nestedCalls} nested-call limit per program. Continue unfinished work in a new code_exec program with a fresh allowance; do not repeat completed calls.`);
+        }
         if (!eligibleSet.has(toolName)) throw new Error(`Tool '${toolName}' is unavailable in Code Mode`);
         if (inputJson.length > limits.inputCharsPerCall) {
           throw new Error(`Input for '${toolName}' exceeds the per-call size limit`);
@@ -1775,7 +1769,7 @@ export function createCodeExecTool(options: {
   toolNames: string[];
   toolDefinitions?: Record<string, Tool>;
   abortSignal?: AbortSignal;
-  /** Run-wide limits shared by every sibling code_exec call from this tool. */
+  /** Per-program limits, with active concurrency and guest memory shared across siblings. */
   limits?: Partial<CodeModeLimits>;
   onNestedToolStart?: CodeModeOptions['onNestedToolStart'];
   onNestedToolFinish?: CodeModeOptions['onNestedToolFinish'];
@@ -1804,6 +1798,7 @@ export function createCodeExecTool(options: {
       'never do that math in prose, in your head, or in bash. When the user asks for a shell artifact, commands or scripts may contain the calculations the artifact itself needs; bash is forbidden only as private scratch space for working out an answer. Date, Math, JSON, and standard string methods are available and the clock is real. URL, Intl, locale-aware formatting, and host timezone services are unavailable. ' +
       'The program has no direct filesystem, network, environment, process, package, or import access; it can reach only host capabilities exposed as permitted tools. Dynamic code construction through eval or Function constructors is unavailable. ' +
       'Call permitted tools as await tools.<name>({ ... }) using the same input object as a direct tool call. A transport-sensitive tool may also remain separately visible for binary or provider-native result delivery. Await or return every async operation; detached async work is rejected during preflight. ' +
+      `Each program allows up to ${runLimits.nestedCalls} nested tool-call attempts; later code_exec programs get a fresh allowance. Active tool calls and guest memory share run-wide limits. ` +
       'tools.tools__bash runs only commands from the agent auto-run allowlist and returns { output: string, metadata?: { exitCode?: number | null, timedOut?: boolean, aborted?: boolean, truncated?: boolean } }. Read r.output, not r.value; inspect metadata for command exit status. Refusal errors are JSON text in output. Gated commands are rejected here and must use the separately visible direct Bash tool after approval. Time awaiting an authorized Bash process is governed by the Bash timeout instead of consuming the guest computation timeout. ' +
       'When a needed tool is absent from the quick index, use await catalog.search(query), call handle.describe(), or inspect API.list("tools") and API.read("tools/<name>.d.ts") in a first code_exec. Catalog handles are callable and use the same dispatch policy as tools.<name>. ' +
       'For targeted file discovery, prefer tools__filesystem_search with an exact file or glob and bounded context (context_lines from 0 to 5; for example { file_path: "/authorized/guide.md", query: "target", context_lines: 2 }), then use tools__filesystem_read with line offset/limit for any additional excerpt. The read limit is lines, not characters. Do not return several raw file bodies from one program; return only the matches, excerpts, fields, or decisions the next step needs. When complete reading is required, retrieve bounded chunks across later calls. ' +

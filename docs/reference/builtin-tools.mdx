@@ -159,7 +159,12 @@ creator tools, subagents, and any tool marked as approval-required remain
 direct-only. Binary media results also stay on the direct path because the guest
 bridge is JSON-only. Programs are bounded by source, memory, stack, computation,
 output, nested-call, and concurrency limits. Time awaiting Bash is governed by
-the Bash timeout and does not consume the guest computation timeout.
+the Bash timeout and does not consume the guest computation timeout. The 128 nested
+tool-call limit applies to each `code_exec` program, including failed attempts.
+A later program receives a fresh allowance; continue unfinished work without
+repeating completed effects. Active nested calls (up to 8) and guest memory
+(32 MiB) remain shared across programs in the same run. The agent run retains
+its own execution timeout and step limits.
 
 Use Code Mode for eligible JSON tools, including a single call, and for an
 auto-run Bash command whose output feeds parsing, filtering, branching,

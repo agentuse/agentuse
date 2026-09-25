@@ -1735,7 +1735,7 @@ describe('Code Mode', () => {
     await expect(third).resolves.toEqual(expect.objectContaining({ status: 'completed', value: 3 }));
   });
 
-  it('charges completed nested calls to the run-wide limit', async () => {
+  it('gives each code_exec program a fresh nested-call allowance', async () => {
     const dispatcher = new ToolDispatcher({
       echo: { description: 'Echo', inputSchema: z.object({ value: z.number() }), execute: async (input: unknown) => input },
     });
@@ -1751,9 +1751,63 @@ describe('Code Mode', () => {
     }));
     await expect(dispatcher.dispatch('code_exec', { code: 'return tools.echo({ value: 2 });' }, { toolCallId: 'two' }))
       .resolves.toEqual(expect.objectContaining({
-        status: 'failed',
-        error: expect.objectContaining({ message: expect.stringMatching(/nested-call limit/i) }),
+        status: 'completed',
+        value: { value: 2 },
       }));
+  });
+
+  it('bounds a 200-call program without exhausting later programs or shared concurrency', async () => {
+    let dispatched = 0;
+    let active = 0;
+    let maxActive = 0;
+    const dispatcher = new ToolDispatcher({
+      wait: {
+        description: 'Wait', inputSchema: z.object({}),
+        execute: async () => {
+          dispatched++;
+          active++;
+          maxActive = Math.max(maxActive, active);
+          try {
+            await new Promise(resolve => setTimeout(resolve, 1));
+            return true;
+          } finally {
+            active--;
+          }
+        },
+      },
+    });
+    dispatcher.register('code_exec', createCodeExecTool({ dispatcher, toolNames: dispatcher.names() }));
+    await expect(dispatcher.dispatch('code_exec', { code: `
+      const calls = await Promise.allSettled(Array.from({ length: 200 }, () => tools.wait({})));
+      return {
+        completed: calls.filter(call => call.status === 'fulfilled').length,
+        rejected: calls.filter(call => call.status === 'rejected').length,
+      };
+    ` }, { toolCallId: 'large-batch' })).resolves.toEqual(expect.objectContaining({
+      status: 'completed', value: { completed: 128, rejected: 72 },
+    }));
+    expect(dispatched).toBe(128);
+    expect(maxActive).toBe(8);
+    expect(active).toBe(0);
+    await expect(dispatcher.dispatch('code_exec', { code: 'return tools.wait({});' }, { toolCallId: 'next-program' }))
+      .resolves.toEqual(expect.objectContaining({ status: 'completed', value: true }));
+    expect(dispatched).toBe(129);
+  });
+
+  it('does not leak shared resources on already-aborted acquisition', async () => {
+    const limits = { ...DEFAULT_CODE_MODE_LIMITS, concurrency: 1, nestedCalls: 1 };
+    const budget = new CodeModeRunBudget(limits);
+    const controller = new AbortController();
+    controller.abort(new Error('already cancelled'));
+    await expect(budget.acquireRuntime(limits.memoryBytes, controller.signal)).rejects.toThrow('already cancelled');
+    await expect(budget.acquireNestedCall(controller.signal)).rejects.toThrow('already cancelled');
+    // Each release restores capacity, including after rejected acquisitions.
+    for (let i = 0; i < 3; i++) {
+      const releaseRuntime = await budget.acquireRuntime(limits.memoryBytes);
+      const releaseCall = await budget.acquireNestedCall();
+      releaseCall();
+      releaseRuntime();
+    }
   });
 
   it('journals the outer execution and each nested tool call', async () => {
