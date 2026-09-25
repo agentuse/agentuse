@@ -604,7 +604,12 @@ export async function createSubAgentTool(
                 });
                 await dismissIfReviewerRejected(subagentSessionManager, subagentSessionID, agentId, subagentIncomplete);
               } else {
-                await subagentSessionManager.setSessionCompleted(subagentSessionID, agentId);
+                const successfulOutcome = preparedTools.runOutcome.complete;
+                await subagentSessionManager.setSessionCompleted(
+                  subagentSessionID,
+                  agentId,
+                  successfulOutcome ? (successfulOutcome.idle ? 'idle' : 'complete') : undefined,
+                );
               }
             } catch (error) {
               logger.debug(`[SubAgent] Failed to update message with token usage: ${(error as Error).message}`);

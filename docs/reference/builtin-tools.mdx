@@ -528,13 +528,13 @@ The `report_outcome` tool is always available, no configuration needed. Every ag
 | `status` | `"complete" \| "idle" \| "incomplete"` | Required | How the run ended, judged against the requested objective |
 | `headline` | `string` | Required | One line. Complete: what the run achieved. Idle: what it checked and why nothing was due. Incomplete: the blocker and what a human must fix |
 | `details` | `string` | Optional | Markdown body, only when the headline cannot carry the substance |
-| `artifacts` | `string[]` | Required | Every path or URL the run produced or changed. `[]` when it changed nothing |
+| `artifacts` | `string[]` | Required | Paths or URLs of substantive deliverables produced or changed in this run. Excludes routine bookkeeping and pre-existing outputs. `[]` for idle runs |
 | `rejectionOnly` | `boolean` | Optional | Incomplete only. `true` when a human rejection is the sole blocker |
 
 What each status does:
 
 - **`complete`**: the objective was achieved. The call is the run's answer and ends the run. The session is `completed`.
-- **`idle`**: the agent checked and there was genuinely nothing to do. `artifacts` must be `[]`. It ends the run and the session is still `completed`, but the outcome is marked idle: the run JSON carries `result.idle: true`, and the session view shows the verdict in grey instead of green. A stretch of idle runs from an agent that usually ships is a sign something upstream is stuck.
+- **`idle`**: a successful check found no action due: nothing eligible, no alert condition met, or the intended work was already handled before this run. Routine logs, checkpoints, watermarks, audit notes, and monitoring-state updates do not turn an idle check into delivered work; exclude them from `artifacts`, which must be `[]`. A requested report, analysis, or other substantive deliverable actually produced by this run is `complete`, even when it recommends no action. An idle run ends successfully and its durable session status remains `completed`; the run JSON carries `result.idle: true`, and the sessions list exposes an Idle badge and filter separately from Done. A stretch of idle runs can help reveal changes in an agent's supply of eligible work.
 - **`incomplete`**: a required outcome was not delivered because something failed, including due work the agent found but could not move. The run keeps going only for bookkeeping. When it ends, the session is persisted as `error` with code `INCOMPLETE`:
   - Session list (CLI and web) shows an `incomplete` status instead of a green `completed`
   - Channel notifications fire the `failure` event, not `completion`

@@ -52,17 +52,18 @@ export function isRunningRow(row: Pick<SessionRow, 'status' | 'subagentActive'>)
   return isExecutingSessionStatus(row.status) || row.subagentActive === true;
 }
 
-/** The five dots the list uses. A run the agent declared incomplete gets its
+/** The six dots the list uses. A run the agent declared incomplete gets its
  *  own dot: it did not crash, it stopped short and wants a human — a skim
  *  should tell the two apart. Everything else reads as an ordinary finished
  *  run. */
 export function statusDot(
-  row: Pick<SessionRow, 'status' | 'subagentActive' | 'errorCode'>
-): 'running' | 'waiting' | 'failed' | 'incomplete' | 'done' {
+  row: Pick<SessionRow, 'status' | 'outcome' | 'subagentActive' | 'errorCode'>
+): 'running' | 'waiting' | 'failed' | 'incomplete' | 'idle' | 'done' {
   if (isRunningRow(row)) return 'running';
   if (isLiveSessionStatus(row.status)) return 'waiting';
   if (isIncompleteOutcome(row.status, row.errorCode)) return 'incomplete';
   if (row.status === 'error') return 'failed';
+  if (row.status === 'completed' && row.outcome === 'idle') return 'idle';
   return 'done';
 }
 
@@ -252,6 +253,7 @@ export function SessionListItem(props: {
       <span class="it-body">
         <span class="it-agent">
           <span class="it-agent-name"><Highlight text={name} query={query} /></span>
+          {dot === 'idle' && <span class="chip status idle">idle</span>}
           {purposeLabel && <span class="chip internal">{purposeLabel}</span>}
           {/* Says why the row is dimmed. A failure that has been waved off is
               still a failure, so it keeps its colour and loses its urgency. */}
@@ -294,7 +296,9 @@ export function SessionReader(props: {
   const dismissed = props.dismissed ?? isDismissedRow(row);
   const discardable = Boolean(props.onDiscard) && !dismissed && isDiscardableRow(row);
   const live = isRunningRow(row) || isLiveSessionStatus(row.status);
-  const status = displayStatusLabel(row.status, row.errorCode);
+  const status = row.status === 'completed' && row.outcome === 'idle'
+    ? 'idle'
+    : displayStatusLabel(row.status, row.errorCode);
   const statusText = row.subagentActive ? 'running · subagent' : status;
   const purposeLabel = sessionPurposeLabel(row);
   const repeatRunPath = sessionRepeatRunPath(row);
@@ -743,6 +747,7 @@ export default function SessionsList() {
         {statusChip('', 'All', counts?.all)}
         {statusChip('running', 'Running', counts?.running, 'running')}
         {statusChip('completed', 'Done', counts?.done)}
+        {statusChip('idle', 'Idle', counts?.idle, 'idle')}
         {statusChip('incomplete', 'Incomplete', counts?.incomplete, 'incomplete')}
         {statusChip('error', 'Failed', counts?.failed, 'failed')}
         {/* Triage, not status, so it composes with the chips above: the counts

@@ -9,9 +9,9 @@ import {
 } from '../src/session/status';
 
 describe('shared session status semantics', () => {
-  it('exposes every durable status in the session filter', () => {
+  it('exposes every lifecycle status and derived outcome in the session filter', () => {
     expect(SESSION_STATUS_FILTERS).toEqual([
-      '', 'preparing', 'running', 'suspended', 'completed', 'error', 'incomplete',
+      '', 'preparing', 'running', 'suspended', 'completed', 'idle', 'error', 'incomplete',
     ]);
   });
 

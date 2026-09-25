@@ -969,6 +969,14 @@ describe('Session list item', () => {
     expect(html).toContain('No final output.');
   });
 
+  it('labels an idle completion explicitly', () => {
+    const html = render({ ...base, outcome: 'idle', finalResponse: '💤 Idle: No messages waiting' });
+
+    expect(html).toContain('class="dot idle"');
+    expect(html).toContain('class="chip status idle">idle</span>');
+    expect(html).toContain('💤 Idle: No messages waiting');
+  });
+
   it('labels agent creation and revision sessions beside their names', () => {
     const createHtml = render({
       ...base,
@@ -1053,7 +1061,7 @@ describe('Session list helpers', () => {
     })).toBeUndefined();
   });
 
-  it('maps every run state onto one of five dots', () => {
+  it('maps every run state and successful outcome onto one of six dots', () => {
     expect(statusDot({ status: 'running' })).toBe('running');
     expect(statusDot({ status: 'suspended', subagentActive: true })).toBe('running');
     expect(statusDot({ status: 'suspended' })).toBe('waiting');
@@ -1061,6 +1069,7 @@ describe('Session list helpers', () => {
     expect(statusDot({ status: 'error', errorCode: 'TIMEOUT' })).toBe('failed');
     // Declared by the agent, not a crash: its own dot, and its own colour.
     expect(statusDot({ status: 'error', errorCode: 'INCOMPLETE' })).toBe('incomplete');
+    expect(statusDot({ status: 'completed', outcome: 'idle' })).toBe('idle');
     expect(statusDot({ status: 'completed' })).toBe('done');
   });
 

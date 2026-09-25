@@ -10,7 +10,7 @@ export type ApprovalSummaryStatus = 'pending' | 'approved' | 'rejected' | 'comme
 
 export type ApprovalSessionFilter = 'pending' | 'completed' | 'errored';
 
-export type SessionStatusFilter = 'preparing' | 'running' | 'suspended' | 'completed' | 'error' | 'incomplete';
+export type SessionStatusFilter = 'preparing' | 'running' | 'suspended' | 'completed' | 'idle' | 'error' | 'incomplete';
 
 /** Triage axis, orthogonal to status: has an ended run been reviewed-and-discarded yet? */
 export type SessionTriageFilter = 'undismissed' | 'dismissed';
@@ -81,6 +81,8 @@ export interface SessionSummary {
     isSubAgent?: boolean;
   };
   status: string;
+  /** Successful report_outcome verdict. Absent historical rows read complete. */
+  outcome?: 'complete' | 'idle';
   trigger: SessionTrigger;
   createdAt: number;
   updatedAt: number;
@@ -108,6 +110,7 @@ export interface SessionStatusCounts {
   all: number;
   running: number;
   done: number;
+  idle: number;
   /** Crashes only. An agent-declared incomplete run is counted separately. */
   failed: number;
   incomplete: number;

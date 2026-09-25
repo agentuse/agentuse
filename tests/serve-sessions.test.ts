@@ -484,6 +484,18 @@ describe('session list helpers', () => {
     expect(__testing.sessionMatchesStatusFilter(incomplete, undefined)).toBe(true);
   });
 
+  it('partitions idle from ordinary successful completions', () => {
+    const done = { ...rows[0]!.session, status: 'completed' };
+    const explicitComplete = { ...done, outcome: 'complete' as const };
+    const idle = { ...done, outcome: 'idle' as const };
+
+    expect(__testing.sessionMatchesStatusFilter(done, 'completed')).toBe(true);
+    expect(__testing.sessionMatchesStatusFilter(explicitComplete, 'completed')).toBe(true);
+    expect(__testing.sessionMatchesStatusFilter(idle, 'completed')).toBe(false);
+    expect(__testing.sessionMatchesStatusFilter(idle, 'idle')).toBe(true);
+    expect(__testing.sessionMatchesStatusFilter(done, 'idle')).toBe(false);
+  });
+
   it('matches durable preparing sessions without folding them into running', () => {
     const preparing = { ...rows[0]!.session, status: 'preparing' };
 
@@ -542,12 +554,13 @@ describe('session list helpers', () => {
       { status: 'suspended' },
       { status: 'completed' },
       { status: 'completed' },
+      { status: 'completed', outcome: 'idle' },
       { status: 'error' },
       // Declared incomplete by the agent: its own chip, never counted as a crash.
       { status: 'error', errorCode: 'INCOMPLETE' },
     ]);
 
-    expect(counts).toEqual({ all: 8, running: 3, done: 2, failed: 1, incomplete: 1 });
+    expect(counts).toEqual({ all: 9, running: 3, done: 2, idle: 1, failed: 1, incomplete: 1 });
   });
 
   it('keeps the sessions SSE list refresh at the old page polling cadence', () => {

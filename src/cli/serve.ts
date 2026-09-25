@@ -1335,7 +1335,7 @@ function isSessionWindowFilter(value: string): value is SessionWindowFilter {
 }
 
 function parseSessionStatusFilter(value: string | undefined): SessionStatusFilter | undefined {
-  return value === 'preparing' || value === 'running' || value === 'suspended' || value === 'completed' || value === 'error' || value === 'incomplete'
+  return value === 'preparing' || value === 'running' || value === 'suspended' || value === 'completed' || value === 'idle' || value === 'error' || value === 'incomplete'
     ? value
     : undefined;
 }
@@ -1352,13 +1352,15 @@ function parseSessionTriageFilter(value: string | undefined): SessionTriageFilte
  * run the agent itself declared incomplete.
  */
 function sessionMatchesStatusFilter(
-  session: Pick<SessionSummary, 'status' | 'errorCode'>,
+  session: Pick<SessionSummary, 'status' | 'outcome' | 'errorCode'>,
   filter: SessionStatusFilter | undefined
 ): boolean {
   if (!filter) return true;
   const incomplete = isIncompleteOutcome(session.status, session.errorCode);
   if (filter === 'incomplete') return incomplete;
   if (filter === 'error') return session.status === 'error' && !incomplete;
+  if (filter === 'idle') return session.status === 'completed' && session.outcome === 'idle';
+  if (filter === 'completed') return session.status === 'completed' && session.outcome !== 'idle';
   return session.status === filter;
 }
 
@@ -1430,11 +1432,12 @@ function sessionMatchesSearchIdentity(
  * matching the dot the list draws.
  */
 function sessionStatusCounts(
-  sessions: ReadonlyArray<Pick<SessionSummary, 'status' | 'subagentActive' | 'errorCode'>>
+  sessions: ReadonlyArray<Pick<SessionSummary, 'status' | 'outcome' | 'subagentActive' | 'errorCode'>>
 ): SessionStatusCounts {
-  const counts: SessionStatusCounts = { all: sessions.length, running: 0, done: 0, failed: 0, incomplete: 0 };
+  const counts: SessionStatusCounts = { all: sessions.length, running: 0, done: 0, idle: 0, failed: 0, incomplete: 0 };
   for (const session of sessions) {
     if (isExecutingSessionStatus(session.status) || session.subagentActive === true) counts.running += 1;
+    else if (session.status === 'completed' && session.outcome === 'idle') counts.idle += 1;
     else if (session.status === 'completed') counts.done += 1;
     else if (isIncompleteOutcome(session.status, session.errorCode)) counts.incomplete += 1;
     else if (session.status === 'error') counts.failed += 1;

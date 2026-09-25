@@ -1234,6 +1234,7 @@ export interface SessionStatusCounts {
   all: number;
   running: number;
   done: number;
+  idle: number;
   /** Crashes only; an agent-declared incomplete run is counted separately. */
   failed: number;
   incomplete: number;

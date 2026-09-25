@@ -101,6 +101,8 @@ export interface SessionSummary {
     runPath?: string;
   };
   status: string;
+  /** Successful report_outcome verdict. Absent historical rows read complete. */
+  outcome?: 'complete' | 'idle';
   trigger: SessionTrigger;
   createdAt: number;
   updatedAt: number;

@@ -33,10 +33,23 @@ describe('report_outcome tool', () => {
     expect(outcome).toEqual({ complete: { headline: 'No PRs due for release', artifacts: [], idle: true } });
   });
 
+  it('keeps bookkeeping context on idle without declaring it delivered work', async () => {
+    const outcome: RunOutcome = {};
+    await execute(outcome, {
+      status: 'idle', headline: 'No eligible notifications after checking both inboxes',
+      details: 'Watermarks advanced; audit: [scan log](./scan-log.json).', artifacts: [],
+    });
+    expect(outcome.complete?.idle).toBe(true);
+    expect(outcome.complete?.artifacts).toEqual([]);
+    expect(composeFinalOutput(outcome.complete, '')).toBe(
+      '💤 Idle: No eligible notifications after checking both inboxes\n\nWatermarks advanced; audit: [scan log](./scan-log.json).'
+    );
+  });
+
   it('refuses idle with artifacts and records nothing', async () => {
     const outcome: RunOutcome = {};
     await expect(execute(outcome, { status: 'idle', headline: 'Nothing to do', artifacts: ['pr/12'] }))
-      .rejects.toThrow('status "idle" means this run changed nothing');
+      .rejects.toThrow('status "idle" means this run delivered no substantive output');
     expect(outcome).toEqual({});
   });
 

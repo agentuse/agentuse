@@ -138,6 +138,13 @@ const DETAILS_DESCRIPTION =
 const REJECTION_ONLY_DESCRIPTION =
   'Set true only when a human rejection in this run or a delegated child is the sole reason for non-delivery. Set false if any independent failure or pending approval remains. Rejection-only runs are automatically dismissed after verifying the recorded human decision.';
 
+/** Shared by the tool, runtime prompt, and reserved outcome turn. */
+export const IDLE_OUTCOME_GUIDANCE =
+  'You successfully checked and no action was due: nothing eligible, no alert condition met, or the intended work was already handled before this run. Routine bookkeeping (logs, checkpoints, watermarks, audit notes, or refreshed monitoring state) does not turn that into delivered work. Report idle even when the check itself was the requested task. A requested report, analysis, or other substantive deliverable that this run actually produced is complete, even if it recommends no action. Work that is due but blocked, including pending approval, is incomplete, never idle.';
+
+export const OUTCOME_ARTIFACTS_DESCRIPTION =
+  'Paths or URLs of substantive deliverables this run produced or changed: requested documents, PRs, issues, published posts, sent messages. Exclude routine bookkeeping and pre-existing outputs merely inspected or referenced. Use [] when this run delivered no substantive output, including idle runs. Relevant bookkeeping or prior-output links may go in details when needed.';
+
 interface ReportOutcomeInput {
   status: OutcomeStatus;
   headline: string;
@@ -159,7 +166,7 @@ export function createReportOutcomeTool(
     description:
       'Declare how this run ended and deliver its report. Judge the requested objective, not whether the run stopped cleanly. Pick one status:\n' +
       '- complete: the objective was achieved. This call IS your final answer: the runtime renders `headline` + `details` everywhere (terminal, Slack, the session list, the run feed, and the parent when you are a sub-agent). Call it once, when the work is done, then stop; do not also write the report as a normal message.\n' +
-      '- idle: you checked and nothing was waiting at all: no items in scope. `artifacts` must be []. The headline says what you checked. Also final: stop after it.\n' +
+      '- idle: ' + IDLE_OUTCOME_GUIDANCE + ' `artifacts` must be []. The headline says what you checked and why no action was due. Also final: stop after it.\n' +
       '- incomplete: a required outcome was not delivered because a precondition, input, access path, login/session, dependency, or action failed. That includes items that were waiting but you could not act on (a failed check, a conflict, a missing approval), even when your instructions told you to skip them: skipping was right, but the work is stuck, so it is not idle. Name what is stuck and why. Use it even when stopping was correct or secondary work succeeded. Call it once the blocker is confirmed; the run stays active only for required bookkeeping and concise context not already in the headline. Do not resume core work or report again.\n' +
       'Unsure between idle and incomplete? Choose incomplete.',
     inputSchema: z.object({
@@ -168,9 +175,7 @@ export function createReportOutcomeTool(
         'ONE line, no markdown heading. complete: what the run achieved and the single number that matters (e.g. "Posted 10/10 connect replies, all verified; 10 of 20 daily budget left"). idle: what you checked. incomplete: what remains blocked and what a human must fix; alongside a human rejection, only the independent failures. Not the task restated, not a summary of your steps.'
       ),
       details: z.string().optional().describe(DETAILS_DESCRIPTION),
-      artifacts: z.array(z.string()).describe(
-        'Every path or URL this run produced or changed: files written, PRs, issues, published posts, sent messages. [] when the run changed nothing. Callers use these instead of parsing your report.'
-      ),
+      artifacts: z.array(z.string()).describe(OUTCOME_ARTIFACTS_DESCRIPTION),
       rejectionOnly: z.boolean().optional().describe(`incomplete only. ${REJECTION_ONLY_DESCRIPTION}`),
     }),
     execute: async ({ status, headline, details, artifacts, rejectionOnly }: ReportOutcomeInput) => {
@@ -181,14 +186,14 @@ export function createReportOutcomeTool(
       }
       if (status === 'idle' && artifacts.length > 0) {
         throw new Error(
-          `status "idle" means this run changed nothing, but artifacts lists ${artifacts.length}. ` +
-          'Use "complete" if the run produced them, or "incomplete" if due work was blocked.'
+          `status "idle" means this run delivered no substantive output, but artifacts lists ${artifacts.length}. ` +
+          'Exclude routine bookkeeping and pre-existing outputs from artifacts. Use "complete" if the run produced a substantive deliverable, or "incomplete" if due work was blocked.'
         );
       }
       options.assertDeliverable?.();
       // Last call wins, matching incomplete: an agent may refine the headline
       // once late bookkeeping changes the number. The list is kept even when
-      // empty: [] is the agent saying it changed nothing.
+      // empty: [] is the agent saying it has no substantive output artifacts.
       outcome.complete = {
         headline: normalizeHeadline(headline),
         ...(details?.trim() ? { details: details.trim() } : {}),

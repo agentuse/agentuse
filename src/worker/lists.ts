@@ -1,5 +1,6 @@
 import { gateRound } from '../session/gate-rounds';
 import { findPendingSubagentWaitChildId, loadSessionPartsFlat, descendToLeafGate, findStaleCascadeChild, describeStaleCascade, CASCADE_ORPHANED_CODE } from '../runner/subagent-cascade';
+import { readOutcomeCall } from '../tools/report-outcome';
 import { logger } from '../utils/logger';
 import { SessionManager } from '../session/index.js';
 import { initStorage, CorruptStorageError, readJSON, writeJSON } from '../storage/index.js';
@@ -9,6 +10,8 @@ import { approvalProjectionKey, dismissedAtField, mockField, sessionErrorFields,
 import { normalizeApprovalOptions, normalizeReviewEscalation } from './approval-logs.js';
 import type { WorkerContext } from './context.js';
 import type { ApprovalProjectionIndex, ApprovalSummary, ApprovalSummaryStatus, ExecuteRequest } from './types.js';
+import type { SessionListSummary } from '../session/manager.js';
+import type { SessionSuccessfulOutcome } from '../session/types.js';
 
 export async function listAllApprovals(ctx: WorkerContext, req: ExecuteRequest) {
   return withListCache(ctx, listCacheKey(req, 'approvals'), req.id, async () => {
@@ -314,6 +317,57 @@ export async function listAllApprovals(ctx: WorkerContext, req: ExecuteRequest) 
   });
 }
 
+/** Recover the latest successful verdict from the newest stored turn. This is
+ * used once for sessions written before the compact index carried `outcome`;
+ * the result is then persisted into that index, so steady-state list polling
+ * remains an index-only operation. */
+async function storedSuccessfulOutcome(
+  sessionManager: SessionManager,
+  session: SessionListSummary,
+): Promise<SessionSuccessfulOutcome> {
+  const messages = await sessionManager.getSessionMessages(session.sessionId, session.agent.id);
+  // Compaction summaries can be appended after the primary run message. They
+  // are context bookkeeping, not a new outcome boundary.
+  const latest = [...messages].reverse().find((message) => message.assistant.summary !== true);
+  if (!latest) return 'complete';
+  const parts = await sessionManager.getMessageParts(session.sessionId, session.agent.id, latest.id);
+  for (const part of [...parts].reverse()) {
+    if (part.type !== 'tool' || part.state.status !== 'completed') continue;
+    const call = readOutcomeCall(part.tool, part.state.input);
+    if (!call || call.status === 'incomplete') continue;
+    return call.status;
+  }
+  // Runs from before report_outcome, and models that omitted the tool, retain
+  // the historical successful-completion behavior.
+  return 'complete';
+}
+
+async function backfillSuccessfulOutcomes(
+  sessionManager: SessionManager,
+  sessions: SessionListSummary[],
+): Promise<Map<string, SessionSuccessfulOutcome>> {
+  const outcomes = new Map<string, SessionSuccessfulOutcome>();
+  const missing = sessions.filter((session) => session.status === 'completed' && !session.outcome);
+  const batchSize = 10;
+  for (let index = 0; index < missing.length; index += batchSize) {
+    await Promise.all(missing.slice(index, index + batchSize).map(async (session) => {
+      try {
+        const outcome = await storedSuccessfulOutcome(sessionManager, session);
+        const persisted = await sessionManager.backfillSessionOutcome(
+          session.sessionId,
+          session.agent.id,
+          outcome,
+          session.updatedAt,
+        );
+        if (persisted) outcomes.set(session.sessionId, outcome);
+      } catch (error) {
+        logger.warn(`Could not recover outcome for session ${session.sessionId}: ${(error as Error).message}`);
+      }
+    }));
+  }
+  return outcomes;
+}
+
 export async function listSessions(ctx: WorkerContext, req: ExecuteRequest) {
   return withListCache(ctx, listCacheKey(req, 'sessions'), req.id, async () => {
   try {
@@ -326,6 +380,7 @@ export async function listSessions(ctx: WorkerContext, req: ExecuteRequest) {
       // stalled long-running session disappears from Home at the boundary.
       includeLiveBeforeUpdatedAfter: true,
     });
+    const backfilledOutcomes = await backfillSuccessfulOutcomes(sessionManager, sessions);
 
     // Top-level runs by default; approval-filtered session views opt into
     // subagents so approval history links can land on the exact run.
@@ -343,6 +398,9 @@ export async function listSessions(ctx: WorkerContext, req: ExecuteRequest) {
           ...(session.agent.isSubAgent && { isSubAgent: true }),
         },
         status: session.status,
+        ...((session.outcome ?? backfilledOutcomes.get(session.sessionId)) && {
+          outcome: session.outcome ?? backfilledOutcomes.get(session.sessionId),
+        }),
         trigger: session.trigger ?? 'manual',
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,

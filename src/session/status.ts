@@ -1,12 +1,13 @@
 import type { SessionStatus } from './types.js';
 
-/** Durable statuses exposed as exact session-list filters. */
-export const SESSION_STATUS_FILTERS: readonly ('' | SessionStatus | 'incomplete')[] = [
+/** Lifecycle statuses and derived outcomes exposed as session-list filters. */
+export const SESSION_STATUS_FILTERS: readonly ('' | SessionStatus | 'idle' | 'incomplete')[] = [
   '',
   'preparing',
   'running',
   'suspended',
   'completed',
+  'idle',
   'error',
   'incomplete',
 ];

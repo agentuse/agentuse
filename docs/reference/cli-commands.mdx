@@ -706,6 +706,13 @@ Lists top-level runs as JSON, live first and then by most recent activity. Filte
 last update, so a recently completed long-running session remains visible. The
 browsable HTML page is at `/sessions`.
 
+Use `?status=idle` for successful checks with no action due, or
+`?status=completed` for Done runs excluding idle. Idle rows retain the durable
+`status: "completed"` and carry `outcome: "idle"`; the list's `counts.idle` and
+`counts.done` are separate. Older recorded idle outcomes are recovered from the
+structured tool call. Runs that reported complete are not reclassified from
+their output text.
+
 ```bash
 curl "http://127.0.0.1:12233/api/sessions?agent=daily&trigger=scheduled" \
   -H "Authorization: Bearer $AGENTUSE_API_KEY"

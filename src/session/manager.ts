@@ -31,6 +31,7 @@ import {
 } from './code-mode-result-query';
 import type {
   SessionInfo,
+  SessionSuccessfulOutcome,
   SessionTrigger,
   Part,
   Message,
@@ -74,6 +75,7 @@ export interface SessionListSummary {
   };
   projectRoot?: string;
   status: SessionInfo['status'];
+  outcome?: SessionSuccessfulOutcome;
   trigger: SessionTrigger;
   createdAt: number;
   updatedAt: number;
@@ -284,6 +286,7 @@ function toSessionListSummary(session: SessionInfo, sessionPath: string): Sessio
     },
     ...(session.project?.root && { projectRoot: session.project.root }),
     status: session.status,
+    ...(session.outcome && { outcome: session.outcome }),
     trigger: session.trigger ?? 'manual',
     createdAt: session.time.created,
     updatedAt: session.time.updated,
@@ -1653,6 +1656,7 @@ export class SessionManager {
   async setSessionSuspended(sessionID: string, agentId: string): Promise<void> {
     await this.updateSession(sessionID, agentId, {
       status: 'suspended',
+      outcome: undefined,
       error: undefined
     } as any);
   }
@@ -1667,6 +1671,7 @@ export class SessionManager {
     // with the status flip so direct retries and cascade parents agree.
     await this.updateSession(sessionID, agentId, {
       status: 'running',
+      outcome: undefined,
       error: undefined
     } as any);
   }
@@ -2185,6 +2190,7 @@ export class SessionManager {
   ): Promise<void> {
     await this.updateSession(sessionID, agentId, {
       status: 'error',
+      outcome: undefined,
       error: {
         ...error,
         time: Date.now()
@@ -2195,11 +2201,38 @@ export class SessionManager {
   /**
    * Mark session as completed successfully
    */
-  async setSessionCompleted(sessionID: string, agentId: string): Promise<void> {
+  async setSessionCompleted(
+    sessionID: string,
+    agentId: string,
+    outcome?: SessionSuccessfulOutcome,
+  ): Promise<void> {
     await this.updateSession(sessionID, agentId, {
       status: 'completed',
+      outcome,
       error: undefined
     } as any);
+  }
+
+  /** Persist a verdict recovered from an older session's structured outcome
+   * call without making that historical run look newly active. */
+  async backfillSessionOutcome(
+    sessionID: string,
+    agentId: string,
+    outcome: SessionSuccessfulOutcome,
+    expectedUpdatedAt: number,
+  ): Promise<boolean> {
+    const sessionPath = await this.resolveSessionDir(sessionID, agentId);
+    const key = `${sessionPath}/session`;
+    return this.serializedWrite(key, () => this.withSessionIndexMutation(async () => {
+      const session = await readJSON<SessionInfo>(key);
+      // A continuation can start after the list snapshot was read. Never let a
+      // stale backfill overwrite its cleared outcome or newly terminal state.
+      if (!session || session.status !== 'completed' || session.time.updated !== expectedUpdatedAt) return false;
+      session.outcome = outcome;
+      await writeJSON(key, session);
+      await this.updateSessionIndex(session, sessionPath);
+      return true;
+    }));
   }
 
   /**

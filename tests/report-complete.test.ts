@@ -3,6 +3,7 @@ import { describe, it, expect } from 'bun:test';
 import {
   createReportCompleteTool,
   createReportIncompleteTool,
+  createReportOutcomeTool,
   normalizeHeadline,
   composeFinalOutput,
   composeSubagentResult,
@@ -229,7 +230,7 @@ describe('shouldRequestOutcome', () => {
     expect(OUTCOME_NUDGE_PROMPT).toContain('does not authorize more work');
     expect(OUTCOME_NUDGE_PROMPT).toContain('full preceding task and tool trace');
     expect(OUTCOME_NUDGE_PROMPT).toContain('do not invent a blocker');
-    expect(OUTCOME_NUDGE_PROMPT).toContain('nothing was waiting at all');
+    expect(OUTCOME_NUDGE_PROMPT).toContain('a successful check found no action due');
     expect(OUTCOME_NUDGE_PROMPT).toContain('skipped, blocked, failed, or only partially delivered');
     expect(OUTCOME_NUDGE_PROMPT).toMatch(/do not repeat/i);
   });
@@ -277,9 +278,19 @@ describe('system prompt outcome contract', () => {
   });
 
   it('tells idle from a blocked sweep', () => {
-    expect(prompt).toMatch(/- idle: You checked and nothing was waiting at all/);
+    expect(prompt).toMatch(/- idle: You successfully checked and no action was due/);
     expect(prompt).toContain('even when your instructions told you to skip such items');
     expect(prompt).toContain('Unsure between idle and incomplete? Choose incomplete.');
+  });
+
+  it('applies the same idle boundary to initial guidance, the tool, and the final nudge', () => {
+    for (const guidance of [prompt, createReportOutcomeTool({}).description!, OUTCOME_NUDGE_PROMPT]) {
+      expect(guidance).toContain('no alert condition met');
+      expect(guidance).toContain('already handled before this run');
+      expect(guidance).toContain('Routine bookkeeping');
+      expect(guidance).toContain('A requested report, analysis, or other substantive deliverable');
+      expect(guidance).toContain('including pending approval, is incomplete, never idle');
+    }
   });
 
   it('puts the outcome call outside the guidance precedence ladder', () => {

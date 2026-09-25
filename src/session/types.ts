@@ -9,6 +9,10 @@ export type DeepPartial<T> = {
 // Session Info Schema
 export type SessionStatus = 'preparing' | 'running' | 'completed' | 'error' | 'suspended';
 
+/** A successful product outcome declared by report_outcome. This is separate
+ * from lifecycle status because an idle run still completed successfully. */
+export type SessionSuccessfulOutcome = 'complete' | 'idle';
+
 // How a run was triggered. Drives filtering on the /sessions operator surface.
 // 'manual' is the default for CLI direct runs, subagents, and the HTTP run
 // endpoint when no origin is specified; serve sets 'scheduled' / 'api' / 'slack'
@@ -32,6 +36,9 @@ export interface SessionInfo {
   parentSessionID?: string;          // For subagent sessions - links to parent agent session
   status: SessionStatus;             // Durable preparation/execution lifecycle
   trigger: SessionTrigger;           // How this run was triggered (defaults to 'manual')
+  /** Structured verdict for a successful terminal run. Historical sessions
+   * are backfilled from their stored outcome tool call when first listed. */
+  outcome?: SessionSuccessfulOutcome | undefined;
 
   // Agent metadata
   agent: {

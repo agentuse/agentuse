@@ -7706,6 +7706,7 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-sessions .dot.waiting { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
 .page-sessions .dot.failed { background: var(--red); }
 .page-sessions .dot.incomplete { background: var(--amber); }
+.page-sessions .dot.idle { background: var(--muted); opacity: 0.65; }
 .page-sessions .dot.done { background: var(--muted-2); }
 @keyframes sessions-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) {
@@ -8052,6 +8053,7 @@ a.lastrun.waiting { color: var(--cyan); }
 /* A finished run is the expected outcome, so it stays neutral: colour is spent
    on the states that want a second look (running, suspended, failed). */
 .page-sessions .chip.status.completed { color: var(--muted-3); border-color: var(--line-strong); background: none; }
+.page-sessions .chip.status.idle { color: var(--muted); border-color: var(--line-strong); background: none; }
 .page-sessions .chip.status.approved { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
 .page-sessions .chip.status.error, .page-sessions .chip.status.rejected, .page-sessions .chip.status.expired, .page-sessions .chip.status.timeout { color: var(--red); border-color: var(--red-border); background: var(--red-soft); }
 /* Agent-declared non-delivery (error/INCOMPLETE): amber, distinct from a crash,

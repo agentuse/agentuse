@@ -644,7 +644,11 @@ export async function runAgent(
           // "Reviewer rejected" is a review already given; don't ask for it twice.
           await dismissIfReviewerRejected(sessionManager, prepSessionID, prepAgentId, incomplete);
         } else {
-          await sessionManager.setSessionCompleted(prepSessionID, prepAgentId);
+          await sessionManager.setSessionCompleted(
+            prepSessionID,
+            prepAgentId,
+            complete ? (complete.idle ? 'idle' : 'complete') : undefined,
+          );
         }
       } catch (error) {
         logger.debug(`Failed to mark session ${incomplete ? 'incomplete' : 'completed'}: ${(error as Error).message}`);

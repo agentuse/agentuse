@@ -1,5 +1,6 @@
 import type { RunAgentResult } from './types';
 import type { RunOutcome } from '../tools/report-outcome.js';
+import { IDLE_OUTCOME_GUIDANCE } from '../tools/report-outcome.js';
 import { aggregateToolCalls, countSteps } from '../telemetry/metrics.js';
 
 /**
@@ -13,8 +14,9 @@ import { aggregateToolCalls, countSteps } from '../telemetry/metrics.js';
 export const OUTCOME_NUDGE_PROMPT =
   '[runtime] This run is ending without a declared outcome. The preceding turn may have reached its normal work-step limit after returning a tool result; this reserved outcome-only turn does not authorize more work. ' +
   'Review the full preceding task and tool trace, and do not invent a blocker or claim work was skipped when the trace shows it was performed. ' +
-  'Call report_outcome now with a one-line headline: status "complete" if the requested objective was achieved, "idle" if the trace shows you checked and nothing was waiting at all, ' +
+  'Call report_outcome now with a one-line headline: status "complete" if the requested objective was achieved with substantive work delivered, "idle" if a successful check found no action due, ' +
   'or "incomplete" if the trace shows a required outcome was skipped, blocked, failed, or only partially delivered, including waiting items you could not act on. ' +
+  IDLE_OUTCOME_GUIDANCE + ' For idle, artifacts must be []; exclude routine bookkeeping and pre-existing outputs. ' +
   'Emit ONLY that tool call: do not redo any work, and do not repeat, extend, or rewrite the report you already wrote.';
 
 /**
