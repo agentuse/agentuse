@@ -4,9 +4,13 @@ import type * as ClackPrompts from '@clack/prompts';
 import { FIRST_PROJECT_DEFAULT_NAME, terminalFirstAgentPrompt, validateManagedProjectName } from '../onboarding';
 import { loadGlobalConfig } from '../utils/global-config';
 import { createManagedProject, ManagedProjectError } from '../utils/managed-project';
+import { openBrowser } from '../utils/open-browser';
 import { createServeCommand } from './serve';
 
 type SetupSurface = 'web' | 'terminal';
+type SetupChoice = SetupSurface | 'mac-app';
+
+export const MAC_APP_DOWNLOAD_URL = 'https://agentuse.io/download/mac';
 
 interface SetupOptions {
   web?: boolean;
@@ -38,18 +42,39 @@ export function resolveSetupSurface(
   throw new Error('Choose a setup surface: --web or --terminal');
 }
 
-async function chooseSurface(): Promise<SetupSurface | null> {
+/** The Mac app ships for Apple silicon only, so only offer it there. */
+export function setupChoices(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): { value: SetupChoice; label: string; hint: string }[] {
+  const choices: { value: SetupChoice; label: string; hint: string }[] = [
+    { value: 'web', label: 'Browser', hint: 'guided visual setup' },
+    { value: 'terminal', label: 'Terminal', hint: 'guided text setup' },
+  ];
+  if (platform === 'darwin' && arch === 'arm64') {
+    choices.unshift({ value: 'mac-app', label: 'Mac app', hint: 'recommended on Mac · runtime included' });
+  }
+  return choices;
+}
+
+async function chooseSurface(): Promise<SetupChoice | null> {
   const p = await loadPrompts();
+  const options = setupChoices();
   const selected = await p.select({
     message: 'How would you like to continue?',
-    options: [
-      { value: 'web', label: 'Browser', hint: 'guided visual setup' },
-      { value: 'terminal', label: 'Terminal', hint: 'guided text setup' },
-    ],
-    initialValue: 'web',
+    options,
+    initialValue: options[0].value,
   });
   if (p.isCancel(selected)) return null;
-  return selected as SetupSurface;
+  return selected as SetupChoice;
+}
+
+async function openMacAppDownload(): Promise<void> {
+  const p = await loadPrompts();
+  const opened = await openBrowser(MAC_APP_DOWNLOAD_URL);
+  p.outro(opened
+    ? `Opened ${MAC_APP_DOWNLOAD_URL}. Move AgentUse to Applications, open it, and follow the guided setup.`
+    : `Download the Mac app: ${MAC_APP_DOWNLOAD_URL}`);
 }
 
 async function promptProjectName(): Promise<string | null> {
@@ -177,6 +202,10 @@ export function createSetupCommand(): Command {
         const selected = await chooseSurface();
         if (!selected) {
           p.cancel('Setup cancelled.');
+          return;
+        }
+        if (selected === 'mac-app') {
+          await openMacAppDownload();
           return;
         }
         surface = selected;
