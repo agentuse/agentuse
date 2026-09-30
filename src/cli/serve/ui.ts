@@ -1,4 +1,4 @@
-import matter from 'gray-matter';
+import { parseFrontmatter } from '../../utils/frontmatter';
 import { WORDMARK_SVG } from "./brand";
 import { safeHttpUrl } from "../../utils/url";
 import { escapeHtml, renderLogContentValue, renderMarkdownBlock } from "./web/lib/content-html";
@@ -86,7 +86,7 @@ export function renderMarkdownArtifact(raw: string): string {
   let data: Record<string, unknown> = {};
   let content = raw;
   try {
-    const parsed = matter(raw, {});
+    const parsed = parseFrontmatter(raw);
     data = (parsed.data ?? {}) as Record<string, unknown>;
     content = parsed.content;
   } catch {

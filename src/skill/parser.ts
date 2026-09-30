@@ -1,4 +1,4 @@
-import matter from 'gray-matter';
+import { parseFrontmatter } from '../utils/frontmatter';
 import { readFile } from 'fs/promises';
 import { basename, dirname } from 'path';
 import type { ZodError } from 'zod';
@@ -63,7 +63,7 @@ function parseAllowedTools(allowedTools: string | string[] | undefined): string[
 export async function parseSkillFrontmatter(filePath: string): Promise<SkillInfo | null> {
   try {
     const content = await readFile(filePath, 'utf-8');
-    const { data } = matter(content, {});
+    const { data } = parseFrontmatter(content);
 
     const parsed = SkillFrontmatterSchema.safeParse(data);
     if (!parsed.success) {
@@ -95,7 +95,7 @@ export async function parseSkillFrontmatter(filePath: string): Promise<SkillInfo
  */
 export async function parseSkillContent(filePath: string): Promise<SkillContent> {
   const fileContent = await readFile(filePath, 'utf-8');
-  const { data, content } = matter(fileContent, {});
+  const { data, content } = parseFrontmatter(fileContent);
 
   const parsed = SkillFrontmatterSchema.safeParse(data);
   if (!parsed.success) {

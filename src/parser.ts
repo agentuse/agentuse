@@ -1,4 +1,4 @@
-import matter from 'gray-matter';
+import { parseFrontmatter } from './utils/frontmatter';
 import { z } from 'zod';
 import { REASONING_LEVELS } from './model-compatibility';
 import { readFile } from 'fs/promises';
@@ -391,11 +391,9 @@ export interface ParsedAgent {
  */
 export function parseAgentContent(content: string, name: string): ParsedAgent {
   try {
-    // Parse YAML frontmatter. The {} matters: with no options, gray-matter
-    // memoizes every result in a module-level cache keyed by the full file
-    // content, so long-lived processes retain every version of every file
-    // ever parsed. Same rule applies to every matter() call in this repo.
-    const { data, content: instructions } = matter(content, {});
+    // Parse YAML frontmatter (see utils/frontmatter for why every caller
+    // goes through the shared wrapper).
+    const { data, content: instructions } = parseFrontmatter(content);
 
     if (data && typeof data === 'object' && 'notifications' in data) {
       throw new ConfigError(

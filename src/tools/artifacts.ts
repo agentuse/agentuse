@@ -1,6 +1,6 @@
 import type { Tool } from 'ai';
 import { z } from 'zod';
-import matter from 'gray-matter';
+import { parseFrontmatter, stringifyFrontmatter } from '../utils/frontmatter';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { ToolOutput, ToolErrorOutput } from './types.js';
@@ -54,11 +54,11 @@ function safeFileName(name: string): string {
 /** Merge title/tags into a markdown file's YAML frontmatter (explicit args win). */
 function applyFrontmatter(content: string, title?: string, tags?: string[]): string {
   if (title === undefined && (!tags || tags.length === 0)) return content;
-  const parsed = matter(content, {});
+  const parsed = parseFrontmatter(content);
   const data: Record<string, unknown> = { ...parsed.data };
   if (title !== undefined) data.title = title;
   if (tags && tags.length > 0) data.tags = tags;
-  return matter.stringify(parsed.content, data);
+  return stringifyFrontmatter(parsed.content, data);
 }
 
 /**

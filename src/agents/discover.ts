@@ -3,7 +3,7 @@ import { lstat, mkdir, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/pr
 import { tmpdir } from 'node:os';
 import { basename, isAbsolute, join, resolve } from 'node:path';
 import { glob } from 'glob';
-import matter from 'gray-matter';
+import { parseFrontmatter } from '../utils/frontmatter';
 import { formatScheduleHuman, parseScheduleExpression } from '../scheduler/parser.js';
 import { discoverSkills } from '../skill/discovery.js';
 import { SAFE_ENV_FILENAMES, isPathInside } from '../utils/path-policy.js';
@@ -136,7 +136,7 @@ async function readExistingProjectAgentSummary(
   if (!buffer || buffer.includes(0)) return undefined;
   const text = redactProjectDiscoveryText(buffer.toString('utf8'));
   try {
-    const parsed = matter(text, {});
+    const parsed = parseFrontmatter(text);
     const data = parsed.data && typeof parsed.data === 'object'
       ? parsed.data as Record<string, unknown>
       : {};
