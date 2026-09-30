@@ -155,6 +155,20 @@ export async function getApprovalInfoUncached(req: ExecuteRequest) {
       }
     }
 
+    // A caller serve has not already authorized must present a resumeToken
+    // this session actually issued: the current gate's, or with
+    // allowHistorical any earlier gate's. A session with no gate token has
+    // nothing to match, so an arbitrary token fails here instead of falling
+    // through to the full session view (serve mints a session link from a
+    // success on this path).
+    if (!req.skipTokenCheck && !resumeTokenIssued(req, effectiveApprovalPart, approvalParts)) {
+      return {
+        id: req.id,
+        success: false,
+        error: { code: 'RESUME_TOKEN_INVALID', message: 'Invalid approval token' },
+      };
+    }
+
     // An ended session (error/completed) whose latest gate was resolved via a
     // resume can be manually rolled back to its suspended approval so a reviewer
     // can retry a resume that failed downstream. The gate keeps its original
@@ -270,34 +284,6 @@ export async function getApprovalInfoUncached(req: ExecuteRequest) {
       : valueAsRecord(metadata.resumePayload);
     const isGenericToolApproval = resumePayload.kind === 'tool_approval';
     const expectedToken = typeof resumePayload.resumeToken === 'string' ? resumePayload.resumeToken : undefined;
-    // For read-only views (e.g. /status polling, page render via an old Slack
-    // link), accept any resumeToken that was issued for any await_human gate
-    // in this session. /decision and resume.ts keep strict latest-token
-    // checks, so authorization to act is not weakened.
-    const tokenMatchesHistory = (() => {
-      if (!req.allowHistorical || !req.resumeToken) return false;
-      for (const part of approvalParts) {
-        const partState = (part as any).state ?? {};
-        const partMeta = valueAsRecord(partState.metadata);
-        const partPayload = partState.status === 'pending'
-          ? valueAsRecord(partState.resumePayload)
-          : valueAsRecord(partMeta.resumePayload);
-        if (typeof partPayload.resumeToken === 'string' && partPayload.resumeToken === req.resumeToken) {
-          return true;
-        }
-      }
-      return false;
-    })();
-    // skipTokenCheck is set only by the serve process after it has already
-    // authorized the viewer; it lets the unified /sessions/:id page resolve
-    // the current gate's resumeToken without the caller knowing it.
-    if (expectedToken && expectedToken !== req.resumeToken && !tokenMatchesHistory && !req.skipTokenCheck) {
-      return {
-        id: req.id,
-        success: false,
-        error: { code: 'RESUME_TOKEN_INVALID', message: 'Invalid approval token' },
-      };
-    }
     if (!expectedToken) {
       return {
         id: req.id,
@@ -521,6 +507,27 @@ export async function getApprovalInfoUncached(req: ExecuteRequest) {
       error: { code: 'INTERNAL_ERROR', message: (err as Error).message },
     };
   }
+}
+
+/** The resumeToken a gate part carries, from its pending or settled state. */
+function gateResumeToken(part: any): string | undefined {
+  const state = part?.state ?? {};
+  const payload = state.status === 'pending'
+    ? valueAsRecord(state.resumePayload)
+    : valueAsRecord(valueAsRecord(state.metadata).resumePayload);
+  return typeof payload.resumeToken === 'string' && payload.resumeToken ? payload.resumeToken : undefined;
+}
+
+/**
+ * Whether the caller's resumeToken was issued by this session. The current
+ * gate's token always counts. With `allowHistorical` (read-only views such as
+ * /status polling or an old Slack link) any earlier gate's token counts too;
+ * /decision and resume.ts keep the strict latest-token check.
+ */
+function resumeTokenIssued(req: ExecuteRequest, currentGate: any, gateParts: any[]): boolean {
+  if (!req.resumeToken) return false;
+  if (gateResumeToken(currentGate) === req.resumeToken) return true;
+  return req.allowHistorical === true && gateParts.some((part) => gateResumeToken(part) === req.resumeToken);
 }
 
 export type ApprovalInfoResponse = Awaited<ReturnType<typeof getApprovalInfoUncached>>;
