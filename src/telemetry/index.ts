@@ -548,7 +548,13 @@ class TelemetryManager {
 
           // Server configuration
           port: config.port,
-          host: config.host,
+          // The kind of bind address only: a self-hoster's hostname or IP
+          // must not leave the machine.
+          host_class: config.host === '127.0.0.1' || config.host === 'localhost' || config.host === '::1'
+            ? 'loopback'
+            : config.host === '0.0.0.0' || config.host === '::'
+              ? 'any'
+              : 'other',
           scheduled_agents: config.scheduledAgents,
           total_agents: config.totalAgents,
           auth_enabled: config.authEnabled,

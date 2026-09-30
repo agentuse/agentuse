@@ -73,6 +73,32 @@ export function isExposedHost(host: string): boolean {
   return host !== "127.0.0.1" && host !== "localhost";
 }
 
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/**
+ * DNS-rebinding guard for a keyless loopback daemon. A hostile page can point
+ * its own name at 127.0.0.1; the browser then treats our responses as that
+ * page's own origin, so the Origin/Host comparison in serve passes and the page
+ * can read every endpoint and start runs. Only names that cannot be rebound
+ * (loopback, `*.localhost`) and the configured public URL's host are accepted.
+ * A request without a Host header is a non-browser client and is allowed.
+ */
+export function isAllowedRequestHost(hostHeader: string | undefined, publicUrl: string): boolean {
+  if (!hostHeader) return true;
+  let hostname: string;
+  try {
+    hostname = new URL(`http://${hostHeader}`).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (LOOPBACK_HOSTNAMES.has(hostname) || hostname.endsWith(".localhost")) return true;
+  try {
+    return hostname === new URL(publicUrl).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 export function validateApiKeyHeader(
   authHeader: string | undefined,
   expectedKey: string | undefined

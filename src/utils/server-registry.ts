@@ -253,3 +253,14 @@ export function formatUptime(startTime: number): string {
     return `${seconds}s`;
   }
 }
+
+/** A host as it goes in a URL: IPv6 literals need brackets (`[::1]`). */
+export function hostForUrl(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+}
+
+/** Base URL a local client uses to reach a registered daemon; a wildcard bind is reached on loopback. */
+export function serverBaseUrl(server: Pick<ServerEntry, "host" | "port">): string {
+  const host = server.host === "0.0.0.0" || server.host === "::" ? "127.0.0.1" : server.host;
+  return `http://${hostForUrl(host)}:${server.port}`;
+}

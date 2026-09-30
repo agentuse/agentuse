@@ -11,7 +11,7 @@ import { CHANGESET_ID_PATTERN, ChangesetActiveError, ChangesetTargetError, activ
 import { WorkerExecuteError, WorkerExecuteOptions, WorkerExecuteResult } from "./serve/worker-types";
 import { importantDescendantTree, logsWithChildSessions } from "./serve/session-log";
 import { serveSessionArtifact, serveSessionToolOutputArtifact } from "./serve/artifacts";
-import { isExposedHost, isHeaderGateExemptRoute, isSessionCapabilityAuthorized, isSpaPageRoute, isOperatorRequest, validateApiKey, validateApiKeyHeader } from "./serve/auth";
+import { isAllowedRequestHost, isExposedHost, isHeaderGateExemptRoute, isSessionCapabilityAuthorized, isSpaPageRoute, isOperatorRequest, validateApiKey, validateApiKeyHeader } from "./serve/auth";
 import { createServer, ServerResponse } from "http";
 import { spawn, type ChildProcess } from "child_process";
 import { join, basename, relative, dirname } from "path";
@@ -33,7 +33,7 @@ import { telemetry, classifyExecution, configuredFeatureUsage, emptyToolCallMetr
 import { version as packageVersion } from "../../package.json";
 import { getBuildInfo, isDevCheckout } from "../utils/build-info";
 import { refreshUpdateCacheInBackground } from "../update-check";
-import { registerServer, unregisterServer, updateServer, listServers, formatUptime, getDefaultLogFilePath, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
+import { registerServer, unregisterServer, updateServer, listServers, formatUptime, getDefaultLogFilePath, hostForUrl, serverBaseUrl, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { acquireSchedulerLock, releaseSchedulerLock } from "../utils/scheduler-lock";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, applyGlobalConfigEnv, getGlobalConfigPath, getGlobalEnvPath, getManagedProjectsRoot, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
@@ -1693,7 +1693,7 @@ export function createServeCommand(): Command {
         process.exit(1);
       }
       const effectiveHost = options.host ?? serveCfg?.host ?? "127.0.0.1";
-      const serverUrl = `http://${effectiveHost}:${port}`;
+      const serverUrl = `http://${hostForUrl(effectiveHost)}:${port}`;
       const effectivePublicUrl = (options.publicUrl ?? serveCfg?.publicUrl ?? process.env.AGENTUSE_RESUME_PUBLIC_URL ?? serverUrl).replace(/\/$/, '');
       try {
         const parsedPublicUrl = new URL(effectivePublicUrl);
@@ -1818,7 +1818,7 @@ export function createServeCommand(): Command {
         console.error(chalk.dim(`\nAgentUse uses one serve daemon for approvals, Slack, sessions, and API traffic.`));
         console.error(chalk.dim(`Add projects to the existing daemon configuration, or stop it before starting another one.`));
         console.error(chalk.dim(`\n  PID:      ${current.pid}`));
-        console.error(chalk.dim(`  Address:  http://${current.host}:${current.port}`));
+        console.error(chalk.dim(`  Address:  ${serverBaseUrl(current)}`));
         console.error(chalk.dim(`  Projects: ${summarizeServerProjects(current)}`));
         if (current.logFile) {
           console.error(chalk.dim(`  Log:      ${current.logFile}`));
@@ -4723,6 +4723,20 @@ export function createServeCommand(): Command {
       };
 
       const server = createServer(guardRequestHandler(async (req, res) => {
+        // Every response: the dashboard may only be framed by itself (its
+        // approve and run buttons must not be clickjackable from another
+        // site), session-token URLs never leave as a cross-site Referer, and
+        // browsers never sniff a response into a script.
+        res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
+        res.setHeader("X-Frame-Options", "SAMEORIGIN");
+        res.setHeader("Referrer-Policy", "same-origin");
+        res.setHeader("X-Content-Type-Options", "nosniff");
+
+        if (!apiKey && !isExposedHost(effectiveHost) && !isAllowedRequestHost(req.headers.host, effectivePublicUrl)) {
+          sendError(res, 403, "HOST_NOT_ALLOWED", `This daemon has no API key and only answers requests addressed to localhost or its public URL (${effectivePublicUrl}). If you reach it under another name, set serve.publicUrl or --public-url to that address.`);
+          return;
+        }
+
         const requestUrl = new URL(req.url || '/', serverUrl);
         // Canonical data/action endpoints live under `/api/*`; HTML pages live at
         // root. `routePath` is the path with any `/api` prefix stripped so a single
@@ -5330,12 +5344,11 @@ function createLogsSubcommand(): Command {
  * Reuses AGENTUSE_API_KEY from the environment when the daemon requires auth.
  */
 async function fetchDaemonJson(server: ServerEntry, path: string): Promise<unknown> {
-  const host = server.host === "0.0.0.0" || server.host === "::" ? "127.0.0.1" : server.host;
   const headers: Record<string, string> = { Accept: "application/json" };
   const apiKey = readApiKey();
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
-  const res = await fetch(`http://${host}:${server.port}${path}`, { headers });
+  const res = await fetch(`${serverBaseUrl(server)}${path}`, { headers });
   if (!res.ok) {
     let detail = "";
     try {

@@ -20,7 +20,7 @@ import { connectMCP } from "../mcp";
 import { applyResumeToolResult, restoreResumeToolResult, runAgent, prepareAgentExecution, describeErrorPart, classifyRunResult } from "../runner";
 import { reconcileOrphanedSessions } from "../runner/resume";
 import { describeLearningOutcome, effectiveCap, saveManualLearning, type LearningSource } from "../learning";
-import { findServerForProject } from "../utils/server-registry";
+import { findServerForProject, serverBaseUrl } from "../utils/server-registry";
 import { formatCompactDuration } from "../utils/duration";
 import { isExecutingSessionStatus, sessionOutcome } from "../session/status";
 import { truncate as truncateText } from "../tools/tool-output-limits";
@@ -1518,8 +1518,7 @@ async function stopSessionViaServer(
   const project = server.projects?.find((entry) => path.resolve(entry.root) === path.resolve(summary.projectRoot))
     ?? server.projects?.find((entry) => path.resolve(summary.projectRoot).startsWith(path.resolve(entry.root) + path.sep))
     ?? server.projects?.[0];
-  const host = server.host === '0.0.0.0' ? '127.0.0.1' : server.host;
-  const url = `http://${host}:${server.port}/sessions/${encodeURIComponent(summary.id)}/stop`;
+  const url = `${serverBaseUrl(server)}/sessions/${encodeURIComponent(summary.id)}/stop`;
 
   try {
     const response = await fetch(url, {
