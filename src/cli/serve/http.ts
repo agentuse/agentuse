@@ -79,6 +79,39 @@ export function sendRequestParseError(res: ServerResponse, err: unknown): boolea
   return false;
 }
 
+/**
+ * A request whose URL cannot be parsed or percent-decoded. Route matchers call
+ * `new URL()` and `decodeURIComponent()` on raw client input, and both throw on
+ * malformed values like `//[` or `%E0`.
+ */
+function isMalformedRequestError(err: unknown): boolean {
+  if (err instanceof URIError) return true;
+  return err instanceof TypeError && (err as NodeJS.ErrnoException).code === "ERR_INVALID_URL";
+}
+
+/**
+ * Wrap the async serve handler so a throw becomes an HTTP error instead of an
+ * unhandled rejection. Without this, one malformed URL from an unauthenticated
+ * client exits the whole daemon.
+ */
+export function guardRequestHandler(
+  handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>,
+  onUnexpectedError: (err: unknown, req: IncomingMessage) => void,
+): (req: IncomingMessage, res: ServerResponse) => void {
+  return (req, res) => {
+    handler(req, res).catch((err: unknown) => {
+      const malformed = isMalformedRequestError(err);
+      if (!malformed) onUnexpectedError(err, req);
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      if (malformed) sendError(res, 400, "BAD_REQUEST", "Malformed request URL");
+      else sendError(res, 500, "INTERNAL_ERROR", "Internal server error");
+    });
+  };
+}
+
 export function sendHTML(res: ServerResponse, status: number, html: string) {
   // These dashboard pages are dynamic and embed build-specific inline JS, so
   // never serve a stale copy from a tab that was open across a restart/upgrade.

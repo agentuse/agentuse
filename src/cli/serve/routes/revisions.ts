@@ -22,7 +22,7 @@ import { logger } from "../../../utils/logger";
 import { isPathInside } from "../../../utils/path-policy";
 import { sessionViewToken } from "../../../utils/session-token";
 import { agentSummaryCache, collectAgentDetail, collectAgents } from "../agents-data";
-import { sessionAgentRevisionAllowed } from "../auth";
+import { isOperatorRequest } from "../auth";
 import { CHANGESET_ID_PATTERN, ChangesetActiveError, ChangesetTargetError, applyProjectChangeset, changesetAcceptsChangeRequest, changesetListSummary, changesetReviewHref, discardProjectChangeset, prepareChangesetStart, removeChangesetWorkspace, resolveChangesetTargetPath, settleChangesetSession } from "../changesets";
 import { parseJSONBody, sendError, sendJSON, sendRequestParseError } from "../http";
 import { OnboardingModelJob } from "../internal-jobs";
@@ -624,7 +624,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
       : null;
     if (startRevisionMatch) {
       try {
-        if (!sessionAgentRevisionAllowed(req.headers.authorization, apiKey)) {
+        if (!isOperatorRequest(req.headers.authorization, apiKey)) {
           sendError(res, 403, 'OPERATOR_REQUIRED', 'Only an authenticated operator can start an agent revision');
           return;
         }
@@ -672,7 +672,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
     // to a copied prompt.
     if (isApi && req.method === 'POST' && routePath === '/agents/revisions') {
       try {
-        if (!sessionAgentRevisionAllowed(req.headers.authorization, apiKey)) {
+        if (!isOperatorRequest(req.headers.authorization, apiKey)) {
           sendError(res, 403, 'OPERATOR_REQUIRED', 'Only an authenticated operator can start an agent revision');
           return;
         }
@@ -749,7 +749,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
         }
 
         if (req.method === 'POST' && !sessionId) {
-          if (!sessionAgentRevisionAllowed(req.headers.authorization, apiKey)) {
+          if (!isOperatorRequest(req.headers.authorization, apiKey)) {
             sendError(res, 403, 'OPERATOR_REQUIRED', 'Only an authenticated operator can start a change set');
             return;
           }
@@ -812,7 +812,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
           sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Unsupported change set action');
           return;
         }
-        if (!sessionAgentRevisionAllowed(req.headers.authorization, apiKey)) {
+        if (!isOperatorRequest(req.headers.authorization, apiKey)) {
           sendError(res, 403, 'OPERATOR_REQUIRED', 'Only an authenticated operator can change agent source');
           return;
         }
@@ -1032,7 +1032,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
           sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Unsupported draft action');
           return;
         }
-        if (!sessionAgentRevisionAllowed(req.headers.authorization, apiKey)) {
+        if (!isOperatorRequest(req.headers.authorization, apiKey)) {
           sendError(res, 403, 'OPERATOR_REQUIRED', 'Only an authenticated operator can change agent source');
           return;
         }
@@ -1226,7 +1226,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
           sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Unsupported revision action');
           return;
         }
-        if (!sessionAgentRevisionAllowed(req.headers.authorization, apiKey)) {
+        if (!isOperatorRequest(req.headers.authorization, apiKey)) {
           sendError(res, 403, 'OPERATOR_REQUIRED', 'Only an authenticated operator can change agent source');
           return;
         }

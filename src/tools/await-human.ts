@@ -3,7 +3,7 @@ import { randomBytes } from 'crypto';
 import { z } from 'zod';
 import { SuspendSignal } from '../runner/suspend';
 import { findServerForProject } from '../utils/server-registry';
-import { sessionViewToken } from '../utils/session-token';
+import { readApiKey, sessionViewToken } from '../utils/session-token';
 import { loadGlobalConfig } from '../utils/global-config';
 import { isHttpUrl } from '../utils/url';
 import { parseDurationMs } from '../utils/duration';
@@ -83,14 +83,14 @@ function getApprovalBaseUrl(projectRoot?: string): string {
  * the SESSION token (HMAC(AGENTUSE_API_KEY, sessionId)): one token that grants
  * both view and approve for the whole session. When no api key is set (local
  * bind) there is no token to mint, so the link omits it and the page is fully
- * open. The worker inherits AGENTUSE_API_KEY from the serve process env. Used
+ * open. The serve worker receives AGENTUSE_API_KEY from serve (see readApiKey). Used
  * for both approval gates and run cards — every session has this page.
  */
 export function getSessionUrl(sessionId: string | undefined, projectRoot?: string): string | undefined {
   if (!sessionId) return undefined;
   const baseUrl = getApprovalBaseUrl(projectRoot);
   const url = new URL(`${baseUrl.replace(/\/$/, '')}/sessions/${encodeURIComponent(sessionId)}`);
-  const token = sessionViewToken(sessionId, process.env.AGENTUSE_API_KEY);
+  const token = sessionViewToken(sessionId, readApiKey());
   if (token) url.searchParams.set('token', token);
   return url.toString();
 }
@@ -115,7 +115,7 @@ export function getArtifactUrl(
     .map(encodeURIComponent)
     .join('/');
   const url = new URL(`${baseUrl.replace(/\/$/, '')}/sessions/${encodeURIComponent(sessionId)}/artifacts/${encodedPath}`);
-  const token = sessionViewToken(sessionId, process.env.AGENTUSE_API_KEY);
+  const token = sessionViewToken(sessionId, readApiKey());
   if (token) url.searchParams.set('token', token);
   return url.toString();
 }

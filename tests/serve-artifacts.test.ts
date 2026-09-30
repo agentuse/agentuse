@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'fs';
 import { join, relative } from 'path';
 import { tmpdir } from 'os';
 import { __testing } from '../src/cli/serve';
+import { sessionDeclaredArtifactPaths } from '../src/cli/serve/artifacts';
 import { getSessionStorageDir } from '../src/storage/paths';
 
 interface CapturedResponse {
@@ -372,6 +373,42 @@ describe('serveSessionArtifact', () => {
       if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
       else process.env.XDG_DATA_HOME = originalXdg;
       rmSync(dataHome, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('session link artifact scope', () => {
+  it('serves only files the session declared', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agentuse-artifact-scope-'));
+    try {
+      mkdirSync(join(root, '.agentuse/artifacts'), { recursive: true });
+      writeFileSync(join(root, '.agentuse/artifacts/report.md'), '# Report\n');
+      writeFileSync(join(root, 'plan.md'), '# Plan\n');
+      writeFileSync(join(root, 'snap.png'), 'png');
+      writeFileSync(join(root, 'saved.html'), '<p>saved</p>');
+      writeFileSync(join(root, '.npmrc'), 'token=secret\n');
+      const declaredPaths = sessionDeclaredArtifactPaths(
+        root,
+        [
+          { details: { artifactPaths: ['plan.md'], artifactSnapshots: [{ path: 'snap.png' }] } },
+          { details: { savedArtifact: { path: 'saved.html' } } },
+          {},
+        ],
+        ['.agentuse/artifacts/report.md'],
+      );
+
+      for (const path of ['plan.md', 'snap.png', 'saved.html', '.agentuse/artifacts/report.md', encodeURIComponent('plan.md')]) {
+        const { res, captured } = fakeResponse();
+        await __testing.serveSessionArtifact(res, root, path, undefined, { declaredPaths });
+        expect(captured.status).toBe(200);
+      }
+      for (const path of ['.npmrc', 'hello.agentuse', './plan.md/../.npmrc']) {
+        const { res, captured } = fakeResponse();
+        await __testing.serveSessionArtifact(res, root, path, undefined, { declaredPaths });
+        expect(captured.status).toBe(403);
+      }
+    } finally {
       rmSync(root, { recursive: true, force: true });
     }
   });

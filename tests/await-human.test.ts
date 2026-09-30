@@ -90,7 +90,7 @@ describe('await_human approval URL', () => {
   it('points the reviewer link at the unified session page (no token when local/no api key)', () => {
     process.env.AGENTUSE_RESUME_PUBLIC_URL = 'https://agentuse.example.com/';
     delete process.env.AGENTUSE_SERVE_URL;
-    delete process.env.AGENTUSE_API_KEY;
+    process.env.AGENTUSE_API_KEY = ''; // empty = no key; a deleted var keeps the key already read
 
     expect(getSessionUrl('session-1')).toBe(
       'https://agentuse.example.com/sessions/session-1'
@@ -112,7 +112,7 @@ describe('await_human approval URL', () => {
   it('falls back to the local serve URL when nothing else is configured', () => {
     delete process.env.AGENTUSE_RESUME_PUBLIC_URL;
     delete process.env.AGENTUSE_SERVE_URL;
-    delete process.env.AGENTUSE_API_KEY;
+    process.env.AGENTUSE_API_KEY = ''; // empty = no key; a deleted var keeps the key already read
 
     // Query a project root no daemon serves so the registry lookup misses; with
     // config isolated to a missing file, only the hard-coded fallback remains.
@@ -124,7 +124,7 @@ describe('await_human approval URL', () => {
   it('falls back to serve.publicUrl from global config when no env URL or daemon is set', () => {
     delete process.env.AGENTUSE_RESUME_PUBLIC_URL;
     delete process.env.AGENTUSE_SERVE_URL;
-    delete process.env.AGENTUSE_API_KEY;
+    process.env.AGENTUSE_API_KEY = ''; // empty = no key; a deleted var keeps the key already read
     const configPath = join(tmpDir, 'config.json');
     writeFileSync(configPath, JSON.stringify({ serve: { publicUrl: 'https://config.example.com' } }));
     process.env.AGENTUSE_CONFIG = configPath;
@@ -138,7 +138,7 @@ describe('await_human approval URL', () => {
   it('uses the registered serve public URL for the project when no explicit env URL is set', () => {
     delete process.env.AGENTUSE_RESUME_PUBLIC_URL;
     delete process.env.AGENTUSE_SERVE_URL;
-    delete process.env.AGENTUSE_API_KEY;
+    process.env.AGENTUSE_API_KEY = ''; // empty = no key; a deleted var keeps the key already read
     registerServer({
       port: 12234,
       host: '127.0.0.1',
@@ -159,7 +159,7 @@ describe('await_human approval URL', () => {
   it('keeps multi-project session URLs clean and project-free', () => {
     delete process.env.AGENTUSE_RESUME_PUBLIC_URL;
     delete process.env.AGENTUSE_SERVE_URL;
-    delete process.env.AGENTUSE_API_KEY;
+    process.env.AGENTUSE_API_KEY = ''; // empty = no key; a deleted var keeps the key already read
     registerServer({
       port: 12235,
       host: '127.0.0.1',
@@ -404,7 +404,7 @@ describe('await_human approval URL', () => {
   });
 
   it('does not set an approval expiration by default', async () => {
-    delete process.env.AGENTUSE_API_KEY;
+    process.env.AGENTUSE_API_KEY = ''; // empty = no key; a deleted var keeps the key already read
     const tool = createAwaitHumanTool('session-1', { projectRoot: '/tmp/project-a' });
 
     try {

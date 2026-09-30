@@ -2,6 +2,7 @@ import { ApprovalListPayload } from "../list-payloads";
 import { toErrorMessage } from "../../../utils/error-message.js";
 import { approvalLog } from "../../../utils/logger";
 import { sessionViewToken } from "../../../utils/session-token";
+import { isOperatorRequest } from "../auth";
 import { parseJSONBody, sendError, sendJSON, sendRequestParseError } from "../http";
 import { isEndedSessionStatus, shouldLogApprovalRequest } from "../session-lists";
 import { relative } from "path";
@@ -338,6 +339,10 @@ export async function approvalRoutes(ctx: ServeContext, rq: ServeRequest): Promi
 
         if (!token) {
           sendError(res, 401, "RESUME_TOKEN_REQUIRED", "Missing approval token");
+          return;
+        }
+        if (!isOperatorRequest(req.headers.authorization, apiKey)) {
+          sendError(res, 403, "OPERATOR_REQUIRED", "Continuing a session with a new prompt needs the API key");
           return;
         }
         if (!prompt) {

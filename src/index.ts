@@ -42,6 +42,7 @@ import { loadGlobalDefaults } from './utils/global-config';
 import { resolveTimeout } from './utils/config';
 import { printLogo, type BrandingStyle } from './utils/branding';
 import { validateAgentEnvVars, formatEnvValidationError } from './utils/env-validation';
+import { readApiKey } from './utils/session-token';
 import {
   telemetry,
   aggregateToolCalls,
@@ -1119,6 +1120,10 @@ Current timeout: ${effectiveTimeoutSeconds}s`);
     }
 }
 
+
+// Take the API key out of the environment before anything can spawn a child
+// process that would inherit it (see readApiKey).
+readApiKey();
 
 // Handle internal worker mode (used by serve command)
 // This must be checked before program.parse() to avoid Commander processing

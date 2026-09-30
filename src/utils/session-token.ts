@@ -1,6 +1,39 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 
 /**
+ * Process-wide slot for the key. Not a module variable: the bundle can hold
+ * more than one copy of this module (lazily imported chunks), and a copy that
+ * found the env var already scrubbed by another copy would see no key and run
+ * the daemon unauthenticated.
+ */
+const API_KEY_SLOT = Symbol.for('agentuse.apiKey');
+type ApiKeySlot = { [API_KEY_SLOT]?: { value: string | undefined } };
+
+/**
+ * The daemon API key. Read from AGENTUSE_API_KEY, then removed from
+ * process.env so no child process inherits it: the bash tool, MCP servers and
+ * skill scripts spawn with the parent environment, and an agent that can run
+ * `env` must not be able to print the operator credential into a session log
+ * that any link holder can read. Checked again on every call so a key loaded
+ * later from an env file is also taken and scrubbed.
+ */
+export function readApiKey(): string | undefined {
+  const slot = globalThis as ApiKeySlot;
+  const fromEnv = process.env.AGENTUSE_API_KEY;
+  if (fromEnv !== undefined) {
+    slot[API_KEY_SLOT] = { value: fromEnv || undefined };
+    delete process.env.AGENTUSE_API_KEY;
+  }
+  return slot[API_KEY_SLOT]?.value;
+}
+
+/** Env for the serve worker process only, which needs the key to mint session links. */
+export function apiKeyWorkerEnv(): NodeJS.ProcessEnv {
+  const apiKey = readApiKey();
+  return apiKey ? { AGENTUSE_API_KEY: apiKey } : {};
+}
+
+/**
  * Stateless per-session URL token: HMAC-SHA256(key = AGENTUSE_API_KEY,
  * msg = sessionId), base64url-encoded.
  *

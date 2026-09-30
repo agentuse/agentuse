@@ -3,7 +3,7 @@ import type { LearningConfig } from "../../../learning";
 import { parseAgent } from "../../../parser";
 import { toErrorMessage } from "../../../utils/error-message.js";
 import { resolveProjectContext } from "../../../utils/project";
-import { sessionLearningTidyAllowed } from "../auth";
+import { isOperatorRequest } from "../auth";
 import { parseJSONBody, sendError, sendJSON, sendRequestParseError } from "../http";
 import { learningListPayload, sessionTidyTarget } from "../learnings-payload";
 import type { Project } from "../project";
@@ -91,7 +91,7 @@ export async function sessionLearningRoutes(ctx: ServeContext, rq: ServeRequest)
           return;
         }
         const resolved = await resolveSessionLearningStore(found.info);
-        const allowTidy = sessionLearningTidyAllowed(req.headers.authorization, apiKey);
+        const allowTidy = isOperatorRequest(req.headers.authorization, apiKey);
         sendJSON(res, 200, resolved
           ? await sessionLearningPayload(found.project, resolved, sessionId, allowTidy)
           : { success: true, learnings: [] });
@@ -112,6 +112,10 @@ export async function sessionLearningRoutes(ctx: ServeContext, rq: ServeRequest)
         const projectId = typeof body.project === 'string' ? body.project : requestUrl.searchParams.get('project') ?? undefined;
         if (!sessionAuthorized(sessionId, token)) {
           sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
+          return;
+        }
+        if (!isOperatorRequest(req.headers.authorization, apiKey)) {
+          sendError(res, 403, "OPERATOR_REQUIRED", "Changing an agent's learnings needs the API key");
           return;
         }
         if (!instruction) {
@@ -138,7 +142,7 @@ export async function sessionLearningRoutes(ctx: ServeContext, rq: ServeRequest)
         // that dropped the tidy target would take the button away at the
         // moment it started to matter.
         const resolved = await resolveSessionLearningStore(found.info);
-        const allowTidy = sessionLearningTidyAllowed(req.headers.authorization, apiKey);
+        const allowTidy = isOperatorRequest(req.headers.authorization, apiKey);
         sendJSON(res, 200, resolved
           ? await sessionLearningPayload(found.project, resolved, sessionId, allowTidy)
           : { success: true, learnings: [] });
@@ -162,6 +166,10 @@ export async function sessionLearningRoutes(ctx: ServeContext, rq: ServeRequest)
           sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
           return;
         }
+        if (!isOperatorRequest(req.headers.authorization, apiKey)) {
+          sendError(res, 403, "OPERATOR_REQUIRED", "Changing an agent's learnings needs the API key");
+          return;
+        }
         const found = await findSessionInfo(sessionId, projectId);
         if (!found.success) {
           sendError(res, found.status, found.code, found.message);
@@ -169,7 +177,7 @@ export async function sessionLearningRoutes(ctx: ServeContext, rq: ServeRequest)
         }
         const resolved = await resolveSessionLearningStore(found.info);
         if (resolved) await resolved.store.remove(learningId);
-        const allowTidy = sessionLearningTidyAllowed(req.headers.authorization, apiKey);
+        const allowTidy = isOperatorRequest(req.headers.authorization, apiKey);
         sendJSON(res, 200, resolved
           ? await sessionLearningPayload(found.project, resolved, sessionId, allowTidy)
           : { success: true, learnings: [] });

@@ -19,6 +19,14 @@
 
 - **The durable gate-pass cache is gone.** It fingerprinted the rendered gate and reused a recorded pass after suspension, but the only case it could ever hit was an unchanged gate resubmitted after a reviewer Comment, which the rule above now handles without a session scan. Removing it also removes a way to escape an exhausted fresh-review budget by resubmitting an earlier passing payload, and a fingerprint that could not see artifact content past the 24KB preview limit.
 
+### Security
+
+- **A malformed request URL no longer stops `agentuse serve`.** Paths such as `//[` or `/sessions/%E0` threw before the auth check and exited the daemon, so anyone who could reach it could take it down with one request. They now get a 400, and any other handler error gets a 500 without stopping the process.
+- **JavaScript front matter is refused everywhere.** A `---js` block in an agent file, skill, or Markdown artifact was evaluated inside the process that parsed it, including the serve daemon when a reviewer opened the artifact. All front matter now goes through one YAML/JSON-only parser.
+- **Session links on a daemon with an API key only view and decide.** A `?token=` link can no longer continue a run with a new prompt, add or discard learnings, or reach its parent session. It can only open files that session showed its reviewer (gate artifacts, snapshots, and saved deliverables), instead of any file in the project. Those actions still work with the API key and on a local daemon without one.
+- **An approval lookup no longer accepts a token the session never issued.** On a session with no approval gate, any `?token=` value was treated as valid, and the session page swapped it for a real session link.
+- **The API key is no longer passed to agent tools.** Each process reads `AGENTUSE_API_KEY` once and removes it from its environment, so commands run by the bash tool, MCP servers, and skill scripts no longer inherit it. The serve worker still receives the key to sign session links.
+
 ### Fixed
 
 - **Long runs keep tool access after 128 cumulative Code Mode calls.** The nested-call allowance now applies to each program, so later programs can continue unfinished work. Concurrent tool calls and guest memory retain their shared run-wide limits.

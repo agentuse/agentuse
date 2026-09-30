@@ -98,16 +98,14 @@ export function validateApiKey(req: IncomingMessage, expectedKey: string | undef
   return validateApiKeyHeader(req.headers.authorization, expectedKey);
 }
 
-/** A session capability can review a run, but only an operator may rewrite its agent file. */
-export function sessionLearningTidyAllowed(
-  authorization: string | undefined,
-  apiKey: string | undefined,
-): boolean {
-  return validateApiKeyHeader(authorization, apiKey);
-}
-
-/** Starting or applying a revision can spend model tokens and rewrite source. */
-export function sessionAgentRevisionAllowed(
+/**
+ * Actions a session link must not reach. A `?token=` link can view a run and
+ * decide its gates; only an operator may steer the agent with a new prompt,
+ * change its learnings or source, spend tokens on a revision, or walk up to a
+ * parent session. True on a keyless (local) daemon, otherwise only with the
+ * API key header.
+ */
+export function isOperatorRequest(
   authorization: string | undefined,
   apiKey: string | undefined,
 ): boolean {

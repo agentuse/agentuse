@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   MAX_JSON_BODY_BYTES,
+  guardRequestHandler,
   RequestBodyTooLargeError,
   parseJSONBody,
   readRequestBody,
@@ -134,5 +135,23 @@ describe('serve HTTP helpers', () => {
     const untouched = responseStub();
     expect(sendRequestParseError(untouched as unknown as ServerResponse, new Error('bad JSON'))).toBe(false);
     expect(untouched.status).toBeUndefined();
+  });
+
+  it('answers malformed URLs with 400 and other throws with 500 instead of crashing', async () => {
+    const unexpected: unknown[] = [];
+    const run = async (thrower: () => void) => {
+      const response = Object.assign(responseStub(), { headersSent: false });
+      const handler = guardRequestHandler(async () => { thrower(); }, (err) => unexpected.push(err));
+      handler({ method: 'GET', url: '/x' } as IncomingMessage, response as unknown as ServerResponse);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return response;
+    };
+
+    expect((await run(() => { new URL('//[', 'http://127.0.0.1:1'); })).status).toBe(400);
+    expect((await run(() => { decodeURIComponent('%E0'); })).status).toBe(400);
+    expect(unexpected).toHaveLength(0);
+
+    expect((await run(() => { throw new Error('boom'); })).status).toBe(500);
+    expect(unexpected).toHaveLength(1);
   });
 });

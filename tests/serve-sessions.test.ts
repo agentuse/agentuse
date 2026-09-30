@@ -318,11 +318,11 @@ describe('header-gate exemption (capability routes)', () => {
 
   it('never offers a source-rewriting tidy action to a token-only reviewer', () => {
     const apiKey = 'operator-secret';
-    expect(__testing.sessionLearningTidyAllowed(undefined, undefined)).toBe(true);
-    expect(__testing.sessionLearningTidyAllowed(`Bearer ${apiKey}`, apiKey)).toBe(true);
+    expect(__testing.isOperatorRequest(undefined, undefined)).toBe(true);
+    expect(__testing.isOperatorRequest(`Bearer ${apiKey}`, apiKey)).toBe(true);
     // Session tokens are intentionally not an input: they authorize review,
     // not mutation of the agent source file.
-    expect(__testing.sessionLearningTidyAllowed(undefined, apiKey)).toBe(false);
+    expect(__testing.isOperatorRequest(undefined, apiKey)).toBe(false);
   });
 
   it('serves the app shell on the tidy-up page so a direct link to it works', () => {

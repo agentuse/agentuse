@@ -2,8 +2,8 @@ import { SessionsPayload } from "../list-payloads";
 import { getManifestPath, readArtifactManifest } from "../../../tools/artifact-manifest";
 import { toErrorMessage } from "../../../utils/error-message.js";
 import { sessionViewToken, validateSessionToken } from "../../../utils/session-token";
-import { serveSessionArtifact, serveSessionToolOutputArtifact } from "../artifacts";
-import { validateApiKey } from "../auth";
+import { serveSessionArtifact, serveSessionToolOutputArtifact, sessionDeclaredArtifactPaths } from "../artifacts";
+import { isOperatorRequest, validateApiKey } from "../auth";
 import { parseJSONBody, sendError, sendHTML, sendJSON, sendRequestParseError } from "../http";
 import { selectSessionProjects } from "../project";
 import { isEndedSessionStatus, sessionListStreamKey, sessionLogLimit } from "../session-lists";
@@ -212,7 +212,7 @@ export async function sessionRoutes(ctx: ServeContext, rq: ServeRequest): Promis
         delete approval.logs;
         if (approval.parentSessionId) {
           const params = new URLSearchParams();
-          const parentToken = sessionViewToken(approval.parentSessionId, apiKey);
+          const parentToken = isOperatorRequest(req.headers.authorization, apiKey) ? sessionViewToken(approval.parentSessionId, apiKey) : '';
           if (parentToken) params.set('token', parentToken);
           params.set('project', found.project.id);
           approval.parentHref = `/sessions/${encodeURIComponent(approval.parentSessionId)}?${params.toString()}`;
@@ -296,7 +296,7 @@ export async function sessionRoutes(ctx: ServeContext, rq: ServeRequest): Promis
       let parentHref: string | undefined;
       if (parentSid) {
         const params = new URLSearchParams();
-        const parentToken = sessionViewToken(parentSid, apiKey);
+        const parentToken = isOperatorRequest(req.headers.authorization, apiKey) ? sessionViewToken(parentSid, apiKey) : '';
         if (parentToken) params.set('token', parentToken);
         params.set('project', found.project.id);
         parentHref = `/sessions/${encodeURIComponent(parentSid)}?${params.toString()}`;
@@ -423,10 +423,20 @@ export async function sessionRoutes(ctx: ServeContext, rq: ServeRequest): Promis
         sendHTML(res, found.status, `<!doctype html><title>Artifact</title><p>${escapeHtml(found.message)}</p>`);
         return;
       }
+      const declaredPaths = isOperatorRequest(req.headers.authorization, apiKey)
+        ? undefined
+        : sessionDeclaredArtifactPaths(
+          found.project.root,
+          found.info.approval.logs ?? [],
+          (await readArtifactManifest(getManifestPath(found.project.root))).artifacts
+            .filter((artifact) => artifact.sessionId === sessionId)
+            .map((artifact) => artifact.name),
+        );
       await serveSessionArtifact(res, found.project.root, sessionArtifactMatch[2], requestUrl.searchParams.get('theme') ?? undefined, {
         sessionId,
         snapHash: requestUrl.searchParams.get('snap') ?? undefined,
         rangeHeader: typeof req.headers.range === 'string' ? req.headers.range : undefined,
+        declaredPaths,
       });
       return;
     }
@@ -575,6 +585,10 @@ export async function sessionRoutes(ctx: ServeContext, rq: ServeRequest): Promis
 
         if (!sessionAuthorized(sessionId, token)) {
           sendError(res, 401, "UNAUTHORIZED", "Not authorized for this session");
+          return;
+        }
+        if (!isOperatorRequest(req.headers.authorization, apiKey)) {
+          sendError(res, 403, "OPERATOR_REQUIRED", "Continuing a session with a new prompt needs the API key");
           return;
         }
         if (!prompt) {

@@ -235,6 +235,36 @@ export function decodeArtifactText(content: Buffer): string | null {
   }
 }
 
+type ArtifactLogEntry = {
+  details?: {
+    artifactPaths?: string[];
+    artifactSnapshots?: Array<{ path: string }>;
+    savedArtifact?: { path: string };
+  } | undefined;
+};
+
+/**
+ * Every project file a session showed its reviewer: gate artifact paths and
+ * snapshots, deliverables saved through `tools__artifact_save`, and manifest
+ * entries recorded under the session. Resolved against the project root the
+ * same way serveSessionArtifact resolves a request, so the two compare as-is.
+ */
+export function sessionDeclaredArtifactPaths(
+  projectRoot: string,
+  logs: readonly ArtifactLogEntry[],
+  manifestNames: readonly string[],
+): Set<string> {
+  const paths = [...manifestNames];
+  for (const entry of logs) {
+    const details = entry.details;
+    if (!details) continue;
+    paths.push(...(details.artifactPaths ?? []));
+    paths.push(...(details.artifactSnapshots ?? []).map((snapshot) => snapshot.path));
+    if (details.savedArtifact?.path) paths.push(details.savedArtifact.path);
+  }
+  return new Set(paths.map((path) => resolve(projectRoot, path)));
+}
+
 /**
  * Resolve, authorize, and serve a local file artifact referenced by an
  * `await_human` gate. The path is interpreted relative to the project root and
@@ -249,7 +279,18 @@ export async function serveSessionArtifact(
   projectRoot: string,
   rawPath: string,
   theme?: string,
-  opts?: { sessionId?: string | undefined; snapHash?: string | undefined; rangeHeader?: string | undefined }
+  opts?: {
+    sessionId?: string | undefined;
+    snapHash?: string | undefined;
+    rangeHeader?: string | undefined;
+    /**
+     * Absolute paths this session put in front of its reviewer (see
+     * sessionDeclaredArtifactPaths). When set, any other project file is
+     * refused: a session link is not a read handle on the whole project.
+     * Operators (API key, or a keyless local daemon) pass none.
+     */
+    declaredPaths?: ReadonlySet<string> | undefined;
+  }
 ): Promise<void> {
   // A gate-time snapshot takes priority over the live workspace path: the
   // reviewer must see the exact bytes the approval covers. Snapshot files are
@@ -271,6 +312,10 @@ export async function serveSessionArtifact(
   }
   const decoded = (() => { try { return decodeURIComponent(rawPath); } catch { return rawPath; } })();
   const resolved = resolve(projectRoot, decoded);
+  if (opts?.declaredPaths && !opts.declaredPaths.has(resolved)) {
+    sendHTML(res, 403, '<!doctype html><title>Artifact</title><p>This file is not part of this session.</p>');
+    return;
+  }
   // Lexical containment first. Then, when the target exists, resolve symlinks on
   // both sides and re-check so a link inside the project cannot point the served
   // file at a target outside it. A non-existent path has no realpath to resolve

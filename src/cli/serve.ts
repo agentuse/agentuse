@@ -11,7 +11,7 @@ import { CHANGESET_ID_PATTERN, ChangesetActiveError, ChangesetTargetError, activ
 import { WorkerExecuteError, WorkerExecuteOptions, WorkerExecuteResult } from "./serve/worker-types";
 import { importantDescendantTree, logsWithChildSessions } from "./serve/session-log";
 import { serveSessionArtifact, serveSessionToolOutputArtifact } from "./serve/artifacts";
-import { isExposedHost, isHeaderGateExemptRoute, isSessionCapabilityAuthorized, isSpaPageRoute, sessionLearningTidyAllowed, validateApiKey, validateApiKeyHeader } from "./serve/auth";
+import { isExposedHost, isHeaderGateExemptRoute, isSessionCapabilityAuthorized, isSpaPageRoute, isOperatorRequest, validateApiKey, validateApiKeyHeader } from "./serve/auth";
 import { createServer, ServerResponse } from "http";
 import { spawn, type ChildProcess } from "child_process";
 import { join, basename, relative, dirname } from "path";
@@ -43,9 +43,9 @@ import { saveManualLearning, effectiveCap } from "../learning";
 import { homedir } from "os";
 import type { SessionTrigger } from "../session/types";
 import { ulid } from "ulid";
-import { sessionViewToken } from "../utils/session-token";
+import { apiKeyWorkerEnv, readApiKey, sessionViewToken } from "../utils/session-token";
 import { normalizeApiPath } from "./serve/ui";
-import { readRequestBody, sendError, sendHTML } from "./serve/http";
+import { guardRequestHandler, readRequestBody, sendError, sendHTML } from "./serve/http";
 import { agentSummaryCache, annotateAgentScheduleStates, collectAgents, redactAgentDetailSource, type AgentSummary } from "./serve/agents-data";
 import {
   bareServeMigrationWarning,
@@ -569,6 +569,7 @@ export class AgentWorker {
       stdio: ["pipe", "pipe", "pipe"],
       env: {
         ...process.env,
+        ...apiKeyWorkerEnv(),
         ...this.envOverrides,
       },
     });
@@ -1714,7 +1715,7 @@ export function createServeCommand(): Command {
       const effectiveHideAgentSource = options.hideAgentSource === true || (serveCfg?.hideAgentSource ?? false);
 
       // Check API key requirement for exposed hosts
-      const apiKey = process.env.AGENTUSE_API_KEY;
+      const apiKey = readApiKey();
 
       if (isExposedHost(effectiveHost) && !apiKey && effectiveAuth) {
         console.error(chalk.red("Error: API key required when binding to exposed host"));
@@ -4721,7 +4722,7 @@ export function createServeCommand(): Command {
         settleStaleChangesetTestRuns,
       };
 
-      const server = createServer(async (req, res) => {
+      const server = createServer(guardRequestHandler(async (req, res) => {
         const requestUrl = new URL(req.url || '/', serverUrl);
         // Canonical data/action endpoints live under `/api/*`; HTML pages live at
         // root. `routePath` is the path with any `/api` prefix stripped so a single
@@ -4915,7 +4916,9 @@ export function createServeCommand(): Command {
         if (await revisionRoutes(ctx, rq)) return;
         if (await onboardingRoutes(ctx, rq)) return;
         if (await runRoutes(ctx, rq)) return;
-      });
+      }, (err, req) => {
+        logger.error(`serve: ${req.method} ${req.url?.split('?')[0]} failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+      }));
 
       // Graceful shutdown
       const shutdown = createIdempotentShutdown(async () => {
@@ -5329,7 +5332,7 @@ function createLogsSubcommand(): Command {
 async function fetchDaemonJson(server: ServerEntry, path: string): Promise<unknown> {
   const host = server.host === "0.0.0.0" || server.host === "::" ? "127.0.0.1" : server.host;
   const headers: Record<string, string> = { Accept: "application/json" };
-  const apiKey = process.env.AGENTUSE_API_KEY;
+  const apiKey = readApiKey();
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
   const res = await fetch(`http://${host}:${server.port}${path}`, { headers });
@@ -5493,7 +5496,7 @@ export const __testing = {
   sessionMatchesSearchIdentity,
   sessionStatusCounts,
   SESSION_SEARCH_SCAN_LIMIT,
-  sessionLearningTidyAllowed,
+  isOperatorRequest,
   buildRunTranscript,
   importantDescendantTree,
   logsWithChildSessions,

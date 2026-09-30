@@ -7,6 +7,7 @@ import { formatScheduleHuman } from '../scheduler/parser.js';
 import { loadPausedSchedules, normalizeScheduleAgentPath, setSchedulePaused } from '../scheduler/state.js';
 import { resolveLocalAgentPath, resolveProjectContext } from '../utils/project.js';
 import { findServerForProject, type ServerEntry, type ServerProjectEntry } from '../utils/server-registry.js';
+import { readApiKey } from '../utils/session-token';
 
 export function serverScheduleAgentPath(
   projectRoot: string,
@@ -24,7 +25,8 @@ async function notifyRunningServer(server: ServerEntry, projectRoot: string, age
   const runPath = serverScheduleAgentPath(projectRoot, agentPath, project);
   const host = server.host === '0.0.0.0' || server.host === '::' ? '127.0.0.1' : server.host;
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
-  if (process.env.AGENTUSE_API_KEY) headers.Authorization = `Bearer ${process.env.AGENTUSE_API_KEY}`;
+  const apiKey = readApiKey();
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   const response = await fetch(`http://${host}:${server.port}/api/schedules/state`, {
     method: 'POST',
     headers,
