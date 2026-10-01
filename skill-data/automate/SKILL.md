@@ -54,6 +54,9 @@ Choose the project deliberately:
 
 - For work tied to the current repository, keep the agent in that repository
   under `agents/<descriptive-slug>.agentuse`.
+- For new helpers used only by this agent, prefer
+  `agents/scripts/<descriptive-slug>/`. Keep shared helpers in the project's
+  existing scripts directory and preserve established agent layouts.
 - For personal or cross-project work, reuse an already registered AgentUse
   project. If none exists, run `agentuse setup` and follow its onboarding
   handoff rather than inventing project configuration.
@@ -97,6 +100,14 @@ Create exactly one focused `.agentuse` file for the requested job. Use only
 capabilities required by the workflow. Validate the selected model with
 `agentuse models <provider>`. Put effectful shell commands under
 `tools.bash.gated`; prompt wording alone is not an approval boundary.
+
+Use the creator skill's script guidance to decide whether new helpers are
+needed. Reuse existing commands first; write persistent scripts when project
+libraries or raw file/network/process access, reuse outside this agent, or a
+separately reviewed permission boundary warrants them. Do not generate a helper
+for every workflow stage or merely to compose AgentUse tools; use direct tools
+or `code_exec` for that composition. Make any helper reachable through an
+allowlisted command and validate its behavior before handoff.
 
 In CLI-backed mode, run the closed validation loop described by the installed
 tester skill:
