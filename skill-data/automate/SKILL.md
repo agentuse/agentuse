@@ -14,7 +14,7 @@ clear.
 
 Infer the narrowest repeatable job from the supplied context. Establish:
 
-- the input and where it comes from;
+- the input source and how the agent discovers work without a per-run prompt;
 - the outcome and completion criteria;
 - the trigger: manual, scheduled, or HTTP;
 - the output destination; and
@@ -23,6 +23,20 @@ Infer the narrowest repeatable job from the supplied context. Establish:
 Ask one concise question only when a missing choice materially changes the
 agent or its safety boundary. Do not expand a focused workflow into a general
 automation system.
+
+Default to an agent that runs without per-run user input. Infer its source and
+scope from the conversation and repository, then make it discover actionable
+work from that configured source each time it runs. A manual trigger means the
+user starts the agent; it does not imply the user must supply URLs, files, or a
+prompt on every run. Supplied input can be an optional override. Require per-run
+input only when the user explicitly requests an input-driven agent or the job
+inherently depends on an incoming event payload.
+
+Resolve source configuration during authoring. When it cannot be inferred, ask
+for the missing source or scope once rather than designing a recurring request
+for work items. Reuse existing state or record progress to deduplicate processed
+and in-flight items. Define a successful no-work outcome when discovery finds
+nothing actionable; discovery failures are blocked work, not an empty result.
 
 Identify the skills, reference files, and scripts used in the originating manual
 workflow, including those documented in the repository. Preserve them using the
@@ -113,7 +127,10 @@ In CLI-backed mode, run the closed validation loop described by the installed
 tester skill:
 
 1. Run `agentuse doctor <agent-file>`.
-2. Run a mock test without real side effects.
+2. Run a mock test without real side effects. For the default input contract,
+   invoke it without a supplied prompt and verify that the agent discovers work
+   from its configured source. Also exercise the no-work outcome and inspect
+   that repeated runs do not duplicate processed or in-flight items.
 3. Inspect the resulting session.
 4. Correct failures and repeat until the agent validates or a real blocker is
    identified.
@@ -130,7 +147,7 @@ Return a compact activation summary containing:
 - provider and model;
 - trigger and approval boundaries;
 - doctor and mock-test results;
-- the exact command for a supervised first run; and
+- the exact command for a supervised first run, without a prompt by default; and
 - for scheduled or HTTP agents, the remaining `agentuse serve` requirement.
 
 Distinguish clearly between what was completed and what still requires the

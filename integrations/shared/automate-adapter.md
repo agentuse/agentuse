@@ -4,6 +4,12 @@ Treat the current conversation, invocation details, and repository state as the
 originating workflow. Do not make the user restate context that is already
 clear.
 
+Default to an agent that discovers its work from configured sources and runs
+without per-run user input. A manual trigger does not imply a required prompt;
+provided input is an optional override unless the user requests an input-driven
+agent or the workflow inherently consumes an incoming event payload. Apply this
+input contract with the version-matched guidance loaded below.
+
 Try these sources in order and stop after the first successful skill load:
 
 1. When `npx` is available, run
