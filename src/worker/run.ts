@@ -5,7 +5,7 @@ import * as dotenv from 'dotenv';
 import { parseAgent, parseAgentContent } from '../parser';
 import { connectMCP } from '../mcp';
 import { closeMCPConnections } from '../mcp-cleanup';
-import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, workerRunResponse } from '../runner';
+import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreOrSettleResumeToolResult, workerRunResponse } from '../runner';
 import { PluginManager } from '../plugin';
 import { applyRunModelOverride, resolveModelString, type RunModelOverride } from '../utils/model-alias';
 import { logger } from '../utils/logger';
@@ -22,6 +22,9 @@ import { SCHEDULED_RUN_ACTIVE, scheduledRunLockPath } from '../utils/scheduler-l
 import { normalizeScheduleAgentPath } from '../scheduler/state';
 import type { WorkerContext } from './context.js';
 import type { ExecuteRequest } from './types.js';
+
+/** A resume whose preflight failed and whose rollback could not re-park it. */
+const RESUME_ROLLBACK_FAILED_CODE = 'RESUME_ROLLBACK_FAILED';
 
 /**
  * Scheduled runs hold a per-agent claim in the project for as long as this
@@ -89,9 +92,7 @@ async function executeAgentRequest(ctx: WorkerContext, req: ExecuteRequest) {
 
   const restoreResumeAndReturn = async <T>(response: T): Promise<T> => {
     if (sessionManager && resumeRollback) {
-      await restoreResumeToolResult({ sessionManager, rollback: resumeRollback }).catch((restoreErr) => {
-        logger.warn(`Failed to restore pending approval after resume error: ${(restoreErr as Error).message}`);
-      });
+      await restoreOrSettleResumeToolResult({ sessionManager, rollback: resumeRollback, failure: (response as { error?: unknown }).error, code: RESUME_ROLLBACK_FAILED_CODE });
       resumeRollback = undefined;
     }
     return response;
@@ -434,9 +435,7 @@ async function executeAgentRequest(ctx: WorkerContext, req: ExecuteRequest) {
     }
   } catch (err) {
     if (sessionManager && resumeRollback) {
-      await restoreResumeToolResult({ sessionManager, rollback: resumeRollback }).catch((restoreErr) => {
-        logger.warn(`Failed to restore pending approval after resume error: ${(restoreErr as Error).message}`);
-      });
+      await restoreOrSettleResumeToolResult({ sessionManager, rollback: resumeRollback, failure: err, code: RESUME_ROLLBACK_FAILED_CODE });
     }
     if (abortController.signal.aborted) {
       const stoppedFailure = await userStopFailure();

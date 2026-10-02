@@ -323,6 +323,46 @@ export async function restoreResumeToolResult(options: {
   );
 }
 
+/**
+ * Roll back a resume that failed before its run started. When the rollback
+ * itself fails, the session would stay `running` under this live process, and
+ * orphan reconcile never touches a live owner, so it would read "running"
+ * until the process died. Settle it as failed instead, the way Stop does:
+ * pending parts stopped, approval lease revoked, nothing re-parked, and an
+ * already-ended session (a Stop won) left alone. Not under the claim, since a
+ * claim timeout is one way the rollback fails; a concurrent Stop at worst
+ * trades one terminal error for the other. Never throws: the caller still
+ * propagates `failure`, the error that made the resume roll back.
+ */
+export async function restoreOrSettleResumeToolResult(options: {
+  sessionManager: SessionManager;
+  rollback?: ResumeToolRollback | undefined;
+  failure: unknown;
+  code: string;
+}): Promise<void> {
+  const { sessionManager, rollback, failure, code } = options;
+  if (!rollback) return;
+  try {
+    await restoreResumeToolResult({ sessionManager, rollback });
+    return;
+  } catch (restoreError) {
+    logger.warn(`Failed to restore session ${rollback.sessionId} after its resume failed: ${failureText(restoreError)}`);
+    await sessionManager.stopSessionUnclaimed(rollback.sessionId, {
+      code,
+      message: `Resuming this run failed (${failureText(failure)}), and returning it to where it was waiting ` +
+        `also failed (${failureText(restoreError)}). The run was stopped; re-run the agent.`,
+    }).catch((settleError) => {
+      logger.warn(`Failed to settle session ${rollback.sessionId} after its rollback failed: ${failureText(settleError)}`);
+    });
+  }
+}
+
+function failureText(failure: unknown): string {
+  if (failure instanceof Error) return failure.message;
+  const message = (failure as { message?: unknown } | null | undefined)?.message;
+  return typeof message === 'string' ? message : String(failure);
+}
+
 /** restoreResumeToolResult for a caller that already holds the session's resume claim. */
 export async function restoreClaimedResumeToolResult(options: {
   sessionManager: SessionManager;
