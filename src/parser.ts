@@ -4,7 +4,7 @@ import { REASONING_LEVELS } from './model-compatibility';
 import { readFile } from 'fs/promises';
 import { resolve } from 'path';
 import { logger } from './utils/logger';
-import { agentBaseName } from './utils/agent-id';
+import { agentBaseName, subagentToolName } from './utils/agent-id';
 import { durationSecondsSchema, parseDurationMs } from './utils/duration';
 import {
   MODEL_DEFAULT_ENV,
@@ -230,7 +230,24 @@ const AgentSchema = z.object({
     path: z.string(),
     name: z.string().optional(),
     maxSteps: maxStepsSchema.optional()
-  })).optional(),
+  })).superRefine((subagents, ctx) => {
+    // Two entries that normalize to one tool name would silently replace each
+    // other in the tool registry while the manager prompt still lists both.
+    const seen = new Map<string, string>();
+    subagents.forEach((entry, index) => {
+      const toolName = subagentToolName(entry);
+      const first = seen.get(toolName);
+      if (first !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index],
+          message: `Sub-agents "${first}" and "${entry.path}" both register as tool "${toolName}"; give one a distinct name`,
+        });
+      } else {
+        seen.set(toolName, entry.path);
+      }
+    });
+  }).optional(),
   // Advisory cross-run ordering: agents whose output this one consumes
   // (typically via a shared store). Display/graph metadata only — the runner
   // and scheduler never act on it. Paths resolve relative to this agent file.

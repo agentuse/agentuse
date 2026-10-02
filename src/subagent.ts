@@ -8,7 +8,7 @@ import { executeAgentCore, processAgentStream } from './runner';
 import { createSessionLogSink, dismissIfReviewerRejected, type SessionLogSink } from './runner/session-helper';
 import { DoomLoopDetector } from './tools/index.js';
 import { resolve, dirname } from 'path';
-import { agentBaseName, computeAgentId } from './utils/agent-id';
+import { computeAgentId, subagentToolName } from './utils/agent-id';
 import { findProjectRoot } from './utils/project';
 import {
   applyRunModelOverride,
@@ -785,20 +785,8 @@ export async function createSubAgentTools(
         abortSignal,
         pluginManager
       );
-      // Use custom name if provided, otherwise extract from filename
-      let name = config.name;
-      if (!name) {
-        // Extract agent name from path (e.g., "./code-reviewer.agentuse" -> "code_reviewer")
-        const filename = agentBaseName(config.path) || 'agent';
-        // Replace all non-alphanumeric characters (except underscore and hyphen) with underscore
-        name = filename.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/-/g, '_');
-      }
-
-      // Ensure the name is valid for API requirements (only alphanumeric, underscore, hyphen)
-      name = name.replace(/[^a-zA-Z0-9_-]/g, '_');
-
-      // Add subagent__ prefix
-      const prefixedName = `subagent__${name}`;
+      // Same name the manager prompt lists; the parser rejects entries that collide.
+      const prefixedName = subagentToolName(config);
       tools[prefixedName] = tool;
       // Debug level: wiring a tool up at startup is not run activity.
       logger.debug(`[SubAgent] Registered sub-agent: ${prefixedName}`);

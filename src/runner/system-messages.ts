@@ -1,5 +1,5 @@
 import { dirname, resolve } from 'path';
-import { agentBaseName, computeAgentId } from '../utils/agent-id';
+import { computeAgentId, subagentToolName } from '../utils/agent-id';
 import {
   buildAutonomousAgentPrompt,
   isAutonomousAgentPrompt,
@@ -213,16 +213,16 @@ async function buildManagerSystemPrompt(agent: ParsedAgent, agentFilePath?: stri
       try {
         const subagentPath = resolve(basePath, sa.path);
         const subagent = await parseAgent(subagentPath);
+        // List the callable tool name, not the agent's display name.
         subagentInfo.push({
-          name: sa.name || subagent.name,
+          name: subagentToolName(sa),
           description: subagent.description,
           path: sa.path,
         });
       } catch (error) {
         // If we can't parse the subagent, add basic info
-        const name = sa.name || agentBaseName(sa.path) || 'unknown';
         subagentInfo.push({
-          name,
+          name: subagentToolName(sa),
           path: sa.path,
         });
         logger.debug(`[Manager] Could not parse subagent ${sa.path}: ${(error as Error).message}`);

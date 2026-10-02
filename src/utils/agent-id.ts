@@ -1,5 +1,5 @@
 import { relative } from 'path';
-import { stripAgentExtension } from './agent-name';
+import { agentBaseName, stripAgentExtension } from './agent-name';
 
 /**
  * Compute agent ID from file path
@@ -29,6 +29,18 @@ export function computeAgentId(
     return stripAgentExtension(relative(projectRoot, agentFilePath));
   }
   return fallback;
+}
+
+/**
+ * The tool name a configured sub-agent is registered under, and the name the
+ * manager prompt tells the model to call. A custom `name` wins; otherwise the
+ * file name is used (`./code-reviewer.agentuse` -> `subagent__code_reviewer`).
+ * Characters a tool name cannot carry become `_`, so two entries can map to
+ * the same tool name; the parser rejects that.
+ */
+export function subagentToolName(entry: { path: string; name?: string | undefined }): string {
+  const name = entry.name || (agentBaseName(entry.path) || 'agent').replace(/-/g, '_');
+  return `subagent__${name.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 }
 
 /**
