@@ -209,6 +209,23 @@ interface LegacyNoticeSource {
 }
 
 /**
+ * An instruction line starting with `#` would read as the next entry's
+ * `###` heading or the `## ` section break and truncate the instruction on
+ * reload. Bodies are written with one extra backslash before any run of
+ * backslashes that leads into a line-initial `#`, and read back with it
+ * removed. A file written before this has no line-initial `#` in a body (it
+ * would already have been cut off) and parses as before, short of a body
+ * line that itself begins with a backslash and `#`.
+ */
+function escapeHeadingLines(instruction: string): string {
+  return instruction.replace(/^(\\*)#/gm, '\\$1#');
+}
+
+function unescapeHeadingLines(body: string): string {
+  return body.replace(/^\\(\\*)#/gm, '$1#');
+}
+
+/**
  * Store for managing agent learnings in markdown format
  */
 export class LearningStore {
@@ -826,7 +843,7 @@ export class LearningStore {
         ...(evidence && { evidence }),
         reasserted: meta.reasserted ?? 0,
         approvedRuns: meta.approved ?? 0,
-        instruction: body.trim(),
+        instruction: unescapeHeadingLines(body).trim(),
       });
     }
     return learnings;
@@ -926,7 +943,7 @@ export class LearningStore {
       + `<!-- id:${l.id} | confidence:${l.confidence.toFixed(2)} | injected:${l.injectedCount}`
       + ` | src:${l.source}${channel}${hash}${tool}${sig}${sess}${state}${re}${ok} | ${toLocalDate(l.extractedAt)} -->\n`
       + why + evidence
-      + `${l.instruction}\n\n`;
+      + `${escapeHeadingLines(l.instruction)}\n\n`;
   }
 
   /**

@@ -206,6 +206,31 @@ describe("LearningStore", () => {
     expect((await store.load())[0]!.extractedAt).toBe(first);
   });
 
+  it("round-trips an instruction that contains Markdown headings", async () => {
+    // A body line starting with `#` used to end the entry on reload, and the
+    // next save persisted the truncation.
+    const instruction = "Check the report.\n\n## Exceptions\nKeep refunds separate.\n\n#### Detail\n\\# literal";
+    await store.save([
+      { ...baseLearning, instruction },
+      { ...baseLearning, id: "learn002", title: "Second", instruction: "Second rule." },
+    ]);
+    const loaded = await store.load();
+    expect(loaded.map((l) => l.instruction)).toEqual([instruction, "Second rule."]);
+    // Stable across a further save/load cycle.
+    await store.save(loaded);
+    expect((await store.load()).map((l) => l.instruction)).toEqual([instruction, "Second rule."]);
+  });
+
+  it("reads a file written before heading escapes exactly as before", async () => {
+    mkdirSync(dirname(store.filePath), { recursive: true });
+    writeFileSync(
+      store.filePath,
+      "# Learnings for blog\n\n### [tip] Hashes\n<!-- id:old1 | confidence:0.90 | injected:0 | 2024-01-02 -->\n"
+        + "Use C# for issue #12.\nKeep it short.\n\n",
+    );
+    expect((await store.load()).map((l) => l.instruction)).toEqual(["Use C# for issue #12.\nKeep it short."]);
+  });
+
   it("saves and loads learnings in markdown format", async () => {
     const learnings: Learning[] = [
       baseLearning,
