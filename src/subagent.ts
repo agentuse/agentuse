@@ -300,60 +300,59 @@ export async function createSubAgentTool(
 
           // Create session for this subagent if SessionManager is provided
           if (sessionManager && parentSessionID && parentAgentId && projectContext) {
-            try {
-              // Create NEW SessionManager instance for this subagent
-              // This eliminates shared state issues with parent agent
-              subagentSessionManager = new SessionManager();
+            // Create NEW SessionManager instance for this subagent
+            // This eliminates shared state issues with parent agent.
+            // Session creation errors are not swallowed: a child that cannot get
+            // the session it was asked for fails (the outer catch reports it to
+            // the parent) instead of running untracked.
+            subagentSessionManager = new SessionManager();
 
-              // Set parent path on the NEW instance using parent's full path
-              const parentFullPath = sessionManager.getFullPath();
-              if (parentFullPath) {
-                subagentSessionManager.setParentPath(parentFullPath);
-              }
-
-              const taskPrompt = task && task.trim() && !task.match(/^(run|execute|perform|do)$/i)
-                ? task
-                : undefined;
-
-              const modelFallback = snapshotModelFallbackPolicy(agent.config);
-              const sessionResult = await createSessionAndMessage({
-                sessionManager: subagentSessionManager,
-                agent,
-                agentFilePath: resolvedPath,
-                systemMessages: systemMessages.map(m => m.content),
-                task: leafInstructions,
-                userPrompt: taskPrompt,
-                projectContext,
-                version: process.env.npm_package_version || 'unknown',
-                config: {
-                  ...(agent.config.timeout !== undefined && { timeout: agent.config.timeout }),
-                  maxSteps: effectiveMaxSteps,
-                  ...(agent.config.mcpServers && { mcpServers: Object.keys(agent.config.mcpServers) }),
-                  ...(agent.config.subagents && { subagents: agent.config.subagents.map(s => ({
-                    path: s.path,
-                    ...(s.name && { name: s.name })
-                  })) }),
-                  ...(modelOverride && { modelOverride }),
-                  ...(modelFallback && { modelFallback }),
-                },
-                isSubAgent: true,
-                parentSessionID,
-              });
-
-              subagentSessionID = sessionResult.sessionID;
-              await budget.bind(subagentSessionManager, subagentSessionID, agentId);
-              subagentMsgID = sessionResult.messageID;
-
-              try {
-                effectWal.bind(await subagentSessionManager.getSessionDirectory(subagentSessionID, agentId));
-              } catch (error) {
-                logger.debug(`[SubAgent] Failed to bind effect WAL: ${(error as Error).message}`);
-              }
-
-              logger.debug(`[SubAgent] Created session ${subagentSessionID} for ${agent.name}`);
-            } catch (error) {
-              logger.warn(`[SubAgent] Failed to create session: ${(error as Error).message}`);
+            // Set parent path on the NEW instance using parent's full path
+            const parentFullPath = sessionManager.getFullPath();
+            if (parentFullPath) {
+              subagentSessionManager.setParentPath(parentFullPath);
             }
+
+            const taskPrompt = task && task.trim() && !task.match(/^(run|execute|perform|do)$/i)
+              ? task
+              : undefined;
+
+            const modelFallback = snapshotModelFallbackPolicy(agent.config);
+            const sessionResult = await createSessionAndMessage({
+              sessionManager: subagentSessionManager,
+              agent,
+              agentFilePath: resolvedPath,
+              systemMessages: systemMessages.map(m => m.content),
+              task: leafInstructions,
+              userPrompt: taskPrompt,
+              projectContext,
+              version: process.env.npm_package_version || 'unknown',
+              config: {
+                ...(agent.config.timeout !== undefined && { timeout: agent.config.timeout }),
+                maxSteps: effectiveMaxSteps,
+                ...(agent.config.mcpServers && { mcpServers: Object.keys(agent.config.mcpServers) }),
+                ...(agent.config.subagents && { subagents: agent.config.subagents.map(s => ({
+                  path: s.path,
+                  ...(s.name && { name: s.name })
+                })) }),
+                ...(modelOverride && { modelOverride }),
+                ...(modelFallback && { modelFallback }),
+              },
+              isSubAgent: true,
+              parentSessionID,
+            });
+
+            subagentSessionID = sessionResult.sessionID;
+            await budget.bind(subagentSessionManager, subagentSessionID, agentId);
+            subagentMsgID = sessionResult.messageID;
+
+            try {
+              effectWal.bind(await subagentSessionManager.getSessionDirectory(subagentSessionID, agentId));
+            } catch (error) {
+              logger.debug(`[SubAgent] Failed to bind effect WAL: ${(error as Error).message}`);
+            }
+
+            logger.debug(`[SubAgent] Created session ${subagentSessionID} for ${agent.name}`);
           }
 
           // Connect and load tools only after the session is addressable. Apart

@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
+import * as models from '../src/models';
 import { mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -58,6 +59,55 @@ Attempt the delegated task.
         error: { code: 'EXECUTION_ERROR', message: 'All MCP servers failed to connect' },
       });
     } finally {
+      if (priorDataHome === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = priorDataHome;
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('fails the child instead of running it untracked when its session cannot be written', async () => {
+    const priorDataHome = process.env.XDG_DATA_HOME;
+    const projectRoot = await mkdtemp(join(tmpdir(), 'agentuse-subagent-session-required-'));
+    process.env.XDG_DATA_HOME = join(projectRoot, 'data');
+    const modelFactory = spyOn(models, 'createModel');
+    const createMessage = spyOn(SessionManager.prototype, 'createMessage');
+
+    try {
+      const agentPath = join(projectRoot, 'child.agentuse');
+      await writeFile(agentPath, `---
+model: openai:gpt-5
+skills:
+  auto: false
+---
+
+Do the delegated task.
+`);
+
+      await initStorage(projectRoot);
+      const parentManager = new SessionManager();
+      const parentId = await parentManager.createSession({
+        agent: { id: 'agents/manager', name: 'Manager', isSubAgent: false },
+        model: 'openai:gpt-5',
+        version: 'test',
+        config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+      createMessage.mockRejectedValue(new Error('EACCES: child message fixture'));
+
+      const tool = await createSubAgentTool(
+        agentPath, 10, projectRoot, undefined, 0, [], parentManager, parentId, 'agents/manager',
+        { projectRoot, stateRoot: projectRoot, cwd: projectRoot },
+      );
+      const result = await tool.execute?.({ task: 'Run the child' }, {} as never) as { output?: string };
+
+      expect(result.output).toContain('EACCES: child message fixture');
+      expect(modelFactory).not.toHaveBeenCalled();
+      const children = await parentManager.listChildSessions(parentId);
+      expect(children).toHaveLength(1);
+      expect(children[0]?.session).toMatchObject({ status: 'error' });
+    } finally {
+      createMessage.mockRestore();
+      modelFactory.mockRestore();
       if (priorDataHome === undefined) delete process.env.XDG_DATA_HOME;
       else process.env.XDG_DATA_HOME = priorDataHome;
       await rm(projectRoot, { recursive: true, force: true });

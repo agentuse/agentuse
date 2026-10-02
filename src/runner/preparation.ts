@@ -19,7 +19,7 @@ import {
 import { version as packageVersion } from '../../package.json';
 import type { PrepareAgentOptions, PreparedAgentExecution } from './types';
 import type { ToolSet } from 'ai';
-import { loadAgentTools } from './tools-loader';
+import { loadAgentTools, type LoadedAgentTools } from './tools-loader';
 import { EffectWAL } from './effect-wal';
 import { createLiveToolOutputRelay } from './live-tool-output';
 import {
@@ -30,18 +30,67 @@ import {
 import { buildAutonomousAgentPrompt } from './prompt';
 import { isCodeModeEnabled } from './code-mode';
 import { createSessionAndMessage } from './session-helper';
+import { classifyFailure } from './failure';
 import { bindToolsToSnapshot, createToolsSnapshot } from './tool-snapshot';
 import { REPORT_OUTCOME_TOOL } from '../tools/report-outcome.js';
-import { rehydrateMessages, ensureTrailingUserTurn } from '../session';
+import { rehydrateMessages, ensureTrailingUserTurn, type SessionManager } from '../session';
 import type { AssistantTokens } from '../session/usage';
 import { resolveVerifyPlacements, withGateVerify } from '../verify/gate.js';
 import { applyProviderSystemMessages } from '../plugin/provider-behavior';
 
+/** What a preparation has allocated but not yet handed to its caller. */
+interface PreparationOwnership {
+  /** Set only when this call created (or promoted) the session. A resumed
+   * session's status belongs to the resume path, never to this rollback. */
+  createdSession?: { sessionManager: SessionManager; sessionID: string; agentId: string };
+  tools?: Pick<LoadedAgentTools, 'store' | 'sandboxInstance'>;
+}
+
 /**
  * Prepare agent execution - shared setup logic for both streaming and non-streaming modes
  * This extracts the common setup code to avoid duplication between runAgent and serve.ts
+ *
+ * The caller owns the session and resources only once this returns (through
+ * `cleanup`). Until then preparation owns them: a failure after the session or
+ * tools exist releases what was allocated and fails a session this call
+ * created, so no caller is left with a running session nobody will finish.
  */
 export async function prepareAgentExecution(options: PrepareAgentOptions): Promise<PreparedAgentExecution> {
+  const owned: PreparationOwnership = {};
+  try {
+    return await prepareOwnedAgentExecution(options, owned);
+  } catch (error) {
+    await rollbackPreparation(owned, error, options.abortSignal);
+    throw error;
+  }
+}
+
+/** Best-effort: a cleanup failure must never replace the error that caused it. */
+async function rollbackPreparation(owned: PreparationOwnership, error: unknown, abortSignal?: AbortSignal): Promise<void> {
+  try {
+    await owned.tools?.store?.releaseLock();
+  } catch (cleanupError) {
+    logger.debug(`Failed to release store after preparation error: ${(cleanupError as Error).message}`);
+  }
+  try {
+    await owned.tools?.sandboxInstance?.kill();
+  } catch (cleanupError) {
+    logger.debug(`Failed to stop sandbox after preparation error: ${(cleanupError as Error).message}`);
+  }
+  const created = owned.createdSession;
+  if (created) {
+    try {
+      await created.sessionManager.setSessionError(created.sessionID, created.agentId, classifyFailure(error, abortSignal));
+    } catch (cleanupError) {
+      logger.debug(`Failed to mark session ${created.sessionID} failed after preparation error: ${(cleanupError as Error).message}`);
+    }
+  }
+}
+
+async function prepareOwnedAgentExecution(
+  options: PrepareAgentOptions,
+  owned: PreparationOwnership,
+): Promise<PreparedAgentExecution> {
   const {
     agent,
     mcpClients,
@@ -249,47 +298,41 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     cacheableUserMessage = userPrompt ? resolvedInstructions : undefined;
   }
 
+  // Requested persistence is not optional: a run whose session cannot be
+  // created must not continue untracked (its gates, WAL and snapshot all need
+  // the session). Only a caller that supplies no SessionManager runs sessionless.
   if (!existingSessionId && sessionManager && projectContext) {
-    try {
-      const modelFallback = snapshotModelFallbackPolicy(agent.config);
-      const { sessionID: createdSessionID, messageID } = await createSessionAndMessage({
-        sessionManager,
-        agent,
-        ...(agentFilePath !== undefined && { agentFilePath }),
-        systemMessages: systemMessages.map(m => m.content),
-        task: resolvedInstructions,
-        ...(userPrompt !== undefined && { userPrompt }),
-        projectContext,
-        version: packageVersion,
-        ...(trigger && { trigger }),
-        ...(newSessionId && { sessionId: newSessionId }),
-        ...(preparedSession && { preparedSession: true }),
-        config: {
-          ...(agent.config.timeout !== undefined && { timeout: agent.config.timeout }),
-          maxSteps,
-          ...(agent.config.mcpServers && { mcpServers: Object.keys(agent.config.mcpServers) }),
-          ...(agent.config.subagents && { subagents: agent.config.subagents.map(sa => ({
-            path: sa.path,
-            ...(sa.name && { name: sa.name })
-          })) }),
-          ...(effectiveSubagentModelOverride && { modelOverride: effectiveSubagentModelOverride }),
-          ...(modelFallback && { modelFallback }),
-        },
-        isSubAgent: false,
-      });
+    const modelFallback = snapshotModelFallbackPolicy(agent.config);
+    const { sessionID: createdSessionID, messageID } = await createSessionAndMessage({
+      sessionManager,
+      agent,
+      ...(agentFilePath !== undefined && { agentFilePath }),
+      systemMessages: systemMessages.map(m => m.content),
+      task: resolvedInstructions,
+      ...(userPrompt !== undefined && { userPrompt }),
+      projectContext,
+      version: packageVersion,
+      ...(trigger && { trigger }),
+      ...(newSessionId && { sessionId: newSessionId }),
+      ...(preparedSession && { preparedSession: true }),
+      config: {
+        ...(agent.config.timeout !== undefined && { timeout: agent.config.timeout }),
+        maxSteps,
+        ...(agent.config.mcpServers && { mcpServers: Object.keys(agent.config.mcpServers) }),
+        ...(agent.config.subagents && { subagents: agent.config.subagents.map(sa => ({
+          path: sa.path,
+          ...(sa.name && { name: sa.name })
+        })) }),
+        ...(effectiveSubagentModelOverride && { modelOverride: effectiveSubagentModelOverride }),
+        ...(modelFallback && { modelFallback }),
+      },
+      isSubAgent: false,
+    });
 
-      sessionID = createdSessionID;
-      assistantMsgID = messageID;
-      logger.debug(`Session created: ${sessionID}`);
-    } catch (error) {
-      // A prepared shell is the durable lifecycle authority. If it was stopped
-      // or failed before dispatch, never continue as an untracked model run.
-      if (preparedSession) throw error;
-      logger.warn(`Failed to create session: ${(error as Error).message}`);
-      if (verbose) {
-        logger.debug(`Session creation error stack: ${(error as Error).stack}`);
-      }
-    }
+    sessionID = createdSessionID;
+    assistantMsgID = messageID;
+    owned.createdSession = { sessionManager, sessionID: createdSessionID, agentId };
+    logger.debug(`Session created: ${sessionID}`);
   }
 
   if (sessionManager && sessionID) {
@@ -330,6 +373,7 @@ export async function prepareAgentExecution(options: PrepareAgentOptions): Promi
     effectAudit: effectWal,
     liveToolOutput,
   });
+  owned.tools = loadedTools;
 
   // Load sub-agent tools if configured
   let subAgentTools: Record<string, ToolSet[string]> = {};

@@ -5,6 +5,7 @@ import type { ApprovalReview, LearningOutcome } from '../learning/types';
 import { computeAgentId } from '../utils/agent-id';
 import { resolveModelProvider } from '../utils/model-utils';
 import { isMockMode } from './mock-tools';
+import { classifyFailure } from './failure';
 import { readOutcomeCall } from '../tools/report-outcome.js';
 import { logger, withoutLogSink, type LogRecord } from '../utils/logger';
 import type { ModelFallbackPolicy, RunModelOverride } from '../utils/model-alias';
@@ -111,23 +112,35 @@ export async function createSessionAndMessage(params: CreateSessionParams): Prom
     },
   });
 
-  const messageID = await sessionManager.createMessage(sessionID, agentId, {
-    user: {
-      prompt: {
-        task,
-        ...(userPrompt && { user: userPrompt }),
+  let messageID: string;
+  try {
+    messageID = await sessionManager.createMessage(sessionID, agentId, {
+      user: {
+        prompt: {
+          task,
+          ...(userPrompt && { user: userPrompt }),
+        },
       },
-    },
-    assistant: {
-      system: systemMessages,
-      modelID: agent.config.model,
-      providerID: resolveModelProvider(agent.config.model),
-      mode: 'build',
-      path: { cwd: projectContext.cwd, root: projectContext.projectRoot },
-      cost: 0,
-      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-    },
-  });
+      assistant: {
+        system: systemMessages,
+        modelID: agent.config.model,
+        providerID: resolveModelProvider(agent.config.model),
+        mode: 'build',
+        path: { cwd: projectContext.cwd, root: projectContext.projectRoot },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      },
+    });
+  } catch (error) {
+    // The session row already exists and reads as running. Nothing will ever
+    // run in it, so fail it rather than leave an ownerless active session.
+    try {
+      await sessionManager.setSessionError(sessionID, agentId, classifyFailure(error));
+    } catch (markError) {
+      logger.debug(`Failed to mark half-created session ${sessionID} failed: ${(markError as Error).message}`);
+    }
+    throw error;
+  }
 
   return { sessionID, messageID };
 }
