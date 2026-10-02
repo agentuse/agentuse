@@ -41,7 +41,7 @@ beforeEach(() => {
 const agent: ParsedAgent = {
   name: 'stopped-run',
   instructions: 'Do the task.',
-  config: { model: 'demo:default' },
+  config: { model: 'demo:default' } as ParsedAgent['config'],
 };
 
 function preparation(): PreparedAgentExecution {
@@ -55,6 +55,9 @@ function preparation(): PreparedAgentExecution {
     cleanup: async () => {},
     releaseStoreLock: async () => {},
     learningsApplied: 0,
+    learningsStored: 0,
+    learningsCap: 0,
+    learningsInjectedIds: [],
   };
 }
 

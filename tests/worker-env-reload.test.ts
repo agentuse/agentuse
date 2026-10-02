@@ -25,7 +25,7 @@ function fakeSpawner() {
     child.unref = (() => child) as ChildProcess['unref'];
     children.push(child);
     envs.push({ ...(options.env ?? {}) });
-    queueMicrotask(() => child.stdout?.write('{"type":"ready"}\n'));
+    queueMicrotask(() => (child.stdout as PassThrough).write('{"type":"ready"}\n'));
     return child;
   }) as unknown as typeof spawn;
   const cleanup = () => {

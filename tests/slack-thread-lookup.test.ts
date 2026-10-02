@@ -7,11 +7,14 @@ const approval = (sessionId: string, ts: string) => ({
   channelMessage: { type: 'slack-message', channel: 'C1', ts },
 }) as unknown as ApprovalSummary;
 
-const ok = (approvals: ApprovalSummary[]) => ({
-  listApprovals: async () => ({ success: true as const, approvals }),
+type Lister = {
+  listApprovals(): Promise<{ success: true; approvals: ApprovalSummary[] } | { success: false; error: { message: string } }>;
+};
+const ok = (approvals: ApprovalSummary[]): Lister => ({
+  listApprovals: async () => ({ success: true, approvals }),
 });
-const failing = (message: string) => ({
-  listApprovals: async () => ({ success: false as const, error: { message } }),
+const failing = (message: string): Lister => ({
+  listApprovals: async () => ({ success: false, error: { message } }),
 });
 const project = (id: string) => ({ id, root: `/projects/${id}` });
 const inThread = (ts: string) => (item: ApprovalSummary) => item.channelMessage?.ts === ts;
