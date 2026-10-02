@@ -99,7 +99,7 @@ import { providerSetupSnapshot } from "../auth/provider-setup";
 import { AgentCreationError, agentCreationProviders, createAgentFile } from "../agents/create";
 import { validateAuthoredAgentSource } from "../agents/author";
 import { failAgentRevision, readAgentRevisionRecord, type AgentRevisionRecord } from "../agents/revision";
-import { appendAgentDraft, failAgentDraft, readAgentDraftRecord, type AgentDraftRecord } from "../agents/draft";
+import { AGENT_DRAFT_NOT_SUBMITTED, appendAgentDraft, failAgentDraft, readAgentDraftRecord, type AgentDraftRecord } from "../agents/draft";
 import { readChangesetRecord, settleChangesetTestRun } from "../agents/changeset";
 import { computeAgentId, stripAgentExtension } from '../utils/agent-id.js';
 import { formatCliRow, renderCliTable, renderCliTableHeader } from '../utils/cli-table.js';
@@ -2599,15 +2599,21 @@ export function createServeCommand(): Command {
             job.error = session.error;
           } else {
             try {
-              await appendAgentDraft(project.root, job.id, {
+              const appended = await appendAgentDraft(project.root, job.id, {
                 source: session.submission.source,
                 name: session.submission.name,
                 fileName: session.submission.fileName,
                 model: session.submission.model,
                 ...(session.submission.loadedSkills?.length && { loadedSkills: session.submission.loadedSkills }),
               });
-              job.result = { kind: 'draft', jobId: job.id, projectId: project.id };
-              job.status = 'completed';
+              if (appended.status === 'running') {
+                // The finished turn resubmitted the draft already under review.
+                job.status = 'error';
+                job.error = { ...AGENT_DRAFT_NOT_SUBMITTED };
+              } else {
+                job.result = { kind: 'draft', jobId: job.id, projectId: project.id };
+                job.status = 'completed';
+              }
             } catch (error) {
               job.status = 'error';
               job.error = {
@@ -3355,7 +3361,7 @@ export function createServeCommand(): Command {
           && result.result.authoredAgentName
           && result.result.authoredAgentFileName
         ) {
-          await appendAgentDraft(project.root, sessionId, {
+          const appended = await appendAgentDraft(project.root, sessionId, {
             source: result.result.agentSource,
             name: result.result.authoredAgentName,
             fileName: result.result.authoredAgentFileName,
@@ -3365,21 +3371,22 @@ export function createServeCommand(): Command {
               loadedSkills: result.result.authoredAgentLoadedSkills,
             }),
           });
-          if (job?.kind === 'agent-creation') {
-            job.status = 'completed';
-            job.result = { kind: 'draft', jobId: sessionId, projectId: project.id };
-            await persistOnboardingJob(job);
+          // Still running means the turn resubmitted the draft already under
+          // review, which is no new draft: fall through to the failure below.
+          if (appended.status !== 'running') {
+            if (job?.kind === 'agent-creation') {
+              job.status = 'completed';
+              job.result = { kind: 'draft', jobId: sessionId, projectId: project.id };
+              await persistOnboardingJob(job);
+            }
+            return;
           }
-          return;
         }
 
         // A creator turn that ends without resubmitting leaves the operator with
         // no new draft to review, so it is recorded as a failed turn rather than
         // silently leaving the panel spinning.
-        const error = {
-          code: 'DRAFT_NOT_SUBMITTED',
-          message: 'The creator finished the change request without submitting a new draft',
-        };
+        const error = { ...AGENT_DRAFT_NOT_SUBMITTED };
         await failAgentDraft(project.root, sessionId, error);
         if (job?.kind === 'agent-creation') {
           job.status = 'error';

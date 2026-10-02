@@ -2,6 +2,7 @@ import { mkdir, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getProjectDirSync } from '../storage/paths.js';
 import { atomicWriteFile } from '../utils/atomic-write.js';
+import { withAuthoringLock } from './authoring-lock.js';
 import { internalAgentSourcePath, writeInternalAgentSource } from './internal-agent-file.js';
 
 /**
@@ -93,6 +94,12 @@ function draftPath(projectRoot: string, jobId: string): string {
   return join(draftDir(projectRoot), `${jobId}.json`);
 }
 
+/** A creator turn that ended without a new draft for the operator to review. */
+export const AGENT_DRAFT_NOT_SUBMITTED = {
+  code: 'DRAFT_NOT_SUBMITTED',
+  message: 'The creator finished the change request without submitting a new draft',
+} as const;
+
 async function writeRecord(record: AgentDraftRecord): Promise<void> {
   await mkdir(draftDir(record.projectRoot), { recursive: true });
   await atomicWriteFile(
@@ -154,17 +161,30 @@ async function mutate(
   jobId: string,
   change: (record: AgentDraftRecord) => AgentDraftRecord,
 ): Promise<AgentDraftRecord> {
-  const record = await readAgentDraftRecord(projectRoot, jobId);
-  if (!record) throw new Error('This agent draft no longer exists');
-  const next = { ...change(record), updatedAt: Date.now() };
-  await writeRecord(next);
-  return next;
+  // Under the project's authoring lock so a live consume, a restart recovery
+  // and an operator Save or Discard cannot interleave their read and write.
+  return withAuthoringLock(projectRoot, async () => {
+    const record = await readAgentDraftRecord(projectRoot, jobId);
+    if (!record) throw new Error('This agent draft no longer exists');
+    const changed = change(record);
+    if (changed === record) return record;
+    const next = { ...changed, updatedAt: Date.now() };
+    await writeRecord(next);
+    return next;
+  });
 }
 
 /**
  * Append one accepted submission. The same submission arriving twice (a live
  * consume followed by a restart recovery) must not create a duplicate draft, so
- * an identical source at the tail is treated as already recorded.
+ * an identical source at the tail is treated as already recorded and changes
+ * nothing. A creator result can also land after the operator has decided: a
+ * saved or discarded draft is closed, and the late result is dropped rather
+ * than reopening it.
+ *
+ * A record still `running` after the append therefore means the submission was
+ * the draft already under review: the caller that knows the turn ended settles
+ * it as {@link AGENT_DRAFT_NOT_SUBMITTED}.
  */
 export async function appendAgentDraft(
   projectRoot: string,
@@ -172,11 +192,10 @@ export async function appendAgentDraft(
   submission: Omit<AgentDraftEntry, 'index' | 'submittedAt'>,
 ): Promise<AgentDraftRecord> {
   return mutate(projectRoot, jobId, (record) => {
-    const { pendingRequest, ...retained } = record;
+    if (record.status === 'saved' || record.status === 'discarded') return record;
     const latest = record.drafts[record.drafts.length - 1];
-    if (latest && latest.source === submission.source) {
-      return { ...retained, status: 'drafted' };
-    }
+    if (latest && latest.source === submission.source) return record;
+    const { pendingRequest, ...retained } = record;
     const entry: AgentDraftEntry = {
       ...(pendingRequest && { request: pendingRequest }),
       ...submission,

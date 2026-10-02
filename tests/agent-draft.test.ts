@@ -171,3 +171,59 @@ describe('agent draft record', () => {
     await expect(readAgentDraftRecord(projectRoot, '../escape')).rejects.toThrow(/Invalid agent draft id/u);
   });
 });
+
+describe('late creator results', () => {
+  const first = {
+    source: source('Collect issues.'),
+    name: 'Issue digest',
+    fileName: 'issue-digest.agentuse',
+    model: 'openai:gpt-5.6-luna',
+  };
+  const second = { ...first, source: source('Collect issues. Finish early when empty.') };
+
+  it('cannot reopen a saved draft', async () => {
+    const { projectRoot } = await fixture();
+    await appendAgentDraft(projectRoot, JOB_ID, first);
+    await markAgentDraftSaved(projectRoot, JOB_ID, 'agents/issue-digest.agentuse');
+
+    expect((await appendAgentDraft(projectRoot, JOB_ID, first)).status).toBe('saved');
+    const afterNew = await appendAgentDraft(projectRoot, JOB_ID, second);
+    expect(afterNew.status).toBe('saved');
+    expect(afterNew.drafts).toHaveLength(1);
+    expect((await readAgentDraftRecord(projectRoot, JOB_ID))?.status).toBe('saved');
+  });
+
+  it('cannot reopen a discarded draft', async () => {
+    const { projectRoot } = await fixture();
+    await appendAgentDraft(projectRoot, JOB_ID, first);
+    await markAgentDraftDiscarded(projectRoot, JOB_ID);
+
+    await appendAgentDraft(projectRoot, JOB_ID, first);
+    await appendAgentDraft(projectRoot, JOB_ID, second);
+    const record = await readAgentDraftRecord(projectRoot, JOB_ID);
+    expect(record?.status).toBe('discarded');
+    expect(record?.drafts).toHaveLength(1);
+  });
+
+  it('leaves a reopened draft and its pending request alone when the earlier result repeats', async () => {
+    const { projectRoot } = await fixture();
+    await appendAgentDraft(projectRoot, JOB_ID, first);
+    await reopenAgentDraft(projectRoot, JOB_ID, 'Skip days with no new issues.');
+    const before = await readAgentDraftRecord(projectRoot, JOB_ID);
+
+    const after = await appendAgentDraft(projectRoot, JOB_ID, first);
+    expect(after.status).toBe('running');
+    expect(after.pendingRequest).toBe('Skip days with no new issues.');
+    expect(await readAgentDraftRecord(projectRoot, JOB_ID)).toEqual(before);
+  });
+
+  it('keeps a save that races a late submission', async () => {
+    const { projectRoot } = await fixture();
+    await appendAgentDraft(projectRoot, JOB_ID, first);
+    await Promise.all([
+      markAgentDraftSaved(projectRoot, JOB_ID, 'agents/issue-digest.agentuse'),
+      appendAgentDraft(projectRoot, JOB_ID, second),
+    ]);
+    expect((await readAgentDraftRecord(projectRoot, JOB_ID))?.status).toBe('saved');
+  });
+});
