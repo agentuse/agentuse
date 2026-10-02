@@ -42,6 +42,11 @@ async function importEsbuild(): Promise<Esbuild> {
 }
 
 export function loadEsbuild(): Promise<Esbuild> {
-  esbuildPromise ??= importEsbuild();
+  // Forget a failed load so a long-lived daemon retries on the next call
+  // instead of keeping Code Mode and plugin loading broken until restart.
+  esbuildPromise ??= importEsbuild().catch((error: unknown) => {
+    esbuildPromise = undefined;
+    throw error;
+  });
   return esbuildPromise;
 }
