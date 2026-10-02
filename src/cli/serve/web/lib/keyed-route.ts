@@ -23,8 +23,9 @@ export function keyedRoute(
   };
 }
 
-/** A session page is one session in one project. The resume token is left out:
- *  it can change under a live session, and a remount would drop its logs. */
+/** A session page, and its context diagnostic, is one session in one project.
+ *  The resume token is left out: it can change under a live session, and a
+ *  remount would drop its logs. */
 export const sessionRouteIdentity = ({ params, query }: RouteMatch): string =>
   `${query.project ?? ''}:${params.sessionId ?? ''}`;
 

@@ -41,6 +41,7 @@ const ChangesetReview = lazy(reloadOnChunkError(() => import('./routes/changeset
 // page you left (an open dialog, a pending submit, a late response) can act
 // on the one you opened.
 const SessionDetailRoute = keyedRoute(SessionDetail, sessionRouteIdentity);
+const SessionContextRoute = keyedRoute(SessionContext, sessionRouteIdentity);
 const ChangesetReviewRoute = keyedRoute(ChangesetReview, changesetRouteIdentity);
 const AgentDetailRoute = keyedRoute(AgentDetail, agentRouteIdentity);
 const AgentDraftRoute = keyedRoute(AgentDraft, agentDraftRouteIdentity);
@@ -111,7 +112,7 @@ function AppRoutes() {
       <Route path="/sessions" component={SessionsList} />
       <Route path="/sessions/:sessionId" component={SessionDetailRoute} />
       {/* Diagnostic subpage: what was actually loaded into this run's context window. */}
-      <Route path="/sessions/:sessionId/context" component={SessionContext} />
+      <Route path="/sessions/:sessionId/context" component={SessionContextRoute} />
       <Route path="/approvals" component={ApprovalsList} />
       <Route path="/stores" component={StoresIndex} />
       <Route path="/stores/:store" component={StoreItemsRoute} />

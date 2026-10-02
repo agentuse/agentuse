@@ -40,6 +40,15 @@ describe('keyedRoute', () => {
     expect(after).toBe(before);
   });
 
+  it('gives each session its own context diagnostic page', () => {
+    // /sessions/:sessionId/context?project=&token= shares the session page's address shape.
+    const route = (sessionId: string, project: string, token: string) => ({ params: { sessionId }, query: { project, token } });
+    const a = keyFor(sessionRouteIdentity, route('a', 'p', 'one'));
+    expect(keyFor(sessionRouteIdentity, route('b', 'p', 'one'))).not.toBe(a);
+    expect(keyFor(sessionRouteIdentity, route('a', 'q', 'one'))).not.toBe(a);
+    expect(keyFor(sessionRouteIdentity, route('a', 'p', 'two'))).toBe(a);
+  });
+
   it('keys changesets and agents by project and id', () => {
     expect(keyFor(changesetRouteIdentity, { params: { projectId: 'p', sessionId: 'a' }, query: {} }))
       .not.toBe(keyFor(changesetRouteIdentity, { params: { projectId: 'p', sessionId: 'b' }, query: {} }));
