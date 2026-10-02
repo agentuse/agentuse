@@ -113,8 +113,13 @@ const PROVIDERS = [
 export async function getProviderStatus(options: ProviderStatusOptions = {}): Promise<ProviderStatus> {
   const providers: ProviderAuthStatus[] = [];
   const definitions = new Map<string, ProviderDefinition[]>();
+  // Model creation picks a loaded full plugin before the built-in provider of
+  // the same id, so that plugin's row is the only one for the id.
+  const plugins = await loadProviderPlugins();
+  const pluginIds = new Set(plugins.map((plugin) => plugin.id));
 
   for (const provider of PROVIDERS) {
+    if (pluginIds.has(provider.id)) continue;
     const providerAuth = await AuthStorage.getProviderAuth(provider.id);
     const sources: ProviderAuthSourceStatus[] = [];
     const adapters = await getProviderAdapters(provider.id);
@@ -186,7 +191,7 @@ export async function getProviderStatus(options: ProviderStatusOptions = {}): Pr
     });
   }
 
-  for (const plugin of await loadProviderPlugins()) {
+  for (const plugin of plugins) {
     // A plugin without auth methods (e.g. one wrapping a local CLI) needs no
     // credential, so it is usable as soon as it is installed.
     const sources = plugin.auth ? await providerPluginAuthStatus(plugin) : [];

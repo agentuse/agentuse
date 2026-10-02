@@ -434,6 +434,45 @@ describe('project-local activation scope', () => {
     }
   });
 
+  it('reports one status row, from the full plugin, when it overrides a built-in id', async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-override-status-'));
+    const plugins = path.join(root, 'plugins');
+    const dataDir = path.join(root, 'data');
+    await fs.mkdir(plugins);
+    await fs.mkdir(path.join(dataDir, 'plugins'), { recursive: true });
+    await fs.writeFile(path.join(plugins, 'local.js'), `
+      export default function (agentuse) {
+        agentuse.registerProvider({
+          id: 'anthropic', override: true, name: 'Replacement',
+          models: [{ id: 'model', name: 'Model', input: ['text'], reasoning: false, contextWindow: 1000, maxOutputTokens: 100 }],
+          transport: { kind: 'openai-chat-completions', baseURL: 'http://localhost:1234/v1' },
+        });
+      }
+    `);
+    const envKeys = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'] as const;
+    const savedEnv = envKeys.map((key) => process.env[key]);
+    for (const key of envKeys) delete process.env[key];
+    oldDataDir = process.env.AGENTUSE_DATA_DIR;
+    process.env.AGENTUSE_DATA_DIR = dataDir;
+    resetProviderPluginCache();
+    try {
+      const manager = new PluginManager();
+      await manager.loadPlugins([plugins]);
+
+      const rows = (await getProviderStatus({ readiness: 'defer' })).providers.filter((provider) => provider.id === 'anthropic');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ name: 'Replacement', configured: true, sources: [] });
+      const readiness = (await getProviderReadiness()).filter((result) => result.id === 'anthropic');
+      expect(readiness).toHaveLength(1);
+      expect(readiness[0]).toMatchObject({ configured: true, sources: [] });
+    } finally {
+      envKeys.forEach((key, index) => {
+        if (savedEnv[index] === undefined) delete process.env[key];
+        else process.env[key] = savedEnv[index];
+      });
+    }
+  });
+
   it('activates a built-in provider adapter only when its credential predicate matches', async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-extension-plugin-'));
     const plugins = path.join(root, 'plugins');
