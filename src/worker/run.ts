@@ -361,8 +361,18 @@ async function executeAgentRequest(ctx: WorkerContext, req: ExecuteRequest) {
 
     activeSessionId = preparedExecution.sessionID ?? existingSessionId;
 
+    // runAgent's finally releases the prepared resources once it is called.
+    // Until then they are still this worker's: a failure here must release
+    // them too. The continued session's status is left as it was.
     if (continuationSession) {
-      await sessionManager.setSessionRunning(continuationSession.sessionId, continuationSession.agentId);
+      try {
+        await sessionManager.setSessionRunning(continuationSession.sessionId, continuationSession.agentId);
+      } catch (err) {
+        await preparedExecution.cleanup().catch((cleanupErr) => {
+          logger.debug(`Failed to release prepared resources after continuation error: ${(cleanupErr as Error).message}`);
+        });
+        throw err;
+      }
     }
 
     if (activeSessionId) {

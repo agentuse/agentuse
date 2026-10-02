@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
-import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -10,7 +10,7 @@ import * as sandbox from '../src/sandbox';
 import { Store } from '../src/store/store';
 import { initStorage } from '../src/storage';
 import { SessionManager } from '../src/session';
-import { parseAgentContent } from '../src/parser';
+import { parseAgent, parseAgentContent } from '../src/parser';
 import { prepareAgentExecution } from '../src/runner/preparation';
 import { runAgent } from '../src/runner/run';
 import { executeAgent } from '../src/worker/run';
@@ -134,6 +134,47 @@ describe('prepareAgentExecution rollback', () => {
       { status: 'error', code: 'EXECUTION_ERROR' },
       { status: 'error', code: 'EXECUTION_ERROR' },
     ]);
+  });
+});
+
+describe('attached worker handoff', () => {
+  it('releases prepared resources when a continuation cannot be marked running', async () => {
+    let killed = 0;
+    const allocation = spyOn(sandbox, 'createSandbox').mockImplementation(async () =>
+      ({ container: { id: 'handoff-double' }, kill: async () => { killed++; } }) as never);
+    const sandboxTools = spyOn(sandbox, 'createSandboxTools').mockReturnValue({});
+    const release = spyOn(Store.prototype, 'releaseLock');
+    const markRunning = spyOn(SessionManager.prototype, 'setSessionRunning');
+    try {
+      const agentPath = join(root, 'continued.agentuse');
+      await writeFile(agentPath, '---\nmodel: demo:test\nsandbox: true\nstore: true\nintent: false\nskills:\n  auto: false\n---\nReview');
+      const manager = new SessionManager();
+      const first = await prepareAgentExecution({
+        agent: await parseAgent(agentPath), mcpClients: [], agentFilePath: agentPath,
+        sessionManager: manager, projectContext: context(),
+      });
+      await first.cleanup();
+      const { sessionID, agentId } = first;
+      if (!sessionID || !agentId) throw new Error('fixture session was not created');
+      await manager.setSessionCompleted(sessionID, agentId);
+      killed = 0;
+      release.mockClear();
+      markRunning.mockRejectedValue(new Error('EIO: mark running fixture'));
+
+      const result = await executeAgent(createWorkerContext(), {
+        id: 'continue-request', type: 'continue-session', projectRoot: root, sessionId: sessionID, prompt: 'Continue.',
+      });
+
+      expect(result.success).toBe(false);
+      expect(killed).toBe(1);
+      expect(release).toHaveBeenCalled();
+      expect(await sessionStates(manager)).toEqual([{ status: 'completed', code: undefined }]);
+    } finally {
+      allocation.mockRestore();
+      sandboxTools.mockRestore();
+      release.mockRestore();
+      markRunning.mockRestore();
+    }
   });
 });
 
