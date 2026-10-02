@@ -12,6 +12,7 @@ import { dehydrateSnapshotMedia, rehydrateSnapshotMedia } from './media-cache';
 import { computeSubagentActiveIds } from './subagent-active';
 import { isExecutingSessionStatus, isLiveSessionStatus } from './status';
 import { isHumanCommentDecision } from './gate-rounds';
+import { LeaseStore } from '../runner/approval-lease';
 import {
   codeModeResultId,
   describeCodeModeResult,
@@ -1788,6 +1789,7 @@ export class SessionManager {
     const now = Date.now();
     const code = options.code ?? 'USER_STOPPED';
     const message = options.message ?? 'Session stopped by user';
+    const storageDir = (await getStorageState()).dir;
     const stopped: StoppedSession[] = [];
     for (const entry of ordered) {
       const wasStatus = entry.session.status;
@@ -1820,6 +1822,11 @@ export class SessionManager {
       }
       if (shouldStopPendingParts) {
         await this.stopPendingPartsAtPath(entry.path, { message, time: now });
+        // A stopped session keeps no approval: a grant whose segment never ran
+        // (or is being aborted) must not authorize a later continuation.
+        if (!new LeaseStore(path.join(storageDir, entry.path)).revoke()) {
+          logger.warn(`Failed to revoke the approval lease of stopped session ${entry.session.id}`);
+        }
       }
       stopped.push({
         sessionId: entry.session.id,

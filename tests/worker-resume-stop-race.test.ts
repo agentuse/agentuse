@@ -138,6 +138,28 @@ describe('worker resume preflight vs user Stop', () => {
     expect((await manager.findSession(sessionId))?.session.status).toBe('error');
   });
 
+  test('Stop revokes an approval lease on its own, with no rollback', async () => {
+    const { applyResumeToolResult } = await import('../src/runner/resume');
+    const { LeaseStore } = await import('../src/runner/approval-lease');
+    const { manager, agentId, sessionId } = await createSuspendedGateSession({
+      prompt: 'Approve?',
+      changes: [{ label: 'Post', content: 'echo publish' }],
+    });
+
+    await applyResumeToolResult({
+      sessionManager: manager,
+      sessionId,
+      toolResult: { status: 'approve' },
+      resumeToken: 'resume-token',
+    });
+    const sessionDir = await manager.getSessionDirectory(sessionId, agentId);
+    expect(new LeaseStore(sessionDir).read()).toBeDefined();
+
+    await manager.stopSessionTree(sessionId, { code: 'USER_STOPPED', message: 'Session stopped by user' });
+
+    expect(new LeaseStore(sessionDir).read()).toBeUndefined();
+  });
+
   test('a Stop during preflight stays durable and is reported as USER_STOPPED', async () => {
     const { createWorkerContext } = await import('../src/worker/context');
     const { executeAgent } = await import('../src/worker/run');
