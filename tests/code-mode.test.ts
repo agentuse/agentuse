@@ -1452,6 +1452,25 @@ describe('Code Mode', () => {
     })).rejects.toThrow(/unhandled nested tool failures.*nested failure/i);
   });
 
+  it('keeps the internal tool error marker out of unhandled nested failures', async () => {
+    let message = '';
+    try {
+      await executeCodeMode(`
+        tools.fail({ n: 1 });
+        tools.fail({ n: 2 });
+        return "program result";
+      `, {
+        dispatcher: { dispatch: async () => { throw new Error('nested failure'); } },
+        toolNames: ['fail'],
+        parentCallId: 'floating-failure-marker',
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toMatch(/unhandled nested tool failures.*nested failure/i);
+    expect(message).not.toContain('__AGENTUSE_');
+  });
+
   it('allows guest code to catch a nested failure and return a fallback', async () => {
     await expect(executeCodeMode(`
       try {

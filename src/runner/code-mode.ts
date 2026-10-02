@@ -571,19 +571,27 @@ function throwGuestError(
   const mappedStack = stack && sourceMap ? mapCodeModeStack(stack, sourceMap) : stack;
   const locationFrame = sourceLocation ? `at <anonymous> (agentuse-code-mode:user.ts:${sourceLocation})` : undefined;
   const trace = locationFrame ?? mappedStack?.trim();
-  const toolErrorMarker = '__AGENTUSE_TOOL_ERROR__';
-  const resultErrorMarker = '__AGENTUSE_RESULT_ERROR__';
-  const isToolError = message.startsWith(toolErrorMarker);
-  const isResultError = message.startsWith(resultErrorMarker);
-  const cleanMessage = isToolError
-    ? message.slice(toolErrorMarker.length)
-    : isResultError
-      ? message.slice(resultErrorMarker.length)
-      : message;
+  const guestError = stripGuestErrorMarker(message);
   throw new CodeModeGuestError(
-    `Code Mode failed: ${cleanMessage}${trace ? `\n${trace}` : ''}`,
-    isToolError ? 'tool_execution' : isResultError ? 'result_access' : 'runtime_error',
+    `Code Mode failed: ${guestError.message}${trace ? `\n${trace}` : ''}`,
+    guestError.code,
   );
+}
+
+const GUEST_ERROR_MARKERS = [
+  ['__AGENTUSE_TOOL_ERROR__', 'tool_execution'],
+  ['__AGENTUSE_RESULT_ERROR__', 'result_access'],
+] as const;
+
+/** Remove the internal prefix the guest prelude puts on bridge rejections. */
+function stripGuestErrorMarker(message: string): {
+  message: string;
+  code: 'tool_execution' | 'result_access' | 'runtime_error';
+} {
+  for (const [marker, code] of GUEST_ERROR_MARKERS) {
+    if (message.startsWith(marker)) return { message: message.slice(marker.length), code };
+  }
+  return { message, code: 'runtime_error' };
 }
 
 function classifyCodeModeError(error: unknown, signal: AbortSignal): CodeModeErrorCode {
@@ -1681,7 +1689,7 @@ export async function executeCodeModeDetailed(
     await drainGuestOperations();
     throwIfAborted();
     if (unhandledNestedFailures.size > 0) {
-      throw new Error(`Code Mode has unhandled nested tool failures: ${[...unhandledNestedFailures.values()].join('; ')}`);
+      throw new Error(`Code Mode has unhandled nested tool failures: ${[...unhandledNestedFailures.values()].map((failure) => stripGuestErrorMarker(failure).message).join('; ')}`);
     }
     capturedOutput = takeGuestOutput();
     const fitted = fitCodeModeOutput(result, capturedOutput, limits.outputChars);
