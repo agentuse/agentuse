@@ -11,6 +11,8 @@ import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionP
 import { currentProcessRef } from '../utils/process-info';
 import { withOwnershipLock } from '../utils/ownership-lock';
 import { withSessionResumeClaim } from '../session/resume-claim';
+import { isTerminalSessionStatus } from '../session/status';
+import { LeaseStore } from '../runner/approval-lease';
 import { buildDescendantActivity, buildDescendantReport, buildImportantDescendantEvents, buildImportantDescendants } from '../session/important-descendants';
 import { resolveProjectContext } from '../utils/project';
 import { logger } from '../utils/logger';
@@ -299,6 +301,36 @@ export async function claimCascadeChain(
   ));
 }
 
+// A parent whose bookmark rollback failed is still `running` with this live
+// worker as its owner, and orphan reconcile never touches a live owner, so it
+// would read "running" until the worker died. Settle it as failed instead: the
+// bookmark stays resolved, no approval lease survives, and nothing re-parks it.
+// Not under the claim, since a claim timeout is one way the rollback fails; a
+// concurrent Stop at worst trades one terminal error for the other.
+async function settleUnrestoredParent(
+  sessionManager: InstanceType<typeof SessionManager>,
+  parent: { sessionId: string; agentId: string },
+  setupError: unknown,
+  restoreError: unknown
+): Promise<void> {
+  const current = await sessionManager.findSession(parent.sessionId);
+  if (!current || isTerminalSessionStatus(current.session.status)) return;
+  const sessionDir = await sessionManager.getSessionDirectory(parent.sessionId, parent.agentId);
+  if (!new LeaseStore(sessionDir).revoke()) {
+    logger.warn(`Failed to revoke the approval lease of session ${parent.sessionId}`);
+  }
+  await sessionManager.setSessionError(parent.sessionId, parent.agentId, {
+    code: 'CASCADE_ROLLBACK_FAILED',
+    message: `Resuming this run after its sub-agent finished failed (${errorText(setupError)}), ` +
+      `and returning it to wait on the sub-agent also failed (${errorText(restoreError)}). ` +
+      'The run was stopped; re-run the agent.',
+  });
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 // Walk a parked ancestor chain back up from a finished child: complete each
 // ancestor's subagent_wait bookmark with its child's real output, resume it,
 // and stop if any level re-suspends on a new gate (its gate re-surfaces at
@@ -347,8 +379,11 @@ export async function walkUpCascadeChain(opts: {
       if (parentRollback && (!enteredParentRun || isExistingSessionPreRunError(error))) {
         // The rollback re-parks the parent itself, and leaves it alone when a
         // Stop (or another terminal outcome) landed meanwhile.
-        await restoreResumeToolResult({ sessionManager, rollback: parentRollback }).catch((restoreErr) => {
+        await restoreResumeToolResult({ sessionManager, rollback: parentRollback }).catch(async (restoreErr) => {
           logger.warn(`Failed to restore sub-agent bookmark after resume setup error: ${(restoreErr as Error).message}`);
+          await settleUnrestoredParent(sessionManager, parent, error, restoreErr).catch((settleErr) => {
+            logger.warn(`Failed to settle parent ${parent.sessionId} after its bookmark rollback failed: ${(settleErr as Error).message}`);
+          });
         });
       }
       throw error;
