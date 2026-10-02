@@ -33,3 +33,25 @@ export const changesetRouteIdentity = ({ params }: RouteMatch): string =>
 
 export const agentRouteIdentity = ({ params }: RouteMatch): string =>
   `${params.project ?? ''}:${params.agent ?? ''}`;
+
+/** A store page is one store, in one project or across all of them. `q` and
+ *  `agent` only seed its filters on mount, so a link that changes them has to
+ *  remount to apply. `highlight` is left out: the page scrolls to it in place. */
+export const storeItemsRouteIdentity = ({ params, query }: RouteMatch): string =>
+  `${query.project ?? ''}:${params.store ?? ''}:${query.q ?? ''}:${query.agent ?? ''}`;
+
+export const storeItemRouteIdentity = ({ params, query }: RouteMatch): string =>
+  `${query.project ?? ''}:${params.store ?? ''}:${params.item ?? ''}`;
+
+/** Draft, revision and tidy-up pages are addressed by query, not path. */
+export const agentDraftRouteIdentity = ({ query }: RouteMatch): string =>
+  `${query.project ?? ''}:${query.job ?? ''}`;
+
+/** The resume token is left out, as on the session page. */
+export const agentRevisionRouteIdentity = ({ query }: RouteMatch): string =>
+  `${query.project ?? ''}:${query.session ?? ''}`;
+
+/** One tidy-up job for one agent. `start` is left out: it only asks the page to
+ *  start a job, and the job id that comes back changes the key anyway. */
+export const learningsTidyRouteIdentity = ({ query }: RouteMatch): string =>
+  `${query.project ?? ''}:${query.path ?? ''}:${query.job ?? ''}`;

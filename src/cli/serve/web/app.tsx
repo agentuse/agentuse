@@ -7,7 +7,17 @@ import { CopyLinkToast } from './components/copy-link-toast';
 import { NavTracker } from './hooks/use-smart-back';
 import { GlobalApprovalsProvider } from './hooks/use-global-approvals';
 import { reloadOnChunkError } from './lib/lazy-route';
-import { agentRouteIdentity, changesetRouteIdentity, keyedRoute, sessionRouteIdentity } from './lib/keyed-route';
+import {
+  agentDraftRouteIdentity,
+  agentRevisionRouteIdentity,
+  agentRouteIdentity,
+  changesetRouteIdentity,
+  keyedRoute,
+  learningsTidyRouteIdentity,
+  sessionRouteIdentity,
+  storeItemRouteIdentity,
+  storeItemsRouteIdentity,
+} from './lib/keyed-route';
 
 const Home = lazy(reloadOnChunkError(() => import('./routes/home')));
 const Onboarding = lazy(reloadOnChunkError(() => import('./routes/onboarding')));
@@ -33,6 +43,11 @@ const ChangesetReview = lazy(reloadOnChunkError(() => import('./routes/changeset
 const SessionDetailRoute = keyedRoute(SessionDetail, sessionRouteIdentity);
 const ChangesetReviewRoute = keyedRoute(ChangesetReview, changesetRouteIdentity);
 const AgentDetailRoute = keyedRoute(AgentDetail, agentRouteIdentity);
+const AgentDraftRoute = keyedRoute(AgentDraft, agentDraftRouteIdentity);
+const AgentRevisionRoute = keyedRoute(AgentRevision, agentRevisionRouteIdentity);
+const StoreItemsRoute = keyedRoute(StoreItems, storeItemsRouteIdentity);
+const StoreItemDetailRoute = keyedRoute(StoreItemDetail, storeItemRouteIdentity);
+const LearningsTidyRoute = keyedRoute(LearningsTidy, learningsTidyRouteIdentity);
 
 // The shell's #boot spinner (static.ts) covers bundle download AND the first
 // lazy route chunk: it lives outside #app so mounting the (route-less) app
@@ -85,8 +100,8 @@ function AppRoutes() {
       <Route path="/agents" component={Agents} />
       {/* Query-addressed (?project=&job=): a draft has no agent path yet, and
           /agents/:project/:agent* would swallow the segment. */}
-      <Route path="/agents/draft" component={AgentDraft} />
-      <Route path="/agents/revision" component={AgentRevision} />
+      <Route path="/agents/draft" component={AgentDraftRoute} />
+      <Route path="/agents/revision" component={AgentRevisionRoute} />
       <Route path="/agents/:project" component={Agents} />
       <Route path="/agents/:project/:agent*" component={AgentDetailRoute} />
       {/* The multi-file successor to /agents/draft and /agents/revision. Both
@@ -99,12 +114,12 @@ function AppRoutes() {
       <Route path="/sessions/:sessionId/context" component={SessionContext} />
       <Route path="/approvals" component={ApprovalsList} />
       <Route path="/stores" component={StoresIndex} />
-      <Route path="/stores/:store" component={StoreItems} />
-      <Route path="/stores/:store/:item" component={StoreItemDetail} />
+      <Route path="/stores/:store" component={StoreItemsRoute} />
+      <Route path="/stores/:store/:item" component={StoreItemDetailRoute} />
       <Route path="/settings" component={Settings} />
       {/* Query-addressed (?project=&path=&job=): an agent path has slashes
           of its own, which would be ambiguous under /agents/:project/:agent*. */}
-      <Route path="/learnings/tidy" component={LearningsTidy} />
+      <Route path="/learnings/tidy" component={LearningsTidyRoute} />
       <Route default component={NotFound} />
     </Router>
   );
