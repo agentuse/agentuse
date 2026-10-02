@@ -2,7 +2,7 @@ import { afterAll, afterEach, describe, expect, it } from "bun:test";
 import * as fs from "fs";
 import * as path from "path";
 import { tmpdir } from "os";
-import { listServers, registerServer, unregisterServer, updateServer } from "../src/utils/server-registry";
+import { findServerForProject, listServers, registerServer, unregisterServer, updateServer } from "../src/utils/server-registry";
 
 const originalAgentuseDataDir = process.env.AGENTUSE_DATA_DIR;
 const testDataDir = fs.mkdtempSync(path.join(tmpdir(), "agentuse-server-registry-integrity-"));
@@ -65,5 +65,11 @@ describe("server registry integrity", () => {
     expect(updatedInode).not.toBe(registeredInode);
     expect(JSON.parse(fs.readFileSync(entryPath, "utf-8")).agentCount).toBe(3);
     expect(fs.readdirSync(REGISTRY_DIR).filter((file) => file.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("matches a project nested in a directory whose name starts with two dots", () => {
+    registerServer(entry("/test/project"));
+
+    expect(findServerForProject("/test/project/..cache/sub")?.pid).toBe(process.pid);
   });
 });

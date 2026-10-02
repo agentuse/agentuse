@@ -8,9 +8,10 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, rmSync, readFileSync } from "fs";
-import { join, relative, resolve } from "path";
+import { join, resolve } from "path";
 import { atomicWriteFileSync } from "./atomic-write";
 import { getAgentuseDataDir } from "./data-dir";
+import { isPathInside } from "./path-policy";
 import { getProcessStartTime, getCurrentProcessStartTime } from "./process-info";
 import type { DesktopServerSupervisor } from "./desktop-supervisor";
 
@@ -225,7 +226,7 @@ export function findServerForProject(projectRoot?: string): ServerEntry | undefi
   const related = servers
     .map((server) => {
       const roots = serverRoots(server);
-      const matchingRoots = roots.filter((root) => isSameOrNested(root, normalizedProjectRoot) || isSameOrNested(normalizedProjectRoot, root));
+      const matchingRoots = roots.filter((root) => isPathInside(root, normalizedProjectRoot) || isPathInside(normalizedProjectRoot, root));
       const bestRootLength = matchingRoots.reduce((max, root) => Math.max(max, root.length), 0);
       return { server, bestRootLength };
     })
@@ -234,11 +235,6 @@ export function findServerForProject(projectRoot?: string): ServerEntry | undefi
   if (related.length > 0) return related[0].server;
 
   return undefined;
-}
-
-function isSameOrNested(parent: string, child: string): boolean {
-  const rel = relative(parent, child);
-  return rel === '' || (!rel.startsWith('..') && !rel.startsWith('/') && rel !== '..');
 }
 
 /**
