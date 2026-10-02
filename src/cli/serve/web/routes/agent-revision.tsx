@@ -133,18 +133,25 @@ export default function AgentRevision() {
     }
   };
 
-  const requestChange = async (prompt: string) => {
+  const requestChange = async (prompt: string): Promise<boolean> => {
     setBusy('request');
     setActionError(null);
     try {
       await requestAgentRevisionChanges(sessionId, prompt, project);
-      setTab('changes');
-      await refresh();
     } catch (caught) {
       setActionError((caught as Error).message || 'Could not send that change request.');
+      setBusy(null);
+      return false;
+    }
+    // Sent. The composer clears now; refresh() reports its own load errors,
+    // and a failed reload must not invite the operator to send it twice.
+    try {
+      setTab('changes');
+      await refresh();
     } finally {
       setBusy(null);
     }
+    return true;
   };
 
 

@@ -59,8 +59,8 @@ export function DraftComposer(props: {
   hint: string;
   busy: boolean;
   disabled?: boolean;
-  /** Return false when sending fails to keep the operator's text. */
-  onSend: (prompt: string) => void | boolean | Promise<void | boolean>;
+  /** Resolve true once the request is sent; false keeps the operator's text. */
+  onSend: (prompt: string) => Promise<boolean>;
 }) {
   const [value, setValue] = useState('');
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -73,7 +73,7 @@ export function DraftComposer(props: {
     sendingRef.current = true;
     setSending(true);
     try {
-      if (await props.onSend(prompt) !== false) setValue('');
+      if (await props.onSend(prompt)) setValue('');
     } catch {
       // The caller displays the error; retain the text for another attempt.
     } finally {

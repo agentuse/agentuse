@@ -226,22 +226,27 @@ export default function ChangesetReview() {
     }
   };
 
-  const requestChange = async (request: string) => {
+  const requestChange = async (request: string): Promise<boolean> => {
     setBusy('request');
     setActionError(null);
     try {
       await requestChangesetChanges(projectId, sessionId, request);
+    } catch (caught) {
+      setActionError((caught as Error).message || 'Could not send that change request.');
+      setBusy(null);
+      return false;
+    }
+    // Sent. The composer clears now; refresh() reports its own load errors,
+    // and a failed reload must not invite the operator to send it twice.
+    try {
       // The answer arrives in the thread, so go where it will show up.
       setTabPinned(true);
       setTab('changes');
       await refresh();
-      return true;
-    } catch (caught) {
-      setActionError((caught as Error).message || 'Could not send that change request.');
-      return false;
     } finally {
       setBusy(null);
     }
+    return true;
   };
 
   const selectFile = (path: string) => {
