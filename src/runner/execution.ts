@@ -1055,9 +1055,13 @@ async function* executeAgentAttempt(
   let snapshotTimer: ReturnType<typeof setTimeout> | undefined;
   let snapshotWrites: Promise<void> = Promise.resolve();
   let lastSnapshot: { messages: number; tokens: number } | undefined;
+  // Set once the run suspends: the suspension chunk's snapshot (written by the
+  // stream consumer) is the resume boundary, so nothing may rewrite it after.
+  let snapshotWriterClosed = false;
 
   const writeContextSnapshot = async (): Promise<void> => {
     if (
+      snapshotWriterClosed ||
       !contextManager?.hasCompacted() ||
       !options.sessionManager ||
       !options.sessionID ||
@@ -1100,12 +1104,28 @@ async function* executeAgentAttempt(
     }, CONTEXT_SNAPSHOT_DEBOUNCE_MS);
   };
 
-  const flushContextSnapshot = async (): Promise<void> => {
+  const cancelContextSnapshotTimer = (): void => {
     if (snapshotTimer) {
       clearTimeout(snapshotTimer);
       snapshotTimer = undefined;
     }
+  };
+
+  const flushContextSnapshot = async (): Promise<void> => {
+    cancelContextSnapshotTimer();
     await queueContextSnapshotWrite();
+  };
+
+  // Called at every suspension before the snapshot is built and yielded. The
+  // consumer persists the yielded snapshot and stamps the pending gate just
+  // after its updatedAt; rehydrate keeps only parts newer than that boundary.
+  // A later write from this writer (a debounced timer, or the finally flush)
+  // would restamp the boundary past the gate and hide it from resume. Drain
+  // any in-flight write so it lands before the consumer's, then close.
+  const closeContextSnapshotWriter = async (): Promise<void> => {
+    cancelContextSnapshotTimer();
+    snapshotWriterClosed = true;
+    await snapshotWrites;
   };
 
   let pluginTerminateRequested = false;
@@ -3040,6 +3060,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
           resolved: call.resolved,
         })),
       });
+      await closeContextSnapshotWriter();
       const contextSnapshot = buildContextSnapshot();
       yield {
         type: 'suspended',
@@ -3083,6 +3104,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
       // lease so nothing effectful can run until this gate is approved.
       leaseStore.revoke();
       await compactAtSuspensionBoundary();
+      await closeContextSnapshotWriter();
       const contextSnapshot = buildContextSnapshot(suspendState.toolCallId);
       yield {
         type: 'suspended',
@@ -3337,6 +3359,7 @@ Current step: ${stepCount}/${options.maxSteps}`);
         ...(lastToolCall?.name && { gateTool: lastToolCall.name }),
       });
       await compactAtSuspensionBoundary();
+      await closeContextSnapshotWriter();
       const contextSnapshot = buildContextSnapshot(lastToolCall?.id);
       yield {
         type: 'suspended',
