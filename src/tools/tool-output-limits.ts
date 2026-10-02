@@ -190,17 +190,21 @@ export function truncateHeadTail(
 
 /**
  * Memory-bounded head+tail accumulator for streaming output (e.g. a child
- * process's stdout). Retains at most `maxBytes` of content — the first
- * `headBytes` and a rolling window of the last `tailBytes` — while counting
+ * process's stdout). Retains about `maxBytes` of UTF-8 content — the first
+ * `headBytes` and a rolling window of the last bytes — while counting
  * everything, so the middle of a runaway stream is dropped without buffering
  * it. `finalize()` reconstructs the output with a truncation marker when the
  * total exceeded the cap, or returns the full output verbatim when it didn't.
+ *
+ * The budget is measured in UTF-8 bytes and every cut lands on a code-point
+ * boundary, so CJK/emoji output stays within the byte cap. The marker counts
+ * characters, matching truncateHeadTail.
  */
 export interface BoundedAccumulator {
   append(chunk: string): void;
   /** Total characters seen across all appends. */
   readonly total: number;
-  /** True once total exceeded `maxBytes` and content was dropped. */
+  /** True once the total UTF-8 bytes exceeded `maxBytes` and content was dropped. */
   readonly truncated: boolean;
   finalize(): string;
 }
@@ -210,44 +214,86 @@ export function createBoundedAccumulator(
   headRatio: number = DEFAULT_HEAD_RATIO,
 ): BoundedAccumulator {
   const headBytes = Math.floor(maxBytes * headRatio);
-  const tailBytes = maxBytes - headBytes;
   let head = '';
-  let tail = '';
-  let total = 0;
+  let headUsed = 0;
+  let headClosed = false;
+  // Once the head closes, the tail may use whatever the head left unused, so
+  // output within maxBytes is never cut even when the head stopped short of a
+  // multi-byte character.
+  let tailBudget = maxBytes - headBytes;
+  // Tail chunks are kept whole and dropped from the front only while the rest
+  // still covers the budget; finalize() makes the one exact byte cut.
+  const tailChunks: Array<{ text: string; bytes: number }> = [];
+  let tailBytesHeld = 0;
+  let totalChars = 0;
+  let totalBytes = 0;
+  // A high surrogate ending a chunk waits for its pair so byte counts and
+  // cuts never see half a code point.
+  let pending = '';
 
   function appendTail(s: string): void {
-    tail += s;
-    if (tail.length > tailBytes) {
-      tail = tail.slice(tail.length - tailBytes);
+    const bytes = Buffer.byteLength(s, 'utf8');
+    if (bytes >= tailBudget) {
+      const kept = utf8Suffix(s, tailBudget);
+      tailChunks.length = 0;
+      tailChunks.push({ text: kept, bytes: Buffer.byteLength(kept, 'utf8') });
+      tailBytesHeld = tailChunks[0]!.bytes;
+      return;
     }
+    tailChunks.push({ text: s, bytes });
+    tailBytesHeld += bytes;
+    while (tailBytesHeld - tailChunks[0]!.bytes >= tailBudget) {
+      tailBytesHeld -= tailChunks.shift()!.bytes;
+    }
+  }
+
+  function commit(text: string): void {
+    if (text.length === 0) return;
+    totalBytes += Buffer.byteLength(text, 'utf8');
+    if (headClosed) {
+      appendTail(text);
+      return;
+    }
+    const part = utf8Prefix(text, headBytes - headUsed);
+    head += part;
+    headUsed += Buffer.byteLength(part, 'utf8');
+    const rest = text.slice(part.length);
+    if (rest.length > 0) {
+      headClosed = true;
+      tailBudget = maxBytes - headUsed;
+      appendTail(rest);
+    }
+  }
+
+  function tailText(): string {
+    return tailChunks.map((c) => c.text).join('');
   }
 
   return {
     append(chunk: string): void {
-      total += chunk.length;
-      if (head.length < headBytes) {
-        const room = headBytes - head.length;
-        head += chunk.slice(0, room);
-        const rest = chunk.slice(room);
-        if (rest.length > 0) appendTail(rest);
+      totalChars += chunk.length;
+      const text = pending + chunk;
+      pending = '';
+      if (text.length > 0 && isHighSurrogate(text.charCodeAt(text.length - 1))) {
+        pending = text.slice(-1);
+        commit(text.slice(0, -1));
       } else {
-        appendTail(chunk);
+        commit(text);
       }
     },
     get total(): number {
-      return total;
+      return totalChars;
     },
     get truncated(): boolean {
-      return total > maxBytes;
+      return totalBytes + Buffer.byteLength(pending, 'utf8') > maxBytes;
     },
     finalize(): string {
-      // Within budget: head + tail is the full output, no marker, no drop. A
-      // surrogate pair split across the head/tail boundary is rejoined here by
-      // the direct concatenation, so no fix-up is needed.
-      if (total <= maxBytes) return head + tail;
-      // Truncated: a marker separates head and tail, so snap each side off any
-      // lone surrogate (the cut can land inside an emoji during streaming).
-      return trimTrailingHighSurrogate(head) + truncationMarker(total - maxBytes, total) + trimLeadingLowSurrogate(tail);
+      commit(pending);
+      pending = '';
+      // Within budget: head + tail is the full output, no marker, no drop.
+      if (totalBytes <= maxBytes) return head + tailText();
+      const tail = utf8Suffix(tailText(), tailBudget);
+      return head + truncationMarker(totalChars - head.length - tail.length, totalChars) + tail;
     },
   };
 }

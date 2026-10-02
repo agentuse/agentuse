@@ -345,6 +345,47 @@ describe('clampToolResultForModel measures UTF-8 bytes', () => {
     expect(summary.message).toContain(`Result was ${summary.bytes.toLocaleString('en-US')} bytes`);
   });
 
+  it('bounds streamed multi-byte output to the accumulator byte budget', () => {
+    const text = '中'.repeat(9_000); // 9,000 chars, 27,000 bytes
+    for (const chunkSize of [1, 7, 4_096, text.length]) {
+      const acc = createBoundedAccumulator(maxBytes, 0.4);
+      for (let i = 0; i < text.length; i += chunkSize) acc.append(text.slice(i, i + chunkSize));
+      expect(acc.truncated).toBe(true);
+      expect(acc.total).toBe(9_000);
+      const out = acc.finalize();
+      const [head, tail] = out.split(/\n\n\.\.\. \[\d+ chars truncated of 9000 total\] \.\.\.\n\n/);
+      expect(Buffer.byteLength(head!, 'utf8')).toBeLessThanOrEqual(4_096);
+      expect(Buffer.byteLength(head! + tail!, 'utf8')).toBeLessThanOrEqual(maxBytes);
+      expect(head!.length + tail!.length).toBeGreaterThan(3_400);
+      expect(out).toContain(`${9_000 - head!.length - tail!.length} chars truncated of 9000 total`);
+    }
+  });
+
+  it('keeps accumulated emoji whole and the head contiguous at byte cut points', () => {
+    for (let pad = 0; pad < 4; pad++) {
+      for (const chunkSize of [1, 3]) {
+        const text = 'a'.repeat(pad) + '😀'.repeat(5_000) + 'END';
+        const acc = createBoundedAccumulator(1_000, 0.4);
+        for (let i = 0; i < text.length; i += chunkSize) acc.append(text.slice(i, i + chunkSize));
+        const out = acc.finalize();
+        expect(hasLoneSurrogate(out)).toBe(false);
+        const [head, tail] = out.split(/\n\n\.\.\. \[\d+ chars truncated of \d+ total\] \.\.\.\n\n/);
+        expect(text.startsWith(head!)).toBe(true);
+        expect(text.endsWith(tail!)).toBe(true);
+        expect(Buffer.byteLength(head! + tail!, 'utf8')).toBeLessThanOrEqual(1_000);
+      }
+    }
+  });
+
+  it('does not cut multi-byte output that fits the accumulator byte budget', () => {
+    // Head (4 bytes) cannot hold a second 3-byte char; the tail absorbs the slack.
+    const text = '中'.repeat(3) + 'abc';
+    const acc = createBoundedAccumulator(Buffer.byteLength(text, 'utf8'), 0.4);
+    for (const ch of text) acc.append(ch);
+    expect(acc.truncated).toBe(false);
+    expect(acc.finalize()).toBe(text);
+  });
+
   it('keeps astral characters whole at both byte cut points', () => {
     for (let pad = 0; pad < 4; pad++) {
       const out = truncateHeadTail('a'.repeat(pad) + '😀'.repeat(5_000), 1_000, 0.4);
