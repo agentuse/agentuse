@@ -20,6 +20,7 @@ import {
   type RunChannelHandle
 } from '../channels/run';
 import { executeAgentCore } from './execution';
+import { settleWithin } from '../utils/settle-within';
 import { extractApiErrorDetail } from './api-error';
 import { prepareAgentExecution } from './preparation';
 import { processAgentStream } from './stream';
@@ -734,21 +735,20 @@ export async function runAgent(
       }
     }
 
-    // Check if it's an abort error from timeout
-    if ((error instanceof Error && error.name === 'AbortError') || (abortSignal && abortSignal.aborted)) {
-      // Timeout already handled by caller
-      throw error;
-    }
+    const aborted = (error instanceof Error && error.name === 'AbortError') || Boolean(abortSignal?.aborted);
     if (captureActive) {
       logger.stopCapture();
       captureActive = false;
     }
+    // Stops and timeouts finalize the run card too; leaving before this left
+    // it at "running" for good. Their delivery is bounded so a Slack outage
+    // cannot hold up the stop response or the CLI exit.
     void announceSessionFinished({
       status: 'failed',
       agentName: agent.name,
       ...(sessionID && { sessionId: sessionID }),
     });
-    await sendRunChannelMessages({
+    const failureDelivery = sendRunChannelMessages({
       event: 'failure',
       agent,
       error,
@@ -756,6 +756,12 @@ export async function runAgent(
       ...(agentFilePath !== undefined && { agentFilePath }),
       ...(startTime !== undefined && { startTime })
     }, undefined, runChannelHandles);
+    if (aborted) {
+      await settleWithin(failureDelivery);
+      // Timeout / stop reporting is handled by the caller
+      throw error;
+    }
+    await failureDelivery;
     logger.error('Agent execution failed', error as Error);
     throw error;
   } finally {

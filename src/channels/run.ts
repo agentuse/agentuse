@@ -1,8 +1,10 @@
 import type { ParsedAgent } from '../parser';
 import type { RunAgentResult } from '../runner/types';
+import type { SessionInfo } from '../session/types';
 import { formatShortDuration } from '../utils/duration';
 import { toErrorMessage } from '../utils/error-message';
 import { logger } from '../utils/logger';
+import { settleWithin } from '../utils/settle-within';
 import { truncateForMessage as truncate } from '../tools/tool-output-limits';
 import { getSessionUrl } from '../tools/await-human';
 import {
@@ -48,7 +50,12 @@ export interface RunChannelHandle extends SlackChannel {
   ts: string;
 }
 
-interface RunChannelDisplayOptions extends Omit<RunChannelOptions, 'event'> {
+/** What a run card shows about the agent; a session record carries this much. */
+type RunCardAgent = Pick<ParsedAgent, 'name'> & { config: Pick<ParsedAgent['config'], 'model'> };
+
+type RunCardOptions = Omit<RunChannelOptions, 'agent'> & { agent: RunCardAgent };
+
+interface RunChannelDisplayOptions extends Omit<RunCardOptions, 'event'> {
   event?: RunChannelEvent;
   lifecycleStatus?: RunLifecycleStatus;
 }
@@ -112,7 +119,7 @@ function runTitle(agentName: string | undefined, status: RunLifecycleStatus): st
   return (agentName ? `${agentName} · ${base}` : `AgentUse ${base}`).slice(0, 150);
 }
 
-function runPreview(options: RunChannelOptions): string {
+function runPreview(options: RunCardOptions): string {
   if (options.event === 'completion') {
     return options.result?.text?.trim() || 'Agent completed without a final answer.';
   }
@@ -169,7 +176,7 @@ function buildRunRootBlocks(options: RunChannelDisplayOptions): any[] {
   ];
 }
 
-function buildRunThreadMessages(options: RunChannelOptions): SlackThreadMessage[] {
+function buildRunThreadMessages(options: RunCardOptions): SlackThreadMessage[] {
   const durationMs = runDurationMs(options);
   const details = [
     `Agent: ${options.agent.name}`,
@@ -230,7 +237,7 @@ function shouldUpdateHandleForEvent(handle: RunChannelHandle, event: RunChannelE
   return handle.events.includes(event) || handle.events.includes('approval');
 }
 
-function terminalText(options: RunChannelOptions): string {
+function terminalText(options: RunCardOptions): string {
   return options.event === 'completion'
     ? `AgentUse run completed: ${options.agent.name}`
     : `AgentUse run failed: ${options.agent.name}`;
@@ -284,7 +291,7 @@ async function sendSlackRunStartChannelMessage(channel: SlackChannel, options: R
   };
 }
 
-async function updateSlackRunChannelMessage(handle: RunChannelHandle, options: RunChannelOptions): Promise<void> {
+async function updateSlackRunChannelMessage(handle: RunChannelHandle, options: RunCardOptions): Promise<void> {
   const botToken = process.env.SLACK_BOT_TOKEN;
   if (!botToken) {
     logger.warn('Slack run channel update skipped: missing SLACK_BOT_TOKEN');
@@ -390,6 +397,35 @@ export async function suspendRunChannels(
       logger.warn(`Slack run suspension channel failed: ${(err as Error).message}`);
     }
   }
+}
+
+/**
+ * Mark a session's live run cards failed when the session ended with no
+ * runner left to do it: stopped while suspended on approval, or reconciled as
+ * interrupted after its worker died. Works from the handles persisted on the
+ * session; a session that never posted a card has none and this is a no-op.
+ */
+export async function finalizeSessionRunChannels(
+  session: Pick<SessionInfo, 'id' | 'agent' | 'model' | 'channels'>,
+  failure: { message: string },
+  update: (handle: RunChannelHandle, options: RunCardOptions) => Promise<void> = updateSlackRunChannelMessage,
+): Promise<void> {
+  const handles = (session.channels?.slack ?? []).filter((handle) => shouldUpdateHandleForEvent(handle, 'failure'));
+  if (handles.length === 0) return;
+  const options: RunCardOptions = {
+    event: 'failure',
+    agent: { name: session.agent.name, config: { model: session.model } },
+    sessionId: session.id,
+    error: failure.message,
+    ...(session.agent.filePath && { agentFilePath: session.agent.filePath }),
+  };
+  await settleWithin(Promise.all(handles.map(async (handle) => {
+    try {
+      await update(handle, options);
+    } catch (err) {
+      logger.warn(`Slack run channel update failed: ${toErrorMessage(err)}`);
+    }
+  })));
 }
 
 export const __testing = {

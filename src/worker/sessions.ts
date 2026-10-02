@@ -5,6 +5,8 @@ import { SessionManager } from '../session/index.js';
 import { initStorage, CorruptStorageError } from '../storage/index.js';
 import { buildSessionContextPayload } from '../cli/serve/context-stack.js';
 import { version as packageVersion } from '../../package.json';
+import { finalizeSessionRunChannels } from '../channels/run';
+import { logger } from '../utils/logger';
 import { invalidateListCaches, sessionBelongsToProject } from './cache.js';
 import { mockField, sessionErrorFields, valueAsRecord } from './helpers.js';
 import type { WorkerContext } from './context.js';
@@ -291,6 +293,26 @@ export async function sweepExpiredApprovals(req: ExecuteRequest) {
   }
 }
 
+/**
+ * Mark the run cards of sessions that just ended without a live runner.
+ * `failure` defaults to the error now recorded on each session.
+ */
+async function finalizeEndedSessionCards(
+  sessionManager: SessionManager,
+  sessionIds: string[],
+  failure?: { message: string },
+): Promise<void> {
+  for (const sessionId of sessionIds) {
+    try {
+      const found = await sessionManager.findSession(sessionId);
+      if (!found) continue;
+      await finalizeSessionRunChannels(found.session, failure ?? found.session.error ?? { message: 'Run ended' });
+    } catch (error) {
+      logger.debug(`Run card finalize failed for ${sessionId}: ${(error as Error).message}`);
+    }
+  }
+}
+
 // Thin IPC shell over reconcileOrphanedSessions (see runner/resume.ts): recover
 // sessions a dead worker left stuck 'running' with no live process. Invoked when
 // this worker (re)spawns; cutoff is the ready time so only pre-existing orphans
@@ -302,6 +324,12 @@ export async function reconcileOrphanSessions(req: ExecuteRequest) {
     const cutoff = typeof req.reconcileCutoff === 'number' ? req.reconcileCutoff : Date.now();
     const reconciled = await reconcileOrphanedSessions({ sessionManager, cutoff, ...(req.workerDeath && { workerDeath: req.workerDeath }) });
     if (reconciled.length > 0) invalidateListCaches(req.projectRoot);
+    // The dead worker's runner never reached its catch, so its card still
+    // reads "running" (or "waiting for approval" for a stranded manager).
+    await finalizeEndedSessionCards(
+      sessionManager,
+      reconciled.filter((entry) => entry.reason === 'interrupted' || entry.reason === 'stranded').map((entry) => entry.sessionId),
+    );
     return { id: req.id, success: true as const, reconciled };
   } catch (err) {
     return {
@@ -383,6 +411,13 @@ export async function stopSession(ctx: WorkerContext, req: ExecuteRequest) {
         error: { code: 'SESSION_NOT_FOUND', message: `Session not found: ${req.sessionId}` },
       };
     }
+    // A running session's own runner marks its card when the abort lands; a
+    // suspended one has no runner, so its card would stay "waiting for approval".
+    await finalizeEndedSessionCards(
+      sessionManager,
+      stopped.filter((entry) => entry.stopped && entry.wasStatus === 'suspended').map((entry) => entry.sessionId),
+      stopFailure,
+    );
     return {
       id: req.id,
       success: true,
