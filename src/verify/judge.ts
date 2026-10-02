@@ -16,6 +16,7 @@ import { completeText } from '../complete-text.js';
 import { providerHelperSystemPrompt as helperSystemPrompt } from '../plugin/provider-behavior.js';
 import { parseAgent } from '../parser.js';
 import { connectMCP, type MCPServersConfig } from '../mcp.js';
+import { closeMCPConnections } from '../mcp-cleanup.js';
 import { executeAgentCore } from '../runner/execution.js';
 import { processAgentStream } from '../runner/stream.js';
 import { loadAgentTools } from '../runner/tools-loader.js';
@@ -567,13 +568,7 @@ async function judgeViaAgent(
     if (loadedTools.store) {
       await loadedTools.store.releaseLock();
     }
-    for (const conn of mcpConnections) {
-      try {
-        await conn.client.close();
-      } catch {
-        // best-effort close
-      }
-    }
+    await closeMCPConnections(mcpConnections);
   }
 }
 

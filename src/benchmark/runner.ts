@@ -5,6 +5,7 @@ import { join, dirname, resolve } from 'path';
 import { runAgent } from '../runner/run.js';
 import { prepareAgentExecution } from '../runner/preparation.js';
 import { connectMCP } from '../mcp.js';
+import { closeMCPConnections } from '../mcp-cleanup.js';
 import {
   agentForBenchmarkModel,
   resolveSuiteConfig,
@@ -159,13 +160,7 @@ async function runTrial(
       }, scenario, workspace);
     } finally {
       // Clean up MCP clients
-      for (const connection of mcpClients) {
-        try {
-          await connection.client.close();
-        } catch {
-          // Ignore cleanup errors
-        }
-      }
+      await closeMCPConnections(mcpClients);
     }
   } catch (error) {
     clearTimeout(timeoutId);

@@ -17,6 +17,7 @@ import { tool } from 'ai';
 import { z } from 'zod';
 import { parseAgent } from '../parser.js';
 import { connectMCP, type MCPServersConfig } from '../mcp.js';
+import { closeMCPConnections } from '../mcp-cleanup.js';
 import { executeAgentCore } from '../runner/execution.js';
 import { processAgentStream } from '../runner/stream.js';
 import { loadAgentTools, type LoadedAgentTools } from '../runner/tools-loader.js';
@@ -174,8 +175,6 @@ Call the \`submit_learnings\` tool exactly once with 0-5 candidate learnings (an
   } finally {
     try { await loadedTools?.sandboxInstance?.kill(); } catch { /* best-effort cleanup */ }
     try { await loadedTools?.store?.releaseLock(); } catch { /* best-effort cleanup */ }
-    for (const conn of mcpConnections) {
-      try { await conn.client.close(); } catch { /* best-effort cleanup */ }
-    }
+    await closeMCPConnections(mcpConnections);
   }
 }

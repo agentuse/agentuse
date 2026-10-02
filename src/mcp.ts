@@ -3,6 +3,7 @@ import type { Tool } from 'ai';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { logger } from './utils/logger';
+import { closeMCPConnections } from './mcp-cleanup';
 import { parseJsonEnvVar } from './utils/env';
 import { resolveToolTimeout } from './utils/config';
 import { z } from 'zod';
@@ -476,9 +477,7 @@ export async function connectMCP(
   // On a fatal error the caller never receives the connections, so close the
   // ones that did succeed before re-throwing to exit the CLI.
   if (fatalError !== undefined) {
-    for (const conn of connections) {
-      try { await conn.client.close(); } catch { /* ignore */ }
-    }
+    await closeMCPConnections(connections);
     throw fatalError;
   }
   

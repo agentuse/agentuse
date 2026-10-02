@@ -4,6 +4,7 @@ import { ExecutionBudget } from '../runner/execution-budget';
 import { dirname, join } from 'path';
 import { parseAgent } from '../parser';
 import { connectMCP } from '../mcp';
+import { closeMCPConnections } from '../mcp-cleanup';
 import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, restoreClaimedResumeToolResult, workerRunResponse } from '../runner';
 import { composeSubagentResult, type RunOutcome } from '../tools/report-outcome';
 import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, describeStaleCascade, isRecoverableCascadeFailure, isFinishableStale, loadStoredSubagentResult, CASCADE_ORPHANED_CODE, CASCADE_RECOVERABLE_CODE, MAX_CASCADE_DEPTH } from '../runner/subagent-cascade';
@@ -153,9 +154,7 @@ export async function runExistingSession(opts: {
   } catch (err) {
     // runAgent closes MCP in its own finally; if we threw before/around it, close
     // here so a failed cascade level does not leak stdio MCP subprocesses.
-    for (const conn of mcp) {
-      try { await conn.client.close(); } catch { /* ignore */ }
-    }
+    await closeMCPConnections(mcp);
     if (enteredRunAgent && executionBudget?.signal.aborted) {
       // An operator stop must keep unwinding so the whole cascade halts. A
       // deadline must not: a restored ancestor's clock expiring is folded into

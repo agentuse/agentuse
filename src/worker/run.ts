@@ -4,6 +4,7 @@ import { existsSync } from 'fs';
 import * as dotenv from 'dotenv';
 import { parseAgent, parseAgentContent } from '../parser';
 import { connectMCP } from '../mcp';
+import { closeMCPConnections } from '../mcp-cleanup';
 import { runAgent, prepareAgentExecution, applyResumeToolResult, restoreResumeToolResult, workerRunResponse } from '../runner';
 import { PluginManager } from '../plugin';
 import { applyRunModelOverride, resolveModelString, type RunModelOverride } from '../utils/model-alias';
@@ -458,13 +459,7 @@ async function executeAgentRequest(ctx: WorkerContext, req: ExecuteRequest) {
       ctx.activeExecutionControllers.delete(id);
       ctx.activeStoppedSessions.delete(id);
     }
-    for (const conn of mcp) {
-      try {
-        await conn.client.close();
-      } catch {
-        // Ignore cleanup errors
-      }
-    }
+    await closeMCPConnections(mcp);
     ctx.activeExecuteRequests--;
     invalidateListCaches(req.projectRoot);
   }

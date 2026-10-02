@@ -2,6 +2,7 @@ import { executionBudgetFor } from './execution-budget';
 import type { ParsedAgent } from '../parser';
 import { announceSessionFinished, announceSessionStarted } from './announce';
 import type { MCPConnection } from '../mcp';
+import { closeMCPConnections } from '../mcp-cleanup';
 import type { SessionInfo, SessionManager, SessionTrigger } from '../session';
 import type { AgentCompleteEvent, AgentReference, ModelFallbackEvent, PluginManager } from '../plugin';
 import { emitRunOutcome } from '../plugin/run-outcome';
@@ -777,14 +778,7 @@ export async function runAgent(
     }
 
     // Clean up MCP clients (like opencode does)
-    for (const connection of mcpClients) {
-      try {
-        await connection.client.close();
-        logger.debug(`Closed MCP client: ${connection.name}`);
-      } catch (error) {
-        // Ignore errors when closing MCP clients
-      }
-    }
+    await closeMCPConnections(mcpClients);
   }
 }
 

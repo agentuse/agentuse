@@ -3,6 +3,7 @@ import type { Tool } from 'ai';
 import { z } from 'zod';
 import { parseAgent } from './parser';
 import { connectMCP, type MCPServersConfig } from './mcp';
+import { closeMCPConnections } from './mcp-cleanup';
 import { logger, runWithLogSink } from './utils/logger';
 import { executeAgentCore, processAgentStream } from './runner';
 import { createSessionLogSink, dismissIfReviewerRejected, type SessionLogSink } from './runner/session-helper';
@@ -657,13 +658,7 @@ export async function createSubAgentTool(
           }
 
           // Clean up MCP connections
-          for (const conn of mcpConnections) {
-            try {
-              await conn.client.close();
-            } catch (error) {
-              // Ignore errors when closing
-            }
-          }
+          await closeMCPConnections(mcpConnections);
         }
 
       } catch (error) {
