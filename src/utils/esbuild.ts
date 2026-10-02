@@ -1,0 +1,47 @@
+import { access } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+type Esbuild = typeof import('esbuild');
+
+const requireFromModule = createRequire(
+  typeof __filename === 'string' ? __filename : import.meta.url,
+);
+let esbuildPromise: Promise<Esbuild> | undefined;
+
+function physicalEsbuildEntry(resolvedEntry: string): string {
+  const archiveSegment = `${sep}app.asar${sep}`;
+  return resolvedEntry.replace(archiveSegment, `${sep}app.asar.unpacked${sep}`);
+}
+
+async function importEsbuild(): Promise<Esbuild> {
+  let resolvedEntry: string;
+  try {
+    resolvedEntry = requireFromModule.resolve('esbuild');
+  } catch (cause) {
+    throw new Error('Unable to resolve the esbuild package required by AgentUse.', { cause });
+  }
+
+  const entry = physicalEsbuildEntry(resolvedEntry);
+  try {
+    await access(entry);
+  } catch (cause) {
+    throw new Error(`The packaged esbuild module is missing at ${entry}.`, { cause });
+  }
+
+  try {
+    const loaded = await import(pathToFileURL(entry).href);
+    if (typeof loaded.build !== 'function' || typeof loaded.transform !== 'function') {
+      throw new Error('the module does not export build() and transform()');
+    }
+    return loaded;
+  } catch (cause) {
+    throw new Error(`Unable to load esbuild from ${entry}.`, { cause });
+  }
+}
+
+export function loadEsbuild(): Promise<Esbuild> {
+  esbuildPromise ??= importEsbuild();
+  return esbuildPromise;
+}

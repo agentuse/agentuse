@@ -477,6 +477,9 @@ function verifyDesktop(): void {
     fail(`Bundled Desktop CLI reports ${embeddedVersion}; package.json says ${manifest().version}.`);
   }
 
+  note('\n=== packaged desktop Code Mode ===');
+  stream('bun', ['scripts/smoke-desktop-code-mode.ts', appDir]);
+
   note(`\nDesktop gate passed: ${appDir}`);
 }
 

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { tmpdir } from 'os';
 import { pathToFileURL } from 'url';
-import * as esbuild from 'esbuild';
+import { loadEsbuild } from '../utils/esbuild';
 import type { AgentUsePackageManifest } from './types';
 
 export interface ResolvedPackageManifest {
@@ -36,6 +36,7 @@ export async function importExtensionModule(entry: string): Promise<unknown> {
 }
 
 async function bundleExtensionModule(entry: string): Promise<unknown> {
+  const esbuild = await loadEsbuild();
   const result = await esbuild.build({
     entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', target: 'node22',
     sourcemap: 'inline', write: false, absWorkingDir: dirname(entry), external: ['node:*'],

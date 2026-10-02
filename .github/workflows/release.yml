@@ -119,7 +119,7 @@ jobs:
             --publish never \
             -c.forceCodeSigning=true
 
-      - name: Verify ${{ matrix.arch }} signature and notarization
+      - name: Verify ${{ matrix.arch }} signature, notarization, and Code Mode
         if: github.repository == 'agentuse/agentuse' && github.event_name == 'push'
         shell: bash
         run: |
@@ -142,6 +142,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
           xcrun stapler validate "$APP_PATH"
           spctl --assess --verbose=2 --type execute "$APP_PATH"
+          bun scripts/smoke-desktop-code-mode.ts "$APP_PATH"
 
       - name: Preserve ${{ matrix.arch }} release artifacts
         if: github.repository == 'agentuse/agentuse' && github.event_name == 'push'

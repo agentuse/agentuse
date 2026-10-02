@@ -1,12 +1,12 @@
 import type { ResultPageRequest, resultPage } from '../tools/result-pages';
 import { createHash } from 'crypto';
-import { transform } from 'esbuild';
 import { getQuickJS, type QuickJSContext, type QuickJSHandle } from 'quickjs-emscripten';
 import { z } from 'zod';
 import type { Tool } from 'ai';
 import type { CodeModeResultPage } from '../session/manager';
 import { ToolDispatchPostEffectError, type ToolDispatcher } from './tool-dispatcher';
 import { toErrorMessage } from '../utils/error-message';
+import { loadEsbuild } from '../utils/esbuild';
 import {
   buildCodeModeToolContracts,
   buildCodeModeToolContractsSync,
@@ -465,6 +465,7 @@ async function compileTypeScript(
     `    const __agentuseMessage = String(__agentuseError.message || __agentuseError);\n` +
     `    throw new Error("__AGENTUSE_ERROR_ENVELOPE__" + JSON.stringify({ message: __agentuseMessage, location: ${locationVariable}, stack: String(__agentuseError.stack || "") }));\n` +
     `  }\n  throw __agentuseError;\n} })()`;
+  const { transform } = await loadEsbuild();
   const compiled = await transform(wrapped, {
     loader: 'ts',
     target: 'es2022',

@@ -34,6 +34,10 @@
     "appId": "io.agentuse.desktop",
     "productName": "AgentUse",
     "asar": true,
+    "asarUnpack": [
+      "node_modules/esbuild/**",
+      "node_modules/@esbuild/**"
+    ],
     "npmRebuild": false,
     "forceCodeSigning": false,
     "mac": {
@@ -50,6 +54,7 @@
     "dmg": {
       "sign": false
     },
+    "onNodeModuleFile": "./scripts/include-typescript-lib-declarations.cjs",
     "afterSign": "scripts/notarize.cjs",
     "files": [
       "dist/main.cjs",
