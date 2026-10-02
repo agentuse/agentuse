@@ -1117,15 +1117,34 @@ async function listSnapshots(dir: string): Promise<string[]> {
   return (await readdir(dir)).filter((f) => f.endsWith('.json') && f !== RECORD_FILE).sort();
 }
 
-async function writeSnapshot(stateRoot: string, agentFilePath: string, snapshot: Snapshot): Promise<void> {
+/**
+ * Write a snapshot and return its id. Called inside the learning file lock,
+ * which orders commits across processes, so the id is taken from commit time
+ * and forced past every existing snapshot: undo restores the last name in
+ * sort order, and that has to be the last commit even when two tidy-ups
+ * overlap, land in the same millisecond, or the clock steps back.
+ */
+async function writeSnapshot(
+  stateRoot: string,
+  agentFilePath: string,
+  files: Snapshot['files'],
+): Promise<string> {
   const dir = snapshotDir(stateRoot, agentFilePath);
   await mkdir(dir, { recursive: true });
-  await atomicWriteFile(join(dir, `${snapshot.id}.json`), JSON.stringify(snapshot, null, 2));
+  const previous = (await listSnapshots(dir)).at(-1)?.replace(/\.json$/, '');
+  let id = new Date().toISOString().replace(/[:.]/g, '-');
+  if (previous && previous >= id) {
+    const [, base, seq] = previous.match(/^(.*?)(?:~(\d+))?$/)!;
+    id = `${base}~${String(Number(seq ?? 0) + 1).padStart(4, '0')}`;
+  }
+  const snapshot: Snapshot = { id, files };
+  await atomicWriteFile(join(dir, `${id}.json`), JSON.stringify(snapshot, null, 2));
 
   const entries = await listSnapshots(dir);
   for (const stale of entries.slice(0, Math.max(0, entries.length - UNDO_HISTORY))) {
     await unlink(join(dir, stale)).catch(() => {});
   }
+  return id;
 }
 
 /**
@@ -1229,14 +1248,16 @@ export async function undoConsolidation(
   agentFilePath: string,
 ): Promise<{ restored: string[] } | null> {
   const dir = snapshotDir(stateRoot, agentFilePath);
-  if (!existsSync(dir)) return null;
-  const entries = await listSnapshots(dir);
-  const latest = entries[entries.length - 1];
-  if (!latest) return null;
+  // The same lock a tidy-up commits under: picking and reading the latest
+  // snapshot inside it means a commit landing meanwhile cannot change which
+  // snapshot this restores.
+  const lockKey = LearningStore.fromAgentFile(agentFilePath, stateRoot).filePath;
+  return withLearningFileLock(lockKey, async () => {
+    if (!existsSync(dir)) return null;
+    const latest = (await listSnapshots(dir)).at(-1);
+    if (!latest) return null;
 
-  const snapshot: Snapshot = JSON.parse(await readFile(join(dir, latest), 'utf-8'));
-  const learningPath = snapshot.files[0]?.path;
-  const restore = async () => {
+    const snapshot: Snapshot = JSON.parse(await readFile(join(dir, latest), 'utf-8'));
     for (const file of snapshot.files) {
       await mkdir(dirname(file.path), { recursive: true });
       await atomicWriteFile(file.path, file.content);
@@ -1244,10 +1265,8 @@ export async function undoConsolidation(
     // Keep the snapshot until every destination has been durably replaced. A
     // failed partial restore can then be retried instead of becoming permanent.
     await unlink(join(dir, latest)).catch(() => {});
-  };
-  if (learningPath) await withLearningFileLock(learningPath, restore);
-  else await restore();
-  return { restored: snapshot.files.map((f) => f.path) };
+    return { restored: snapshot.files.map((f) => f.path) };
+  });
 }
 
 /**
@@ -2127,7 +2146,6 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
   // the same entries get re-vetted (one model call each) on every later press.
   if (options.dryRun || (changes.length === 0 && revetStamped === 0)) return result;
 
-  const undoId = new Date(now).toISOString().replace(/[:.]/g, '-');
   const committed = await withLearningFileLock(store.filePath, async () => {
     const latest = await store.load();
     const reconciled = reconcileConcurrentLearnings(stored, working, latest);
@@ -2169,13 +2187,10 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
 
     // The snapshot is of the actual commit-time inputs, not the stale files the
     // model read minutes ago. Undo therefore preserves concurrent additions.
-    await writeSnapshot(options.stateRoot, options.agentFilePath, {
-      id: undoId,
-      files: [
-        { path: store.filePath, content: latestLearnings },
-        { path: options.agentFilePath, content: latestAgent },
-      ],
-    });
+    const undoId = await writeSnapshot(options.stateRoot, options.agentFilePath, [
+      { path: store.filePath, content: latestLearnings },
+      { path: options.agentFilePath, content: latestAgent },
+    ]);
 
     // Agent file first. A crash between the two writes leaves a rule stated
     // twice, which is harmless; the reverse order could lose it from both.
@@ -2183,7 +2198,7 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
       await atomicWriteFile(options.agentFilePath, reconciledAgent);
     }
     await store.save(reconciledStaged);
-    return { reconciled: reconciledStaged, latestLearnings, latestAgent, reconciledAgent };
+    return { reconciled: reconciledStaged, latestLearnings, latestAgent, reconciledAgent, undoId };
   });
   reportAt('done');
 
@@ -2202,7 +2217,7 @@ export async function consolidateLearnings(options: ConsolidateOptions): Promise
         }
         : {}),
     },
-    undoId,
+    undoId: committed.undoId,
   };
 }
 

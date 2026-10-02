@@ -524,7 +524,7 @@ describe("tidying up an over-cap corrections file", () => {
     rmSync(xdgDir, { recursive: true, force: true });
   });
 
-  const run = (opts: { dryRun?: boolean } = {}) =>
+  const run = (opts: { dryRun?: boolean; now?: number } = {}) =>
     consolidateLearnings({
       agentFilePath,
       agentInstructions: "Do the work.",
@@ -1062,6 +1062,23 @@ describe("tidying up an over-cap corrections file", () => {
     expect(restored!.restored).toHaveLength(2);
     expect(readFileSync(agentFilePath, "utf-8")).toBe(AGENT_FILE);
     expect(readFileSync(store.filePath, "utf-8")).toBe(storeBefore);
+  });
+
+  it("undo restores the tidy-up that committed last, not the one that started last", async () => {
+    // Two overlapping tidy-ups: the one that started later commits first. Undo
+    // must roll back only the last commit, whose snapshot holds the first
+    // commit's result, rather than reverting both.
+    await seed();
+    decideResponse = JSON.stringify({ retire: [{ id: "rule4", why: "superseded" }] });
+    await run({ now: NOW + 60_000 });
+    const afterFirst = readFileSync(store.filePath, "utf-8");
+
+    decideResponse = JSON.stringify({ retire: [{ id: "rule5", why: "superseded" }] });
+    await run({ now: NOW });
+    expect(readFileSync(store.filePath, "utf-8")).not.toBe(afterFirst);
+
+    await undoConsolidation(tempDir, agentFilePath);
+    expect(readFileSync(store.filePath, "utf-8")).toBe(afterFirst);
   });
 
   it("CLI undo restores an agent even when the current file no longer parses", async () => {
