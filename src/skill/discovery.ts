@@ -1,5 +1,5 @@
 import { homedir } from 'os';
-import { join } from 'path';
+import { basename, dirname, join } from 'path';
 import { readdir, realpath, stat } from 'fs/promises';
 import { parseSkillFrontmatter } from './parser.js';
 import type { SkillInfo } from './types.js';
@@ -167,7 +167,7 @@ async function scanSkillDirectories(
       if (!skill) continue;
 
       // Warn if explicit name differs from directory, but still load it.
-      const dirName = match.split('/').slice(-2, -1)[0];
+      const dirName = basename(dirname(match));
       if (dirName !== skill.name) {
         logger.debug(`Skill name "${skill.name}" differs from directory "${dirName}" in ${match}`);
       }

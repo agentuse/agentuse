@@ -14,6 +14,7 @@ import {
 import { parseSkillContent } from '../skill/parser.js';
 import { resolveProjectContext } from '../utils/project.js';
 import { getGlobalConfigDir } from '../utils/global-config.js';
+import { isPathInside } from '../utils/path-policy.js';
 import type { SkillContent, SkillInfo } from '../skill/types.js';
 
 type SkillSource = 'builtin' | 'installed';
@@ -102,7 +103,7 @@ async function getSkillsContext(source: SkillSource): Promise<SkillsContext> {
 
 function getSourceDir(location: string, directories: DirectoryInfo[]): string {
   for (const dir of directories) {
-    if (location === dir.path || location.startsWith(`${dir.path}/`)) {
+    if (isPathInside(dir.path, location)) {
       return dir.label;
     }
   }
@@ -170,13 +171,16 @@ async function listSkills(source: SkillSource, options: { verbose?: boolean; jso
   const noun = source === 'builtin' ? 'builtin skill' : 'installed skill';
   console.log(chalk.bold(`\nFound ${context.skills.size} ${noun}(s):\n`));
 
-  for (const dir of context.directories) {
-    const sourceSkills = grouped.get(dir.label);
+  // Directory order first, then any group no directory claimed (`unknown`),
+  // so every counted skill is printed.
+  const labels = new Set([...context.directories.map((dir) => dir.label), ...grouped.keys()]);
+  for (const label of labels) {
+    const sourceSkills = grouped.get(label);
     if (!sourceSkills?.length) {
       continue;
     }
 
-    console.log(chalk.yellow(dir.label));
+    console.log(chalk.yellow(label));
     for (const skill of sourceSkills) {
       console.log(`  ${chalk.cyan(skill.name)}`);
       console.log(chalk.gray(`    ${skill.description}`));
