@@ -857,6 +857,11 @@ async function listSessionsCommand(
     sessions = sessions.slice(0, limit);
   }
 
+  if (options?.json) {
+    process.stdout.write(JSON.stringify(sessions, null, 2) + "\n");
+    return;
+  }
+
   if (sessions.length === 0) {
     if (scope.kind === "all") {
       process.stdout.write("No sessions found across all projects\n");
@@ -864,11 +869,6 @@ async function listSessionsCommand(
       process.stdout.write(`No sessions for current project: ${scope.projectRoot}\n\n`);
       process.stdout.write("Use `agentuse sessions list --all` to search all projects.\n");
     }
-    return;
-  }
-
-  if (options?.json) {
-    process.stdout.write(JSON.stringify(sessions, null, 2) + "\n");
     return;
   }
 
