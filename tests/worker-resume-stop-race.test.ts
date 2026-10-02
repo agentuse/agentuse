@@ -40,7 +40,7 @@ afterAll(async () => {
   mock.restore();
 });
 
-async function createSuspendedGateSession() {
+async function createSuspendedGateSession(input: Record<string, unknown> = { prompt: 'Approve?' }) {
   const { initStorage } = await import('../src/storage');
   const { SessionManager } = await import('../src/session');
   await initStorage(root);
@@ -81,7 +81,7 @@ async function createSuspendedGateSession() {
     tool: 'await_human',
     state: {
       status: 'pending',
-      input: { prompt: 'Approve?' },
+      input,
       suspendedAt: Date.now(),
       resumePayload: { kind: 'await_human', resumeToken: 'resume-token' },
     },
@@ -110,6 +110,32 @@ describe('worker resume preflight vs user Stop', () => {
     expect(final?.session.status).toBe('error');
     expect(final?.session.error?.code).toBe('USER_STOPPED');
     expect(finalPart?.type === 'tool' ? finalPart.state.status : undefined).toBe('completed');
+  });
+
+  test('rollback after a Stop revokes the lease the decision granted', async () => {
+    const { applyResumeToolResult, restoreResumeToolResult } = await import('../src/runner/resume');
+    const { LeaseStore } = await import('../src/runner/approval-lease');
+    const { manager, agentId, sessionId } = await createSuspendedGateSession({
+      prompt: 'Approve?',
+      changes: [{ label: 'Post', content: 'echo publish' }],
+    });
+
+    const applied = await applyResumeToolResult({
+      sessionManager: manager,
+      sessionId,
+      toolResult: { status: 'approve' },
+      resumeToken: 'resume-token',
+    });
+    const sessionDir = await manager.getSessionDirectory(sessionId, agentId);
+    expect(new LeaseStore(sessionDir).read()).toBeDefined();
+
+    await manager.stopSessionTree(sessionId, { code: 'USER_STOPPED', message: 'Session stopped by user' });
+    await restoreResumeToolResult({ sessionManager: manager, rollback: applied.rollback });
+
+    // No segment ran to consume the lease, so a later continuation of the
+    // stopped session must not inherit it.
+    expect(new LeaseStore(sessionDir).read()).toBeUndefined();
+    expect((await manager.findSession(sessionId))?.session.status).toBe('error');
   });
 
   test('a Stop during preflight stays durable and is reported as USER_STOPPED', async () => {

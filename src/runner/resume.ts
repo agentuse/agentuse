@@ -349,9 +349,16 @@ export async function restoreClaimedResumeToolResult(options: {
   // A terminal status recorded after the decision was applied (a user Stop, or
   // the run ending) is a newer lifecycle decision. Rolling back over it would
   // reopen the gate and turn a stopped session back into one awaiting approval.
+  // The decision's lease still goes: no segment ran to consume or revoke it, and
+  // a grant must never authorize a later continuation of the stopped session.
   const current = await sessionManager.findSession(rollback.sessionId);
   const status = current?.session.status;
-  if (status === 'error' || status === 'completed') return;
+  if (status === 'error' || status === 'completed') {
+    if (rollback.decisionEffects && !new LeaseStore(rollback.decisionEffects.sessionDir).revoke()) {
+      throw new Error('Failed to revoke the approval lease of a stopped session');
+    }
+    return;
+  }
 
   // Restore authorization state before making the approval pending again. A
   // pending gate must never be visible with the reject seal or approval lease
