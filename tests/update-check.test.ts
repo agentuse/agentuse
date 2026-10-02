@@ -136,4 +136,17 @@ describe('update check', () => {
     expect(exitCode, stderr).toBe(0);
     expect(stderr).not.toContain('SyntaxError');
   });
+  it('keeps a version another process cached while this refresh was in flight', async () => {
+    const cachePath = __testing.updateCachePath();
+    await mkdir(dirname(cachePath), { recursive: true });
+    // This process read the cache (no version yet) and started its request;
+    // another process then refreshed successfully before this one failed.
+    await writeFile(cachePath, JSON.stringify({ checkedAt: 2, latestVersion: '9.0.0' }));
+
+    __testing.recordRefreshResult(3);
+    expect(JSON.parse(await Bun.file(cachePath).text())).toEqual({ checkedAt: 3, latestVersion: '9.0.0' });
+
+    __testing.recordRefreshResult(4, '9.1.0');
+    expect(JSON.parse(await Bun.file(cachePath).text())).toEqual({ checkedAt: 4, latestVersion: '9.1.0' });
+  });
 });

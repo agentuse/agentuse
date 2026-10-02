@@ -208,6 +208,19 @@ export function shouldRefreshUpdateCache(checkedAt: number | undefined, now = Da
 }
 
 /**
+ * Write one refresh attempt's outcome. A failed attempt keeps whatever version
+ * the cache holds now, not the copy read before the request: another process
+ * may have refreshed it successfully in the meantime.
+ */
+function recordRefreshResult(checkedAt: number, latestVersion?: string): void {
+  const kept = latestVersion ?? readJson<UpdateCache>(updateCachePath())?.latestVersion;
+  atomicWriteJson(updateCachePath(), {
+    checkedAt,
+    ...(kept ? { latestVersion: kept } : {}),
+  } satisfies UpdateCache);
+}
+
+/**
  * Refresh npm's `latest` dist-tag without holding the process open. A failed
  * attempt still advances checkedAt when the process lives long enough to hear
  * the failure, preventing offline machines from retrying on every command.
@@ -223,10 +236,7 @@ export function refreshUpdateCacheInBackground(currentVersion: string, now = Dat
     if (settled) return;
     settled = true;
     refreshInFlight = false;
-    atomicWriteJson(updateCachePath(), {
-      checkedAt: now,
-      ...(latestVersion ? { latestVersion } : cache?.latestVersion ? { latestVersion: cache.latestVersion } : {}),
-    } satisfies UpdateCache);
+    recordRefreshResult(now, latestVersion);
   };
 
   const request = httpsGet(
@@ -271,4 +281,5 @@ export const __testing = {
   noticeCachePath,
   cachedUpdate,
   shouldRemind,
+  recordRefreshResult,
 };
