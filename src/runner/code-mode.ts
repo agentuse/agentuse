@@ -18,6 +18,7 @@ import {
 import { typecheckCodeMode, type CodeModeSourceLocation } from './code-mode-typecheck';
 import { mapCodeModeStack } from './code-mode-source-map';
 import { OUTCOME_TOOL_NAMES } from '../tools/report-outcome';
+import { trimLeadingLowSurrogate, trimTrailingHighSurrogate } from '../tools/tool-output-limits';
 import {
   describeCodeModeResultFromSerialized,
   isIncompleteCapturedResult,
@@ -334,13 +335,39 @@ function safeErrorMessage(error: unknown): string {
   }
 }
 
-function partialEffectsError(error: unknown, completed: readonly CompletedNestedCall[]): Error {
-  const message = safeErrorMessage(error);
+const DIAGNOSTIC_MIN_CHARS = 512;
+const DIAGNOSTIC_ENVELOPE_RESERVE = 512;
+const DIAGNOSTIC_MARKER_RESERVE = 64;
+
+/**
+ * A failure's message is guest-controlled: thrown text, joined nested tool
+ * errors, a failing initial job, post-effect validation dumps. It shares the
+ * outputChars budget with emitted output; the host-built effects ledger and
+ * telemetry are bounded separately. Short diagnostics are never cut.
+ */
+function diagnosticBudget(outputChars: number): number {
+  return Math.max(DIAGNOSTIC_MIN_CHARS, Math.floor(outputChars / 2) - DIAGNOSTIC_ENVELOPE_RESERVE);
+}
+
+/** Keep the head (error code and message) and the tail (the user.ts frame). */
+function boundDiagnostic(message: string, maxChars: number): string {
+  if (message.length <= maxChars) return message;
+  const keep = Math.max(0, maxChars - DIAGNOSTIC_MARKER_RESERVE);
+  const headChars = Math.ceil(keep * 0.75);
+  const head = trimTrailingHighSurrogate(message.slice(0, headChars));
+  const tail = trimLeadingLowSurrogate(message.slice(message.length - (keep - headChars)));
+  const omitted = message.length - head.length - tail.length;
+  return `${head}\n… [${omitted} diagnostic characters omitted] …\n${tail}`;
+}
+
+function partialEffectsError(error: unknown, message: string, completed: readonly CompletedNestedCall[]): Error {
   if (completed.length === 0) {
-    try {
-      if (error instanceof Error) return error;
-    } catch {
-      // Fall through to the safe wrapper for a hostile proxy.
+    if (message === safeErrorMessage(error)) {
+      try {
+        if (error instanceof Error) return error;
+      } catch {
+        // Fall through to the safe wrapper for a hostile proxy.
+      }
     }
     return new Error(message);
   }
@@ -746,8 +773,9 @@ export async function executeCodeModeDetailed(
   };
   const asExecutionError = (error: unknown): CodeModeExecutionError => {
     if (error instanceof CodeModeExecutionError) return error;
-    const cause = partialEffectsError(error, completedCalls);
-    const fitted = fitCodeModeOutput(undefined, capturedOutput, limits.outputChars, false);
+    const diagnostic = boundDiagnostic(safeErrorMessage(error), diagnosticBudget(limits.outputChars));
+    const cause = partialEffectsError(error, diagnostic, completedCalls);
+    const fitted = fitCodeModeOutput(undefined, capturedOutput, Math.max(0, limits.outputChars - diagnostic.length), false);
     const reusable = reusableResults(completedCalls);
     return new CodeModeExecutionError({
       status: 'failed',

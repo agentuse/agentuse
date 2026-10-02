@@ -470,6 +470,71 @@ describe('Code Mode', () => {
     }));
   });
 
+  it('bounds guest-controlled failure text to outputChars while keeping its head and source location', async () => {
+    const failureFor = async (source: string, options: Partial<Parameters<typeof executeCodeModeDetailed>[1]> = {}) => {
+      try {
+        await executeCodeModeDetailed(source, {
+          dispatcher: { dispatch: async () => null },
+          toolNames: [],
+          parentCallId: 'bounded-failure-text',
+          limits: { outputChars: 1_000 },
+          ...options,
+        });
+      } catch (error) {
+        expect(error).toBeInstanceOf(CodeModeExecutionError);
+        return (error as CodeModeExecutionError).result;
+      }
+      throw new Error('Expected Code Mode to fail');
+    };
+
+    const thrown = await failureFor('const size = 5_000;\nthrow new Error("boom:" + "x".repeat(size));');
+    expect(thrown.error.code).toBe('runtime_error');
+    expect(JSON.stringify(thrown).length).toBeLessThanOrEqual(1_000);
+    expect(thrown.error.message).toStartWith('Code Mode failed: boom:xxx');
+    expect(thrown.error.message).toMatch(/… \[\d+ diagnostic characters omitted\] …/);
+    expect(thrown.error.message).toEndWith('(agentuse-code-mode:user.ts:2:7)');
+
+    const withOutput = await failureFor(
+      'for (let i = 0; i < 40; i++) text("line " + i + " " + "y".repeat(40));\nthrow new Error("z".repeat(5_000));',
+    );
+    expect(withOutput.output?.length).toBeGreaterThan(0);
+    expect(withOutput.error.message.length + JSON.stringify(withOutput.output).length).toBeLessThanOrEqual(1_000);
+
+    const joined = await failureFor(
+      'for (let i = 0; i < 20; i++) tools.fail({ i });\nreturn "done";',
+      {
+        dispatcher: { dispatch: async () => { throw new Error('nested '.repeat(100)); } },
+        toolNames: ['fail'],
+      },
+    );
+    expect(joined.error.code).toBe('tool_execution');
+    expect(joined.error.message).toStartWith('Code Mode has unhandled nested tool failures:');
+    expect(JSON.stringify(joined).length).toBeLessThanOrEqual(1_000);
+  });
+
+  it('keeps the completed-effects ledger whole when the failure text is bounded', async () => {
+    let caught: unknown;
+    try {
+      await executeCodeModeDetailed(`
+        await tools.load({});
+        throw new Error("w".repeat(5_000));
+      `, {
+        dispatcher: { dispatch: async () => ({ rows: [1, 2, 3] }) },
+        toolNames: ['load'],
+        parentCallId: 'bounded-failure-ledger',
+        limits: { outputChars: 1_000 },
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(CodeModeExecutionError);
+    const message = (caught as CodeModeExecutionError).result.error.message;
+    const [diagnostic, ledger] = message.split('\nCompleted nested calls before failure (do not repeat these effects): ');
+    expect(diagnostic!.length).toBeLessThanOrEqual(512);
+    expect(JSON.parse(ledger!)).toEqual([expect.objectContaining({ toolName: 'load' })]);
+  });
+
   it('returns the typed failure envelope from the model-facing tool boundary', async () => {
     const dispatcher = new ToolDispatcher({});
     dispatcher.register('code_exec', createCodeExecTool({
