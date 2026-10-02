@@ -50,6 +50,7 @@
 - **Approving after context compaction works.** The suspension snapshot is no longer overwritten as the run shuts down, which made approval fail with `RESUME_HISTORY_INVALID`.
 - **Stop wins over a failing resume.** Stopping a session while an approval is being applied, or while a manager's delegated work is being handed back, now sticks if setup then fails, and the API reports `USER_STOPPED`.
 - **Stop always cancels an approval already given.** Every session a Stop ends loses its approval lease, so a later continuation of the stopped session cannot run the approved command.
+- **Code Mode works in the packaged Desktop app.** The app now ships TypeScript's standard library declarations for the Code Mode type check and runs esbuild from outside the app archive, and the release smoke-tests Code Mode before uploading. A failed esbuild load is retried on the next call instead of breaking Code Mode and plugin loading until restart.
 - **Delegated agents stop their sandbox when they finish.** Each sandboxed sub-agent call used to leave its container running.
 - **`agentuse sessions stop` sends `AGENTUSE_API_KEY` to the daemon.** If the daemon refuses, the command fails with its reason instead of marking the session stopped locally while the run continues.
 - **Sessions of a serve worker that died after its replacement started are marked interrupted** instead of staying "running" forever.
