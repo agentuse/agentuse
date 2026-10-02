@@ -10,6 +10,7 @@ import type { AgentConfig } from './parser';
 import { resolve, isAbsolute } from 'path';
 import { toErrorMessage } from './utils/error-message';
 import { setApprovalToolContract } from './tools/tool-contract';
+import { withDeadline } from './utils/deadline';
 
 // Use the actual type from the parser to avoid mismatches
 // Note: Using mcpServers (the normalized field after transform)
@@ -18,6 +19,22 @@ export type MCPServersConfig = AgentConfig['mcpServers'];
 
 type MCPClient = Awaited<ReturnType<typeof createMCPClient>>;
 type MCPResource = Awaited<ReturnType<MCPClient['listResources']>>['resources'][number];
+
+/**
+ * An MCP tool call that outlived its timeout. MCP has no reliable remote
+ * cancellation (a stdio server is never told the client gave up), so the
+ * server may still complete the call. This is not a safe failure: the effect
+ * must be checked before the call is retried.
+ */
+export class ToolOutcomeUnknownError extends Error {
+  override name = 'ToolOutcomeUnknownError';
+  constructor(toolName: string, timeoutSeconds: number) {
+    super(
+      `Tool ${toolName} timed out after ${timeoutSeconds}s and its outcome is unknown: ` +
+      'the MCP server may still complete the call. Check whether its effect happened before retrying.',
+    );
+  }
+}
 
 /**
  * Fallback bound on the MCP handshake. Without it a wedged `npx` or a server
@@ -663,27 +680,15 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
           execute: async (args: any, opts: any) => {
               let result: any;
 
-              // Apply timeout if configured (0 means no timeout)
+              // Apply timeout if configured (0 means no timeout). The call gets
+              // its own signal, linked to the run's, that is aborted on the
+              // deadline so in-process and HTTP transports stop the request.
               if (timeoutSeconds > 0) {
-                let timeoutId: ReturnType<typeof setTimeout> | undefined;
-                const timeoutPromise = new Promise((_, reject) => {
-                  timeoutId = setTimeout(() => {
-                    const error = new Error(`Tool timed out after ${timeoutSeconds}s`);
-                    error.name = 'TimeoutError';
-                    reject(error);
-                  }, timeoutSeconds * 1000);
-                });
-
-                try {
-                  result = await Promise.race([
-                    originalExecute(args, opts),
-                    timeoutPromise
-                  ]);
-                } finally {
-                  // Otherwise the pending timer keeps the event loop alive
-                  // for up to timeoutSeconds after the tool finishes.
-                  clearTimeout(timeoutId);
-                }
+                result = await withDeadline(
+                  (signal) => originalExecute(args, { ...opts, abortSignal: signal }),
+                  timeoutSeconds * 1000,
+                  { parent: opts?.abortSignal, error: () => new ToolOutcomeUnknownError(prefixedName, timeoutSeconds) },
+                );
               } else {
                 // No timeout - execute normally
                 result = await originalExecute(args, opts);
