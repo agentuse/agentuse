@@ -423,6 +423,6 @@ export const GLOSSARY_ITEMS = [
   },
   {
     term: 'Cost/Success',
-    definition: 'Average cost per successful trial. Accounts for failed attempts, so lower is more cost-effective.',
+    definition: 'Total cost of all trials, failed ones included, divided by the number of successes. A trial that errored before finishing counts as no cost, since its partial usage is not reported. Blank when nothing succeeded or a price is unknown.',
   },
 ];

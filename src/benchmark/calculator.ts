@@ -119,6 +119,23 @@ function calculateWeightedScore(
 
 // ============ Aggregation Helpers ============
 
+/**
+ * Total spend of every attempt, failed ones included, divided by the number of
+ * successes: what one success actually costs. Undefined when nothing succeeded
+ * or when any attempt's price is unknown, rather than a figure that silently
+ * leaves part of the spend out.
+ */
+function costPerSuccess(trials: TrialResult[]): number | undefined {
+  const successes = trials.filter((t) => t.execution.success && t.output.valid).length;
+  if (successes === 0) return undefined;
+  let total = 0;
+  for (const trial of trials) {
+    if (trial.usage.estimatedCostUsd === undefined) return undefined;
+    total += trial.usage.estimatedCostUsd;
+  }
+  return total / successes;
+}
+
 function aggregateToolMetrics(traces: ToolCallTrace[]): ToolMetrics[] {
   const toolMap = new Map<
     string,
@@ -297,13 +314,7 @@ function calculateScenarioMetrics(
   const validCosts = trials
     .map((t) => t.usage.estimatedCostUsd)
     .filter((c): c is number => c !== undefined);
-  const validSuccessCosts = successfulTrials
-    .map((t) => t.usage.estimatedCostUsd)
-    .filter((c): c is number => c !== undefined);
-  const costPerSuccess =
-    validSuccessCosts.length > 0
-      ? validSuccessCosts.reduce((sum, c) => sum + c, 0) / validSuccessCosts.length
-      : undefined;
+  const scenarioCostPerSuccess = costPerSuccess(trials);
 
   // Tool call stats (from successful trials only)
   const toolCounts = successfulTrials.map((t) => t.toolCalls.total);
@@ -341,7 +352,7 @@ function calculateScenarioMetrics(
           meanUsd: validCosts.reduce((a, b) => a + b, 0) / validCosts.length,
           totalUsd: validCosts.reduce((a, b) => a + b, 0),
         }),
-        ...(costPerSuccess !== undefined && { perSuccessUsd: costPerSuccess }),
+        ...(scenarioCostPerSuccess !== undefined && { perSuccessUsd: scenarioCostPerSuccess }),
       },
       toolCalls: {
         meanCount: toolCounts.length > 0 ? toolCounts.reduce((a, b) => a + b, 0) / toolCounts.length : 0,
@@ -618,13 +629,7 @@ export function calculateMetrics(raw: RawBenchmarkResult): SuiteResult {
       const agentErrorCounts = mergeErrorCounts(
         scenarios.map((s) => s.metrics.errorCounts).filter((e): e is ErrorCounts => e !== undefined)
       );
-      const validSuccessCosts = successfulTrials
-        .map((t) => t.usage.estimatedCostUsd)
-        .filter((c): c is number => c !== undefined);
-      const agentCostPerSuccess =
-        validSuccessCosts.length > 0
-          ? validSuccessCosts.reduce((sum, c) => sum + c, 0) / validSuccessCosts.length
-          : undefined;
+      const agentCostPerSuccess = costPerSuccess(allTrials);
 
       agents.push({
         agentPath,
@@ -671,16 +676,7 @@ export function calculateMetrics(raw: RawBenchmarkResult): SuiteResult {
       agents.map((a) => a.aggregate.errorCounts).filter((e): e is ErrorCounts => e !== undefined)
     );
 
-    const successfulTrials = allModelTrials.filter(
-      (t) => t.execution.success && t.output.valid
-    );
-    const validSuccessCosts = successfulTrials
-      .map((t) => t.usage.estimatedCostUsd)
-      .filter((c): c is number => c !== undefined);
-    const modelCostPerSuccess =
-      validSuccessCosts.length > 0
-        ? validSuccessCosts.reduce((sum, c) => sum + c, 0) / validSuccessCosts.length
-        : undefined;
+    const modelCostPerSuccess = costPerSuccess(allModelTrials);
 
     // Initial overall score (will be recalculated after efficiency and toolSuccessRate)
     const overallScore = avgPassK * 50; // efficiency and toolSuccessRate added later

@@ -63,38 +63,3 @@ export async function evaluateTrial(
 
   return updatedTrial;
 }
-
-/**
- * Calculate pass^k metric
- * pass^k = probability of at least one success in k trials
- * pass^k = 1 - (1 - p)^k where p is single-trial success rate
- */
-export function calculatePassK(trials: TrialResult[], k: number): number {
-  if (trials.length === 0) return 0;
-
-  const successRate =
-    trials.filter((t) => t.execution.success && t.output.valid).length /
-    trials.length;
-
-  return 1 - Math.pow(1 - successRate, k);
-}
-
-/**
- * Calculate consistency score
- * High consistency = low variance in outcomes
- */
-export function calculateConsistency(trials: TrialResult[]): number {
-  if (trials.length === 0) return 0;
-
-  const outcomes: number[] = trials.map((t) =>
-    t.execution.success && t.output.valid ? 1 : 0
-  );
-
-  const mean = outcomes.reduce((a: number, b: number) => a + b, 0) / outcomes.length;
-  const variance =
-    outcomes.reduce((sum: number, val: number) => sum + Math.pow(val - mean, 2), 0) /
-    outcomes.length;
-
-  // Consistency is inverse of standard deviation (normalized to 0-1)
-  return 1 - Math.sqrt(variance);
-}
