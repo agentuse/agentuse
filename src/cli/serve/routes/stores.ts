@@ -67,12 +67,9 @@ export async function storeRoutes(ctx: ServeContext, rq: ServeRequest): Promise<
       for (const project of selectedProjects) {
         try {
           const row = await listStoreRows(project, storeName);
-          rows.push(row);
+          if (row) rows.push(row);
         } catch (err) {
-          const code = (err as NodeJS.ErrnoException).code;
-          if (code !== 'ENOENT') {
-            errors.push({ projectId: project.id, message: toErrorMessage(err) });
-          }
+          errors.push({ projectId: project.id, message: toErrorMessage(err) });
         }
       }
 
@@ -115,10 +112,7 @@ export async function storeRoutes(ctx: ServeContext, rq: ServeRequest): Promise<
             break;
           }
         } catch (err) {
-          const code = (err as NodeJS.ErrnoException).code;
-          if (code !== 'ENOENT') {
-            errors.push({ projectId: project.id, message: toErrorMessage(err) });
-          }
+          errors.push({ projectId: project.id, message: toErrorMessage(err) });
         }
       }
 

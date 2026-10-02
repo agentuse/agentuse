@@ -143,12 +143,9 @@ function resolveStoreRoot(projectRoot: string): string {
  * by listProjectStores). The cache is keyed on the file's identity, so a write
  * by any agent in this process is picked up on the next read.
  */
-async function readStoreItems(projectRoot: string, storeName: string): Promise<StoreItem[]> {
+async function readStoreItems(projectRoot: string, storeName: string): Promise<StoreItem[] | null> {
   if (!isSafeStoreName(storeName)) throw new Error('Invalid store name');
-  const storePath = storeItemsPath(projectRoot, storeName);
-  const items = await readStoreItemsAtPath(storePath);
-  if (!items) throw new Error(`No store at ${storePath}`);
-  return items;
+  return readStoreItemsAtPath(storeItemsPath(projectRoot, storeName));
 }
 
 export async function listProjectStores(project: StoreProjectRef): Promise<{ stores: StoreBrowserSummary[]; errors: Array<{ storeName?: string; message: string }> }> {
@@ -163,6 +160,8 @@ export async function listProjectStores(project: StoreProjectRef): Promise<{ sto
     if (!isSafeStoreName(storeName)) continue;
     try {
       const items = await readStoreItems(project.root, storeName);
+      // The glob raced a delete: the store is gone, not broken.
+      if (!items) continue;
       const timestamps = items
         .map((item) => Date.parse(item.updatedAt))
         .filter((value) => Number.isFinite(value));
@@ -189,8 +188,10 @@ export async function listProjectStores(project: StoreProjectRef): Promise<{ sto
   return { stores, errors };
 }
 
-export async function listStoreRows(project: StoreProjectRef, storeName: string): Promise<StoreBrowserRows> {
+/** One store's rows, or null when the project has no such store. */
+export async function listStoreRows(project: StoreProjectRef, storeName: string): Promise<StoreBrowserRows | null> {
   const items = await readStoreItems(project.root, storeName);
+  if (!items) return null;
   items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   return { projectId: project.id, storeName, items, ...summarizeStoreItems(items) };
 }
@@ -202,6 +203,7 @@ export async function listStoreRows(project: StoreProjectRef, storeName: string)
  */
 export async function findStoreItemRelations(project: StoreProjectRef, storeName: string, itemId: string): Promise<StoreItemRelations | null> {
   const items = await readStoreItems(project.root, storeName);
+  if (!items) return null;
   const item = items.find((entry) => entry.id === itemId);
   if (!item) return null;
   const parentItem = item.parentId ? items.find((entry) => entry.id === item.parentId) : undefined;
@@ -227,13 +229,14 @@ const METRICS_STORE = 'metrics';
  */
 export async function readSessionResults(projectRoot: string): Promise<Map<string, SessionResult[]>> {
   const bySession = new Map<string, SessionResult[]>();
-  let items: StoreItem[];
+  let items: StoreItem[] | null;
   try {
     items = await readStoreItems(projectRoot, METRICS_STORE);
   } catch {
-    // Missing, half-written or invalid store must not take the sessions list down.
+    // A half-written or invalid store must not take the sessions list down.
     return new Map();
   }
+  if (!items) return bySession;
   for (const item of items) {
     if (item.type !== 'metric') continue;
     const { metric, sessionId, note } = item.data;
