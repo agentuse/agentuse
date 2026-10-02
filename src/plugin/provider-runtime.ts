@@ -66,11 +66,43 @@ export function providerPluginRegistryPath(): string {
   return join(providerPluginHome(), 'registry.json');
 }
 
+/**
+ * Strict read of a plugin registry file, for anything that writes it back.
+ * Only a missing file counts as empty: an unreadable file, bad JSON, or a root
+ * that is not an array throws, so a registry update never replaces records it
+ * failed to read.
+ */
+export async function readPluginRegistryFile(file: string): Promise<InstalledPluginRecord[]> {
+  const unusable = (reason: string) => new Error(
+    `Plugin registry ${file} ${reason}. It was left unchanged. Fix or move it aside, then retry.`
+  );
+  let content: string;
+  try {
+    content = await readFile(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw unusable(`could not be read (${(error as Error).message})`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch (error) {
+    throw unusable(`is not valid JSON (${(error as Error).message})`);
+  }
+  if (!Array.isArray(parsed)) throw unusable('does not contain a JSON array');
+  return parsed as InstalledPluginRecord[];
+}
+
+/** Strict read of the global registry; see readPluginRegistryFile. */
+export async function readInstalledPluginRecordsStrict(): Promise<InstalledPluginRecord[]> {
+  const records = await readPluginRegistryFile(providerPluginRegistryPath());
+  return records.map((record) => ({ scope: 'global', ...(record as object) }) as InstalledPluginRecord);
+}
+
+/** Global registry for lookups and listing: an unusable file reads as no plugins. */
 export async function readInstalledPluginRecords(): Promise<InstalledPluginRecord[]> {
   try {
-    const parsed = JSON.parse(await readFile(providerPluginRegistryPath(), 'utf8')) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map((record) => ({ scope: 'global', ...record })) as InstalledPluginRecord[];
+    return await readInstalledPluginRecordsStrict();
   } catch {
     return [];
   }

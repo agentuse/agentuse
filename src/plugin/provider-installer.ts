@@ -9,6 +9,8 @@ import {
   providerPluginHome,
   providerPluginRegistryPath,
   readInstalledPluginRecords,
+  readInstalledPluginRecordsStrict,
+  readPluginRegistryFile,
   resetProviderPluginCache,
 } from './provider-runtime';
 import type { InstalledPluginRecord } from './types';
@@ -249,10 +251,10 @@ export async function inspectPluginSource(source: string): Promise<PluginSourceI
   }
 }
 
+/** Project registry for listing: an unusable file reads as no plugins. */
 export async function readProjectPluginRecords(options?: PluginInstallOptions): Promise<InstalledPluginRecord[]> {
   try {
-    const value = JSON.parse(await readFile(projectPluginRegistryPath(options), 'utf8')) as unknown;
-    return Array.isArray(value) ? value as InstalledPluginRecord[] : [];
+    return await readPluginRegistryFile(projectPluginRegistryPath(options));
   } catch {
     return [];
   }
@@ -268,8 +270,9 @@ function assertManagedDirectory(record: InstalledPluginRecord, options?: PluginI
   if (target === home || dirname(target) !== home) throw new Error(`Refusing to modify unmanaged plugin directory: ${record.directory}`);
 }
 
+/** Strict read for the registry being mutated, so an unusable file is never overwritten. */
 async function readRecords(options?: PluginInstallOptions): Promise<InstalledPluginRecord[]> {
-  return options?.local ? readProjectPluginRecords(options) : readInstalledPluginRecords();
+  return options?.local ? readPluginRegistryFile(projectPluginRegistryPath(options)) : readInstalledPluginRecordsStrict();
 }
 
 /**
@@ -375,7 +378,7 @@ async function inspectLinkedPlugin(source: string, options?: PluginInstallOption
 }
 
 export async function installPlugin(source: string, options?: PluginInstallOptions): Promise<InstalledPluginRecord> {
-  const records = options?.local ? await readProjectPluginRecords(options) : await readInstalledPluginRecords();
+  const records = await readRecords(options);
   // A path on disk always links (edits are live); only a path pinned to a full
   // commit, or a remote source, is cloned into the managed plugin home.
   const resolvedLocal = isLocalPath(source) ? resolvePluginSource(source) : undefined;
@@ -415,7 +418,7 @@ export async function installPlugin(source: string, options?: PluginInstallOptio
 export type PluginUpdateResult = InstalledPluginRecord & { changed: boolean };
 
 export async function updatePlugins(name?: string, options?: PluginInstallOptions): Promise<PluginUpdateResult[]> {
-  const records = options?.local ? await readProjectPluginRecords(options) : await readInstalledPluginRecords();
+  const records = await readRecords(options);
   const targets = name ? records.filter((item) => item.name === name) : records;
   if (name && targets.length === 0) throw new Error(`Plugin '${name}' is not installed`);
   const results: PluginUpdateResult[] = [];
@@ -474,7 +477,7 @@ export async function updatePlugins(name?: string, options?: PluginInstallOption
 }
 
 export async function removePlugin(name: string, options?: PluginInstallOptions): Promise<InstalledPluginRecord> {
-  const records = options?.local ? await readProjectPluginRecords(options) : await readInstalledPluginRecords();
+  const records = await readRecords(options);
   const record = records.find((item) => item.name === name);
   if (!record) throw new Error(`Plugin '${name}' is not installed`);
   if (record.linked) {
