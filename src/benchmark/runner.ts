@@ -1,6 +1,7 @@
 import { ulid } from 'ulid';
-import { mkdir, rm } from 'fs/promises';
-import { join, dirname } from 'path';
+import { cp, mkdir, rm } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join, dirname, resolve } from 'path';
 import { runAgent } from '../runner/run.js';
 import { prepareAgentExecution } from '../runner/preparation.js';
 import { connectMCP } from '../mcp.js';
@@ -22,8 +23,8 @@ import {
   type ErrorCategory,
 } from './types.js';
 import { calculateMetrics } from './calculator.js';
-import { evaluateCompletion } from './evaluator/completion.js';
-import { evaluateArtifacts } from './evaluator/artifacts.js';
+import { evaluateTrial } from './evaluator/index.js';
+import { getGitRootSync, getProjectDirSync } from '../storage/paths.js';
 import { toErrorMessage } from '../utils/error-message.js';
 import type { ParsedAgent } from '../parser.js';
 import { logger } from '../utils/logger.js';
@@ -39,21 +40,14 @@ async function runTrial(
   trialNumber: number,
   config: BenchmarkRunConfig,
   settings: EffectiveSuiteConfig,
-  agentFilePath: string
+  agentFilePath: string,
+  workspace: string
 ): Promise<TrialResult> {
   const startTime = Date.now();
   let timeToFirstToken: number | undefined;
 
   // Substitute dynamic variables ({{$uuid}}, {{$timestamp}}, etc.) for this trial
   const scenarioInput = substituteTemplateVariables(scenario.input);
-
-  // Create a temp directory for this trial's artifacts
-  const trialDir = join(
-    config.outputDir ?? '.agentuse/benchmark',
-    'trials',
-    `${scenario.id}-${trialNumber}`
-  );
-  await mkdir(trialDir, { recursive: true });
 
   // Set up abort controller with timeout
   const abortController = new AbortController();
@@ -62,6 +56,8 @@ async function runTrial(
   const projectRoot = dirname(agentFilePath);
 
   try {
+    await prepareTrialWorkspace(workspace, scenario, config);
+
     // Connect MCP servers from agent config
     const mcpClients = await connectMCP(
       agent.config.mcpServers,
@@ -71,8 +67,12 @@ async function runTrial(
     );
 
     try {
-      // Use agent directory as projectRoot for skill discovery and cwd for bash commands
-      const projectContext = { projectRoot, stateRoot: projectRoot, cwd: projectRoot };
+      // The agent directory stays projectRoot, so skills and ${agentDir} resolve
+      // as usual. The trial's own workspace is its cwd (files it writes, and
+      // the artifacts it is judged on) and its stateRoot (learnings it
+      // captures), so nothing one trial leaves behind reaches the next trial,
+      // another model, or the agent's real state.
+      const projectContext = { projectRoot, stateRoot: workspace, cwd: workspace };
 
       // Create goal tracker for this trial
       const goalTracker = new GoalTracker();
@@ -120,42 +120,6 @@ async function runTrial(
       // Extract tool names from traces
       const toolNames = result.toolCallTraces?.map((t) => t.name) ?? [];
 
-      // Evaluate output if validation is specified
-      let outputValid = true;
-      let validationDetails = '';
-
-      if (scenario.expected.output) {
-        const evalResult = await evaluateCompletion(
-          result.text,
-          scenario.expected.output
-        );
-        outputValid = evalResult.valid;
-        validationDetails = evalResult.details;
-      }
-
-      // Evaluate artifacts if expectations are specified
-      let artifactResult = {
-        checked: 0,
-        passed: 0,
-        details: [] as Array<{ path: string; exists: boolean; containsMatch: boolean }>,
-      };
-
-      if (scenario.expected.artifacts && scenario.expected.artifacts.length > 0) {
-        const evalResult = await evaluateArtifacts(
-          scenario.expected.artifacts,
-          projectRoot // Use agent's project root for artifact paths
-        );
-        artifactResult = {
-          checked: evalResult.checked,
-          passed: evalResult.passed,
-          details: evalResult.details.map((d) => ({
-            path: d.path,
-            exists: d.exists,
-            containsMatch: d.containsMatch,
-          })),
-        };
-      }
-
       // Process goal tracking
       if (result.toolCallTraces) {
         goalTracker.processTraces(result.toolCallTraces);
@@ -163,7 +127,9 @@ async function runTrial(
       const trackedGoals = goalTracker.getGoals();
       const goalMetrics = goalTracker.getMetrics();
 
-      return {
+      // One verdict per trial, from the output and the artifacts together,
+      // judged in the same workspace the agent ran in.
+      return await evaluateTrial({
         trialNumber,
         execution: {
           success: true,
@@ -183,17 +149,13 @@ async function runTrial(
           names: toolNames,
           traces: result.toolCallTraces ?? [],
         },
-        output: {
-          text: result.text,
-          valid: outputValid,
-          ...(validationDetails && { validationDetails }),
-        },
-        artifacts: artifactResult,
+        output: { text: result.text, valid: false },
+        artifacts: { checked: 0, passed: 0, details: [] },
         goals: {
           tracked: trackedGoals,
           metrics: goalMetrics,
         },
-      };
+      }, scenario, workspace);
     } finally {
       // Clean up MCP clients
       for (const connection of mcpClients) {
@@ -251,13 +213,43 @@ async function runTrial(
       },
     };
   } finally {
-    // Clean up trial directory
-    try {
-      await rm(trialDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
+    await removeTrialWorkspace(workspace);
   }
+}
+
+/** A fresh workspace, seeded from the scenario's fixture directory if it has one. */
+async function prepareTrialWorkspace(
+  workspace: string,
+  scenario: Scenario,
+  config: BenchmarkRunConfig
+): Promise<void> {
+  await rm(workspace, { recursive: true, force: true });
+  await mkdir(workspace, { recursive: true });
+  if (scenario.fixture) {
+    await cp(resolve(dirname(config.suitePath), scenario.fixture), workspace, { recursive: true });
+  }
+}
+
+/**
+ * Remove a trial workspace and the per-project state the run keyed on it.
+ * Workspaces live outside any repository, so that state directory belongs to
+ * this trial alone; the check keeps a temp dir that somehow sits inside a
+ * repository from ever deleting that repository's state.
+ */
+async function removeTrialWorkspace(workspace: string): Promise<void> {
+  try {
+    if (getGitRootSync(workspace) === null) {
+      await rm(getProjectDirSync(workspace), { recursive: true, force: true });
+    }
+    await rm(workspace, { recursive: true, force: true });
+  } catch (error) {
+    logger.warn(`Could not remove benchmark workspace ${workspace}: ${toErrorMessage(error)}`);
+  }
+}
+
+/** Path-safe form of a model id, agent name, or scenario id. */
+function pathSegment(value: string): string {
+  return value.replace(/[^\w.-]+/g, '_');
 }
 
 /**
@@ -269,7 +261,8 @@ async function runScenario(
   scenario: Scenario,
   model: string,
   config: BenchmarkRunConfig,
-  settings: EffectiveSuiteConfig
+  settings: EffectiveSuiteConfig,
+  workspaceRoot: string
 ): Promise<RawTrialEntry[]> {
   const { runs } = settings;
   logger.info(`  Scenario: ${scenario.name} (${runs} runs)`);
@@ -277,7 +270,14 @@ async function runScenario(
   const entries: RawTrialEntry[] = [];
   for (let i = 0; i < runs; i++) {
     logger.info(`    Trial ${i + 1}/${runs}...`);
-    const trial = await runTrial(agent, scenario, i + 1, config, settings, test.agentPath);
+    const workspace = join(
+      workspaceRoot,
+      pathSegment(model),
+      pathSegment(test.agent.name),
+      pathSegment(scenario.id),
+      `trial-${i + 1}`
+    );
+    const trial = await runTrial(agent, scenario, i + 1, config, settings, test.agentPath, workspace);
     entries.push({
       model,
       agentPath: test.agentPath,
@@ -334,17 +334,24 @@ export async function runBenchmarkSuite(
   logger.info(`Total scenarios: ${tests.reduce((sum, t) => sum + t.scenarios.length, 0)}`);
   logger.separator();
 
+  // Trial workspaces live under the system temp dir, outside any repository,
+  // keyed by run so concurrent runs never share one.
+  const workspaceRoot = join(tmpdir(), 'agentuse-benchmark', runId);
   const trials: RawTrialEntry[] = [];
-  for (const target of targets) {
-    const model = target.resolved.model;
-    logger.info(`\n=== Model: ${model} ===\n`);
-    for (const test of tests) {
-      logger.info(`Agent: ${test.agent.name} (model: ${model})`);
-      const agent = agentForBenchmarkModel(test.agent, target);
-      for (const scenario of test.scenarios) {
-        trials.push(...await runScenario(test, agent, scenario, model, config, settings));
+  try {
+    for (const target of targets) {
+      const model = target.resolved.model;
+      logger.info(`\n=== Model: ${model} ===\n`);
+      for (const test of tests) {
+        logger.info(`Agent: ${test.agent.name} (model: ${model})`);
+        const agent = agentForBenchmarkModel(test.agent, target);
+        for (const scenario of test.scenarios) {
+          trials.push(...await runScenario(test, agent, scenario, model, config, settings, workspaceRoot));
+        }
       }
     }
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
   }
 
   return calculateMetrics({

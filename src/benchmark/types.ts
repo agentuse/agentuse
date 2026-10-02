@@ -45,6 +45,9 @@ export const ScenarioSchema = z.object({
   name: z.string(),
   difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
   input: z.string(), // Goal/problem given to agent
+  // Directory (relative to the suite file) copied into each trial's fresh
+  // workspace before the agent runs. Without one the workspace starts empty.
+  fixture: z.string().optional(),
   expected: z.object({
     artifacts: z.array(ArtifactExpectationSchema).optional(),
     output: OutputValidationSchema.optional(),

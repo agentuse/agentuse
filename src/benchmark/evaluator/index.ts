@@ -6,60 +6,54 @@ import { evaluateArtifacts } from './artifacts.js';
 import type { Scenario, TrialResult } from '../types.js';
 
 /**
- * Full evaluation of a trial result against scenario expectations
+ * The one verdict for a trial: valid only when the run succeeded and both the
+ * output check and every artifact expectation pass. Artifacts are read from
+ * `workspace`, the directory the agent ran in.
  */
 export async function evaluateTrial(
   trial: TrialResult,
   scenario: Scenario,
-  trialDir: string
+  workspace: string
 ): Promise<TrialResult> {
-  const updatedTrial = { ...trial };
-
-  // Skip evaluation if execution failed
   if (!trial.execution.success) {
-    updatedTrial.output.valid = false;
-    return updatedTrial;
+    return { ...trial, output: { ...trial.output, valid: false } };
   }
 
-  let outputValid = true;
-  let outputDetails = '';
+  let valid = true;
+  const details: string[] = [];
 
-  // Evaluate output if validation is specified
   if (scenario.expected.output) {
-    const outputResult = await evaluateCompletion(
-      trial.output.text,
-      scenario.expected.output
-    );
-    outputValid = outputResult.valid;
-    outputDetails = outputResult.details;
+    const outputResult = await evaluateCompletion(trial.output.text, scenario.expected.output);
+    valid = outputResult.valid;
+    if (outputResult.details) details.push(outputResult.details);
   }
 
-  // Evaluate artifacts if specified
+  let artifacts = trial.artifacts;
   if (scenario.expected.artifacts && scenario.expected.artifacts.length > 0) {
-    const artifactResult = await evaluateArtifacts(
-      scenario.expected.artifacts,
-      trialDir
-    );
-
-    updatedTrial.artifacts = {
+    const artifactResult = await evaluateArtifacts(scenario.expected.artifacts, workspace);
+    artifacts = {
       checked: artifactResult.checked,
       passed: artifactResult.passed,
-      details: artifactResult.details,
+      details: artifactResult.details.map((d) => ({
+        path: d.path,
+        exists: d.exists,
+        containsMatch: d.containsMatch,
+      })),
     };
-
-    // Overall validity requires both output and artifacts to pass
-    outputValid = outputValid && artifactResult.valid;
-
+    valid = valid && artifactResult.valid;
     if (!artifactResult.valid) {
-      const failedArtifacts = artifactResult.details
-        .filter((d) => !d.containsMatch)
-        .map((d) => d.path);
-      outputDetails += ` | Artifact failures: ${failedArtifacts.join(', ')}`;
+      const failed = artifactResult.details.filter((d) => !d.containsMatch).map((d) => d.path);
+      details.push(`Artifact failures: ${failed.join(', ')}`);
     }
   }
 
-  updatedTrial.output.valid = outputValid;
-  updatedTrial.output.validationDetails = outputDetails.trim();
-
-  return updatedTrial;
+  return {
+    ...trial,
+    artifacts,
+    output: {
+      text: trial.output.text,
+      valid,
+      ...(details.length > 0 && { validationDetails: details.join(' | ') }),
+    },
+  };
 }

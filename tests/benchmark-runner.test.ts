@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import type { ParsedAgent } from '../src/parser';
@@ -75,17 +75,23 @@ const PRICED_B = 'anthropic:claude-sonnet-4-5';
 
 let tempDir: string;
 let agentPath: string;
+let originalXdg: string | undefined;
 
 beforeEach(() => {
   runs = [];
   respond = async () => ({ text: 'done' });
   tempDir = mkdtempSync(join(tmpdir(), 'benchmark-runner-'));
+  // Trial state directories resolve under $XDG_DATA_HOME; keep them in the temp tree.
+  originalXdg = process.env.XDG_DATA_HOME;
+  process.env.XDG_DATA_HOME = join(tempDir, 'state');
   mkdirSync(join(tempDir, 'agents'), { recursive: true });
   agentPath = join(tempDir, 'agents', 'worker.agentuse');
   writeFileSync(agentPath, '---\nmodel: ${model}\n---\nDo the work.\n');
 });
 
 afterEach(() => {
+  if (originalXdg === undefined) delete process.env.XDG_DATA_HOME;
+  else process.env.XDG_DATA_HOME = originalXdg;
   rmSync(tempDir, { recursive: true, force: true });
 });
 
@@ -193,5 +199,97 @@ describe('benchmark effective settings', () => {
 
     await runBenchmarkSuite(suite({ models: [PRICED] }), runConfig());
     expect(runs[0]!.maxSteps).toBeUndefined();
+  });
+});
+
+describe('benchmark trial workspace and verdict', () => {
+  const artifactScenario = (over: Partial<Scenario> = {}) => scenario({
+    id: 'write-report',
+    expected: { artifacts: [{ path: 'report.md', exists: true, contains: ['total'] }] },
+    ...over,
+  });
+
+  it('fails a trial whose expected artifact is missing, even with no output check', async () => {
+    const result = await runBenchmarkSuite(suite({ models: [PRICED] }, [artifactScenario()]), runConfig());
+
+    const trial = result.modelResults[PRICED]!.agents[0]!.scenarios[0]!.trials[0]!;
+    expect(trial.output.valid).toBe(false);
+    expect(trial.output.validationDetails).toBe('Artifact failures: report.md');
+    expect(result.ranking[0]!.completionRate).toBe(0);
+    expect(result.modelResults[PRICED]!.aggregate.errorCounts!.validation_failure).toBe(1);
+  });
+
+  it('judges the artifact the agent wrote in its own workspace', async () => {
+    respond = async (call) => {
+      writeFileSync(join(call.projectContext!.cwd, 'report.md'), 'The total is 4.');
+      return { text: 'written' };
+    };
+    const result = await runBenchmarkSuite(suite({ models: [PRICED] }, [artifactScenario()]), runConfig());
+
+    expect(result.ranking[0]!.completionRate).toBe(1);
+    // The agent's own directory is never written to.
+    expect(existsSync(join(tempDir, 'agents', 'report.md'))).toBe(false);
+  });
+
+  it('gives every trial a fresh workspace as cwd and state root, then removes it', async () => {
+    const seen: boolean[] = [];
+    respond = async (call) => {
+      const cwd = call.projectContext!.cwd;
+      seen.push(existsSync(join(cwd, 'leftover')));
+      writeFileSync(join(cwd, 'leftover'), 'x');
+      return { text: 'done' };
+    };
+    await runBenchmarkSuite(suite({ models: [PRICED, PRICED_B], runs: 2 }), runConfig());
+
+    expect(seen).toEqual([false, false, false, false]);
+    const contexts = runs.map((r) => r.projectContext!);
+    expect(new Set(contexts.map((c) => c.cwd)).size).toBe(4);
+    for (const context of contexts) {
+      expect(context.projectRoot).toBe(join(tempDir, 'agents'));
+      expect(context.stateRoot).toBe(context.cwd);
+      expect(context.cwd.startsWith(join(tempDir, 'agents'))).toBe(false);
+      expect(existsSync(context.cwd)).toBe(false);
+    }
+  });
+
+  it("removes the state a trial kept under its workspace's project directory", async () => {
+    const { getProjectDirSync } = await import('../src/storage/paths');
+    const stateDirs: string[] = [];
+    respond = async (call) => {
+      const dir = getProjectDirSync(call.projectContext!.stateRoot);
+      mkdirSync(join(dir, 'learnings'), { recursive: true });
+      writeFileSync(join(dir, 'learnings', 'worker.learnings.md'), '# captured');
+      stateDirs.push(dir);
+      return { text: 'done' };
+    };
+    await runBenchmarkSuite(suite({ models: [PRICED], runs: 2 }), runConfig());
+
+    expect(stateDirs).toHaveLength(2);
+    expect(stateDirs.every((dir) => dir.startsWith(join(tempDir, 'state')) && !existsSync(dir))).toBe(true);
+  });
+
+  it("seeds the workspace from the scenario's fixture", async () => {
+    mkdirSync(join(tempDir, 'fixtures', 'sales'), { recursive: true });
+    writeFileSync(join(tempDir, 'fixtures', 'sales', 'input.csv'), 'a,b\n1,2\n');
+    let input = '';
+    respond = async (call) => {
+      input = readFileSync(join(call.projectContext!.cwd, 'input.csv'), 'utf-8');
+      return { text: 'done' };
+    };
+    await runBenchmarkSuite(suite({ models: [PRICED] }, [scenario({ fixture: 'fixtures/sales' })]), runConfig());
+
+    expect(input).toBe('a,b\n1,2\n');
+  });
+
+  it('rejects a suite whose fixture does not exist before running anything', async () => {
+    const { loadSuite } = await import('../src/benchmark/loader');
+    const suitePath = join(tempDir, 'suite.suite.yaml');
+    writeFileSync(suitePath, [
+      'id: s', 'name: S', 'config:', `  models: [${PRICED}]`, 'tests:', '  - agent: agents/worker.agentuse',
+      '    scenarios:', '      - id: a', '        name: A', '        input: go', '        fixture: fixtures/missing',
+      '        expected: {}', '',
+    ].join('\n'));
+
+    await expect(loadSuite(suitePath)).rejects.toThrow('Fixture for scenario "a" not found');
   });
 });

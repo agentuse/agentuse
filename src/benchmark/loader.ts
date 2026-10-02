@@ -160,6 +160,17 @@ export async function loadSuite(suitePath: string): Promise<LoadedSuite> {
     // Resolve agent path relative to suite directory
     const agentPath = join(suiteDir, test.agent);
 
+    // A missing fixture would fail every trial of the scenario; say so up front.
+    for (const scenario of test.scenarios) {
+      if (scenario.fixture && !existsSync(resolve(suiteDir, scenario.fixture))) {
+        throw new SuiteConfigError(
+          `Fixture for scenario "${scenario.id}" not found: ${scenario.fixture}`,
+          `tests.${test.agent}.scenarios.${scenario.id}.fixture`,
+          'not_found'
+        );
+      }
+    }
+
     try {
       const agent = await parseAgent(agentPath);
 
