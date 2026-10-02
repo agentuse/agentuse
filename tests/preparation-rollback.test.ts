@@ -102,12 +102,14 @@ describe('prepareAgentExecution rollback', () => {
     const agent = parseAgentContent('---\nmodel: demo:test\nskills:\n  auto: false\n---\nReview', 'rollback-fixture');
     const prepared = await prepareAgentExecution({ agent, mcpClients: [], sessionManager: manager, projectContext: context() });
     await prepared.cleanup();
-    await manager.setSessionSuspended(prepared.sessionID!, prepared.agentId);
+    const { sessionID, agentId } = prepared;
+    if (!sessionID || !agentId) throw new Error('fixture session was not created');
+    await manager.setSessionSuspended(sessionID, agentId);
     const setError = spyOn(manager, 'setSessionError');
     spyOn(manager, 'readToolsSnapshot').mockRejectedValue(new Error('EIO: snapshot read fixture'));
 
     await expect(prepareAgentExecution({
-      agent, mcpClients: [], sessionManager: manager, projectContext: context(), existingSessionId: prepared.sessionID,
+      agent, mcpClients: [], sessionManager: manager, projectContext: context(), existingSessionId: sessionID,
     })).rejects.toThrow('EIO: snapshot read fixture');
     expect(setError).not.toHaveBeenCalled();
     expect(await sessionStates(manager)).toEqual([{ status: 'suspended', code: undefined }]);
