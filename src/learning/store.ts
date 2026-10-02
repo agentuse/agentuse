@@ -8,20 +8,15 @@ import { getProjectDirSync, sanitizeAgentName } from '../storage/paths';
 import { computeAgentId } from '../utils/agent-id';
 import { agentBaseName } from '../utils/agent-name';
 import { logger } from '../utils/logger';
-import { withOwnershipLock } from '../utils/ownership-lock';
+import { withSerializedOwnershipLock } from '../utils/ownership-lock';
 import { atomicWriteFile } from '../utils/atomic-write';
 
 // Serialize read-modify-write sequences on the same learnings file so two
 // concurrent saves (e.g. two serve approval decisions on the same agent) can't
-// clobber each other. The promise chain orders callers in this process; the
-// ownership lock orders the runner, serve daemon, and CLI across processes.
-const fileLocks = new Map<string, Promise<unknown>>();
-export async function withLearningFileLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  const prev = fileLocks.get(key) ?? Promise.resolve();
-  const locked = () => withOwnershipLock(`${key}.lock`, fn, { label: 'learnings' });
-  const run = prev.then(locked, locked); // run fn once, after prev settles either way
-  fileLocks.set(key, run.then(() => {}, () => {}));
-  return run;
+// clobber each other, within this process and across the runner, serve daemon,
+// and CLI.
+export function withLearningFileLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  return withSerializedOwnershipLock(`${key}.lock`, fn, { label: 'learnings' });
 }
 
 /** Collision-checked 8-char hex id (randomUUID is always long enough, unlike
