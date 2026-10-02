@@ -40,7 +40,7 @@ import type { AgentChunk } from './types';
 import { isSuspendSignal } from './suspend';
 import { sanitizeWALInput, type EffectWAL } from './effect-wal';
 import { BashPermissionController, LeaseStore } from './approval-lease';
-import { GateSealStore } from './gate-seal';
+import { GateSealStore, type GateSealSnapshot } from './gate-seal';
 import {
   ApprovalInputLedger,
   ApprovalInputLedgerError,
@@ -52,7 +52,7 @@ import { applyGateDecisionEffects } from './gate-decision';
 import { attachCommandToPendingGate, withGatePlanPreflight } from './gate-preflight';
 import { isMockMode, resolveMockApprovalDecision, mockGateDecisionResult } from './mock-tools';
 import { registerSDKTelemetryOnce } from '../telemetry/sdk-telemetry';
-import { recordErrorMarker } from './session-helper';
+import { isHumanGateDecision, recordErrorMarker } from './session-helper';
 import { extractApiErrorDetail } from './api-error';
 import { toErrorMessage } from '../utils/error-message';
 import { completeApprovalValueDisplay, type CompleteApprovalValueDisplay } from '../utils/approval-value';
@@ -1633,23 +1633,42 @@ async function* executeAgentAttempt(
       let gatePendingThisStep = false;
       let pendingGateInput: Record<string, unknown> | undefined;
       let pendingMockDecision: ReturnType<typeof mockGateDecisionResult> | undefined;
+      // The seal as it was before a mocked decision was provisionally applied.
+      let sealBeforeMockDecision: GateSealSnapshot | undefined;
 
       const clearInlineGateState = (result: unknown) => {
+        const gateInput = pendingGateInput;
+        const mockDecision = pendingMockDecision;
+        const sealBefore = sealBeforeMockDecision;
         gatePendingThisStep = false;
         pendingGateInput = undefined;
         pendingMockDecision = undefined;
+        sealBeforeMockDecision = undefined;
         gateBarrierActive = false;
         gateBarrierCallId = undefined;
-        if (
-          result
-          && typeof result === 'object'
-          && (result as Record<string, unknown>).source === 'gate-preflight'
-        ) {
-          // Mock approval effects are applied from toolApproval so a later step
-          // can use the lease. If final-payload validation rejects inline, undo
-          // that provisional grant.
-          leaseStore.revoke();
+        // Mock decision effects are applied provisionally from toolApproval so a
+        // later step can use the lease. What stands is what the gate actually
+        // returned: a mocked reviewer decision (which an escalated gate may have
+        // turned from approve into a comment) re-applies from that decision; a
+        // machine bounce (gate preflight, verify judge) or a thrown error never
+        // reached a reviewer, so no decision effect survives it.
+        if (!(result instanceof Error) && isHumanGateDecision(result)) {
+          if (mockDecision) {
+            const decided = result as { status?: unknown; choice?: unknown };
+            applyGateDecisionEffects({
+              leaseStore,
+              gateSealStore,
+              status: decided.status,
+              choice: decided.choice,
+              gateInput,
+              now: Date.now(),
+              sealReason: 'mock reviewer rejected the gate (--mock-approval reject)',
+            });
+          }
+          return;
         }
+        leaseStore.revoke();
+        if (sealBefore) gateSealStore.restoreSnapshot(sealBefore);
       };
 
       if ((toolsForStream as any).await_human) {
@@ -1716,6 +1735,7 @@ async function* executeAgentAttempt(
               ...(options.sessionID && { runKey: options.sessionID }),
             });
             pendingMockDecision = decision;
+            sealBeforeMockDecision = gateSealStore.snapshot();
             applyGateDecisionEffects({
               leaseStore,
               gateSealStore,

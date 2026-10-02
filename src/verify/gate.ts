@@ -305,8 +305,9 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
   });
   // Candidates that passed on an earlier attempt, keyed by id → the request
   // context plus the candidate's exact reviewed text (see settledKey). Spans
-  // the same stream segment as the rejection counter; a resume starts both
-  // fresh, so a human decision always gets a full judge look.
+  // the same gate cycle as the rejection counter; a resume or an inline
+  // resolution starts both fresh, so a human decision always gets a full
+  // judge look.
   const settledText = new Map<string, string>();
   // Text of every candidate as of the last judge look, to name what changed.
   const lastText = new Map<string, string>();
@@ -334,7 +335,20 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
       const suspend = async (reviewEscalation?: ReviewEscalation) => {
         judgeSession = undefined;
         try {
-          return await innerExecute(input as never, callOptions as never);
+          // The escalation travels with the call so an inline (mocked)
+          // reviewer is held to the same decision rules as a real one.
+          const options = reviewEscalation && callOptions && typeof callOptions === 'object'
+            ? { ...callOptions, reviewEscalation }
+            : callOptions;
+          const result = await innerExecute(input as never, options as never);
+          // A real gate always throws SuspendSignal and the resume builds a new
+          // closure. Returning means the gate was decided inline, which ends
+          // this gate cycle the same way: none of its memory may carry over.
+          gateRejections = 0;
+          settledText.clear();
+          lastText.clear();
+          lastFreshCritique = undefined;
+          return result;
         } catch (error) {
           if (reviewEscalation && isSuspendSignal(error)) {
             error.payload.reviewEscalation = reviewEscalation;

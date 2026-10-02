@@ -210,3 +210,162 @@ describe('a whole-request judge failure', () => {
     expect(suspend).not.toHaveBeenCalled();
   });
 });
+
+describe('inline gate resolution', () => {
+  afterEach(() => {
+    delete process.env.AGENTUSE_MOCK_MODE;
+    delete process.env.AGENTUSE_MOCK_MODEL;
+    delete process.env.AGENTUSE_MOCK_APPROVAL;
+  });
+
+  it('ends the gate cycle: a later gate gets its own judge look', async () => {
+    const approveInline = mock(async () => ({ status: 'approved' }));
+    const gate = withGateVerify({ description: 'gate', inputSchema: {}, execute: approveInline } as any, options);
+    const input = { prompt: 'Approve?', changes: [{ label: 'Post', content: 'same text' }] };
+    judgeOutputMock.mockResolvedValue({ status: 'verdict', verdict: { pass: true, candidates: [{ id: 'change-1', pass: true }] } });
+
+    expect(await gate.execute!(input as never, {} as never)).toEqual({ status: 'approved' });
+    expect(await gate.execute!(input as never, {} as never)).toEqual({ status: 'approved' });
+    expect(judgeOutputMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('turns a mocked approve on an exhausted strict-review gate into revision guidance', async () => {
+    process.env.AGENTUSE_MOCK_MODE = '1';
+    process.env.AGENTUSE_MOCK_APPROVAL = 'approve';
+    resetMockGateDecisions();
+    const gate = withGateVerify(
+      maybeMockAwaitHuman(createAwaitHumanTool()),
+      { ...options, config: { ...options.config, gateReview: 'fresh' as const, maxRedos: 1 } },
+    );
+    judgeOutputMock.mockResolvedValueOnce({ status: 'verdict', verdict: { pass: false, critique: 'Unsafe draft.' } });
+    const result = await gate.execute!({
+      prompt: 'Approve?', changes: [{ label: 'Post', content: 'unsafe text' }],
+    } as never, { toolCallId: 'gate-fresh' } as never);
+    expect(result).toEqual({ status: 'commented', comment: 'Unsafe draft.' });
+  });
+});
+
+describe('mocked decisions at the execution barrier', () => {
+  let storageRoot: string;
+  let sessionManager: InstanceType<typeof SessionManager>;
+  let sessionID: string;
+  let sessionDir: string;
+  const agentId = 'agents/gate-invariants';
+  const command = 'publish unsafe-draft';
+  const usage = {
+    inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+    outputTokens: { total: 5, text: 5, reasoning: 0 },
+  };
+  const turn = (parts: unknown[], finishReason = 'tool-calls') => [
+    { type: 'stream-start', warnings: [] },
+    ...parts,
+    { type: 'finish', finishReason: { unified: finishReason, raw: finishReason }, usage },
+  ];
+  const toolCall = (toolCallId: string, toolName: string, input: unknown) => ({
+    type: 'tool-call', toolCallId, toolName, input: JSON.stringify(input),
+  });
+  const done = turn([
+    { type: 'text-start', id: 't1' },
+    { type: 'text-delta', id: 't1', delta: 'done' },
+    { type: 'text-end', id: 't1' },
+  ], 'stop');
+  const gateCall = (id: string) => toolCall(id, 'await_human', { prompt: 'Publish?', changes: [{ label: 'Post', content: command }] });
+
+  beforeEach(async () => {
+    process.env.AGENTUSE_MOCK_MODE = '1';
+    process.env.AGENTUSE_MOCK_MODEL = 'mock:model';
+    process.env.AGENTUSE_MOCK_APPROVAL = 'approve';
+    resetMockGateDecisions();
+    storageRoot = await mkdtemp(join(tmpdir(), 'agentuse-gate-invariants-'));
+    process.env.XDG_DATA_HOME = storageRoot;
+    await initStorage(storageRoot);
+    sessionManager = new SessionManager();
+    sessionID = await sessionManager.createSession({
+      agent: { id: agentId, name: 'gate-invariants', isSubAgent: false },
+      model: 'mock:model', version: 'test', config: {},
+      project: { root: storageRoot, cwd: storageRoot },
+    });
+    sessionDir = await sessionManager.getSessionDirectory(sessionID, agentId);
+  });
+
+  afterEach(async () => {
+    delete process.env.AGENTUSE_MOCK_MODE;
+    delete process.env.AGENTUSE_MOCK_MODEL;
+    delete process.env.AGENTUSE_MOCK_APPROVAL;
+    delete process.env.XDG_DATA_HOME;
+    await rm(storageRoot, { recursive: true, force: true });
+  });
+
+  async function run(turns: unknown[][], config: Record<string, unknown>) {
+    let modelCalls = 0;
+    currentModel = new MockLanguageModelV3({
+      doStream: async () => ({
+        stream: convertArrayToReadableStream(turns[Math.min(modelCalls++, turns.length - 1)] as any),
+      }),
+    });
+    const bashExecute = mock(async () => ({ output: 'executed', exitCode: 0 }));
+    const tools = {
+      await_human: withGateVerify(maybeMockAwaitHuman(createAwaitHumanTool()), {
+        config: { criteria: 'safe and accurate', maxRedos: 2, ...config } as any,
+        agentModel: 'mock:model',
+        task: 'Publish only after the gate judge passes.',
+      }),
+      tools__bash: tool({
+        description: 'fake bash',
+        inputSchema: z.object({ command: z.string() }),
+        execute: bashExecute,
+      }),
+    };
+    const agent = {
+      name: 'gate-invariants',
+      instructions: 'test',
+      config: { model: 'mock:model', approval: true, tools: { bash: { commands: ['publish *'], gated: ['publish *'] } } },
+    } as any;
+    const result = await processAgentStream(executeAgentCore(agent, tools as any, {
+      userMessage: 'go', systemMessages: [], maxSteps: 5,
+      sessionManager, sessionID, agentId,
+    }), { quiet: true });
+    return { result, bashExecute };
+  }
+
+  it('revokes a mocked approval the judge then bounced', async () => {
+    judgeOutputMock.mockResolvedValue({ status: 'verdict', verdict: { pass: false, critique: 'Unsafe draft must not publish.' } });
+    const { result, bashExecute } = await run([
+      turn([gateCall('gate-1')]),
+      turn([toolCall('bash-1', 'tools__bash', { command })]),
+      done,
+    ], {});
+    expect(Boolean(result.suspended)).toBe(false);
+    expect(judgeOutputMock).toHaveBeenCalledTimes(1);
+    expect(bashExecute).not.toHaveBeenCalled();
+    expect(fs.existsSync(join(sessionDir, LEASE_FILENAME))).toBe(false);
+  });
+
+  it('leaves no seal from a mocked reject the judge pre-empted', async () => {
+    process.env.AGENTUSE_MOCK_APPROVAL = 'reject';
+    judgeOutputMock
+      .mockResolvedValueOnce({ status: 'verdict', verdict: { pass: false, critique: 'Needs one more fix.' } })
+      .mockResolvedValueOnce({ status: 'verdict', verdict: { pass: true } });
+    await run([
+      turn([gateCall('gate-1')]),
+      turn([gateCall('gate-2')]),
+      done,
+    ], {});
+    // The re-gate reached the judge instead of the terminal seal; the seal on
+    // disk now comes from the reject the reviewer actually returned on it.
+    expect(judgeOutputMock).toHaveBeenCalledTimes(2);
+    expect(fs.existsSync(join(sessionDir, GATE_SEAL_FILENAME))).toBe(true);
+  });
+
+  it('grants no lease when strict review escalates the gate', async () => {
+    judgeOutputMock.mockResolvedValue({ status: 'verdict', verdict: { pass: false, critique: 'Unsafe draft must not publish.' } });
+    const { bashExecute } = await run([
+      turn([gateCall('gate-1')]),
+      turn([toolCall('bash-1', 'tools__bash', { command })]),
+      done,
+    ], { gateReview: 'fresh', maxRedos: 1 });
+    expect(judgeOutputMock).toHaveBeenCalledTimes(1);
+    expect(bashExecute).not.toHaveBeenCalled();
+    expect(fs.existsSync(join(sessionDir, LEASE_FILENAME))).toBe(false);
+  });
+});

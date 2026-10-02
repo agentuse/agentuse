@@ -2,6 +2,7 @@ import * as aiSdk from 'ai';
 import type { Tool } from 'ai';
 import { completeText } from '../complete-text';
 import { isEffectful } from './approval-lease';
+import { awaitHumanDecisionTarget, validateGateDecision } from './gate-decision';
 import { parseBashCommand } from '../tools/bash-parser';
 import { logger } from '../utils/logger';
 import { OUTCOME_TOOL_NAMES } from '../tools/report-outcome';
@@ -251,12 +252,19 @@ export function maybeMockAwaitHuman(tool: Tool): Tool {
   return withMockedGateExecute(tool);
 }
 
-/** Unconditionally swap the gate's execute for the deterministic decision. */
+/** Unconditionally swap the gate's execute for the deterministic decision.
+ * The mocked reviewer is held to the same decision rules as a real one: on a
+ * gate strict review escalated (passed in by the verify gate), an approve is
+ * not available, so it becomes the comment a real reviewer would have to send. */
 function withMockedGateExecute(tool: Tool): Tool {
   return {
     ...tool,
-    execute: async (input: unknown, options?: { toolCallId?: string }) => {
-      const result = mockGateDecisionResult(input, { ...(options?.toolCallId && { callId: options.toolCallId }) });
+    execute: async (input: unknown, options?: { toolCallId?: string; reviewEscalation?: { critique?: string } }) => {
+      const decided = mockGateDecisionResult(input, { ...(options?.toolCallId && { callId: options.toolCallId }) });
+      const invalid = validateGateDecision(awaitHumanDecisionTarget(input, options?.reviewEscalation), decided);
+      const result: MockGateDecisionResult = invalid
+        ? { status: 'commented', comment: options?.reviewEscalation?.critique ?? invalid.message }
+        : decided;
       logger.debug(`[Mock] await_human -> deterministic ${result.status} (--mock-approval)`);
       return result;
     },
