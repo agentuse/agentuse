@@ -510,6 +510,7 @@ function assertRepositoryMatches(): void {
 }
 
 function publish(): void {
+  assertManifestVersionsCoupled();
   const { name, version } = manifest();
   const tag = distTag(version);
 

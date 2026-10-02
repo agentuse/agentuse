@@ -92,3 +92,18 @@ describe('GitHub Release creation', () => {
     expect(args.some((arg) => /\.(?:zip|tgz)$/.test(arg))).toBe(false);
   });
 });
+
+describe('release entry points', () => {
+  it('routes every release script through scripts/release*.ts', async () => {
+    const pkg = (await Bun.file(new URL('../package.json', import.meta.url)).json()) as {
+      scripts: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const releaseScripts = Object.entries(pkg.scripts).filter(([name]) => name === 'release' || name.startsWith('release:'));
+
+    for (const [name, command] of releaseScripts) {
+      expect({ name, command }).toEqual({ name, command: expect.stringMatching(/^bun scripts\/release[\w-]*\.ts\b/) });
+    }
+    expect(pkg.devDependencies?.np).toBeUndefined();
+  });
+});
