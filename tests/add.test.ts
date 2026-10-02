@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtemp, writeFile, mkdir, rm, readFile, readdir, chmod } from 'fs/promises';
+import { mkdtemp, writeFile, mkdir, rm, readFile, readdir, chmod, symlink, readlink } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -386,6 +386,60 @@ description: Skill B
       await expect(add(projectDir, projectDir, { force: true })).rejects.toThrow(/overlap/);
       expect(await readFile(join(projectDir, 'notes.txt'), 'utf-8')).toBe('project file');
       expect(existsSync(join(projectDir, '.agentuse'))).toBe(false);
+    });
+  });
+
+  describe('add - unsafe plans', () => {
+    it('refuses two skills that install to the same name before writing anything', async () => {
+      for (const dir of ['team-a', 'team-b']) {
+        await mkdir(join(sourceDir, dir, 'shared'), { recursive: true });
+        await writeFile(join(sourceDir, dir, 'shared', 'SKILL.md'), `---\nname: shared\ndescription: ${dir}\n---`);
+      }
+
+      const attempt = add(sourceDir, projectDir, { force: true });
+
+      await expect(attempt).rejects.toThrow(join(sourceDir, 'team-a', 'shared'));
+      await expect(attempt).rejects.toThrow(join(sourceDir, 'team-b', 'shared'));
+      expect(existsSync(join(projectDir, '.agentuse'))).toBe(false);
+    });
+
+    it('refuses a skill containing a symlink that points outside it', async () => {
+      const outside = join(sourceDir, 'outside.txt');
+      await writeFile(outside, 'not part of the skill');
+      await mkdir(join(sourceDir, 'skills', 'leaky'), { recursive: true });
+      await writeFile(join(sourceDir, 'skills', 'leaky', 'SKILL.md'), '---\nname: leaky\ndescription: L\n---');
+      await symlink('../../outside.txt', join(sourceDir, 'skills', 'leaky', 'notes.txt'));
+
+      await expect(add(sourceDir, projectDir, { force: true })).rejects.toThrow(
+        join(sourceDir, 'skills', 'leaky', 'notes.txt')
+      );
+      expect(existsSync(join(projectDir, '.agentuse'))).toBe(false);
+    });
+
+    it('refuses an agent file that is a symlink to outside its directory', async () => {
+      const outside = await mkdtemp(join(tmpdir(), 'add-test-outside-'));
+      try {
+        await writeFile(join(outside, 'real.agentuse'), 'model: anthropic:claude-sonnet-4-5\n---');
+        await mkdir(join(sourceDir, 'agents'), { recursive: true });
+        await symlink(join(outside, 'real.agentuse'), join(sourceDir, 'agents', 'linked.agentuse'));
+
+        await expect(add(sourceDir, projectDir, { force: true })).rejects.toThrow(/symlink .*linked\.agentuse/);
+        expect(existsSync(join(projectDir, 'agents'))).toBe(false);
+      } finally {
+        await rm(outside, { recursive: true, force: true });
+      }
+    });
+
+    it('installs a skill whose symlinks stay inside it', async () => {
+      await mkdir(join(sourceDir, 'skills', 'tidy', 'docs'), { recursive: true });
+      await writeFile(join(sourceDir, 'skills', 'tidy', 'SKILL.md'), '---\nname: tidy\ndescription: T\n---');
+      await writeFile(join(sourceDir, 'skills', 'tidy', 'docs', 'guide.md'), 'guide');
+      await symlink('docs/guide.md', join(sourceDir, 'skills', 'tidy', 'GUIDE.md'));
+
+      const result = await add(sourceDir, projectDir, { force: true });
+
+      expect(result.skills).toEqual([{ name: 'tidy', action: 'added' }]);
+      expect(await readlink(join(projectDir, '.agentuse', 'skills', 'tidy', 'GUIDE.md'))).toBeTruthy();
     });
   });
 

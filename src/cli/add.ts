@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { execFileSync } from 'child_process';
-import { existsSync, rmSync, mkdirSync, cpSync, statSync, readFileSync, realpathSync, renameSync } from 'fs';
+import { existsSync, rmSync, mkdirSync, cpSync, statSync, lstatSync, readdirSync, readlinkSync, readFileSync, realpathSync, renameSync } from 'fs';
 import { glob } from 'glob';
 import { join, basename, dirname, resolve } from 'path';
 import { tmpdir } from 'os';
@@ -311,9 +311,44 @@ function realpathLoose(path: string): string {
   return join(realpathLoose(parent), basename(absolute));
 }
 
+/** A clone's VCS metadata is never part of what gets installed. */
+function isInstalledPath(path: string): boolean {
+  return basename(path) !== '.git';
+}
+
+/**
+ * The first symlink under `path` (or `path` itself) whose target lies outside
+ * `boundary`. Links are read, never followed, so nothing outside the item is
+ * touched. Every link is checked, so a chain can only escape through a link
+ * that points outside on its own.
+ */
+function findEscapingSymlink(path: string, boundary: string): string | undefined {
+  if (!isInstalledPath(path)) return undefined;
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink()) {
+    const target = resolve(dirname(path), readlinkSync(path));
+    // The boundary may sit under a symlinked ancestor (macOS /var), so a target
+    // spelled through either form of it counts as inside.
+    const inside = isPathInside(boundary, target) || isPathInside(realpathSync(boundary), target);
+    return inside ? undefined : path;
+  }
+  if (!stat.isDirectory()) return undefined;
+  for (const entry of readdirSync(path)) {
+    const escaping = findEscapingSymlink(join(path, entry), boundary);
+    if (escaping) return escaping;
+  }
+  return undefined;
+}
+
 function planItem(kind: PlannedItem['kind'], id: string, src: string, dest: string, container: string): PlannedItem {
   if (!isPathInside(resolve(container), resolve(dest), { allowEqual: false })) {
     throw new Error(`Refusing to install ${kind} "${id}": ${dest} is not inside ${container}`);
+  }
+  // A skill is its directory; an agent file is bounded by the directory it sits in.
+  const boundary = kind === 'skill' ? resolve(src) : dirname(resolve(src));
+  const escaping = findEscapingSymlink(resolve(src), boundary);
+  if (escaping) {
+    throw new Error(`Refusing to install ${kind} "${id}": symlink ${escaping} points outside ${boundary}`);
   }
   const realSrc = realpathSync(src);
   const realDest = realpathLoose(dest);
@@ -339,6 +374,17 @@ function planInstall(workDir: string, items: DiscoveredItems, selection: Selecti
     if (selection !== 'all' && !selection.agents.includes(agent.path)) continue;
     plan.push(planItem('agent', agent.path, join(workDir, agent.path), join(projectRoot, agent.path), projectRoot));
   }
+  // Two sources with one destination would silently overwrite each other.
+  const byDest = new Map<string, PlannedItem>();
+  for (const item of plan) {
+    const earlier = byDest.get(resolve(item.dest));
+    if (earlier) {
+      throw new Error(
+        `Refusing to install ${item.kind} "${item.id}": ${earlier.src} and ${item.src} both install to ${item.dest}`
+      );
+    }
+    byDest.set(resolve(item.dest), item);
+  }
   return plan;
 }
 
@@ -354,8 +400,7 @@ function stagedInstall(src: string, dest: string): void {
   const staged = `${tag}.new`;
   const backup = `${tag}.old`;
   try {
-    // A clone's VCS metadata is never part of what gets installed.
-    cpSync(src, staged, { recursive: true, filter: (path) => basename(path) !== '.git' });
+    cpSync(src, staged, { recursive: true, filter: isInstalledPath });
     const replacing = existsSync(dest);
     if (replacing) renameSync(dest, backup);
     try {
