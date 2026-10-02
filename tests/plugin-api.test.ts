@@ -844,6 +844,24 @@ describe('project-local activation scope', () => {
     expect((await checkProviderReadiness(provider, { maxAgeMs: 30_000 })).detail).toBe('check 3');
   });
 
+  it('keeps readiness results apart for definitions that share a provider id', async () => {
+    let checksB = 0;
+    const transport = { kind: 'openai-responses' as const, baseURL: 'https://same.example' };
+    const a: ProviderDefinition = { id: 'same', name: 'A', models: [], transport, check: () => ({ ok: true, detail: 'A ready' }) };
+    const b: ProviderDefinition = {
+      id: 'same', name: 'B', models: [], transport,
+      check() { checksB++; return { ok: false, message: 'B down' }; },
+    };
+    resetProviderPluginCache();
+    expect(await checkProviderReadiness(a, { maxAgeMs: 30_000 })).toMatchObject({ ok: true, detail: 'A ready' });
+    expect(await checkProviderReadiness(b, { maxAgeMs: 30_000 })).toMatchObject({ ok: false, message: 'B down' });
+    expect(checksB).toBe(1);
+    // A fresh check of one definition does not replace the other's cached result.
+    expect(await checkProviderReadiness(a)).toMatchObject({ ok: true });
+    expect(await checkProviderReadiness(b, { maxAgeMs: 30_000 })).toMatchObject({ ok: false, message: 'B down' });
+    expect(checksB).toBe(1);
+  });
+
   it('compiles a TypeScript extension once per file version', async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-ts-cache-'));
     const entry = path.join(root, 'plugin.ts');

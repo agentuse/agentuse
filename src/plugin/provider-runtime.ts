@@ -155,7 +155,7 @@ export function resetProviderPluginCache(): void {
   installedHosts.clear();
   legacyProviderPluginMigration = undefined;
   legacyProviderPluginMigrationFailedAt = undefined;
-  readinessCache.clear();
+  readinessCache = new WeakMap();
   clearActiveProviders();
 }
 
@@ -173,7 +173,7 @@ export async function getInstalledPluginHost(): Promise<PluginHost> {
   let pending = cached?.revision === revision ? cached.host : undefined;
   if (!pending) {
     if (cached) {
-      readinessCache.clear();
+      readinessCache = new WeakMap();
       clearActiveProviders();
     }
     pending = (async () => {
@@ -452,7 +452,9 @@ export function providerReadinessHealthSubject(provider: ProviderDefinition): Pr
   return providerHealthSubject(provider.id, 'readiness', { name: provider.name, transport: provider.transport });
 }
 
-const readinessCache = new Map<string, { at: number; pending: Promise<ProviderReadiness> }>();
+// Keyed by definition, like the discovery and resolved-model caches: two
+// adapters can share a provider id and must not reuse each other's result.
+let readinessCache = new WeakMap<ProviderDefinition, { at: number; pending: Promise<ProviderReadiness> }>();
 /** How long a model creation trusts the last readiness result. */
 const MODEL_READINESS_MAX_AGE_MS = 30_000;
 
@@ -467,10 +469,10 @@ export async function checkProviderReadiness(
 ): Promise<ProviderReadiness> {
   if (!provider.check) return { ok: true };
   const maxAgeMs = options.maxAgeMs ?? 0;
-  const cached = readinessCache.get(provider.id);
+  const cached = readinessCache.get(provider);
   if (maxAgeMs > 0 && cached && Date.now() - cached.at <= maxAgeMs) return cached.pending;
   const pending = runProviderReadinessCheck(provider);
-  readinessCache.set(provider.id, { at: Date.now(), pending });
+  readinessCache.set(provider, { at: Date.now(), pending });
   return pending;
 }
 
