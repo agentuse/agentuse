@@ -7,6 +7,7 @@ import { writeJSON, readJSON, listKeys, getStorageState, sanitizeAgentName, Corr
 import { logger } from '../utils/logger';
 import { currentProcessRef } from '../utils/process-info';
 import { withOwnershipLock } from '../utils/ownership-lock';
+import { withSessionResumeClaim } from './resume-claim';
 import { mapLimit, Semaphore } from '../utils/concurrency';
 import { dehydrateSnapshotMedia, rehydrateSnapshotMedia } from './media-cache';
 import { computeSubagentActiveIds } from './subagent-active';
@@ -1791,50 +1792,58 @@ export class SessionManager {
     const message = options.message ?? 'Session stopped by user';
     const storageDir = (await getStorageState()).dir;
     const stopped: StoppedSession[] = [];
-    for (const entry of ordered) {
-      const wasStatus = entry.session.status;
-      const shouldStop = wasStatus === 'preparing' || wasStatus === 'running' || wasStatus === 'suspended';
-      // dismissEnded (reviewer-initiated stops only): stopping an already-
-      // failed run is the reviewer's "reviewed, wave it off" — stamp
-      // dismissedAt so needs-attention surfaces drop it, but keep status/error
-      // intact so the true outcome stays diagnosable. Sessions the reviewer
-      // stopped themselves are excluded (never re-enter needs-attention), which
-      // also keeps the CLI's post-daemon-stop local pass from re-stamping them.
-      const shouldDismiss = options.dismissEnded === true
-        && !shouldStop
-        && wasStatus === 'error'
-        && entry.session.error?.code !== 'USER_STOPPED'
-        && entry.session.dismissedAt === undefined;
-      const shouldStopPendingParts = shouldStop || entry.session.error?.code === code;
-      if (shouldStop) {
-        await this.updateSessionAtPath(entry.path, {
-          status: 'error',
-          error: {
-            code,
-            message,
-            ...(code === 'USER_STOPPED' && { cause: 'user_stopped' }),
-            ...(code === 'CLIENT_DISCONNECT' && { cause: 'client_disconnect' }),
-            time: now
-          }
-        });
-      } else if (shouldDismiss) {
-        await this.updateSessionAtPath(entry.path, { dismissedAt: now });
-      }
-      if (shouldStopPendingParts) {
-        await this.stopPendingPartsAtPath(entry.path, { message, time: now });
-        // A stopped session keeps no approval: a grant whose segment never ran
-        // (or is being aborted) must not authorize a later continuation.
-        if (!new LeaseStore(path.join(storageDir, entry.path)).revoke()) {
-          logger.warn(`Failed to revoke the approval lease of stopped session ${entry.session.id}`);
+    // Stamp each session under its own resume claim, root first, re-reading it
+    // there: an approval rollback on any session in the tree then either
+    // finishes before the stamp or sees it and leaves the session stopped. One
+    // claim at a time, so a rollback holding a child's claim can delay the stop
+    // but never deadlock it.
+    for (const listed of ordered) {
+      await withSessionResumeClaim(path.join(storageDir, listed.path), listed.session.id, async () => {
+        const entry = (await this.readSessionEntryAtPath(listed.path, listed.session.id)) ?? listed;
+        const wasStatus = entry.session.status;
+        const shouldStop = wasStatus === 'preparing' || wasStatus === 'running' || wasStatus === 'suspended';
+        // dismissEnded (reviewer-initiated stops only): stopping an already-
+        // failed run is the reviewer's "reviewed, wave it off" — stamp
+        // dismissedAt so needs-attention surfaces drop it, but keep status/error
+        // intact so the true outcome stays diagnosable. Sessions the reviewer
+        // stopped themselves are excluded (never re-enter needs-attention), which
+        // also keeps the CLI's post-daemon-stop local pass from re-stamping them.
+        const shouldDismiss = options.dismissEnded === true
+          && !shouldStop
+          && wasStatus === 'error'
+          && entry.session.error?.code !== 'USER_STOPPED'
+          && entry.session.dismissedAt === undefined;
+        const shouldStopPendingParts = shouldStop || entry.session.error?.code === code;
+        if (shouldStop) {
+          await this.updateSessionAtPath(entry.path, {
+            status: 'error',
+            error: {
+              code,
+              message,
+              ...(code === 'USER_STOPPED' && { cause: 'user_stopped' }),
+              ...(code === 'CLIENT_DISCONNECT' && { cause: 'client_disconnect' }),
+              time: now
+            }
+          });
+        } else if (shouldDismiss) {
+          await this.updateSessionAtPath(entry.path, { dismissedAt: now });
         }
-      }
-      stopped.push({
-        sessionId: entry.session.id,
-        agentId: entry.agentId,
-        agentName: entry.session.agent.name || entry.session.agent.id,
-        wasStatus,
-        stopped: shouldStop,
-        ...(shouldDismiss && { dismissed: true })
+        if (shouldStopPendingParts) {
+          await this.stopPendingPartsAtPath(entry.path, { message, time: now });
+          // A stopped session keeps no approval: a grant whose segment never ran
+          // (or is being aborted) must not authorize a later continuation.
+          if (!new LeaseStore(path.join(storageDir, entry.path)).revoke()) {
+            logger.warn(`Failed to revoke the approval lease of stopped session ${entry.session.id}`);
+          }
+        }
+        stopped.push({
+          sessionId: entry.session.id,
+          agentId: entry.agentId,
+          agentName: entry.session.agent.name || entry.session.agent.id,
+          wasStatus,
+          stopped: shouldStop,
+          ...(shouldDismiss && { dismissed: true })
+        });
       });
     }
 

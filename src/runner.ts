@@ -7,7 +7,7 @@ export { LoggerTerminalPresenter, defaultTerminalPresenter } from './runner/term
 export type { TerminalPresenter, TerminalToolResultOptions } from './runner/terminal-presenter';
 export { executeAgentCore } from './runner/execution';
 export { runAgent } from './runner/run';
-export { applyResumeToolResult, restoreResumeToolResult, restoreClaimedResumeToolResult, withResumeClaim, reopenSuspendedGate, reconcileOrphanedSessions } from './runner/resume';
+export { applyResumeToolResult, restoreResumeToolResult, restoreClaimedResumeToolResult, reopenSuspendedGate, reconcileOrphanedSessions } from './runner/resume';
 export type { ReopenGateResult, ReconciledOrphan } from './runner/resume';
 export { recordCorrectionsMarker, recordLearningMarker, recordLearningMarkerForLatestMessage, recordErrorMarker, recordErrorMarkerForLatestMessage, describeErrorPart, createSessionLogSink, describeLogPart, gatherApprovalContext, gatherHumanApprovalHistory, dismissIfReviewerRejected } from './runner/session-helper';
 export type { SessionLogSink, LogPartView, ApprovalContext } from './runner/session-helper';

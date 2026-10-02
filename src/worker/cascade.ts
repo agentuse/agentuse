@@ -10,6 +10,7 @@ import { composeSubagentResult, type RunOutcome } from '../tools/report-outcome'
 import { findPendingSubagentWaitChildId, findPendingAwaitHumanPart, loadSessionPartsFlat, describeStaleCascade, isRecoverableCascadeFailure, isFinishableStale, loadStoredSubagentResult, CASCADE_ORPHANED_CODE, CASCADE_RECOVERABLE_CODE, MAX_CASCADE_DEPTH } from '../runner/subagent-cascade';
 import { currentProcessRef } from '../utils/process-info';
 import { withOwnershipLock } from '../utils/ownership-lock';
+import { withSessionResumeClaim } from '../session/resume-claim';
 import { buildDescendantActivity, buildDescendantReport, buildImportantDescendantEvents, buildImportantDescendants } from '../session/important-descendants';
 import { resolveProjectContext } from '../utils/project';
 import { logger } from '../utils/logger';
@@ -200,7 +201,7 @@ export async function completeSubagentBookmark(
   resumedMessages: ModelMessage[];
 }> {
   const sessionDir = await sessionManager.getSessionDirectory(parentSessionId, parentAgentId);
-  return withOwnershipLock(join(sessionDir, '.resume-claim'), async () => {
+  return withSessionResumeClaim(sessionDir, parentSessionId, async () => {
     const parts = await loadSessionPartsFlat(sessionManager, parentSessionId, parentAgentId);
     const part = [...parts].reverse().find((p: any) =>
       p?.type === 'tool' &&
@@ -268,11 +269,6 @@ export async function completeSubagentBookmark(
       }
       throw error;
     }
-  }, {
-    staleMs: 30_000,
-    retryMs: 10,
-    maxWaitMs: 35_000,
-    label: `resume:${parentSessionId}`,
   });
 }
 

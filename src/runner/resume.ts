@@ -17,8 +17,7 @@ import {
   CASCADE_ORPHANED_CODE,
 } from './subagent-cascade';
 import { logger } from '../utils/logger';
-import { join } from 'node:path';
-import { withOwnershipLock } from '../utils/ownership-lock';
+import { withSessionResumeClaim } from '../session/resume-claim';
 
 export interface ResumeToolRollback {
   sessionId: string;
@@ -70,16 +69,7 @@ export async function applyResumeToolResult(options: {
     options.sessionId,
     initial.agentId
   );
-  return withOwnershipLock(
-    join(sessionDir, '.resume-claim'),
-    () => applyClaimedResumeToolResult(options),
-    {
-      staleMs: 30_000,
-      retryMs: 10,
-      maxWaitMs: 35_000,
-      label: `resume:${options.sessionId}`,
-    }
-  );
+  return withSessionResumeClaim(sessionDir, options.sessionId, () => applyClaimedResumeToolResult(options));
 }
 
 async function applyClaimedResumeToolResult(options: {
@@ -305,10 +295,10 @@ async function applyClaimedResumeToolResult(options: {
 
 /**
  * Run `operation` under the session's durable `.resume-claim`, the lock that
- * approval apply/rollback and worker Stop contend on. Narrow unit doubles
+ * approval apply/rollback and Stop contend on. Narrow unit doubles
  * without getSessionDirectory run unlocked, as applyResumeToolResult allows.
  */
-export async function withResumeClaim<T>(
+async function withResumeClaim<T>(
   sessionManager: SessionManager,
   sessionId: string,
   agentId: string,
@@ -319,12 +309,7 @@ export async function withResumeClaim<T>(
   }).getSessionDirectory;
   if (!getSessionDirectory) return operation();
   const sessionDir = await getSessionDirectory.call(sessionManager, sessionId, agentId);
-  return withOwnershipLock(join(sessionDir, '.resume-claim'), operation, {
-    staleMs: 30_000,
-    retryMs: 10,
-    maxWaitMs: 35_000,
-    label: `resume:${sessionId}`,
-  });
+  return withSessionResumeClaim(sessionDir, sessionId, operation);
 }
 
 export async function restoreResumeToolResult(options: {
