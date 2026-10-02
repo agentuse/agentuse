@@ -13,6 +13,7 @@ import { atomicWriteFileSync } from "./atomic-write";
 import { getAgentuseDataDir } from "./data-dir";
 import { isPathInside } from "./path-policy";
 import { getProcessStartTime, getCurrentProcessStartTime } from "./process-info";
+import { readApiKey } from "./session-token";
 import type { DesktopServerSupervisor } from "./desktop-supervisor";
 
 export interface ServerProjectEntry {
@@ -267,4 +268,30 @@ export function hostForUrl(host: string): string {
 export function serverBaseUrl(server: Pick<ServerEntry, "host" | "port">): string {
   const host = server.host === "0.0.0.0" || server.host === "::" ? "127.0.0.1" : server.host;
   return `http://${hostForUrl(host)}:${server.port}`;
+}
+
+/**
+ * Headers for a CLI request to a registered daemon. Carries AGENTUSE_API_KEY
+ * as a bearer token when one is configured, so a keyed daemon accepts it.
+ */
+export function daemonRequestHeaders(headers: Record<string, string> = {}): Record<string, string> {
+  const apiKey = readApiKey();
+  return {
+    Accept: "application/json",
+    ...headers,
+    ...(apiKey && { Authorization: `Bearer ${apiKey}` }),
+  };
+}
+
+/** The error for a non-OK daemon response: the daemon's own message, plus an auth hint on 401. */
+export async function daemonResponseError(response: Response, label: string): Promise<Error> {
+  let detail = "";
+  try {
+    const body = (await response.json()) as { error?: { message?: string } };
+    detail = body?.error?.message ?? "";
+  } catch {
+    // Non-JSON error body; fall back to status only.
+  }
+  const authHint = response.status === 401 ? " (set AGENTUSE_API_KEY to match the daemon)" : "";
+  return new Error(`${label} failed: ${response.status}${detail ? ` ${detail}` : ""}${authHint}`);
 }

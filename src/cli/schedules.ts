@@ -6,8 +6,7 @@ import { parseAgent } from '../parser.js';
 import { formatScheduleHuman } from '../scheduler/parser.js';
 import { loadPausedSchedules, normalizeScheduleAgentPath, setSchedulePaused } from '../scheduler/state.js';
 import { resolveLocalAgentPath, resolveProjectContext } from '../utils/project.js';
-import { findServerForProject, serverBaseUrl, type ServerEntry, type ServerProjectEntry } from '../utils/server-registry.js';
-import { readApiKey } from '../utils/session-token';
+import { daemonRequestHeaders, findServerForProject, serverBaseUrl, type ServerEntry, type ServerProjectEntry } from '../utils/server-registry.js';
 
 export function serverScheduleAgentPath(
   projectRoot: string,
@@ -23,12 +22,9 @@ async function notifyRunningServer(server: ServerEntry, projectRoot: string, age
   const project = server.projects?.find((entry) => resolve(entry.root) === resolve(projectRoot));
   if (!project) return;
   const runPath = serverScheduleAgentPath(projectRoot, agentPath, project);
-  const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
-  const apiKey = readApiKey();
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   const response = await fetch(`${serverBaseUrl(server)}/api/schedules/state`, {
     method: 'POST',
-    headers,
+    headers: daemonRequestHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ project: project.id, path: runPath, paused }),
   });
   if (!response.ok) throw new Error(`running daemon returned ${response.status}`);

@@ -20,7 +20,7 @@ import { connectMCP } from "../mcp";
 import { applyResumeToolResult, restoreResumeToolResult, runAgent, prepareAgentExecution, describeErrorPart, classifyRunResult } from "../runner";
 import { reconcileOrphanedSessions } from "../runner/resume";
 import { describeLearningOutcome, effectiveCap, saveManualLearning, type LearningSource } from "../learning";
-import { findServerForProject, serverBaseUrl } from "../utils/server-registry";
+import { daemonRequestHeaders, daemonResponseError, findServerForProject, serverBaseUrl } from "../utils/server-registry";
 import { formatCompactDuration } from "../utils/duration";
 import { isExecutingSessionStatus, sessionOutcome } from "../session/status";
 import { truncate as truncateText } from "../tools/tool-output-limits";
@@ -1520,35 +1520,41 @@ async function stopSessionViaServer(
     ?? server.projects?.[0];
   const url = `${serverBaseUrl(server)}/sessions/${encodeURIComponent(summary.id)}/stop`;
 
+  let response: Response;
   try {
-    const response = await fetch(url, {
+    response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: daemonRequestHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         ...(project?.id && { project: project.id }),
         ...(options.reason && { reason: options.reason }),
         ...(options.force && { force: true }),
       }),
     });
-    if (!response.ok) return { handled: false };
-    let payload: Record<string, unknown> = {};
-    try {
-      payload = await response.json() as Record<string, unknown>;
-    } catch {
-      // Older daemons may answer without a JSON body; treat as a plain stop.
-    }
-    // Nothing was running and the daemon stamped the failed run(s) as
-    // reviewed instead — surface that so the caller reports it accurately.
-    const stoppedEntries = Array.isArray(payload.stopped)
-      ? payload.stopped as Array<{ stopped?: boolean; dismissed?: boolean }>
-      : [];
-    const dismissed = stoppedEntries.length > 0
-      && stoppedEntries.some((entry) => entry.dismissed === true)
-      && stoppedEntries.every((entry) => entry.stopped !== true);
-    return { handled: true, mode: payload.rejected === true ? 'rejected' : 'stopped', ...(dismissed && { dismissed: true }) };
   } catch {
+    // Daemon unreachable (a stale registry entry): nothing else owns the
+    // session, so the caller handles the stop locally.
     return { handled: false };
   }
+  // The daemon is up and answered no (unauthorized, unknown session). A local
+  // stamp would not abort its worker and would bypass its approval cascade,
+  // so report the daemon's answer and change nothing.
+  if (!response.ok) throw await daemonResponseError(response, `Stopping session ${summary.id}`);
+  let payload: Record<string, unknown> = {};
+  try {
+    payload = await response.json() as Record<string, unknown>;
+  } catch {
+    // Older daemons may answer without a JSON body; treat as a plain stop.
+  }
+  // Nothing was running and the daemon stamped the failed run(s) as
+  // reviewed instead — surface that so the caller reports it accurately.
+  const stoppedEntries = Array.isArray(payload.stopped)
+    ? payload.stopped as Array<{ stopped?: boolean; dismissed?: boolean }>
+    : [];
+  const dismissed = stoppedEntries.length > 0
+    && stoppedEntries.some((entry) => entry.dismissed === true)
+    && stoppedEntries.every((entry) => entry.stopped !== true);
+  return { handled: true, mode: payload.rejected === true ? 'rejected' : 'stopped', ...(dismissed && { dismissed: true }) };
 }
 
 // A hard stop on a suspended approval gate orphans it: the agent never

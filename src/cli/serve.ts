@@ -33,7 +33,7 @@ import { telemetry, classifyExecution, configuredFeatureUsage, emptyToolCallMetr
 import { version as packageVersion } from "../../package.json";
 import { getBuildInfo, isDevCheckout } from "../utils/build-info";
 import { refreshUpdateCacheInBackground } from "../update-check";
-import { registerServer, unregisterServer, updateServer, listServers, formatUptime, getDefaultLogFilePath, hostForUrl, serverBaseUrl, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
+import { registerServer, unregisterServer, updateServer, listServers, daemonRequestHeaders, daemonResponseError, formatUptime, getDefaultLogFilePath, hostForUrl, serverBaseUrl, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { acquireSchedulerLock, releaseSchedulerLock } from "../utils/scheduler-lock";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, applyGlobalConfigEnv, getGlobalConfigPath, getGlobalEnvPath, getManagedProjectsRoot, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
@@ -5344,22 +5344,8 @@ function createLogsSubcommand(): Command {
  * Reuses AGENTUSE_API_KEY from the environment when the daemon requires auth.
  */
 async function fetchDaemonJson(server: ServerEntry, path: string): Promise<unknown> {
-  const headers: Record<string, string> = { Accept: "application/json" };
-  const apiKey = readApiKey();
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-
-  const res = await fetch(`${serverBaseUrl(server)}${path}`, { headers });
-  if (!res.ok) {
-    let detail = "";
-    try {
-      const body = (await res.json()) as { error?: { message?: string } };
-      detail = body?.error?.message ?? "";
-    } catch {
-      // Non-JSON error body; fall back to status only.
-    }
-    const authHint = res.status === 401 ? " (set AGENTUSE_API_KEY to match the daemon)" : "";
-    throw new Error(`Request to ${path} failed: ${res.status}${detail ? ` ${detail}` : ""}${authHint}`);
-  }
+  const res = await fetch(`${serverBaseUrl(server)}${path}`, { headers: daemonRequestHeaders() });
+  if (!res.ok) throw await daemonResponseError(res, `Request to ${path}`);
   return res.json();
 }
 
