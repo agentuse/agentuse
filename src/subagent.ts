@@ -648,6 +648,14 @@ export async function createSubAgentTool(
             await loadedTools.store.releaseLock();
           }
 
+          // The child created its own sandbox in loadAgentTools; stop it, or
+          // every delegated call leaves a container running.
+          try {
+            await loadedTools?.sandboxInstance?.kill();
+          } catch (error) {
+            logger.warn(`[SubAgent] Failed to stop sandbox: ${(error as Error).message}`);
+          }
+
           // Clean up MCP connections
           for (const conn of mcpConnections) {
             try {
