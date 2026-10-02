@@ -1,8 +1,16 @@
-import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'fs/promises';
 import { join } from 'path';
+import * as realOs from 'os';
 import { tmpdir } from 'os';
-import { createSkillsCommand } from '../src/cli/skills';
+
+// Bun's os.homedir() reads HOME once at startup, so pointing HOME at the test
+// dir would still leave skill discovery scanning the real ~/.claude, ~/.agents
+// and ~/.agentuse. Follow HOME as Node does.
+const realHomedir = realOs.homedir;
+mock.module('os', () => ({ ...realOs, homedir: () => process.env.HOME || realHomedir() }));
+
+const { createSkillsCommand } = await import('../src/cli/skills');
 
 describe('createSkillsCommand', () => {
   let testDir: string;
@@ -173,6 +181,19 @@ ${body}
     const output = await runSkillsCommand(['installed', 'path', 'path-helper']);
 
     expect(output).toBe(await realpath(skillDir));
+  });
+
+  it('searches only the test home for installed skills', async () => {
+    const output = await runSkillsCommand(['installed', 'list', '--json']);
+    const parsed = JSON.parse(output);
+
+    const roots = [testDir, await realpath(testDir)];
+    const outside = (parsed.directories as { path: string }[])
+      .map((dir) => dir.path)
+      .filter((path) => !roots.some((root) => path.startsWith(`${root}/`)));
+
+    expect(parsed.directories.length).toBeGreaterThan(0);
+    expect(outside).toEqual([]);
   });
 
   it('prints builtin skill directory path', async () => {
