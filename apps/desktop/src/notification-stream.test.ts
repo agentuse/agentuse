@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseNotificationFrames } from "./notification-stream";
+import { notificationTargetUrl, parseNotificationFrames } from "./notification-stream";
 
 describe("native notification stream", () => {
   test("parses notification events and ignores heartbeats", () => {
@@ -24,5 +24,26 @@ describe("native notification stream", () => {
       'event: notification\ndata: nope\n\nevent: approvals\ndata: {}\n\nevent: notification\ndata: {"category":"other","payload":{}}\n\n',
     );
     expect(parsed.events).toEqual([]);
+  });
+});
+
+describe("notification click target", () => {
+  const daemon = { port: 12233, projectRoot: "project-a" };
+
+  test("rebases the run's path onto the current dashboard", () => {
+    expect(notificationTargetUrl("http://127.0.0.1:12233/sessions/s1?project=a", "http://127.0.0.1:12233", daemon, daemon))
+      .toBe("http://127.0.0.1:12233/sessions/s1?project=a");
+    expect(notificationTargetUrl("http://100.64.0.1:12233/sessions/s1", "http://127.0.0.1:12233"))
+      .toBe("http://127.0.0.1:12233/sessions/s1");
+  });
+
+  test("opens the dashboard home when Desktop has switched to another daemon", () => {
+    const other = { port: 12234, projectRoot: "project-b" };
+    expect(notificationTargetUrl("http://127.0.0.1:12233/sessions/s1", "http://127.0.0.1:12234", daemon, other))
+      .toBe("http://127.0.0.1:12234");
+    expect(notificationTargetUrl("http://127.0.0.1:12233/sessions/s1", "http://127.0.0.1:12233", daemon, { ...daemon, projectRoot: "project-b" }))
+      .toBe("http://127.0.0.1:12233");
+    expect(notificationTargetUrl("http://127.0.0.1:12233/sessions/s1", "http://127.0.0.1:12233", daemon, undefined))
+      .toBe("http://127.0.0.1:12233");
   });
 });

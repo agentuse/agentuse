@@ -1,3 +1,5 @@
+import { sameServerEndpoint, type ServerEndpoint } from "./runtime";
+
 export interface NativeNotificationPayload {
   title: string;
   body: string;
@@ -44,4 +46,25 @@ export function parseNotificationFrames(buffer: string): {
   }
 
   return { events, remainder };
+}
+
+/**
+ * Where a clicked notification opens. Its path is rebased onto the current
+ * dashboard origin. When the notification came from a daemon Desktop no longer
+ * uses, its session lives on that other backend, so open the dashboard home
+ * instead of a page that would not exist here.
+ */
+export function notificationTargetUrl(
+  url: string,
+  dashboardUrl: string,
+  source?: ServerEndpoint,
+  current?: ServerEndpoint,
+): string | undefined {
+  if (source && !(current && sameServerEndpoint(source, current))) return dashboardUrl;
+  try {
+    const remote = new URL(url);
+    return new URL(`${remote.pathname}${remote.search}${remote.hash}`, dashboardUrl).toString();
+  } catch {
+    return undefined;
+  }
 }

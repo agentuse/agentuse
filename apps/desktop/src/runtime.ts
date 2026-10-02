@@ -61,6 +61,13 @@ export function selectServer(servers: readonly RegisteredServer[]): RegisteredSe
   return servers.filter(isLocalServer).sort((left, right) => left.startTime - right.startTime)[0];
 }
 
+/** The endpoint a daemon serves: a restart keeps it, a different daemon does not. */
+export type ServerEndpoint = Pick<RegisteredServer, "port" | "projectRoot">;
+
+export function sameServerEndpoint(left: ServerEndpoint, right: ServerEndpoint): boolean {
+  return left.port === right.port && left.projectRoot === right.projectRoot;
+}
+
 /**
  * Prefer a restarted daemon on the endpoint Desktop was already using. A
  * supervisor can leave the old registry entry visible while the replacement
@@ -68,12 +75,10 @@ export function selectServer(servers: readonly RegisteredServer[]): RegisteredSe
  */
 export function reconnectCandidates(
   servers: readonly RegisteredServer[],
-  previous: Pick<RegisteredServer, "port" | "projectRoot">,
+  previous: ServerEndpoint,
 ): RegisteredServer[] {
   return servers
-    .filter((candidate) => isLocalServer(candidate)
-      && candidate.port === previous.port
-      && candidate.projectRoot === previous.projectRoot)
+    .filter((candidate) => isLocalServer(candidate) && sameServerEndpoint(candidate, previous))
     .sort((left, right) => left.startTime - right.startTime);
 }
 

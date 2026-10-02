@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { pendingApprovalCount, pendingApprovalTitle, pendingApprovalTooltip, type ApprovalBucketsPayload } from "./approval-status";
 import { bundledCliCommand } from "./bundled-cli";
 import { createEditMenu, createNavigationMenu, createTrayMenu, createViewMenu, type FindCommands, type NavigationCommands, type ShareCommands, type ViewCommands } from "./menus";
-import { parseNotificationFrames, type NativeNotificationEvent } from "./notification-stream";
+import { notificationTargetUrl, parseNotificationFrames, type NativeNotificationEvent } from "./notification-stream";
 import { encodeNativeSettingsMessage, isNativeSettingsPipeClosure, parseNativeSettingsCommand, type NativeSettingsMessage } from "./native-settings";
 import {
   clearPendingDesktopOnboardingLaunchAtLoginDefault,
@@ -21,7 +21,7 @@ import {
 } from "./onboarding-state";
 import { createDesktopQuitPolicy, deferDesktopQuitAfterDrain, shouldWarnBeforeFullQuit } from "./quit-policy";
 import { shouldHideDashboardWindow } from "./dashboard-presentation";
-import { isAbandonedDesktopServer, isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, reconnectCandidates, selectServer, serverAcquisitionMode, serverRegistryDirectory, serverUrl, type RegisteredServer } from "./runtime";
+import { isAbandonedDesktopServer, isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, reconnectCandidates, selectServer, serverAcquisitionMode, serverRegistryDirectory, serverUrl, type RegisteredServer, type ServerEndpoint } from "./runtime";
 import { readExternalServerTarget, writeExternalServerTarget, type ExternalServerTarget } from "./external-server-state";
 import { createAgentUseTrayIcon } from "./tray-icon";
 import { selectLoopbackPort } from "./port-selection";
@@ -360,17 +360,7 @@ function stopNotificationStream(): void {
   notificationStreamOrigin = undefined;
 }
 
-function notificationTargetUrl(url: string): string | undefined {
-  if (!dashboardUrl) return undefined;
-  try {
-    const remote = new URL(url);
-    return new URL(`${remote.pathname}${remote.search}${remote.hash}`, dashboardUrl).toString();
-  } catch {
-    return undefined;
-  }
-}
-
-function showNativeNotification(event: NativeNotificationEvent): void {
+function showNativeNotification(event: NativeNotificationEvent, source: ServerEndpoint | undefined): void {
   if (!desktopNotificationPreferences[event.category]) return;
   if (!Notification.isSupported()) return;
   const key = event.payload.tag ?? `${event.category}:${event.payload.url}`;
@@ -384,10 +374,7 @@ function showNativeNotification(event: NativeNotificationEvent): void {
   const forget = () => {
     if (activeNotifications.get(key) === notification) activeNotifications.delete(key);
   };
-  notification.on("click", () => {
-    const target = notificationTargetUrl(event.payload.url);
-    void showDashboard(target);
-  });
+  notification.on("click", () => void showDashboard(event.payload.url, source));
   notification.on("close", forget);
   notification.on("failed", (_event, error) => {
     console.error("Could not show AgentUse notification:", error);
@@ -407,7 +394,12 @@ async function waitForNotificationReconnect(signal: AbortSignal): Promise<void> 
   });
 }
 
-async function consumeNotificationStream(origin: string, apiKey: string | undefined, signal: AbortSignal): Promise<void> {
+async function consumeNotificationStream(
+  origin: string,
+  apiKey: string | undefined,
+  source: ServerEndpoint | undefined,
+  signal: AbortSignal,
+): Promise<void> {
   while (!signal.aborted) {
     try {
       const streamUrl = new URL("/api/notifications/events", origin);
@@ -428,7 +420,7 @@ async function consumeNotificationStream(origin: string, apiKey: string | undefi
         buffer += decoder.decode(value, { stream: true });
         const parsed = parseNotificationFrames(buffer);
         buffer = parsed.remainder;
-        for (const event of parsed.events) showNativeNotification(event);
+        for (const event of parsed.events) showNativeNotification(event, source);
       }
     } catch (error) {
       if (!signal.aborted) console.debug("AgentUse notification stream disconnected:", error);
@@ -443,7 +435,8 @@ function startNotificationStream(): void {
   stopNotificationStream();
   notificationStreamOrigin = dashboardUrl;
   notificationStreamController = new AbortController();
-  void consumeNotificationStream(dashboardUrl, dashboardApiKey, notificationStreamController.signal);
+  const source = currentServer && { port: currentServer.port, projectRoot: currentServer.projectRoot };
+  void consumeNotificationStream(dashboardUrl, dashboardApiKey, source, notificationStreamController.signal);
 }
 
 async function probeServer(url: string, apiKey?: string): Promise<"ready" | "unauthorized" | "unreachable"> {
@@ -801,15 +794,16 @@ async function prepareDesktopDocument(browser: BrowserWindow): Promise<void> {
   })()`).catch(() => {});
 }
 
-function showDashboard(requestedUrl?: string): Promise<void> {
+/** `source` is the daemon a notification came from; see notificationTargetUrl. */
+function showDashboard(requestedUrl?: string, source?: ServerEndpoint): Promise<void> {
   const presentation = dashboardPresentationQueue
     .catch(() => {})
-    .then(() => presentDashboard(requestedUrl));
+    .then(() => presentDashboard(requestedUrl, source));
   dashboardPresentationQueue = presentation;
   return presentation;
 }
 
-async function presentDashboard(requestedUrl?: string): Promise<void> {
+async function presentDashboard(requestedUrl?: string, source?: ServerEndpoint): Promise<void> {
   if (process.platform === "darwin") await app.dock?.show();
   if (currentServer) {
     const registered = listRegisteredServers().find((server) => server.pid === currentServer?.pid);
@@ -825,7 +819,9 @@ async function presentDashboard(requestedUrl?: string): Promise<void> {
   }
   if (!dashboardUrl) await ensureServer();
   if (!window || window.isDestroyed()) window = createWindow();
-  const targetUrl = requestedUrl ? notificationTargetUrl(requestedUrl) ?? dashboardUrl! : dashboardUrl!;
+  const targetUrl = requestedUrl
+    ? notificationTargetUrl(requestedUrl, dashboardUrl!, source, currentServer) ?? dashboardUrl!
+    : dashboardUrl!;
   if (window.webContents.getURL() !== targetUrl) await window.loadURL(targetUrl);
   await prepareDesktopDocument(window);
   startApprovalPolling();
