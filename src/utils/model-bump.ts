@@ -9,6 +9,7 @@
  *    the line from then on and never needs bumping again.
  */
 
+import * as YAML from 'yaml';
 import { getSuggestedModelIds } from '../generated/models';
 import { deriveModelAlias, getVersionAliasesForProvider } from './model-alias';
 import { splitModelString } from './model-utils';
@@ -143,43 +144,40 @@ export function rewriteAgentFileModels(
   };
 }
 
-/** Rewrite scalar values of the model fields recognized by the agent schema. */
+/** The model fields recognized by the agent schema, as YAML paths. */
+const MODEL_FIELD_PATHS = [['model'], ['verify', 'model'], ['learning', 'model']];
+
+/**
+ * Rewrite the scalar values at exactly the agent schema's model paths. The
+ * frontmatter is parsed, not scanned line by line, so a `model:` nested under
+ * `metadata`, a deeper key, or text inside a block scalar is never mistaken
+ * for one; each value is spliced by its source range so quotes, comments, and
+ * layout survive. Frontmatter that does not parse is left alone (the agent
+ * would not load either).
+ */
 function rewriteModelFields(
   frontmatter: string,
   providers: string[],
   rewrite: (provider: string, modelId: string) => string | null
 ): { text: string; changes: ModelReferenceChange[] } {
-  const lines = frontmatter.split(/(\r?\n)/);
-  const changes: ModelReferenceChange[] = [];
-  let modelSectionIndent: number | null = null;
+  const doc = YAML.parseDocument(frontmatter);
+  if (doc.errors.length > 0) return { text: frontmatter, changes: [] };
 
-  for (let index = 0; index < lines.length; index += 2) {
-    const line = lines[index]!;
-    const indent = line.match(/^\s*/)?.[0].length ?? 0;
-    if (line.trim() !== '' && modelSectionIndent !== null && indent <= modelSectionIndent) {
-      modelSectionIndent = null;
-    }
-    if (/^\s*(?:verify|learning)\s*:\s*(?:#.*)?$/.test(line)) {
-      modelSectionIndent = indent;
-      continue;
-    }
-
-    const isTopLevelModel = indent === 0;
-    const isConfiguredHelperModel = modelSectionIndent !== null && indent > modelSectionIndent;
-    if (!isTopLevelModel && !isConfiguredHelperModel) continue;
-
-    // Preserve YAML quoting, whitespace, and an inline comment; only the
-    // scalar model value is eligible for a replacement.
-    const field = line.match(/^(\s*model\s*:\s*)(["']?)([^"'#\r\n]*?)\2(\s*(?:#.*)?)$/);
-    if (!field) continue;
-    const [, prefix, quote, value, suffix] = field;
-    const rewritten = rewriteModelReferences(value!, providers, rewrite);
-    if (rewritten.changes.length === 0) continue;
-    lines[index] = `${prefix}${quote}${rewritten.text}${quote}${suffix}`;
-    changes.push(...rewritten.changes);
+  const edits: { start: number; end: number; text: string; changes: ModelReferenceChange[] }[] = [];
+  for (const path of MODEL_FIELD_PATHS) {
+    const node = doc.getIn(path, true);
+    if (!YAML.isScalar(node) || typeof node.value !== 'string' || !node.range) continue;
+    const [start, end] = node.range;
+    const rewritten = rewriteModelReferences(frontmatter.slice(start, end), providers, rewrite);
+    if (rewritten.changes.length > 0) edits.push({ start, end, ...rewritten });
   }
 
-  return { text: lines.join(''), changes };
+  let text = frontmatter;
+  for (const edit of [...edits].sort((a, b) => b.start - a.start)) {
+    text = text.slice(0, edit.start) + edit.text + text.slice(edit.end);
+  }
+  // Changes are reported in document order.
+  return { text, changes: edits.sort((a, b) => a.start - b.start).flatMap((edit) => edit.changes) };
 }
 
 /** Character range of the YAML frontmatter body, excluding the `---` fences. */

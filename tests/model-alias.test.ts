@@ -424,6 +424,39 @@ describe('rewriting model references in agent files', () => {
     expect(content).toContain('X-Model: openai:gpt-5.4-mini');
   });
 
+  it('rewrites only the exact model paths, not nested or block-scalar look-alikes', () => {
+    const file = [
+      '---',
+      'model: "anthropic:claude-haiku-4-5" # pinned',
+      'metadata:',
+      '  learning:',
+      '    model: anthropic:claude-haiku-4-5',
+      '  note: |',
+      '    verify:',
+      '      model: anthropic:claude-haiku-4-5',
+      'verify:',
+      '  extra:',
+      '    model: anthropic:claude-haiku-4-5',
+      '  model: anthropic:claude-haiku-4-5',
+      'learning: { capture: true, model: anthropic:claude-haiku-4-5 }',
+      '---',
+      'Work.',
+      '',
+    ].join('\n');
+    const { content, changes } = rewriteAgentFileModels(file, providers, toVersionAlias);
+    expect(changes).toHaveLength(3);
+    expect(content).toBe(file
+      .replace('model: "anthropic:claude-haiku-4-5" # pinned', 'model: "anthropic:claude-haiku" # pinned')
+      .replace('extra:\n    model: anthropic:claude-haiku-4-5\n  model: anthropic:claude-haiku-4-5',
+        'extra:\n    model: anthropic:claude-haiku-4-5\n  model: anthropic:claude-haiku')
+      .replace('{ capture: true, model: anthropic:claude-haiku-4-5 }', '{ capture: true, model: anthropic:claude-haiku }'));
+  });
+
+  it('leaves frontmatter that is not valid YAML untouched', () => {
+    const file = '---\nmodel: anthropic:claude-haiku-4-5\nbroken: [\n---\nWork.\n';
+    expect(rewriteAgentFileModels(file, providers, toVersionAlias)).toEqual({ content: file, changes: [] });
+  });
+
   it('does not bump an OpenRouter model to a different vendor', () => {
     expect(findCurrentModel('openrouter', 'unknown-vendor/model-4-pro', currentModels)).toBeNull();
   });
