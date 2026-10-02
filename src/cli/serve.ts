@@ -30,7 +30,7 @@ import { printLogo } from "../utils/branding";
 import { initStorage } from "../storage/index.js";
 import { getAgentuseDataDir } from "../storage/paths.js";
 import { Scheduler, type Schedule, type SerializedSchedule } from "../scheduler";
-import { loadPausedSchedules, normalizeScheduleAgentPath, setSchedulePaused } from '../scheduler/state.js';
+import { normalizeScheduleAgentPath, setSchedulePaused } from '../scheduler/state.js';
 import { FileWatcher } from "../watcher";
 import { telemetry, classifyExecution, configuredFeatureUsage, emptyToolCallMetrics, parseModel, type OnboardingRoute, type OnboardingStep, type WebUIClientSurface, type WebUITelemetryEvent } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
@@ -38,6 +38,7 @@ import { getBuildInfo, isDevCheckout } from "../utils/build-info";
 import { refreshUpdateCacheInBackground } from "../update-check";
 import { registerServer, unregisterServer, updateServer, listServers, daemonRequestHeaders, daemonResponseError, formatUptime, getDefaultLogFilePath, hostForUrl, serverBaseUrl, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { acquireSchedulerLock, releaseSchedulerLock, SCHEDULED_RUN_ACTIVE } from "../utils/scheduler-lock";
+import { createProjectScheduleState, loadProjectScheduleState, projectScheduleEnabled } from "./serve/schedule-state";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, applyGlobalConfigEnv, getGlobalConfigPath, getGlobalEnvPath, getManagedProjectsRoot, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
@@ -2123,21 +2124,20 @@ export function createServeCommand(): Command {
         onExecute: executeScheduledAgent,
       });
 
-      const pausedSchedulesByProject = new Map<string, Set<string>>();
+      const scheduleState = createProjectScheduleState();
+      const pausedSchedulesByProject = scheduleState.paused;
+      const scheduleStateErrors = scheduleState.errors;
       for (const seed of projectSeeds) {
-        try {
-          pausedSchedulesByProject.set(seed.id, await loadPausedSchedules(seed.root));
-        } catch (error) {
-          logger.warn(`Could not load schedule state for ${seed.id}: ${toErrorMessage(error)}`);
-          pausedSchedulesByProject.set(seed.id, new Set());
-        }
+        await loadProjectScheduleState(scheduleState, seed.id, seed.root);
       }
       const scheduleIsEnabled = (
         project: Project | Omit<Project, 'agentFiles'>,
         agentPath: string,
-      ): boolean => !pausedSchedulesByProject
-        .get(project.id)
-        ?.has(normalizeScheduleAgentPath(toProjectRelativeAgentPath(project, agentPath)));
+      ): boolean => projectScheduleEnabled(
+        scheduleState,
+        project.id,
+        normalizeScheduleAgentPath(toProjectRelativeAgentPath(project, agentPath)),
+      );
 
       // Per-project scheduler lock (see utils/scheduler-lock.ts): the daemon
       // registry above only sees daemons sharing this XDG data dir, so a
@@ -2938,12 +2938,7 @@ export function createServeCommand(): Command {
           projectSeeds.push(seed);
           projects.push(project);
           projectsById.set(seed.id, project);
-          try {
-            pausedSchedulesByProject.set(seed.id, await loadPausedSchedules(seed.root));
-          } catch (error) {
-            logger.warn(`Could not load schedule state for ${seed.id}: ${toErrorMessage(error)}`);
-            pausedSchedulesByProject.set(seed.id, new Set());
-          }
+          await loadProjectScheduleState(scheduleState, seed.id, seed.root);
           agentCounts.set(seed.id, agentFiles.length);
           pathSeen.set(seed.root, seed.id);
           idSeen.set(seed.id, seed.root);
@@ -4638,6 +4633,7 @@ export function createServeCommand(): Command {
         resetWorkerProviderPlugins,
         scheduler,
         pausedSchedulesByProject,
+        scheduleStateErrors,
         schedulerLocksHeld,
         scheduleIsEnabled,
         canArmSchedules,

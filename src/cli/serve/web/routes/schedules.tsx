@@ -382,6 +382,11 @@ export default function Schedules() {
             <h1>Schedules</h1>
             <p class="lede">{lede}</p>
             {error && <InlineError>Failed to load schedules: {error.message}</InlineError>}
+            {Object.entries(data?.stateErrors ?? {}).map(([projectId, message]) => (
+              <InlineError key={projectId}>
+                Schedules for {projectId} are not running: its schedule state could not be read ({message}). Fix or delete the file, then restart serve.
+              </InlineError>
+            ))}
           </div>
           {multiProject && (
             <select class="project-filter" aria-label="Project" value={project} onChange={(e) => setProject((e.currentTarget as HTMLSelectElement).value)}>

@@ -118,6 +118,8 @@ export interface ServeContext {
   // --- scheduling --------------------------------------------------------
   scheduler: Scheduler;
   pausedSchedulesByProject: Map<string, Set<string>>;
+  /** Project id -> why its schedule-state file could not be read (schedules disarmed). */
+  scheduleStateErrors: Map<string, string>;
   schedulerLocksHeld: Set<string>;
   scheduleIsEnabled: (project: Project | Omit<Project, "agentFiles">, agentPath: string) => boolean;
   canArmSchedules: (projectId: string, projectRoot: string) => boolean;

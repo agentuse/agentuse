@@ -34,6 +34,7 @@ export async function projectRoutes(ctx: ServeContext, rq: ServeRequest): Promis
     workerReadyAt,
     scheduler,
     pausedSchedulesByProject,
+    scheduleStateErrors,
     schedulerLocksHeld,
     orphanReconcileLoop,
   } = ctx;
@@ -178,6 +179,7 @@ export async function projectRoutes(ctx: ServeContext, rq: ServeRequest): Promis
         if (projectIndex >= 0) projects.splice(projectIndex, 1);
         projectsById.delete(project.id);
         pausedSchedulesByProject.delete(project.id);
+        scheduleStateErrors.delete(project.id);
         agentCounts.delete(project.id);
         pathSeen.delete(project.root);
         idSeen.delete(project.id);

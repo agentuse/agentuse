@@ -14,6 +14,7 @@ export async function scheduleRoutes(ctx: ServeContext, rq: ServeRequest): Promi
     projectsById,
     scheduler,
     pausedSchedulesByProject,
+    scheduleStateErrors,
     wakeListHubs,
   } = ctx;
   // Verbatim slice of the original route chain. A `return` in here meant
@@ -24,7 +25,11 @@ export async function scheduleRoutes(ctx: ServeContext, rq: ServeRequest): Promi
     if (req.method === "GET" && routePath === '/schedules') {
       const schedules = scheduler.listSerialized();
       if (isApi) {
-        sendJSON(res, 200, { success: true, schedules });
+        sendJSON(res, 200, {
+          success: true,
+          schedules,
+          ...(scheduleStateErrors.size > 0 && { stateErrors: Object.fromEntries(scheduleStateErrors) }),
+        });
         return;
       }
     }

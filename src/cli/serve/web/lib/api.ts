@@ -1221,6 +1221,8 @@ export function removeCustomProvider(name: string): Promise<ProviderSetupPayload
 export interface SchedulesPayload {
   success: true;
   schedules: SerializedSchedule[];
+  /** Project id -> unreadable schedule-state error; that project's schedules are disarmed. */
+  stateErrors?: Record<string, string>;
 }
 
 export function fetchSchedules(): Promise<SchedulesPayload> {
