@@ -257,6 +257,7 @@ export interface ServeContext {
   ) => AgentDraftRecord & { sessionToken?: string; sessionHref: string };
   reconcileAgentDraftRecord: (project: Project, record: AgentDraftRecord) => Promise<AgentDraftRecord>;
   reconcileAgentRevisionRecord: (project: Project, record: AgentRevisionRecord) => Promise<AgentRevisionRecord>;
+  reconcileChangesetRecord: (project: Project, record: ChangesetRecord) => Promise<ChangesetRecord>;
   startMockTestRun: (
     project: Project,
     candidate: { source: string; name: string; fileName: string; model: string; index: number },

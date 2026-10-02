@@ -1,5 +1,6 @@
 import { agentCreationProviders } from "../../../agents/create";
 import { discoverProjectSkillCatalog, prepareProjectDiscoveryView } from "../../../agents/discover";
+import { readChangesetRecord } from "../../../agents/changeset";
 import { readAgentRevisionRecord } from "../../../agents/revision";
 import { providerSetupSnapshot } from "../../../auth/provider-setup";
 import { ONBOARDING_AGENT_ID, ONBOARDING_AGENT_SOURCE } from "../../../onboarding";
@@ -10,6 +11,7 @@ import { toErrorMessage } from "../../../utils/error-message.js";
 import { logger } from "../../../utils/logger";
 import { isProcessRefAliveAsync } from "../../../utils/process-info";
 import { sessionViewToken } from "../../../utils/session-token";
+import { CHANGESET_SESSION_FAILURES } from "../authoring-session";
 import { parseJSONBody, sendError, sendJSON, sendRequestParseError } from "../http";
 import { AgentCreationRecoveryInput, OnboardingModelJob } from "../internal-jobs";
 import { ulid } from "ulid";
@@ -41,6 +43,7 @@ export async function onboardingRoutes(ctx: ServeContext, rq: ServeRequest): Pro
     recoverAgentCreationJob,
     recoverProjectDiscoveryJob,
     reconcileAgentRevisionRecord,
+    reconcileChangesetRecord,
   } = ctx;
   // Verbatim slice of the original route chain. A `return` in here meant
   // "request answered", exactly as it did inside the server callback; falling
@@ -89,6 +92,25 @@ export async function onboardingRoutes(ctx: ServeContext, rq: ServeRequest): Pro
             } else if (reconciled && reconciled.status !== 'running') {
               job.status = 'completed';
               job.result = reconciled;
+            }
+            await persistOnboardingJob(job);
+          } else if (job.kind === 'changeset') {
+            // Same as a revision: the record, settled against its durable
+            // session, decides the envelope, so a dead authoring run is not
+            // reported as merely interrupted while its record stays running.
+            const project = projectsById.get(job.projectId);
+            const record = project
+              ? await readChangesetRecord(project.root, job.sessionId)
+              : undefined;
+            const reconciled = project && record
+              ? await reconcileChangesetRecord(project, record)
+              : record;
+            if (reconciled?.status === 'error') {
+              job.status = 'error';
+              job.error = reconciled.error ?? { ...CHANGESET_SESSION_FAILURES.failed };
+            } else if (reconciled && reconciled.status !== 'running') {
+              job.status = 'completed';
+              job.result = { kind: 'changeset', sessionId: job.sessionId, projectId: job.projectId };
             }
             await persistOnboardingJob(job);
           } else if (job.status === 'running' && !ownerAlive) {

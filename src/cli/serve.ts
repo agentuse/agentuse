@@ -10,6 +10,8 @@ import { RunRequest, reportedSurfaceForRun, webUIClientSurface, workerExecutionE
 import { LIST_PAGE_DEFAULT_LIMIT, LIST_PAGE_MAX_LIMIT, buildRunTranscript, cursorPage, isEndedSessionStatus, sessionLearningTargetAgent, sessionListStreamKey } from "./serve/session-lists";
 import { CHANGESET_ID_PATTERN, ChangesetActiveError, ChangesetTargetError, activeChangesetForTarget, applyProjectChangeset, changesetAcceptsChangeRequest, changesetApplyValidator, changesetListSummary, changesetReviewHref, changesetSessionPurpose, discardProjectChangeset, prepareChangesetStart, removeChangesetWorkspace, resolveChangesetTargetPath, settleChangesetSession } from "./serve/changesets";
 import { WorkerExecuteError, WorkerExecuteOptions, WorkerExecuteResult } from "./serve/worker-types";
+import { REVISION_SESSION_FAILURES, settleRunningAuthoringRecord } from "./serve/authoring-session";
+import { reconcileChangesetSession } from "./serve/changesets";
 import { importantDescendantTree, logsWithChildSessions } from "./serve/session-log";
 import { serveSessionArtifact, serveSessionToolOutputArtifact } from "./serve/artifacts";
 import { isAllowedRequestHost, isExposedHost, isHeaderGateExemptRoute, isSessionCapabilityAuthorized, isSpaPageRoute, isOperatorRequest, validateApiKey, validateApiKeyHeader } from "./serve/auth";
@@ -2744,37 +2746,27 @@ export function createServeCommand(): Command {
           revisionMutations,
           activeSessionContinuations,
         )) return record;
-        const worker = workers.get(project.id);
-        if (!worker) return record;
-        const status = await worker.getSessionStatusInfo({
+        return await settleRunningAuthoringRecord({
+          worker: workers.get(project.id),
           projectRoot: project.root,
           sessionId: record.revisionSessionId,
-        });
-        if (!status.success) {
-          if (status.error.code !== 'SESSION_NOT_FOUND') return record;
-          // The durable record is written immediately before its preparing
-          // shell. Do not let a concurrent list request classify that tiny
-          // in-process handoff window as a restart loss.
-          if (Date.now() - record.createdAt < 30_000) return record;
-          return await failAgentRevision(project.root, record.revisionSessionId, {
-            code: 'REVISION_SESSION_MISSING',
-            message: 'The revision session was lost before execution started',
-          }) ?? record;
-        }
-        if (status.session.sessionStatus === 'error') {
-          return await failAgentRevision(project.root, record.revisionSessionId, {
-            code: status.session.errorCode ?? 'REVISION_SESSION_FAILED',
-            message: status.session.errorMessage ?? 'The revision session did not finish successfully',
-          }) ?? record;
-        }
-        if (status.session.sessionStatus === 'completed') {
-          return await failAgentRevision(project.root, record.revisionSessionId, {
-            code: 'REVISION_NOT_SUBMITTED',
-            message: 'The revision session ended without submitting a validated outcome',
-          }) ?? record;
-        }
-        return record;
+          createdAt: record.createdAt,
+          failures: REVISION_SESSION_FAILURES,
+          fail: (error) => failAgentRevision(project.root, record.revisionSessionId, error),
+        }) ?? record;
       };
+
+      /** The same settlement for a change set: its first-run and continuation
+       *  callbacks are in memory too, so a restart left it running forever. */
+      const reconcileChangesetRecord = (
+        project: Project,
+        record: ChangesetRecord,
+      ): Promise<ChangesetRecord> => reconcileChangesetSession({
+        worker: workers.get(project.id),
+        record,
+        inFlight: changesetMutations.has(`changeset:${project.id}:${record.sessionId}`)
+          || activeSessionContinuations.has(`${project.id}:${record.sessionId}`),
+      });
 
       // Helper to print hot reload messages
       const printHotReload = (projectId: string, action: "added" | "changed" | "removed", path: string, schedule?: Schedule) => {
@@ -4693,6 +4685,7 @@ export function createServeCommand(): Command {
         draftViewPayload,
         reconcileAgentDraftRecord,
         reconcileAgentRevisionRecord,
+        reconcileChangesetRecord,
         startMockTestRun,
         startChangesetTestRun,
         settleStaleChangesetTestRuns,

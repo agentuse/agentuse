@@ -92,6 +92,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
     draftViewPayload,
     reconcileAgentDraftRecord,
     reconcileAgentRevisionRecord,
+    reconcileChangesetRecord,
     startMockTestRun,
     startChangesetTestRun,
     settleStaleChangesetTestRuns,
@@ -246,6 +247,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
         ...(target && { target }),
         ...(originSessionId && { originSessionId }),
         ...(originTranscript && { originTranscript }),
+        reconcile: (existing) => reconcileChangesetRecord(project, existing),
       });
 
       const timeout = mode === 'create' ? CHANGESET_CREATE_TIMEOUT_SECONDS : CHANGESET_REVISE_TIMEOUT_SECONDS;
@@ -355,7 +357,11 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
             job.result = { kind: 'changeset', sessionId, projectId: project.id };
             return;
           }
-          const failure = await settleChangesetSession(project.root, sessionId, execution);
+          // A read may already have settled the record against the durable
+          // session, which ends before this callback runs.
+          const failure = await settleChangesetSession(project.root, sessionId, execution)
+            ?? await readChangesetRecord(project.root, sessionId)
+              .then((settled) => (settled?.status === 'error' ? settled.error : undefined));
           if (failure) {
             job.status = 'error';
             job.error = failure;
@@ -740,10 +746,10 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
 
         if (req.method === 'GET' && !sessionId) {
           const target = requestUrl.searchParams.get('target')?.trim();
-          const records = await listChangesetRecords(
+          const records = await Promise.all((await listChangesetRecords(
             project.root,
             target ? { targetPath: target } : {},
-          );
+          )).map((record) => reconcileChangesetRecord(project, record)));
           sendJSON(res, 200, { success: true, changesets: records.map(changesetListSummary) });
           return;
         }
@@ -773,7 +779,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
             sendError(res, 404, 'CHANGESET_NOT_FOUND', 'Change set not found');
             return;
           }
-          const record = await settleStaleChangesetTestRuns(project, stored);
+          const record = await settleStaleChangesetTestRuns(project, await reconcileChangesetRecord(project, stored));
           // Older changesets only stored the origin id. Resolve their context
           // on read without rewriting the historical record.
           if (record.mode === 'revise' && record.originSessionId && !record.originTranscript) {

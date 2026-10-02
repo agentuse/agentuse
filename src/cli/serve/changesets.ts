@@ -15,15 +15,13 @@ import { projectFileReader as changesetProjectFileReader, listProjectAgents as l
 import { isPathInside } from "../../utils/path-policy";
 import type { SessionPurpose } from "./types";
 import { WorkerExecuteError, WorkerExecuteResult } from "./worker-types";
+import { CHANGESET_SESSION_FAILURES, settleRunningAuthoringRecord, type AuthoringSessionStatusSource } from "./authoring-session";
 import { lstat, mkdir, realpath, rm, writeFile } from "fs/promises";
 import { join, relative, resolve } from "path";
 
 /** ULID, the only shape a change set id can take. Checked before the record
  *  helpers throw on it, so a junk path is a 404 rather than a 400. */
-export const CHANGESET_NOT_SUBMITTED = {
-  code: 'CHANGESET_NOT_SUBMITTED',
-  message: 'The change set session ended without submitting a validated outcome',
-} as const;
+export const CHANGESET_NOT_SUBMITTED = CHANGESET_SESSION_FAILURES.notSubmitted;
 
 export const CHANGESET_ID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
 
@@ -149,11 +147,15 @@ export async function prepareChangesetStart(input: {
   target?: { path: string; name: string };
   originSessionId?: string;
   originTranscript?: string;
+  /** Settles a record whose session ended while no daemon was watching, so
+   *  a dead authoring run does not hold its target forever. */
+  reconcile?: (record: ChangesetRecord) => Promise<ChangesetRecord>;
 }): Promise<ChangesetRecord> {
   if (input.mode === 'revise') {
     if (!input.target) throw new Error('A revise change set needs a target agent');
+    const existing = await listChangesetRecords(input.projectRoot, { targetPath: input.target.path });
     const conflict = activeChangesetForTarget(
-      await listChangesetRecords(input.projectRoot, { targetPath: input.target.path }),
+      input.reconcile ? await Promise.all(existing.map(input.reconcile)) : existing,
       input.target.path,
     );
     if (conflict) {
@@ -234,6 +236,29 @@ export async function discardProjectChangeset(projectRoot: string, sessionId: st
   const record = await discardChangeset(projectRoot, sessionId);
   await removeChangesetWorkspace(projectRoot, sessionId).catch(() => undefined);
   return record;
+}
+
+/**
+ * Settle a `running` change set against its durable session when the host
+ * callback that would have settled it is gone (a daemon restart). Mirrors the
+ * revision reconcile; `inFlight` is a request-changes handoff, whose session
+ * still shows the previous turn's terminal status.
+ */
+export async function reconcileChangesetSession(input: {
+  worker: AuthoringSessionStatusSource | undefined;
+  record: ChangesetRecord;
+  inFlight: boolean;
+}): Promise<ChangesetRecord> {
+  const { record } = input;
+  if (record.status !== 'running' || input.inFlight) return record;
+  return await settleRunningAuthoringRecord({
+    worker: input.worker,
+    projectRoot: record.projectRoot,
+    sessionId: record.sessionId,
+    createdAt: record.createdAt,
+    failures: CHANGESET_SESSION_FAILURES,
+    fail: (error) => failChangeset(record.projectRoot, record.sessionId, error),
+  }) ?? record;
 }
 
 /**
