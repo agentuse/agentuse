@@ -3,6 +3,8 @@ import path from "path";
 import type { AuthInfo, OAuthTokens, CodexOAuthTokens, ApiKeyAuth, ProviderAuth, CustomProviderAuth } from "./types.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
 import { getAgentuseDataDir } from "../utils/data-dir.js";
+import { withOwnershipLock } from "../utils/ownership-lock.js";
+import { logger } from "../utils/logger.js";
 import type { PluginCredential } from "../plugin/types.js";
 
 export function resolveAuthFilePath(): string {
@@ -11,8 +13,14 @@ export function resolveAuthFilePath(): string {
 
 export class AuthStorage {
   private static readonly AUTH_FILE = resolveAuthFilePath();
-  private static readonly LOCK_TIMEOUT_MS = 30_000;
-  private static readonly STALE_LOCK_MS = 5 * 60_000;
+  private static readonly LOCK_TIMEOUT_MS = 40_000;
+  /**
+   * Deadline for a callback running under the lock (a token refresh). The
+   * ownership lock heartbeats while its holder is alive, so a hung refresh
+   * would otherwise block every other worker forever. Kept below
+   * LOCK_TIMEOUT_MS so waiters outlast one stuck holder.
+   */
+  private static readonly REFRESH_TIMEOUT_MS = 30_000;
   private static readonly OAUTH_CACHE_TTL_MS = 1_000;
 
   /**
@@ -32,103 +40,143 @@ export class AuthStorage {
     await fs.mkdir(dir, { recursive: true });
   }
 
-  private static async sleep(ms: number) {
-    await new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
   private static async writeAll(data: Record<string, AuthInfo>): Promise<void> {
     await this.ensureDir();
     await atomicWriteFile(this.AUTH_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
-  }
-
-  private static lockDir(): string {
-    return `${this.AUTH_FILE}.lock`;
   }
 
   private static oauthCacheKey(providerID: string): string {
     return `${this.AUTH_FILE}\0${providerID}`;
   }
 
-  static async withAuthLock<T>(callback: () => Promise<T>): Promise<T> {
-    await this.ensureDir();
-    const lockDir = this.lockDir();
-    const startedAt = Date.now();
-
-    while (true) {
-      try {
-        await fs.mkdir(lockDir);
-        break;
-      } catch (error) {
-        if ((error as { code?: string }).code !== "EEXIST") {
-          throw error;
-        }
-
-        try {
-          const stat = await fs.stat(lockDir);
-          if (Date.now() - stat.mtimeMs > this.STALE_LOCK_MS) {
-            await fs.rm(lockDir, { recursive: true, force: true });
-            continue;
-          }
-        } catch {
-          continue;
-        }
-
-        if (Date.now() - startedAt > this.LOCK_TIMEOUT_MS) {
-          throw new Error(`Timed out waiting for auth storage lock: ${lockDir}`);
-        }
-
-        await this.sleep(50 + Math.floor(Math.random() * 50));
-      }
-    }
-
+  /**
+   * Strict read for anything that writes back. Only a missing file counts as
+   * empty: an unreadable file, bad JSON, or a root that is not an object
+   * throws, so a write never replaces credentials it failed to read.
+   */
+  private static async readAuthFile(): Promise<Record<string, AuthInfo>> {
+    const file = this.AUTH_FILE;
+    const unusable = (reason: string) => new Error(
+      `Auth file ${file} ${reason}. It was left unchanged. Fix or move it aside, then run \`agentuse auth login\` again.`
+    );
+    let content: string;
     try {
-      return await callback();
-    } finally {
-      await fs.rm(lockDir, { recursive: true, force: true }).catch(() => {});
+      content = await fs.readFile(file, "utf-8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+      throw unusable(`could not be read (${(error as Error).message})`);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(content);
+    } catch (error) {
+      throw unusable(`is not valid JSON (${(error as Error).message})`);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw unusable("does not contain a JSON object");
+    }
+    return parsed as Record<string, AuthInfo>;
+  }
+
+  private static lastReadWarning: string | undefined;
+
+  /**
+   * Read for status and lookups: a file that cannot be read reports as no
+   * credentials (so status still renders), with one warning per distinct error.
+   */
+  private static async readAuthFileLenient(): Promise<Record<string, AuthInfo>> {
+    try {
+      return await this.readAuthFile();
+    } catch (error) {
+      const message = (error as Error).message;
+      if (message !== this.lastReadWarning) {
+        this.lastReadWarning = message;
+        logger.warn(message);
+      }
+      return {};
     }
   }
 
-  private static async mutate<T>(callback: (data: Record<string, AuthInfo>) => Promise<T> | T): Promise<T> {
+  static async withAuthLock<T>(callback: () => Promise<T>): Promise<T> {
+    await this.ensureDir();
+    return withOwnershipLock(`${this.AUTH_FILE}.lock`, callback, {
+      maxWaitMs: this.LOCK_TIMEOUT_MS,
+      label: "auth",
+    });
+  }
+
+  /**
+   * The one read-modify-write path for auth.json: lock, strict read, apply
+   * `callback` to the data in place, and write only if it changed. The callback
+   * gets a deadline signal to pass to any network refresh it runs.
+   */
+  private static async transact<T>(
+    callback: (data: Record<string, AuthInfo>, signal: AbortSignal) => Promise<T> | T
+  ): Promise<T> {
     return this.withAuthLock(async () => {
-      const data = await this.all();
-      const result = await callback(data);
-      await this.writeAll(data);
-      this.oauthCache.clear();
+      const data = await this.readAuthFile();
+      const before = JSON.stringify(data);
+      const result = await callback(data, AbortSignal.timeout(this.REFRESH_TIMEOUT_MS));
+      if (JSON.stringify(data) !== before) {
+        await this.writeAll(data);
+        this.oauthCache.clear();
+      }
       return result;
     });
+  }
+
+  private static oauthFrom(
+    data: Record<string, AuthInfo>,
+    providerID: string
+  ): OAuthTokens | CodexOAuthTokens | undefined {
+    const auth = data[`${providerID}:oauth`];
+    if (auth && (auth.type === "oauth" || auth.type === "codex-oauth")) return auth;
+    const legacy = data[providerID];
+    if (legacy && (legacy.type === "oauth" || legacy.type === "codex-oauth")) return legacy;
+    return undefined;
+  }
+
+  private static apiKeyFrom(data: Record<string, AuthInfo>, providerID: string): ApiKeyAuth | undefined {
+    const auth = data[`${providerID}:api`];
+    if (auth && auth.type === "api") return auth;
+    const legacy = data[providerID];
+    if (legacy && legacy.type === "api") return legacy;
+    return undefined;
+  }
+
+  private static pluginCredentialFrom(data: Record<string, unknown>, key: string): PluginCredential | undefined {
+    const value = data[key];
+    return value && typeof value === "object" && !Array.isArray(value) ? value as PluginCredential : undefined;
   }
 
   /**
    * Run a provider-specific OAuth update while holding the shared auth-file lock.
    * The callback receives freshly re-read credentials so concurrent workers do not
-   * all try to refresh the same rotating token.
+   * all try to refresh the same rotating token, plus a deadline signal that any
+   * refresh request must honour so a hung endpoint cannot hold the lock.
    */
   static async updateOAuth<T>(
     providerID: string,
-    callback: (current: OAuthTokens | CodexOAuthTokens | undefined) => Promise<{
+    callback: (current: OAuthTokens | CodexOAuthTokens | undefined, signal: AbortSignal) => Promise<{
       value: T;
       next?: OAuthTokens | CodexOAuthTokens;
     }>
   ): Promise<T> {
-    return this.withAuthLock(async () => {
-      const current = await this.getOAuth(providerID);
-      const { value, next } = await callback(current);
-
+    let written: OAuthTokens | CodexOAuthTokens | undefined;
+    const value = await this.transact(async (data, signal) => {
+      const { value, next } = await callback(this.oauthFrom(data, providerID), signal);
       if (next) {
-        const data = await this.all();
         data[`${providerID}:oauth`] = next;
-
         const legacy = data[providerID];
         if (legacy && (legacy.type === "oauth" || legacy.type === "codex-oauth")) {
           delete data[providerID];
         }
-
-        await this.writeAll(data);
-        this.oauthCache.set(this.oauthCacheKey(providerID), { readAt: Date.now(), value: next });
+        written = next;
       }
-
       return value;
     });
+    if (written) this.oauthCache.set(this.oauthCacheKey(providerID), { readAt: Date.now(), value: written });
+    return value;
   }
 
   /**
@@ -136,8 +184,8 @@ export class AuthStorage {
    * request, and re-reading auth.json each time is pure overhead when the token
    * is nowhere near expiry. Pass `refresh` to skip the cache and re-read, which
    * is what a caller does once its cached copy looks stale, before deciding it
-   * needs the lock. Anything about to *write* keeps using getOAuth inside
-   * withAuthLock, where a stale read would be a correctness bug.
+   * needs the lock. Anything about to *write* reads inside the lock through
+   * transact, where a stale read would be a correctness bug.
    */
   static async getOAuthCached(
     providerID: string,
@@ -162,13 +210,7 @@ export class AuthStorage {
    * Prefer using getOAuth/getApiKey for new code
    */
   static async get(providerID: string): Promise<AuthInfo | undefined> {
-    try {
-      const content = await fs.readFile(this.AUTH_FILE, "utf-8");
-      const data = JSON.parse(content);
-      return data[providerID] as AuthInfo | undefined;
-    } catch {
-      return undefined;
-    }
+    return (await this.readAuthFileLenient())[providerID];
   }
 
   /**
@@ -176,29 +218,7 @@ export class AuthStorage {
    * Checks both new format ({provider}:oauth) and legacy format ({provider})
    */
   static async getOAuth(providerID: string): Promise<OAuthTokens | CodexOAuthTokens | undefined> {
-    try {
-      const content = await fs.readFile(this.AUTH_FILE, "utf-8");
-      const data = JSON.parse(content);
-
-      // Check new format first
-      const oauthKey = `${providerID}:oauth`;
-      if (data[oauthKey]) {
-        const auth = data[oauthKey] as AuthInfo;
-        if (auth.type === "oauth" || auth.type === "codex-oauth") {
-          return auth;
-        }
-      }
-
-      // Fall back to legacy format
-      const legacy = data[providerID] as AuthInfo | undefined;
-      if (legacy && (legacy.type === "oauth" || legacy.type === "codex-oauth")) {
-        return legacy;
-      }
-
-      return undefined;
-    } catch {
-      return undefined;
-    }
+    return this.oauthFrom(await this.readAuthFileLenient(), providerID);
   }
 
   /**
@@ -206,29 +226,7 @@ export class AuthStorage {
    * Checks both new format ({provider}:api) and legacy format ({provider})
    */
   static async getApiKey(providerID: string): Promise<ApiKeyAuth | undefined> {
-    try {
-      const content = await fs.readFile(this.AUTH_FILE, "utf-8");
-      const data = JSON.parse(content);
-
-      // Check new format first
-      const apiKey = `${providerID}:api`;
-      if (data[apiKey]) {
-        const auth = data[apiKey] as AuthInfo;
-        if (auth.type === "api") {
-          return auth;
-        }
-      }
-
-      // Fall back to legacy format
-      const legacy = data[providerID] as AuthInfo | undefined;
-      if (legacy && legacy.type === "api") {
-        return legacy;
-      }
-
-      return undefined;
-    } catch {
-      return undefined;
-    }
+    return this.apiKeyFrom(await this.readAuthFileLenient(), providerID);
   }
 
   /**
@@ -251,12 +249,7 @@ export class AuthStorage {
   }
 
   static async all(): Promise<Record<string, AuthInfo>> {
-    try {
-      const content = await fs.readFile(this.AUTH_FILE, "utf-8");
-      return JSON.parse(content);
-    } catch {
-      return {};
-    }
+    return this.readAuthFileLenient();
   }
 
   /**
@@ -264,7 +257,7 @@ export class AuthStorage {
    * Prefer using setOAuth/setApiKey for new code
    */
   static async set(providerID: string, info: AuthInfo): Promise<void> {
-    await this.mutate((data) => {
+    await this.transact((data) => {
       data[providerID] = info;
     });
   }
@@ -274,7 +267,7 @@ export class AuthStorage {
    * Stores under {provider}:oauth key (does not overwrite API key)
    */
   static async setOAuth(providerID: string, info: OAuthTokens | CodexOAuthTokens): Promise<void> {
-    await this.mutate((data) => {
+    await this.transact((data) => {
       // Store in new format
       data[`${providerID}:oauth`] = info;
 
@@ -291,7 +284,7 @@ export class AuthStorage {
    * Stores under {provider}:api key (does not overwrite OAuth)
    */
   static async setApiKey(providerID: string, info: ApiKeyAuth): Promise<void> {
-    await this.mutate((data) => {
+    await this.transact((data) => {
       // Store in new format
       data[`${providerID}:api`] = info;
 
@@ -304,7 +297,7 @@ export class AuthStorage {
   }
 
   static async remove(providerID: string): Promise<void> {
-    await this.mutate((data) => {
+    await this.transact((data) => {
       delete data[providerID];
     });
   }
@@ -313,7 +306,7 @@ export class AuthStorage {
    * Remove OAuth tokens for a provider
    */
   static async removeOAuth(providerID: string): Promise<void> {
-    await this.mutate((data) => {
+    await this.transact((data) => {
       delete data[`${providerID}:oauth`];
 
       // Also remove legacy format if it was OAuth
@@ -328,7 +321,7 @@ export class AuthStorage {
    * Remove API key for a provider
    */
   static async removeApiKey(providerID: string): Promise<void> {
-    await this.mutate((data) => {
+    await this.transact((data) => {
       delete data[`${providerID}:api`];
 
       // Also remove legacy format if it was API key
@@ -355,16 +348,7 @@ export class AuthStorage {
 
   /** Opaque credentials owned by a provider auth method, persisted by core. */
   static async getPluginCredential(providerID: string, methodID: string): Promise<PluginCredential | undefined> {
-    try {
-      const content = await fs.readFile(this.AUTH_FILE, "utf-8");
-      const data = JSON.parse(content) as Record<string, unknown>;
-      const value = data[this.pluginCredentialKey(providerID, methodID)];
-      return value && typeof value === "object" && !Array.isArray(value)
-        ? value as PluginCredential
-        : undefined;
-    } catch {
-      return undefined;
-    }
+    return this.pluginCredentialFrom(await this.readAuthFileLenient(), this.pluginCredentialKey(providerID, methodID));
   }
 
   /**
@@ -376,33 +360,25 @@ export class AuthStorage {
     methodID: string,
     sourceProviderID: string = providerID,
   ): Promise<PluginCredential | undefined> {
-    return this.withAuthLock(async () => {
-      const data = await this.all() as Record<string, unknown>;
+    return this.transact((authData) => {
+      const data = authData as Record<string, unknown>;
       const destinationKey = this.pluginCredentialKey(providerID, methodID);
-      const destination = data[destinationKey];
-      if (destination && typeof destination === "object" && !Array.isArray(destination)) {
-        let changed = false;
-        const sourceKey = `${sourceProviderID}:oauth`;
-        if (sourceKey in data) {
-          delete data[sourceKey];
-          changed = true;
-        }
+      const sourceKey = `${sourceProviderID}:oauth`;
+      const dropLegacyOAuth = () => {
         const legacy = data[sourceProviderID];
         if (legacy && typeof legacy === "object" && !Array.isArray(legacy)) {
           const legacyType = (legacy as { type?: unknown }).type;
-          if (legacyType === "oauth" || legacyType === "codex-oauth") {
-            delete data[sourceProviderID];
-            changed = true;
-          }
+          if (legacyType === "oauth" || legacyType === "codex-oauth") delete data[sourceProviderID];
         }
-        if (changed) {
-          await this.writeAll(data as Record<string, AuthInfo>);
-          this.oauthCache.clear();
-        }
-        return destination as PluginCredential;
+      };
+
+      const destination = this.pluginCredentialFrom(data, destinationKey);
+      if (destination) {
+        delete data[sourceKey];
+        dropLegacyOAuth();
+        return destination;
       }
 
-      const sourceKey = `${sourceProviderID}:oauth`;
       const current = data[sourceKey] ?? data[sourceProviderID];
       if (!current || typeof current !== "object" || Array.isArray(current)) return undefined;
       const type = (current as { type?: unknown }).type;
@@ -411,20 +387,14 @@ export class AuthStorage {
       const normalized = this.normalizePluginCredential(current as PluginCredential);
       data[destinationKey] = normalized;
       delete data[sourceKey];
-      const legacy = data[sourceProviderID];
-      if (legacy && typeof legacy === "object" && !Array.isArray(legacy)) {
-        const legacyType = (legacy as { type?: unknown }).type;
-        if (legacyType === "oauth" || legacyType === "codex-oauth") delete data[sourceProviderID];
-      }
-      await this.writeAll(data as Record<string, AuthInfo>);
-      this.oauthCache.clear();
+      dropLegacyOAuth();
       return normalized;
     });
   }
 
   static async setPluginCredential(providerID: string, methodID: string, credential: PluginCredential): Promise<void> {
     const normalized = this.normalizePluginCredential(credential);
-    await this.mutate((data) => {
+    await this.transact((data) => {
       data[this.pluginCredentialKey(providerID, methodID)] = normalized as AuthInfo;
     });
   }
@@ -432,24 +402,18 @@ export class AuthStorage {
   static async updatePluginCredential<T>(
     providerID: string,
     methodID: string,
-    callback: (credential: PluginCredential | undefined) => Promise<{ value: T; next?: PluginCredential }>,
+    callback: (credential: PluginCredential | undefined, signal: AbortSignal) => Promise<{ value: T; next?: PluginCredential }>,
   ): Promise<T> {
-    return this.withAuthLock(async () => {
-      const data = await this.all() as Record<string, unknown>;
+    return this.transact(async (data, signal) => {
       const key = this.pluginCredentialKey(providerID, methodID);
-      const raw = data[key];
-      const current = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as PluginCredential : undefined;
-      const { value, next } = await callback(current);
-      if (next) {
-        data[key] = this.normalizePluginCredential(next);
-        await this.writeAll(data as Record<string, AuthInfo>);
-      }
+      const { value, next } = await callback(this.pluginCredentialFrom(data, key), signal);
+      if (next) data[key] = this.normalizePluginCredential(next) as AuthInfo;
       return value;
     });
   }
 
   static async removePluginCredential(providerID: string, methodID: string): Promise<void> {
-    await this.mutate((data) => {
+    await this.transact((data) => {
       delete data[this.pluginCredentialKey(providerID, methodID)];
     });
   }
@@ -462,7 +426,7 @@ export class AuthStorage {
     name: string,
     config: Omit<CustomProviderAuth, "type">
   ): Promise<void> {
-    await this.mutate((data) => {
+    await this.transact((data) => {
       const entry: CustomProviderAuth = {
         type: "custom",
         baseURL: config.baseURL,
@@ -479,17 +443,8 @@ export class AuthStorage {
    * Get a custom provider configuration by name
    */
   static async getCustomProvider(name: string): Promise<CustomProviderAuth | undefined> {
-    try {
-      const content = await fs.readFile(this.AUTH_FILE, "utf-8");
-      const data = JSON.parse(content);
-      const entry = data[`custom:${name}`];
-      if (entry && entry.type === "custom") {
-        return entry as CustomProviderAuth;
-      }
-      return undefined;
-    } catch {
-      return undefined;
-    }
+    const entry = (await this.readAuthFileLenient())[`custom:${name}`];
+    return entry && entry.type === "custom" ? entry : undefined;
   }
 
   /**
@@ -512,7 +467,7 @@ export class AuthStorage {
    * Remove a custom provider configuration
    */
   static async removeCustomProvider(name: string): Promise<boolean> {
-    return this.mutate((data) => {
+    return this.transact((data) => {
       const key = `custom:${name}`;
       if (!(key in data)) {
         return false;

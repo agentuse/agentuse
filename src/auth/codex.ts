@@ -90,7 +90,7 @@ function usable(info: OAuthTokens | CodexOAuthTokens | undefined): info is Codex
   );
 }
 
-async function refreshAccessToken(credential: OAuthTokens | CodexOAuthTokens): Promise<TokenResponse> {
+async function refreshAccessToken(credential: OAuthTokens | CodexOAuthTokens, signal: AbortSignal): Promise<TokenResponse> {
   const subject = oauthHealthSubject("openai", credential);
   await assertProviderRefreshAllowed(subject);
   const response = await fetchWithProviderHealth(subject, `${ISSUER}/oauth/token`, {
@@ -101,6 +101,7 @@ async function refreshAccessToken(credential: OAuthTokens | CodexOAuthTokens): P
       refresh_token: credential.refresh,
       client_id: CLIENT_ID,
     }).toString(),
+    signal,
   }, { oauth: true });
   if (!response.ok) {
     throw new Error(`Token refresh failed: ${response.status}`);
@@ -182,7 +183,7 @@ export namespace CodexAuth {
       }
       if (usable(cached)) return { token: cached.access, accountId: cached.accountId };
 
-      return await AuthStorage.updateOAuth("openai", async (info) => {
+      return await AuthStorage.updateOAuth("openai", async (info, signal) => {
         if (!info || info.type !== "codex-oauth") return { value: undefined };
 
         // Check if token is still valid (with 5 minute buffer)
@@ -191,7 +192,7 @@ export namespace CodexAuth {
         }
 
         // Refresh is locked across processes because OAuth refresh tokens can rotate.
-        const tokens = await refreshAccessToken(info);
+        const tokens = await refreshAccessToken(info, signal);
         const accountId = extractAccountId(tokens) || info.accountId;
         const next = {
           type: "codex-oauth" as const,

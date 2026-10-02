@@ -565,11 +565,14 @@ export async function resolveProviderAuth(
   }
 
   let credential = await readCredential(provider.id, method);
-  const refresh = async (latest: PluginCredential): Promise<PluginCredential> => {
+  // `deadline` is set when the refresh runs under the shared auth lock: core
+  // aborts it there so a hung endpoint cannot hold every worker's lock.
+  const refresh = async (latest: PluginCredential, deadline?: AbortSignal): Promise<PluginCredential> => {
     const subject = pluginCredentialSubject(provider, method, latest);
     await assertProviderRefreshAllowed(subject);
     const next = await method.refresh!(latest, {
       ...context,
+      signal: deadline ? AbortSignal.any([context.signal, deadline]) : context.signal,
       fetch: ((input: RequestInfo | URL, init?: RequestInit) => fetchWithProviderHealth(subject, input, init, { fetch: context.fetch, oauth: true })) as typeof fetch,
     });
     await recordProviderHealth(pluginCredentialSubject(provider, method, next), 'verified');
@@ -578,9 +581,9 @@ export async function resolveProviderAuth(
   if (credential && method.refresh && needsRefresh(credential)) {
     const storedHere = await AuthStorage.getPluginCredential(provider.id, method.id);
     if (storedHere) {
-      credential = await AuthStorage.updatePluginCredential(provider.id, method.id, async (latest) => {
+      credential = await AuthStorage.updatePluginCredential(provider.id, method.id, async (latest, deadline) => {
         if (!latest || !needsRefresh(latest)) return { value: latest };
-        const next = await refresh(latest);
+        const next = await refresh(latest, deadline);
         return { value: next, next };
       });
     } else {
