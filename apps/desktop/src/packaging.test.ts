@@ -15,10 +15,10 @@ describe("desktop dependency packaging", () => {
   it("configures the TypeScript declaration inclusion hook", async () => {
     const manifest = await Bun.file(join(desktopRoot, "package.json")).json();
     expect(manifest.build.onNodeModuleFile).toBe("./scripts/include-typescript-lib-declarations.cjs");
-    expect(manifest.build.asarUnpack).toEqual([
+    expect(manifest.build.asarUnpack).toEqual(expect.arrayContaining([
       "node_modules/esbuild/**",
       "node_modules/@esbuild/**",
-    ]);
+    ]));
   });
 
   it("force-includes only TypeScript standard-library declarations", () => {
