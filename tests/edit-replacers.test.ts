@@ -137,6 +137,24 @@ end`]);
 }`;
       expect([...BlockAnchorReplacer(content, search)]).toEqual([]);
     });
+
+    it('does not score lines past the closing anchor of a candidate span', () => {
+      const content = `section {
+  if (ready) {
+    runOld();
+  }
+  finish();
+}`;
+      const search = `section {
+  if (ready) {
+    runPrevious();
+  }
+  finish();
+}`;
+      // The span ending at the inner brace must not borrow finish() and the
+      // outer brace from outside itself; the full block is the match.
+      expect([...BlockAnchorReplacer(content, search)]).toEqual([content]);
+    });
   });
 
   describe('WhitespaceNormalizedReplacer', () => {
@@ -305,6 +323,38 @@ describe('fuzzyReplace - Integration', () => {
   });
 
   describe('fuzzy match cases', () => {
+    it('replaces a whole block whose closing anchor also appears on an inner line', () => {
+      const content = `function process() {
+  if (ready) {
+    runOld();
+  }
+  finish();
+}
+`;
+      const result = fuzzyReplace(content, `function process() {
+  if (ready) {
+    runPrevious();
+  }
+  finish();
+}`, `function process() {
+  if (ready) {
+    runNew();
+  }
+  finish();
+}`);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.replacerUsed).toBe('block-anchor');
+        expect(result.newContent).toBe(`function process() {
+  if (ready) {
+    runNew();
+  }
+  finish();
+}
+`);
+      }
+    });
+
     it('should use line-trimmed matching for whitespace differences', () => {
       // Content where exact match won't work but line-trimmed will
       const result = fuzzyReplace(

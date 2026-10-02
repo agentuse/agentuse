@@ -46,14 +46,15 @@ function blockMiddleSimilarity(
   const linesToCheck = Math.max(originalMiddleCount, searchMiddleCount);
   if (linesToCheck === 0) return 1;
 
+  // Compare only lines inside both middles. A line past the candidate's end
+  // anchor belongs to the surrounding file, and scoring it would let a short
+  // span borrow agreement from code it does not replace. Unpaired lines on
+  // either side contribute zero.
+  const pairedLines = Math.min(originalMiddleCount, searchMiddleCount);
   let similarity = 0;
-  for (let offset = 0; offset < linesToCheck; offset++) {
-    const originalLine = originalLines[startLine + 1 + offset];
-    const searchLine = searchLines[1 + offset];
-    if (originalLine === undefined || searchLine === undefined) continue;
-
-    const originalTrimmed = originalLine.trim();
-    const searchTrimmed = searchLine.trim();
+  for (let offset = 0; offset < pairedLines; offset++) {
+    const originalTrimmed = originalLines[startLine + 1 + offset].trim();
+    const searchTrimmed = searchLines[1 + offset].trim();
     const maxLen = Math.max(originalTrimmed.length, searchTrimmed.length);
     if (maxLen === 0) {
       similarity += 1;
@@ -136,18 +137,22 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
 
   const firstLineSearch = searchLines[0].trim();
   const lastLineSearch = searchLines[searchLines.length - 1].trim();
-  // Collect all candidate positions where both anchors match
+  // A span whose middle is more than twice the search's middle scores below
+  // the threshold (unpaired lines score zero), so longer spans are skipped.
+  const maxMiddleLines = 2 * (searchLines.length - 2);
+  // Collect every span where both anchors match. Every closing anchor after a
+  // start is a candidate, not just the first: an inner `}` or a repeated
+  // heading must not cut the block short.
   const candidates: Array<{ startLine: number; endLine: number }> = [];
   for (let i = 0; i < originalLines.length; i++) {
     if (originalLines[i].trim() !== firstLineSearch) {
       continue;
     }
 
-    // Look for the matching last line after this first line
-    for (let j = i + 2; j < originalLines.length; j++) {
+    const lastEndLine = Math.min(originalLines.length - 1, i + 1 + maxMiddleLines);
+    for (let j = i + 2; j <= lastEndLine; j++) {
       if (originalLines[j].trim() === lastLineSearch) {
         candidates.push({ startLine: i, endLine: j });
-        break; // Only match the first occurrence of the last line
       }
     }
   }
@@ -157,8 +162,9 @@ export const BlockAnchorReplacer: Replacer = function* (content, find) {
     return;
   }
 
-  // Score every candidate using all middle lines. Missing lines contribute
+  // Score every candidate using all middle lines. Unpaired lines contribute
   // zero, so a short search cannot accidentally authorize a much larger span.
+  // Ties keep the earliest, shortest span.
   let bestMatch: { startLine: number; endLine: number } | null = null;
   let maxSimilarity = -1;
 
