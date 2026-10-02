@@ -1146,6 +1146,10 @@ export const executionLog = {
   suspended(agentPath: string, durationMs: number): void {
     console.log(`${this.formatTimestamp()} ${chalk.yellow('Awaiting approval:')} ${agentPath} (${this.formatDuration(durationMs)})`);
   },
+
+  skipped(agentPath: string, reason: string): void {
+    console.log(`${this.formatTimestamp()} ${chalk.yellow('Skipped:')} ${agentPath} - ${reason}`);
+  },
 };
 
 export const approvalLog = {

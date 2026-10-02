@@ -5,7 +5,12 @@ import { parseScheduleExpression } from "./parser";
 import { logger, executionLog } from "../utils/logger";
 
 export interface SchedulerOptions {
-  onExecute: (schedule: Schedule) => Promise<{ success: boolean; duration: number; error?: string; sessionId?: string; suspended?: boolean }>;
+  /**
+   * `skipped` carries the reason when the run was declined before it started
+   * (e.g. a previous run of the agent still holds its claim). Nothing ran, so
+   * lastRun/lastResult are left as they were.
+   */
+  onExecute: (schedule: Schedule) => Promise<{ success: boolean; duration: number; error?: string; sessionId?: string; suspended?: boolean; skipped?: string }>;
   scheduleJitterMs?: number;
 }
 
@@ -106,6 +111,11 @@ function formatDelay(delayMs: number): string {
   return `${Math.round(delayMs / 1000)}s`;
 }
 
+/** Stable identity of one scheduled agent across schedule reloads. */
+function scheduleRunKey(schedule: Pick<Schedule, "projectId" | "agentPath">): string {
+  return `${schedule.projectId}\0${schedule.agentPath}`;
+}
+
 /**
  * In-memory scheduler for running agents on cron schedules
  */
@@ -198,28 +208,30 @@ export class Scheduler {
     const schedule = this.schedules.get(scheduleId);
     if (!schedule || !schedule.enabled) return;
 
-    // Prevent overlapping executions of the same schedule: a cron tick (or manual
+    // Prevent overlapping executions of the same agent: a cron tick (or manual
     // trigger) that fires while a previous run is still in flight is skipped
     // rather than running the agent concurrently and racing on lastRun/lastResult.
-    if (this.runningSchedules.has(scheduleId)) {
+    // Keyed by project + agent path, not schedule id: a hot reload replaces the
+    // Schedule (new id) while the pre-edit run is still going.
+    const runKey = scheduleRunKey(schedule);
+    if (this.runningSchedules.has(runKey)) {
       logger.debug(`Scheduler: ${schedule.agentPath} is still running; skipping overlapping run`);
       return;
     }
-    this.runningSchedules.add(scheduleId);
+    this.runningSchedules.add(runKey);
 
     executionLog.start(schedule.agentPath);
 
     const startTime = Date.now();
 
     try {
-      const result = await this.onExecute(schedule);
+      const { skipped, ...result } = await this.onExecute(schedule);
+      if (skipped !== undefined) {
+        executionLog.skipped(schedule.agentPath, skipped);
+        return;
+      }
 
-      schedule.lastRun = new Date();
-      schedule.lastResult = result;
-
-      // Update next run time
-      const job = this.jobs.get(scheduleId);
-      schedule.nextRun = job?.nextRun() || null;
+      this.recordRunResult(schedule, result);
 
       if (result.success) {
         if (result.suspended) {
@@ -236,22 +248,29 @@ export class Scheduler {
       }
     } catch (error) {
       const duration = Date.now() - startTime;
-      schedule.lastRun = new Date();
-      schedule.lastResult = {
+      this.recordRunResult(schedule, {
         success: false,
         duration,
         error: (error as Error).message,
-      };
-
-      // Update next run time
-      const job = this.jobs.get(scheduleId);
-      schedule.nextRun = job?.nextRun() || null;
+      });
 
       executionLog.failed(schedule.agentPath, duration, (error as Error).message);
       logger.debug(`Schedule ${scheduleId} failed: ${(error as Error).message}`);
     } finally {
-      this.runningSchedules.delete(scheduleId);
+      this.runningSchedules.delete(runKey);
     }
+  }
+
+  /**
+   * Record a finished run on the schedule currently registered for the agent.
+   * A hot reload during the run replaces the Schedule object, so writing to the
+   * one captured at start would leave the live entry's lastRun blank.
+   */
+  private recordRunResult(started: Schedule, result: NonNullable<Schedule["lastResult"]>): void {
+    const current = this.getByAgentPath(started.projectId, started.agentPath) ?? started;
+    current.lastRun = new Date();
+    current.lastResult = result;
+    current.nextRun = this.jobs.get(current.id)?.nextRun() || null;
   }
 
   /**

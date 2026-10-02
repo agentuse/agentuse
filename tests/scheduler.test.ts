@@ -409,3 +409,68 @@ describe("Scheduler", () => {
     });
   });
 });
+
+describe("overlap guard across schedule reloads", () => {
+  it("skips a firing under the reloaded schedule while the pre-edit run is still going", async () => {
+    let release!: () => void;
+    const executed: string[] = [];
+    const scheduler = new Scheduler({
+      scheduleJitterMs: 0,
+      onExecute: async (schedule) => {
+        executed.push(schedule.id);
+        if (executed.length === 1) await new Promise<void>((resolve) => { release = resolve; });
+        return { success: true, duration: 1 };
+      },
+    });
+    const original = scheduler.add("p", "a.agentuse", "0 9 * * *");
+    const firstRun = scheduler.trigger(original.id);
+
+    const reloaded = scheduler.update("p", "a.agentuse", "0 10 * * *")!;
+    expect(reloaded.id).not.toBe(original.id);
+    await scheduler.trigger(reloaded.id);
+    expect(executed).toEqual([original.id]);
+
+    release();
+    await firstRun;
+    await scheduler.trigger(reloaded.id);
+    expect(executed).toEqual([original.id, reloaded.id]);
+    scheduler.shutdown();
+  });
+
+  it("leaves lastRun untouched when the run is skipped before it starts", async () => {
+    const skippedSpy = spyOn(executionLog, "skipped").mockImplementation(() => {});
+    const scheduler = new Scheduler({
+      scheduleJitterMs: 0,
+      onExecute: async () => ({ success: false, duration: 2, skipped: "previous run is still active" }),
+    });
+    const schedule = scheduler.add("p", "a.agentuse", "0 9 * * *");
+    await scheduler.trigger(schedule.id);
+
+    expect(schedule.lastRun).toBeUndefined();
+    expect(schedule.lastResult).toBeUndefined();
+    expect(skippedSpy).toHaveBeenCalledWith("a.agentuse", "previous run is still active");
+    expect(executionLogFailedSpy).not.toHaveBeenCalled();
+    skippedSpy.mockRestore();
+    scheduler.shutdown();
+  });
+
+  it("records the result of a run that spanned a reload on the live schedule", async () => {
+    let release!: () => void;
+    const scheduler = new Scheduler({
+      scheduleJitterMs: 0,
+      onExecute: async () => {
+        await new Promise<void>((resolve) => { release = resolve; });
+        return { success: true, duration: 5, sessionId: "s1" };
+      },
+    });
+    const original = scheduler.add("p", "a.agentuse", "0 9 * * *");
+    const run = scheduler.trigger(original.id);
+    const reloaded = scheduler.update("p", "a.agentuse", "0 10 * * *")!;
+    release();
+    await run;
+
+    expect(scheduler.get(reloaded.id)?.lastRun).toBeInstanceOf(Date);
+    expect(scheduler.get(reloaded.id)?.lastResult).toEqual({ success: true, duration: 5, sessionId: "s1" });
+    scheduler.shutdown();
+  });
+});

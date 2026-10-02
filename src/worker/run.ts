@@ -16,10 +16,53 @@ import { initStorage } from '../storage/index.js';
 import { invalidateListCaches } from './cache.js';
 import { finishCascadeFromStorage, resumeApprovalCascade, retryFailedCascade } from './cascade.js';
 import { buildContinuationPrompt } from './helpers.js';
+import { acquireOwnershipLock, OwnershipLockHeldError, type OwnershipLockHandle } from '../utils/ownership-lock';
+import { SCHEDULED_RUN_ACTIVE, scheduledRunLockPath } from '../utils/scheduler-lock';
+import { normalizeScheduleAgentPath } from '../scheduler/state';
 import type { WorkerContext } from './context.js';
 import type { ExecuteRequest } from './types.js';
 
+/**
+ * Scheduled runs hold a per-agent claim in the project for as long as this
+ * worker executes them. The daemon's in-memory overlap guard does not survive
+ * a handoff: the old daemon releases its worker (which keeps running) and the
+ * replacement arms the same schedule with no record of that run. The claim is
+ * held by the process doing the work, so a live run in a released worker
+ * still blocks the next firing; a dead holder is reclaimed immediately.
+ */
 export async function executeAgent(ctx: WorkerContext, req: ExecuteRequest) {
+  if (req.type !== 'execute' || req.trigger !== 'scheduled' || !req.agentPath) {
+    return executeAgentRequest(ctx, req);
+  }
+  const lockPath = scheduledRunLockPath(req.projectRoot, normalizeScheduleAgentPath(req.agentPath));
+  let claim: OwnershipLockHandle;
+  try {
+    claim = await acquireOwnershipLock(lockPath, { maxWaitMs: 0, label: 'scheduled-run' });
+  } catch (error) {
+    if (!(error instanceof OwnershipLockHeldError)) {
+      return {
+        id: req.id,
+        success: false,
+        error: { code: 'SCHEDULED_RUN_LOCK_FAILED', message: `Could not claim scheduled run: ${(error as Error).message}` },
+      };
+    }
+    return {
+      id: req.id,
+      success: false,
+      error: {
+        code: SCHEDULED_RUN_ACTIVE,
+        message: `previous run is still active${error.ownerPid ? ` in PID ${error.ownerPid}` : ''}`,
+      },
+    };
+  }
+  try {
+    return await executeAgentRequest(ctx, req);
+  } finally {
+    await claim.release();
+  }
+}
+
+async function executeAgentRequest(ctx: WorkerContext, req: ExecuteRequest) {
   const startTime = Date.now();
   let mcp: Awaited<ReturnType<typeof connectMCP>> = [];
   let sessionManager: InstanceType<typeof SessionManager> | undefined;

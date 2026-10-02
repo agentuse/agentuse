@@ -18,7 +18,7 @@
  * the project checkout lives.
  */
 import { appendFileSync, existsSync, linkSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { dirname, join } from 'path';
 import { getCurrentProcessStartTime, processRefState } from './process-info';
 
@@ -37,6 +37,21 @@ export function schedulerLockPath(projectRoot: string): string {
   return join(projectRoot, '.agentuse', 'scheduler.lock');
 }
 
+/**
+ * Per-agent claim held by the worker process for the duration of one
+ * scheduled run. It lives next to the scheduler lock for the same reason (every
+ * daemon resolves it identically), and it is held by the process that runs
+ * the agent, so it survives a daemon handoff where the released worker keeps
+ * running after the old daemon has given up the scheduler lock.
+ */
+/** Worker error code: a scheduled run was skipped because its claim is held. */
+export const SCHEDULED_RUN_ACTIVE = 'SCHEDULED_RUN_ACTIVE';
+
+export function scheduledRunLockPath(projectRoot: string, normalizedAgentPath: string): string {
+  const key = createHash('sha256').update(normalizedAgentPath).digest('hex').slice(0, 16);
+  return join(projectRoot, '.agentuse', 'schedule-runs', key);
+}
+
 export function schedulerLockReclaimPath(projectRoot: string): string {
   return `${schedulerLockPath(projectRoot)}.reclaim`;
 }
@@ -45,6 +60,7 @@ const GIT_EXCLUDE_PATTERNS = [
   '.agentuse/scheduler.lock',
   '.agentuse/scheduler.lock.reclaim',
   '.agentuse/scheduler.lock.*.tmp',
+  '.agentuse/schedule-runs/',
 ];
 
 /**

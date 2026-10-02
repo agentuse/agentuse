@@ -27,6 +27,14 @@ export interface OwnershipLockOptions {
   label?: string;
 }
 
+/** The lock is still held by a live owner when the wait budget ran out. */
+export class OwnershipLockHeldError extends Error {
+  constructor(message: string, readonly ownerPid?: number) {
+    super(message);
+    this.name = 'OwnershipLockHeldError';
+  }
+}
+
 export interface OwnershipLockHandle {
   token: string;
   release(): Promise<void>;
@@ -275,9 +283,10 @@ export async function acquireOwnershipLock(
 
     if (Date.now() >= deadline) {
       const owner = info.isDirectory() ? await readOwner(lockPath) : null;
-      throw new Error(
+      throw new OwnershipLockHeldError(
         `Timed out waiting for lock "${lockPath}"` +
-        (owner ? ` held by PID ${owner.pid}${owner.label ? ` (${owner.label})` : ''}` : '')
+        (owner ? ` held by PID ${owner.pid}${owner.label ? ` (${owner.label})` : ''}` : ''),
+        owner?.pid
       );
     }
     await new Promise<void>((resolve) => setTimeout(resolve, retryMs));

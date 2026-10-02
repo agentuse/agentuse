@@ -37,7 +37,7 @@ import { version as packageVersion } from "../../package.json";
 import { getBuildInfo, isDevCheckout } from "../utils/build-info";
 import { refreshUpdateCacheInBackground } from "../update-check";
 import { registerServer, unregisterServer, updateServer, listServers, daemonRequestHeaders, daemonResponseError, formatUptime, getDefaultLogFilePath, hostForUrl, serverBaseUrl, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
-import { acquireSchedulerLock, releaseSchedulerLock } from "../utils/scheduler-lock";
+import { acquireSchedulerLock, releaseSchedulerLock, SCHEDULED_RUN_ACTIVE } from "../utils/scheduler-lock";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, applyGlobalConfigEnv, getGlobalConfigPath, getGlobalEnvPath, getManagedProjectsRoot, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
@@ -1992,7 +1992,7 @@ export function createServeCommand(): Command {
       // Uses subprocess to work around EBADF issue when spawning from async callbacks
       const executeScheduledAgent = async (
         schedule: Schedule
-      ): Promise<{ success: boolean; duration: number; error?: string; sessionId?: string; suspended?: boolean }> => {
+      ): Promise<{ success: boolean; duration: number; error?: string; sessionId?: string; suspended?: boolean; skipped?: string }> => {
         const startTime = Date.now();
         const project = projectsById.get(schedule.projectId);
         if (!project) {
@@ -2046,6 +2046,10 @@ export function createServeCommand(): Command {
         wakeListHubs();
 
         const duration = Date.now() - startTime;
+
+        if (!spawnResult.success && spawnResult.error.code === SCHEDULED_RUN_ACTIVE) {
+          return { success: false, duration, skipped: spawnResult.error.message };
+        }
 
         if (spawnResult.success) {
           serveState.totalExecutions++;
