@@ -7,8 +7,9 @@
  * are cleaned up automatically.
  */
 
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync, readFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, readFileSync } from "fs";
 import { join, relative, resolve } from "path";
+import { atomicWriteFileSync } from "./atomic-write";
 import { getAgentuseDataDir } from "./data-dir";
 import { getProcessStartTime, getCurrentProcessStartTime } from "./process-info";
 import type { DesktopServerSupervisor } from "./desktop-supervisor";
@@ -118,7 +119,9 @@ export function registerServer(entry: Omit<ServerEntry, "pid">): void {
     pid: process.pid,
     ...(procStartedAt ? { procStartedAt } : {}),
   };
-  writeFileSync(getEntryPath(process.pid), JSON.stringify(fullEntry, null, 2));
+  // Readers run in other processes (`serve ps`, the single-daemon guard), so
+  // the entry is replaced whole: a reader must never see it half-written.
+  atomicWriteFileSync(getEntryPath(process.pid), JSON.stringify(fullEntry, null, 2));
 }
 
 /**
@@ -133,7 +136,7 @@ export function updateServer(updates: Partial<Omit<ServerEntry, "pid" | "startTi
   try {
     const existing = JSON.parse(readFileSync(entryPath, "utf-8")) as ServerEntry;
     const updated: ServerEntry = { ...existing, ...updates };
-    writeFileSync(entryPath, JSON.stringify(updated, null, 2));
+    atomicWriteFileSync(entryPath, JSON.stringify(updated, null, 2));
   } catch {
     // Ignore errors - registry is best-effort
   }
@@ -187,7 +190,12 @@ export function listServers(): ServerEntry[] {
         }
       }
     } catch {
-      // Invalid JSON or read error - try to clean up
+      // Unreadable entry. Remove it only once the daemon named by the file is
+      // gone: a live daemon's entry can be mid-rewrite (versions before atomic
+      // replacement truncate it in place), and deleting it would hide that
+      // daemon for good, since updateServer never re-creates a missing entry.
+      const filePid = Number(file.slice(0, -".json".length));
+      if (Number.isInteger(filePid) && filePid > 0 && isProcessRunning(filePid)) continue;
       try {
         rmSync(filePath);
       } catch {
