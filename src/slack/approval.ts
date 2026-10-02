@@ -1000,17 +1000,27 @@ export class SlackApprovalSocket {
     // re-fires restart on every tick until the new socket finishes connecting.
     this.lastHealthyAt = Date.now();
     try {
+      let disconnectCap: ReturnType<typeof setTimeout> | undefined;
       try {
         // A wedged/zombie socket's disconnect() waits on the peer's close frame
         // and can block ~30s (the ws library's internal close timeout); cap it so
         // a dead connection can't stall the recreate.
         await Promise.race([
           this.socket.disconnect(),
-          new Promise<void>((resolve) => setTimeout(resolve, SLACK_RESTART_DISCONNECT_MS)),
+          new Promise<void>((resolve) => {
+            disconnectCap = setTimeout(resolve, SLACK_RESTART_DISCONNECT_MS);
+            disconnectCap.unref?.();
+          }),
         ]);
       } catch {
         // best-effort teardown of the wedged socket
+      } finally {
+        clearTimeout(disconnectCap);
       }
+      // stop() may have landed during the teardown. It has already
+      // disconnected the old socket and returned; a replacement built now
+      // would take decisions and comments after shutdown and lose them.
+      if (this.stopped) return;
       // Detach handlers from the old socket before replacing it. If disconnect()
       // exceeded its cap and the socket lingers, its still-bound listeners keep
       // firing handleLifecycle (spurious watchdog restarts) and can deliver
@@ -1022,6 +1032,9 @@ export class SlackApprovalSocket {
       }
       this.socket = this.buildSocket();
       await this.socket.start();
+      // stop() during start() disconnected this socket, but start() can still
+      // finish connecting after that. Do not leave a stopped bridge listening.
+      if (this.stopped) await this.socket.disconnect();
     } catch (err) {
       logger.warn(`Slack approval socket recreate failed: ${(err as Error).message}`);
     } finally {
