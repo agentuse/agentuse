@@ -44,6 +44,34 @@ export function rowKey(row: Pick<SessionRow, 'project' | 'sessionId'>): string {
   return `${row.project}:${row.sessionId}`;
 }
 
+/** Rows loaded past the live first page, and the first-page cursor they
+ *  continue from. When that cursor moves (a row entered or left the head), the
+ *  rows are reloaded from the new one so none fall between head and tail. */
+export interface SessionTail {
+  from: string;
+  rows: SessionRow[];
+  cursor?: string;
+}
+
+/** The largest page the server returns (LIST_PAGE_MAX_LIMIT in session-lists). */
+const SESSION_PAGE_MAX = 100;
+
+/** Load `want` rows following `from`, in as few pages as the server allows. */
+export async function loadSessionTail(
+  fetchPage: (cursor: string, limit: number) => Promise<Pick<SessionsPayload, 'sessions' | 'nextCursor'>>,
+  from: string,
+  want: number,
+): Promise<SessionTail> {
+  const rows: SessionRow[] = [];
+  let cursor: string | undefined = from;
+  while (cursor && rows.length < want) {
+    const page = await fetchPage(cursor, Math.min(SESSION_PAGE_MAX, want - rows.length));
+    rows.push(...page.sessions);
+    cursor = page.nextCursor;
+  }
+  return { from, rows, ...(cursor && { cursor }) };
+}
+
 export function sessionHref(row: Pick<SessionRow, 'project' | 'sessionId'>): string {
   return `/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`;
 }
@@ -502,16 +530,17 @@ export default function SessionsList() {
   const [streamData, setStreamData] = useState<SessionsPayload | null>(null);
   const [streamError, setStreamError] = useState<Error | null>(null);
   const [streamFallback, setStreamFallback] = useState(false);
-  const [loadedMore, setLoadedMore] = useState<SessionRow[]>([]);
+  const [tail, setTail] = useState<SessionTail | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [pagedCursor, setPagedCursor] = useState<{ cursor?: string } | null>(null);
+  const [rebuildingTail, setRebuildingTail] = useState(false);
+  const keyRef = useRef(key);
+  keyRef.current = key;
 
   useEffect(() => {
     setStreamData(null);
     setStreamError(null);
     setStreamFallback(false);
-    setLoadedMore([]);
-    setPagedCursor(null);
+    setTail(null);
   }, [key]);
 
   const query = {
@@ -558,7 +587,32 @@ export default function SessionsList() {
   }, [agentsFetch.data]);
 
   const seen = new Set<string>();
-  const rows = [...(resolvedData?.sessions ?? []), ...loadedMore].filter((row) => {
+  // The first page is live; the rows past it were loaded after its last row.
+  // When new activity moves that boundary, reload the same number of rows
+  // after the new one, one reload at a time. Without this, the row pushed out
+  // of the first page belongs to neither part and silently disappears.
+  const headCursor = resolvedData?.nextCursor;
+  useEffect(() => {
+    if (!tail || rebuildingTail || loadingMore || headCursor === tail.from) return;
+    if (!headCursor) {
+      setTail(null);
+      return;
+    }
+    const startedFor = key;
+    setRebuildingTail(true);
+    loadSessionTail((cursor, limit) => fetchSessions({ ...query, limit, cursor }), headCursor, tail.rows.length)
+      .then(
+        (next) => { if (keyRef.current === startedFor) setTail(next); },
+        // A tail that can't be rebuilt is wrong, not just stale: fall back to
+        // the live first page and let Load more start over.
+        () => { if (keyRef.current === startedFor) setTail(null); },
+      )
+      .finally(() => setRebuildingTail(false));
+    // query follows key; the reload must use the filters it was started with.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [headCursor, tail, rebuildingTail, loadingMore]);
+
+  const rows = [...(resolvedData?.sessions ?? []), ...(tail?.rows ?? [])].filter((row) => {
     const id = rowKey(row);
     if (seen.has(id)) return false;
     seen.add(id);
@@ -676,14 +730,19 @@ export default function SessionsList() {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [rows, selectedIndex, effectiveIndex, select]);
 
-  const nextCursor = pagedCursor ? pagedCursor.cursor : resolvedData?.nextCursor;
+  const nextCursor = tail ? tail.cursor : headCursor;
   const loadMore = async () => {
-    if (!nextCursor || loadingMore) return;
+    if (!nextCursor || !headCursor || loadingMore || rebuildingTail) return;
+    const startedFor = key;
     setLoadingMore(true);
     try {
       const next = await fetchSessions({ ...query, cursor: nextCursor });
-      setLoadedMore((current) => [...current, ...next.sessions]);
-      setPagedCursor({ ...(next.nextCursor && { cursor: next.nextCursor }) });
+      if (keyRef.current !== startedFor) return;
+      setTail((current) => ({
+        from: current?.from ?? headCursor,
+        rows: [...(current?.rows ?? []), ...next.sessions],
+        ...(next.nextCursor && { cursor: next.nextCursor }),
+      }));
     } finally {
       setLoadingMore(false);
     }
