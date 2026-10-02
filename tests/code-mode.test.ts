@@ -1470,6 +1470,80 @@ describe('Code Mode', () => {
     })).resolves.toEqual({ fallback: true });
   });
 
+  it('fails when detached guest async work that is not a literal IIFE hides a nested failure', async () => {
+    const programs = [
+      'async function detached() { await tools.fail({}); }\ndetached();\nreturn "done";',
+      'const helper = { async run() { await tools.fail({}); } };\nhelper.run();\nreturn "done";',
+      'async function* stream() { yield await tools.fail({}); }\nconst it = stream();\nit.next();\nreturn "done";',
+      'const NativePromise = (async () => 1)().constructor as any;\nNativePromise.resolve(tools.fail({}));\nreturn "done";',
+      'const spec = ["x"].join("");\nconst ImportPromise = import(spec).constructor as any;\nImportPromise.resolve(tools.fail({}));\nreturn "done";',
+    ];
+    for (const code of programs) {
+      let calls = 0;
+      await expect(executeCodeMode(code, {
+        dispatcher: { dispatch: async () => { calls++; throw new Error('hidden nested failure'); } },
+        toolNames: ['fail'],
+        parentCallId: 'detached-helper-failure',
+      }), code).rejects.toThrow(/unhandled nested tool failures.*hidden nested failure/i);
+      expect(calls, code).toBe(1);
+    }
+  });
+
+  it('reports a post-effect failure from a detached helper with its completed-effects ledger', async () => {
+    let effects = 0;
+    const dispatcher = new ToolDispatcher({
+      write: trustedOutputTool({
+        inputSchema: z.object({ id: z.string() }),
+        outputSchema: z.object({ committed: z.boolean() }),
+        execute: async () => {
+          effects++;
+          return { committed: 'invalid-after-effect' };
+        },
+      }),
+    });
+
+    let caught: unknown;
+    try {
+      await executeCodeModeDetailed(`
+        async function detached() {
+          await tools.write({ id: "committed-once" });
+        }
+        detached();
+        return "reported-success";
+      `, {
+        dispatcher,
+        toolDefinitions: dispatcher.codeModeTools(),
+        toolNames: dispatcher.codeModeToolNames(),
+        parentCallId: 'detached-post-effect',
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(effects).toBe(1);
+    expect(caught).toBeInstanceOf(CodeModeExecutionError);
+    const failure = (caught as CodeModeExecutionError).result;
+    expect(failure.status).toBe('failed');
+    expect(failure.error.message).toMatch(/unhandled nested tool failures/i);
+    expect(failure.error.message).toContain('do not repeat these effects');
+  });
+
+  it('still completes when guest async helpers and generators are awaited and caught', async () => {
+    await expect(executeCodeMode(`
+      async function attempt() {
+        try { await tools.fail({}); } catch { return "recovered"; }
+      }
+      async function* numbers() { yield 1; yield await Promise.resolve(2); }
+      const seen: number[] = [];
+      for await (const n of numbers()) seen.push(n);
+      return { recovered: await attempt(), seen };
+    `, {
+      dispatcher: { dispatch: async () => { throw new Error('expected failure'); } },
+      toolNames: ['fail'],
+      parentCallId: 'awaited-helper-failure',
+    })).resolves.toEqual({ recovered: 'recovered', seen: [1, 2] });
+  });
+
   it('applies the deadline while declarations are loading', async () => {
     await expect(executeCodeMode('return true;', {
       dispatcher: { dispatch: async () => null },

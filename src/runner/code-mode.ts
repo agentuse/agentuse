@@ -441,9 +441,14 @@ async function compileTypeScript(
   const compiled = await transform(wrapped, {
     loader: 'ts',
     target: 'es2022',
-    // Keep native async frames so runtime failures map back to the submitted
-    // TypeScript line. Nested tool promises still use TrackedPromise below,
-    // which owns unhandled nested-call detection independently.
+    // Lower guest async functions, async generators, for-await and dynamic
+    // import to helpers built on the global Promise. At eval time that global
+    // is TrackedPromise, so every guest async result is tracked: a detached
+    // helper, method or alias whose nested call fails cannot hide the failure
+    // in an intrinsic promise the runtime never reports. Runtime failures still
+    // map back to the submitted TypeScript line through the source map and the
+    // instrumented location variable.
+    supported: { 'async-await': false, 'async-generator': false, 'for-await': false, 'dynamic-import': false },
     format: 'esm',
     sourcemap: 'external',
     sourcefile: 'agentuse-code-mode:wrapped.ts',
@@ -1797,7 +1802,7 @@ export function createCodeExecTool(options: {
       'Run isolated TypeScript for arithmetic, timestamps and duration math, percentages, basic string operations, deterministic loops, filtering, branching, batching, joins, and parallel tool calls. Call tools exposed under tools.<name> here, including when the program needs only one JSON tool call; most are deliberately hidden as top-level tools. Use it with zero tool calls for deterministic computation too; ' +
       'never do that math in prose, in your head, or in bash. When the user asks for a shell artifact, commands or scripts may contain the calculations the artifact itself needs; bash is forbidden only as private scratch space for working out an answer. Date, Math, JSON, and standard string methods are available and the clock is real. URL, Intl, locale-aware formatting, and host timezone services are unavailable. ' +
       'The program has no direct filesystem, network, environment, process, package, or import access; it can reach only host capabilities exposed as permitted tools. Dynamic code construction through eval or Function constructors is unavailable. ' +
-      'Call permitted tools as await tools.<name>({ ... }) using the same input object as a direct tool call. A transport-sensitive tool may also remain separately visible for binary or provider-native result delivery. Await or return every async operation; detached async work is rejected during preflight. ' +
+      'Call permitted tools as await tools.<name>({ ... }) using the same input object as a direct tool call. A transport-sensitive tool may also remain separately visible for binary or provider-native result delivery. Await or return every async operation; a detached async call whose work fails fails the whole program. ' +
       `Each program allows up to ${runLimits.nestedCalls} nested tool-call attempts; later code_exec programs get a fresh allowance. Active tool calls and guest memory share run-wide limits. ` +
       'tools.tools__bash runs only commands from the agent auto-run allowlist and returns { output: string, metadata?: { exitCode?: number | null, timedOut?: boolean, aborted?: boolean, truncated?: boolean } }. Read r.output, not r.value; inspect metadata for command exit status. Refusal errors are JSON text in output. Gated commands are rejected here and must use the separately visible direct Bash tool after approval. Time awaiting an authorized Bash process is governed by the Bash timeout instead of consuming the guest computation timeout. ' +
       'When a needed tool is absent from the quick index, use await catalog.search(query), call handle.describe(), or inspect API.list("tools") and API.read("tools/<name>.d.ts") in a first code_exec. Catalog handles are callable and use the same dispatch policy as tools.<name>. ' +
