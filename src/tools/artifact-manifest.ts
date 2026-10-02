@@ -52,26 +52,45 @@ function emptyManifest(): ArtifactManifest {
 }
 
 /**
- * Read the manifest. A missing or corrupt file is treated as empty rather than
- * an error, so a hand-deleted manifest or a partially written one never crashes
- * a run or the viewer.
+ * Strict read for the write path. Only a missing file counts as empty: an
+ * unreadable file, bad JSON, or a root without an `artifacts` array throws, so
+ * an upsert never replaces entries it failed to read.
  */
-export async function readArtifactManifest(manifestPath: string): Promise<ArtifactManifest> {
+async function readArtifactManifestStrict(manifestPath: string): Promise<ArtifactManifest> {
+  const unusable = (reason: string) => new Error(
+    `Artifact manifest ${manifestPath} ${reason}. It was left unchanged. Fix or move it aside, then save the artifact again.`
+  );
   let raw: string;
   try {
     raw = await fs.readFile(manifestPath, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return emptyManifest();
+    throw unusable(`could not be read (${(error as Error).message})`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw unusable(`is not valid JSON (${(error as Error).message})`);
+  }
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as ArtifactManifest).artifacts)) {
+    throw unusable('does not contain an object with an "artifacts" array');
+  }
+  return { version: 1, artifacts: (parsed as ArtifactManifest).artifacts };
+}
+
+/**
+ * Read the manifest for listing and display. A missing or corrupt file is
+ * treated as empty rather than an error, so a hand-deleted manifest or a
+ * partially written one never crashes a run or the viewer. Writes go through
+ * the strict read instead.
+ */
+export async function readArtifactManifest(manifestPath: string): Promise<ArtifactManifest> {
+  try {
+    return await readArtifactManifestStrict(manifestPath);
   } catch {
     return emptyManifest();
   }
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (parsed && typeof parsed === 'object' && Array.isArray((parsed as ArtifactManifest).artifacts)) {
-      return { version: 1, artifacts: (parsed as ArtifactManifest).artifacts };
-    }
-  } catch {
-    /* corrupt → empty */
-  }
-  return emptyManifest();
 }
 
 async function writeManifestAtomic(manifestPath: string, manifest: ArtifactManifest): Promise<void> {
@@ -90,7 +109,7 @@ export async function upsertArtifactEntry(
   // Serve workers and a CLI run can write one project's manifest at the same
   // time; the atomic rename only stops torn reads, the lock stops lost updates.
   await withSerializedOwnershipLock(`${manifestPath}.lock`, async () => {
-    const manifest = await readArtifactManifest(manifestPath);
+    const manifest = await readArtifactManifestStrict(manifestPath);
     const idx = manifest.artifacts.findIndex((a) => a.name === entry.name);
     if (idx >= 0) {
       manifest.artifacts[idx] = { ...entry, createdAt: manifest.artifacts[idx].createdAt };
