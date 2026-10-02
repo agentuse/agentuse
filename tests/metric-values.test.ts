@@ -18,6 +18,19 @@ describe('normalizeMetricValues', () => {
     });
   });
 
+  it('keeps a measured amount that happens to equal the count', () => {
+    expect(normalizeMetricValues({ count: 1, value: 1, unit: 'usd' })).toEqual({
+      count: 1,
+      value: 1,
+      unit: 'usd',
+    });
+    expect(normalizeMetricValues({ count: 2, value: 2, unit: 'hours' })).toEqual({
+      count: 2,
+      value: 2,
+      unit: 'hours',
+    });
+  });
+
   it('recognizes count-only sentinel variants in legacy records', () => {
     for (const unit of ['count', 'counts', 'count_only', 'count-only', 'COUNT ONLY']) {
       expect(normalizeMetricValues({ count: 3, value: 0, unit })).toEqual({
