@@ -1,6 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { atomicWriteFile } from '../utils/atomic-write.js';
+import { withSerializedOwnershipLock } from '../utils/ownership-lock.js';
 
 /**
  * Project artifact manifest.
@@ -73,19 +74,6 @@ export async function readArtifactManifest(manifestPath: string): Promise<Artifa
   return emptyManifest();
 }
 
-// Per-manifest-path promise chain. Serializes read-modify-write so concurrent
-// tool calls within a run (and in-process subagents) never interleave and drop
-// each other's entries. The atomic temp+rename below guarantees no reader ever
-// observes a half-written file even across separate processes.
-const writeChains = new Map<string, Promise<unknown>>();
-
-function withWriteChain<T>(key: string, op: () => Promise<T>): Promise<T> {
-  const previous = writeChains.get(key) ?? Promise.resolve();
-  const result = previous.then(() => op(), () => op());
-  writeChains.set(key, result.then(() => {}, () => {}));
-  return result;
-}
-
 async function writeManifestAtomic(manifestPath: string, manifest: ArtifactManifest): Promise<void> {
   await fs.mkdir(path.dirname(manifestPath), { recursive: true });
   await atomicWriteFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
@@ -93,13 +81,15 @@ async function writeManifestAtomic(manifestPath: string, manifest: ArtifactManif
 
 /**
  * Insert or update an entry, keyed on `name` (the project-relative path). An
- * existing entry keeps its original `createdAt`. Serialized + atomic.
+ * existing entry keeps its original `createdAt`. Locked across processes + atomic.
  */
 export async function upsertArtifactEntry(
   manifestPath: string,
   entry: ArtifactManifestEntry
 ): Promise<void> {
-  await withWriteChain(manifestPath, async () => {
+  // Serve workers and a CLI run can write one project's manifest at the same
+  // time; the atomic rename only stops torn reads, the lock stops lost updates.
+  await withSerializedOwnershipLock(`${manifestPath}.lock`, async () => {
     const manifest = await readArtifactManifest(manifestPath);
     const idx = manifest.artifacts.findIndex((a) => a.name === entry.name);
     if (idx >= 0) {
@@ -108,5 +98,5 @@ export async function upsertArtifactEntry(
       manifest.artifacts.push(entry);
     }
     await writeManifestAtomic(manifestPath, manifest);
-  });
+  }, { label: 'artifact-manifest' });
 }

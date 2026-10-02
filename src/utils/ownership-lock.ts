@@ -296,3 +296,23 @@ export async function withOwnershipLock<T>(
     await handle.release();
   }
 }
+
+const serializedChains = new Map<string, Promise<unknown>>();
+
+/**
+ * {@link withOwnershipLock} for a read-modify-write of one shared file. Callers
+ * in this process queue on a promise chain keyed by `lockPath`, so they never
+ * poll the lock against each other; the ownership lock then orders them
+ * against other processes (serve workers, the CLI, the daemon).
+ */
+export function withSerializedOwnershipLock<T>(
+  lockPath: string,
+  operation: () => Promise<T>,
+  options: OwnershipLockOptions = {}
+): Promise<T> {
+  const previous = serializedChains.get(lockPath) ?? Promise.resolve();
+  const locked = () => withOwnershipLock(lockPath, operation, options);
+  const result = previous.then(locked, locked);
+  serializedChains.set(lockPath, result.then(() => {}, () => {}));
+  return result;
+}
