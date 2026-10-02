@@ -537,8 +537,9 @@ async function pendingSubagentWaitChildId(
  *
  * Call this the moment a project's worker (re)spawns. There is one worker per
  * project, so a freshly (re)spawned worker owns no executions yet: any 'running'
- * session last touched BEFORE it became ready (`time.updated < cutoff`) whose
- * recorded owner process is gone is orphaned. The same rule terminates a
+ * session whose recorded owner process is gone is orphaned, as is an ownerless
+ * (older-version) one last touched BEFORE it became ready
+ * (`time.updated < cutoff`). The same rule terminates a
  * `preparing` shell whose host died before it could dispatch model execution.
  * The owner probe matters because
  * the storage is shared by every process serving the project (a terminal
@@ -569,11 +570,18 @@ export async function reconcileOrphanedSessions(options: {
   const lookbackMs = options.lookbackMs ?? 30 * 24 * 60 * 60 * 1000;
   const sessions = await sessionManager.listReconcileCandidatesCreatedAfter(Date.now() - lookbackMs);
   const reconciled: ReconciledOrphan[] = [];
-  // Pass 1: runs killed mid-flight.
+  // Pass 1: runs killed mid-flight. A recorded owner decides by liveness: a
+  // live process (a terminal `agentuse run`, another daemon's worker, this
+  // worker) still holds the run however stale its header, and a dead one does
+  // not however recent, since a released predecessor keeps writing after this
+  // worker became ready. Rows from older versions carry no owner and keep the
+  // cutoff-only rule.
+  const heldByLiveRun = async (session: SessionInfo) => session.owner
+    ? await isProcessRefAliveAsync(session.owner)
+    : session.time.updated >= cutoff;
   for (const { session, agentId } of sessions) {
     if (session.status === 'preparing') {
-      if (session.time.updated >= cutoff) continue;
-      if (session.owner && await isProcessRefAliveAsync(session.owner)) continue;
+      if (await heldByLiveRun(session)) continue;
       if (!dryRun) {
         await sessionManager.setSessionError(session.id, agentId, {
           code: 'PREPARATION_INTERRUPTED',
@@ -584,11 +592,7 @@ export async function reconcileOrphanedSessions(options: {
       continue;
     }
     if (session.status !== 'running') continue;
-    if (session.time.updated >= cutoff) continue; // owned by the current live worker
-    // Sessions run by a process that is still alive (a terminal `agentuse run`,
-    // another daemon's worker) are not orphans, however stale their header.
-    // Sessions from older versions carry no owner and keep the cutoff-only rule.
-    if (session.owner && await isProcessRefAliveAsync(session.owner)) continue;
+    if (await heldByLiveRun(session)) continue;
     const deathDetail = matchingWorkerDeath(session.owner, session.time.updated, options.workerDeath);
     if (!dryRun) {
       await sessionManager.setSessionError(session.id, agentId, {

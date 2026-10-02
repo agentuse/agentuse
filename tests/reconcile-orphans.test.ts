@@ -160,6 +160,37 @@ describe('reconcileOrphanedSessions', () => {
     }
   });
 
+  it('reconciles a dead owner\'s rows even when they were touched after the cutoff', async () => {
+    // A released predecessor keeps writing after the replacement worker became
+    // ready, then dies. Its rows are newer than the readiness cutoff, but the
+    // owner probe, not the timestamp, decides whether a live run holds them.
+    const { projectRoot, sessionManager, sessionID: runningID, agentId } = await makeSession();
+    try {
+      const cutoff = Date.now() - 60_000;
+      await sessionManager.updateSession(runningID, agentId, { owner: { pid: DEAD_PID } });
+      const preparingID = await sessionManager.createSession({
+        initialStatus: 'preparing',
+        owner: { pid: DEAD_PID },
+        agent: { id: 'agents/prep', name: 'prep', isSubAgent: false },
+        model: 'demo:test', version: 'test', config: {},
+        project: { root: projectRoot, cwd: projectRoot },
+      });
+      const running = await sessionManager.findSession(runningID);
+      const preparing = await sessionManager.findSession(preparingID);
+      expect(running!.session.time.updated).toBeGreaterThanOrEqual(cutoff);
+      expect(preparing!.session.time.updated).toBeGreaterThanOrEqual(cutoff);
+
+      const reconciled = await reconcileOrphanedSessions({ sessionManager, cutoff });
+
+      expect(reconciled.map((r) => r.sessionId).sort()).toEqual([runningID, preparingID].sort());
+      expect((await sessionManager.findSession(runningID))?.session.error?.code).toBe('WORKER_INTERRUPTED');
+      expect((await sessionManager.findSession(preparingID))?.session.error?.code).toBe('PREPARATION_INTERRUPTED');
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      delete process.env.XDG_DATA_HOME;
+    }
+  });
+
   it('rechecks a released owner that dies after the replacement startup pass', async () => {
     const { projectRoot, sessionManager, sessionID, agentId } = await makeSession();
     const oldWorker = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
