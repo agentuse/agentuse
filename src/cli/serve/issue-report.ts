@@ -15,6 +15,7 @@
  * and the operator decides what to share.
  */
 import type { ChangesetProposal, ChangesetRecord } from '../../agents/changeset-types.js';
+import { truncate } from '../../tools/tool-output-limits.js';
 
 export const DEFAULT_ISSUE_REPO = 'agentuse/agentuse';
 
@@ -39,8 +40,7 @@ export function issueRepo(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 function clip(text: string, max: number): string {
-  const trimmed = text.trim();
-  return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
+  return truncate(text.trim(), max, '…', 0);
 }
 
 export function buildUpstreamIssueReport(input: {

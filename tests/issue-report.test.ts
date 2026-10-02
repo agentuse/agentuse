@@ -68,4 +68,18 @@ describe('buildUpstreamIssueReport', () => {
     expect(report.body).not.toContain('- Run:');
     expect(report.body).toContain('- Revision:');
   });
+
+  it('still builds the link when a clip boundary lands inside an emoji', () => {
+    const report = buildUpstreamIssueReport({
+      record: { ...record, target: { ...record.target, name: `${'n'.repeat(68)}😀 agent` } },
+      proposal: { ...proposal, diagnosis: `${'d'.repeat(2_999)}😀b` },
+      version: '0.22.0',
+      repo: 'agentuse/agentuse',
+    });
+    expect(report.body).toContain(`${'d'.repeat(2_999)}…`);
+    expect(report.title.endsWith(`${'n'.repeat(68)}…`)).toBe(true);
+    const decoded = new URL(report.url);
+    expect(decoded.searchParams.get('body')).toBe(report.body);
+    expect(decoded.searchParams.get('title')).toBe(report.title);
+  });
 });

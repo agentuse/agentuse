@@ -111,7 +111,9 @@ export function truncate(
   reserve = suffix.length,
 ): string {
   if (value.length <= maxLength) return value;
-  return value.slice(0, Math.max(0, maxLength - reserve)) + suffix;
+  // Never split a surrogate pair: a lone surrogate breaks encodeURIComponent
+  // and is invalid UTF-8 for Slack and model providers.
+  return trimTrailingHighSurrogate(value.slice(0, Math.max(0, maxLength - reserve))) + suffix;
 }
 
 /**

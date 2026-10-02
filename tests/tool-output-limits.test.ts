@@ -45,6 +45,11 @@ describe('truncate', () => {
     expect(truncate('x'.repeat(40), 20, '…', 5)).toBe(`${'x'.repeat(15)}…`);
   });
 
+  it('never splits a surrogate pair at the cut', () => {
+    expect(truncate(`ab😀cd`, 3, '…', 0)).toBe('ab…');
+    expect(hasLoneSurrogate(truncateForMessage(`${'x'.repeat(7)}😀${'y'.repeat(40)}`, 20))).toBe(false);
+  });
+
   it('keeps the message builders on their historical 12-char reserve', () => {
     // The marker is 15 chars; Slack widths are tuned to only 12 being budgeted.
     expect(truncateForMessage('x'.repeat(40), 20)).toBe(`${'x'.repeat(8)}\n...(truncated)`);
