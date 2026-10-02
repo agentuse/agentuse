@@ -350,10 +350,11 @@ export async function walkUpCascadeChain(opts: {
       parentRollback = undefined;
     } catch (error) {
       if (parentRollback && (!enteredParentRun || isExistingSessionPreRunError(error))) {
+        // The rollback re-parks the parent itself, and leaves it alone when a
+        // Stop (or another terminal outcome) landed meanwhile.
         await restoreResumeToolResult({ sessionManager, rollback: parentRollback }).catch((restoreErr) => {
           logger.warn(`Failed to restore sub-agent bookmark after resume setup error: ${(restoreErr as Error).message}`);
         });
-        await sessionManager.setSessionSuspended(parent.sessionId, parent.agentId).catch(() => {});
       }
       throw error;
     }
