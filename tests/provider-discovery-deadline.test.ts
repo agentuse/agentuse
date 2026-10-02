@@ -83,6 +83,34 @@ describe('provider plugin discovery deadline', () => {
     expect((await pending).map((provider) => provider.id)).toEqual(['ok-provider']);
   });
 
+  it('discovers providers concurrently so several hung providers cost one deadline', async () => {
+    let enteredCount = 0;
+    let entered!: () => void;
+    const discoveryEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const hung = (id: string) => ({
+      id, name: id, transport: { kind: 'openai-chat-completions', baseURL: `https://${id}.example` },
+      models() { enteredCount++; entered(); return never(); },
+    });
+    const ok = (id: string) => ({
+      id, name: id, transport: { kind: 'openai-chat-completions', baseURL: `https://${id}.example` }, models: [model],
+    });
+    const host = new PluginHost();
+    await host.activate({ name: 'providers', source: 'test', scope: 'local' }, (agentuse: any) => {
+      agentuse.registerProvider(hung('hung-a'));
+      agentuse.registerProvider(ok('ok-1'));
+      agentuse.registerProvider(hung('hung-b'));
+      agentuse.registerProvider(ok('ok-2'));
+    });
+    enterPluginHost(host);
+    jest.useFakeTimers();
+    const pending = loadProviderPlugins();
+    await discoveryEntered;
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(enteredCount).toBe(2);
+    jest.advanceTimersByTime(DISCOVERY_DEADLINE_MS);
+    expect((await pending).map((provider) => provider.id)).toEqual(['ok-1', 'ok-2']);
+  });
+
   it('treats a hung adapter when() as not selected and falls back to the next candidate', async () => {
     let whenSignal: AbortSignal | undefined;
     let entered!: () => void;

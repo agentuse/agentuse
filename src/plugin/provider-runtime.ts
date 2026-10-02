@@ -219,16 +219,18 @@ export async function loadProviderPlugins(): Promise<ProviderDefinition[]> {
   const localIds = new Set(local.map((provider) => provider.id));
   const installed = installedHost.listProviders().filter((provider) => !localIds.has(provider.id));
   const candidates = [...local, ...installed];
+  // Discover concurrently so N hung providers cost one deadline, not N; the
+  // result keeps candidate order, so local-first precedence is unchanged.
+  const outcomes = await Promise.allSettled(candidates.map((provider) => cacheProviderMetadata(provider)));
   const providers: ProviderDefinition[] = [];
-  for (const provider of candidates) {
-    try {
-      await cacheProviderMetadata(provider);
-    } catch (error) {
-      logger.warn(`Failed to discover models for plugin provider ${provider.id}: ${toErrorMessage(error)}`);
-      continue;
+  outcomes.forEach((outcome, index) => {
+    const provider = candidates[index]!;
+    if (outcome.status === 'rejected') {
+      logger.warn(`Failed to discover models for plugin provider ${provider.id}: ${toErrorMessage(outcome.reason)}`);
+      return;
     }
     providers.push(provider);
-  }
+  });
   return providers;
 }
 
