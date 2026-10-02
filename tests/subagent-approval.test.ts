@@ -60,8 +60,8 @@ describe('approval gate in delegated sub-agents without durable substrate (fail 
 
   it('propagates the error through createSubAgentTools instead of swallowing it', async () => {
     // The manager delegates to an approval-enabled sub-agent. The plural loader
-    // normally logs-and-continues on per-subagent failures; the approval error
-    // must abort the whole load so the manager never runs with a missing tool.
+    // aborts on any per-subagent failure, and the approval error must keep its
+    // identity so the manager never runs with a missing tool.
     await expectRejectsWithApprovalError(
       createSubAgentTools(
         [{ path: './sub-approval-bool.agentuse', name: 'approver' }],

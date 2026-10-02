@@ -807,13 +807,10 @@ export async function createSubAgentTools(
       // So we won't register @-prefixed versions anymore
       // Users can still reference them with @ in instructions, but the actual tool name won't have @
     } catch (error) {
-      // Approval-in-subagent is a hard configuration error: surface it and abort
-      // the run instead of silently dropping the sub-agent tool (which would leave
-      // the manager flailing with a missing tool).
-      if (error instanceof SubAgentApprovalUnsupportedError) {
-        throw error;
-      }
-
+      // A configured child is a declared dependency, not an optional extra.
+      // Dropping it would leave the parent running without a worker its prompt
+      // still names, so every load failure (missing file, invalid frontmatter,
+      // cycle, approval without a session) aborts the whole load.
       const errorMsg = toErrorMessage(error);
       logger.error(`Failed to load sub-agent from ${config.path}: ${errorMsg}`);
 
@@ -829,6 +826,7 @@ export async function createSubAgentTools(
           logger.error(`  Consider renaming the file to use '-' or '_' instead`);
         }
       }
+      throw error;
     }
   }
 
