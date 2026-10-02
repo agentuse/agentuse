@@ -478,6 +478,8 @@ export class AgentWorker {
   private released = false;
   private spawnedAt = 0;
   private recycling = false;
+  /** The project's env file changed since this process was spawned. */
+  private envStale = false;
   private ready = false;
   private readyPromise: Promise<void> | null = null;
   private readyResolve: (() => void) | null = null;
@@ -491,9 +493,16 @@ export class AgentWorker {
    *  dead worker left stuck as 'running'. Must never throw. */
   onReady?: (readyAt: number) => void;
 
+  /**
+   * `baseEnv` is what the worker inherits before its overrides. serve passes
+   * the env captured before any project .env was loaded into the daemon, so a
+   * worker never carries another project's (or a stale) project-file value;
+   * the worker loads its own project's file itself.
+   */
   constructor(
     private envOverrides: NodeJS.ProcessEnv = {},
     private spawnProcess: typeof spawn = spawn,
+    private baseEnv: NodeJS.ProcessEnv = process.env,
   ) {}
 
   /**
@@ -537,10 +546,12 @@ export class AgentWorker {
     });
 
     this.spawnedAt = Date.now();
+    // A fresh process reads the project's env file as it is now.
+    this.envStale = false;
     const child = this.spawnProcess(process.execPath, [cliPath, "--internal-worker"], {
       stdio: ["pipe", "pipe", "pipe"],
       env: {
-        ...process.env,
+        ...this.baseEnv,
         ...apiKeyWorkerEnv(),
         ...this.envOverrides,
       },
@@ -1061,7 +1072,7 @@ export class AgentWorker {
           // again, because the next run might be days away. The periodic
           // approval sweep now doubles as the idle heartbeat.
           const rssBytes = (value as { workerRssBytes?: number }).workerRssBytes;
-          void this.recycleIfBloated(rssBytes, this.envOverrides.AGENTUSE_PROJECT_ID ?? "worker");
+          void this.recycleIfDue(rssBytes);
         },
         timeoutId,
       });
@@ -1126,7 +1137,19 @@ export class AgentWorker {
   }
 
   /**
-   * Retire a bloated idle worker and bring up a fresh one in its place.
+   * The project's env file changed. A worker keeps the values it loaded for
+   * its lifetime (dotenv never overrides), so retire it for a fresh one as soon
+   * as it is idle. A busy worker is left alone: releasing it would orphan the
+   * replies its callers are waiting on. The next settled request retries.
+   */
+  markEnvStale(): void {
+    this.envStale = true;
+    void this.recycleIfDue(undefined);
+  }
+
+  /**
+   * Retire an idle worker that is bloated or carries a stale project env, and
+   * bring up a fresh one in its place.
    *
    * Built on release rather than a kill so it stays safe if a run slips in
    * between the idle check and here: the old process finishes whatever it holds
@@ -1135,15 +1158,21 @@ export class AgentWorker {
    * Returns false when the worker is not a candidate (busy, too young, already
    * recycling, or recycling disabled).
    */
-  async recycleIfBloated(rssBytes: number | undefined, projectId: string): Promise<boolean> {
+  async recycleIfDue(rssBytes: number | undefined): Promise<boolean> {
     if (this.recycling || this.released) return false;
-    if (!shouldRecycleWorker({
-      rssBytes,
-      activeRuns: this.activeRuns.size,
-      activeRequests: this.pendingRequests.size,
-      ageMs: Date.now() - this.spawnedAt,
-    })) return false;
-    const rssMb = (rssBytes ?? 0) / (1024 * 1024);
+    const projectId = this.envOverrides.AGENTUSE_PROJECT_ID ?? "worker";
+    const idle = this.activeRuns.size === 0 && this.pendingRequests.size === 0;
+    const reason = this.envStale && idle
+      ? 'to pick up its changed env'
+      : shouldRecycleWorker({
+        rssBytes,
+        activeRuns: this.activeRuns.size,
+        activeRequests: this.pendingRequests.size,
+        ageMs: Date.now() - this.spawnedAt,
+      })
+        ? `holding ${((rssBytes ?? 0) / (1024 * 1024)).toFixed(0)}MB (threshold ${WORKER_RECYCLE_MB}MB)`
+        : undefined;
+    if (!reason) return false;
 
     this.recycling = true;
     try {
@@ -1152,7 +1181,7 @@ export class AgentWorker {
       // child, and the old one's exit handler no-ops once this.process moves on.
       this.released = false;
       await this.spawn();
-      logger.info(`Recycled ${projectId} worker holding ${rssMb.toFixed(0)}MB (threshold ${WORKER_RECYCLE_MB}MB); a fresh one is serving now.`);
+      logger.info(`Recycled ${projectId} worker ${reason}; a fresh one is serving now.`);
       return true;
     } catch (error) {
       logger.warn(`Worker recycle for ${projectId} failed: ${toErrorMessage(error)}`);
@@ -1729,6 +1758,11 @@ export function createServeCommand(): Command {
         if (migrationWarning) console.error(chalk.yellow(migrationWarning));
       }
 
+      // Workers inherit this snapshot, not the live daemon env: below, the
+      // single-project .env is loaded into the daemon, and a worker spawned
+      // from that would keep those values (dotenv never overrides) and keep
+      // deleted keys. Each worker loads its own project's file instead.
+      const workerBaseEnv: NodeJS.ProcessEnv = { ...process.env };
       loadedServeEnvFiles.push(...loadServeProjectEnvironment(projectSeeds));
 
       // Reject duplicate absolute paths
@@ -1926,7 +1960,7 @@ export function createServeCommand(): Command {
         const w = new AgentWorker({
           AGENTUSE_RESUME_PUBLIC_URL: effectivePublicUrl,
           AGENTUSE_PROJECT_ID: p.id,
-        });
+        }, undefined, workerBaseEnv);
         // Assigned before spawn so the initial ready records its timestamp too;
         // the sweep it requests here no-ops because the worker isn't registered
         // yet, and the explicit runNow below drives the real startup pass.
@@ -2402,7 +2436,7 @@ export function createServeCommand(): Command {
           AGENTUSE_PROJECT_ID: project.id,
           AGENTUSE_RESUME_PUBLIC_URL: effectivePublicUrl,
           ...mockRunEnv({ scope, model: mockModel }),
-        });
+        }, undefined, workerBaseEnv);
         await worker.spawn();
         testRunWorkers.set(sessionId, worker);
         const prepared = await worker.createPreparingSession({
@@ -2500,7 +2534,7 @@ export function createServeCommand(): Command {
             AGENTUSE_PROJECT_ID: project.id,
             AGENTUSE_RESUME_PUBLIC_URL: effectivePublicUrl,
             ...mockRunEnv({ scope, model: mockModel }),
-          });
+          }, undefined, workerBaseEnv);
           await worker.spawn();
           testRunWorkers.set(testSessionId, worker);
           // The runner keys the session directory by the entry's path relative
@@ -2876,9 +2910,13 @@ export function createServeCommand(): Command {
             updateRegistryCounts();
           },
 
-          onEnvReloaded: () => {
-            // Env changes are picked up by the worker on its next execute,
-            // which re-reads the project's .env / .env.local before each run.
+          onEnvReloaded: (changedFile) => {
+            // A worker loads the project's env once and keeps it, so swap the
+            // project's worker for a fresh one once it is idle. Runs already in
+            // flight finish with the env they started with.
+            const fileName = changedFile.split("/").pop() || changedFile;
+            console.log(`  Hot reload: ${fileName} changed; ${project.id} picks it up on the next run once its worker is idle`);
+            workers.get(project.id)?.markEnvStale();
           },
         });
 

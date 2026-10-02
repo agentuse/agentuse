@@ -200,7 +200,7 @@ export async function runInternalWorker() {
   /** Write one IPC response, tolerating a parent that is no longer listening.
    *  Every reply to a request carries this worker's RSS: serve decides on each
    *  settled request whether the process has banked enough memory to be worth
-   *  retiring (see recycleIfBloated), and a run reply alone is too rare a
+   *  retiring (see recycleIfDue), and a run reply alone is too rare a
    *  heartbeat -- the memory is banked precisely when the worker goes idle.
    *  Unsolicited messages (the ready signal) are left as-is; nothing settles. */
   const reply = (response: unknown) => {

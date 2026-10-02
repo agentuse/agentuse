@@ -4,7 +4,6 @@ import { readdir } from "fs/promises";
 import type { Dirent } from "fs";
 import { logger } from "../utils/logger";
 import { Semaphore } from "../utils/concurrency";
-import * as dotenv from "dotenv";
 
 export interface FileWatcherOptions {
   projectRoot: string;
@@ -14,7 +13,8 @@ export interface FileWatcherOptions {
   onAgentAdded: (relativePath: string) => Promise<void>;
   onAgentChanged: (relativePath: string) => Promise<void>;
   onAgentRemoved: (relativePath: string) => void;
-  onEnvReloaded: () => void;
+  /** A project env file changed. Nothing is loaded into this process. */
+  onEnvReloaded: (changedFile: string) => void;
 }
 
 const DEFAULT_AGENT_SCAN_INTERVAL_MS = 15_000;
@@ -352,16 +352,11 @@ export class FileWatcher {
       });
   }
 
-  private reloadEnv(changedFile: string, callback: () => void): void {
-    // Reload from the file that actually changed; watching .env, .env.local and a
-    // custom envFile means the changed path is the source of truth, not the
-    // configured default.
-    dotenv.config({ path: changedFile, override: true });
-
-    const fileName = changedFile.split("/").pop() || changedFile;
-    console.log(`  Hot reload: Environment reloaded from ${fileName}`);
-
-    callback();
+  private reloadEnv(changedFile: string, callback: (changedFile: string) => void): void {
+    // Only notify. Loading the file into this (daemon) process would leak one
+    // project's values into every worker spawned later, for every project, and
+    // let .env override .env.local. Workers read their own project's file.
+    callback(changedFile);
   }
 
   /**
