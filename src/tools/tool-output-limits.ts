@@ -156,17 +156,19 @@ export function trimLeadingLowSurrogate(text: string): string {
 }
 
 /**
- * Truncate a string to `maxBytes` from the end, never leaving a lone surrogate
- * at the cut. Use for head-only truncation (e.g. per-line caps).
+ * Keep the first `maxChars` UTF-16 characters, never leaving a lone surrogate
+ * at the cut. Use for head-only character caps (e.g. per-line limits); for a
+ * byte budget use truncateHeadTail.
  */
-export function truncateEnd(text: string, maxBytes: number): string {
-  if (text.length <= maxBytes) return text;
-  return trimTrailingHighSurrogate(text.slice(0, maxBytes));
+export function truncateEnd(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return trimTrailingHighSurrogate(text.slice(0, maxChars));
 }
 
 /**
- * Truncate a string to `maxBytes`, keeping a head and tail slice with a marker
- * describing what was dropped. Returns the input unchanged when within budget.
+ * Truncate a string to `maxBytes` of UTF-8, keeping a head and tail slice with
+ * a marker describing what was dropped. Returns the input unchanged when
+ * within budget. The marker counts characters, as it always has.
  *
  * The head and tail cut points are snapped off any lone surrogate so the
  * result is always valid UTF-16/UTF-8 even when the cut lands inside an emoji.
@@ -176,12 +178,12 @@ export function truncateHeadTail(
   maxBytes: number,
   headRatio: number = DEFAULT_HEAD_RATIO,
 ): string {
-  if (text.length <= maxBytes) return text;
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) return text;
   const headBytes = Math.floor(maxBytes * headRatio);
   const tailBytes = maxBytes - headBytes;
-  const head = trimTrailingHighSurrogate(text.slice(0, headBytes));
-  const tail = trimLeadingLowSurrogate(text.slice(text.length - tailBytes));
-  return head + truncationMarker(text.length - maxBytes, text.length) + tail;
+  const head = utf8Prefix(text, headBytes);
+  const tail = utf8Suffix(text, tailBytes);
+  return head + truncationMarker(text.length - head.length - tail.length, text.length) + tail;
 }
 
 /**
@@ -274,6 +276,7 @@ function reusablePreviewJsonBytes(value: unknown): number {
   return json === undefined ? Number.POSITIVE_INFINITY : Buffer.byteLength(json, 'utf8');
 }
 
+/** Longest head of `value` within `maxBytes` of UTF-8, never ending on a lone surrogate. */
 function utf8Prefix(value: string, maxBytes: number): string {
   if (maxBytes <= 0) return '';
   if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value;
@@ -286,6 +289,21 @@ function utf8Prefix(value: string, maxBytes: number): string {
     else high = middle - 1;
   }
   return trimTrailingHighSurrogate(value.slice(0, low));
+}
+
+/** Longest tail of `value` within `maxBytes` of UTF-8, never starting on a lone surrogate. */
+function utf8Suffix(value: string, maxBytes: number): string {
+  if (maxBytes <= 0) return '';
+  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value;
+  let low = 0;
+  let high = value.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    const candidate = trimLeadingLowSurrogate(value.slice(value.length - middle));
+    if (Buffer.byteLength(candidate, 'utf8') <= maxBytes) low = middle;
+    else high = middle - 1;
+  }
+  return trimLeadingLowSurrogate(value.slice(value.length - low));
 }
 
 function objectPath(path: string, key: string): string {
@@ -447,7 +465,7 @@ export function clampToolResultForModel(
   }
 
   const json = stableJson(value);
-  if (json === undefined || json.length <= maxBytes) {
+  if (json === undefined || Buffer.byteLength(json, 'utf8') <= maxBytes) {
     return { value, truncated: false };
   }
 
@@ -473,12 +491,13 @@ export interface OversizedResultSummary {
 
 function sampleJson(value: unknown, budget: number): string {
   const json = stableJson(value) ?? String(value);
-  if (json.length <= budget) return json;
-  return `${trimTrailingHighSurrogate(json.slice(0, budget))}...`;
+  const sample = utf8Prefix(json, budget);
+  return sample === json ? json : `${sample}...`;
 }
 
 function jsonBytes(value: unknown): number {
-  return stableJson(value)?.length ?? 0;
+  const json = stableJson(value);
+  return json === undefined ? 0 : Buffer.byteLength(json, 'utf8');
 }
 
 /**
@@ -542,16 +561,17 @@ export function summarizeOversizedResult(
   previewBytes: number = DEFAULT_OVERSIZED_PREVIEW_BYTES,
 ): OversizedResultSummary {
   const budget = Math.min(previewBytes, limitBytes);
+  const bytes = Buffer.byteLength(json, 'utf8');
   let shape = describeShape(value, 1);
   if (jsonBytes(shape) > budget) shape = describeShape(value, 0);
   if (jsonBytes(shape) > budget) shape = sampleJson(json, Math.max(64, budget - 256));
   return {
     truncated: true,
-    bytes: json.length,
-    omittedBytes: json.length,
+    bytes,
+    omittedBytes: bytes,
     limitBytes,
     message:
-      `Result was ${json.length.toLocaleString('en-US')} bytes, over the ${limitBytes.toLocaleString('en-US')} byte model-context limit, so only its shape is shown. ` +
+      `Result was ${bytes.toLocaleString('en-US')} bytes, over the ${limitBytes.toLocaleString('en-US')} byte model-context limit, so only its shape is shown. ` +
       'Do not retry the same call. Narrow the query, fetch one item by ID, or in code_exec do the filtering and return only the ids, fields, counts, and decisions the next step needs.',
     shape,
   };

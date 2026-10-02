@@ -309,3 +309,44 @@ describe('clampToolResultForModel', () => {
     expect(value.shape.keys.items.length).toBe(300);
   });
 });
+
+describe('clampToolResultForModel measures UTF-8 bytes', () => {
+  const maxBytes = 10_240;
+  const markerAllowance = 100;
+  const bytes = (value: unknown) => Buffer.byteLength(typeof value === 'string' ? value : JSON.stringify(value), 'utf8');
+
+  it('truncates a multi-byte string that fits by length but not by bytes', () => {
+    const value = '中'.repeat(9_000); // 9,000 chars, 27,000 bytes
+    const result = clampToolResultForModel(value, { maxBytes, headRatio: 0.4 });
+    expect(result.truncated).toBe(true);
+    expect(bytes(result.value)).toBeLessThanOrEqual(maxBytes + markerAllowance);
+    expect(result.value).toContain('chars truncated of 9000 total');
+  });
+
+  it('bounds a multi-byte output field to the byte budget', () => {
+    const result = clampToolResultForModel({ output: '中'.repeat(30_000) }, { maxBytes, headRatio: 0.4 });
+    expect(result.truncated).toBe(true);
+    expect(bytes((result.value as { output: string }).output)).toBeLessThanOrEqual(maxBytes + markerAllowance);
+  });
+
+  it('summarizes structured results whose JSON exceeds the budget only in bytes', () => {
+    const value = Array.from({ length: 1_400 }, () => '中文内容');
+    const json = JSON.stringify(value);
+    expect(json.length).toBeLessThanOrEqual(maxBytes);
+    const result = clampToolResultForModel(value, { maxBytes, headRatio: 0.4 });
+    expect(result.truncated).toBe(true);
+    const summary = result.value as { bytes: number; message: string };
+    expect(summary.bytes).toBe(Buffer.byteLength(json, 'utf8'));
+    expect(summary.message).toContain(`Result was ${summary.bytes.toLocaleString('en-US')} bytes`);
+  });
+
+  it('keeps astral characters whole at both byte cut points', () => {
+    for (let pad = 0; pad < 4; pad++) {
+      const out = truncateHeadTail('a'.repeat(pad) + '😀'.repeat(5_000), 1_000, 0.4);
+      expect(hasLoneSurrogate(out)).toBe(false);
+      const [head, tail] = out.split(/\n\n\.\.\. \[\d+ chars truncated of \d+ total\] \.\.\.\n\n/);
+      expect(Buffer.byteLength(head!, 'utf8')).toBeLessThanOrEqual(400);
+      expect(Buffer.byteLength(tail!, 'utf8')).toBeLessThanOrEqual(600);
+    }
+  });
+});
