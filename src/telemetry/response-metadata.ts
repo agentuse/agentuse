@@ -11,6 +11,16 @@ export interface ResponseMetadata {
   diagnosticReason?: string;
 }
 
+/**
+ * `total` minus its parts, or undefined when any count is unknown or the parts
+ * exceed the total. Missing counts are unknown, not zero.
+ */
+export function knownRemainder(total: number | undefined, ...parts: Array<number | undefined>): number | undefined {
+  if (total === undefined || parts.some((part) => part === undefined)) return undefined;
+  const rest = parts.reduce<number>((left, part) => left - (part as number), total);
+  return rest >= 0 ? rest : undefined;
+}
+
 const record = (value: unknown): Record<string, any> =>
   value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : {};
 
@@ -40,11 +50,8 @@ export function responseMetadataFromRaw(value: unknown): ResponseMetadata | unde
     cacheWriteTokens: details.cache_write_tokens,
     diagnosticType: diagnostics.type, diagnosticReason: diagnostics.reason,
   });
-  // Missing write/read counts are unknown, not zero. Only derive a complete split.
-  if (metadata?.inputTokens !== undefined && metadata.cachedInputTokens !== undefined && metadata.cacheWriteTokens !== undefined) {
-    const ordinary = metadata.inputTokens - metadata.cachedInputTokens - metadata.cacheWriteTokens;
-    if (ordinary >= 0) metadata.uncachedInputTokens = ordinary;
-  }
+  const ordinary = knownRemainder(metadata?.inputTokens, metadata?.cachedInputTokens, metadata?.cacheWriteTokens);
+  if (metadata && ordinary !== undefined) metadata.uncachedInputTokens = ordinary;
   return metadata;
 }
 

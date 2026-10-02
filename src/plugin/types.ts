@@ -308,8 +308,17 @@ export interface ProviderRequest {
   signal: AbortSignal;
 }
 
+/**
+ * Token counts for one response. `inputTokens` and `outputTokens` are totals
+ * that include the cache and reasoning parts. Leave a count undefined when it
+ * is unknown and report 0 when it is known to be zero (for example a provider
+ * without caching): uncached input and text output are only derived when every
+ * part is known.
+ */
 export interface ProviderUsage {
+  /** Total input tokens, including cache reads and writes. */
   inputTokens?: number;
+  /** Total output tokens, including reasoning. */
   outputTokens?: number;
   cachedInputTokens?: number;
   cacheWriteInputTokens?: number;

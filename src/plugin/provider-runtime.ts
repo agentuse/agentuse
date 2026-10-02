@@ -18,6 +18,7 @@ import { AuthStorage } from '../auth/storage';
 import { assertProviderRefreshAllowed, fetchWithProviderHealth, providerHealthSubject, recordProviderHealth, type ProviderHealthSubject } from '../auth/provider-health';
 import { MODELS, SUGGESTED_MODEL_IDS, type ModelInfo, type Provider as RegistryProvider } from '../generated/models';
 import type { ProviderAuthSourceStatus } from '../auth/provider-status';
+import { knownRemainder } from '../telemetry/response-metadata';
 import { logger } from '../utils/logger';
 import { getAgentuseDataDir } from '../utils/data-dir';
 import { findProjectRoot } from '../utils/project';
@@ -729,13 +730,13 @@ function customUsage(value?: ProviderUsage): LanguageModelV3Usage {
   return {
     inputTokens: {
       total: value?.inputTokens,
-      noCache: value?.inputTokens,
+      noCache: knownRemainder(value?.inputTokens, value?.cachedInputTokens, value?.cacheWriteInputTokens),
       cacheRead: value?.cachedInputTokens,
       cacheWrite: value?.cacheWriteInputTokens,
     },
     outputTokens: {
       total: value?.outputTokens,
-      text: value?.outputTokens,
+      text: knownRemainder(value?.outputTokens, value?.reasoningTokens),
       reasoning: value?.reasoningTokens,
     },
   };

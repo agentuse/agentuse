@@ -225,7 +225,7 @@ describe('AgentUse activation API', () => {
       { type: 'tool-call', toolCallId: 'call-1', toolName: 'done', input: '{"ok":true}' },
     ]);
     expect(result.finishReason).toEqual({ unified: 'tool-calls', raw: 'toolUse' });
-    expect(result.usage.inputTokens).toEqual({ total: 10, noCache: 10, cacheRead: 2, cacheWrite: undefined });
+    expect(result.usage.inputTokens).toEqual({ total: 10, noCache: undefined, cacheRead: 2, cacheWrite: undefined });
     expect(result.response).toMatchObject({ id: 'response-1', modelId: 'remote-model' });
     expect(result.warnings).toEqual([{ type: 'unsupported', feature: 'temperature', details: 'Ignored' }]);
 
@@ -243,6 +243,47 @@ describe('AgentUse activation API', () => {
     expect(parts).toContainEqual({ type: 'text-start', id: 'text-0' });
     expect(parts).toContainEqual({ type: 'text-end', id: 'text-0' });
     expect(parts).toContainEqual(expect.objectContaining({ type: 'finish' }));
+  });
+
+  it('derives uncached input and text output only when every usage part is known', async () => {
+    const reports = [
+      { inputTokens: 10, outputTokens: 4, cachedInputTokens: 2, cacheWriteInputTokens: 3, reasoningTokens: 1 },
+      { inputTokens: 10, outputTokens: 4, cachedInputTokens: 0, cacheWriteInputTokens: 0, reasoningTokens: 0 },
+      { inputTokens: 10, outputTokens: 4, cachedInputTokens: 2 },
+      { inputTokens: 10, outputTokens: 4, cachedInputTokens: 8, cacheWriteInputTokens: 5, reasoningTokens: 6 },
+    ];
+    let index = 0;
+    const provider: ProviderDefinition = {
+      id: 'usage-split',
+      name: 'Usage Split',
+      models: [],
+      transport: {
+        kind: 'custom',
+        apiVersion: 1,
+        async *stream() {
+          yield { type: 'finish', reason: 'stop', usage: reports[index++] };
+        },
+      },
+    };
+    const model = createCustomProviderModel(provider, 'model');
+    const results = [];
+    for (let i = 0; i < reports.length; i++) results.push((await model.doGenerate({ prompt: [] })).usage);
+    expect(results[0]).toEqual({
+      inputTokens: { total: 10, noCache: 5, cacheRead: 2, cacheWrite: 3 },
+      outputTokens: { total: 4, text: 3, reasoning: 1 },
+    });
+    expect(results[1]).toEqual({
+      inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+      outputTokens: { total: 4, text: 4, reasoning: 0 },
+    });
+    // Unknown parts are not zero, so the totals are not copied into the splits.
+    expect(results[2]).toEqual({
+      inputTokens: { total: 10, noCache: undefined, cacheRead: 2, cacheWrite: undefined },
+      outputTokens: { total: 4, text: undefined, reasoning: undefined },
+    });
+    // Parts larger than the total are inconsistent, not a negative remainder.
+    expect(results[3].inputTokens.noCache).toBeUndefined();
+    expect(results[3].outputTokens.text).toBeUndefined();
   });
 
   it('rejects a custom provider stream that omits its terminal finish event', async () => {
