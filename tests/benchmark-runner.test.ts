@@ -164,3 +164,34 @@ describe('benchmark model identity', () => {
     expect(result.ranking[0]!.costUsd).toBeCloseTo(1);
   });
 });
+
+describe('benchmark effective settings', () => {
+  it("passes the suite's maxSteps to every trial and persists the settings that ran", async () => {
+    const result = await runBenchmarkSuite(suite({ models: [PRICED], runs: 2, timeout: 120, maxSteps: 7 }), runConfig());
+
+    expect(runs.map((r) => r.maxSteps)).toEqual([7, 7]);
+    const saved = JSON.parse(generateJsonReport(result));
+    expect(saved.config).toEqual({ models: [PRICED], runs: 2, timeout: 120, maxSteps: 7 });
+  });
+
+  it('lets CLI flags win over the suite file', async () => {
+    const result = await runBenchmarkSuite(
+      suite({ models: [PRICED_B], runs: 3, timeout: 120, maxSteps: 7 }),
+      runConfig({ models: [PRICED], runs: 1, timeout: 30, maxSteps: 2 }),
+    );
+
+    expect(runs.map((r) => [r.model, r.maxSteps])).toEqual([[PRICED, 2]]);
+    expect(result.config).toMatchObject({ models: [PRICED], runs: 1, timeout: 30, maxSteps: 2 });
+  });
+
+  it("leaves each agent's own maxSteps in force when the suite sets none", async () => {
+    const { BenchmarkSuiteSchema } = await import('../src/benchmark/types');
+    const parsed = BenchmarkSuiteSchema.parse({
+      id: 's', name: 'S', config: { models: [PRICED] }, tests: [],
+    });
+    expect(parsed.config.maxSteps).toBeUndefined();
+
+    await runBenchmarkSuite(suite({ models: [PRICED] }), runConfig());
+    expect(runs[0]!.maxSteps).toBeUndefined();
+  });
+});

@@ -4,10 +4,17 @@ import { join, dirname } from 'path';
 import { runAgent } from '../runner/run.js';
 import { prepareAgentExecution } from '../runner/preparation.js';
 import { connectMCP } from '../mcp.js';
-import { agentForBenchmarkModel, substituteTemplateVariables, type LoadedSuite, type LoadedTest } from './loader.js';
+import {
+  agentForBenchmarkModel,
+  resolveSuiteConfig,
+  substituteTemplateVariables,
+  type LoadedSuite,
+  type LoadedTest,
+} from './loader.js';
 import { resolveModelString } from '../utils/model-alias.js';
 import {
   type BenchmarkRunConfig,
+  type EffectiveSuiteConfig,
   type TrialResult,
   type RawTrialEntry,
   type SuiteResult,
@@ -31,6 +38,7 @@ async function runTrial(
   scenario: Scenario,
   trialNumber: number,
   config: BenchmarkRunConfig,
+  settings: EffectiveSuiteConfig,
   agentFilePath: string
 ): Promise<TrialResult> {
   const startTime = Date.now();
@@ -49,7 +57,7 @@ async function runTrial(
 
   // Set up abort controller with timeout
   const abortController = new AbortController();
-  const timeout = config.timeout ?? 300;
+  const timeout = settings.timeout;
   const timeoutId = setTimeout(() => abortController.abort(), timeout * 1000);
   const projectRoot = dirname(agentFilePath);
 
@@ -75,7 +83,7 @@ async function runTrial(
         agent,
         mcpClients,
         agentFilePath,
-        cliMaxSteps: config.maxSteps,
+        cliMaxSteps: settings.maxSteps,
         projectContext,
         userPrompt: scenarioInput,
         abortSignal: abortController.signal,
@@ -98,7 +106,7 @@ async function runTrial(
         startTime,
         config.verbose ?? false,
         agentFilePath,
-        config.maxSteps,
+        settings.maxSteps,
         undefined, // sessionManager
         projectContext,
         scenarioInput, // userPrompt - this is the scenario goal (with substituted variables)
@@ -260,15 +268,16 @@ async function runScenario(
   agent: ParsedAgent,
   scenario: Scenario,
   model: string,
-  runs: number,
-  config: BenchmarkRunConfig
+  config: BenchmarkRunConfig,
+  settings: EffectiveSuiteConfig
 ): Promise<RawTrialEntry[]> {
+  const { runs } = settings;
   logger.info(`  Scenario: ${scenario.name} (${runs} runs)`);
 
   const entries: RawTrialEntry[] = [];
   for (let i = 0; i < runs; i++) {
     logger.info(`    Trial ${i + 1}/${runs}...`);
-    const trial = await runTrial(agent, scenario, i + 1, config, test.agentPath);
+    const trial = await runTrial(agent, scenario, i + 1, config, settings, test.agentPath);
     entries.push({
       model,
       agentPath: test.agentPath,
@@ -280,13 +289,13 @@ async function runScenario(
     });
 
     // Check cost budget
-    if (config.budgetUsd) {
+    if (settings.budgetUsd) {
       const totalCost = entries.reduce(
         (sum, e) => sum + (e.trial.usage.estimatedCostUsd ?? 0),
         0
       );
-      if (totalCost > config.budgetUsd) {
-        logger.warn(`Cost budget exceeded ($${totalCost.toFixed(2)} > $${config.budgetUsd})`);
+      if (totalCost > settings.budgetUsd) {
+        logger.warn(`Cost budget exceeded ($${totalCost.toFixed(2)} > $${settings.budgetUsd})`);
         break;
       }
     }
@@ -309,11 +318,11 @@ export async function runBenchmarkSuite(
   const runId = ulid();
   const startTime = Date.now();
 
-  // Use config overrides or suite defaults
-  const runs = config.runs ?? suite.config.runs;
+  const settings = resolveSuiteConfig(suite.config, config);
+  const { runs } = settings;
   // Resolve each suite model once; trials are labelled and priced by the
   // concrete id they actually ran.
-  const targets = (config.models ?? suite.config.models).map((requested) => ({
+  const targets = settings.models.map((requested) => ({
     requested,
     resolved: resolveModelString(requested),
   }));
@@ -333,7 +342,7 @@ export async function runBenchmarkSuite(
       logger.info(`Agent: ${test.agent.name} (model: ${model})`);
       const agent = agentForBenchmarkModel(test.agent, target);
       for (const scenario of test.scenarios) {
-        trials.push(...await runScenario(test, agent, scenario, model, runs, config));
+        trials.push(...await runScenario(test, agent, scenario, model, config, settings));
       }
     }
   }
@@ -345,7 +354,8 @@ export async function runBenchmarkSuite(
     runId,
     timestamp: startTime,
     durationMs: Date.now() - startTime,
-    config: { models, runs },
+    // Persist what actually ran: the resolved models and every effective setting.
+    config: { ...settings, models },
     trials,
   });
 }

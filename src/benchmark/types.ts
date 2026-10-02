@@ -68,7 +68,8 @@ export const SuiteConfigSchema = z.object({
   models: z.array(z.string()),
   runs: z.number().int().positive().default(3), // number of trials per scenario
   timeout: z.number().positive().default(300), // seconds
-  maxSteps: z.number().int().positive().default(30),
+  // No default: unset means each agent's own maxSteps, then the global default.
+  maxSteps: z.number().int().positive().optional(),
 });
 
 export type SuiteConfig = z.infer<typeof SuiteConfigSchema>;
@@ -296,9 +297,7 @@ export interface SuiteResult {
   timestamp: number;
   durationMs: number;
 
-  config: {
-    models: string[];
-    runs: number;
+  config: BenchmarkRunSettings & {
     totalScenarios: number;
     totalTrials: number;
   };
@@ -347,6 +346,25 @@ export interface SuiteResult {
   }>;
 }
 
+// ============ Run Settings ============
+
+/**
+ * The settings a suite run actually used, persisted with its results. Fields
+ * beyond models/runs are optional only because older result files lack them.
+ */
+export interface BenchmarkRunSettings {
+  models: string[];
+  runs: number;
+  timeout?: number; // seconds per trial
+  maxSteps?: number; // unset: each agent's own maxSteps, then the global default
+  budgetUsd?: number;
+}
+
+/** {@link BenchmarkRunSettings} as resolved for a run that is about to start. */
+export interface EffectiveSuiteConfig extends BenchmarkRunSettings {
+  timeout: number;
+}
+
 // ============ Raw Benchmark Result (for JSON storage) ============
 
 /**
@@ -377,10 +395,7 @@ export interface RawBenchmarkResult {
   durationMs: number;
 
   // Config
-  config: {
-    models: string[];
-    runs: number;
-  };
+  config: BenchmarkRunSettings;
 
   // Raw trial data - flat array
   trials: RawTrialEntry[];

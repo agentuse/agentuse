@@ -9,8 +9,11 @@ import { toErrorMessage } from '../utils/error-message.js';
 import { applyRunModelOverride, type RunModelOverride } from '../utils/model-alias.js';
 import {
   BenchmarkSuiteSchema,
+  type BenchmarkRunConfig,
   type BenchmarkSuite,
+  type EffectiveSuiteConfig,
   type Scenario,
+  type SuiteConfig,
 } from './types.js';
 
 /**
@@ -189,14 +192,23 @@ export function getTotalScenarios(suite: BenchmarkSuite): number {
 }
 
 /**
- * Get total number of trials for a suite run
- * (scenarios * models * runs)
+ * The one place a run's effective settings are decided: CLI flags over the
+ * suite file. The CLI summary, the runner, every trial, and the saved result
+ * all read this, so none of them can disagree about what ran. `maxSteps` stays
+ * unset unless given, leaving each agent's own limit in force.
  */
-export function getTotalTrials(suite: BenchmarkSuite): number {
-  const scenarios = getTotalScenarios(suite);
-  const models = suite.config.models.length;
-  const runs = suite.config.runs;
-  return scenarios * models * runs;
+export function resolveSuiteConfig(
+  config: SuiteConfig,
+  overrides: Pick<BenchmarkRunConfig, 'models' | 'runs' | 'timeout' | 'maxSteps' | 'budgetUsd'>
+): EffectiveSuiteConfig {
+  const maxSteps = overrides.maxSteps ?? config.maxSteps;
+  return {
+    models: overrides.models ?? config.models,
+    runs: overrides.runs ?? config.runs,
+    timeout: overrides.timeout ?? config.timeout,
+    ...(maxSteps !== undefined && { maxSteps }),
+    ...(overrides.budgetUsd !== undefined && { budgetUsd: overrides.budgetUsd }),
+  };
 }
 
 /**

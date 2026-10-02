@@ -4,6 +4,7 @@
  */
 
 import {
+  type BenchmarkRunSettings,
   type RawBenchmarkResult,
   type RawTrialEntry,
   type SuiteResult,
@@ -754,7 +755,7 @@ export function calculateMetrics(raw: RawBenchmarkResult): SuiteResult {
     timestamp,
     durationMs,
     config: {
-      models: config.models,
+      ...config,
       runs,
       totalScenarios,
       totalTrials: trials.length,
@@ -762,6 +763,12 @@ export function calculateMetrics(raw: RawBenchmarkResult): SuiteResult {
     modelResults,
     ranking,
   };
+}
+
+/** The persisted run settings, without the totals derived from the trials. */
+function settingsOf(config: SuiteResult['config']): BenchmarkRunSettings {
+  const { totalScenarios: _scenarios, totalTrials: _trials, ...settings } = config;
+  return settings;
 }
 
 /**
@@ -796,10 +803,7 @@ export function extractRawData(result: SuiteResult): RawBenchmarkResult {
     runId: result.runId,
     timestamp: result.timestamp,
     durationMs: result.durationMs,
-    config: {
-      models: result.config.models,
-      runs: result.config.runs,
-    },
+    config: settingsOf(result.config),
     trials,
   };
 }

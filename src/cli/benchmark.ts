@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { resolve } from 'path';
-import { loadSuite, getTotalScenarios, resolveSuitePath, BENCHMARK_DIRS } from '../benchmark/loader.js';
+import { loadSuite, getTotalScenarios, resolveSuitePath, resolveSuiteConfig, BENCHMARK_DIRS } from '../benchmark/loader.js';
 import { runBenchmarkSuite } from '../benchmark/runner.js';
 import { saveReports, generateMarkdownReport, generateHtmlReport, isRawBenchmarkResult, type ReportFormat } from '../benchmark/reporter/index.js';
 import { calculateMetrics } from '../benchmark/calculator.js';
@@ -47,24 +47,6 @@ export function createBenchmarkCommand(): Command {
         console.log(chalk.gray('Loading suite...'));
         const loadedSuite = await loadSuite(absoluteSuitePath);
 
-        // Show suite info
-        const totalScenarios = getTotalScenarios(loadedSuite.suite);
-        const models = options.models ?? loadedSuite.suite.config.models;
-        const runs = options.runs ?? loadedSuite.suite.config.runs;
-        const totalTrials = totalScenarios * models.length * runs;
-
-        console.log(chalk.cyan(`\n📋 ${loadedSuite.suite.name}`));
-        console.log(chalk.gray(`   Models: ${models.join(', ')}`));
-        console.log(chalk.gray(`   Scenarios: ${totalScenarios}`));
-        console.log(chalk.gray(`   Runs per scenario: ${runs}`));
-        console.log(chalk.gray(`   Total trials: ${totalTrials}`));
-
-        if (options.budget) {
-          console.log(chalk.yellow(`   Budget: $${options.budget}`));
-        }
-
-        console.log('');
-
         // Build config
         const config: BenchmarkRunConfig = {
           suitePath: absoluteSuitePath,
@@ -77,6 +59,27 @@ export function createBenchmarkCommand(): Command {
           formats: (options.format as ReportFormat[]) ?? ['json', 'markdown', 'html'],
           ...(options.verbose !== undefined && { verbose: options.verbose }),
         };
+
+        // Show suite info, from the same resolved settings the run will use
+        const settings = resolveSuiteConfig(loadedSuite.suite.config, config);
+        const totalScenarios = getTotalScenarios(loadedSuite.suite);
+        const totalTrials = totalScenarios * settings.models.length * settings.runs;
+
+        console.log(chalk.cyan(`\n📋 ${loadedSuite.suite.name}`));
+        console.log(chalk.gray(`   Models: ${settings.models.join(', ')}`));
+        console.log(chalk.gray(`   Scenarios: ${totalScenarios}`));
+        console.log(chalk.gray(`   Runs per scenario: ${settings.runs}`));
+        console.log(chalk.gray(`   Total trials: ${totalTrials}`));
+        console.log(chalk.gray(`   Timeout per trial: ${settings.timeout}s`));
+        if (settings.maxSteps !== undefined) {
+          console.log(chalk.gray(`   Max steps: ${settings.maxSteps}`));
+        }
+
+        if (settings.budgetUsd !== undefined) {
+          console.log(chalk.yellow(`   Budget: $${settings.budgetUsd}`));
+        }
+
+        console.log('');
 
         // Run benchmark
         console.log(chalk.bold('Running benchmark...\n'));
