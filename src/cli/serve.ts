@@ -39,6 +39,7 @@ import { refreshUpdateCacheInBackground } from "../update-check";
 import { registerServer, unregisterServer, updateServer, listServers, daemonRequestHeaders, daemonResponseError, formatUptime, getDefaultLogFilePath, hostForUrl, serverBaseUrl, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { acquireSchedulerLock, releaseSchedulerLock, SCHEDULED_RUN_ACTIVE } from "../utils/scheduler-lock";
 import { createProjectScheduleState, loadProjectScheduleState, projectScheduleEnabled } from "./serve/schedule-state";
+import { findThreadApproval } from "./serve/slack-thread-lookup";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, applyGlobalConfigEnv, getGlobalConfigPath, getGlobalEnvPath, getManagedProjectsRoot, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
 import { SlackApprovalSocket, updateSlackApprovalRequestStatus, type SlackApprovalDecision, type SlackApprovalThreadComment, type SlackApprovalThreadCommentResult, type SlackRunThreadCommentResult } from "../slack/approval";
@@ -3815,30 +3816,12 @@ export function createServeCommand(): Command {
         })().catch((err) => logger.warn(`Slack approval thread note failed: ${toErrorMessage(err)}`));
       };
 
-      const sessionIdForLocalApprovalThread = async (comment: SlackApprovalThreadComment): Promise<string | undefined> => {
-        for (const project of projects) {
-          const projectWorker = workers.get(project.id);
-          if (!projectWorker) continue;
-          const result = await projectWorker.listApprovals(project.root);
-          if (!result.success) {
-            logger.debug(`Slack approval thread lookup failed for ${project.id}: ${result.error.message}`);
-            continue;
-          }
-          const approval = result.approvals.find((item) =>
-            (
-              item.channelMessage?.type === 'slack-message' &&
-              item.channelMessage.channel === comment.channel &&
-              item.channelMessage.ts === comment.threadTs
-            ) ||
-            item.channels?.slack?.some((handle) =>
-              handle.channel === comment.channel &&
-              handle.ts === comment.threadTs
-            )
-          );
-          if (approval) return approval.sessionId;
-        }
-        return undefined;
-      };
+      const findSlackThreadApproval = (comment: SlackApprovalThreadComment, matches: (approval: ApprovalSummary) => boolean) =>
+        findThreadApproval(
+          projects.map((project) => ({ project, worker: workers.get(project.id) })),
+          matches,
+          `Slack thread ${comment.channel}/${comment.threadTs}`,
+        );
 
       const postSlackRunThreadNote = (
         comment: SlackApprovalThreadComment,
@@ -3858,14 +3841,21 @@ export function createServeCommand(): Command {
       };
 
       const continueSlackRunThread = async (comment: SlackApprovalThreadComment): Promise<SlackRunThreadCommentResult> => {
-        let sessionId: string | undefined;
-        try {
-          sessionId = await sessionIdForLocalApprovalThread(comment);
-        } catch (err) {
-          logger.warn(`Slack run thread lookup failed: ${toErrorMessage(err)}`);
-          return { handled: false };
-        }
-        if (!sessionId) return { handled: false };
+        // A lookup failure throws through to the socket, which posts a visible
+        // failure note in the thread rather than dropping the reply silently.
+        const found = await findSlackThreadApproval(comment, (item) =>
+          (
+            item.channelMessage?.type === 'slack-message' &&
+            item.channelMessage.channel === comment.channel &&
+            item.channelMessage.ts === comment.threadTs
+          ) ||
+          Boolean(item.channels?.slack?.some((handle) =>
+            handle.channel === comment.channel &&
+            handle.ts === comment.threadTs
+          ))
+        );
+        if (!found) return { handled: false };
+        const sessionId = found.approval.sessionId;
 
         wakeListHubs();
         const done = (async () => {
@@ -3909,25 +3899,16 @@ export function createServeCommand(): Command {
       };
 
       const resumeSlackThreadComment = async (comment: SlackApprovalThreadComment): Promise<SlackApprovalThreadCommentResult> => {
-        for (const project of projects) {
-          const projectWorker = workers.get(project.id);
-          if (!projectWorker) continue;
-
-          const result = await projectWorker.listApprovals(project.root);
-          if (!result.success) {
-            logger.debug(`Slack approval comment lookup failed for ${project.id}: ${result.error.message}`);
-            continue;
-          }
-
-          const approval = result.approvals.find((item) =>
-            item.status === 'pending' &&
-            item.sessionStatus === 'suspended' &&
-            item.resumeToken &&
-            item.channelMessage?.type === 'slack-message' &&
-            item.channelMessage.channel === comment.channel &&
-            item.channelMessage.ts === comment.threadTs
-          );
-          if (!approval?.resumeToken) continue;
+        const found = await findSlackThreadApproval(comment, (item) =>
+          item.status === 'pending' &&
+          item.sessionStatus === 'suspended' &&
+          Boolean(item.resumeToken) &&
+          item.channelMessage?.type === 'slack-message' &&
+          item.channelMessage.channel === comment.channel &&
+          item.channelMessage.ts === comment.threadTs
+        );
+        if (found) {
+          const { project, worker: projectWorker, approval } = found;
 
           const activeKey = `${project.id}:${approval.sessionId}`;
           if (activeApprovalResumes.has(activeKey)) {
