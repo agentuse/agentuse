@@ -10,6 +10,7 @@ import {
   readChangesetRecord,
 } from '../src/agents/changeset';
 import { applyChangeset, restoreChangeset } from '../src/agents/changeset-apply';
+import { withAuthoringLock } from '../src/agents/authoring-lock';
 
 const cleanups: Array<() => Promise<void>> = [];
 const priorDataDir = process.env.AGENTUSE_DATA_DIR;
@@ -280,5 +281,76 @@ describe('restoreChangeset', () => {
   it('refuses to restore a changeset that was never applied', async () => {
     const { projectRoot } = await fixture();
     await expect(restore(projectRoot)).rejects.toThrow('no applied files to restore');
+  });
+});
+
+describe('concurrent authoring operations', () => {
+  const OTHER_ID = '01K4ABCDEFGHJKMNPQRSTVWXY0';
+
+  it('lets a live apply finish instead of reconciling its journal from a read', async () => {
+    const { projectRoot } = await fixture();
+    const path = changesetRecordPath(projectRoot, SESSION_ID);
+    const stored = JSON.parse(await readFile(path, 'utf8')) as ChangesetRecord;
+    const applied = {
+      at: Date.now(),
+      files: [
+        { path: EXISTING, beforeHash: contentHash(EXISTING_SOURCE), afterHash: contentHash(REVISED_SOURCE) },
+        { path: 'scripts/collect.py', beforeHash: null, afterHash: contentHash(NEW_SCRIPT) },
+      ],
+    };
+
+    let read: Promise<ChangesetRecord | undefined> | undefined;
+    let readSettled = false;
+    await withAuthoringLock(projectRoot, async () => {
+      // The apply has journaled its intent but not yet written a project file.
+      await writeFile(path, `${JSON.stringify({ ...stored, status: 'applying', applied }, null, 2)}\n`);
+      read = readChangesetRecord(projectRoot, SESSION_ID);
+      void read.then(() => { readSettled = true; }, () => { readSettled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(readSettled).toBe(false);
+      await writeFile(join(projectRoot, EXISTING), REVISED_SOURCE);
+      await mkdir(join(projectRoot, 'scripts'), { recursive: true });
+      await writeFile(join(projectRoot, 'scripts/collect.py'), NEW_SCRIPT);
+      await writeFile(path, `${JSON.stringify({ ...stored, status: 'applied', applied }, null, 2)}\n`);
+    });
+
+    const seen = await read!;
+    expect(seen?.status).toBe('applied');
+    expect(seen?.applied?.files).toEqual(applied.files);
+    const persisted = JSON.parse(await readFile(path, 'utf8')) as ChangesetRecord;
+    expect(persisted.status).toBe('applied');
+    expect(persisted.applied?.files).toEqual(applied.files);
+  });
+
+  it('refuses the second of two concurrent applies that modify the same file', async () => {
+    const { projectRoot } = await fixture([modifyFile(EXISTING, EXISTING_SOURCE, REVISED_SOURCE)]);
+    const otherSource = `${EXISTING_SOURCE}\nSkip weekends.\n`;
+    await createChangesetRecord({
+      sessionId: OTHER_ID,
+      projectId: 'demo',
+      projectRoot,
+      scopeRoot: projectRoot,
+      mode: 'create',
+      instruction: 'Skip weekends.',
+      authoringModel: 'openai:gpt-5.6-luna',
+    });
+    await appendChangesetProposal(projectRoot, OTHER_ID, {
+      reply: 'Skips weekends.',
+      entry: EXISTING,
+      files: [modifyFile(EXISTING, EXISTING_SOURCE, otherSource)],
+    });
+
+    const results = await Promise.allSettled([
+      apply(projectRoot),
+      applyChangeset({ projectRoot, scopeRoot: projectRoot, sessionId: OTHER_ID, validate: noopValidate }),
+    ]);
+
+    const fulfilled = results.filter((result) => result.status === 'fulfilled');
+    const rejected = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(String(rejected[0]!.reason)).toContain('changed after this changeset started');
+    const winner = results[0]!.status === 'fulfilled' ? REVISED_SOURCE : otherSource;
+    expect(await readFile(join(projectRoot, EXISTING), 'utf8')).toBe(winner);
   });
 });

@@ -15,6 +15,7 @@ import { internalAgentSourcePath, writeInternalAgentSource } from './internal-ag
 import { isPathInside } from '../utils/path-policy.js';
 import { atomicWriteFile } from '../utils/atomic-write.js';
 import { toErrorMessage } from '../utils/error-message';
+import { withAuthoringLock } from './authoring-lock.js';
 
 export type AgentRevisionStatus =
   | 'running'
@@ -189,15 +190,30 @@ async function reconcileRevisionMutation(record: AgentRevisionRecord): Promise<A
   return failed;
 }
 
-export async function readAgentRevisionRecord(projectRoot: string, revisionSessionId: string): Promise<AgentRevisionRecord | undefined> {
+async function readStoredAgentRevisionRecord(projectRoot: string, revisionSessionId: string): Promise<AgentRevisionRecord | undefined> {
   try {
     const parsed = JSON.parse(await readFile(revisionPath(projectRoot, revisionSessionId), 'utf8')) as AgentRevisionRecord;
     if (parsed.version !== 1 || parsed.revisionSessionId !== revisionSessionId || parsed.projectRoot !== projectRoot) return undefined;
-    return reconcileRevisionMutation(parsed);
+    return parsed;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw error;
   }
+}
+
+/** Read while holding the authoring lock: an in-flight marker seen here has no
+ *  live owner, so it is settled on the spot. */
+async function readAgentRevisionRecordLocked(projectRoot: string, revisionSessionId: string): Promise<AgentRevisionRecord | undefined> {
+  const record = await readStoredAgentRevisionRecord(projectRoot, revisionSessionId);
+  return record && reconcileRevisionMutation(record);
+}
+
+export async function readAgentRevisionRecord(projectRoot: string, revisionSessionId: string): Promise<AgentRevisionRecord | undefined> {
+  const record = await readStoredAgentRevisionRecord(projectRoot, revisionSessionId);
+  if (record?.status !== 'applying' && record?.status !== 'restoring') return record;
+  // A live apply or restore holds the lock until its final status lands, so
+  // waiting for it means reconciling only a marker its owner left behind.
+  return withAuthoringLock(projectRoot, () => readAgentRevisionRecordLocked(projectRoot, revisionSessionId));
 }
 
 export async function listAgentRevisionRecords(projectRoot: string, originSessionId?: string): Promise<AgentRevisionRecord[]> {
@@ -659,14 +675,23 @@ async function validateRevisionTarget(scopeRoot: string, targetPath: string): Pr
   if (!isPathInside(realScope, realDirectory)) throw new Error('The target agent is outside the served project scope');
 }
 
-export async function applyAgentRevision(input: {
+type ApplyAgentRevisionInput = {
   projectRoot: string;
   scopeRoot: string;
   revisionSessionId: string;
   availableModels: readonly string[];
   availableSkills: readonly string[];
-}): Promise<AgentRevisionRecord> {
-  const record = await readAgentRevisionRecord(input.projectRoot, input.revisionSessionId);
+};
+
+/** Apply and restore hold the project's authoring lock from the source check
+ *  to the final status, like a change set apply, so a second operation on the
+ *  same agent checks against what the first one wrote. */
+export async function applyAgentRevision(input: ApplyAgentRevisionInput): Promise<AgentRevisionRecord> {
+  return withAuthoringLock(input.projectRoot, () => applyAgentRevisionLocked(input));
+}
+
+async function applyAgentRevisionLocked(input: ApplyAgentRevisionInput): Promise<AgentRevisionRecord> {
+  const record = await readAgentRevisionRecordLocked(input.projectRoot, input.revisionSessionId);
   if (!record || record.status !== 'proposed' || !record.proposedSource) throw new Error('This revision is not ready to apply');
   await validateRevisionTarget(input.scopeRoot, record.targetAgentPath);
   const currentSource = await readFile(record.targetAgentPath, 'utf8');
@@ -696,12 +721,18 @@ export async function applyAgentRevision(input: {
   return applied;
 }
 
-export async function restoreAgentRevision(input: {
+type RestoreAgentRevisionInput = {
   projectRoot: string;
   scopeRoot: string;
   revisionSessionId: string;
-}): Promise<AgentRevisionRecord> {
-  const record = await readAgentRevisionRecord(input.projectRoot, input.revisionSessionId);
+};
+
+export async function restoreAgentRevision(input: RestoreAgentRevisionInput): Promise<AgentRevisionRecord> {
+  return withAuthoringLock(input.projectRoot, () => restoreAgentRevisionLocked(input));
+}
+
+async function restoreAgentRevisionLocked(input: RestoreAgentRevisionInput): Promise<AgentRevisionRecord> {
+  const record = await readAgentRevisionRecordLocked(input.projectRoot, input.revisionSessionId);
   if (!record || record.status !== 'applied' || !record.previousSource || !record.proposedSourceHash) throw new Error('This revision has no applied source to restore');
   await validateRevisionTarget(input.scopeRoot, record.targetAgentPath);
   const currentSource = await readFile(record.targetAgentPath, 'utf8');

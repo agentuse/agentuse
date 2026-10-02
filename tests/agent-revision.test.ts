@@ -17,6 +17,7 @@ import {
   restoreAgentRevision,
   sourceHash,
 } from '../src/agents/revision';
+import { withAuthoringLock } from '../src/agents/authoring-lock';
 
 const cleanups: Array<() => Promise<void>> = [];
 const priorDataDir = process.env.AGENTUSE_DATA_DIR;
@@ -466,5 +467,81 @@ describe('revision submission schema', () => {
     // outcome must stay one object with an enum discriminator.
     const schema = tool.inputSchema as { _def?: { typeName?: string } };
     expect(schema._def?.typeName).toBe('ZodObject');
+  });
+});
+
+describe('concurrent revision operations', () => {
+  const OTHER_ID = '01K4ABCDEFGHJKMNPQRSTVWXY0';
+
+  async function propose(f: Awaited<ReturnType<typeof fixture>>, revisionSessionId: string, newText: string) {
+    if (revisionSessionId !== f.revisionSessionId) {
+      await createAgentRevisionRecord({
+        revisionSessionId,
+        projectId: 'support',
+        projectRoot: f.projectRoot,
+        targetAgentPath: f.targetAgentPath,
+        targetAgentRunPath: 'support-triage.agentuse',
+        targetAgentName: 'Support triage',
+        instruction: 'Another change.',
+        authoringModel: 'openai:gpt-5.6-luna',
+        expectedSourceHash: sourceHash(f.currentSource),
+      });
+    }
+    // The second revision is agent-anchored, so its contract names no origin run.
+    const { originSessionId: _origin, ...anchorless } = f.contract;
+    const contract = revisionSessionId === f.revisionSessionId ? f.contract : { ...anchorless, revisionSessionId };
+    const tool = createSubmitAgentRevisionTool({}, contract);
+    await (tool.execute as any)({
+      outcome: 'revision-proposed',
+      diagnosis: 'A change is needed.',
+      summary: 'Change the instructions.',
+      edits: [{ oldText: 'Classify active orders and prioritize urgent tickets.', newText }],
+    });
+  }
+
+  const applyRevision = (f: Awaited<ReturnType<typeof fixture>>, revisionSessionId: string) => applyAgentRevision({
+    projectRoot: f.projectRoot,
+    scopeRoot: f.projectRoot,
+    revisionSessionId,
+    availableModels: ['openai:gpt-5.6-luna'],
+    availableSkills: [],
+  });
+
+  it('refuses the second of two concurrent applies to the same agent', async () => {
+    const f = await fixture();
+    await propose(f, f.revisionSessionId, 'Exclude refunded orders.');
+    await propose(f, OTHER_ID, 'Skip weekend tickets.');
+
+    const results = await Promise.allSettled([applyRevision(f, f.revisionSessionId), applyRevision(f, OTHER_ID)]);
+
+    const rejected = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+    expect(rejected).toHaveLength(1);
+    expect(String(rejected[0]!.reason)).toContain('The agent changed after this revision started');
+    const winner = results[0]!.status === 'fulfilled' ? 'Exclude refunded orders.' : 'Skip weekend tickets.';
+    expect(await readFile(f.targetAgentPath, 'utf8')).toContain(winner);
+  });
+
+  it('lets a live apply finish instead of reconciling it from a read', async () => {
+    const f = await fixture();
+    await propose(f, f.revisionSessionId, 'Exclude refunded orders.');
+    const proposal = (await readAgentRevisionRecord(f.projectRoot, f.revisionSessionId))!;
+    const recordPath = join(getProjectDirSync(f.projectRoot), 'revision', `${f.revisionSessionId}.json`);
+    const applying = { ...proposal, status: 'applying', previousSource: f.currentSource, appliedAt: Date.now() };
+
+    let read: ReturnType<typeof readAgentRevisionRecord> | undefined;
+    let readSettled = false;
+    await withAuthoringLock(f.projectRoot, async () => {
+      await writeFile(recordPath, `${JSON.stringify(applying, null, 2)}\n`);
+      read = readAgentRevisionRecord(f.projectRoot, f.revisionSessionId);
+      void read.then(() => { readSettled = true; }, () => { readSettled = true; });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(readSettled).toBe(false);
+      await writeFile(f.targetAgentPath, proposal.proposedSource!);
+      await writeFile(recordPath, `${JSON.stringify({ ...applying, status: 'applied' }, null, 2)}\n`);
+    });
+
+    const seen = await read!;
+    expect(seen?.status).toBe('applied');
+    expect(seen?.previousSource).toBe(f.currentSource);
   });
 });

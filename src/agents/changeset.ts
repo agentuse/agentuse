@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { atomicWriteFile } from '../utils/atomic-write.js';
 import { toErrorMessage } from '../utils/error-message';
+import { withAuthoringLock } from './authoring-lock.js';
 import {
   changesetDir,
   changesetObjectPath,
@@ -144,7 +145,7 @@ async function reconcileChangesetMutation(record: ChangesetRecord): Promise<Chan
   );
 }
 
-export async function readChangesetRecord(
+async function readStoredChangesetRecord(
   projectRoot: string,
   sessionId: string,
 ): Promise<ChangesetRecord | undefined> {
@@ -155,11 +156,35 @@ export async function readChangesetRecord(
     if (parsed.version !== 1 || parsed.sessionId !== sessionId || parsed.projectRoot !== projectRoot) {
       return undefined;
     }
-    return reconcileChangesetMutation(parsed);
+    return parsed;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw error;
   }
+}
+
+/**
+ * Read a record while already holding the authoring lock. An `applying` or
+ * `restoring` marker seen here has no live owner (the owner would hold the
+ * lock), so it is settled on the spot.
+ */
+export async function readChangesetRecordLocked(
+  projectRoot: string,
+  sessionId: string,
+): Promise<ChangesetRecord | undefined> {
+  const record = await readStoredChangesetRecord(projectRoot, sessionId);
+  return record && reconcileChangesetMutation(record);
+}
+
+export async function readChangesetRecord(
+  projectRoot: string,
+  sessionId: string,
+): Promise<ChangesetRecord | undefined> {
+  const record = await readStoredChangesetRecord(projectRoot, sessionId);
+  if (record?.status !== 'applying' && record?.status !== 'restoring') return record;
+  // A live apply or restore holds the lock until its final status lands, so
+  // waiting for it means reconciling only a marker its owner left behind.
+  return withAuthoringLock(projectRoot, () => readChangesetRecordLocked(projectRoot, sessionId));
 }
 
 export interface ChangesetRecordFilter {
@@ -194,11 +219,13 @@ async function mutate(
   sessionId: string,
   change: (record: ChangesetRecord) => ChangesetRecord,
 ): Promise<ChangesetRecord> {
-  const record = await readChangesetRecord(projectRoot, sessionId);
-  if (!record) throw new Error('This changeset no longer exists');
-  const next = { ...change(record), updatedAt: Date.now() };
-  await writeRecord(next);
-  return next;
+  return withAuthoringLock(projectRoot, async () => {
+    const record = await readChangesetRecordLocked(projectRoot, sessionId);
+    if (!record) throw new Error('This changeset no longer exists');
+    const next = { ...change(record), updatedAt: Date.now() };
+    await writeRecord(next);
+    return next;
+  });
 }
 
 /** Identity of a proposed file set, used to spot a resubmitted proposal. */

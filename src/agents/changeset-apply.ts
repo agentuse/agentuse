@@ -13,15 +13,20 @@ import {
   getChangesetObject,
   latestChangesetProposal,
   putChangesetObject,
-  readChangesetRecord,
+  readChangesetRecordLocked,
   writeChangesetRecord,
 } from './changeset.js';
+import { withAuthoringLock } from './authoring-lock.js';
 
 /**
  * Apply and restore for a multi-file changeset. Every check that can refuse the
  * operation runs before the first project file is touched, so a rejected apply
  * leaves the project byte-for-byte as it was. A crash between the `applying`
  * marker and the final status is settled by the reconcile in `changeset.ts`.
+ *
+ * Both hold the project's authoring lock from the first read to the final
+ * status, so a second apply or restore re-checks its base hashes against what
+ * the first one wrote, and a reader waits instead of reconciling a live marker.
  */
 
 /** Injected so apply does not depend on the validator module's shape. */
@@ -147,7 +152,16 @@ export async function applyChangeset(input: {
   sessionId: string;
   validate: ChangesetValidate;
 }): Promise<ChangesetRecord> {
-  const record = await readChangesetRecord(input.projectRoot, input.sessionId);
+  return withAuthoringLock(input.projectRoot, () => applyChangesetLocked(input));
+}
+
+async function applyChangesetLocked(input: {
+  projectRoot: string;
+  scopeRoot: string;
+  sessionId: string;
+  validate: ChangesetValidate;
+}): Promise<ChangesetRecord> {
+  const record = await readChangesetRecordLocked(input.projectRoot, input.sessionId);
   if (!record || record.status !== 'proposed') throw new Error('This changeset is not ready to apply');
   const proposal = latestChangesetProposal(record);
   if (!proposal || proposal.files.length === 0) throw new Error('This changeset has no files to apply');
@@ -193,7 +207,15 @@ export async function restoreChangeset(input: {
   scopeRoot: string;
   sessionId: string;
 }): Promise<ChangesetRestoreResult> {
-  const record = await readChangesetRecord(input.projectRoot, input.sessionId);
+  return withAuthoringLock(input.projectRoot, () => restoreChangesetLocked(input));
+}
+
+async function restoreChangesetLocked(input: {
+  projectRoot: string;
+  scopeRoot: string;
+  sessionId: string;
+}): Promise<ChangesetRestoreResult> {
+  const record = await readChangesetRecordLocked(input.projectRoot, input.sessionId);
   if (!record || record.status !== 'applied' || !record.applied) {
     throw new Error('This changeset has no applied files to restore');
   }
