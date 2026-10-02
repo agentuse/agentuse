@@ -9,7 +9,6 @@ import { createSessionLogSink, dismissIfReviewerRejected, type SessionLogSink } 
 import { DoomLoopDetector } from './tools/index.js';
 import { resolve, dirname } from 'path';
 import { computeAgentId, subagentToolName } from './utils/agent-id';
-import { findProjectRoot } from './utils/project';
 import {
   applyRunModelOverride,
   snapshotModelFallbackPolicy,
@@ -19,9 +18,10 @@ import { SessionManager } from './session/manager';
 import { loadAgentTools } from './runner/tools-loader';
 import { EffectWAL } from './runner/effect-wal';
 import { createLiveToolOutputRelay } from './runner/live-tool-output';
-import { buildSystemMessages, buildLearningPrompt } from './runner/system-messages';
+import { buildSystemMessages } from './runner/system-messages';
+import { buildFreshInstructions } from './runner/instructions';
 import { createSessionAndMessage } from './runner/session-helper';
-import { isApprovalEnabled, appendApprovalInstructions, approvalToolDefaults } from './runner/approval';
+import { isApprovalEnabled, approvalToolDefaults } from './runner/approval';
 import { createAwaitHumanTool } from './tools/await-human';
 import { maybeMockAwaitHuman } from './runner/mock-tools';
 import { createToolsSnapshot } from './runner/tool-snapshot';
@@ -256,31 +256,14 @@ export async function createSubAgentTool(
           });
           const systemMessages = systemMessagesResult.messages;
 
-          // Parity with the top-level run: when this leaf carries its own approval
-          // gate, inject the same approval-gate instructions so it calls await_human
-          // identically whether run directly or delegated. No-ops when approval is
-          // not enabled. Persisted as the task below so a resumed child sees the same
-          // prompt.
-          let leafInstructions = appendApprovalInstructions(agent.instructions, agent.config);
-
-          // Inject this leaf's own learnings (parity with the top-level run path in
-          // preparation.ts). Without this, a subagent's `learning.apply` is silently a
-          // no-op: it captures learnings every run but never reads them back, so a
-          // delegated leaf can never act on its own prior-run corrections. Built into
-          // leafInstructions here so it persists with the task and a resumed child sees
-          // the same prompt.
-          if (agent.config.learning?.apply) {
-            const learningResult = await buildLearningPrompt(
-              agent,
-              resolvedPath,
-              projectContext?.stateRoot ?? findProjectRoot(resolvedPath),
-            );
-            if (learningResult?.prompt) {
-              leafInstructions = `${leafInstructions}\n\n${learningResult.prompt}`;
-            }
-            if (learningResult) {
-              logger.debug(`[SubAgent] Appended ${learningResult.count} learning(s) to ${agent.name}`);
-            }
+          // Same fresh-run assembly as a top-level run: safe path variables,
+          // approval instructions with resolved bash patterns, preloaded skills
+          // and this leaf's own learnings. Persisted as the task below so a
+          // resumed child sees the same prompt.
+          const fresh = await buildFreshInstructions({ agent, agentFilePath: resolvedPath, projectContext });
+          const leafInstructions = fresh.instructions;
+          if (fresh.learningsApplied > 0) {
+            logger.debug(`[SubAgent] Appended ${fresh.learningsApplied} learning(s) to ${agent.name}`);
           }
 
           // Build user message: agent instructions + optional parent task
