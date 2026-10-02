@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { randomBytes } from 'crypto';
 import { parseAgent, type ParsedAgent } from '../parser.js';
 import { toErrorMessage } from '../utils/error-message.js';
+import { applyRunModelOverride, type RunModelOverride } from '../utils/model-alias.js';
 import {
   BenchmarkSuiteSchema,
   type BenchmarkSuite,
@@ -199,20 +200,20 @@ export function getTotalTrials(suite: BenchmarkSuite): number {
 }
 
 /**
- * Substitute model placeholder in agent config
- * Agents use ${model} placeholder which gets replaced at runtime
+ * The agent as a benchmark trial runs it under one suite model.
+ *
+ * Uses the same override path as `agentuse run --model`: the suite model always
+ * replaces the agent's own (a `${model}` placeholder is just the common case),
+ * and aliases resolve to a concrete id. Fallback candidates are cut to that one
+ * model, so a trial never silently moves to another model while being
+ * labelled, priced, and ranked as this one.
  */
-export function substituteModel(
-  agent: ParsedAgent,
-  model: string
-): ParsedAgent {
-  return {
-    ...agent,
-    config: {
-      ...agent.config,
-      model: agent.config.model === '${model}' ? model : agent.config.model,
-    },
-  };
+export function agentForBenchmarkModel(agent: ParsedAgent, override: RunModelOverride): ParsedAgent {
+  const config = { ...agent.config };
+  applyRunModelOverride(config, override);
+  if (config.modelCandidates) config.modelCandidates = [config.model];
+  delete config.modelFallbackCooldownMs;
+  return { ...agent, config };
 }
 
 /**

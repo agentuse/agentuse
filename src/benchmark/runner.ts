@@ -4,7 +4,8 @@ import { join, dirname } from 'path';
 import { runAgent } from '../runner/run.js';
 import { prepareAgentExecution } from '../runner/preparation.js';
 import { connectMCP } from '../mcp.js';
-import { substituteModel, substituteTemplateVariables, type LoadedSuite, type LoadedTest } from './loader.js';
+import { agentForBenchmarkModel, substituteTemplateVariables, type LoadedSuite, type LoadedTest } from './loader.js';
+import { resolveModelString } from '../utils/model-alias.js';
 import {
   type BenchmarkRunConfig,
   type TrialResult,
@@ -309,8 +310,14 @@ export async function runBenchmarkSuite(
   const startTime = Date.now();
 
   // Use config overrides or suite defaults
-  const models = config.models ?? suite.config.models;
   const runs = config.runs ?? suite.config.runs;
+  // Resolve each suite model once; trials are labelled and priced by the
+  // concrete id they actually ran.
+  const targets = (config.models ?? suite.config.models).map((requested) => ({
+    requested,
+    resolved: resolveModelString(requested),
+  }));
+  const models = targets.map((target) => target.resolved.model);
 
   logger.info(`\nBenchmark: ${suite.name}`);
   logger.info(`Models: ${models.join(', ')}`);
@@ -319,11 +326,12 @@ export async function runBenchmarkSuite(
   logger.separator();
 
   const trials: RawTrialEntry[] = [];
-  for (const model of models) {
+  for (const target of targets) {
+    const model = target.resolved.model;
     logger.info(`\n=== Model: ${model} ===\n`);
     for (const test of tests) {
       logger.info(`Agent: ${test.agent.name} (model: ${model})`);
-      const agent = substituteModel(test.agent, model);
+      const agent = agentForBenchmarkModel(test.agent, target);
       for (const scenario of test.scenarios) {
         trials.push(...await runScenario(test, agent, scenario, model, runs, config));
       }

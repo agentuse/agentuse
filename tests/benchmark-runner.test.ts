@@ -142,3 +142,25 @@ describe('benchmark scoring', () => {
     expect(live.config.totalTrials).toBe(reloaded.config.totalTrials);
   });
 });
+
+describe('benchmark model identity', () => {
+  it('runs a fixed-model agent under each suite model, labelled by the model that ran', async () => {
+    const loaded = suite({ models: [PRICED, PRICED_B] }, [scenario()], 'openai:gpt-5-mini');
+    loaded.tests[0]!.agent.config.modelCandidates = ['openai:gpt-5-mini', 'openai:gpt-5'];
+
+    const result = await runBenchmarkSuite(loaded, runConfig());
+
+    expect(runs.map((r) => r.model)).toEqual([PRICED, PRICED_B]);
+    // No fallback list survives: a trial measures exactly one model.
+    expect(runs.every((r) => r.modelCandidates === undefined || r.modelCandidates.join() === r.model)).toBe(true);
+    expect(Object.keys(result.modelResults)).toEqual([PRICED, PRICED_B]);
+  });
+
+  it('resolves a version alias to the concrete id it ran and prices it', async () => {
+    const result = await runBenchmarkSuite(suite({ models: ['anthropic:claude-haiku'] }), runConfig());
+
+    expect(runs.map((r) => r.model)).toEqual([PRICED]);
+    expect(Object.keys(result.modelResults)).toEqual([PRICED]);
+    expect(result.ranking[0]!.costUsd).toBeCloseTo(1);
+  });
+});
