@@ -1397,11 +1397,14 @@ agentuse add <source> [options]
 -a, --agent <path>   Install specific agent(s) by path (repeatable)
 ```
 
+`--skill` and `--agent` install exactly the named items: `--skill` alone installs no agents, and `--agent` alone installs no skills. Combine them to install both.
+
 ### What Gets Added
 
 | Source Pattern | Destination |
 |---------------|-------------|
 | `**/SKILL.md` (parent dir) | `.agentuse/skills/{skill-name}/` |
+| `SKILL.md` at the source root | `.agentuse/skills/{repo-or-directory-name}/` |
 | `**/*.agentuse` | Same relative path in project |
 
 ### Examples

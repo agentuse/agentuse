@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtemp, writeFile, mkdir, rm, readFile } from 'fs/promises';
+import { mkdtemp, writeFile, mkdir, rm, readFile, readdir, chmod } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -343,6 +343,73 @@ description: Skill B
       const result = await add(sourceDir, projectDir, { force: true });
 
       expect(result.skills).toHaveLength(2);
+    });
+
+    it('installs no agents when only skills are named', async () => {
+      await mkdir(join(sourceDir, 'skills', 'skill-a'), { recursive: true });
+      await writeFile(join(sourceDir, 'skills', 'skill-a', 'SKILL.md'), '---\nname: skill-a\ndescription: A\n---');
+      await writeFile(join(sourceDir, 'agent-a.agentuse'), 'model: anthropic:claude-sonnet-4-5\n---');
+
+      const result = await add(sourceDir, projectDir, { force: true, selectedSkills: ['skill-a'] });
+
+      expect(result.skills.map((s) => s.name)).toEqual(['skill-a']);
+      expect(result.agents).toHaveLength(0);
+      expect(existsSync(join(projectDir, 'agent-a.agentuse'))).toBe(false);
+    });
+  });
+
+  describe('add - installing an item onto itself', () => {
+    it('keeps an installed skill when it is added again with force', async () => {
+      const installed = join(projectDir, '.agentuse', 'skills', 'example');
+      await mkdir(installed, { recursive: true });
+      await writeFile(join(installed, 'SKILL.md'), '---\nname: example\ndescription: Installed\n---\n# Keep me');
+
+      const result = await add(installed, projectDir, { force: true });
+
+      expect(result.skills).toEqual([{ name: 'example', action: 'skipped' }]);
+      expect(await readFile(join(installed, 'SKILL.md'), 'utf-8')).toContain('Keep me');
+    });
+
+    it('keeps an agent when the project is added to itself with force', async () => {
+      await writeFile(join(projectDir, 'example.agentuse'), 'model: anthropic:claude-sonnet-4-5\n---\n# Keep me');
+
+      const result = await add(projectDir, projectDir, { force: true, selectedAgents: ['example.agentuse'] });
+
+      expect(result.agents).toEqual([{ path: 'example.agentuse', action: 'skipped' }]);
+      expect(await readFile(join(projectDir, 'example.agentuse'), 'utf-8')).toContain('Keep me');
+    });
+
+    it('refuses a skill whose install target is inside its own source', async () => {
+      await writeFile(join(projectDir, 'SKILL.md'), '---\nname: whole-project\ndescription: Root\n---');
+      await writeFile(join(projectDir, 'notes.txt'), 'project file');
+
+      await expect(add(projectDir, projectDir, { force: true })).rejects.toThrow(/overlap/);
+      expect(await readFile(join(projectDir, 'notes.txt'), 'utf-8')).toBe('project file');
+      expect(existsSync(join(projectDir, '.agentuse'))).toBe(false);
+    });
+  });
+
+  describe('add - failed copy', () => {
+    it('keeps the existing install when the new copy fails', async () => {
+      if (process.getuid?.() === 0) return; // root can read a mode-000 file
+      const installed = join(projectDir, '.agentuse', 'skills', 'keep');
+      await mkdir(installed, { recursive: true });
+      await writeFile(join(installed, 'SKILL.md'), 'old content');
+
+      await mkdir(join(sourceDir, 'skills', 'keep'), { recursive: true });
+      await writeFile(join(sourceDir, 'skills', 'keep', 'SKILL.md'), '---\nname: keep\ndescription: New\n---');
+      const unreadable = join(sourceDir, 'skills', 'keep', 'unreadable.txt');
+      await writeFile(unreadable, 'secret');
+      await chmod(unreadable, 0o000);
+
+      try {
+        await expect(add(sourceDir, projectDir, { force: true })).rejects.toThrow();
+      } finally {
+        await chmod(unreadable, 0o600);
+      }
+
+      expect(await readFile(join(installed, 'SKILL.md'), 'utf-8')).toBe('old content');
+      expect(await readdir(join(projectDir, '.agentuse', 'skills'))).toEqual(['keep']);
     });
   });
 });

@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { execFileSync } from 'child_process';
-import { existsSync, rmSync, mkdirSync, cpSync, statSync, readFileSync } from 'fs';
+import { existsSync, rmSync, mkdirSync, cpSync, statSync, readFileSync, realpathSync, renameSync } from 'fs';
 import { glob } from 'glob';
 import { join, basename, dirname, resolve } from 'path';
 import { tmpdir } from 'os';
@@ -10,6 +10,7 @@ import type * as ClackPrompts from '@clack/prompts';
 
 import { resolveProjectContext } from '../utils/project.js';
 import { agentBaseName } from '../utils/agent-id.js';
+import { isPathInside } from '../utils/path-policy.js';
 import { telemetry, type AddCommandResult } from '../telemetry/index.js';
 
 /**
@@ -166,10 +167,22 @@ function parseSkillDescription(skillMdPath: string): string {
   return '';
 }
 
+interface DiscoveredItems {
+  skills: SkillInfo[];
+  agents: AgentInfo[];
+}
+
 /**
- * Discover available skills and agents in a directory
+ * Discover available skills and agents in a directory.
+ *
+ * A SKILL.md at the root of `workDir` makes the whole directory one skill. Its
+ * directory name is '.', which can never be an install target, so it is named
+ * `rootSkillName` instead (the repo or directory name).
  */
-export async function discoverItems(workDir: string): Promise<{ skills: SkillInfo[]; agents: AgentInfo[] }> {
+export async function discoverItems(
+  workDir: string,
+  rootSkillName: string = basename(resolve(workDir))
+): Promise<DiscoveredItems> {
   const skills: SkillInfo[] = [];
   const agents: AgentInfo[] = [];
 
@@ -181,7 +194,7 @@ export async function discoverItems(workDir: string): Promise<{ skills: SkillInf
 
   for (const skillMd of skillFiles) {
     const skillDir = dirname(skillMd);
-    const skillName = basename(skillDir);
+    const skillName = skillDir === '.' ? rootSkillName : basename(skillDir);
     const description = parseSkillDescription(join(workDir, skillMd));
     skills.push({ name: skillName, description, path: skillDir });
   }
@@ -198,6 +211,51 @@ export async function discoverItems(workDir: string): Promise<{ skills: SkillInf
 
   return { skills, agents };
 }
+
+/** The name a source goes by: the repo name for remotes, the directory name for local paths. */
+function sourceName(resolved: ResolvedSource): string {
+  const last = resolved.path.split(/[\\/:]/).filter(Boolean).pop() ?? '';
+  return last.replace(/\.git$/, '');
+}
+
+interface AcquiredSource {
+  resolved: ResolvedSource;
+  workDir: string;
+  cleanup(): void;
+}
+
+/** Make a resolved source's files available locally, cloning a remote exactly once. */
+function acquireSource(resolved: ResolvedSource): AcquiredSource {
+  if (!resolved.needsClone) {
+    return { resolved, workDir: resolved.path, cleanup: () => {} };
+  }
+  const workDir = join(tmpdir(), `agentuse-add-${Date.now()}`);
+  try {
+    cloneSource(resolved, workDir);
+  } catch (error) {
+    rmSync(workDir, { recursive: true, force: true });
+    throw new Error(`Failed to clone repository: ${(error as Error).message}`);
+  }
+  return { resolved, workDir, cleanup: () => rmSync(workDir, { recursive: true, force: true }) };
+}
+
+/** Discover what a source offers. A direct skill path is exactly one skill: the directory itself. */
+async function discoverSource(source: AcquiredSource): Promise<DiscoveredItems> {
+  if (source.resolved.type === 'skill') {
+    return {
+      skills: [{
+        name: sourceName(source.resolved),
+        description: parseSkillDescription(join(source.workDir, 'SKILL.md')),
+        path: '.',
+      }],
+      agents: [],
+    };
+  }
+  return discoverItems(source.workDir, sourceName(source.resolved));
+}
+
+/** What to install: everything, or exactly the named skills and agent paths. */
+export type Selection = 'all' | { skills: string[]; agents: string[] };
 
 /**
  * Prompt user for conflict resolution
@@ -234,54 +292,132 @@ async function promptConflict(
   });
 }
 
+interface PlannedItem {
+  kind: 'skill' | 'agent';
+  /** Skill name or agent path, as shown to the user. */
+  id: string;
+  src: string;
+  dest: string;
+  /** The source already is the installed copy, so there is nothing to do. */
+  sameItem: boolean;
+}
+
+/** Realpath of `path`, or of its nearest existing ancestor joined with the rest. */
+function realpathLoose(path: string): string {
+  const absolute = resolve(path);
+  if (existsSync(absolute)) return realpathSync(absolute);
+  const parent = dirname(absolute);
+  if (parent === absolute) return absolute;
+  return join(realpathLoose(parent), basename(absolute));
+}
+
+function planItem(kind: PlannedItem['kind'], id: string, src: string, dest: string, container: string): PlannedItem {
+  if (!isPathInside(resolve(container), resolve(dest), { allowEqual: false })) {
+    throw new Error(`Refusing to install ${kind} "${id}": ${dest} is not inside ${container}`);
+  }
+  const realSrc = realpathSync(src);
+  const realDest = realpathLoose(dest);
+  const sameItem = realSrc === realDest;
+  if (!sameItem && (isPathInside(realSrc, realDest) || isPathInside(realDest, realSrc))) {
+    throw new Error(`Refusing to install ${kind} "${id}": source ${src} and destination ${dest} overlap`);
+  }
+  return { kind, id, src, dest, sameItem };
+}
+
 /**
- * Copy a skill or agent, prompting on conflict
+ * Derive every install target up front, so an unsafe one aborts the whole
+ * install before anything is written.
  */
-async function copyWithConflictHandling(
-  src: string,
-  dest: string,
-  type: 'skill' | 'agent',
-  name: string,
+function planInstall(workDir: string, items: DiscoveredItems, selection: Selection, projectRoot: string): PlannedItem[] {
+  const skillsRoot = join(projectRoot, '.agentuse', 'skills');
+  const plan: PlannedItem[] = [];
+  for (const skill of items.skills) {
+    if (selection !== 'all' && !selection.skills.includes(skill.name)) continue;
+    plan.push(planItem('skill', skill.name, join(workDir, skill.path), join(skillsRoot, skill.name), skillsRoot));
+  }
+  for (const agent of items.agents) {
+    if (selection !== 'all' && !selection.agents.includes(agent.path)) continue;
+    plan.push(planItem('agent', agent.path, join(workDir, agent.path), join(projectRoot, agent.path), projectRoot));
+  }
+  return plan;
+}
+
+/**
+ * Copy `src` to `dest` through a sibling staging path. The previous install
+ * is moved aside only once the new copy is complete, and is restored if the
+ * swap fails, so a failed copy never destroys what was installed.
+ */
+function stagedInstall(src: string, dest: string): void {
+  const parent = dirname(dest);
+  mkdirSync(parent, { recursive: true });
+  const tag = join(parent, `.${basename(dest)}.agentuse-add-${process.pid}-${Date.now()}`);
+  const staged = `${tag}.new`;
+  const backup = `${tag}.old`;
+  try {
+    // A clone's VCS metadata is never part of what gets installed.
+    cpSync(src, staged, { recursive: true, filter: (path) => basename(path) !== '.git' });
+    const replacing = existsSync(dest);
+    if (replacing) renameSync(dest, backup);
+    try {
+      renameSync(staged, dest);
+    } catch (error) {
+      if (replacing) renameSync(backup, dest);
+      throw error;
+    }
+  } finally {
+    rmSync(staged, { recursive: true, force: true });
+  }
+  try {
+    rmSync(backup, { recursive: true, force: true });
+  } catch (error) {
+    console.warn(chalk.yellow(`Installed ${dest}, but could not remove the previous copy at ${backup}: ${(error as Error).message}`));
+  }
+}
+
+/**
+ * Install one planned item, prompting on conflict
+ */
+async function installWithConflictHandling(
+  item: PlannedItem,
   mode: ConflictMode
-): Promise<{ action: 'added' | 'skipped' | 'overwritten'; newMode?: ConflictMode }> {
-  const exists = existsSync(dest);
-
-  if (exists) {
-    if (mode === 'skip-all') {
-      return { action: 'skipped' };
-    }
-    if (mode === 'overwrite-all') {
-      rmSync(dest, { recursive: true, force: true });
-      mkdirSync(dirname(dest), { recursive: true });
-      cpSync(src, dest, { recursive: true });
-      return { action: 'overwritten' };
-    }
-
-    // Prompt user
-    const answer = await promptConflict(type, name);
-
-    if (answer === 'skip-all') {
-      return { action: 'skipped', newMode: 'skip-all' };
-    }
-    if (answer === 'overwrite-all') {
-      rmSync(dest, { recursive: true, force: true });
-      mkdirSync(dirname(dest), { recursive: true });
-      cpSync(src, dest, { recursive: true });
-      return { action: 'overwritten', newMode: 'overwrite-all' };
-    }
-    if (answer === 'overwrite') {
-      rmSync(dest, { recursive: true, force: true });
-      mkdirSync(dirname(dest), { recursive: true });
-      cpSync(src, dest, { recursive: true });
-      return { action: 'overwritten' };
-    }
+): Promise<{ action: 'added' | 'skipped' | 'overwritten'; newMode?: ConflictMode | undefined }> {
+  if (item.sameItem) {
     return { action: 'skipped' };
   }
+  if (!existsSync(item.dest)) {
+    stagedInstall(item.src, item.dest);
+    return { action: 'added' };
+  }
 
-  // No conflict - just copy
-  mkdirSync(dirname(dest), { recursive: true });
-  cpSync(src, dest, { recursive: true });
-  return { action: 'added' };
+  const answer = mode === 'prompt' ? await promptConflict(item.kind, item.id) : mode;
+  const newMode = answer === 'skip-all' || answer === 'overwrite-all' ? answer : undefined;
+  if (answer === 'skip' || answer === 'skip-all') {
+    return { action: 'skipped', newMode };
+  }
+  stagedInstall(item.src, item.dest);
+  return { action: 'overwritten', newMode };
+}
+
+/**
+ * Install the selected items from an acquired source into the project
+ */
+async function installItems(
+  workDir: string,
+  items: DiscoveredItems,
+  selection: Selection,
+  projectRoot: string,
+  mode: ConflictMode
+): Promise<CopyResult> {
+  const plan = planInstall(workDir, items, selection, projectRoot);
+  const result: CopyResult = { skills: [], agents: [] };
+  let conflictMode = mode;
+  for (const item of plan) {
+    const { action, newMode } = await installWithConflictHandling(item, conflictMode);
+    if (newMode) conflictMode = newMode;
+    if (item.kind === 'skill') result.skills.push({ name: item.id, action });
+    else result.agents.push({ path: item.id, action });
+  }
+  return result;
 }
 
 interface AddOptions {
@@ -291,7 +427,8 @@ interface AddOptions {
 }
 
 /**
- * Main add function
+ * Main add function. With no selection everything is installed; naming items
+ * in either category installs exactly the named items.
  */
 export async function add(
   source: string,
@@ -299,77 +436,19 @@ export async function add(
   options: AddOptions = {}
 ): Promise<CopyResult> {
   const resolved = resolveSource(source);
-  let workDir: string;
-  let shouldCleanup = false;
-  const result: CopyResult = { skills: [], agents: [] };
-  let conflictMode: ConflictMode = options.force ? 'overwrite-all' : 'prompt';
-
-  // 1. Get working directory
   if (resolved.needsClone) {
-    workDir = join(tmpdir(), `agentuse-add-${Date.now()}`);
-
     console.log(chalk.gray(`Cloning ${resolved.path}...`));
-    try {
-      cloneSource(resolved, workDir);
-    } catch (error) {
-      throw new Error(`Failed to clone repository: ${(error as Error).message}`);
-    }
-    shouldCleanup = true;
-  } else {
-    workDir = resolved.path;
   }
-
+  const acquired = acquireSource(resolved);
   try {
-    // 2. Handle direct skill path
-    if (resolved.type === 'skill') {
-      const skillName = basename(workDir);
-      const dest = join(projectRoot, '.agentuse', 'skills', skillName);
-      const { action } = await copyWithConflictHandling(workDir, dest, 'skill', skillName, conflictMode);
-      result.skills.push({ name: skillName, action });
-      return result;
-    }
-
-    // 3. Find available items
-    const { skills, agents } = await discoverItems(workDir);
-
-    // 4. Filter by selection if provided
-    const selectedSkills = options.selectedSkills;
-    const selectedAgents = options.selectedAgents;
-
-    // Copy skills
-    for (const skill of skills) {
-      if (selectedSkills && !selectedSkills.includes(skill.name)) {
-        continue;
-      }
-
-      const src = join(workDir, skill.path);
-      const dest = join(projectRoot, '.agentuse', 'skills', skill.name);
-
-      const { action, newMode } = await copyWithConflictHandling(src, dest, 'skill', skill.name, conflictMode);
-      if (newMode) conflictMode = newMode;
-      result.skills.push({ name: skill.name, action });
-    }
-
-    // Copy agents
-    for (const agent of agents) {
-      if (selectedAgents && !selectedAgents.includes(agent.path)) {
-        continue;
-      }
-
-      const src = join(workDir, agent.path);
-      const dest = join(projectRoot, agent.path);
-
-      const { action, newMode } = await copyWithConflictHandling(src, dest, 'agent', agent.path, conflictMode);
-      if (newMode) conflictMode = newMode;
-      result.agents.push({ path: agent.path, action });
-    }
-
-    return result;
+    const items = await discoverSource(acquired);
+    const selection: Selection =
+      options.selectedSkills === undefined && options.selectedAgents === undefined
+        ? 'all'
+        : { skills: options.selectedSkills ?? [], agents: options.selectedAgents ?? [] };
+    return await installItems(acquired.workDir, items, selection, projectRoot, options.force ? 'overwrite-all' : 'prompt');
   } finally {
-    // 5. Cleanup
-    if (shouldCleanup) {
-      rmSync(workDir, { recursive: true, force: true });
-    }
+    acquired.cleanup();
   }
 }
 
@@ -514,46 +593,26 @@ export function createAddCommand(): Command {
           isTrackableSource = true;
         }
 
-        let workDir: string;
-        let shouldCleanup = false;
-
+        let acquired: AcquiredSource;
         if (resolved.needsClone) {
-          workDir = join(tmpdir(), `agentuse-add-${Date.now()}`);
-
           const spinner = p.spinner();
           spinner.start(`Cloning ${resolved.path}`);
           try {
-            cloneSource(resolved, workDir);
+            acquired = acquireSource(resolved);
             spinner.stop('Repository cloned');
           } catch (error) {
             spinner.stop('Clone failed');
             telemetryData.errorType = 'clone_failed';
-            throw new Error(`Failed to clone repository: ${(error as Error).message}`);
+            throw error;
           }
-          shouldCleanup = true;
         } else {
-          workDir = resolved.path;
+          acquired = acquireSource(resolved);
         }
 
         try {
-          // Handle direct skill path
-          if (resolved.type === 'skill') {
-            const result = await add(source, projectContext.projectRoot, { force: options.force ?? false });
-            // Track installed skills (only for non-local sources)
-            if (isTrackableSource) {
-              const installed = result.skills.filter((s) => s.action === 'added' || s.action === 'overwritten');
-              if (installed.length > 0) {
-                telemetryData.skillsInstalled = installed.map((s) => s.name);
-              }
-            }
-            telemetryData.success = true;
-            printSummary(result);
-            p.outro('Done');
-            return;
-          }
-
-          // 2. Discover available items
-          const { skills, agents } = await discoverItems(workDir);
+          // 2. Discover available items (a direct skill path is one skill)
+          const items = await discoverSource(acquired);
+          const { skills, agents } = items;
 
           if (skills.length === 0 && agents.length === 0) {
             telemetryData.success = true;
@@ -589,60 +648,56 @@ export function createAddCommand(): Command {
             return;
           }
 
-          // 4. Determine what to install
-          let selectedSkills: string[] | undefined;
-          let selectedAgents: string[] | undefined;
+          // 4. Determine what to install. Naming items in either category
+          // installs exactly those. --all, or a source that is itself one
+          // skill, installs everything without asking.
+          let selection: Selection;
+          const installEverything = options.all || resolved.type === 'skill';
 
           if (options.skill || options.agent) {
-            // Explicit selection via flags
-            selectedSkills = options.skill;
-            selectedAgents = options.agent;
+            selection = { skills: options.skill ?? [], agents: options.agent ?? [] };
 
-            // Validate selections
-            if (selectedSkills) {
-              const availableSkillNames = skills.map((s) => s.name);
-              for (const name of selectedSkills) {
-                if (!availableSkillNames.includes(name)) {
-                  telemetryData.errorType = 'validation_failed';
-                  throw new Error(`Skill "${name}" not found. Available: ${availableSkillNames.join(', ')}`);
-                }
+            const availableSkillNames = skills.map((s) => s.name);
+            for (const name of selection.skills) {
+              if (!availableSkillNames.includes(name)) {
+                telemetryData.errorType = 'validation_failed';
+                throw new Error(`Skill "${name}" not found. Available: ${availableSkillNames.join(', ')}`);
               }
             }
-            if (selectedAgents) {
-              const availableAgentPaths = agents.map((a) => a.path);
-              for (const path of selectedAgents) {
-                if (!availableAgentPaths.includes(path)) {
-                  telemetryData.errorType = 'validation_failed';
-                  throw new Error(`Agent "${path}" not found. Available: ${availableAgentPaths.join(', ')}`);
-                }
+            const availableAgentPaths = agents.map((a) => a.path);
+            for (const path of selection.agents) {
+              if (!availableAgentPaths.includes(path)) {
+                telemetryData.errorType = 'validation_failed';
+                throw new Error(`Agent "${path}" not found. Available: ${availableAgentPaths.join(', ')}`);
               }
             }
-          } else if (!options.all) {
+          } else if (installEverything) {
+            selection = 'all';
+          } else {
             // Interactive selection
-            const selection = await promptSelection(skills, agents, projectContext.projectRoot);
-            if (!selection) {
+            const picked = await promptSelection(skills, agents, projectContext.projectRoot);
+            if (!picked) {
               telemetryData.errorType = 'cancelled';
               telemetryData.success = false;
               p.outro('Cancelled');
               return;
             }
-            selectedSkills = selection.selectedSkills;
-            selectedAgents = selection.selectedAgents;
-
-            if (selectedSkills.length === 0 && selectedAgents.length === 0) {
+            if (picked.selectedSkills.length === 0 && picked.selectedAgents.length === 0) {
               telemetryData.success = true;
               p.outro('Nothing selected');
               return;
             }
+            selection = { skills: picked.selectedSkills, agents: picked.selectedAgents };
           }
-          // If --all, selectedSkills and selectedAgents remain undefined (install all)
 
           // 5. Install selected items
-          const result = await add(source, projectContext.projectRoot, {
-            force: options.force ?? false,
-            selectedSkills,
-            selectedAgents,
-          });
+          const result = await installItems(
+            acquired.workDir,
+            items,
+            selection,
+            projectContext.projectRoot,
+            options.force ? 'overwrite-all' : 'prompt'
+          );
 
           // Update telemetry with results (only for non-local sources)
           if (isTrackableSource) {
@@ -664,9 +719,7 @@ export function createAddCommand(): Command {
           printSummary(result);
           p.outro('Done');
         } finally {
-          if (shouldCleanup) {
-            rmSync(workDir, { recursive: true, force: true });
-          }
+          acquired.cleanup();
         }
       } catch (error) {
         if (!telemetryData.errorType) {
