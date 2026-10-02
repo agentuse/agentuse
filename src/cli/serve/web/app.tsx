@@ -7,6 +7,7 @@ import { CopyLinkToast } from './components/copy-link-toast';
 import { NavTracker } from './hooks/use-smart-back';
 import { GlobalApprovalsProvider } from './hooks/use-global-approvals';
 import { reloadOnChunkError } from './lib/lazy-route';
+import { agentRouteIdentity, changesetRouteIdentity, keyedRoute, sessionRouteIdentity } from './lib/keyed-route';
 
 const Home = lazy(reloadOnChunkError(() => import('./routes/home')));
 const Onboarding = lazy(reloadOnChunkError(() => import('./routes/onboarding')));
@@ -25,6 +26,13 @@ const LearningsTidy = lazy(reloadOnChunkError(() => import('./routes/learnings-t
 const AgentDraft = lazy(reloadOnChunkError(() => import('./routes/agent-draft')));
 const AgentRevision = lazy(reloadOnChunkError(() => import('./routes/agent-revision')));
 const ChangesetReview = lazy(reloadOnChunkError(() => import('./routes/changeset-review')));
+
+// Pages addressed by an id remount when the id changes, so nothing from the
+// page you left (an open dialog, a pending submit, a late response) can act
+// on the one you opened.
+const SessionDetailRoute = keyedRoute(SessionDetail, sessionRouteIdentity);
+const ChangesetReviewRoute = keyedRoute(ChangesetReview, changesetRouteIdentity);
+const AgentDetailRoute = keyedRoute(AgentDetail, agentRouteIdentity);
 
 // The shell's #boot spinner (static.ts) covers bundle download AND the first
 // lazy route chunk: it lives outside #app so mounting the (route-less) app
@@ -80,13 +88,13 @@ function AppRoutes() {
       <Route path="/agents/draft" component={AgentDraft} />
       <Route path="/agents/revision" component={AgentRevision} />
       <Route path="/agents/:project" component={Agents} />
-      <Route path="/agents/:project/:agent*" component={AgentDetail} />
+      <Route path="/agents/:project/:agent*" component={AgentDetailRoute} />
       {/* The multi-file successor to /agents/draft and /agents/revision. Both
           ids are opaque, so this one is addressed by path. */}
-      <Route path="/projects/:projectId/changesets/:sessionId" component={ChangesetReview} />
+      <Route path="/projects/:projectId/changesets/:sessionId" component={ChangesetReviewRoute} />
       <Route path="/schedules" component={Schedules} />
       <Route path="/sessions" component={SessionsList} />
-      <Route path="/sessions/:sessionId" component={SessionDetail} />
+      <Route path="/sessions/:sessionId" component={SessionDetailRoute} />
       {/* Diagnostic subpage: what was actually loaded into this run's context window. */}
       <Route path="/sessions/:sessionId/context" component={SessionContext} />
       <Route path="/approvals" component={ApprovalsList} />

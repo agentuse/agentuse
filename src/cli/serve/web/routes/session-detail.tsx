@@ -402,7 +402,7 @@ export function nestedCallIdsToExpand(
 /** Per-session view state, kept across in-app navigations so stepping into a
  *  sub-agent and back doesn't re-collapse the parent's log, drop its search, or
  *  throw away the reader's scroll position. Module-level (not state) because the
- *  router reuses this component instance across /sessions/:id. */
+ *  page remounts per session (keyedRoute in app.tsx), which drops its state. */
 interface SessionViewState {
   expandOverrides: Map<string, boolean>;
   logQuery: string;
@@ -1089,10 +1089,8 @@ export default function SessionDetail() {
   const logSearchRef = useRef<HTMLInputElement>(null);
   const currentResumeTokenRef = useRef<string | undefined>(token);
   const followScrollRef = useRef(true);
-  // First-paint scroll-to-end happens once per session. The router reuses this
-  // component across /sessions/:id navigations, so this must be reset on session
-  // change (see the [sessionId] effect) or a sub-agent opened from its parent
-  // would inherit the parent's "already scrolled" state and land at the top.
+  // First-paint scroll-to-end happens once per session, so a sub-agent opened
+  // from its parent lands at the end of its own log, not the parent's position.
   const hasScrolledRef = useRef(false);
   const resultRef = useRef(result);
   resultRef.current = result;
@@ -1172,13 +1170,11 @@ export default function SessionDetail() {
     }
   }, []);
 
-  // The router reuses this component instance across /sessions/:id navigations,
-  // so logsRef and the per-session state persist. Without an explicit reset, a
-  // child (sub-agent) session's logs — including its own approval entry — linger
-  // when you navigate back to the manager, rendering a duplicate approval box.
-  // Clear accumulated state whenever the session id changes. token is excluded:
-  // it tracks sessionId via the URL, and resetting on a token-only refresh would
-  // wipe live logs mid-session.
+  // The page remounts per project + session (keyedRoute in app.tsx), so this
+  // runs once per session: it restores the session's banked view state on the
+  // way in and banks it again on the way out (the cleanup runs on unmount).
+  // token is excluded: a token-only URL change keeps the instance, and resetting
+  // then would wipe live logs mid-session.
   useEffect(() => {
     logsRef.current = new Map();
     currentResumeTokenRef.current = token;
@@ -1584,15 +1580,17 @@ export default function SessionDetail() {
   // `error`, which is historical as soon as execution is active again.
   const ended = isEndedStatus(status);
   // Opening a finished run is reviewing it: stamp it so Home's "results you
-  // haven't opened" and the unseen marks drop it. Once per page load; the
-  // server ignores repeats. Best-effort, a miss only leaves the mark on.
+  // haven't opened" and the unseen marks drop it. Once per session visit; the
+  // server ignores repeats. A failed post clears the marker so the next status
+  // or identity change tries again.
   const reviewedPostedRef = useRef(false);
   useEffect(() => {
     if (reviewedPostedRef.current) return;
     if (approval?.sessionStatus !== 'completed') return;
     reviewedPostedRef.current = true;
     void postSessionReviewed(sessionId, token, projectId ? { project: projectId } : {}).catch(() => {
-      // Nothing to show the reader; the run simply stays marked new.
+      // Nothing to show the reader; the run stays marked new until a retry lands.
+      reviewedPostedRef.current = false;
     });
   }, [approval?.sessionStatus, sessionId, token, projectId]);
   const expired = approval?.expiresAt !== undefined && approval.expiresAt <= Date.now();
