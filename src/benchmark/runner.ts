@@ -21,6 +21,7 @@ import {
   type SuiteResult,
   type Scenario,
   type ErrorCategory,
+  calculateCost,
 } from './types.js';
 import { calculateMetrics } from './calculator.js';
 import { evaluateTrial } from './evaluator/index.js';
@@ -188,11 +189,13 @@ async function runTrial(
         finishReason: isAbort ? 'timeout' : 'error',
         error: errorInfo,
       },
+      // Partial usage of a failed run is not reported back. The cost is left
+      // to the calculator, which prices these zero tokens for a known model
+      // and shows an unknown price as unknown rather than as $0.
       usage: {
         inputTokens: 0,
         outputTokens: 0,
         totalTokens: 0,
-        estimatedCostUsd: 0,
       },
       toolCalls: {
         total: 0,
@@ -262,13 +265,15 @@ async function runScenario(
   model: string,
   config: BenchmarkRunConfig,
   settings: EffectiveSuiteConfig,
-  workspaceRoot: string
+  workspaceRoot: string,
+  ledger: SpendLedger
 ): Promise<RawTrialEntry[]> {
   const { runs } = settings;
   logger.info(`  Scenario: ${scenario.name} (${runs} runs)`);
 
   const entries: RawTrialEntry[] = [];
   for (let i = 0; i < runs; i++) {
+    if (!ledger.canStart()) break;
     logger.info(`    Trial ${i + 1}/${runs}...`);
     const workspace = join(
       workspaceRoot,
@@ -287,20 +292,33 @@ async function runScenario(
       ...(scenario.difficulty && { difficulty: scenario.difficulty }),
       trial,
     });
-
-    // Check cost budget
-    if (settings.budgetUsd) {
-      const totalCost = entries.reduce(
-        (sum, e) => sum + (e.trial.usage.estimatedCostUsd ?? 0),
-        0
-      );
-      if (totalCost > settings.budgetUsd) {
-        logger.warn(`Cost budget exceeded ($${totalCost.toFixed(2)} > $${settings.budgetUsd})`);
-        break;
-      }
-    }
+    ledger.record(model, trial);
   }
   return entries;
+}
+
+/**
+ * Suite-wide spend for `--budget`. Each trial is priced as it finishes with
+ * the same `calculateCost` the report uses, and the limit is checked before
+ * every trial across all models, agents, and scenarios. A trial already
+ * running is never cut short, so the last one can overshoot the limit. Spend
+ * by an llm-judge output check, and partial usage of a trial that errored,
+ * are not reported back and so are not counted.
+ */
+class SpendLedger {
+  spentUsd = 0;
+  exhausted = false;
+
+  constructor(readonly limitUsd: number | undefined) {}
+
+  canStart(): boolean {
+    if (this.limitUsd !== undefined && this.spentUsd >= this.limitUsd) this.exhausted = true;
+    return !this.exhausted;
+  }
+
+  record(model: string, trial: TrialResult): void {
+    this.spentUsd += calculateCost(model, trial.usage.inputTokens, trial.usage.outputTokens) ?? 0;
+  }
 }
 
 /**
@@ -328,6 +346,19 @@ export async function runBenchmarkSuite(
   }));
   const models = targets.map((target) => target.resolved.model);
 
+  // A budget is only a guard if every trial can be priced. Treating an unknown
+  // price as free is exactly how a budget silently never trips.
+  if (settings.budgetUsd !== undefined) {
+    const unpriced = models.filter((model) => calculateCost(model, 1, 1) === undefined);
+    if (unpriced.length > 0) {
+      throw new Error(
+        `--budget needs a known price for every model, and none is known for: ${unpriced.join(', ')}. `
+        + 'Drop --budget or those models.'
+      );
+    }
+  }
+  const ledger = new SpendLedger(settings.budgetUsd);
+
   logger.info(`\nBenchmark: ${suite.name}`);
   logger.info(`Models: ${models.join(', ')}`);
   logger.info(`Runs per scenario: ${runs}`);
@@ -339,19 +370,26 @@ export async function runBenchmarkSuite(
   const workspaceRoot = join(tmpdir(), 'agentuse-benchmark', runId);
   const trials: RawTrialEntry[] = [];
   try {
-    for (const target of targets) {
+    suiteLoop: for (const target of targets) {
       const model = target.resolved.model;
       logger.info(`\n=== Model: ${model} ===\n`);
       for (const test of tests) {
         logger.info(`Agent: ${test.agent.name} (model: ${model})`);
         const agent = agentForBenchmarkModel(test.agent, target);
         for (const scenario of test.scenarios) {
-          trials.push(...await runScenario(test, agent, scenario, model, config, settings, workspaceRoot));
+          if (!ledger.canStart()) break suiteLoop;
+          trials.push(...await runScenario(test, agent, scenario, model, config, settings, workspaceRoot, ledger));
         }
       }
     }
   } finally {
     await rm(workspaceRoot, { recursive: true, force: true }).catch(() => {});
+  }
+  if (ledger.exhausted) {
+    logger.warn(
+      `Budget of $${settings.budgetUsd} reached ($${ledger.spentUsd.toFixed(2)} spent); `
+      + `stopped after ${trials.length} trials.`
+    );
   }
 
   return calculateMetrics({
@@ -362,7 +400,7 @@ export async function runBenchmarkSuite(
     timestamp: startTime,
     durationMs: Date.now() - startTime,
     // Persist what actually ran: the resolved models and every effective setting.
-    config: { ...settings, models },
+    config: { ...settings, models, ...(ledger.exhausted && { budgetExhausted: true }) },
     trials,
   });
 }

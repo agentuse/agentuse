@@ -361,6 +361,8 @@ export interface BenchmarkRunSettings {
   timeout?: number; // seconds per trial
   maxSteps?: number; // unset: each agent's own maxSteps, then the global default
   budgetUsd?: number;
+  /** Set when the run stopped early at the budget; the trials are what ran. */
+  budgetExhausted?: boolean;
 }
 
 /** {@link BenchmarkRunSettings} as resolved for a run that is about to start. */

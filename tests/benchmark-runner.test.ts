@@ -293,3 +293,48 @@ describe('benchmark trial workspace and verdict', () => {
     await expect(loadSuite(suitePath)).rejects.toThrow('Fixture for scenario "a" not found');
   });
 });
+
+describe('benchmark budget', () => {
+  it('stops the whole suite once suite-wide spend reaches the budget', async () => {
+    // $1 per haiku trial, $3 per sonnet trial; 4 trials planned.
+    const result = await runBenchmarkSuite(
+      suite({ models: [PRICED, PRICED_B] }, [scenario(), scenario({ id: 'second', name: 'Second' })]),
+      runConfig({ budgetUsd: 2.5 }),
+    );
+
+    // $1 + $1 leaves room, the $3 trial overshoots, and nothing starts after it.
+    expect(runs.map((r) => r.model)).toEqual([PRICED, PRICED, PRICED_B]);
+    expect(result.config.budgetExhausted).toBe(true);
+    expect(result.config.totalTrials).toBe(3);
+    expect(result.config.totalScenarios).toBe(2);
+    expect(JSON.parse(generateJsonReport(result)).config).toMatchObject({ budgetUsd: 2.5, budgetExhausted: true });
+  });
+
+  it('runs everything when the budget is never reached', async () => {
+    const result = await runBenchmarkSuite(suite({ models: [PRICED], runs: 2 }), runConfig({ budgetUsd: 10 }));
+
+    expect(runs).toHaveLength(2);
+    expect(result.config.budgetExhausted).toBeUndefined();
+  });
+
+  it('refuses to start a budgeted run with a model it cannot price', async () => {
+    await expect(
+      runBenchmarkSuite(suite({ models: [PRICED, 'demo:test'] }), runConfig({ budgetUsd: 5 })),
+    ).rejects.toThrow('none is known for: demo:test');
+    expect(runs).toHaveLength(0);
+  });
+
+  it('shows an unpriced model with a failed trial as unknown cost, not $0', async () => {
+    let call = 0;
+    respond = async () => {
+      if (++call === 2) throw new Error('provider down');
+      return { text: 'done' };
+    };
+    const result = await runBenchmarkSuite(suite({ models: ['demo:test'], runs: 2 }), runConfig());
+
+    const trials = result.modelResults['demo:test']!.agents[0]!.scenarios[0]!.trials;
+    expect(trials[1]!.execution.success).toBe(false);
+    expect(trials[1]!.usage.estimatedCostUsd).toBeUndefined();
+    expect(result.ranking[0]!.costUsd).toBeUndefined();
+  });
+});

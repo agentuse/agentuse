@@ -22,7 +22,7 @@ export function createBenchmarkCommand(): Command {
     .option('-r, --runs <number>', 'Number of runs (trials) per scenario', parseInt)
     .option('--timeout <seconds>', 'Timeout per scenario in seconds', parseInt)
     .option('--max-steps <number>', 'Max steps per scenario', parseInt)
-    .option('--budget <usd>', 'Cost budget in USD (stops if exceeded)', parseFloat)
+    .option('--budget <usd>', 'Cost budget in USD for the whole run; no trial starts once it is reached (the last trial can overshoot)', parseFloat)
     .option('-o, --output <dir>', 'Output directory for reports', './.agentuse/benchmark/results')
     .option('--format <formats...>', 'Output formats: json, markdown, html')
     .option('-v, --verbose', 'Enable verbose logging')
@@ -84,6 +84,12 @@ export function createBenchmarkCommand(): Command {
         // Run benchmark
         console.log(chalk.bold('Running benchmark...\n'));
         const result = await runBenchmarkSuite(loadedSuite, config);
+
+        if (result.config.budgetExhausted) {
+          console.log(chalk.yellow(
+            `\nBudget of $${settings.budgetUsd} reached: stopped after ${result.config.totalTrials} of ${totalTrials} trials.`
+          ));
+        }
 
         // Print results summary
         console.log(chalk.bold('\n📊 Results\n'));

@@ -743,10 +743,9 @@ export function calculateMetrics(raw: RawBenchmarkResult): SuiteResult {
       rank: index + 1,
     }));
 
-  const totalScenarios = Object.values(modelResults).reduce(
-    (sum, mr) => sum + mr.agents.reduce((s, a) => s + a.scenarios.length, 0),
-    0
-  ) / config.models.length;
+  // Distinct scenarios that ran, so a run stopped at its budget (where later
+  // models ran fewer scenarios, or none) still counts them correctly.
+  const totalScenarios = new Set(trials.map((t) => `${t.agentPath}\0${t.scenarioId}`)).size;
 
   return {
     suiteId,
