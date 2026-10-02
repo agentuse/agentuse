@@ -11,6 +11,7 @@ import {
 import { resultPage } from '../tools/result-pages.js';
 import { logger } from '../utils/logger';
 import { toErrorMessage } from '../utils/error-message';
+import { awaitAbortable } from '../utils/deadline';
 import type {
   ModelToolOutputArtifactRef,
   ToolOutputArtifactRef,
@@ -183,17 +184,6 @@ function combinedAbortSignal(...signals: Array<AbortSignal | undefined>): AbortS
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw signal.reason ?? new Error('Tool call aborted');
-}
-
-/** Await a lazy schema while still honoring a caller that has timed out. */
-async function awaitAbortable<T>(value: PromiseLike<T> | T, signal: AbortSignal | undefined): Promise<T> {
-  throwIfAborted(signal);
-  if (!signal) return await value;
-  return await new Promise<T>((resolve, reject) => {
-    const abort = () => reject(signal.reason ?? new Error('Tool call aborted'));
-    signal.addEventListener('abort', abort, { once: true });
-    Promise.resolve(value).then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
-  });
 }
 
 function modelToolOutputArtifactRef(artifact: ToolOutputArtifactRef): ModelToolOutputArtifactRef {
