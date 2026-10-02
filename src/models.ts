@@ -9,7 +9,7 @@ import { wrapLanguageModel } from 'ai';
 import { CodexAuth } from './auth/codex';
 import { AuthStorage } from './auth/storage';
 import { PROVIDER_PLUGIN_REGISTRY } from './plugin/provider-registry';
-import { normalizeCustomProviderBaseURL } from './auth/custom-provider-models';
+import { resolveCustomProvider } from './auth/custom-provider-models';
 import { logger } from './utils/logger';
 import { warnIfModelNotInRegistry, loadCustomProviderNames } from './utils/model-utils';
 import { resolveModelString } from './utils/model-alias';
@@ -686,19 +686,13 @@ export async function createModel(modelString: string, options: { sessionId?: st
     // Check for custom provider
     const customProvider = await AuthStorage.getCustomProvider(config.provider);
     if (customProvider) {
-      // Allow env var overrides: <NAME>_BASE_URL and <NAME>_API_KEY
-      const envPrefix = config.provider.toUpperCase().replace(/-/g, '_');
-      const baseURL = normalizeCustomProviderBaseURL(
-        config.provider,
-        process.env[`${envPrefix}_BASE_URL`] || customProvider.baseURL,
-      );
-      const apiKey = process.env[`${envPrefix}_API_KEY`] || customProvider.key || 'not-needed';
+      // <NAME>_BASE_URL and <NAME>_API_KEY override the stored values.
+      const { baseURL, apiKey, api } = resolveCustomProvider(config.provider, customProvider);
       const headers = isOpenCodeGoBaseURL(baseURL) ? createOpenCodeGoHeaders(options.sessionId) : undefined;
 
       logger.debug(`Using custom provider '${config.provider}' at ${baseURL}`);
 
       const healthFetch = ((input: RequestInfo | URL, init?: RequestInit) => fetchWithProviderHealth(apiHealthSubject(config.provider, apiKey, baseURL), input, init)) as typeof fetch;
-      const api = customProvider.api ?? 'openai-completions';
       if (api === 'anthropic-messages') {
         const provider = createAnthropic({ apiKey, baseURL, ...(headers && { headers }), fetch: healthFetch });
         return await maybeWrapWithDevTools(provider.chat(config.modelName));

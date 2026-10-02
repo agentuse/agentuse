@@ -27,7 +27,7 @@ import {
   readInstalledPluginRecords,
 } from '../plugin/provider-runtime.js';
 import type { AuthInteraction, ProviderDefinition } from '../plugin/types.js';
-import { checkCustomProviderCompletion, CUSTOM_PROVIDER_APIS, detectCustomProviderApi, discoverCustomProviderModelIds, normalizeCustomProviderBaseURL, normalizeCustomProviderModelIds, type CustomProviderApi } from './custom-provider-models.js';
+import { checkCustomProviderCompletion, CUSTOM_PROVIDER_APIS, detectCustomProviderApi, discoverCustomProviderModelIds, resolveCustomProvider, normalizeCustomProviderBaseURL, normalizeCustomProviderModelIds, type CustomProviderApi } from './custom-provider-models.js';
 import type { CustomProviderAuth } from './types.js';
 
 export type ProviderAuthMethod = 'oauth' | 'api_key';
@@ -545,7 +545,13 @@ export async function refreshCustomProviderModels(name: unknown): Promise<Provid
   if (typeof name !== 'string' || !name) throw new Error('Custom provider name is required');
   const provider = await AuthStorage.getCustomProvider(name);
   if (!provider) throw new Error(`Custom provider was not found: ${name}`);
-  const discovered = await discoverCustomProviderModelIds(name, provider);
+  // Discover from the endpoint the runtime calls, so env overrides apply; only the model list is saved.
+  const effective = resolveCustomProvider(name, provider);
+  const discovered = await discoverCustomProviderModelIds(name, {
+    baseURL: effective.baseURL,
+    key: effective.keyFrom === 'none' ? undefined : effective.apiKey,
+    api: effective.api,
+  });
   if (discovered.length === 0) throw new Error('The provider returned no usable models. The saved model list was not changed.');
   await AuthStorage.setCustomProvider(name, { ...provider, models: discovered });
   return providerSetupSnapshot();

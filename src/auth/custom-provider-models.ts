@@ -17,6 +17,40 @@ export function normalizeCustomProviderBaseURL(id: string, value: string): strin
   return url.toString().replace(/\/$/, '');
 }
 
+export type CustomProviderValueSource = 'environment' | 'stored';
+
+export interface ResolvedCustomProvider {
+  /** Effective, normalized base URL the runtime calls. */
+  baseURL: string;
+  /** Effective key the runtime sends; `not-needed` when no key is configured. */
+  apiKey: string;
+  api: CustomProviderApi;
+  baseURLFrom: CustomProviderValueSource;
+  keyFrom: CustomProviderValueSource | 'none';
+}
+
+/**
+ * The endpoint and key a custom provider runs with: `<NAME>_BASE_URL` and
+ * `<NAME>_API_KEY` override the stored values. Model creation, status and
+ * model refresh all resolve through here so they agree on one endpoint.
+ */
+export function resolveCustomProvider(
+  id: string,
+  stored: Pick<CustomProviderAuth, 'baseURL' | 'key' | 'api'>,
+  env: NodeJS.ProcessEnv = process.env,
+): ResolvedCustomProvider {
+  const envPrefix = id.toUpperCase().replace(/-/g, '_');
+  const envBaseURL = env[`${envPrefix}_BASE_URL`];
+  const envKey = env[`${envPrefix}_API_KEY`];
+  return {
+    baseURL: normalizeCustomProviderBaseURL(id, envBaseURL || stored.baseURL),
+    apiKey: envKey || stored.key || 'not-needed',
+    api: stored.api ?? 'openai-completions',
+    baseURLFrom: envBaseURL ? 'environment' : 'stored',
+    keyFrom: envKey ? 'environment' : stored.key ? 'stored' : 'none',
+  };
+}
+
 export function normalizeCustomProviderModelIds(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return [...new Set(value

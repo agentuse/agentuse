@@ -13,6 +13,7 @@ import {
   installProviderPluginFromRegistry,
   installUnreviewedProviderPlugin,
   providerSetupSnapshot,
+  refreshCustomProviderModels,
   removeCustomProvider,
   removeProviderCredential,
   saveCustomProvider,
@@ -22,6 +23,9 @@ import {
   startProviderOAuth,
 } from '../src/auth/provider-setup';
 import { AuthStorage } from '../src/auth/storage';
+import { getProviderStatus } from '../src/auth/provider-status';
+import { recordProviderHealth } from '../src/auth/provider-health';
+import { apiHealthSubject } from '../src/auth/provider-health-identity';
 import { defaultProviderSetupSelection, friendlyProviderPluginError, hasConfiguredProvider, missingProviderMethods, providerSetupOptions, validateProviderPluginSource } from '../src/cli/serve/web/components/provider-setup';
 import { resetProviderPluginCache } from '../src/plugin/provider-runtime';
 import * as installer from '../src/plugin/provider-installer';
@@ -217,6 +221,54 @@ describe('Dashboard provider setup service', () => {
       providers: [{ id: 'openai', name: 'OpenAI', configured: false, sources: [] }],
       customProviders: [{ id: 'ollama', baseURL: 'http://localhost:11434/v1', hasApiKey: false }],
     })).toBe(true);
+  });
+
+  async function withCustomEnv(values: Record<string, string>, run: () => Promise<void>): Promise<void> {
+    const saved = Object.keys(values).map((key) => [key, process.env[key]] as const);
+    Object.assign(process.env, values);
+    try {
+      await run();
+    } finally {
+      for (const [key, value] of saved) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  }
+
+  it('reports the custom endpoint and key source the runtime uses, without the key', async () => {
+    await AuthStorage.setCustomProvider('lmstudio', { baseURL: 'http://localhost:1234/v1', models: ['qwen3'] });
+    await withCustomEnv({ LMSTUDIO_BASE_URL: 'http://127.0.0.1:9999/api/v1', LMSTUDIO_API_KEY: 'fake-env-key' }, async () => {
+      // The runtime records health against the normalized LM Studio base.
+      await recordProviderHealth(apiHealthSubject('lmstudio', 'fake-env-key', 'http://127.0.0.1:9999/v1'), 'verified');
+      const status = await getProviderStatus({ readiness: 'defer' });
+      expect(status.customProviders).toMatchObject([{
+        id: 'lmstudio',
+        baseURL: 'http://127.0.0.1:9999/v1',
+        hasApiKey: true,
+        baseURLFrom: 'environment',
+        keyFrom: 'environment',
+        health: { state: 'verified' },
+      }]);
+      expect(JSON.stringify(status)).not.toContain('fake-env-key');
+    });
+    expect((await getProviderStatus({ readiness: 'defer' })).customProviders).toMatchObject([{
+      baseURL: 'http://localhost:1234/v1', hasApiKey: false, baseURLFrom: 'stored', keyFrom: 'none',
+    }]);
+  });
+
+  it('refreshes custom provider models from the env-overridden endpoint and saves only the model list', async () => {
+    await AuthStorage.setCustomProvider('gateway', { baseURL: 'http://stored.example/v1', key: 'fake-stored-key', models: ['old'] });
+    fetchSpy?.mockImplementation(async () => Response.json({ data: [{ id: 'fresh' }] }));
+    await withCustomEnv({ GATEWAY_BASE_URL: 'http://env.example/v1/', GATEWAY_API_KEY: 'fake-env-key' }, async () => {
+      await refreshCustomProviderModels('gateway');
+    });
+    expect(fetchSpy).toHaveBeenCalledWith('http://env.example/v1/models', expect.objectContaining({
+      headers: expect.objectContaining({ authorization: 'Bearer fake-env-key' }),
+    }));
+    expect(await AuthStorage.getCustomProvider('gateway')).toMatchObject({
+      baseURL: 'http://stored.example/v1', key: 'fake-stored-key', models: ['fresh'],
+    });
   });
 
   it('returns the provider catalog and active environment sources without exposing values', async () => {

@@ -4,6 +4,7 @@ import { applyConnectionHealth } from './provider-verification';
 import type { ProviderHealth } from './provider-health';
 import type { ProviderDefinition } from '../plugin/types';
 import { AuthStorage } from './storage.js';
+import { resolveCustomProvider, type CustomProviderValueSource, type ResolvedCustomProvider } from './custom-provider-models.js';
 import {
   OPENCODE_GO_API_KEY_ENV,
   OPENCODE_GO_DISPLAY_NAME,
@@ -70,8 +71,13 @@ export interface ProviderStatusOptions {
 export interface CustomProviderStatus {
   health?: ProviderHealth;
   id: string;
+  /** Effective endpoint, after `<NAME>_BASE_URL` and normalization. */
   baseURL: string;
   hasApiKey: boolean;
+  /** Where `baseURL` came from. Never carries a value. */
+  baseURLFrom?: CustomProviderValueSource;
+  /** Where the key comes from, if any. Never carries a value. */
+  keyFrom?: CustomProviderValueSource | 'none';
   models?: string[];
   api?: 'openai-completions' | 'openai-responses' | 'anthropic-messages';
 }
@@ -201,17 +207,24 @@ export async function getProviderStatus(options: ProviderStatusOptions = {}): Pr
   }
 
   const customProviders = await Promise.all(Object.entries(await AuthStorage.getCustomProviders()).map(
-    async ([id, config]) => {
-      const envPrefix = id.toUpperCase().replace(/-/g, '_');
-      const baseURL = process.env[`${envPrefix}_BASE_URL`] || config.baseURL;
-      const key = process.env[`${envPrefix}_API_KEY`] || config.key || 'not-needed';
+    async ([id, config]): Promise<CustomProviderStatus> => {
+      const models = config.models ?? [];
+      let resolved: ResolvedCustomProvider;
+      try {
+        resolved = resolveCustomProvider(id, config);
+      } catch {
+        // An unparseable base URL fails at model creation; keep the rest of status readable.
+        return { id, baseURL: config.baseURL, hasApiKey: Boolean(config.key), api: config.api ?? 'openai-completions', models };
+      }
       return {
         id,
-        baseURL: config.baseURL,
-        hasApiKey: Boolean(config.key),
-        api: config.api ?? 'openai-completions',
-        models: config.models ?? [],
-        health: await readProviderHealth(apiHealthSubject(id, key, baseURL)),
+        baseURL: resolved.baseURL,
+        hasApiKey: resolved.keyFrom !== 'none',
+        baseURLFrom: resolved.baseURLFrom,
+        keyFrom: resolved.keyFrom,
+        api: resolved.api,
+        models,
+        health: await readProviderHealth(apiHealthSubject(id, resolved.apiKey, resolved.baseURL)),
       };
     },
   ));
