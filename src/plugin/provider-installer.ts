@@ -15,6 +15,7 @@ import type { InstalledPluginRecord } from './types';
 import { readPackageManifest } from './loader';
 import { findProjectRoot } from '../utils/project';
 import { AuthStorage } from '../auth/storage';
+import { logger } from '../utils/logger';
 
 const exec = promisify(execFile);
 const GITHUB_REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -461,13 +462,13 @@ export async function updatePlugins(name?: string, options?: PluginInstallOption
         updatedAt: new Date().toISOString(),
       };
       await mutateRegistry(options, upsert(next));
-      await rm(backup, { recursive: true, force: true });
       results.push({ ...next, changed: true });
     } catch (error) {
       await rm(current.directory, { recursive: true, force: true }).catch(() => {});
       await rename(backup, current.directory).catch(() => {});
       throw error;
     }
+    await removeAfterCommit(backup);
   }
   return results;
 }
@@ -489,6 +490,19 @@ export async function removePlugin(name: string, options?: PluginInstallOptions)
     await rename(staged, record.directory).catch(() => {});
     throw error;
   }
-  await rm(staged, { recursive: true, force: true });
+  await removeAfterCommit(staged);
   return record;
+}
+
+/**
+ * Remove a directory the registry no longer points at. The registry change
+ * is already committed, so a failure here leaves a stray directory, not a
+ * failed operation, and must never trigger a rollback.
+ */
+async function removeAfterCommit(directory: string): Promise<void> {
+  try {
+    await rm(directory, { recursive: true, force: true });
+  } catch (error) {
+    logger.warn(`Could not remove old plugin files at ${directory}: ${(error as Error).message}. Delete it manually.`);
+  }
 }
