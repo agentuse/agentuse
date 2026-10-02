@@ -1,7 +1,7 @@
 import { agentCreationProviders } from "../../../agents/create";
 import { discoverProjectSkillCatalog, prepareProjectDiscoveryView } from "../../../agents/discover";
 import { readChangesetRecord } from "../../../agents/changeset";
-import { readAgentRevisionRecord } from "../../../agents/revision";
+import { readAgentRevisionRecord, revisionViewReleasable } from "../../../agents/revision";
 import { providerSetupSnapshot } from "../../../auth/provider-setup";
 import { ONBOARDING_AGENT_ID, ONBOARDING_AGENT_SOURCE } from "../../../onboarding";
 import { runInternalJobLifecycle } from "../../../onboarding/internal-job-runner";
@@ -175,12 +175,11 @@ export async function onboardingRoutes(ctx: ServeContext, rq: ServeRequest): Pro
         if (record?.status === 'proposed' || record?.status === 'no-change' || record?.status === 'accepted' || record?.status === 'applied' || record?.status === 'restored' || record?.status === 'discarded') {
           job.status = 'completed';
           job.result = record;
-          if (record.status === 'accepted' || record.status === 'applied' || record.status === 'restored' || record.status === 'discarded') {
-            await cleanupInternalView(job.sessionId);
-          }
         } else if (record?.status === 'error') {
           job.status = 'error';
           if (record.error) job.error = record.error;
+        }
+        if (record && revisionViewReleasable(record.status)) {
           await cleanupInternalView(job.sessionId);
         }
         await persistOnboardingJob(job);

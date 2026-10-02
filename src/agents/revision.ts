@@ -15,19 +15,10 @@ import { internalAgentSourcePath, writeInternalAgentSource } from './internal-ag
 import { isPathInside } from '../utils/path-policy.js';
 import { atomicWriteFile } from '../utils/atomic-write.js';
 import { toErrorMessage } from '../utils/error-message';
+import { revisionAcceptsFollowUp, type AgentRevisionStatus } from './revision-status.js';
 import { withAuthoringLock } from './authoring-lock.js';
 
-export type AgentRevisionStatus =
-  | 'running'
-  | 'proposed'
-  | 'no-change'
-  | 'accepted'
-  | 'applying'
-  | 'applied'
-  | 'discarded'
-  | 'restoring'
-  | 'restored'
-  | 'error';
+export { revisionAcceptsFollowUp, revisionViewReleasable, type AgentRevisionStatus } from './revision-status.js';
 
 export interface AgentRevisionRecord {
   version: 1;
@@ -769,7 +760,7 @@ export async function reopenAgentRevision(
   request?: string,
 ): Promise<AgentRevisionRecord> {
   const record = await readAgentRevisionRecord(projectRoot, revisionSessionId);
-  if (!record || (record.status !== 'proposed' && record.status !== 'no-change' && record.status !== 'accepted')) {
+  if (!record || !revisionAcceptsFollowUp(record.status)) {
     throw new Error('This revision is not waiting for review changes');
   }
   const {

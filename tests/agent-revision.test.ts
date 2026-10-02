@@ -15,6 +15,8 @@ import {
   readAgentRevisionRecord,
   reopenAgentRevision,
   restoreAgentRevision,
+  revisionAcceptsFollowUp,
+  revisionViewReleasable,
   sourceHash,
 } from '../src/agents/revision';
 import { withAuthoringLock } from '../src/agents/authoring-lock';
@@ -543,5 +545,34 @@ describe('concurrent revision operations', () => {
     const seen = await read!;
     expect(seen?.status).toBe('applied');
     expect(seen?.previousSource).toBe(f.currentSource);
+  });
+});
+
+describe('revision follow-up rule', () => {
+  it('keeps the project view for every status a follow-up can reopen', () => {
+    for (const status of ['proposed', 'no-change', 'accepted'] as const) {
+      expect(revisionAcceptsFollowUp(status)).toBe(true);
+      expect(revisionViewReleasable(status)).toBe(false);
+    }
+    expect(revisionViewReleasable('running')).toBe(false);
+    for (const status of ['applied', 'discarded', 'restored', 'error'] as const) {
+      expect(revisionAcceptsFollowUp(status)).toBe(false);
+      expect(revisionViewReleasable(status)).toBe(true);
+    }
+  });
+
+  it('reopens exactly the statuses the rule accepts', async () => {
+    const f = await fixture();
+    const tool = createSubmitAgentRevisionTool({}, f.contract);
+    await (tool.execute as any)({
+      outcome: 'no-agent-change',
+      diagnosis: 'The provider credential expired.',
+      recommendedAction: 'Reconnect the provider.',
+    });
+    const accepted = await readAgentRevisionRecord(f.projectRoot, f.revisionSessionId);
+    expect(revisionAcceptsFollowUp(accepted!.status)).toBe(true);
+    const reopened = await reopenAgentRevision(f.projectRoot, f.revisionSessionId, 'Look again');
+    expect(revisionAcceptsFollowUp(reopened.status)).toBe(false);
+    await expect(reopenAgentRevision(f.projectRoot, f.revisionSessionId, 'Again')).rejects.toThrow('not waiting for review changes');
   });
 });

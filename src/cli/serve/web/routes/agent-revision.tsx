@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { useLocation } from 'preact-iso';
 import type { AgentRevisionRecord } from '../../../../agents/revision';
+import { revisionAcceptsFollowUp } from '../../../../agents/revision-status';
 import {
   fetchAgentRevision,
   postAgentRevisionAction,
@@ -31,9 +32,6 @@ type RevisionView = Omit<AgentRevisionRecord, 'previousSource'> & {
 };
 
 const OPEN_STATUSES = new Set(['running', 'proposed', 'no-change']);
-// An accepted no-change diagnosis needs no decision, but the operator can
-// still push back on it in the same session.
-const REPLYABLE_STATUSES = new Set([...OPEN_STATUSES, 'accepted']);
 
 export default function AgentRevision() {
   const location = useLocation();
@@ -116,6 +114,10 @@ export default function AgentRevision() {
 
   const running = revision.status === 'running';
   const open = OPEN_STATUSES.has(revision.status);
+  // The composer stays up (busy) while a turn runs. An accepted no-change
+  // diagnosis needs no decision, but the operator can still push back on it in
+  // the same session; the server reopens by the same rule.
+  const replyable = running || revisionAcceptsFollowUp(revision.status);
 
   const act = async (action: 'apply' | 'discard' | 'restore' | 'cancel') => {
     setBusy(action);
@@ -273,7 +275,7 @@ export default function AgentRevision() {
         entry={question} sessionId={sessionId} projectId={project} token={token}
         onAnswered={reviserSession.onAnswered}
         onShowContext={() => { setTabPinned(true); setTab('changes'); } }
-      /> : REPLYABLE_STATUSES.has(revision.status) && (
+      /> : replyable && (
         <DraftComposer
           placeholder="Tell the reviser what to change in this proposal…"
           hint="to send · same revision session, keeps context"

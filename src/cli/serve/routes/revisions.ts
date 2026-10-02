@@ -9,6 +9,7 @@ import { latestAgentDraft, markAgentDraftDiscarded, markAgentDraftSaved, readAge
 import { internalAgentSourcePath, writeInternalAgentSource } from "../../../agents/internal-agent-file";
 import { agentRevisionAgentName, agentRevisionDescription, applyAgentRevision, buildAgentRevisionSessionAgent, buildChangesetRevisionSessionAgent, createAgentRevisionRecord, discardAgentRevision, failAgentRevision, internalAgentRevisionPath, listAgentRevisionRecords, readAgentRevisionRecord, reopenAgentRevision, restoreAgentRevision, sourceHash, writeInternalAgentRevisionSource } from "../../../agents/revision";
 import type { AgentRevisionRecord } from "../../../agents/revision";
+import { revisionViewReleasable } from "../../../agents/revision-status";
 import { providerSetupSnapshot } from "../../../auth/provider-setup";
 import { REASONING_LEVELS } from "../../../model-compatibility";
 import type { ReasoningLevel } from "../../../model-compatibility";
@@ -609,7 +610,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
           cleanup: async () => {
             await cleanupView?.().catch(() => undefined);
             const latest = await readAgentRevisionRecord(project.root, revisionSessionId).catch(() => undefined);
-            if (latest && (latest.status === 'accepted' || latest.status === 'applied' || latest.status === 'discarded' || latest.status === 'restored' || latest.status === 'error')) {
+            if (latest && revisionViewReleasable(latest.status)) {
               await cleanupInternalView(revisionSessionId);
             }
           },
@@ -1215,7 +1216,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
             if (originToken) originParams.set('token', originToken);
             return `/sessions/${encodeURIComponent(record.originSessionId)}?${originParams.toString()}`;
           })();
-          if (record.status === 'accepted' || record.status === 'applied' || record.status === 'discarded' || record.status === 'restored' || record.status === 'error') {
+          if (revisionViewReleasable(record.status)) {
             await cleanupInternalView(revisionSessionId);
           }
           sendJSON(res, 200, {
