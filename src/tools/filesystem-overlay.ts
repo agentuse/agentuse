@@ -502,17 +502,23 @@ ${projectDescription}`,
       if (bytes > CHANGESET_LIMITS.maxFileBytes) {
         return errorOutput(`Cannot write ${resolved.rel}: ${humanBytes(bytes)} exceeds the ${humanBytes(CHANGESET_LIMITS.maxFileBytes)} per-file limit`);
       }
-      const refusal = await checkMutable(resolved);
-      if (refusal) return errorOutput(refusal);
+      // One transaction per staged path: the existence checks, base hash and
+      // write must not interleave with a concurrent edit's seed or cleanup.
+      // The 'overlay' namespace keeps this lock apart from the inner tool's
+      // own per-file queue on the same path, which would otherwise deadlock.
+      return withFileMutationQueue(resolved.editPath, async () => {
+        const refusal = await checkMutable(resolved);
+        if (refusal) return errorOutput(refusal);
 
-      const existedInProject = await isFile(resolved.realPath);
-      const existedStaged = await isFile(resolved.editPath);
-      if (existedInProject) await recordBaseHash(resolved);
+        const existedInProject = await isFile(resolved.realPath);
+        const existedStaged = await isFile(resolved.editPath);
+        if (existedInProject) await recordBaseHash(resolved);
 
-      await fs.mkdir(path.dirname(resolved.editPath), { recursive: true });
-      // NEVER writes into scopeRoot: the destination is always under editRoot.
-      const result = await innerWrite({ file_path: resolved.editPath, content }, callOptions);
-      return rewritePathInResult(result, resolved, { created: !existedInProject && !existedStaged });
+        await fs.mkdir(path.dirname(resolved.editPath), { recursive: true });
+        // NEVER writes into scopeRoot: the destination is always under editRoot.
+        const result = await innerWrite({ file_path: resolved.editPath, content }, callOptions);
+        return rewritePathInResult(result, resolved, { created: !existedInProject && !existedStaged });
+      }, 'overlay');
     },
   };
 
@@ -542,30 +548,34 @@ ${projectDescription}`,
     }, callOptions?: { abortSignal?: AbortSignal }): Promise<ToolOutput> => {
       const resolved = resolveScopePath(args.file_path);
       if (typeof resolved === 'string') return errorOutput(resolved);
-      const refusal = await checkMutable(resolved);
-      if (refusal) return errorOutput(refusal);
+      // Same staged-path transaction as write: the staged-existence check,
+      // seed, mutation and failure cleanup must see one consistent state.
+      return withFileMutationQueue(resolved.editPath, async () => {
+        const refusal = await checkMutable(resolved);
+        if (refusal) return errorOutput(refusal);
 
-      const alreadyStaged = await isFile(resolved.editPath);
-      if (!alreadyStaged) {
-        // Copy-on-write: seed the staged copy from the real file, then edit the
-        // copy. NEVER writes into scopeRoot; the real file is only ever read.
-        const original = await fs.readFile(resolved.realPath, 'utf8').catch(() => undefined);
-        if (original === undefined) {
-          return errorOutput(`File not found: ${path.join(scopeRoot, resolved.rel)}`);
+        const alreadyStaged = await isFile(resolved.editPath);
+        if (!alreadyStaged) {
+          // Copy-on-write: seed the staged copy from the real file, then edit the
+          // copy. NEVER writes into scopeRoot; the real file is only ever read.
+          const original = await fs.readFile(resolved.realPath, 'utf8').catch(() => undefined);
+          if (original === undefined) {
+            return errorOutput(`File not found: ${path.join(scopeRoot, resolved.rel)}`);
+          }
+          await recordBaseHash(resolved);
+          await fs.mkdir(path.dirname(resolved.editPath), { recursive: true });
+          await atomicWriteFile(resolved.editPath, original);
         }
-        await recordBaseHash(resolved);
-        await fs.mkdir(path.dirname(resolved.editPath), { recursive: true });
-        await atomicWriteFile(resolved.editPath, original);
-      }
 
-      const result = await innerEdit({ ...args, file_path: resolved.editPath }, callOptions);
-      const parsed = parseJsonOutput(result);
-      if (!alreadyStaged && parsed?.success === false) {
-        // A failed edit must not leave a seeded copy behind: submit would then
-        // report an unchanged file as a modification.
-        await fs.rm(resolved.editPath, { force: true }).catch(() => undefined);
-      }
-      return rewritePathInResult(result, resolved, {});
+        const result = await innerEdit({ ...args, file_path: resolved.editPath }, callOptions);
+        const parsed = parseJsonOutput(result);
+        if (!alreadyStaged && parsed?.success === false) {
+          // A failed edit must not leave a seeded copy behind: submit would then
+          // report an unchanged file as a modification.
+          await fs.rm(resolved.editPath, { force: true }).catch(() => undefined);
+        }
+        return rewritePathInResult(result, resolved, {});
+      }, 'overlay');
     },
   };
 

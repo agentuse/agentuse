@@ -263,3 +263,50 @@ describe('overlay filesystem tools', () => {
     await expect(stat(join(editRoot, 'agents', 'daily.agentuse'))).rejects.toThrow();
   });
 });
+
+describe('overlay concurrent mutations on one staged path', () => {
+  it('keeps both changes from two concurrent first edits', async () => {
+    const tools = overlay();
+    for (let trial = 0; trial < 30; trial += 1) {
+      const target = join(scopeRoot, `same-${trial}.txt`);
+      await writeFile(target, 'alpha: old\nomega: old\n');
+      const results = await Promise.all([
+        tools.tools__filesystem_edit!.execute({ file_path: target, old_string: 'alpha: old', new_string: 'alpha: new' }),
+        tools.tools__filesystem_edit!.execute({ file_path: target, old_string: 'omega: old', new_string: 'omega: new' }),
+      ]);
+      expect(results.map((result) => JSON.parse(result.output).success), `trial ${trial}`).toEqual([true, true]);
+      expect(await readFile(join(editRoot, `same-${trial}.txt`), 'utf8'), `trial ${trial}`).toBe('alpha: new\nomega: new\n');
+    }
+  });
+
+  it('does not let a failed concurrent first edit remove a successful staged edit', async () => {
+    const tools = overlay();
+    for (let trial = 0; trial < 30; trial += 1) {
+      const target = join(scopeRoot, `failure-${trial}.txt`);
+      const staged = join(editRoot, `failure-${trial}.txt`);
+      await writeFile(target, 'alpha: old\nomega: old\n');
+      const [successful, failed] = await Promise.all([
+        tools.tools__filesystem_edit!.execute({ file_path: target, old_string: 'alpha: old', new_string: 'alpha: new' }),
+        tools.tools__filesystem_edit!.execute({ file_path: target, old_string: 'missing', new_string: 'never' }),
+      ]);
+      expect(JSON.parse(successful.output).success, `trial ${trial}`).toBe(true);
+      expect(JSON.parse(failed.output).success, `trial ${trial}`).toBe(false);
+      expect(await readFile(staged, 'utf8'), `trial ${trial}`).toBe('alpha: new\nomega: old\n');
+    }
+  });
+
+  it('does not let a concurrent first edit seed over a staged write', async () => {
+    const tools = overlay();
+    for (let trial = 0; trial < 30; trial += 1) {
+      const target = join(scopeRoot, `write-${trial}.txt`);
+      await writeFile(target, 'alpha: old\n');
+      const [written, edited] = await Promise.all([
+        tools.tools__filesystem_write!.execute({ file_path: target, content: 'alpha: old\nwritten\n' }),
+        tools.tools__filesystem_edit!.execute({ file_path: target, old_string: 'alpha: old', new_string: 'alpha: new' }),
+      ]);
+      expect(JSON.parse(written.output).success, `trial ${trial}`).toBe(true);
+      expect(JSON.parse(edited.output).success, `trial ${trial}`).toBe(true);
+      expect(await readFile(join(editRoot, `write-${trial}.txt`), 'utf8'), `trial ${trial}`).toBe('alpha: new\nwritten\n');
+    }
+  });
+});
