@@ -3083,6 +3083,32 @@ describe('judge verdict on an approval gate card', () => {
     expect(html).not.toContain('approval-judge-footer');
   });
 
+  it('labels a verdict as stale when only the media or exact command under unchanged text changed', () => {
+    const html = renderEntry(gate({
+      prompt: 'Pick a post',
+      options: [{ id: 'A', label: 'Draft A' }, { id: 'B', label: 'Draft B' }],
+      changes: [
+        { optionId: 'A', content: 'same post', mediaUrls: ['https://media.example/new.png'] },
+        { optionId: 'B', content: "postctl publish --account @new --body 'same body'", displayContent: 'same body' },
+      ],
+      judge: {
+        verdict: 'skipped', attempt: 2, maxAttempts: 3,
+        critique: 'Not judged: pre-review budget spent, escalated to you.',
+        previous: {
+          verdict: 'fail', attempt: 1, maxAttempts: 3,
+          candidates: [
+            { id: 'A', pass: false, critique: 'Image shows the wrong product', fingerprint: fingerprintText('same post') },
+            { id: 'B', pass: false, critique: 'Posts to the wrong account', fingerprint: fingerprintText('same body') },
+          ],
+        },
+      },
+    }), { expanded: true });
+
+    expect(html).toContain('was: Image shows the wrong product');
+    expect(html).toContain('was: Posts to the wrong account');
+    expect(html).not.toContain('approval-judge-strip is-fail');
+  });
+
   it('carries the not-judged reason on the strip when nothing has ever judged a single draft', () => {
     const html = renderEntry(gate({
       draft: 'the only reply',

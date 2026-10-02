@@ -13,7 +13,7 @@
 import type { Tool } from 'ai';
 import { judgeOutput, type JudgeSessionHandle } from './judge.js';
 import type { CandidateVerdict, CanonicalVerifyConfig, GateCandidate, VerifyPlacement, VerifyVerdict } from './types.js';
-import { extractGateCandidates, fingerprintText } from './candidates.js';
+import { extractGateCandidates, fingerprintText, renderChangeForReview } from './candidates.js';
 
 export { extractGateCandidates, fingerprintText } from './candidates.js';
 import { logger } from '../utils/logger.js';
@@ -163,7 +163,7 @@ export async function renderGatePayload(
     }
   }
 
-  const changes = input.changes as Array<{ label?: string; content?: string; displayContent?: string; media_urls?: string[]; optionId?: string }> | undefined;
+  const changes = input.changes as Array<{ label?: string; optionId?: string }> | undefined;
   if (Array.isArray(changes)) {
     const rendered = changes
       .map((c, i) => {
@@ -171,16 +171,7 @@ export async function renderGatePayload(
         const scope = optionId
           ? `\nReviewer choice: ${optionLabels.get(optionId) ?? optionId} [${optionId}]`
           : '';
-        const content = str(c?.content) ?? '';
-        const displayContent = str(c?.displayContent);
-        const exactCommand = displayContent && displayContent !== content
-          ? `\n\nExact command:\n${content}`
-          : '';
-        const media = Array.isArray(c?.media_urls)
-          ? c.media_urls.filter((url): url is string => typeof url === 'string' && url.trim().length > 0)
-          : [];
-        const mediaText = media.length > 0 ? `\n\nMedia for review:\n${media.join('\n')}` : '';
-        return `### ${str(c?.label) ?? `Action ${i + 1}`}${scope}\n${displayContent ?? content}${exactCommand}${mediaText}`;
+        return `### ${str(c?.label) ?? `Action ${i + 1}`}${scope}\n${renderChangeForReview(c)}`;
       })
       .join('\n\n');
     if (rendered.trim()) sections.push(`## On approval (the exact content under review)\n${rendered}`);
@@ -232,7 +223,9 @@ export async function renderGatePayload(
  * earlier attempt and whose text is byte-identical keeps its pass no matter
  * what the judge says now: the lock is what stops a fresh-context judge from
  * failing A on attempt 2 after passing it on attempt 1. The whole-request
- * verdict is then "every candidate passes".
+ * verdict is "every candidate passes and the judge passed the request", where
+ * the judge's request failure is lifted only when every row it failed is a
+ * settled one.
  *
  * Without per-candidate verdicts (single draft, or a judge that answered only
  * at slate level) the verdict is returned as-is.
@@ -255,10 +248,17 @@ export function reconcileCandidateVerdicts(
     return { id: candidate.id, pass: verdict.pass, ...(!verdict.pass && verdict.critique && { critique: verdict.critique }), fingerprint };
   });
   const failing = merged.filter((entry) => !entry.pass);
-  const pass = failing.length === 0;
+  // The judge's own whole-request failure stands unless every row it failed
+  // is a settled one. A failure it pinned on no row is about the request
+  // itself (destination, reference, context) and no settled row can lift it.
+  const judgeFailedIds = (verdict.candidates ?? []).filter((entry) => !entry.pass).map((entry) => entry.id);
+  const settledOverride = judgeFailedIds.length > 0 && judgeFailedIds.every((id) => settledIds.has(id));
+  const pass = failing.length === 0 && (verdict.pass || settledOverride);
   const critique = pass
     ? verdict.critique
-    : failing.map((entry) => `${entry.id}: ${entry.critique ?? verdict.critique ?? 'did not pass pre-review'}`).join('\n');
+    : failing.length > 0
+      ? failing.map((entry) => `${entry.id}: ${entry.critique ?? verdict.critique ?? 'did not pass pre-review'}`).join('\n')
+      : verdict.critique ?? 'The request did not pass pre-review.';
   return { pass, ...(critique && { critique }), candidates: merged };
 }
 
@@ -303,9 +303,10 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
     comment: `[Automated pre-review — not the human reviewer] ${critique}\n\nRevise the draft and request review again. Every candidate will receive a fresh review. Attempt ${gateRejections} of ${freshReviewAttempts}. If the review budget is exhausted, the draft returns to the human for revision guidance without authorizing publication. Do not perform side-effectful actions.`,
     reviewer: { username: 'verify-judge' },
   });
-  // Candidates that passed on an earlier attempt, keyed by id → exact text.
-  // Spans the same stream segment as the rejection counter; a resume starts
-  // both fresh, so a human decision always gets a full judge look.
+  // Candidates that passed on an earlier attempt, keyed by id → the request
+  // context plus the candidate's exact reviewed text (see settledKey). Spans
+  // the same stream segment as the rejection counter; a resume starts both
+  // fresh, so a human decision always gets a full judge look.
   const settledText = new Map<string, string>();
   // Text of every candidate as of the last judge look, to name what changed.
   const lastText = new Map<string, string>();
@@ -387,8 +388,13 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
       }
 
       const attempt = gateRejections;
+      // A settled pass covers the candidate only under the request context it
+      // was judged in: a changed prompt, reference, context, option or artifact
+      // sends every candidate back to the judge.
+      const requestContext = await renderGatePayload({ ...input, changes: undefined }, projectContext?.projectRoot);
+      const settledKey = (candidate: GateCandidate) => `${requestContext}\0${candidate.text}`;
       const settledIds = new Set(
-        candidates.filter((candidate) => !freshReview && settledText.get(candidate.id) === candidate.text).map((candidate) => candidate.id)
+        candidates.filter((candidate) => !freshReview && settledText.get(candidate.id) === settledKey(candidate)).map((candidate) => candidate.id)
       );
       if (candidates.length > 0 && settledIds.size === candidates.length) {
         // Every candidate already passed and none changed: nothing to judge.
@@ -456,13 +462,16 @@ export function withGateVerify<T extends Tool>(tool: T, options: GateVerifyOptio
       const verdict = reconcileCandidateVerdicts(outcome.verdict, candidates, settledIds);
       const candidateVerdicts = verdict.candidates;
       // Remember every pass so an unchanged candidate is never re-litigated.
-      if (candidateVerdicts) {
+      // A request-level failure pinned on no row says nothing about which rows
+      // are fine, so it settles none of them.
+      const rowsExplainVerdict = verdict.pass || (candidateVerdicts ?? []).some((entry) => !entry.pass);
+      if (candidateVerdicts && rowsExplainVerdict) {
         for (const entry of candidateVerdicts) {
           const candidate = candidates.find((item) => item.id === entry.id);
-          if (candidate && entry.pass) settledText.set(candidate.id, candidate.text);
+          if (candidate && entry.pass) settledText.set(candidate.id, settledKey(candidate));
         }
       } else if (verdict.pass) {
-        for (const candidate of candidates) settledText.set(candidate.id, candidate.text);
+        for (const candidate of candidates) settledText.set(candidate.id, settledKey(candidate));
       }
 
       if (verdict.pass) {

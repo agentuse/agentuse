@@ -10,12 +10,35 @@
 
 import type { GateCandidate } from './types.js';
 
+const str = (v: unknown): string | undefined =>
+  typeof v === 'string' && v.trim() ? v.trim() : undefined;
+
+/** One `changes[]` entry as the judge reviews it and as a verdict's identity
+ * covers it: the visible body, the exact command when it differs from that
+ * body, and the action's media. Gate payload rendering, settled-pass memory and
+ * the card's staleness fingerprint all compose a change through this one
+ * function, so a verdict can never cover less than what was judged. A plain
+ * content-only change renders as its content alone. Accepts both the tool's
+ * `media_urls` and the card's `mediaUrls`. */
+export function renderChangeForReview(change: unknown): string {
+  const record = change && typeof change === 'object' ? change as Record<string, unknown> : {};
+  const content = str(record.content) ?? '';
+  const displayContent = str(record.displayContent);
+  const exactCommand = displayContent && displayContent !== content
+    ? `\n\nExact command:\n${content}`
+    : '';
+  const rawMedia = Array.isArray(record.media_urls) ? record.media_urls : record.mediaUrls;
+  const media = Array.isArray(rawMedia)
+    ? rawMedia.filter((url): url is string => typeof url === 'string' && url.trim().length > 0)
+    : [];
+  const mediaText = media.length > 0 ? `\n\nMedia for review:\n${media.join('\n')}` : '';
+  return `${displayContent ?? content}${exactCommand}${mediaText}`;
+}
+
 /** The reviewable candidates on a gate. Slate gates key each `changes[]`
  * entry by its `optionId`; single-draft gates key by position. A gate with no
  * changes but a `draft` is one candidate. Empty when nothing is reviewable. */
 export function extractGateCandidates(input: Record<string, unknown>): GateCandidate[] {
-  const str = (v: unknown): string | undefined =>
-    typeof v === 'string' && v.trim() ? v.trim() : undefined;
   const options = Array.isArray(input.options) ? input.options as Array<Record<string, unknown>> : [];
   const optionLabels = new Map<string, string>();
   for (const option of options) {
@@ -23,12 +46,12 @@ export function extractGateCandidates(input: Record<string, unknown>): GateCandi
     if (id) optionLabels.set(id, str(option?.label) ?? id);
   }
   const changes = Array.isArray(input.changes)
-    ? input.changes as Array<{ label?: unknown; content?: unknown; displayContent?: unknown; optionId?: unknown }>
+    ? input.changes as Array<{ label?: unknown; optionId?: unknown }>
     : [];
   const candidates: GateCandidate[] = [];
   const seen = new Set<string>();
   changes.forEach((change, index) => {
-    const text = str(change?.displayContent) ?? str(change?.content);
+    const text = renderChangeForReview(change);
     if (!text) return;
     const optionId = str(change?.optionId);
     const id = optionId ?? `change-${index + 1}`;
