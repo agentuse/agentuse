@@ -53,6 +53,33 @@ export async function executeAgent(ctx: WorkerContext, req: ExecuteRequest) {
     return response;
   };
 
+  // After this run's signal aborted: when a user Stop caused it, classify the
+  // failure as that stop and re-stamp the stopped tree so the API response and
+  // storage agree. Shared by the run-time and preflight failure paths.
+  // Undefined when the abort was not a user Stop.
+  const userStopFailure = async () => {
+    // The stop marker is keyed by the session id stopSession saw, which
+    // for resume/continue is req.sessionId; fall back to it when the abort
+    // landed before activeSessionId was resolved so an early user-stop is
+    // not misreported as a timeout.
+    const stoppedSessionId = (activeSessionId && ctx.activeStoppedSessions.has(activeSessionId))
+      ? activeSessionId
+      : (req.sessionId && ctx.activeStoppedSessions.has(req.sessionId))
+        ? req.sessionId
+        : undefined;
+    if (stoppedSessionId === undefined) return undefined;
+    const stoppedFailure = abortController.signal.reason instanceof RunAbortError
+      ? classifyFailure(abortController.signal.reason)
+      : { code: 'USER_STOPPED', cause: 'user_stopped', message: 'Session stopped by user' };
+    if (sessionManager) {
+      await sessionManager.stopSessionTree(stoppedSessionId, {
+        code: stoppedFailure.code,
+        message: stoppedFailure.message
+      }).catch(() => {});
+    }
+    return stoppedFailure;
+  };
+
   ctx.activeExecuteRequests++;
   try {
     invalidateListCaches(req.projectRoot);
@@ -342,32 +369,8 @@ export async function executeAgent(ctx: WorkerContext, req: ExecuteRequest) {
       // failures before runAgent still use restoreResumeAndReturn above.
       resumeRollback = undefined;
       if (abortController.signal.aborted) {
-        // The stop marker is keyed by the session id stopSession saw, which
-        // for resume/continue is req.sessionId; fall back to it when the abort
-        // landed before activeSessionId was resolved so an early user-stop is
-        // not misreported as a timeout.
-        const stoppedSessionId = (activeSessionId && ctx.activeStoppedSessions.has(activeSessionId))
-          ? activeSessionId
-          : (req.sessionId && ctx.activeStoppedSessions.has(req.sessionId))
-            ? req.sessionId
-            : undefined;
-        const stoppedByUser = stoppedSessionId !== undefined;
-        const stoppedFailure = abortController.signal.reason instanceof RunAbortError
-          ? classifyFailure(abortController.signal.reason)
-          : { code: 'USER_STOPPED', cause: 'user_stopped', message: 'Session stopped by user' };
-        if (stoppedByUser && sessionManager) {
-          await sessionManager.stopSessionTree(stoppedSessionId, {
-            code: stoppedFailure.code,
-            message: stoppedFailure.message
-          }).catch(() => {});
-        }
-        return {
-          id: req.id,
-          success: false,
-          error: stoppedByUser
-            ? stoppedFailure
-            : classifyFailure(err, abortController.signal),
-        };
+        const stoppedFailure = await userStopFailure();
+        if (stoppedFailure) return { id: req.id, success: false, error: stoppedFailure };
       }
       return {
         id: req.id,
@@ -380,6 +383,10 @@ export async function executeAgent(ctx: WorkerContext, req: ExecuteRequest) {
       await restoreResumeToolResult({ sessionManager, rollback: resumeRollback }).catch((restoreErr) => {
         logger.warn(`Failed to restore pending approval after resume error: ${(restoreErr as Error).message}`);
       });
+    }
+    if (abortController.signal.aborted) {
+      const stoppedFailure = await userStopFailure();
+      if (stoppedFailure) return { id: req.id, success: false, error: stoppedFailure };
     }
     const failure = classifyFailure(err, abortController.signal);
     return {

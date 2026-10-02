@@ -1,5 +1,5 @@
 import { sessionStopReason, classifyFailure } from '../runner/failure';
-import { reconcileOrphanedSessions, reopenSuspendedGate } from '../runner';
+import { reconcileOrphanedSessions, reopenSuspendedGate, withResumeClaim } from '../runner';
 import { findRootSessionId } from '../runner/subagent-cascade';
 import { SessionManager } from '../session/index.js';
 import { initStorage, CorruptStorageError } from '../storage/index.js';
@@ -363,11 +363,19 @@ export async function stopSession(ctx: WorkerContext, req: ExecuteRequest) {
     await initStorage(req.projectRoot);
     invalidateListCaches(req.projectRoot);
     const sessionManager = new SessionManager();
-    const stopped = await sessionManager.stopSessionTree(req.sessionId, {
+    const sessionId = req.sessionId;
+    const stopTree = () => sessionManager.stopSessionTree(sessionId, {
       code: stopFailure.code,
       message: stopFailure.message,
       ...(req.dismissEnded === true && { dismissEnded: true })
     });
+    // Stamp under the resume claim so a concurrent approval rollback either
+    // finishes first or sees the stop and leaves it alone, never reopening the
+    // gate on a session the user just stopped.
+    const found = await sessionManager.findSession(sessionId);
+    const stopped = found
+      ? await withResumeClaim(sessionManager, sessionId, found.agentId, stopTree)
+      : await stopTree();
     if (stopped.length === 0) {
       return {
         id: req.id,

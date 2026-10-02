@@ -276,7 +276,7 @@ async function applyClaimedResumeToolResult(options: {
   } catch (error) {
     // The caller cannot receive the rollback token when this function throws,
     // so restore here while the resume claim is still held.
-    await restoreResumeToolResult({ sessionManager, rollback }).catch((restoreError) => {
+    await restoreClaimedResumeToolResult({ sessionManager, rollback }).catch((restoreError) => {
       logger.warn(`Failed to restore approval after resume history preparation failed: ${(restoreError as Error).message}`);
     });
     throw error;
@@ -290,12 +290,55 @@ async function applyClaimedResumeToolResult(options: {
   };
 }
 
+/**
+ * Run `operation` under the session's durable `.resume-claim`, the lock that
+ * approval apply/rollback and worker Stop contend on. Narrow unit doubles
+ * without getSessionDirectory run unlocked, as applyResumeToolResult allows.
+ */
+export async function withResumeClaim<T>(
+  sessionManager: SessionManager,
+  sessionId: string,
+  agentId: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const getSessionDirectory = (sessionManager as SessionManager & {
+    getSessionDirectory?: (sessionId: string, agentId: string) => Promise<string>;
+  }).getSessionDirectory;
+  if (!getSessionDirectory) return operation();
+  const sessionDir = await getSessionDirectory.call(sessionManager, sessionId, agentId);
+  return withOwnershipLock(join(sessionDir, '.resume-claim'), operation, {
+    staleMs: 30_000,
+    retryMs: 10,
+    maxWaitMs: 35_000,
+    label: `resume:${sessionId}`,
+  });
+}
+
 export async function restoreResumeToolResult(options: {
   sessionManager: SessionManager;
   rollback?: ResumeToolRollback | undefined;
 }): Promise<void> {
   const { sessionManager, rollback } = options;
   if (!rollback) return;
+  await withResumeClaim(sessionManager, rollback.sessionId, rollback.agentId, () =>
+    restoreClaimedResumeToolResult(options)
+  );
+}
+
+/** restoreResumeToolResult for a caller that already holds the session's resume claim. */
+export async function restoreClaimedResumeToolResult(options: {
+  sessionManager: SessionManager;
+  rollback?: ResumeToolRollback | undefined;
+}): Promise<void> {
+  const { sessionManager, rollback } = options;
+  if (!rollback) return;
+
+  // A terminal status recorded after the decision was applied (a user Stop, or
+  // the run ending) is a newer lifecycle decision. Rolling back over it would
+  // reopen the gate and turn a stopped session back into one awaiting approval.
+  const current = await sessionManager.findSession(rollback.sessionId);
+  const status = current?.session.status;
+  if (status === 'error' || status === 'completed') return;
 
   // Restore authorization state before making the approval pending again. A
   // pending gate must never be visible with the reject seal or approval lease
