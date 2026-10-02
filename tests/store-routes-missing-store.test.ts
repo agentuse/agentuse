@@ -19,7 +19,7 @@ async function get(projects: Array<{ id: string; root: string }>, path: string) 
     },
     setHeader() {},
     end(body?: string) {
-      captured.body = body;
+      if (body !== undefined) captured.body = body;
       return res;
     },
   };

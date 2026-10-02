@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import {
@@ -144,9 +144,9 @@ describe('update check', () => {
     await writeFile(cachePath, JSON.stringify({ checkedAt: 2, latestVersion: '9.0.0' }));
 
     __testing.recordRefreshResult(3);
-    expect(JSON.parse(await Bun.file(cachePath).text())).toEqual({ checkedAt: 3, latestVersion: '9.0.0' });
+    expect(JSON.parse(await readFile(cachePath, 'utf8'))).toEqual({ checkedAt: 3, latestVersion: '9.0.0' });
 
     __testing.recordRefreshResult(4, '9.1.0');
-    expect(JSON.parse(await Bun.file(cachePath).text())).toEqual({ checkedAt: 4, latestVersion: '9.1.0' });
+    expect(JSON.parse(await readFile(cachePath, 'utf8'))).toEqual({ checkedAt: 4, latestVersion: '9.1.0' });
   });
 });
