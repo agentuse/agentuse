@@ -21,6 +21,13 @@ import { SandboxConfigSchema } from './sandbox.js';
 import { SkillsConfigSchema, defaultSkillsConfig } from './skill/config.js';
 import { toErrorMessage } from './utils/error-message';
 
+/**
+ * Step budget for a run or a delegated child. A fractional value never matches
+ * the SDK's step-count stop condition (the run is unbounded) and zero/negative
+ * values are silently clamped, so every entry point shares this one rule.
+ */
+export const maxStepsSchema = z.number().positive().int();
+
 const warnedParserMessages = new Set<string>();
 function warnOnce(key: string, message: string): void {
   if (warnedParserMessages.has(key)) return;
@@ -182,7 +189,7 @@ const AgentSchema = z.object({
   // Run timeout: bare number = SECONDS (unchanged), or a suffixed duration
   // string like "10m" / "900s". Normalized to whole seconds at parse time.
   timeout: durationSecondsSchema('timeout').optional(),
-  maxSteps: z.number().positive().int().optional(),
+  maxSteps: maxStepsSchema.optional(),
   // Per-response output-token ceiling (max_tokens). Optional: unset, first-class
   // Anthropic models default to their real registry limit capped at 32000, other
   // providers use the SDK default. Raise this for an agent that must emit a large
@@ -222,7 +229,7 @@ const AgentSchema = z.object({
   subagents: z.array(z.object({
     path: z.string(),
     name: z.string().optional(),
-    maxSteps: z.number().optional()
+    maxSteps: maxStepsSchema.optional()
   })).optional(),
   // Advisory cross-run ordering: agents whose output this one consumes
   // (typically via a shared store). Display/graph metadata only — the runner

@@ -9,7 +9,7 @@ import { isPathInside } from "../../../utils/path-policy";
 import { sessionViewToken } from "../../../utils/session-token";
 import { sendError, sendJSON, sendRequestParseError } from "../http";
 import { resolveScopedAgentPath, toProjectRelativeAgentPath } from "../project";
-import { RunResponse, parseRequestBody, reportedSurfaceForRun, webUIClientSurface, workerExecutionErrorResponse } from "../run-request";
+import { InvalidRunRequestError, RunResponse, parseRequestBody, reportedSurfaceForRun, webUIClientSurface, workerExecutionErrorResponse } from "../run-request";
 import { existsSync } from "fs";
 import { ulid } from "ulid";
 import type { ServeContext, ServeRequest } from "../context";
@@ -378,7 +378,7 @@ export async function runRoutes(ctx: ServeContext, rq: ServeRequest): Promise<bo
       if (sendRequestParseError(res, err)) return;
       const message = toErrorMessage(err);
 
-      if (message.includes("Invalid JSON")) {
+      if (err instanceof InvalidRunRequestError || message.includes("Invalid JSON")) {
         sendError(res, 400, "INVALID_REQUEST", message);
       } else if (message.includes("Missing required")) {
         sendError(res, 400, "MISSING_FIELD", message);

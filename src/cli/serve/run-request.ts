@@ -6,6 +6,15 @@ import type { WebUIClientSurface } from "../../telemetry";
 import { readRequestBody } from "./http";
 import { WorkerExecuteError, WorkerExecuteResult } from "./worker-types";
 import { IncomingMessage } from "http";
+import { maxStepsSchema } from "../../parser";
+
+/** A well-formed JSON body whose fields fail validation (HTTP 400). */
+export class InvalidRunRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidRunRequestError";
+  }
+}
 
 export interface RunRequest {
   agent: string;
@@ -81,6 +90,10 @@ export function parseRequestBody(req: IncomingMessage): Promise<RunRequest> {
         const parsed = JSON.parse(body);
         if (!parsed.agent || typeof parsed.agent !== "string") {
           reject(new Error("Missing required field: agent"));
+          return;
+        }
+        if (parsed.maxSteps !== undefined && !maxStepsSchema.safeParse(parsed.maxSteps).success) {
+          reject(new InvalidRunRequestError("Invalid maxSteps: must be a positive integer"));
           return;
         }
         resolve(parsed as RunRequest);
