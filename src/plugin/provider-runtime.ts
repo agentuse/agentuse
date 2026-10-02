@@ -54,6 +54,7 @@ import type {
 } from './types';
 import type { PluginIdentity } from './internal-types';
 import { toErrorMessage } from '../utils/error-message';
+import { withDeadline } from '../utils/deadline';
 
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
@@ -285,8 +286,23 @@ export async function getActiveProviderAdapter(
   signal?: AbortSignal,
 ): Promise<ProviderDefinition | undefined> {
   for (const candidate of await getProviderAdapters(id)) {
-    const context = createProviderPluginContext(candidate.provider, modelId, signal);
-    if (await candidate.adapter.when(context)) {
+    // A hung `when()` must not hang model creation: past the deadline the
+    // adapter counts as not selected and the next candidate (or the built-in
+    // provider) is used.
+    const timedOut = new Error(`when() timed out after ${PROVIDER_DISCOVERY_TIMEOUT_MS / 1000}s`);
+    let selected: boolean;
+    try {
+      selected = await withDeadline(
+        (deadline) => candidate.adapter.when(createProviderPluginContext(candidate.provider, modelId, deadline)),
+        PROVIDER_DISCOVERY_TIMEOUT_MS,
+        { parent: signal, error: () => timedOut },
+      );
+    } catch (error) {
+      if (error !== timedOut) throw error;
+      logger.warn(`Skipping provider adapter ${candidate.provider.name} for ${id}: ${timedOut.message}`);
+      continue;
+    }
+    if (selected) {
       await cacheProviderMetadata(candidate.provider);
       selectActiveProvider(id, candidate.provider);
       return candidate.provider;
@@ -335,6 +351,12 @@ function registryModelDefinition(
 
 /** How long a live `models()` discovery result is reused before asking again. */
 const LIVE_MODEL_DISCOVERY_TTL_MS = 5 * 60 * 1000;
+/**
+ * Bound on a plugin's live `models()` and adapter `when()`. Every model
+ * creation awaits discovery for every provider plugin, so one hung plugin
+ * would otherwise hang all runs. Generous enough for a cold local model server.
+ */
+const PROVIDER_DISCOVERY_TIMEOUT_MS = 20_000;
 
 export async function discoverProviderModels(provider: ProviderDefinition): Promise<ProviderModelDefinition[]> {
   const cached = discoveredModelsCache.get(provider);
@@ -347,12 +369,14 @@ export async function discoverProviderModels(provider: ProviderDefinition): Prom
   const pending = (async () => {
     if (Array.isArray(provider.models)) return provider.models;
     if (typeof provider.models === 'function') {
-      return provider.models({
-        signal: new AbortController().signal,
-        fetch,
-        env: process.env,
-        log: hostLogger(provider.id),
-      });
+      // A timeout rejects like any failed discovery, so the live entry below
+      // is evicted instead of caching a never-settling promise for the TTL.
+      const discover = provider.models;
+      return withDeadline(
+        (signal) => discover({ signal, fetch, env: process.env, log: hostLogger(provider.id) }),
+        PROVIDER_DISCOVERY_TIMEOUT_MS,
+        { error: () => new Error(`model discovery timed out after ${PROVIDER_DISCOVERY_TIMEOUT_MS / 1000}s`) },
+      );
     }
     const spec = provider.models;
     const inherited = MODELS[spec.inherit as RegistryProvider] ?? {};
@@ -478,22 +502,20 @@ export async function checkProviderReadiness(
 }
 
 async function runProviderReadinessCheck(provider: ProviderDefinition): Promise<ProviderReadiness> {
-  if (!provider.check) return { ok: true };
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), READINESS_CHECK_TIMEOUT_MS);
+  const check = provider.check;
+  if (!check) return { ok: true };
   let readiness: ProviderReadiness;
   try {
-    const result: ProviderCheckResult = await Promise.race([
-      provider.check({ env: process.env, signal: controller.signal, log: hostLogger(provider.id) }),
-      new Promise<never>((_, reject) => controller.signal.addEventListener('abort', () => reject(new Error('readiness check timed out')), { once: true })),
-    ]);
+    const result: ProviderCheckResult = await withDeadline(
+      (signal) => check({ env: process.env, signal, log: hostLogger(provider.id) }),
+      READINESS_CHECK_TIMEOUT_MS,
+      { error: () => new Error('readiness check timed out') },
+    );
     readiness = result.ok
       ? { ok: true, ...(result.detail && { detail: result.detail }) }
       : { ok: false, message: result.message, ...(result.fix && { fix: result.fix }) };
   } catch (error) {
     readiness = { ok: false, message: `${provider.name} readiness check failed: ${toErrorMessage(error)}` };
-  } finally {
-    clearTimeout(timer);
   }
   await recordProviderHealth(providerReadinessHealthSubject(provider), readiness.ok ? 'verified' : 'temporarily_unavailable', Date.now(), { readiness, force: true });
   return readiness;
