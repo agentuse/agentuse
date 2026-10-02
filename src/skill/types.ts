@@ -1,10 +1,20 @@
 import { z } from 'zod';
 
+/**
+ * The one grammar for a skill name. Discovery (a frontmatter `name` or the
+ * directory name) and agent config (`skills:`) both use it, so config can
+ * address every skill discovery accepts. Lowercase kebab-case (`my-skill`,
+ * `ns:my-skill`) is the recommended form; broader assistant-style names
+ * (`My_Skill`, `my.skill`) are accepted so existing skills keep working.
+ */
+export const SkillNameSchema = z.string()
+  .min(1, 'Name cannot be empty')
+  .max(64, 'Name must be 64 characters or less')
+  .refine(s => !/[/\\\s]/.test(s), 'Name cannot contain spaces, forward slashes, or backslashes');
+
 export const SkillFrontmatterSchema = z.object({
-  name: z.string()
-    .max(64, 'Name must be 64 characters or less')
-    .refine(s => !/[/\\\s]/.test(s), 'Name cannot contain spaces, forward slashes, or backslashes')
-    .optional(),
+  // An empty name means "use the directory name", same as omitting it.
+  name: z.preprocess((value) => (value === '' ? undefined : value), SkillNameSchema.optional()),
   description: z.string()
     .max(1024, 'Description must be 1024 characters or less')
     .optional()

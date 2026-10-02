@@ -2,7 +2,7 @@ import { parseFrontmatter } from '../utils/frontmatter';
 import { readFile } from 'fs/promises';
 import { basename, dirname } from 'path';
 import type { ZodError } from 'zod';
-import { SkillFrontmatterSchema, type SkillInfo, type SkillContent } from './types.js';
+import { SkillFrontmatterSchema, SkillNameSchema, type SkillFrontmatter, type SkillInfo, type SkillContent } from './types.js';
 import { logger } from '../utils/logger.js';
 import { toErrorMessage } from '../utils/error-message';
 
@@ -57,6 +57,19 @@ function parseAllowedTools(allowedTools: string | string[] | undefined): string[
 }
 
 /**
+ * The skill's name: its frontmatter `name`, else its directory name. Either
+ * must pass the shared name grammar, or agent config could not address it.
+ */
+function skillName(frontmatter: SkillFrontmatter, filePath: string): string {
+  const name = frontmatter.name || basename(dirname(filePath));
+  const result = SkillNameSchema.safeParse(name);
+  if (!result.success) {
+    throw new Error(`Invalid skill name "${name}": ${result.error.issues.map((issue) => issue.message).join('; ')}`);
+  }
+  return name;
+}
+
+/**
  * Parse SKILL.md frontmatter only (for discovery)
  * Returns SkillInfo or null if invalid
  */
@@ -72,10 +85,8 @@ export async function parseSkillFrontmatter(filePath: string): Promise<SkillInfo
     }
 
     const frontmatter = parsed.data;
-    const skillName = frontmatter.name || basename(dirname(filePath));
-
     return {
-      name: skillName,
+      name: skillName(frontmatter, filePath),
       description: frontmatter.description,
       location: filePath,
       allowedTools: parseAllowedTools(frontmatter['allowed-tools']),
@@ -103,10 +114,9 @@ export async function parseSkillContent(filePath: string): Promise<SkillContent>
   }
 
   const frontmatter = parsed.data;
-  const skillName = frontmatter.name || basename(dirname(filePath));
 
   return {
-    name: skillName,
+    name: skillName(frontmatter, filePath),
     description: frontmatter.description,
     location: filePath,
     allowedTools: parseAllowedTools(frontmatter['allowed-tools']),

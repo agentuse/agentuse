@@ -73,7 +73,7 @@ Each skill lives in its own directory with a `SKILL.md` file:
 
 ```
 .agentuse/skills/
-└── my-skill/           # Directory name must match skill name
+└── my-skill/           # Directory name should match the skill name
     └── SKILL.md        # Skill definition file
 ```
 
@@ -100,7 +100,7 @@ Below the frontmatter, add your skill instructions in markdown.
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | Yes | Skill identifier (1-64 chars, lowercase, hyphens allowed) |
+| `name` | Yes | Skill identifier (1-64 chars, no spaces or slashes; lowercase with hyphens recommended). See [Name Requirements](#name-requirements) |
 | `description` | Yes | What the skill does and when to use it (max 1024 chars) |
 | `allowed-tools` | No | Required tools: a space- or comma-separated string, or a YAML list |
 | `license` | No | Skill license (e.g., MIT, Apache-2.0) |
@@ -116,16 +116,21 @@ rejecting the skill.
 
 ### Name Requirements
 
-Skill names must:
-- Be 1-64 characters long
-- Use only lowercase letters, numbers, and hyphens
-- Not start or end with a hyphen
-- Not contain consecutive hyphens (`--`)
-- Match the parent directory name
+A skill name is accepted when it:
+- Is 1-64 characters long
+- Contains no spaces, forward slashes (`/`), or backslashes (`\`)
 
-**Valid names:** `code-review`, `seo-analyzer`, `db-migration`
+When `name` is omitted, the directory name is used, and it must meet the same rules. Agent config (`skills:`) accepts every name discovery accepts, so any discovered skill can be listed or trusted.
 
-**Invalid names:** `Code-Review`, `my_skill`, `-invalid`, `too--many`
+For new skills, we recommend:
+- Lowercase letters, numbers, and single hyphens (`code-review`, `seo-analyzer`), with an optional `namespace:` prefix (`team:code-review`)
+- A `name` that matches the parent directory name
+
+**Recommended:** `code-review`, `seo-analyzer`, `db-migration`
+
+**Accepted for compatibility:** `Code-Review`, `my_skill`, `too--many`, `my.skill`
+
+**Rejected:** `my skill`, `team/review`, a name over 64 characters
 
 ## Allowed Tools
 

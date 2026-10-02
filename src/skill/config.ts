@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SkillNameSchema } from './types';
 
 export interface SkillGrantConfig {
   // Trusting a skill grants it the bash commands it declares in its SKILL.md
@@ -17,9 +18,15 @@ export interface NormalizedSkillsConfig {
   explicit: Record<string, SkillGrantConfig>;
 }
 
-const SkillNameSchema = z.string()
-  .min(1)
-  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*(?::[a-z0-9]+(?:-[a-z0-9]+)*)*$/, 'Invalid skill name');
+/**
+ * A grant map with no prototype, so a skill named `__proto__` or
+ * `constructor` is an ordinary key and never reaches Object.prototype.
+ */
+function grantMap(entries: Iterable<[string, SkillGrantConfig]> = []): Record<string, SkillGrantConfig> {
+  const map: Record<string, SkillGrantConfig> = Object.create(null);
+  for (const [name, grant] of entries) map[name] = grant;
+  return map;
+}
 
 const SkillGrantSchema = z.object({
   trusted: z.boolean().optional(),
@@ -45,15 +52,15 @@ function normalizeGrant(value: unknown): SkillGrantConfig | { error: string } {
 // (agentuse-lab#168). Note: this reverses v0.15.0, where `skills: [x]` was an
 // allowlist that silently hid every other skill.
 export const SkillsConfigSchema = z.union([
-  z.literal('auto').transform((): NormalizedSkillsConfig => ({ auto: true, trusted: false, explicit: {} })),
-  z.literal('trusted').transform((): NormalizedSkillsConfig => ({ auto: true, trusted: true, explicit: {} })),
+  z.literal('auto').transform((): NormalizedSkillsConfig => ({ auto: true, trusted: false, explicit: grantMap() })),
+  z.literal('trusted').transform((): NormalizedSkillsConfig => ({ auto: true, trusted: true, explicit: grantMap() })),
   z.array(SkillNameSchema).transform((names): NormalizedSkillsConfig => ({
     auto: true,
     trusted: false,
-    explicit: Object.fromEntries(names.map((name) => [name, {}])),
+    explicit: grantMap(names.map((name): [string, SkillGrantConfig] => [name, {}])),
   })),
   z.record(z.unknown()).transform((raw, ctx): NormalizedSkillsConfig => {
-    const explicit: Record<string, SkillGrantConfig> = {};
+    const explicit = grantMap();
     // Open by default: naming skills annotates them, it does not fence out the
     // rest. Opt into a closed set with an explicit `auto: false`.
     let auto = true;
@@ -100,7 +107,7 @@ export const SkillsConfigSchema = z.union([
 ]);
 
 export function defaultSkillsConfig(): NormalizedSkillsConfig {
-  return { auto: true, trusted: false, explicit: {} };
+  return { auto: true, trusted: false, explicit: grantMap() };
 }
 
 export function getExplicitSkillNames(skills: NormalizedSkillsConfig | undefined): string[] {
