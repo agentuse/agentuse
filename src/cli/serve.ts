@@ -38,7 +38,7 @@ import { getBuildInfo, isDevCheckout } from "../utils/build-info";
 import { refreshUpdateCacheInBackground } from "../update-check";
 import { registerServer, unregisterServer, updateServer, listServers, daemonRequestHeaders, daemonResponseError, formatUptime, getDefaultLogFilePath, hostForUrl, serverBaseUrl, type ServerEntry, type ServerProjectEntry } from "../utils/server-registry";
 import { acquireSchedulerLock, releaseSchedulerLock, SCHEDULED_RUN_ACTIVE } from "../utils/scheduler-lock";
-import { createProjectScheduleState, loadProjectScheduleState, projectScheduleEnabled } from "./serve/schedule-state";
+import { armProjectSchedules, createProjectScheduleState, loadProjectScheduleState, projectScheduleEnabled, recordProjectScheduleState } from "./serve/schedule-state";
 import { findThreadApproval } from "./serve/slack-thread-lookup";
 import { startLogFile, type LogFileHandle } from "../utils/log-file";
 import { loadGlobalConfig, applyGlobalConfigEnv, getGlobalConfigPath, getGlobalEnvPath, getManagedProjectsRoot, loadGlobalEnv, type GlobalConfig } from "../utils/global-config";
@@ -2338,8 +2338,8 @@ export function createServeCommand(): Command {
         if (recovery.guided) {
           const statePath = toProjectRelativeAgentPath(project, created.runPath);
           const paused = await setSchedulePaused(project.root, statePath, true);
-          pausedSchedulesByProject.set(project.id, paused);
-          scheduler.setEnabled(project.id, created.runPath, false);
+          recordProjectScheduleState(scheduleState, project.id, paused);
+          armProjectSchedules(scheduler, project, scheduleIsEnabled);
         }
         if (!project.agentFiles.includes(created.runPath)) {
           project.agentFiles.push(created.runPath);
