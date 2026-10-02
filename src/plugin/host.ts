@@ -19,6 +19,7 @@ import {
 } from './types';
 import type { PluginIdentity } from './internal-types';
 import { toErrorMessage } from '../utils/error-message';
+import { awaitAbortable } from '../utils/deadline';
 
 interface Registration<T> { owner: PluginIdentity; value: T }
 interface ActivatedExtension { identity: PluginIdentity; disposables: Disposable[] }
@@ -221,13 +222,25 @@ export class PluginHost {
     logger.warn(`Plugin '${registration.owner.name}' failed (${registration.owner.source}): ${message}`);
   }
 
+  /**
+   * Run one lifecycle handler, but stop waiting once `signal` aborts. A
+   * handler failure is reported and swallowed; the abort reason is rethrown so
+   * no later handler starts and the caller sees the original cause.
+   */
+  private async invoke(registration: Registration<PluginEventHandler<any>>, payload: unknown, signal?: AbortSignal): Promise<unknown> {
+    try {
+      signal?.throwIfAborted();
+      return await awaitAbortable(registration.value(payload, this.eventContext(signal)), signal);
+    } catch (error) {
+      if (signal?.aborted) throw signal.reason;
+      this.reportEventError(registration, error);
+      return undefined;
+    }
+  }
+
   async emit<E extends keyof PluginEvents>(event: E, payload: PluginEvents[E], signal?: AbortSignal): Promise<void> {
     for (const registration of this.events.get(event) ?? []) {
-      try {
-        await registration.value(structuredClone(payload), this.eventContext(signal));
-      } catch (error) {
-        this.reportEventError(registration, error);
-      }
+      await this.invoke(registration, structuredClone(payload), signal);
     }
   }
 
@@ -268,15 +281,8 @@ export class PluginHost {
   async dispatchAgentComplete(event: AgentCompleteEvent, signal?: AbortSignal): Promise<AgentCompleteEvent> {
     const current = structuredClone(event);
     for (const registration of this.events.get('agent:complete') ?? []) {
-      try {
-        const result = await registration.value(
-          structuredClone(current),
-          this.eventContext(signal),
-        ) as { text?: string } | void;
-        if (result?.text !== undefined) current.result.text = result.text;
-      } catch (error) {
-        this.reportEventError(registration, error);
-      }
+      const result = await this.invoke(registration, structuredClone(current), signal) as { text?: string } | void;
+      if (result?.text !== undefined) current.result.text = result.text;
     }
     return current;
   }

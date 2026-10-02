@@ -34,6 +34,7 @@ import { resolveMaxSteps } from './utils/config';
 import { resolveVerifyPlacements, withGateVerify } from './verify/gate';
 import { composeSubagentResult } from './tools/report-outcome.js';
 import type { AgentReference, ModelFallbackEvent, PluginManager } from './plugin';
+import { emitRunOutcome } from './plugin/run-outcome';
 
 // Constants
 const DEFAULT_MAX_SUBAGENT_DEPTH = 2;
@@ -564,7 +565,7 @@ export async function createSubAgentTool(
             }
             await subagentSessionManager.setSessionSuspended(subagentSessionID, agentId);
             if (pluginManager) {
-              await pluginManager.emit('agent:suspend', {
+              await emitRunOutcome(pluginManager, 'agent:suspend', {
                 agent: subagentReference,
                 sessionId: subagentSessionID,
                 reason: 'approval',
@@ -693,7 +694,7 @@ export async function createSubAgentTool(
         logger.error(`[SubAgent] ${agent.name} failed: ${errorMsg}`);
 
         if (pluginManager) {
-          await pluginManager.emit('agent:error', {
+          await emitRunOutcome(pluginManager, 'agent:error', {
             agent: {
               name: agent.name,
               model: agent.config.model,

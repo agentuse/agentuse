@@ -12,6 +12,7 @@ import type { PluginIdentity } from './internal-types';
 import { PluginHost } from './host';
 import { importExtensionModule } from './loader';
 import { logger } from '../utils/logger';
+import { awaitAbortable } from '../utils/deadline';
 import { enterPluginHost } from './context';
 import { getInstalledPluginHost } from './provider-runtime';
 import { getGlobalConfigDir } from '../utils/global-config';
@@ -94,9 +95,13 @@ export class PluginManager {
     const legacyEvent = structuredClone(current);
     for (const plugin of this.plugins) {
       if (this.hostManagedPaths.has(plugin.path)) continue;
+      const handler = plugin.handlers['agent:complete'];
+      if (!handler) continue;
       try {
-        await plugin.handlers['agent:complete']?.(legacyEvent);
+        signal?.throwIfAborted();
+        await awaitAbortable(handler(legacyEvent), signal);
       } catch (error) {
+        if (signal?.aborted) throw signal.reason;
         logger.warn(`Plugin '${plugin.path}' failed: ${toErrorMessage(error)}`);
       }
     }

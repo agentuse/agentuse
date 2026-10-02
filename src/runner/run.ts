@@ -4,6 +4,7 @@ import { announceSessionFinished, announceSessionStarted } from './announce';
 import type { MCPConnection } from '../mcp';
 import type { SessionInfo, SessionManager, SessionTrigger } from '../session';
 import type { AgentCompleteEvent, AgentReference, ModelFallbackEvent, PluginManager } from '../plugin';
+import { emitRunOutcome } from '../plugin/run-outcome';
 import { classifyFailure } from './failure';
 import { logger, runWithLogSink } from '../utils/logger';
 import { extractLearnings, LearningStore } from '../learning/index.js';
@@ -530,7 +531,7 @@ export async function runAgent(
         ...(result.contextUsage && { contextUsage: result.contextUsage })
       };
       if (pluginManager && prepSessionID) {
-        await pluginManager.emit('agent:suspend', {
+        await emitRunOutcome(pluginManager, 'agent:suspend', {
           agent: agentReference(agent, agentFilePath),
           sessionId: prepSessionID,
           reason: 'approval',
@@ -698,7 +699,7 @@ export async function runAgent(
   } catch (error: unknown) {
     const failure = classifyFailure(error, abortSignal);
     if (pluginManager) {
-      await pluginManager.emit('agent:error', {
+      await emitRunOutcome(pluginManager, 'agent:error', {
         agent: agentReference(agent, agentFilePath),
         ...(sessionID && { sessionId: sessionID }),
         error: {
