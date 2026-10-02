@@ -67,6 +67,9 @@ let setupWindow: BrowserWindow | undefined;
 let settingsProcess: ChildProcess | undefined;
 let settingsOutputBuffer = "";
 let settingsCommandQueue = Promise.resolve();
+// Shown as an alert once Settings is on screen, e.g. why the dashboard could
+// not open. A freshly spawned helper only reads it after it reports ready.
+let pendingSettingsError: string | undefined;
 let tray: Tray | undefined;
 let trayMenu: Menu | undefined;
 let dashboardUrl: string | undefined;
@@ -746,6 +749,23 @@ async function showPrimaryWindow(): Promise<void> {
   await showDashboard();
 }
 
+/**
+ * Every user entry point into the dashboard (launch, Dock, tray, shortcut,
+ * second instance) goes through here. The menu-bar shell already exists, so a
+ * backend Desktop cannot reach is never fatal: Settings opens on the server
+ * state with the reason, and Start Server stays one click away.
+ */
+async function openPrimaryWindow(): Promise<void> {
+  try {
+    await showPrimaryWindow();
+  } catch (error) {
+    console.error("Could not open the AgentUse dashboard:", error);
+    pendingSettingsError = error instanceof Error ? error.message : String(error);
+    refreshMenus();
+    showSettings();
+  }
+}
+
 async function prepareDesktopDocument(browser: BrowserWindow): Promise<void> {
   if (browser.isDestroyed() || browser.webContents.isDestroyed()) return;
   await browser.webContents.executeJavaScript(`(() => {
@@ -839,6 +859,12 @@ function nativeSettingsExecutablePath(): string {
   return join(bundle, "Contents", "MacOS", "AgentUseSettings");
 }
 
+function flushPendingSettingsError(child = settingsProcess): void {
+  if (!pendingSettingsError) return;
+  sendNativeSettingsMessage({ type: "error", message: pendingSettingsError }, child);
+  pendingSettingsError = undefined;
+}
+
 function sendNativeSettingsMessage(message: NativeSettingsMessage, child = settingsProcess): void {
   if (!child?.stdin?.writable || child.stdin.destroyed || child.exitCode !== null || child.killed) return;
   try {
@@ -875,12 +901,21 @@ async function handleNativeSettingsCommand(line: string, child: ChildProcess): P
     case "ready":
       await pushNativeSettingsState(child);
       sendNativeSettingsMessage({ type: "show" }, child);
+      flushPendingSettingsError(child);
       break;
     case "toggleServer": {
       const operation = toggleServerFromSettings();
       await pushNativeSettingsState(child);
-      await operation;
-      await pushNativeSettingsState(child);
+      try {
+        await operation;
+      } catch (error) {
+        console.error("Could not change the AgentUse server:", error);
+        const detail = error instanceof Error ? error.message : String(error);
+        sendNativeSettingsMessage({ type: "error", message: detail }, child);
+        refreshMenus();
+      } finally {
+        await pushNativeSettingsState(child);
+      }
       break;
     }
     case "setLaunchAtLogin":
@@ -962,6 +997,7 @@ function showSettings(): void {
   if (settingsProcess && settingsProcess.exitCode === null && !settingsProcess.killed) {
     sendNativeSettingsMessage({ type: "show" });
     void pushNativeSettingsState();
+    flushPendingSettingsError();
     return;
   }
 
@@ -1008,7 +1044,7 @@ function toggleDashboard(): void {
     window.hide();
     return;
   }
-  void showPrimaryWindow();
+  void openPrimaryWindow();
 }
 
 async function initializeDesktopPreferences(): Promise<void> {
@@ -1359,7 +1395,7 @@ const viewCommands: ViewCommands = {
 
 function refreshTrayMenu(): void {
   trayMenu = Menu.buildFromTemplate(createTrayMenu({
-    showDashboard: () => void showPrimaryWindow(),
+    showDashboard: () => void openPrimaryWindow(),
     showSettings,
     quit: () => void requestFullQuitFromMenuBar(),
   }));
@@ -1429,7 +1465,7 @@ if (!app.requestSingleInstanceLock()) {
   // replacing its bundle. Treat that as an explicit full quit so an owned
   // server gets the same graceful shutdown as the menu-bar Quit command.
   process.once("SIGTERM", requestFullQuit);
-  app.on("second-instance", () => void showPrimaryWindow());
+  app.on("second-instance", () => void openPrimaryWindow());
   app.on("will-quit", unregisterDashboardShortcut);
   app.on("before-quit", (event) => {
     if (!quitPolicy.shouldTerminate()) {
@@ -1456,7 +1492,7 @@ if (!app.requestSingleInstanceLock()) {
       app.quit();
     });
   });
-  app.on("activate", () => void showPrimaryWindow());
+  app.on("activate", () => void openPrimaryWindow());
   app.whenReady().then(async () => {
     // Finder-launched apps do not inherit shell setup. Load the same AgentUse
     // global .env and config.json env block as the CLI before any provider
@@ -1494,9 +1530,11 @@ if (!app.requestSingleInstanceLock()) {
       refreshMenus();
       return;
     }
-    await showPrimaryWindow();
+    await openPrimaryWindow();
     await flushDesktopTelemetry();
   }).catch((error: unknown) => {
+    // Only shell setup (tray, IPC, preferences) lands here: without a menu-bar
+    // shell there is nothing left to recover from, so quit.
     console.error("Could not open AgentUse desktop:", error);
     dialog.showErrorBox("AgentUse could not start", error instanceof Error ? error.message : String(error));
     requestFullQuit();
