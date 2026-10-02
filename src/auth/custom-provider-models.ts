@@ -29,6 +29,12 @@ export interface ResolvedCustomProvider {
   keyFrom: CustomProviderValueSource | 'none';
 }
 
+/** The environment variables that override a custom provider's stored URL and key. */
+export function customProviderEnvVars(id: string): { baseURL: string; apiKey: string } {
+  const envPrefix = id.toUpperCase().replace(/-/g, '_');
+  return { baseURL: `${envPrefix}_BASE_URL`, apiKey: `${envPrefix}_API_KEY` };
+}
+
 /**
  * The endpoint and key a custom provider runs with: `<NAME>_BASE_URL` and
  * `<NAME>_API_KEY` override the stored values. Model creation, status and
@@ -39,9 +45,9 @@ export function resolveCustomProvider(
   stored: Pick<CustomProviderAuth, 'baseURL' | 'key' | 'api'>,
   env: NodeJS.ProcessEnv = process.env,
 ): ResolvedCustomProvider {
-  const envPrefix = id.toUpperCase().replace(/-/g, '_');
-  const envBaseURL = env[`${envPrefix}_BASE_URL`];
-  const envKey = env[`${envPrefix}_API_KEY`];
+  const envVars = customProviderEnvVars(id);
+  const envBaseURL = env[envVars.baseURL];
+  const envKey = env[envVars.apiKey];
   return {
     baseURL: normalizeCustomProviderBaseURL(id, envBaseURL || stored.baseURL),
     apiKey: envKey || stored.key || 'not-needed',

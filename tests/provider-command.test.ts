@@ -269,6 +269,47 @@ describe('createProviderCommand', () => {
     expect(text).not.toContain('custom-secret');
   });
 
+  it('lists the URL and key a custom provider runs with, and where each comes from', async () => {
+    const command = createProviderCommand();
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-provider-command-test-'));
+    const originalAuthFile = (AuthStorage as any).AUTH_FILE;
+    const envNames = ['AGENTUSE_DATA_DIR', 'GATEWAY_BASE_URL', 'GATEWAY_API_KEY', 'LOCAL_BASE_URL', 'LOCAL_API_KEY'];
+    const originalEnv = new Map(envNames.map((name) => [name, process.env[name]]));
+    const output: string[] = [];
+
+    (AuthStorage as any).AUTH_FILE = path.join(tempDir, 'auth.json');
+    for (const name of envNames) delete process.env[name];
+    process.env.AGENTUSE_DATA_DIR = tempDir;
+    process.env.GATEWAY_BASE_URL = 'http://override.test:8080/v1';
+    process.env.GATEWAY_API_KEY = 'env-secret-2222';
+    resetProviderPluginCache();
+    stdoutSpy = spyOn(process.stdout, 'write').mockImplementation(((chunk: string | Uint8Array) => {
+      output.push(String(chunk));
+      return true;
+    }) as any);
+
+    try {
+      await AuthStorage.setCustomProvider('gateway', { baseURL: 'http://stored.test:9999/v1', key: 'stored-secret-1111' });
+      await AuthStorage.setCustomProvider('local', { baseURL: 'http://localhost:11434/v1', key: 'local-secret-3333' });
+      await command.parseAsync(['list'], { from: 'user' });
+    } finally {
+      (AuthStorage as any).AUTH_FILE = originalAuthFile;
+      for (const [name, value] of originalEnv) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      resetProviderPluginCache();
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+
+    const text = output.join('');
+    expect(text).toContain('gateway → http://override.test:8080/v1 (from GATEWAY_BASE_URL), key ****2222 (from GATEWAY_API_KEY)');
+    expect(text).toContain('local → http://localhost:11434/v1 (stored), key ****3333 (stored)');
+    expect(text).not.toContain('stored.test');
+    expect(text).not.toContain('1111');
+    expect(text).not.toContain('env-secret');
+  });
+
   it('accepts opencode-go in logout command routing', async () => {
     const command = createProviderCommand();
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agentuse-provider-command-test-'));

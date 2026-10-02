@@ -10,7 +10,13 @@ import {
 } from "../providers/opencode-go";
 import { AUTH_PROVIDERS, BUILTIN_PROVIDERS } from "../providers/registry-sources";
 import { getProviderStatus } from "../auth/provider-status.js";
-import { CUSTOM_PROVIDER_APIS, type CustomProviderApi } from "../auth/custom-provider-models.js";
+import {
+  CUSTOM_PROVIDER_APIS,
+  customProviderEnvVars,
+  resolveCustomProvider,
+  type CustomProviderApi,
+} from "../auth/custom-provider-models.js";
+import type { CustomProviderAuth } from "../auth/types.js";
 import {
   completeProviderOAuth,
   configureCustomProvider,
@@ -89,6 +95,31 @@ function pluginAuthInteraction(): AuthInteraction {
   };
 }
 
+
+/**
+ * The URL and key a custom provider actually runs with, labelled with where
+ * each comes from: a `<NAME>_BASE_URL` / `<NAME>_API_KEY` override or the
+ * stored config. The key is shown as its last four characters only.
+ */
+function describeCustomProviderEndpoint(
+  id: string,
+  stored: Pick<CustomProviderAuth, "baseURL" | "key" | "api">,
+): { url: string; key?: string } {
+  const envVars = customProviderEnvVars(id);
+  let resolved: ReturnType<typeof resolveCustomProvider>;
+  try {
+    resolved = resolveCustomProvider(id, stored);
+  } catch (error) {
+    return { url: `invalid base URL (${toErrorMessage(error)})` };
+  }
+  const source = (from: string, envVar: string) => from === "environment" ? `from ${envVar}` : "stored";
+  return {
+    url: `${resolved.baseURL} (${source(resolved.baseURLFrom, envVars.baseURL)})`,
+    ...(resolved.keyFrom !== "none" && {
+      key: `****${resolved.apiKey.slice(-4)} (${source(resolved.keyFrom, envVars.apiKey)})`,
+    }),
+  };
+}
 
 export function createProviderCommand(): Command {
   const authCmd = new Command("provider")
@@ -250,10 +281,11 @@ Use these only when an endpoint reports a protocol compatibility error.
         });
         const { name: providerName, provider, models } = configured;
 
+        const endpoint = describeCustomProviderEndpoint(providerName, provider);
         process.stdout.write(`✅ Added custom provider '${providerName}'\n`);
-        process.stdout.write(`   URL: ${provider.baseURL}\n`);
+        process.stdout.write(`   URL: ${endpoint.url}\n`);
         process.stdout.write(`   API: ${provider.api}${options.api === 'auto' ? ' (detected)' : ''}\n`);
-        if (options.key) process.stdout.write(`   Key: ****${options.key.slice(-4)}\n`);
+        if (endpoint.key) process.stdout.write(`   Key: ${endpoint.key}\n`);
         process.stdout.write(`   Models: ${models.length} saved\n`);
         process.stdout.write(`\nUsage: agentuse run agent.agentuse -m ${providerName}:${models[0]}\n`);
       } catch (error) {
@@ -570,9 +602,10 @@ Use these only when an endpoint reports a protocol compatibility error.
         process.stdout.write("Custom Providers:\n");
         process.stdout.write("─".repeat(50) + "\n");
         for (const provider of status.customProviders) {
-          const key = customProviderAuth[provider.id]?.key;
-          const keyStatus = key ? ` (key: ****${key.slice(-4)})` : "";
-          process.stdout.write(`  🔌 ${provider.id} → ${provider.baseURL}${keyStatus}\n`);
+          const stored = customProviderAuth[provider.id];
+          if (!stored) continue;
+          const endpoint = describeCustomProviderEndpoint(provider.id, stored);
+          process.stdout.write(`  🔌 ${provider.id} → ${endpoint.url}${endpoint.key ? `, key ${endpoint.key}` : ""}\n`);
         }
         process.stdout.write("\n");
       }
