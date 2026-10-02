@@ -384,17 +384,18 @@ For a suspended approval session:
 ```bash
 agentuse sessions resume 01K... --approve
 agentuse sessions resume 01K... --approve "Looks good"
+agentuse sessions resume 01K... --approve --choice candidate-2
 agentuse sessions resume 01K... --reject "Not ready"
 agentuse sessions resume 01K... --comment "Please revise the CTA"
 agentuse sessions resume 01K... --comment "Keep intros factual, not salesy" --remember
 agentuse sessions resume 01K... --comment "Please revise with citations" --remember "Always include source links before publishing."
 ```
 
-The CLI uses local session access as the trust boundary, so approval resumes do not require a resume token.
+The CLI uses local session access as the trust boundary, so approval resumes do not require a resume token. The decision rules are the same as on the approval page: a pick gate (one with `options`) needs `--choice <id>` naming the option to approve, `--choice` only goes with `--approve`, and a draft that strict automated review sent back for revision guidance can be commented on or rejected but not approved.
 
 `--remember` saves the comment as a future instruction, and requires `--comment` (a non-empty one). Bare `--remember` reuses the comment text; passing a value (`--remember "..."`) overrides it. Passing `--remember` is itself the opt-in, so saving needs no `learning` config on the agent. The comment is still the feedback for this revision; the instruction is distilled from it, stored as `src:manual`, and injected into future runs once the agent has `learning.apply` enabled. It is also vetted against the agent's own instructions: a note that contradicts them is still saved, but quarantined with the conflict named rather than injected.
 
-For a suspended non-approval `await_*` tool:
+For a suspended non-approval `await_*` tool (approval gates refuse `--tool-result`; use the decision flags above):
 
 ```bash
 agentuse sessions resume 01K... --tool-result '{"status":"done"}'

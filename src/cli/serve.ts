@@ -1,5 +1,6 @@
 import { classifyFailure, RunAbortError } from '../runner/failure';
 import { workerDeathDetail, type WorkerDeath } from '../worker/death';
+import { validateGateDecision, type GateDecisionError } from '../runner/gate-decision';
 import { Command } from "commander";
 import { ApprovalListPayload, ApprovalRow, ApprovalSessionFilter, ApprovalSummary, ApprovalSummaryStatus, SessionStatusCounts, SessionStatusFilter, SessionSummary, SessionTriageFilter, SessionWindowFilter, SessionsPayload } from "./serve/list-payloads";
 import { ApprovalPageInfo } from "./serve/approval-page";
@@ -138,47 +139,15 @@ const WORKER_PROTOCOL_ERROR_CODE = 'WORKER_PROTOCOL_ERROR';
 
 /** Validate a human decision against the durable approval contract. Keeping
  * this server-side means stale clients and notification actions cannot bypass
- * a strict-review feedback gate merely by posting an approve decision. */
+ * a strict-review feedback gate merely by posting an approve decision. The
+ * rules live in core (validateGateDecision) so every other resume surface
+ * enforces the same ones; serve checks early only to answer with a 4xx. */
 function validateDecisionChoice(
   info: WorkerApprovalInfoResult,
   status: string,
   choice: string | undefined
-): { code: string; message: string } | null {
-  if (info.approval.approvalKind === 'tool_approval') {
-    const supported = status === 'approve' || status === 'approved'
-      || status === 'reject' || status === 'rejected';
-    if (!supported) {
-      return { code: 'TOOL_APPROVAL_DECISION_INVALID', message: 'Generic tool approvals support only approve or reject' };
-    }
-    if (choice !== undefined) {
-      return { code: 'CHOICE_INVALID', message: 'Generic tool approvals do not accept option choices' };
-    }
-    return null;
-  }
-  const gateOptions = info.approval.options;
-  // Both spellings reach the worker as an approval ('approve' and 'approved'
-  // normalize to the same decision in src/index.ts), so both must validate
-  // identically.
-  const isApprove = status === 'approve' || status === 'approved';
-  if (isApprove && info.approval.reviewEscalation) {
-    return {
-      code: 'REVIEW_REVISION_REQUIRED',
-      message: 'This draft did not pass strict automated review. Send revision guidance or reject it; it cannot be approved in its current form.',
-    };
-  }
-  if (choice !== undefined) {
-    if (!isApprove) {
-      return { code: 'CHOICE_REQUIRES_APPROVE', message: 'A choice can only be submitted with an approve decision' };
-    }
-    if (!gateOptions?.some((o) => o.id === choice)) {
-      return { code: 'CHOICE_INVALID', message: `Choice "${choice}" is not one of this gate's options` };
-    }
-    return null;
-  }
-  if (isApprove && gateOptions && gateOptions.length > 0) {
-    return { code: 'CHOICE_REQUIRED', message: 'This gate offers options; approve decisions must include a choice (option id)' };
-  }
-  return null;
+): GateDecisionError | null {
+  return validateGateDecision(info.approval, { status, choice });
 }
 
 /** Worker replies are serialized with `id` first. If JSON-line framing breaks,

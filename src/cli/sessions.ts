@@ -572,6 +572,7 @@ function buildApprovalToolResult(options: {
   approve?: string | boolean;
   reject?: string | boolean;
   comment?: string;
+  choice?: string;
 }): unknown | null {
   const decisions = [
     options.approve !== undefined ? "approve" : null,
@@ -594,6 +595,7 @@ function buildApprovalToolResult(options: {
   return {
     status,
     ...(comment && { comment }),
+    ...(options.choice !== undefined && { choice: options.choice }),
     reviewer: { username: "cli" }
   };
 }
@@ -682,8 +684,9 @@ export function createSessionsCommand(): Command {
     .option("--approve [comment]", "Approve a suspended approval request")
     .option("--reject [comment]", "Reject a suspended approval request with an optional comment")
     .option("--comment <comment>", "Send a reviewer comment to a suspended approval request")
+    .option("--choice <id>", "Option id to approve on a pick gate (with --approve)")
     .option("--remember [instruction]", "Also save the comment (or a given instruction) as a future instruction")
-    .option("--tool-result <json>", "JSON result for a suspended non-approval await_* tool")
+    .option("--tool-result <json>", "JSON result for a suspended non-approval await_* tool (not accepted by approval gates)")
     .option("--prompt <text>", "Instruction for continuing an ended session")
     .option("--project [path]", "Search a project path; defaults to the current project")
     .option("--all-search", "Search all projects if the session is not in the selected project")
@@ -693,6 +696,7 @@ export function createSessionsCommand(): Command {
       approve?: string | boolean;
       reject?: string | boolean;
       comment?: string;
+      choice?: string;
       remember?: string | boolean;
       toolResult?: string;
       prompt?: string;
@@ -1602,6 +1606,7 @@ async function resumeSession(
     approve?: string | boolean;
     reject?: string | boolean;
     comment?: string;
+    choice?: string;
     remember?: string | boolean;
     toolResult?: string;
     prompt?: string;
@@ -1643,6 +1648,9 @@ async function resumeSession(
   }
   if (options.remember !== undefined && (options.comment === undefined || options.comment.trim() === "")) {
     throw new Error("--remember requires --comment");
+  }
+  if (options.choice !== undefined && options.approve === undefined) {
+    throw new Error("--choice requires --approve");
   }
 
   const fallbackCwd = resolved.allSearchMatch ? summary.projectRoot : selectedCwd;
@@ -1690,12 +1698,18 @@ async function resumeSession(
     }
 
     if (pendingKind === 'tool_approval') {
-      if (options.comment !== undefined || options.remember !== undefined || options.toolResult !== undefined) {
+      if (options.comment !== undefined || options.choice !== undefined || options.remember !== undefined || options.toolResult !== undefined) {
         throw new Error('Generic tool approvals support --approve or --reject only');
       }
       if (options.approve === undefined && options.reject === undefined) {
         throw new Error(`Session ${summary.id} is waiting for approval to execute ${pending.part.tool}. Use --approve or --reject.`);
       }
+    }
+
+    if (options.toolResult !== undefined && pending.part.tool === "await_human") {
+      // A gate is resolved only by a reviewer decision; raw JSON could bypass
+      // the decision flags' shape entirely.
+      throw new Error(`Session ${summary.id} is waiting for approval. Use --approve (with --choice on a pick gate), --reject, or --comment, not --tool-result.`);
     }
 
     const approvalResult = buildApprovalToolResult(options);

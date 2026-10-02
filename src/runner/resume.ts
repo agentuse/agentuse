@@ -5,7 +5,7 @@ import type { SessionInfo, ToolState } from '../session/types';
 import { isProcessRefAliveAsync } from '../utils/process-info';
 import { LeaseStore, type ApprovalLease } from './approval-lease';
 import { GateSealStore, type GateSealSnapshot } from './gate-seal';
-import { applyGateDecisionEffects } from './gate-decision';
+import { applyGateDecisionEffects, awaitHumanDecisionTarget, validateGateDecision } from './gate-decision';
 import {
   loadSessionPartsFlat,
   findPendingSubagentWaitChildId,
@@ -189,6 +189,19 @@ async function applyClaimedResumeToolResult(options: {
       approved: genericApproved,
       ...(typeof comment === 'string' && comment.trim().length > 0 && { reason: comment }),
     };
+  } else if (pending.part.tool === 'await_human') {
+    // Every surface resolves a gate through here (CLI, worker, cascade, the
+    // legacy resume route), so the reviewer-decision rules are enforced here
+    // and not only by the serve routes. Keyed on the tool, not the payload
+    // kind: other suspended tools are persisted as kind await_human too and
+    // keep accepting arbitrary results. Validated, never normalized, so the
+    // decision is still stored verbatim.
+    const decision = toolResult && typeof toolResult === 'object' ? toolResult as Record<string, unknown> : {};
+    const invalid = validateGateDecision(
+      awaitHumanDecisionTarget(input, resumePayload?.reviewEscalation),
+      { status: decision.status, choice: decision.choice },
+    );
+    if (invalid) throw new Error(`${invalid.code}: ${invalid.message}`);
   }
 
   await sessionManager.updatePart(sessionId, found.agentId, pending.message.id, pending.part.id, {
