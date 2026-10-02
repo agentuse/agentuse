@@ -23,7 +23,7 @@ import { describeLearningOutcome, effectiveCap, saveManualLearning, type Learnin
 import { daemonRequestHeaders, daemonResponseError, findServerForProject, serverBaseUrl } from "../utils/server-registry";
 import { formatCompactDuration } from "../utils/duration";
 import { isExecutingSessionStatus, sessionOutcome } from "../session/status";
-import { truncate as truncateText } from "../tools/tool-output-limits";
+import { truncate as truncateText, truncateEnd } from "../tools/tool-output-limits";
 import { toErrorMessage } from "../utils/error-message";
 import { stripAgentExtension } from "../utils/agent-name";
 import { extractToolIntent, extractToolRecovery, withoutToolIntent } from "../runner/tool-intent";
@@ -618,16 +618,16 @@ function buildContinuationPrompt(session: SessionInfo, previous: string | undefi
 }
 
 /**
- * Format tool output with truncation and line limits
+ * Format tool output with truncation and line limits. Exported for testing.
  */
-function formatToolOutput(output: string, maxLen: number = 200, maxLines: number = 5): string {
+export function formatToolOutput(output: string, maxLen: number = 200, maxLines: number = 5): string {
   const lines = output.split("\n");
   const result: string[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];
     if (line.length > maxLen) {
-      line = line.substring(0, maxLen) + `… [${output.length} chars]`;
+      line = truncateEnd(line, maxLen) + `… [${output.length} chars]`;
     }
     result.push(line);
 
