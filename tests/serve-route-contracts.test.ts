@@ -152,6 +152,32 @@ async function invokeRoute(
 }
 
 describe('session lifecycle route contracts', () => {
+  it('pushes a finished run, but not one that stopped on a person', async () => {
+    const project = { id: 'project-a', root: '/project' } as any;
+    const finish = async (session: Record<string, unknown>) => {
+      const pushes: any[] = [];
+      const result = await invokeRoute(sessionLifecycleRoutes, contextStub({
+        findSessionStatusInfo: async () => ({
+          success: true, project, session: { agent: { name: 'contract-agent' }, ...session },
+        } as any),
+        deliverNotification: async (_category: unknown, payload: unknown) => { pushes.push(payload); },
+      }), { method: 'POST', path: '/sessions/session-1/finished', body: {} });
+      return { status: result.json.status, reason: result.json.reason, pushes };
+    };
+
+    const waiting = await finish({ sessionStatus: 'error', errorCode: 'INCOMPLETE', errorCause: 'waiting_on_human' });
+    expect(waiting).toEqual({ status: 'ignored', reason: 'stopped on a person', pushes: [] });
+    const rejected = await finish({ sessionStatus: 'error', errorCode: 'INCOMPLETE', errorCause: 'rejected_by_human' });
+    expect(rejected.pushes).toEqual([]);
+
+    // Something broke: still a failure push.
+    const broken = await finish({ sessionStatus: 'error', errorCode: 'INCOMPLETE', errorCause: 'missing_tool' });
+    expect(broken.status).toBe('notified');
+    expect(broken.pushes).toMatchObject([{ title: 'Session failed' }]);
+    const done = await finish({ sessionStatus: 'completed' });
+    expect(done.pushes).toMatchObject([{ title: 'Session completed' }]);
+  });
+
   it('rejects unauthorized stop requests before session lookup', async () => {
     let lookedUp = false;
     const result = await invokeRoute(sessionLifecycleRoutes, contextStub({

@@ -39,7 +39,7 @@
 
 ### Fixed
 
-- **A run that stopped on a person no longer sends a Slack failure alert.** A run waiting on or rejected by a reviewer settles its live run card as **run incomplete** with the agent's reason, and posts nothing new; the gate already reached the reviewer. Runs blocked by anything else still alert as failures.
+- **A run that stopped on a person no longer sends a failure alert.** A run waiting on or rejected by a reviewer settles its live Slack run card as **run incomplete** with the agent's reason, posts nothing new, and sends no "Session failed" phone push; the gate already reached the reviewer. Runs blocked by anything else still alert as failures.
 - **Home lists undismissed failures from the last 30 days, not just the last 24 hours.** It borrowed the 24-hour window the rest of Home charts, so a day-old failure dropped off without anyone dismissing it. It now matches the approvals list's 30 days.
 - **`agentuse serve -H ::1` works.** An IPv6 bind address built the server URL without brackets, so every request failed. Client commands that reach a running daemon (`serve ps`, `schedules`, `sessions stop`) now share one address builder that also handles `::`.
 - **Long runs keep tool access after 128 cumulative Code Mode calls.** The nested-call allowance now applies to each program, so later programs can continue unfinished work. Concurrent tool calls and guest memory retain their shared run-wide limits.

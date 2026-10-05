@@ -2,6 +2,7 @@ import { toErrorMessage } from "../../../utils/error-message.js";
 import { logger } from "../../../utils/logger";
 import { parseJSONBody, sendError, sendJSON, sendRequestParseError } from "../http";
 import { isEndedSessionStatus } from "../session-lists";
+import { isIncompleteOutcome } from "../../../session/status";
 import type { ServeContext, ServeRequest } from "../context";
 
 /**
@@ -204,6 +205,13 @@ export async function sessionLifecycleRoutes(ctx: ServeContext, rq: ServeRequest
         // so dashboards stay current.
         if (found.session.mock) {
           sendJSON(res, 200, { success: true, status: "ignored", reason: "mock session" });
+          return;
+        }
+        // A run that stopped on a person (waiting on or rejected by one) broke
+        // nothing, and its gate already reached them: a "Session failed" buzz
+        // would be both wrong and a repeat.
+        if (isIncompleteOutcome(status, found.session.errorCode, found.session.errorCause)) {
+          sendJSON(res, 200, { success: true, status: "ignored", reason: "stopped on a person" });
           return;
         }
         if (notifiedFinishedSessions.has(sessionId)) {
