@@ -92,7 +92,7 @@ function usable(info: OAuthTokens | CodexOAuthTokens | undefined): info is Codex
 
 async function refreshAccessToken(credential: OAuthTokens | CodexOAuthTokens, signal: AbortSignal): Promise<TokenResponse> {
   const subject = oauthHealthSubject("openai", credential);
-  await assertProviderRefreshAllowed(subject);
+  await assertProviderRefreshAllowed(subject, "openai");
   const response = await fetchWithProviderHealth(subject, `${ISSUER}/oauth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },

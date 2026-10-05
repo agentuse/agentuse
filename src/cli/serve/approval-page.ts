@@ -2,6 +2,7 @@
  * The approval payload a session page renders, and the token accounting that
  * rides along with it. Moved verbatim out of serve.ts.
  */
+import type { ApprovalActionFailure } from "../../session/approval-action-failure";
 import type { ImportantDescendantEvent, ImportantDescendantSummary } from "../../session/important-descendants";
 import type { ActiveContextUsage, ReviewEscalation } from "../../session/types";
 import { ApprovalLogEntry, ChildSessionSummary } from "./session-log";
@@ -71,6 +72,8 @@ export interface ApprovalPageInfo {
   decision?: unknown;
   errorCode?: string;
   errorMessage?: string;
+  /** Why the last decision on the still-open gate did not take effect. */
+  actionFailure?: ApprovalActionFailure;
   /** Resume the parent by retrying its interrupted delegated child. */
   cascadeRetryable?: boolean;
   childSessions?: ChildSessionSummary[];

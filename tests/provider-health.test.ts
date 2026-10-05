@@ -47,7 +47,7 @@ describe('durable provider health', () => {
   it('persists invalid_grant and blocks another refresh or manual recheck', async () => {
     await observeProviderResponse(subject(), Response.json({ error: 'invalid_grant', error_description: 'private-refresh-token' }, { status: 400 }), true);
     expect((await readProviderHealth(subject())).state).toBe('reconnect_required');
-    await expect(assertProviderRefreshAllowed(subject())).rejects.toThrow('Reconnect');
+    await expect(assertProviderRefreshAllowed(subject(), 'anthropic')).rejects.toThrow('Reconnect');
     const probe = mock(async () => 'verified' as const);
     await verifyProviderHealth(subject(), probe, true);
     expect(probe).not.toHaveBeenCalled();
@@ -57,13 +57,13 @@ describe('durable provider health', () => {
 
   it('does not treat a bare HTTP 400 as an invalid refresh token', async () => {
     await observeProviderResponse(subject(), Response.json({ error: 'invalid_request' }, { status: 400 }), true);
-    await assertProviderRefreshAllowed(subject());
+    await assertProviderRefreshAllowed(subject(), 'anthropic');
     expect((await readProviderHealth(subject())).state).toBe('configured');
   });
 
   it('allows refresh after an access-token 401', async () => {
     await observeProviderResponse(subject(), new Response('', { status: 401 }));
-    await assertProviderRefreshAllowed(subject());
+    await assertProviderRefreshAllowed(subject(), 'anthropic');
   });
 
   it('keeps timeouts, rate limits and server errors retryable', async () => {
@@ -71,7 +71,7 @@ describe('durable provider health', () => {
       const identity = providerHealthSubject('test', 'api', status);
       await observeProviderResponse(identity, new Response('', { status }));
       expect((await readProviderHealth(identity)).state).toBe('temporarily_unavailable');
-      await assertProviderRefreshAllowed(identity);
+      await assertProviderRefreshAllowed(identity, 'anthropic');
     }
     await expect(fetchWithProviderHealth(subject(), 'https://example.invalid', undefined, {
       fetch: mock(async () => { throw new Error('network failure private-refresh-token'); }) as unknown as typeof fetch,
@@ -84,7 +84,7 @@ describe('durable provider health', () => {
     const fresh = providerHealthSubject('anthropic', 'oauth', { refresh: 'replacement' });
     const api = providerHealthSubject('anthropic', 'api', { key: 'independent-key' });
     expect((await readProviderHealth(fresh)).state).toBe('configured');
-    await assertProviderRefreshAllowed(fresh);
+    await assertProviderRefreshAllowed(fresh, 'anthropic');
     expect((await readProviderHealth(api)).state).toBe('configured');
   });
 

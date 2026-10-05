@@ -1,4 +1,5 @@
 import { classifyFailure, RunAbortError } from '../runner/failure';
+import { approvalDecisionAction, approvalFailureKind, isTransientApprovalFailure, type ApprovalActionFailure } from '../session/approval-action-failure';
 import { workerDeathDetail, type WorkerDeath } from '../worker/death';
 import { validateGateDecision, type GateDecisionError } from '../runner/gate-decision';
 import { Command } from "commander";
@@ -1594,10 +1595,26 @@ function isAgentDraftContinuationInFlight(
     || activeApprovalResumes.has(`${projectId}:${jobId}`);
 }
 
-export type BackgroundSessionFailure = { status: string; message: string; at: number };
+export type BackgroundSessionFailure = {
+  status: string;
+  message: string;
+  at: number;
+  /** Worker failure evidence; continuation failures need none of it. */
+  code?: string;
+  cause?: string;
+  statusCode?: number;
+  provider?: string;
+  /** The gate the failed decision was made on. */
+  resumeToken?: string;
+};
 
 /** Add an asynchronous resume/continuation failure to the next session payload. */
-function applyBackgroundSessionFailure<T extends { errorMessage?: string; sessionStatus?: string }>(
+function applyBackgroundSessionFailure<T extends {
+  errorMessage?: string;
+  sessionStatus?: string;
+  currentResumeToken?: string;
+  actionFailure?: ApprovalActionFailure;
+}>(
   session: T,
   failure: BackgroundSessionFailure | undefined,
 ): T {
@@ -1610,13 +1627,30 @@ function applyBackgroundSessionFailure<T extends { errorMessage?: string; sessio
     || session.sessionStatus === 'suspended'
     || session.sessionStatus === 'waiting';
   if (!stillOpen) return session;
-  const action = failure.status === 'approved' ? 'approve'
-    : failure.status === 'rejected' ? 'reject'
-      : failure.status === 'comment' ? 'send your comment on'
+  // A failure speaks for the gate it was made on. Once another gate is pending,
+  // resending that decision would answer a question nobody has read.
+  if (failure.resumeToken && session.currentResumeToken && failure.resumeToken !== session.currentResumeToken) return session;
+  const decision = approvalDecisionAction(failure.status);
+  const kind = approvalFailureKind(failure);
+  const retryable = isTransientApprovalFailure(kind)
+    && failure.resumeToken !== undefined
+    && failure.resumeToken === session.currentResumeToken;
+  const action = decision === 'approve' ? 'approve'
+    : decision === 'reject' ? 'reject'
+      : decision === 'comment' ? 'send your comment on'
         : 'act on';
-  const retryable = !failure.message.includes('CASCADE_GATE_UNRESOLVABLE');
-  session.errorMessage = `Couldn't ${action} this request: ${failure.message}`
-    + (retryable ? '; the gate is still open, try again.' : '');
+  session.errorMessage = `Couldn't ${action} this request: ${failure.message.replace(/[.\s]+$/, '')}`
+    + (retryable ? '; the gate is still open, try again.' : '.');
+  if (decision) {
+    session.actionFailure = {
+      action: decision,
+      kind,
+      ...(failure.provider && { provider: failure.provider }),
+      retryable,
+      code: failure.code ?? 'EXECUTION_ERROR',
+      message: failure.message,
+    };
+  }
   return session;
 }
 
@@ -3514,7 +3548,16 @@ export function createServeCommand(): Command {
               return;
             }
             // Surface the failure on the still-pending gate (the 202 already went out).
-            backgroundSessionFailures.set(activeKey, { status, message: result.error.message, at: Date.now() });
+            backgroundSessionFailures.set(activeKey, {
+              status,
+              message: result.error.message,
+              at: Date.now(),
+              code: result.error.code,
+              ...(result.error.cause && { cause: result.error.cause }),
+              ...(result.error.statusCode !== undefined && { statusCode: result.error.statusCode }),
+              ...(result.error.provider && { provider: result.error.provider }),
+              resumeToken,
+            });
             approvalLog.resumeFailed(targetSessionId, Date.now() - resumeStart, result.error.message);
             logger.warn(`Approval resume ${targetSessionId} failed: ${result.error.message}`);
             try {

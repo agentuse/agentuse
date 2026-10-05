@@ -78,12 +78,16 @@ export async function recordProviderHealth(
 }
 
 export class ProviderReconnectRequiredError extends Error {
-  constructor() { super('Provider credentials were rejected. Reconnect before retrying.'); }
+  /** `provider` is the provider id whose saved credential was rejected. */
+  constructor(readonly provider: string) {
+    super('Provider credentials were rejected. Reconnect before retrying.');
+    this.name = 'ProviderReconnectRequiredError';
+  }
 }
 
-export async function assertProviderRefreshAllowed(subject: ProviderHealthSubject): Promise<void> {
+export async function assertProviderRefreshAllowed(subject: ProviderHealthSubject, provider: string): Promise<void> {
   const record = await readFile(healthPath(subject), 'utf8').then((raw) => JSON.parse(raw)).catch(() => undefined);
-  if (record?.blockRefresh === true) throw new ProviderReconnectRequiredError();
+  if (record?.blockRefresh === true) throw new ProviderReconnectRequiredError(provider);
 }
 
 /** Inspect only auth codes, never retain or expose the response body. */

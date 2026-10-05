@@ -21,6 +21,7 @@ const labels = {
   worker_protocol: 'Worker protocol error',
   request_deadline: 'Request time limit reached',
   authentication: 'Authentication failed',
+  resume_state: 'Approval could not be resumed',
   unknown: 'Execution error',
 } as const;
 

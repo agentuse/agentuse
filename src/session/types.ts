@@ -130,6 +130,7 @@ export interface SessionInfo {
     statusCode?: number;             // HTTP status from the provider (e.g. 400)
     url?: string;                    // Endpoint that rejected the request
     detail?: string;                 // Bounded provider response or observed worker-exit evidence
+    provider?: string;               // Provider id, when a typed credential error named it
   };
 
   /** Terminal errors from earlier attempts of this same resumable session.

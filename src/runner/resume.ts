@@ -17,6 +17,7 @@ import {
   CASCADE_ORPHANED_CODE,
 } from './subagent-cascade';
 import { logger } from '../utils/logger';
+import { ResumeStateError } from './failure';
 import { withSessionResumeClaim } from '../session/resume-claim';
 
 export interface ResumeToolRollback {
@@ -83,15 +84,15 @@ async function applyClaimedResumeToolResult(options: {
   const { sessionManager, sessionId, toolResult, resumeToken, skipTokenValidation, buildResumedMessages } = options;
   const found = await sessionManager.findSession(sessionId);
   if (!found) {
-    throw new Error(`SESSION_NOT_FOUND: ${sessionId}`);
+    throw new ResumeStateError('SESSION_NOT_FOUND', sessionId);
   }
   if (found.session.status !== 'suspended') {
-    throw new Error(`SESSION_NOT_SUSPENDED: ${found.session.status}`);
+    throw new ResumeStateError('SESSION_NOT_SUSPENDED', found.session.status);
   }
 
   const pending = await sessionManager.findPendingTool(sessionId, found.agentId);
   if (!pending) {
-    throw new Error(`PENDING_TOOL_NOT_FOUND: ${sessionId}`);
+    throw new ResumeStateError('PENDING_TOOL_NOT_FOUND', sessionId);
   }
 
   // A `subagent_wait` bookmark is a manager's parked `subagent__*` step, not a human
@@ -105,8 +106,9 @@ async function applyClaimedResumeToolResult(options: {
     pending.part.state.status === 'pending' &&
     pending.part.state.resumePayload?.kind === 'subagent_wait'
   ) {
-    throw new Error(
-      `CASCADE_GATE_UNRESOLVABLE: session ${sessionId} is parked on delegated sub-agent ` +
+    throw new ResumeStateError(
+      'CASCADE_GATE_UNRESOLVABLE',
+      `session ${sessionId} is parked on delegated sub-agent ` +
       `${pending.part.state.resumePayload.childSessionID ?? '(unknown)'}, which is no longer ` +
       `holding a live approval gate. There is nothing left to decide on this run; stop it and re-run the agent.`
     );
@@ -116,7 +118,7 @@ async function applyClaimedResumeToolResult(options: {
     ? pending.part.state.resumePayload?.resumeToken
     : undefined;
   if (!skipTokenValidation && expectedToken && expectedToken !== resumeToken) {
-    throw new Error('RESUME_TOKEN_INVALID');
+    throw new ResumeStateError('RESUME_TOKEN_INVALID');
   }
 
   if (pending.part.state.status === 'completed') {

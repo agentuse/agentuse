@@ -1,5 +1,6 @@
 import { ConfigError } from '../parser';
 import { AuthenticationError } from '../models';
+import { ProviderReconnectRequiredError } from '../auth/provider-health';
 import { toErrorMessage } from '../utils/error-message';
 import { extractApiErrorDetail } from './api-error';
 import { ModelStreamStallError, ModelStreamTransportError } from './model-stall';
@@ -13,6 +14,18 @@ export class RunAbortError extends Error {
   constructor(readonly causeCode: 'run_deadline' | 'user_stopped' | 'user_interrupt' | 'client_disconnect', message: string) {
     super(message);
     this.name = 'AbortError';
+  }
+}
+
+/**
+ * The stored session refused a resume before any of it was applied: the gate is
+ * gone, answered, or replaced. `code` is the stable identifier; the message
+ * keeps the `CODE: detail` form existing logs and callers read.
+ */
+export class ResumeStateError extends Error {
+  constructor(readonly code: string, detail?: string) {
+    super(detail ? `${code}: ${detail}` : code);
+    this.name = 'ResumeStateError';
   }
 }
 
@@ -53,7 +66,11 @@ export function classifyFailure(error: unknown, signal?: AbortSignal): Classifie
     aborted ||= current.name === 'AbortError';
     if (current instanceof ProviderContentFilterError) return { ...base, code: 'CONTENT_FILTER', cause: 'provider_content_filter' };
     if (current instanceof ConfigError) return { ...base, code: 'CONFIG_ERROR', cause: 'configuration' };
-    if (current instanceof AuthenticationError) return { ...base, code: 'AUTH_ERROR', cause: 'authentication' };
+    if (current instanceof ResumeStateError) return { ...base, code: current.code, cause: 'resume_state' };
+    if (current instanceof ProviderReconnectRequiredError) {
+      return { ...base, code: 'PROVIDER_RECONNECT_REQUIRED', cause: 'authentication', provider: current.provider };
+    }
+    if (current instanceof AuthenticationError) return { ...base, code: 'AUTH_ERROR', cause: 'authentication', provider: current.provider };
     if (current instanceof ModelStreamStallError) {
       return { ...base, cause: 'model_stall', phase: current.phase,
         ...(current.attempts !== undefined && { attempts: current.attempts }) };

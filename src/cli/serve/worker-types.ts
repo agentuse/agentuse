@@ -71,6 +71,8 @@ export interface WorkerExecuteError {
     attempts?: number;
     statusCode?: number;
     detail?: string;
+    /** Provider id, when a typed credential error named it. */
+    provider?: string;
     code: string;
     message: string;
   };

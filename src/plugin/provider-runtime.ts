@@ -625,7 +625,7 @@ export async function resolveProviderAuth(
   // aborts it there so a hung endpoint cannot hold every worker's lock.
   const refresh = async (latest: PluginCredential, deadline?: AbortSignal): Promise<PluginCredential> => {
     const subject = pluginCredentialSubject(provider, method, latest);
-    await assertProviderRefreshAllowed(subject);
+    await assertProviderRefreshAllowed(subject, provider.id);
     const next = await method.refresh!(latest, {
       ...context,
       signal: deadline ? AbortSignal.any([context.signal, deadline]) : context.signal,

@@ -1,3 +1,4 @@
+import type { ApprovalActionFailure } from "../../session/approval-action-failure";
 import type { ActiveTiming } from '../../session/timing';
 import type { ActiveContextUsage, ReviewEscalation, SessionTrigger } from "../../session/types";
 import type { SessionTimingSummary } from "../../session/timing";
@@ -476,6 +477,8 @@ export interface ApprovalPageInfo {
   errorCauseSource?: string;
   errorCode?: string;
   errorMessage?: string;
+  /** Why the last decision on the still-open gate did not take effect. */
+  actionFailure?: ApprovalActionFailure;
   /** Resume the parent by retrying its interrupted delegated child. */
   cascadeRetryable?: boolean;
   /** Reviewer discarded this ended failed run (see SessionSummary.dismissedAt). */
