@@ -22,6 +22,14 @@
 // crash-loops every replacement on EADDRINUSE. Naming cli.js directly makes the
 // pid pm2 manages the daemon itself.
 const path = require('path');
+const os = require('os');
+
+// PM2 retains its saved environment across restarts. Include the standard user
+// CLI install directory even when PM2 was launched without a login-shell PATH.
+// Append it to preserve the caller's existing command resolution order.
+const localBin = path.join(os.homedir(), '.local', 'bin');
+const executablePaths = (process.env.PATH || '/usr/local/bin:/usr/bin:/bin').split(path.delimiter);
+if (!executablePaths.includes(localBin)) executablePaths.push(localBin);
 
 module.exports = {
   apps: [
@@ -30,6 +38,7 @@ module.exports = {
       script: path.resolve(__dirname, '..', 'bin', 'cli.js'),
       args: 'serve',
       cwd: process.env.HOME,
+      env: { PATH: executablePaths.join(path.delimiter) },
       exec_mode: 'fork',
       treekill: false,
       kill_timeout: 15000,
