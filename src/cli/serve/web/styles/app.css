@@ -10861,7 +10861,47 @@ html[data-page="draft-panel"] .app-route {
 .draft-answer-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .draft-answer-actions button { min-height: 44px; justify-content: center; }
 .draft-answer-actions .draft-primary { min-width: 120px; }
-.draft-answer-error { margin: 8px 0 0; color: var(--red); font-size: var(--font-size-caption); }
+.draft-answer-body .approval-failure { margin-top: 8px; }
+
+/* Why the last decision did not take effect. Inside the gate's action row it
+   takes the full width, so it sits directly above Comment / Reject / Approve. */
+.approval-failure {
+  flex: 1 0 100%;
+  display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between;
+  gap: 10px 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--muted-3);
+  font-size: var(--font-size-caption);
+  line-height: var(--lh-snug);
+}
+.approval-failure.is-warn { border-color: var(--amber-border); background: var(--amber-soft); }
+.approval-failure.is-error { border-color: var(--red-border); background: var(--red-soft); }
+.approval-failure.is-info { border-color: var(--cyan-border); background: var(--cyan-soft); }
+.approval-failure.is-ok { border-color: var(--green-border); background: var(--green-soft); }
+.approval-failure-copy { flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.approval-failure-title { color: var(--fg); font-weight: var(--weight-bold); }
+.approval-failure-comment { overflow-wrap: anywhere; }
+.approval-failure-comment q {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  color: var(--fg);
+}
+.approval-failure-details summary { cursor: pointer; color: var(--muted); width: fit-content; }
+.approval-failure-details code {
+  display: block; margin-top: 4px;
+  font-family: var(--mono); font-size: var(--font-size-micro);
+  color: var(--muted); overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.approval-failure-actions { flex: none; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.approval-failure-actions button { min-height: 40px; padding: 0 14px; }
+.approval-failure-link { color: var(--fg); text-decoration: underline; text-underline-offset: 3px; min-height: 40px; display: inline-flex; align-items: center; }
+.approval-failure-standalone { margin-top: 16px; }
+@media (max-width: 560px) {
+  .approval-failure-actions { width: 100%; }
+  .approval-failure-actions button { flex: 1 1 auto; }
+}
 .draft-answer :is(button, input):focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
 @media (max-width: 720px) {
   .draft-answer { max-height: 65%; }

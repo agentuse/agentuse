@@ -535,6 +535,7 @@ export default function ChangesetReview() {
           projectId={projectId}
           token={sessionToken ?? token}
           onAnswered={authorSession.onAnswered}
+          failure={authorSession.approval?.actionFailure}
           onShowContext={() => selectTab('changes')}
         />
       ) : (

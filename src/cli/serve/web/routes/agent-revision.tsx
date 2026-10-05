@@ -274,6 +274,7 @@ export default function AgentRevision() {
         key={`${sessionId}:${question.details?.resumeToken}`}
         entry={question} sessionId={sessionId} projectId={project} token={token}
         onAnswered={reviserSession.onAnswered}
+        failure={reviserSession.approval?.actionFailure}
         onShowContext={() => { setTabPinned(true); setTab('changes'); } }
       /> : replyable && (
         <DraftComposer

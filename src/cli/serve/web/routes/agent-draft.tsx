@@ -237,6 +237,7 @@ export default function AgentDraft() {
         key={`${draft.jobId}:${question.details?.resumeToken}`}
         entry={question} sessionId={draft.jobId} projectId={project} token={draft.sessionToken}
         onAnswered={creatorSession.onAnswered}
+        failure={creatorSession.approval?.actionFailure}
         onShowContext={() => { setTabPinned(true); setTab('changes'); } }
       /> : !closed && (
         <DraftComposer

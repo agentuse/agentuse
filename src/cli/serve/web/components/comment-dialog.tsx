@@ -54,7 +54,10 @@ export function DecisionDialog(props: {
   rememberApplies?: boolean;
   /** Strict automated review exhausted, so this dialog guides a revision or stops the action. */
   revisionGuidance?: boolean;
-  onSubmit: (payload: { comment?: string; remember?: string }) => void;
+  /** Text typed for a decision that did not take effect; the dialog reopens with it. */
+  initialText?: string | undefined;
+  /** `text` is what the reviewer typed, before any option prefix, for reopening. */
+  onSubmit: (payload: { comment?: string; remember?: string; text: string }) => void;
   onClose: () => void;
 }) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -102,6 +105,7 @@ export function DecisionDialog(props: {
     props.onSubmit({
       ...(text && { comment: text }),
       ...(remember && { remember }),
+      text: raw,
     });
   };
 
@@ -115,7 +119,7 @@ export function DecisionDialog(props: {
       titleClass={props.mode}
       {...(copy.body ? { describedBy: 'decision-dialog-description' } : {})}
       onOpened={() => {
-        if (inputRef.current) inputRef.current.value = '';
+        if (inputRef.current) inputRef.current.value = props.initialText ?? '';
         setRememberChecked(false);
         setAboutChoice(true);
         requestAnimationFrame(() => inputRef.current?.focus());

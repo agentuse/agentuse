@@ -6,6 +6,8 @@ import type { ApprovalLogEntry, ApprovalPageInfo, LogSubagentSession, LogVerifyS
 import { CandidateVerdictList, LogEntry, artifactKind, toolChipLabel, type PriorReview } from '../components/log-entry';
 import { InlineMarkdown, LogContent } from '../components/content';
 import { DecisionDialog, type DecisionDialogMode } from '../components/comment-dialog';
+import { ApprovalFailurePanel, approvalFailureCopy, decisionRequestFailure, decisionStillPending } from '../components/approval-failure';
+import type { ApprovalActionFailure, ApprovalDecisionAction } from '../../../../session/approval-action-failure';
 import { ContinuePanel } from '../components/continue-panel';
 import { LearningsPanel } from '../components/learnings-panel';
 import { DebugPromptButton } from '../components/debug-prompt-button';
@@ -908,6 +910,9 @@ export function reconcileSessionNotice(
   header: ApprovalHeader,
 ): SessionNotice | undefined {
   const transitionResult = /submitting decision|decision recorded|resuming the session|continuing session|follow-up recorded|stopping session/.test(current.text);
+  // The approval card shows this failure above its buttons; a second copy at
+  // the bottom of the page would say it twice.
+  if (header.actionFailure) return { text: '', error: false };
   const transitionFailure = isBackgroundSessionActionFailure(header.errorMessage);
   if (transitionFailure) {
     return { text: header.errorMessage as string, error: true };
@@ -1018,6 +1023,12 @@ export default function SessionDetail() {
   const [isRevisionSession, setIsRevisionSession] = useState(false);
   const [revisionIdentity, setRevisionIdentity] = useState<AgentRevisionSessionIdentity | null>(null);
   const [decisionDialog, setDecisionDialog] = useState<DecisionDialogMode | null>(null);
+  // The decision request the server refused or never answered. Background
+  // resume failures arrive on the session header instead (approval.actionFailure).
+  const [requestFailure, setRequestFailure] = useState<ApprovalActionFailure | null>(null);
+  // The last decision sent on the current gate, kept until the gate changes so
+  // a failed attempt can be retried or its comment reopened without retyping.
+  const [lastDecision, setLastDecision] = useState<{ action: ApprovalDecisionAction; resumeToken: string; comment?: string | undefined; text?: string | undefined } | null>(null);
   const [nudge, setNudge] = useState(0);
   // Project artifacts this run produced, from the artifact manifest. Refetched as
   // the log grows so newly written artifacts appear without a page reload.
@@ -1152,6 +1163,8 @@ export default function SessionDetail() {
       setSubmittingDecision(null);
       setSelectedChoice(null);
       setResult({ text: '', error: false });
+      setRequestFailure(null);
+      setLastDecision(null);
       if (header.approvalUrl) {
         try { history.replaceState(null, '', header.approvalUrl); } catch { /* ignore */ }
       }
@@ -1164,7 +1177,7 @@ export default function SessionDetail() {
     const transitionFailure = isBackgroundSessionActionFailure(header.errorMessage);
     const nextNotice = reconcileSessionNotice(resultRef.current, nextStatus, header);
     if (nextNotice) setResult(nextNotice);
-    if (transitionFailure) {
+    if (transitionFailure || header.actionFailure) {
       setSubmittingContinue(false);
       setSubmittingDecision(null);
     }
@@ -1189,6 +1202,8 @@ export default function SessionDetail() {
     const banked = sessionViewState.get(sessionId);
     setExpandOverrides(banked ? new Map(banked.expandOverrides) : new Map());
     setResult({ text: '', error: false });
+    setRequestFailure(null);
+    setLastDecision(null);
     setFatalError(null);
     setIsRevisionSession(false);
     setRevisionIdentity(null);
@@ -1816,9 +1831,11 @@ export default function SessionDetail() {
   // an approve carrying none is the ambiguity the comment branch exists to avoid.
   const awaitingPick = Boolean(gateOptions && gateOptions.length > 0 && !effectiveChoice);
 
-  const submitDecision = useCallback(async (action: 'approve' | 'reject' | 'comment', comment?: string, remember?: string) => {
+  const submitDecision = useCallback(async (action: ApprovalDecisionAction, comment?: string, remember?: string, text?: string) => {
     if (submittingDecision || !currentResumeTokenRef.current) return;
     setSubmittingDecision(action);
+    setRequestFailure(null);
+    setLastDecision({ action, resumeToken: currentResumeTokenRef.current, comment, text });
     setResult({ text: '⋮ submitting decision…', error: false });
     try {
       const decidedResumeToken = currentResumeTokenRef.current;
@@ -1846,13 +1863,41 @@ export default function SessionDetail() {
       // best-effort (401s silently on key-gated daemons without the header).
       void fetchApprovals().then((p) => syncAppBadge(p.buckets.pending.length)).catch(() => {});
     } catch (err) {
-      setResult({ text: (err as Error).message || String(err), error: true });
+      // Shown in the approval card above its buttons, not as a page notice.
+      setRequestFailure(decisionRequestFailure(err, action));
+      setResult({ text: '', error: false });
       setSubmittingDecision(null);
-      // The error notice lives at the bottom of <main>, likely off-screen on a
-      // long session; bring it into view so the failure isn't silent.
-      noticeRef.current?.scrollIntoView({ block: 'nearest' });
     }
   }, [sessionId, token, projectId, approval?.project, submittingDecision, pendingQueue, globalApprovals]);
+
+  const actionFailure = requestFailure ?? approval?.actionFailure ?? null;
+  const decisionLocked = actionFailure ? approvalFailureCopy(actionFailure, undefined).locksDecision : false;
+  // Retry resends exactly the failed decision. `remember` is left out: the
+  // server saved that learning when it accepted the first attempt.
+  const retryDecision = actionFailure?.retryable && lastDecision?.action === actionFailure.action
+    ? async () => {
+      if (actionFailure.kind === 'unreachable') {
+        const pending = await decisionStillPending(sessionId, token, projectId, lastDecision.resumeToken).catch(() => null);
+        // Unknown: keep the failure up so the reviewer can check again.
+        if (pending === null) return;
+        if (!pending) {
+          // The first request (or someone else) acted; the stream shows what happened.
+          setRequestFailure(null);
+          setNudge((n) => n + 1);
+          return;
+        }
+      }
+      void submitDecision(lastDecision.action, lastDecision.comment, undefined, lastDecision.text);
+    }
+    : undefined;
+  const failurePanel = actionFailure && (
+    <ApprovalFailurePanel
+      key={`${actionFailure.action}:${actionFailure.code}:${actionFailure.message}`}
+      failure={actionFailure}
+      comment={lastDecision?.action === actionFailure.action ? lastDecision.text : undefined}
+      onRetry={retryDecision && (() => void retryDecision())}
+    />
+  );
 
   const submitContinue = useCallback(async (prompt: string) => {
     // Unlike an approval decision, continuing an ended session needs no resume
@@ -2018,7 +2063,7 @@ export default function SessionDetail() {
       const anyDialogOpen = Boolean(document.querySelector(
         'dialog[open], [role="dialog"], [role="menu"], [role="tooltip"], [role="listbox"]',
       ));
-      const canAct = actionable && !submittingDecision;
+      const canAct = actionable && !submittingDecision && !decisionLocked;
       if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
         // Reject and comment stay available on an unpicked gate; only approve
         // needs the choice, so only approve is withheld.
@@ -2036,7 +2081,7 @@ export default function SessionDetail() {
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [decisionDialog, actionable, submittingDecision, submitDecision, awaitingPick, approval?.approvalKind, gateEntry?.details?.reviewEscalation]);
+  }, [decisionDialog, actionable, submittingDecision, decisionLocked, submitDecision, awaitingPick, approval?.approvalKind, gateEntry?.details?.reviewEscalation]);
 
   if (fatalError) {
     return (
@@ -2402,6 +2447,8 @@ export default function SessionDetail() {
         parentApproveLabel={parentLabel}
         actionsDisabled={submittingDecision !== null}
         pendingAction={submittingDecision}
+        actionNotice={entryActionable ? failurePanel || undefined : undefined}
+        decisionLocked={entryActionable && decisionLocked}
         projectId={projectId}
         sessionId={sessionId}
         token={token}
@@ -2902,6 +2949,9 @@ export default function SessionDetail() {
           {logsFeed}
         </details>
 
+        {/* The gate card hosts the failure while it shows; once the gate is
+            gone (answered elsewhere, expired) the same panel stands here. */}
+        {failurePanel && !actionable && <div class="approval-failure-standalone">{failurePanel}</div>}
         {shouldShowResultNotice(result, mode === 'error', resultErrorText) && (
           <p ref={noticeRef} class={`notice${result.error ? ' error' : ''}`} role={result.error ? 'alert' : 'status'}>{result.text}</p>
         )}
@@ -2914,11 +2964,12 @@ export default function SessionDetail() {
         allowRemember={canRememberLearning}
         rememberApplies={rememberApplies}
         revisionGuidance={Boolean(gateEntry?.details?.reviewEscalation)}
+        initialText={lastDecision?.text}
         onClose={() => setDecisionDialog(null)}
-        onSubmit={({ comment, remember }) => {
+        onSubmit={({ comment, remember, text }) => {
           const action = decisionDialog;
           setDecisionDialog(null);
-          if (action) void submitDecision(action, comment, remember);
+          if (action) void submitDecision(action, comment, remember, text);
         }}
       />
     </div>

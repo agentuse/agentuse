@@ -35,6 +35,25 @@ export function hasConfiguredProvider(status: ProviderStatus | undefined): boole
 }
 
 const pluginSelection = (id: string) => `plugin:${id}`;
+
+/**
+ * The name a connection shows under and the setup selection that reconnects
+ * it, shared by the settings row and the approval card's Reconnect button.
+ * Undefined for providers with no dashboard login (plugin-only providers).
+ */
+export function providerConnectionTarget(payload: ProviderSetupPayload, providerId: string): { name: string; initialProvider: string } | undefined {
+  const entry = payload.catalog.find((item) => item.id === providerId);
+  if (!entry) return undefined;
+  const status = payload.status.providers.find((item) => item.id === providerId);
+  const active = status?.sources.find((source) => source.active);
+  const servingPlugin = payload.installedPlugins.find((plugin) => plugin.providers.some((provided) => provided.id === providerId));
+  const authPlugin = payload.pluginRegistry.find((plugin) => plugin.packageName === active?.plugin?.name);
+  return {
+    // The registry's display name beats an installed package's raw name.
+    name: authPlugin?.name ?? (active?.plugin && servingPlugin ? servingPlugin.name : entry.name),
+    initialProvider: authPlugin ? pluginSelection(authPlugin.id) : entry.id,
+  };
+}
 const advancedPluginSelection = 'plugin:advanced';
 export type ProviderSetupScope = 'all' | 'provider' | 'plugins';
 
@@ -921,8 +940,8 @@ export function ProviderSettingsGroup({ section = 'providers', initialExpanded }
           );
           const migrationKey = migrationPlugin ? `plugin:${migrationPlugin.id}` : null;
           const reconnect = status?.health?.state === 'reconnect_required';
-          const authPlugin = payload?.pluginRegistry.find((plugin) => plugin.packageName === active?.plugin?.name);
-          const displayName = active?.plugin && servingPlugin ? servingPlugin.name : entry.name;
+          const target = payload ? providerConnectionTarget(payload, entry.id) : undefined;
+          const displayName = target?.name ?? entry.name;
           return (
             <ExpandRow
               key={entry.id}
@@ -949,7 +968,7 @@ export function ProviderSettingsGroup({ section = 'providers', initialExpanded }
                           scope: 'provider',
                           title: `reconnect ${displayName}`,
                           reconnect: true,
-                          initialProvider: authPlugin ? pluginSelection(authPlugin.id) : entry.id,
+                          initialProvider: target?.initialProvider ?? entry.id,
                         })}
                   >{migrationKey !== null && busyKey === migrationKey ? 'Upgrading…' : migrationPlugin ? 'Continue upgrade' : 'Reconnect'}</button>
                 </div>

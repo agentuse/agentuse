@@ -1,4 +1,5 @@
 import { memo } from 'preact/compat';
+import type { ComponentChildren } from 'preact';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useSmoothText } from '../hooks/use-smooth-text';
 import { useDeveloperDebug } from '../hooks/use-developer-debug';
@@ -1552,6 +1553,10 @@ export interface LogEntryProps {
   /** The decision currently being submitted; renders a specific pending label
    *  ("approving…") in place of the keyboard hint. */
   pendingAction?: 'approve' | 'reject' | 'comment' | null;
+  /** Why the last decision did not take effect; sits directly above the buttons. */
+  actionNotice?: ComponentChildren;
+  /** The gate can no longer take a decision (answered elsewhere, expired). */
+  decisionLocked?: boolean | undefined;
   /** On a view-only sub-agent page, the pending gate has no local controls —
    *  this links to the parent run where the decision is actually made. */
   parentApproveHref?: string | undefined;
@@ -1866,6 +1871,7 @@ function LogEntryImpl(props: LogEntryProps) {
         )}
         {props.showActions && (
           <div class="log-actions" data-actions-row>
+            {!props.actionsDisabled && props.actionNotice}
             {props.actionsDisabled ? (
               // No role="status": this mounts inside the role="log" list and the
               // page's persistent notice announces the same event; a third live
@@ -1895,12 +1901,12 @@ function LogEntryImpl(props: LogEntryProps) {
                 thing under the cursor and the last thing keyboard focus lands
                 on, so neither reaches it by accident. */}
             <div class="log-actions-buttons">
-              {!genericToolApproval && <button disabled={props.actionsDisabled} title={reviewEscalation ? 'Guide revision (c)' : 'Comment (c)'} onClick={() => props.onAction('comment')}>{reviewEscalation ? 'Guide revision' : 'Comment'}</button>}
-              <button class="danger" disabled={props.actionsDisabled} title={reviewEscalation ? 'Stop (Esc)' : 'Reject (Esc)'} onClick={() => props.onAction('reject')}>{reviewEscalation ? 'Stop' : 'Reject'}</button>
+              {!genericToolApproval && <button disabled={props.actionsDisabled || props.decisionLocked} title={reviewEscalation ? 'Guide revision (c)' : 'Comment (c)'} onClick={() => props.onAction('comment')}>{reviewEscalation ? 'Guide revision' : 'Comment'}</button>}
+              <button class="danger" disabled={props.actionsDisabled || props.decisionLocked} title={reviewEscalation ? 'Stop (Esc)' : 'Reject (Esc)'} onClick={() => props.onAction('reject')}>{reviewEscalation ? 'Stop' : 'Reject'}</button>
               {!reviewEscalation && (
                 <button
                   class="primary"
-                  disabled={props.actionsDisabled || awaitingPick}
+                  disabled={props.actionsDisabled || props.decisionLocked || awaitingPick}
                   title={awaitingPick ? 'Pick one of the options above first' : 'Approve (⌘⏎)'}
                   onClick={() => props.onAction('approve')}
                 >
@@ -1947,6 +1953,8 @@ export const logEntryPropsEqual = (prev: LogEntryProps, next: LogEntryProps): bo
   prev.hideApprovalOptions === next.hideApprovalOptions &&
   prev.actionsDisabled === next.actionsDisabled &&
   prev.pendingAction === next.pendingAction &&
+  prev.actionNotice === next.actionNotice &&
+  prev.decisionLocked === next.decisionLocked &&
   prev.parentApproveHref === next.parentApproveHref &&
   prev.parentApproveLabel === next.parentApproveLabel &&
   prev.projectId === next.projectId &&
