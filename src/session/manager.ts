@@ -2282,6 +2282,35 @@ export class SessionManager {
   }
 
   /**
+   * Stamp bookkeeping (a backfilled blocker, a dismissal) on an ended failed
+   * run without making it look newly active. Skips and returns false when the
+   * run moved after the snapshot was read: a retry must not be overwritten.
+   */
+  async stampEndedFailure(
+    sessionPath: string,
+    expectedUpdatedAt: number,
+    updates: (session: SessionInfo) => Pick<Partial<SessionInfo>, 'error' | 'dismissedAt'>,
+  ): Promise<boolean> {
+    const key = `${sessionPath}/session`;
+    return this.serializedWrite(key, () => this.withSessionIndexMutation(async () => {
+      const session = await readJSON<SessionInfo>(key);
+      if (!session || session.status !== 'error' || session.time.updated !== expectedUpdatedAt) return false;
+      Object.assign(session, updates(session));
+      await writeJSON(key, session);
+      await this.updateSessionIndex(session, sessionPath);
+      return true;
+    }));
+  }
+
+  /** Every tool part stored under a session, its delegated sub-agents' included. */
+  async listToolPartsAtPath(sessionPath: string): Promise<ToolPart[]> {
+    const partKeys = (await listKeys(sessionPath))
+      .filter((key) => key.startsWith(`${sessionPath}/`) && key.includes('/part/'));
+    const parts = await mapLimit(partKeys, 16, (key) => readJSON<Part>(key));
+    return parts.filter((part): part is ToolPart => part?.type === 'tool');
+  }
+
+  /**
    * Get the full path to this session's directory
    */
   getFullPath(): string | null {

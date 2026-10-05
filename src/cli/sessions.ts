@@ -19,6 +19,7 @@ import { parseAgent } from "../parser";
 import { connectMCP } from "../mcp";
 import { applyResumeToolResult, restoreResumeToolResult, runAgent, prepareAgentExecution, describeErrorPart, classifyRunResult } from "../runner";
 import { reconcileOrphanedSessions } from "../runner/resume";
+import { backfillBlockers, type BackfillEntry } from "../session/blocker-backfill";
 import { describeLearningOutcome, effectiveCap, saveManualLearning, type LearningSource } from "../learning";
 import { daemonRequestHeaders, daemonResponseError, findServerForProject, serverBaseUrl } from "../utils/server-registry";
 import { formatCompactDuration } from "../utils/duration";
@@ -740,6 +741,19 @@ export function createSessionsCommand(): Command {
       await reconcileSessionsCommand(scope, options);
     }));
 
+  sessionsCmd
+    .command("backfill-blockers")
+    .description("Give older incomplete runs a blocker so they group like new ones, and dismiss failures too old to act on. Adds fields only; status and messages are never rewritten")
+    .option("--days <n>", "Backfill failures last touched within this many days; dismiss older ones", "14")
+    .option("--dry-run", "Report what would change without writing")
+    .option("-j, --json", "Output as JSON")
+    .option("--all", "Sweep every project")
+    .option("--project [path]", "Sweep a project path; defaults to the current project")
+    .action(async (options: { days?: string; dryRun?: boolean; json?: boolean; all?: boolean; project?: string | boolean }) => runSessionsAction(async () => {
+      const scope = resolveSessionScope(options);
+      await backfillBlockersCommand(scope, options);
+    }));
+
   // Add path subcommand to show storage location
   sessionsCmd
     .command("path")
@@ -756,6 +770,42 @@ export function createSessionsCommand(): Command {
     }));
 
   return sessionsCmd;
+}
+
+async function backfillBlockersCommand(
+  scope: SessionScope,
+  options: { days?: string; dryRun?: boolean; json?: boolean }
+): Promise<void> {
+  const days = Number(options.days ?? "14");
+  if (!Number.isFinite(days) || days <= 0) {
+    throw new Error(`Invalid --days: ${options.days}. Use a positive day count.`);
+  }
+  const sessions = await sessionsForScope(scope);
+  const projectRoots = [...new Set(sessions.map((s) => s.projectRoot).filter(Boolean))];
+  const all: Array<BackfillEntry & { projectRoot: string }> = [];
+  for (const projectRoot of projectRoots) {
+    await initStorage(projectRoot);
+    const entries = await backfillBlockers(new SessionManager(), { days, dryRun: options.dryRun === true });
+    for (const entry of entries) all.push({ projectRoot, ...entry });
+  }
+
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify({ dryRun: options.dryRun === true, days, entries: all }, null, 2)}\n`);
+    return;
+  }
+  const dismissed = all.filter((e) => e.action === 'dismiss').length;
+  const stamped = all.filter((e) => e.action === 'blocker');
+  const verb = options.dryRun ? 'Would' : 'Did';
+  process.stdout.write(`${verb} dismiss ${dismissed} failure(s) older than ${days} day(s).\n`);
+  process.stdout.write(`${verb} add a blocker to ${stamped.length} incomplete run(s):\n`);
+  const counts = new Map<string, number>();
+  for (const entry of stamped) {
+    const key = `${entry.blocker!.source.padEnd(8)} ${entry.blocker!.kind}: ${entry.blocker!.subject}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  for (const [key, count] of [...counts].sort((a, b) => b[1] - a[1])) {
+    process.stdout.write(`  ${String(count).padStart(4)}  ${key}\n`);
+  }
 }
 
 /**
