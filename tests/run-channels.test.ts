@@ -269,4 +269,31 @@ describe('run channels', () => {
     expect(text).toContain('Status: failed');
     expect(text).toContain('/tmp/channel.agentuse');
   });
+
+  it('never posts a fresh alert for a run that stopped on a person, but settles its live card', async () => {
+    const agent = agentWithSlack({ enabled: true, events: ['completion', 'failure'], channelId: 'C_TERMINAL' });
+    expect(__testing.slackChannelForEvent(agent, 'incomplete')).toEqual([]);
+
+    const sent: string[] = [];
+    await sendRunChannelMessages({ event: 'incomplete', agent, sessionId: 'session-1', error: 'Waiting on your pick' },
+      async (_channel, options) => { sent.push(options.event); });
+    expect(sent).toEqual([]);
+
+    // A failure-only channel never got a live card, so nothing is left hanging.
+    const handle = { channel: 'C_TERMINAL', ts: '1.0', events: ['failure' as const] };
+    expect(__testing.shouldUpdateHandleForEvent(handle, 'incomplete')).toBe(true);
+  });
+
+  it('renders a person-blocked run as incomplete with its reason, not as a failure', () => {
+    const options = { event: 'incomplete' as const, agent: agentWithSlack(), sessionId: 'session-1', error: 'Waiting on your pick' };
+    const card = JSON.stringify(__testing.buildRunRootBlocks(options));
+    const thread = JSON.stringify(__testing.buildRunThreadMessages(options));
+
+    expect(card).toContain('channel-test · run incomplete');
+    expect(card).not.toContain('failed');
+    expect(thread).toContain('Reason');
+    expect(thread).toContain('Waiting on your pick');
+    expect(thread).toContain('Status: incomplete');
+    expect(thread).not.toContain('Error');
+  });
 });

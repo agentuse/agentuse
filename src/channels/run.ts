@@ -17,8 +17,13 @@ import {
   type SlackThreadMessage
 } from '../slack/lifecycle';
 
-type RunChannelEvent = 'completion' | 'failure';
-type RunLifecycleStatus = 'running' | 'suspended' | 'completed' | 'failed';
+/**
+ * `incomplete` is a run that stopped on a person (waiting on or rejected by
+ * one): nothing broke, so it never posts a failure alert. It is not a channel
+ * a config can subscribe to; it only settles a live run card already posted.
+ */
+type RunChannelEvent = 'completion' | 'failure' | 'incomplete';
+type RunLifecycleStatus = 'running' | 'suspended' | 'completed' | 'failed' | 'incomplete';
 
 type SlackChannel = {
   channelId?: string;
@@ -62,6 +67,7 @@ interface RunChannelDisplayOptions extends Omit<RunCardOptions, 'event'> {
 
 function slackChannelForEvent(agent: ParsedAgent, event: RunChannelEvent): SlackChannel[] {
   const slack = agent.config.channels?.slack;
+  if (event === 'incomplete') return [];
   if (!slack || slack.enabled === false || !slack.events.includes(event)) return [];
   const channelId = 'channelId' in slack ? slack.channelId : undefined;
   return [{
@@ -93,6 +99,7 @@ function runDurationMs(options: Pick<RunChannelOptions, 'startTime'>): number | 
 
 function runStatus(options: RunChannelDisplayOptions): RunLifecycleStatus {
   if (options.lifecycleStatus) return options.lifecycleStatus;
+  if (options.event === 'incomplete') return 'incomplete';
   return options.event === 'completion' ? 'completed' : 'failed';
 }
 
@@ -106,6 +113,8 @@ function runTitleBase(status: RunLifecycleStatus): string {
       return 'run completed';
     case 'failed':
       return 'run failed';
+    case 'incomplete':
+      return 'run incomplete';
   }
 }
 
@@ -123,7 +132,16 @@ function runPreview(options: RunCardOptions): string {
   if (options.event === 'completion') {
     return options.result?.text?.trim() || 'Agent completed without a final answer.';
   }
+  if (options.event === 'incomplete') {
+    return options.error !== undefined ? toErrorMessage(options.error) : 'Agent stopped on a person.';
+  }
   return options.error !== undefined ? toErrorMessage(options.error) : 'Agent run failed.';
+}
+
+/** Thread heading for the run's last word: an answer, a reason, or an error. */
+function previewLabel(options: RunCardOptions): string {
+  if (options.event === 'completion') return 'Final answer';
+  return options.event === 'incomplete' ? 'Reason' : 'Error';
 }
 
 /**
@@ -190,17 +208,14 @@ function buildRunThreadMessages(options: RunCardOptions): SlackThreadMessage[] {
   ];
   const messages: SlackThreadMessage[] = [];
 
+  const label = previewLabel(options);
   messages.push({
-    text: options.event === 'completion'
-      ? `Final answer: ${truncate(runPreview(options), 120)}`
-      : `Error: ${truncate(runPreview(options), 120)}`,
+    text: `${label}: ${truncate(runPreview(options), 120)}`,
     blocks: [{
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: options.event === 'completion'
-          ? `*Final answer*\n\`\`\`${truncate(runPreview(options), 2800)}\`\`\``
-          : `*Error*\n\`\`\`${truncate(runPreview(options), 2800)}\`\`\``
+        text: `*${label}*\n\`\`\`${truncate(runPreview(options), 2800)}\`\`\``
       }
     }]
   });
@@ -234,13 +249,14 @@ function findHandle(handles: RunChannelHandle[], channel: SlackChannel): RunChan
 }
 
 function shouldUpdateHandleForEvent(handle: RunChannelHandle, event: RunChannelEvent): boolean {
+  // A live card exists only on a channel that wants approvals or every terminal
+  // outcome, so a person-blocked run settles any card it finds.
+  if (event === 'incomplete') return true;
   return handle.events.includes(event) || handle.events.includes('approval');
 }
 
 function terminalText(options: RunCardOptions): string {
-  return options.event === 'completion'
-    ? `AgentUse run completed: ${options.agent.name}`
-    : `AgentUse run failed: ${options.agent.name}`;
+  return `AgentUse ${runTitleBase(runStatus(options))}: ${options.agent.name}`;
 }
 
 async function sendSlackRunChannelMessage(channel: SlackChannel, options: RunChannelOptions): Promise<void> {

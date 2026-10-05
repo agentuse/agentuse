@@ -31,6 +31,7 @@ import type { PreparedAgentExecution, RunAgentResult } from './types';
 import type { ModelMessage } from 'ai';
 import { composeFinalOutput } from '../tools/report-outcome.js';
 import { incompleteSessionError, settleIncomplete } from './blocker-evidence';
+import { isHumanBlocker } from '../session/blocker';
 
 type PersistedSlackRunChannelHandle = {
   channel: string;
@@ -666,11 +667,12 @@ export async function runAgent(
       ...(prepSessionID && { sessionId: prepSessionID }),
     });
 
-    // A declared-incomplete run notifies as a failure — that is the whole point
-    // of the declaration: the completion card would read as a green "done".
+    // A declared-incomplete run notifies as a failure — the completion card
+    // would read as a green "done" — unless a person is the blocker: nothing
+    // broke, the gate already reached them, so it only settles its live card.
     await sendRunChannelMessages({
       ...(incomplete
-        ? { event: 'failure' as const, error: incomplete.reason }
+        ? { event: isHumanBlocker(incomplete.blocker?.kind) ? 'incomplete' as const : 'failure' as const, error: incomplete.reason }
         : { event: 'completion' as const }),
       agent,
       result: runResult,

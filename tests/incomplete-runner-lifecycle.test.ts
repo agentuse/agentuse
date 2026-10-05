@@ -83,4 +83,35 @@ describe('incomplete runner lifecycle', () => {
       agentName: 'incomplete-lifecycle',
     }]);
   });
+
+  it('sends no failure alert when a person is the blocker', async () => {
+    const reason = 'Waiting on your pick of a source post';
+    const agent: ParsedAgent = {
+      name: 'waiting-lifecycle',
+      instructions: 'Report the result.',
+      config: { model: 'demo:default' },
+    };
+    const preparation: PreparedAgentExecution = {
+      tools: {},
+      systemMessages: [],
+      userMessage: 'Run the task.',
+      maxSteps: 1,
+      subAgentNames: new Set(),
+      runOutcome: { incomplete: { reason, blocker: { kind: 'waiting_on_human', subject: 'source pick' } } },
+      doomLoopDetector: new DoomLoopDetector({ threshold: 3, action: 'error' }),
+      cleanup: async () => {},
+      releaseStoreLock: async () => {},
+      learningsApplied: 0,
+    };
+
+    await runAgent(
+      agent, [], false, undefined, Date.now(), false,
+      undefined, undefined, undefined, undefined, undefined,
+      preparation, true, null, false,
+    );
+
+    expect(channelEvents).toHaveLength(1);
+    expect(channelEvents[0]).toMatchObject({ event: 'incomplete', error: reason });
+    expect(channelEvents.some((event) => event.event === 'failure' || event.event === 'completion')).toBe(false);
+  });
 });
