@@ -41,6 +41,8 @@ interface SessionSummary {
   projectRoot: string;
   status?: SessionStatus;
   errorCause?: string;
+  errorSubject?: string;
+  errorCauseSource?: string;
   errorCode?: string;
   errorMessage?: string;
   /** Suspended parent parked on a running delegated child; renders as
@@ -118,6 +120,8 @@ function summaryFromIndex(entry: SessionListSummary, sessionDir: string, fallbac
     projectRoot,
     status: entry.status,
     ...(entry.error?.cause && { errorCause: entry.error.cause }),
+    ...(entry.error?.subject && { errorSubject: entry.error.subject }),
+    ...(entry.error?.causeSource && { errorCauseSource: entry.error.causeSource }),
     ...(entry.error?.code && { errorCode: entry.error.code }),
     ...(entry.error?.message && { errorMessage: entry.error.message }),
     ...(entry.mock && { mock: true }),
@@ -234,6 +238,8 @@ async function listLegacyStoredSessions(sessionDir: string): Promise<SessionSumm
       projectRoot: session.project.root || path.basename(path.dirname(sessionDir)),
       status: session.status,
       ...(session.error?.cause && { errorCause: session.error.cause }),
+      ...(session.error?.subject && { errorSubject: session.error.subject }),
+      ...(session.error?.causeSource && { errorCauseSource: session.error.causeSource }),
       ...(session.error?.code && { errorCode: session.error.code }),
       ...(session.error?.message && { errorMessage: session.error.message }),
       ...(session.mock && { mock: true }),
@@ -373,8 +379,8 @@ function resolveSessionScope(options?: { all?: boolean; project?: string | boole
   return { kind: "project", projectRoot: projectContext.projectRoot };
 }
 
-function statusLabel(status?: SessionStatus, errorCode?: string): string {
-  const outcome = sessionOutcome(status, errorCode);
+function statusLabel(status?: SessionStatus, errorCode?: string, errorCause?: string): string {
+  const outcome = sessionOutcome(status, errorCode, errorCause);
   if (outcome === 'stopped' || outcome === 'timeout' || outcome === 'incomplete') return outcome;
   return outcome === 'completed'
     ? 'done'
@@ -391,7 +397,7 @@ function statusLabel(status?: SessionStatus, errorCode?: string): string {
  *  (a suspended parent parked on a running delegated child) and the mock
  *  marker, so a fabricated test run never reads as a real one. */
 function sessionStatusText(session: Pick<SessionSummary, 'status' | 'errorCode' | 'errorCause' | 'subagentActive' | 'mock'>): string {
-  const base = session.subagentActive ? 'running · subagent' : (failureLabel(session.errorCause) ?? statusLabel(session.status, session.errorCode));
+  const base = session.subagentActive ? 'running · subagent' : (failureLabel(session.errorCause) ?? statusLabel(session.status, session.errorCode, session.errorCause));
   return session.mock ? `${base} · mock` : base;
 }
 

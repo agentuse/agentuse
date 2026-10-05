@@ -30,6 +30,7 @@ import { resolveVerifyPlacements } from '../verify/gate';
 import type { PreparedAgentExecution, RunAgentResult } from './types';
 import type { ModelMessage } from 'ai';
 import { composeFinalOutput } from '../tools/report-outcome.js';
+import { incompleteSessionError, settleIncomplete } from './blocker-evidence';
 
 type PersistedSlackRunChannelHandle = {
   channel: string;
@@ -555,7 +556,10 @@ export async function runAgent(
     // deliver — e.g. a dead login) via report_outcome. That verdict
     // flips the terminal status to error/INCOMPLETE so the run is skimmable as
     // a failure, while the run itself still finished without throwing.
-    const incomplete = preparation.runOutcome?.incomplete;
+    // Runtime evidence (a failed tool call that printed `command not found`)
+    // settles the blocker before anything reports or persists it.
+    const declaredIncomplete = preparation.runOutcome?.incomplete;
+    const incomplete = declaredIncomplete && settleIncomplete(declaredIncomplete, result.toolCallTraces);
     // The agent's own one-line verdict (complete or idle). Suppressed when the
     // run is incomplete so no surface can pair a failure with a "here's what
     // landed" headline; classifyRunResult applies the same precedence.
@@ -640,10 +644,7 @@ export async function runAgent(
           ...(priorTokens && { priorTokens })
         });
         if (incomplete) {
-          await sessionManager.setSessionError(prepSessionID, prepAgentId, {
-            code: 'INCOMPLETE',
-            message: incomplete.reason
-          });
+          await sessionManager.setSessionError(prepSessionID, prepAgentId, incompleteSessionError(incomplete));
           // "Reviewer rejected" is a review already given; don't ask for it twice.
           await dismissIfReviewerRejected(sessionManager, prepSessionID, prepAgentId, incomplete);
         } else {

@@ -391,7 +391,7 @@ describe('report_outcome in the execution loop', () => {
     )) { /* consume */ }
     const work = streamConfigs[0];
 
-    const incomplete = { status: 'incomplete', headline: 'PR #12 blocked on failing CI', artifacts: [] };
+    const incomplete = { status: 'incomplete', headline: 'PR #12 blocked on failing CI', artifacts: [], blocker: { kind: 'service_down', subject: 'CI' } };
     await tools.report_outcome.execute(incomplete);
     expect(stops(work, outcomeStep(incomplete))).toBe(false);
 

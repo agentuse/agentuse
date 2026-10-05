@@ -83,7 +83,7 @@ function RunningRow(props: { row: SessionRow; now: number; ticker: boolean }) {
           ? <div class={tail.tool ? 'now-ticker tool' : 'now-ticker'} aria-hidden="true">
               <span class="now-ticker-line" key={`${tail.tool ?? ''}:${tail.text}`}>{tail.text}</span>
             </div>
-          : <div class="now-desc">{row.agent.description || displayStatusLabel(row.status, row.errorCode)}</div>}
+          : <div class="now-desc">{row.agent.description || displayStatusLabel(row.status, row.errorCode, row.errorCause)}</div>}
       </div>
       <span class="now-elapsed" title="Active processing time">{activeMs === null ? 'Time unavailable' : formatElapsedClock(activeMs)}</span>
     </a>
@@ -111,7 +111,7 @@ export function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow)
   // A declared-incomplete run reads in amber and says WHY it stopped: its code
   // word is already the label, so repeating it as `incomplete · INCOMPLETE`
   // spends the row's one line of detail on nothing.
-  const incomplete = isIncompleteOutcome(row.status, row.errorCode);
+  const incomplete = isIncompleteOutcome(row.status, row.errorCode, row.errorCause);
   const detail = incomplete
     ? errorText(row.errorMessage)
     : (failureLabel(row.errorCause) ?? (errorText(row.errorMessage) || row.errorCode || ''));
@@ -120,7 +120,7 @@ export function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow)
       <span class={`feed-dot ${incomplete ? 'incomplete' : 'failed'}`} aria-hidden="true"></span>
       <span class="attn-agent">{agentName}</span>
       <span class={`attn-fail${incomplete ? ' warn' : ''}`}>
-        {props.label ?? displayStatusLabel(row.status, row.errorCode)}
+        {props.label ?? displayStatusLabel(row.status, row.errorCode, row.errorCause)}
         {!props.label && detail && ` · ${detail}`}
       </span>
       <span class="feed-time" title={formatApprovalTime(at)}>{formatRelativeTime(at)} · review or dismiss →</span>
@@ -341,7 +341,7 @@ function tallyRunsByAgent(sessions: SessionRow[]): AgentRuns[] {
       };
       byAgent.set(key, bar);
     }
-    bar.counts[isIncompleteOutcome(s.status, s.errorCode) || s.status === 'incomplete' ? 'incomplete' : runTone(s.status)]++;
+    bar.counts[isIncompleteOutcome(s.status, s.errorCode, s.errorCause) || s.status === 'incomplete' ? 'incomplete' : runTone(s.status)]++;
     bar.total++;
   }
   const bars = [...byAgent.values()];
@@ -686,7 +686,7 @@ export default function Home() {
   // Crashes only, matching the /sessions?status=error filter this stat links to.
   // A run the agent declared incomplete is listed under its own filter there.
   const failed24h = operationalSessions.filter((s) =>
-    runTone(s.status) === 'failed' && !isIncompleteOutcome(s.status, s.errorCode)).length;
+    runTone(s.status) === 'failed' && !isIncompleteOutcome(s.status, s.errorCode, s.errorCause)).length;
   const ended24h = operationalSessions.filter((s) => { const t = runTone(s.status); return t === 'ok' || t === 'failed'; }).length;
   const successPct = ended24h > 0 ? Math.round(((ended24h - failed24h) / ended24h) * 100) : null;
 

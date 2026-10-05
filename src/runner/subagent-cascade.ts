@@ -219,6 +219,7 @@ export async function loadStoredSubagentResult(
     return { text, incomplete: {
       reason: incomplete.headline,
       ...(incomplete.rejectionOnly !== undefined && { rejectionOnly: incomplete.rejectionOnly }),
+      ...(incomplete.blocker && { blocker: incomplete.blocker }),
     } };
   }
   const complete = [...calls].reverse().find((call) => call.status !== 'incomplete');

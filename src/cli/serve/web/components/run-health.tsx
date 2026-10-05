@@ -12,7 +12,7 @@ import { formatApproximateDuration } from '../../../../utils/duration';
  */
 export function LastRunCell({ session }: { session: SessionRow | undefined }) {
   if (!session) return <span class="muted">—</span>;
-  const label = displayStatusLabel(session.status, session.errorCode);
+  const label = displayStatusLabel(session.status, session.errorCode, session.errorCause);
   const tone = runTone(session.status);
   const at = session.updatedAt || session.createdAt;
   const text = tone === 'running' ? 'running now'
@@ -59,7 +59,7 @@ export function RunHistorySpark({ runs, limit = RUNSPARK_LIMIT }: { runs: Sessio
           key={s.sessionId}
           class={`runspark-bar ${runTone(s.status)}`}
           style={{ height: `${Math.max(3, Math.round(((durations[i] ?? 0) / max) * RUNSPARK_MAX_PX))}px` }}
-          title={`${displayStatusLabel(s.status, s.errorCode)} · ${formatRelativeTime(s.createdAt)} · ${durations[i] === null ? 'Active time unavailable' : `${formatApproximateDuration(durations[i]!)} active`}`}
+          title={`${displayStatusLabel(s.status, s.errorCode, s.errorCause)} · ${formatRelativeTime(s.createdAt)} · ${durations[i] === null ? 'Active time unavailable' : `${formatApproximateDuration(durations[i]!)} active`}`}
         ></span>
       ))}
     </span>

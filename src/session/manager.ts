@@ -83,7 +83,7 @@ export interface SessionListSummary {
   updatedAt: number;
   execution?: SessionInfo['time']['execution'];
   timing?: ActiveTiming;
-  error?: { code?: string; message?: string; cause?: string };
+  error?: { code?: string; message?: string; cause?: string; subject?: string; causeSource?: string };
   dismissedAt?: number;
   reviewedAt?: number;
   mock?: boolean;
@@ -293,7 +293,7 @@ function toSessionListSummary(session: SessionInfo, sessionPath: string): Sessio
     createdAt: session.time.created,
     updatedAt: session.time.updated,
     ...(session.time.execution && { execution: session.time.execution }),
-    ...(session.error && { error: { code: session.error.code, message: session.error.message, ...(session.error.cause && { cause: session.error.cause }) } }),
+    ...(session.error && { error: { code: session.error.code, message: session.error.message, ...(session.error.cause && { cause: session.error.cause }), ...(session.error.subject && { subject: session.error.subject }), ...(session.error.causeSource && { causeSource: session.error.causeSource }) } }),
     ...(session.dismissedAt !== undefined && { dismissedAt: session.dismissedAt }),
     ...(session.reviewedAt !== undefined && { reviewedAt: session.reviewedAt }),
     ...(session.mock && { mock: true }),

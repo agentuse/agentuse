@@ -1067,8 +1067,10 @@ describe('Session list helpers', () => {
     expect(statusDot({ status: 'suspended' })).toBe('waiting');
     expect(statusDot({ status: 'error' })).toBe('failed');
     expect(statusDot({ status: 'error', errorCode: 'TIMEOUT' })).toBe('failed');
-    // Declared by the agent, not a crash: its own dot, and its own colour.
-    expect(statusDot({ status: 'error', errorCode: 'INCOMPLETE' })).toBe('incomplete');
+    // Waiting on a person, not a crash: its own dot, and its own colour.
+    expect(statusDot({ status: 'error', errorCode: 'INCOMPLETE', errorCause: 'waiting_on_human' })).toBe('incomplete');
+    // Declared incomplete because something is broken: a failure.
+    expect(statusDot({ status: 'error', errorCode: 'INCOMPLETE', errorCause: 'missing_tool' })).toBe('failed');
     expect(statusDot({ status: 'completed', outcome: 'idle' })).toBe('idle');
     expect(statusDot({ status: 'completed' })).toBe('done');
   });

@@ -22,7 +22,7 @@ export function formatApprovalLogValue(value: unknown): string | undefined {
     : JSON.stringify(value, null, 2);
 }
 
-export function sessionErrorFields(session: { status?: string; error?: { code?: string; message?: string; cause?: string } }) {
+export function sessionErrorFields(session: { status?: string; error?: { code?: string; message?: string; cause?: string; subject?: string; causeSource?: string } }) {
   if (!session.error) return {};
   // Resuming or continuing a failed run flips the status back to running but
   // leaves the old error on the record (it's kept as history for the session
@@ -32,6 +32,8 @@ export function sessionErrorFields(session: { status?: string; error?: { code?: 
   if (session.status !== undefined && session.status !== 'error') return {};
   return {
     ...(session.error.cause && { errorCause: session.error.cause }),
+    ...(session.error.subject && { errorSubject: session.error.subject }),
+    ...(session.error.causeSource && { errorCauseSource: session.error.causeSource }),
     ...(typeof session.error.code === 'string' && session.error.code ? { errorCode: session.error.code } : {}),
     ...(typeof session.error.message === 'string' && session.error.message ? { errorMessage: session.error.message } : {})
   };

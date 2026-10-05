@@ -1,4 +1,5 @@
 import type { SessionStatus } from './types.js';
+import { isHumanBlocker } from './blocker.js';
 
 /** Lifecycle statuses and derived outcomes exposed as session-list filters. */
 export const SESSION_STATUS_FILTERS: readonly ('' | SessionStatus | 'idle' | 'incomplete')[] = [
@@ -42,13 +43,19 @@ export function isLiveSessionStatus(status: string | undefined): boolean {
 }
 
 /**
- * An agent-declared non-delivery: the run finished cleanly and said it could
- * not deliver (an incomplete report_outcome), persisted as an error carrying the
- * INCOMPLETE code. Operator surfaces separate this from a crash, so the
- * definition lives here instead of being re-spelled per surface.
+ * An agent-declared non-delivery that is not an error: the run finished cleanly
+ * and said it could not deliver because of a person (waiting on or rejected by
+ * one). Persisted as an error carrying the INCOMPLETE code plus the blocker kind
+ * in `cause`. Every other INCOMPLETE blocker (a missing tool, a bad input, no
+ * access, or none recorded) means something is broken, so it reads as an error.
+ * Operator surfaces separate the two through this one definition.
  */
-export function isIncompleteOutcome(status: string | undefined, errorCode: string | undefined): boolean {
-  return status === 'error' && errorCode === 'INCOMPLETE';
+export function isIncompleteOutcome(
+  status: string | undefined,
+  errorCode: string | undefined,
+  errorCause: string | undefined,
+): boolean {
+  return status === 'error' && errorCode === 'INCOMPLETE' && isHumanBlocker(errorCause);
 }
 
 export type SessionOutcome = 'completed' | 'error' | 'stopped' | 'timeout' | 'incomplete';
@@ -56,12 +63,13 @@ export type SessionOutcome = 'completed' | 'error' | 'stopped' | 'timeout' | 'in
 /** Normalize durable status plus error code before each transport chooses its wording. */
 export function sessionOutcome(
   status: string | undefined,
-  errorCode?: string | undefined,
+  errorCode: string | undefined,
+  errorCause: string | undefined,
 ): SessionOutcome | undefined {
   if (status === 'completed') return 'completed';
   if (status !== 'error') return undefined;
   if (errorCode === 'USER_STOPPED') return 'stopped';
   if (errorCode === 'TIMEOUT') return 'timeout';
-  if (errorCode === 'INCOMPLETE') return 'incomplete';
+  if (isIncompleteOutcome(status, errorCode, errorCause)) return 'incomplete';
   return 'error';
 }

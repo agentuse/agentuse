@@ -238,7 +238,7 @@ function recentJobFallback(row: SessionRow): string {
 export function RecentJobRow(props: { row: SessionRow }) {
   const { row } = props;
   const href = `/sessions/${encodeURIComponent(row.sessionId)}?project=${encodeURIComponent(row.project)}`;
-  const status = displayStatusLabel(row.status, row.errorCode);
+  const status = displayStatusLabel(row.status, row.errorCode, row.errorCause);
   const summary = row.finalResponse?.trim() ? recentJobSummary(row.finalResponse) : recentJobFallback(row);
   const { headline, detail } = splitJobSummary(summary);
   const live = isExecutingSessionStatus(row.status) || row.subagentActive === true;

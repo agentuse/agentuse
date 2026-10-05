@@ -118,6 +118,10 @@ export interface SessionInfo {
     message: string;
     code: string;
     cause?: string;                  // Additive, evidence-based failure classification
+    // Blocker of an INCOMPLETE run (see session/blocker.ts): `cause` holds the
+    // kind, `subject` the stuck thing, `causeSource` how it was established.
+    subject?: string;
+    causeSource?: 'runtime' | 'approval' | 'agent' | 'inferred';
     phase?: string;
     attempts?: number;
     time: number;                    // Unix timestamp (ms)

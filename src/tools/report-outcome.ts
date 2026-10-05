@@ -1,6 +1,7 @@
 import type { Tool } from 'ai';
 import { z } from 'zod';
 import { logger } from '../utils/logger';
+import { BLOCKER_KINDS, isBlockerKind, type BlockerKind, type BlockerSource } from '../session/blocker';
 
 /**
  * Mutable per-run outcome shared between the `report_outcome` tool and the
@@ -23,8 +24,15 @@ import { logger } from '../utils/logger';
  * successful completion everywhere; the flag only lets a surface tell "did the
  * job" from "had no job", so a stretch of idle runs can be noticed.
  */
+export interface DeclaredBlocker {
+  kind: BlockerKind;
+  subject: string;
+  /** Set by the runner once runtime evidence has been weighed; absent on the raw declaration. */
+  source?: BlockerSource;
+}
+
 export interface RunOutcome {
-  incomplete?: { reason: string; rejectionOnly?: boolean };
+  incomplete?: { reason: string; rejectionOnly?: boolean; blocker?: DeclaredBlocker };
   complete?: { headline: string; details?: string; artifacts?: string[]; idle?: true };
 }
 
@@ -70,6 +78,14 @@ export interface OutcomeCall {
   details?: string;
   artifacts?: string[];
   rejectionOnly?: boolean;
+  blocker?: DeclaredBlocker;
+}
+
+function readBlocker(value: unknown): DeclaredBlocker | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const { kind, subject } = value as Record<string, unknown>;
+  if (!isBlockerKind(kind) || typeof subject !== 'string') return undefined;
+  return { kind, subject };
 }
 
 /**
@@ -98,12 +114,14 @@ export function readOutcomeCall(toolName: string, input: unknown): OutcomeCall |
     ? 'complete'
     : OUTCOME_STATUSES.find((candidate) => candidate === data.status);
   if (!status) return undefined;
+  const blocker = status === 'incomplete' ? readBlocker(data.blocker) : undefined;
   return {
     status,
     headline: data.headline,
     ...(details && { details }),
     ...(artifacts && { artifacts }),
     ...(status === 'incomplete' && rejectionOnly !== undefined && { rejectionOnly }),
+    ...(blocker && { blocker }),
   };
 }
 
@@ -145,12 +163,24 @@ export const IDLE_OUTCOME_GUIDANCE =
 export const OUTCOME_ARTIFACTS_DESCRIPTION =
   'Paths or URLs of substantive deliverables this run produced or changed: requested documents, PRs, issues, published posts, sent messages. Exclude routine bookkeeping and pre-existing outputs merely inspected or referenced. Use [] when this run delivered no substantive output, including idle runs. Relevant bookkeeping or prior-output links may go in details when needed.';
 
+const BLOCKER_DESCRIPTION =
+  'incomplete only, and required then. Why the run stopped, so runs stuck on the same thing group together. kind: ' +
+  'missing_tool (a CLI or binary is not installed or not on PATH), ' +
+  'missing_package (a library or module is not installed), ' +
+  'bad_input (a required file, record, or input is missing, malformed, or truncated), ' +
+  'no_access (login, permission, bot check, or rate limit refused you), ' +
+  'service_down (an external service or API errored or was unreachable), ' +
+  'waiting_on_human (due work waits on a person: a pending approval, review, or pick), ' +
+  'rejected_by_human (a person rejected the proposal), ' +
+  'other (none of these). subject: the one thing that is stuck, as a short exact name: the command (`birdc`), the package (`boto3`), the file path, the site or service (`quora.com`), or the approval or item waited on. No sentence.';
+
 interface ReportOutcomeInput {
   status: OutcomeStatus;
   headline: string;
   details?: string;
   artifacts: string[];
   rejectionOnly?: boolean;
+  blocker?: DeclaredBlocker;
 }
 
 /**
@@ -167,7 +197,7 @@ export function createReportOutcomeTool(
       'Declare how this run ended and deliver its report. Judge the requested objective, not whether the run stopped cleanly. Pick one status:\n' +
       '- complete: the objective was achieved. This call IS your final answer: the runtime renders `headline` + `details` everywhere (terminal, Slack, the session list, the run feed, and the parent when you are a sub-agent). Call it once, when the work is done, then stop; do not also write the report as a normal message.\n' +
       '- idle: ' + IDLE_OUTCOME_GUIDANCE + ' `artifacts` must be []. The headline says what you checked and why no action was due. Also final: stop after it.\n' +
-      '- incomplete: a required outcome was not delivered because a precondition, input, access path, login/session, dependency, or action failed. That includes items that were waiting but you could not act on (a failed check, a conflict, a missing approval), even when your instructions told you to skip them: skipping was right, but the work is stuck, so it is not idle. Name what is stuck and why. Use it even when stopping was correct or secondary work succeeded. Call it once the blocker is confirmed; the run stays active only for required bookkeeping and concise context not already in the headline. Do not resume core work or report again.\n' +
+      '- incomplete: a required outcome was not delivered because a precondition, input, access path, login/session, dependency, or action failed. That includes items that were waiting but you could not act on (a failed check, a conflict, a missing approval), even when your instructions told you to skip them: skipping was right, but the work is stuck, so it is not idle. Name what is stuck and why, and classify it in `blocker`. Use it even when stopping was correct or secondary work succeeded. Call it once the blocker is confirmed; the run stays active only for required bookkeeping and concise context not already in the headline. Do not resume core work or report again.\n' +
       'Unsure between idle and incomplete? Choose incomplete.',
     inputSchema: z.object({
       status: z.enum(OUTCOME_STATUSES).describe('complete, idle, or incomplete, as defined in the tool description.'),
@@ -177,11 +207,26 @@ export function createReportOutcomeTool(
       details: z.string().optional().describe(DETAILS_DESCRIPTION),
       artifacts: z.array(z.string()).describe(OUTCOME_ARTIFACTS_DESCRIPTION),
       rejectionOnly: z.boolean().optional().describe(`incomplete only. ${REJECTION_ONLY_DESCRIPTION}`),
+      blocker: z.object({
+        kind: z.enum(BLOCKER_KINDS),
+        subject: z.string(),
+      }).optional().describe(BLOCKER_DESCRIPTION),
     }),
-    execute: async ({ status, headline, details, artifacts, rejectionOnly }: ReportOutcomeInput) => {
+    execute: async ({ status, headline, details, artifacts, rejectionOnly, blocker }: ReportOutcomeInput) => {
       if (status === 'incomplete') {
+        // Optional in the schema only because it applies to one status; an
+        // incomplete verdict without it cannot be grouped with its siblings.
+        if (!blocker || !blocker.subject.trim()) {
+          throw new Error(
+            'status "incomplete" requires `blocker`: { kind, subject }. Pick the kind that names why the run stopped and give the stuck thing as a short exact name, then call report_outcome again.'
+          );
+        }
         // Last call wins: an agent may refine the reason as it learns more.
-        outcome.incomplete = { reason: headline, ...(rejectionOnly !== undefined && { rejectionOnly }) };
+        outcome.incomplete = {
+          reason: headline,
+          ...(rejectionOnly !== undefined && { rejectionOnly }),
+          blocker: { kind: blocker.kind, subject: blocker.subject.trim() },
+        };
         return 'Recorded: this run will end marked incomplete. Finish only required bookkeeping and concise non-duplicative context, then stop without another outcome call.';
       }
       if (status === 'idle' && artifacts.length > 0) {
@@ -335,6 +380,8 @@ export interface SubagentResult {
     idle?: true;
     incomplete?: string;
     rejectionOnly?: boolean;
+    /** The child's settled blocker, so a parent stuck on the same thing inherits its evidence. */
+    blocker?: DeclaredBlocker;
   };
 }
 
@@ -371,6 +418,7 @@ export function composeSubagentResult(params: {
       metadata: {
         agent: params.agent, incomplete: incomplete.reason,
         ...(incomplete.rejectionOnly !== undefined && { rejectionOnly: incomplete.rejectionOnly }),
+        ...(incomplete.blocker && { blocker: incomplete.blocker }),
       }
     };
   }

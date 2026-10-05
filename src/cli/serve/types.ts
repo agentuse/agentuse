@@ -72,6 +72,8 @@ export interface ApprovalSummary {
    *  log: a change set's review page. Absent for ordinary runs. */
   reviewHref?: string;
   errorCause?: string;
+  errorSubject?: string;
+  errorCauseSource?: string;
   errorCode?: string;
   errorMessage?: string;
   /** Resume the parent by retrying its interrupted delegated child. */
@@ -108,6 +110,8 @@ export interface SessionSummary {
   updatedAt: number;
   timing?: ActiveTiming;
   errorCause?: string;
+  errorSubject?: string;
+  errorCauseSource?: string;
   errorCode?: string;
   errorMessage?: string;
   /** Reviewer discarded this ended failed run; needs-attention surfaces skip it. */
@@ -167,6 +171,8 @@ export interface SessionStatusInfo {
     filePath?: string;
   };
   errorCause?: string;
+  errorSubject?: string;
+  errorCauseSource?: string;
   errorCode?: string;
   errorMessage?: string;
   mock?: boolean;
@@ -378,6 +384,8 @@ export interface ChildSessionSummary {
   updatedAt: number;
   timing?: ActiveTiming;
   errorCause?: string;
+  errorSubject?: string;
+  errorCauseSource?: string;
   errorCode?: string;
   errorMessage?: string;
   /** Newest tool step, present only while the child is still executing. */
@@ -464,6 +472,8 @@ export interface ApprovalPageInfo {
   };
   decision?: unknown;
   errorCause?: string;
+  errorSubject?: string;
+  errorCauseSource?: string;
   errorCode?: string;
   errorMessage?: string;
   /** Resume the parent by retrying its interrupted delegated child. */

@@ -69,7 +69,7 @@ export function suspendedGateKinds(approvals: ApprovalsListPayload | null): Susp
 }
 
 export function labelFor(row: SessionRow, isNew: boolean, gates: SuspendedGateKinds): string {
-  const status = displayStatusLabel(row.status, row.errorCode);
+  const status = displayStatusLabel(row.status, row.errorCode, row.errorCause);
   if (status === 'suspended') {
     // A suspended parent parked on a running delegated child is progressing, not
     // blocked on a human: the work is live in the subagent. Mutually exclusive

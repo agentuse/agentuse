@@ -411,7 +411,7 @@ describe('sessions suspended before report_outcome', () => {
 
       await (prepared.tools.report_complete as any).execute({ headline: 'Finished after approval' });
       expect(prepared.runOutcome?.complete?.headline).toBe('Finished after approval');
-      await (prepared.tools.report_outcome as any).execute({ status: 'incomplete', headline: 'Login expired', artifacts: [] });
+      await (prepared.tools.report_outcome as any).execute({ status: 'incomplete', headline: 'Login expired', artifacts: [], blocker: { kind: 'no_access', subject: 'login' } });
       expect(prepared.runOutcome?.incomplete?.reason).toBe('Login expired');
 
       expect(fixture.written()?.tools.map(tool => tool.name).sort()).toEqual(['report_complete', 'report_incomplete', 'report_outcome']);

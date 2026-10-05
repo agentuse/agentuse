@@ -259,6 +259,8 @@ export async function listAllApprovals(ctx: WorkerContext, req: ExecuteRequest) 
         ...(typeof reviewer.username === 'string' && { decisionReviewer: reviewer.username }),
         ...(typeof resumePayload.resumeToken === 'string' && { resumeToken: resumePayload.resumeToken }),
         ...(sessionError.errorCause && { errorCause: sessionError.errorCause }),
+        ...(sessionError.errorSubject && { errorSubject: sessionError.errorSubject }),
+        ...(sessionError.errorCauseSource && { errorCauseSource: sessionError.errorCauseSource }),
         ...(sessionError.errorCode && { errorCode: sessionError.errorCode }),
         ...(errorMessage && { errorMessage }),
         ...(Object.keys(channelMessage).length > 0 && {

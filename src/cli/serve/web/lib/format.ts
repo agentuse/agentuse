@@ -204,8 +204,8 @@ export function latestReviewerComment(logs: ApprovalLogEntry[]): { comment: stri
  * error + a self-describing errorCode (USER_STOPPED / TIMEOUT / INCOMPLETE)
  * surface as their own label, matching the server's child-session rendering.
  */
-export function displayStatusLabel(status: string, errorCode?: string | undefined): string {
-  const outcome = sessionOutcome(status, errorCode);
+export function displayStatusLabel(status: string, errorCode: string | undefined, errorCause: string | undefined): string {
+  const outcome = sessionOutcome(status, errorCode, errorCause);
   if (outcome && outcome !== 'completed' && outcome !== 'error') return outcome;
   if (outcome === 'error') {
     // Ended by the reconcile sweep, not by anything the run itself did: it was

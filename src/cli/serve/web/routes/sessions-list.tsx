@@ -85,11 +85,11 @@ export function isRunningRow(row: Pick<SessionRow, 'status' | 'subagentActive'>)
  *  should tell the two apart. Everything else reads as an ordinary finished
  *  run. */
 export function statusDot(
-  row: Pick<SessionRow, 'status' | 'outcome' | 'subagentActive' | 'errorCode'>
+  row: Pick<SessionRow, 'status' | 'outcome' | 'subagentActive' | 'errorCode' | 'errorCause'>
 ): 'running' | 'waiting' | 'failed' | 'incomplete' | 'idle' | 'done' {
   if (isRunningRow(row)) return 'running';
   if (isLiveSessionStatus(row.status)) return 'waiting';
-  if (isIncompleteOutcome(row.status, row.errorCode)) return 'incomplete';
+  if (isIncompleteOutcome(row.status, row.errorCode, row.errorCause)) return 'incomplete';
   if (row.status === 'error') return 'failed';
   if (row.status === 'completed' && row.outcome === 'idle') return 'idle';
   return 'done';
@@ -259,8 +259,8 @@ export function SessionListItem(props: {
     // is already the dot's colour, and the reason is what a reader acts on.
     lineClass = incomplete ? 'it-line warn' : 'it-line err';
     const detail = errorText(row.errorMessage);
-    const code = incomplete ? displayStatusLabel(row.status, row.errorCode) : (failureLabel(row.errorCause) ?? row.errorCode);
-    line = [code, detail].filter(Boolean).join(' · ') || displayStatusLabel(row.status, row.errorCode);
+    const code = incomplete ? displayStatusLabel(row.status, row.errorCode, row.errorCause) : (failureLabel(row.errorCause) ?? row.errorCode);
+    line = [code, detail].filter(Boolean).join(' · ') || displayStatusLabel(row.status, row.errorCode, row.errorCause);
   } else {
     const preview = outputPreview(row.finalResponse);
     line = preview
@@ -326,7 +326,7 @@ export function SessionReader(props: {
   const live = isRunningRow(row) || isLiveSessionStatus(row.status);
   const status = row.status === 'completed' && row.outcome === 'idle'
     ? 'idle'
-    : displayStatusLabel(row.status, row.errorCode);
+    : displayStatusLabel(row.status, row.errorCode, row.errorCause);
   const statusText = row.subagentActive ? 'running · subagent' : status;
   const purposeLabel = sessionPurposeLabel(row);
   const repeatRunPath = sessionRepeatRunPath(row);

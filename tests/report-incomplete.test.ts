@@ -135,19 +135,25 @@ describe('loadAgentTools outcome wiring', () => {
   it('shares the runOutcome ref with the exposed tool', async () => {
     const loaded = await loadAgentTools({ agent, mcpConnections: [] });
 
-    await (loaded.all.report_outcome as any).execute({ status: 'incomplete', headline: 'blocked precondition', artifacts: [] });
+    await (loaded.all.report_outcome as any).execute({
+      status: 'incomplete', headline: 'blocked precondition', artifacts: [], blocker: { kind: 'bad_input', subject: 'precondition' },
+    });
 
-    expect(loaded.runOutcome.incomplete).toEqual({ reason: 'blocked precondition' });
+    expect(loaded.runOutcome.incomplete).toEqual({ reason: 'blocked precondition', blocker: { kind: 'bad_input', subject: 'precondition' } });
   });
 });
 
 describe('incomplete status labels (web)', () => {
-  it('maps error + INCOMPLETE to its own label, like stopped/timeout', () => {
-    expect(displayStatusLabel('error', 'INCOMPLETE')).toBe('incomplete');
-    expect(displayStatusLabel('error', 'USER_STOPPED')).toBe('stopped');
-    expect(displayStatusLabel('error', 'TIMEOUT')).toBe('timeout');
-    expect(displayStatusLabel('error', 'EXECUTION_ERROR')).toBe('error');
-    expect(displayStatusLabel('error', undefined)).toBe('error');
+  it('maps error + INCOMPLETE to its own label only when a person is the blocker', () => {
+    expect(displayStatusLabel('error', 'INCOMPLETE', 'waiting_on_human')).toBe('incomplete');
+    expect(displayStatusLabel('error', 'INCOMPLETE', 'rejected_by_human')).toBe('incomplete');
+    // Something is broken: a missing tool, or no blocker recorded at all.
+    expect(displayStatusLabel('error', 'INCOMPLETE', 'missing_tool')).toBe('error');
+    expect(displayStatusLabel('error', 'INCOMPLETE', undefined)).toBe('error');
+    expect(displayStatusLabel('error', 'USER_STOPPED', undefined)).toBe('stopped');
+    expect(displayStatusLabel('error', 'TIMEOUT', undefined)).toBe('timeout');
+    expect(displayStatusLabel('error', 'EXECUTION_ERROR', undefined)).toBe('error');
+    expect(displayStatusLabel('error', undefined, undefined)).toBe('error');
     // A run the reconcile sweep ended: the failure is in the sub-agent it was
     // parked on, so say that rather than blaming this run with a bare "error".
     expect(displayStatusLabel('error', 'CASCADE_ORPHANED')).toBe('subagent ended');

@@ -23,6 +23,8 @@ export interface SessionStatusInfo {
     filePath?: string;
   };
   errorCause?: string;
+  errorSubject?: string;
+  errorCauseSource?: string;
   errorCode?: string;
   errorMessage?: string;
   mock?: boolean;

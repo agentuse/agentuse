@@ -471,12 +471,16 @@ describe('session list helpers', () => {
     expect(__testing.sessionMatchesAgentFilter(session, 'research')).toBe(false);
   });
 
-  it('matches the incomplete status filter by its error code', () => {
-    const incomplete = { ...rows[0]!.session, status: 'error', errorCode: 'INCOMPLETE' };
+  it('matches the incomplete status filter by its error code and a person as the blocker', () => {
+    const incomplete = { ...rows[0]!.session, status: 'error', errorCode: 'INCOMPLETE', errorCause: 'waiting_on_human' };
+    const brokenIncomplete = { ...rows[0]!.session, status: 'error', errorCode: 'INCOMPLETE', errorCause: 'missing_tool' };
     const ordinaryError = { ...rows[0]!.session, status: 'error', errorCode: 'EXECUTION_ERROR' };
 
     expect(__testing.sessionMatchesStatusFilter(incomplete, 'incomplete')).toBe(true);
     expect(__testing.sessionMatchesStatusFilter(ordinaryError, 'incomplete')).toBe(false);
+    // A declared blocker that is something broken is a failure, not incomplete.
+    expect(__testing.sessionMatchesStatusFilter(brokenIncomplete, 'incomplete')).toBe(false);
+    expect(__testing.sessionMatchesStatusFilter(brokenIncomplete, 'error')).toBe(true);
     // The two filters partition the errors: `error` means a crash, so the
     // Failed chip never re-lists what the Incomplete chip already holds.
     expect(__testing.sessionMatchesStatusFilter(incomplete, 'error')).toBe(false);
@@ -556,11 +560,13 @@ describe('session list helpers', () => {
       { status: 'completed' },
       { status: 'completed', outcome: 'idle' },
       { status: 'error' },
-      // Declared incomplete by the agent: its own chip, never counted as a crash.
-      { status: 'error', errorCode: 'INCOMPLETE' },
+      // Waiting on a person: its own chip, never counted as a crash.
+      { status: 'error', errorCode: 'INCOMPLETE', errorCause: 'waiting_on_human' },
+      // Declared incomplete because something is broken: a failure.
+      { status: 'error', errorCode: 'INCOMPLETE', errorCause: 'missing_tool' },
     ]);
 
-    expect(counts).toEqual({ all: 9, running: 3, done: 2, idle: 1, failed: 1, incomplete: 1 });
+    expect(counts).toEqual({ all: 10, running: 3, done: 2, idle: 1, failed: 2, incomplete: 1 });
   });
 
   it('keeps the sessions SSE list refresh at the old page polling cadence', () => {

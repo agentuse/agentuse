@@ -1,3 +1,5 @@
+import { BLOCKER_LABELS, isBlockerKind } from './blocker.js';
+
 /** Browser-safe presentation shared with CLI. Unknown/new causes remain readable. */
 const labels = {
   run_deadline: 'Execution time limit reached',
@@ -25,5 +27,8 @@ const labels = {
 export type FailureCause = keyof typeof labels;
 
 export function failureLabel(cause?: string): string | undefined {
-  return cause && Object.hasOwn(labels, cause) ? labels[cause as FailureCause] : undefined;
+  if (!cause) return undefined;
+  if (Object.hasOwn(labels, cause)) return labels[cause as FailureCause];
+  // An INCOMPLETE run's cause is the blocker kind the agent or runtime named.
+  return isBlockerKind(cause) ? BLOCKER_LABELS[cause] : undefined;
 }

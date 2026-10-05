@@ -57,10 +57,13 @@ describe('report_outcome tool', () => {
     const outcome: RunOutcome = { complete: { headline: 'Looked done' } };
     const reply = await execute(outcome, {
       status: 'incomplete', headline: 'PR #119 blocked on failing CI; fix the build', artifacts: [], rejectionOnly: false,
+      blocker: { kind: 'service_down', subject: ' CI ' },
     });
 
     expect(reply).toContain('will end marked incomplete');
-    expect(outcome.incomplete).toEqual({ reason: 'PR #119 blocked on failing CI; fix the build', rejectionOnly: false });
+    expect(outcome.incomplete).toEqual({
+      reason: 'PR #119 blocked on failing CI; fix the build', rejectionOnly: false, blocker: { kind: 'service_down', subject: 'CI' },
+    });
     expect(outcome.complete).toEqual({ headline: 'Looked done' });
   });
 
@@ -72,8 +75,17 @@ describe('report_outcome tool', () => {
       .rejects.toThrow('Call submit_changes first');
     await expect(execute(outcome, { status: 'idle', headline: 'Nothing', artifacts: [] }, { assertDeliverable }))
       .rejects.toThrow('Call submit_changes first');
-    await execute(outcome, { status: 'incomplete', headline: 'Blocked', artifacts: [] }, { assertDeliverable });
-    expect(outcome).toEqual({ incomplete: { reason: 'Blocked' } });
+    await execute(outcome, { status: 'incomplete', headline: 'Blocked', artifacts: [], blocker: { kind: 'other', subject: 'x' } }, { assertDeliverable });
+    expect(outcome).toEqual({ incomplete: { reason: 'Blocked', blocker: { kind: 'other', subject: 'x' } } });
+  });
+
+  it('rejects an incomplete verdict that names no blocker, so every one can be grouped', async () => {
+    const outcome: RunOutcome = {};
+    await expect(execute(outcome, { status: 'incomplete', headline: 'Blocked', artifacts: [] }))
+      .rejects.toThrow('requires `blocker`');
+    await expect(execute(outcome, { status: 'incomplete', headline: 'Blocked', artifacts: [], blocker: { kind: 'other', subject: '  ' } }))
+      .rejects.toThrow('requires `blocker`');
+    expect(outcome).toEqual({});
   });
 
   it('requires the artifact list in its schema', () => {

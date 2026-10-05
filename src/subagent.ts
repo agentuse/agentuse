@@ -34,6 +34,7 @@ import { usageToAssistantTokens } from './session/usage';
 import { resolveMaxSteps } from './utils/config';
 import { resolveVerifyPlacements, withGateVerify } from './verify/gate';
 import { composeSubagentResult } from './tools/report-outcome.js';
+import { incompleteSessionError, settleIncomplete } from './runner/blocker-evidence';
 import type { AgentReference, ModelFallbackEvent, PluginManager } from './plugin';
 import { emitRunOutcome } from './plugin/run-outcome';
 
@@ -571,6 +572,9 @@ export async function createSubAgentTool(
           // A sub-agent that declared itself incomplete is
           // persisted as error/INCOMPLETE instead, so its child-session pill reads
           // as a failure in the parent's log.
+          if (preparedTools.runOutcome.incomplete) {
+            preparedTools.runOutcome.incomplete = settleIncomplete(preparedTools.runOutcome.incomplete, result.toolCallTraces);
+          }
           const subagentIncomplete = preparedTools.runOutcome.incomplete;
           if (subagentSessionManager && subagentSessionID && subagentMsgID && result.usage) {
             try {
@@ -582,10 +586,7 @@ export async function createSubAgentTool(
                 }
               });
               if (subagentIncomplete) {
-                await subagentSessionManager.setSessionError(subagentSessionID, agentId, {
-                  code: 'INCOMPLETE',
-                  message: subagentIncomplete.reason
-                });
+                await subagentSessionManager.setSessionError(subagentSessionID, agentId, incompleteSessionError(subagentIncomplete));
                 await dismissIfReviewerRejected(subagentSessionManager, subagentSessionID, agentId, subagentIncomplete);
               } else {
                 const successfulOutcome = preparedTools.runOutcome.complete;
