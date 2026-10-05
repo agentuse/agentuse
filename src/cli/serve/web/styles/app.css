@@ -5347,6 +5347,67 @@ a.metric-row:hover .metric-row-open { opacity: 1; }
 /* Unfold on the left, clear-the-whole-group on the right: the destructive one
    sits away from the one a reviewer clicks to read more. */
 .page-home .attn-actions { display: flex; align-items: center; gap: 12px; }
+
+/* One agent's pending gates: newest row on screen, the rest folded below. */
+.pending-agent-group { border-bottom: 1px solid var(--line); }
+.pending-agent-group > .pending-row:last-of-type { border-bottom: 0; }
+.pending-agent-group > .pending-row.no-agent { padding-left: 180px; }
+.pending-agent-meta {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
+  padding: 0 16px 9px 180px;
+}
+.pending-agent-meta .attn-more { align-self: center; }
+.pending-blocking {
+  padding: 1px 6px; border-radius: 4px;
+  font-family: var(--sans); font-size: var(--font-size-micro); text-transform: uppercase;
+  color: var(--red); background: var(--red-soft); border: 1px solid var(--red-border);
+}
+
+/* Failed runs, one row per stuck thing. */
+.attn-subhead {
+  display: flex; align-items: baseline; gap: 8px; margin: 6px 0 0;
+  font-size: var(--font-size-micro); font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--muted);
+}
+.attn-subhead .count { font-family: var(--mono); color: var(--fg); }
+.broken-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
+  padding: 11px 18px; border-bottom: 1px solid var(--line);
+}
+.broken-row:last-child { border-bottom: 0; }
+.broken-count {
+  flex: 0 0 64px; font-family: var(--mono); font-size: var(--font-size-caption);
+  font-weight: var(--weight-medium); color: var(--red);
+}
+.broken-body { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.broken-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-width: 0; }
+.broken-kind {
+  padding: 1px 6px; border-radius: 4px; background: var(--panel-hover);
+  font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted-3);
+}
+.broken-subject {
+  min-width: 0; font-family: var(--mono); font-size: var(--font-size-supporting);
+  font-weight: var(--weight-medium); color: var(--fg); overflow-wrap: anywhere;
+}
+.broken-meta { font-size: var(--font-size-caption); color: var(--muted); }
+.broken-fix { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.broken-source {
+  flex: none; padding: 0 6px; border-radius: 4px; border: 1px solid var(--line-strong);
+  font-family: var(--mono); font-size: var(--font-size-micro); color: var(--muted);
+}
+.broken-source.source-runtime, .broken-source.source-approval { color: var(--green); border-color: var(--green-border); }
+.broken-message {
+  min-width: 0; font-size: var(--font-size-caption); color: var(--muted-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.broken-actions { display: flex; align-items: center; gap: 14px; margin-left: auto; }
+.broken-actions .attn-more { align-self: center; }
+.broken-review { font-size: var(--font-size-caption); white-space: nowrap; }
+@media (max-width: 560px) {
+  .pending-agent-meta, .pending-agent-group > .pending-row.no-agent { padding-left: 12px; }
+  .broken-row { padding: 11px 12px; }
+  .broken-message { white-space: normal; }
+}
 .page-home .attn-dismiss-all { margin-left: auto; }
 .page-home .attn-dismiss-all:hover { color: var(--red); }
 /* Primed: the second click stops every run in the group, so it says so. */

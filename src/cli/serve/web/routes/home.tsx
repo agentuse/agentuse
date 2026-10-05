@@ -2,7 +2,7 @@ import { activeDuration } from '../../../../session/timing';
 import { failureLabel } from '../../../../session/failure-label';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import type { ApprovalRow, ProjectInfo, SerializedSchedule, SessionRow } from '../lib/api';
-import { fetchInfo, fetchAgents, fetchProjectChangesets, fetchSchedules, fetchStoreRows, postSessionStop } from '../lib/api';
+import { fetchInfo, fetchAgents, fetchProjectChangesets, fetchSchedules, fetchSessions, fetchStoreRows, postSessionStop } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useHomeSections } from '../hooks/use-home-sections';
 import { useLiveHome, sessionRowKey, ORPHANED_LABEL, type ActivityEvent } from '../hooks/use-live-home';
@@ -12,7 +12,8 @@ import { useTitle } from '../hooks/use-title';
 import { UpdateBanner } from '../components/update-banner';
 import { Loading } from '../components/loading';
 import { AgentResultsRows } from '../components/metric-results';
-import { waitingSince, PendingApprovalRow, PendingChangesetRow } from '../components/pending-approval-card';
+import { groupPendingByAgent, PendingChangesetRow } from '../components/pending-approval-card';
+import { ApprovalAgentGroup, BrokenGroupRow, groupBrokenRuns, waitingRunsByAgent } from '../components/attention-groups';
 import { displayAgentName, errorText, formatApprovalTime, formatRelativeTime, displayStatusLabel, plural, runTone, type RunTone } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
@@ -153,10 +154,15 @@ export function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow)
  * warning, and a mis-click costs a stopped run. While it works the button
  * counts up, so a slow sweep of a long list never looks stuck.
  */
-function DismissAll(props: {
-  rows: SessionRow[];
-  onDismissAll: (rows: SessionRow[], onProgress: (done: number) => void) => Promise<number>;
+function DismissAll<Row>(props: {
+  rows: Row[];
+  onDismissAll: (rows: Row[], onProgress: (done: number) => void) => Promise<number>;
+  /** What the sweep does to each row: dismiss a failed run, reject a stale gate. */
+  verb?: 'dismiss' | 'reject';
+  /** Idle-button wording when "<verb> all N" does not fit, e.g. "reject 13 older". */
+  label?: string;
 }) {
+  const verb = props.verb ?? 'dismiss';
   const [armed, setArmed] = useState(false);
   const [done, setDone] = useState<number | null>(null);
   const [failedCount, setFailedCount] = useState(0);
@@ -167,14 +173,14 @@ function DismissAll(props: {
   // a primed confirm, so the count on the button stops matching what it clears.
   useEffect(() => { if (!busy) setArmed(false); }, [total]);
 
-  if (busy) return <span class="attn-more attn-dismiss-all is-busy">dismissing {done} of {total}…</span>;
+  if (busy) return <span class="attn-more attn-dismiss-all is-busy">{verb === 'reject' ? 'rejecting' : 'dismissing'} {done} of {total}…</span>;
 
   if (!armed) {
     return (
       <>
-        {failedCount > 0 && <span class="attn-dismiss-failed">{failedCount} could not be dismissed</span>}
+        {failedCount > 0 && <span class="attn-dismiss-failed">{failedCount} could not be {verb === 'reject' ? 'rejected' : 'dismissed'}</span>}
         <button type="button" class="attn-more attn-dismiss-all" onClick={() => { setArmed(true); setFailedCount(0); }}>
-          dismiss all {total}
+          {props.label ?? `${verb} all ${total}`}
         </button>
       </>
     );
@@ -192,7 +198,7 @@ function DismissAll(props: {
             .then((count) => setFailedCount(count))
             .finally(() => setDone(null));
         }}
-      >dismiss {total}?</button>
+      >{verb} {total}?</button>
       <button type="button" class="attn-more" onClick={() => setArmed(false)}>cancel</button>
     </span>
   );
@@ -205,6 +211,25 @@ const ATTENTION_ROWS = 3;
 /** How many dismissals are in flight at once during a bulk sweep. */
 const DISMISS_ALL_CONCURRENCY = 4;
 
+/** Run one daemon call per row, a few at a time: each one stops a session, so
+ *  firing fifty at once would queue behind itself anyway and lose the running
+ *  count. Returns how many failed, since a partial sweep leaves rows on screen
+ *  and the reviewer deserves to know why. */
+async function sweep<Row>(rows: Row[], act: (row: Row) => Promise<boolean>, onProgress: (done: number) => void): Promise<number> {
+  let next = 0;
+  let done = 0;
+  let failures = 0;
+  const worker = async (): Promise<void> => {
+    while (next < rows.length) {
+      const row = rows[next++]!;
+      if (!await act(row)) failures += 1;
+      onProgress(++done);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(DISMISS_ALL_CONCURRENCY, rows.length) }, worker));
+  return failures;
+}
+
 /** Reviews shown before the tail folds. Twenty-plus open reviews is a real
  * state; the reviewer needs the latest few on screen, not all of them. */
 const PENDING_ROWS = 8;
@@ -212,10 +237,11 @@ const PENDING_ROWS = 8;
 /** Recent-activity rows shown on Home; the full stream lives on /sessions. */
 const FEED_LIMIT = 6;
 
-/** What's blocked on a human: pending gates first, then recent failed runs, then
- *  runs stranded on a sub-agent that already ended. A stranded run is raw-status
- *  `suspended`, so it lands in neither of the first two groups — it used to fall
- *  through every home surface and sit invisible for days.
+/** What's blocked on a human: pending gates first, one row per agent, then
+ *  failed runs grouped by what broke them, then runs stranded on a sub-agent
+ *  that already ended. A stranded run is raw-status `suspended`, so it lands in
+ *  neither of the first two groups — it used to fall through every home
+ *  surface and sit invisible for days.
  *  Renders even when empty — "nothing waiting on you" is the answer the
  *  section exists to give. */
 function AttentionSection(props: {
@@ -223,27 +249,28 @@ function AttentionSection(props: {
   changesets: ChangesetEntry[];
   failed: SessionRow[];
   stranded: SessionRow[];
+  /** Runs that ended waiting on a person; each counts against its agent's gate. */
+  waitingRuns: SessionRow[];
   onDismissFailed: (row: SessionRow) => void;
   onDismissAll: (rows: SessionRow[], onProgress: (done: number) => void) => Promise<number>;
+  onRejectGates: (rows: ApprovalRow[], onProgress: (done: number) => void) => Promise<number>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [pendingOpen, setPendingOpen] = useState(false);
   const { pending, changesets, failed, stranded } = props;
-  const total = pending.length + changesets.length + failed.length + stranded.length;
   const now = useNow(pending.length + changesets.length > 0);
-  const orderedReviews = [
-    ...pending.map((row) => ({ kind: 'approval' as const, row, at: waitingSince(row) ?? Number.MIN_SAFE_INTEGER })),
-    ...changesets.map((row) => ({ kind: 'changeset' as const, row, at: row.updatedAt })),
-  ].sort((a, b) => b.at - a.at);
-  const shownReviews = pendingOpen ? orderedReviews : orderedReviews.slice(0, PENDING_ROWS);
-  const foldedPending = orderedReviews.length - shownReviews.length;
+  const agentGroups = useMemo(() => groupPendingByAgent(pending, 'newest'), [pending]);
+  const blocking = useMemo(() => waitingRunsByAgent(props.waitingRuns), [props.waitingRuns]);
+  const broken = useMemo(() => groupBrokenRuns(failed), [failed]);
+  const total = pending.length + changesets.length + failed.length + stranded.length;
+  const shownGroups = pendingOpen ? agentGroups : agentGroups.slice(0, PENDING_ROWS);
+  const foldedGroups = agentGroups.length - shownGroups.length;
   // Each group keeps its own head, so one long list never buries the other.
-  const shownFailed = expanded ? failed : failed.slice(0, ATTENTION_ROWS);
+  const shownBroken = expanded ? broken : broken.slice(0, ATTENTION_ROWS);
   const shownStranded = expanded ? stranded : stranded.slice(0, ATTENTION_ROWS);
-  const folded = (failed.length - shownFailed.length) + (stranded.length - shownStranded.length);
+  const folded = (broken.length - shownBroken.length) + (stranded.length - shownStranded.length);
   // Everything the ✕ can clear, folded tail included. Bulk dismissal works on
-  // the whole group, not the three rows that happen to be on screen: unfolding
-  // fifteen rows to click fifteen ✕s is the chore it exists to remove.
+  // the whole group, not the rows that happen to be on screen.
   const reviewable = [...failed, ...stranded];
   return (
     <section class="group">
@@ -256,21 +283,43 @@ function AttentionSection(props: {
         ? <div class="attn-empty">Nothing waiting on you.</div>
         : (
           <div class="attn-list">
-            {orderedReviews.length > 0 && (
+            {(agentGroups.length > 0 || changesets.length > 0) && (
               <div class="surface appr-surface pending-rows">
-                {shownReviews.map((review) => review.kind === 'approval'
-                  ? <PendingApprovalRow key={`approval:${review.row.project}:${review.row.sessionId}`} row={review.row} now={now} />
-                  : <PendingChangesetRow key={`changeset:${review.row.projectId}:${review.row.sessionId}`} row={review.row} now={now} />)}
-                {(foldedPending > 0 || pendingOpen) && (
+                {shownGroups.map((group) => (
+                  <ApprovalAgentGroup
+                    key={group.key}
+                    group={group}
+                    now={now}
+                    blockingRuns={blocking.get(group.key) ?? 0}
+                    rejectStale={(rows) => (
+                      <DismissAll rows={rows} onDismissAll={props.onRejectGates} verb="reject" label={`reject ${rows.length} older`} />
+                    )}
+                  />
+                ))}
+                {changesets.map((row) => <PendingChangesetRow key={`changeset:${row.projectId}:${row.sessionId}`} row={row} now={now} />)}
+                {(foldedGroups > 0 || pendingOpen) && (
                   <button type="button" class="attn-more pending-more" onClick={() => setPendingOpen((on) => !on)}>
-                    {pendingOpen ? 'show fewer' : `show all ${orderedReviews.length} waiting →`}
+                    {pendingOpen ? 'show fewer' : `show all ${agentGroups.length} agents waiting →`}
                   </button>
                 )}
               </div>
             )}
-            {(shownFailed.length > 0 || shownStranded.length > 0) && (
+            {broken.length > 0 && (
+              <>
+                <h3 class="attn-subhead">Broken · by blocker <span class="count">{broken.length}</span></h3>
+                <div class="surface">
+                  {shownBroken.map((group) => (
+                    <BrokenGroupRow
+                      key={group.key}
+                      group={group}
+                      actions={<DismissAll rows={group.rows} onDismissAll={props.onDismissAll} {...(group.rows.length === 1 && { label: 'dismiss' })} />}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+            {shownStranded.length > 0 && (
               <div class="surface">
-                {shownFailed.map((row) => <FailedRow key={`${row.project}:${row.sessionId}`} row={row} onDismiss={props.onDismissFailed} />)}
                 {shownStranded.map((row) => (
                   <FailedRow
                     key={`${row.project}:${row.sessionId}`}
@@ -285,7 +334,7 @@ function AttentionSection(props: {
               <div class="attn-actions">
                 {(folded > 0 || expanded) && (
                   <button type="button" class="attn-more" onClick={() => setExpanded((on) => !on)}>
-                    {expanded ? 'show less' : `show all ${reviewable.length} needing a look →`}
+                    {expanded ? 'show less' : `show all ${broken.length + stranded.length} needing a look →`}
                   </button>
                 )}
                 {reviewable.length > 1 && <DismissAll rows={reviewable} onDismissAll={props.onDismissAll} />}
@@ -633,27 +682,43 @@ export default function Home() {
   // session on the daemon, so firing fifty at once would queue behind itself
   // anyway and lose the running count. Returns how many failed, since a partial
   // sweep leaves rows on screen and the reviewer deserves to know why.
-  const dismissAll = useCallback(async (rows: SessionRow[], onProgress: (done: number) => void): Promise<number> => {
-    let next = 0;
-    let done = 0;
-    let failures = 0;
-    const worker = async (): Promise<void> => {
-      while (next < rows.length) {
-        const row = rows[next++]!;
-        if (!await dismissRow(row)) failures += 1;
-        onProgress(++done);
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(DISMISS_ALL_CONCURRENCY, rows.length) }, worker));
-    return failures;
-  }, [dismissRow]);
+  const dismissAll = useCallback(
+    (rows: SessionRow[], onProgress: (done: number) => void) => sweep(rows, dismissRow, onProgress),
+    [dismissRow],
+  );
+  // Stopping a suspended gate is delivered as a REJECT decision, so each agent
+  // records the rejection before it ends, exactly as a reviewer's Reject does.
+  const rejectGates = useCallback(
+    (rows: ApprovalRow[], onProgress: (done: number) => void) => sweep(rows, (row) =>
+      postSessionStop(row.sessionId, undefined, { project: row.project, reason: 'Rejected from home: older than 2 days' })
+        .then(() => true)
+        .catch(() => false), onProgress),
+    [],
+  );
   const dismissedAttention = attentionState.dismissedAttentionSessions;
   // Not truncated here: the section itself folds the tail behind "show all", so
   // the header count is the real number of runs waiting on a review.
-  const failedRecent = useMemo(() => operationalSessions
-    .filter((s) => runTone(s.status) === 'failed' && s.errorCode !== 'USER_STOPPED' && s.dismissedAt === undefined
+  //
+  // Every undismissed failure, however old: the rest of Home charts the last
+  // 24 hours, and borrowing that window made a day-old failure vanish from
+  // here without anyone dismissing it. Until the wider list arrives, the 24h
+  // rows stand in so first paint is not empty.
+  const undismissedFailures = useFetch(
+    'home-undismissed-failures',
+    () => fetchSessions({ window: 'all', status: 'error', triage: 'undismissed' }),
+    { refreshMs: 30_000, enabled: primaryReady },
+  );
+  const waitingRuns = useFetch(
+    'home-waiting-runs',
+    () => fetchSessions({ window: 'all', status: 'incomplete', triage: 'undismissed' }),
+    { refreshMs: 60_000, enabled: primaryReady },
+  );
+  const failedRecent = useMemo(() => (undismissedFailures.data?.sessions ?? operationalSessions)
+    .filter((s) => s.trigger !== 'onboarding' && runTone(s.status) === 'failed'
+      && !isIncompleteOutcome(s.status, s.errorCode, s.errorCause)
+      && s.errorCode !== 'USER_STOPPED' && s.dismissedAt === undefined
       && !isAttentionSessionDismissed(dismissedAttention, s))
-    .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)), [operationalSessions, dismissedAttention]);
+    .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)), [undismissedFailures.data, operationalSessions, dismissedAttention]);
   // Runs parked on a delegated sub-agent that has since ended. They read as
   // `suspended`, so neither the failed filter above nor the pending-gate list
   // catches them, yet nothing will ever move them: the only way out is a human
@@ -733,7 +798,16 @@ export default function Home() {
         {sections.isVisible('running') && running.length > 0 && <WorkingNow running={running} />}
 
         {sections.isVisible('attention') && (
-          <AttentionSection pending={liveHome.pendingRows} changesets={pendingChangesets} failed={failedRecent} stranded={strandedRecent} onDismissFailed={dismissFailed} onDismissAll={dismissAll} />
+          <AttentionSection
+            pending={liveHome.pendingRows}
+            changesets={pendingChangesets}
+            failed={failedRecent}
+            stranded={strandedRecent}
+            waitingRuns={waitingRuns.data?.sessions ?? []}
+            onDismissFailed={dismissFailed}
+            onDismissAll={dismissAll}
+            onRejectGates={rejectGates}
+          />
         )}
 
         {sections.isVisible('results') && (
