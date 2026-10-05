@@ -39,7 +39,7 @@
 
 ### Fixed
 
-- **Home lists every undismissed failure, not just the last 24 hours'.** It borrowed the 24-hour window the rest of Home charts, so a day-old failure dropped off without anyone dismissing it.
+- **Home lists undismissed failures from the last 30 days, not just the last 24 hours.** It borrowed the 24-hour window the rest of Home charts, so a day-old failure dropped off without anyone dismissing it. It now matches the approvals list's 30 days.
 - **`agentuse serve -H ::1` works.** An IPv6 bind address built the server URL without brackets, so every request failed. Client commands that reach a running daemon (`serve ps`, `schedules`, `sessions stop`) now share one address builder that also handles `::`.
 - **Long runs keep tool access after 128 cumulative Code Mode calls.** The nested-call allowance now applies to each program, so later programs can continue unfinished work. Concurrent tool calls and guest memory retain their shared run-wide limits.
 - **Retryable provider failures during a stream can recover without ending the run.** Server and overload errors retry the active step within the existing three-attempt limit, provided it has emitted no visible text and started no tool call. Exhausted retries retain the provider's actual error and classification instead of reporting an unknown failure or dropped connection.

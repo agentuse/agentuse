@@ -208,6 +208,10 @@ function DismissAll<Row>(props: {
  *  never folded: a waiting human is the whole point of the section. */
 const ATTENTION_ROWS = 3;
 
+/** How far back Home looks for runs still waiting on a review: the same 30
+ *  days the approvals list covers. */
+const ATTENTION_WINDOW = '30d';
+
 /** How many dismissals are in flight at once during a bulk sweep. */
 const DISMISS_ALL_CONCURRENCY = 4;
 
@@ -699,18 +703,20 @@ export default function Home() {
   // Not truncated here: the section itself folds the tail behind "show all", so
   // the header count is the real number of runs waiting on a review.
   //
-  // Every undismissed failure, however old: the rest of Home charts the last
-  // 24 hours, and borrowing that window made a day-old failure vanish from
-  // here without anyone dismissing it. Until the wider list arrives, the 24h
-  // rows stand in so first paint is not empty.
+  // Undismissed failures from the approvals' 30-day window, not the 24 hours
+  // the rest of Home charts: borrowing that window made a day-old failure
+  // vanish from here without anyone dismissing it. Not 'all': a large
+  // project's full history times out the list request and returns it partial.
+  // Until the wider list arrives, the 24h rows stand in so first paint is not
+  // empty.
   const undismissedFailures = useFetch(
     'home-undismissed-failures',
-    () => fetchSessions({ window: 'all', status: 'error', triage: 'undismissed' }),
+    () => fetchSessions({ window: ATTENTION_WINDOW, status: 'error', triage: 'undismissed' }),
     { refreshMs: 30_000, enabled: primaryReady },
   );
   const waitingRuns = useFetch(
     'home-waiting-runs',
-    () => fetchSessions({ window: 'all', status: 'incomplete', triage: 'undismissed' }),
+    () => fetchSessions({ window: ATTENTION_WINDOW, status: 'incomplete', triage: 'undismissed' }),
     { refreshMs: 60_000, enabled: primaryReady },
   );
   const failedRecent = useMemo(() => (undismissedFailures.data?.sessions ?? operationalSessions)
