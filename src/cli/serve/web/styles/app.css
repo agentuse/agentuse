@@ -5348,19 +5348,41 @@ a.metric-row:hover .metric-row-open { opacity: 1; }
    sits away from the one a reviewer clicks to read more. */
 .page-home .attn-actions { display: flex; align-items: center; gap: 12px; }
 
-/* One agent's pending gates: newest row on screen, the rest folded below. */
+/* One agent's pending gates: the newest ask is the row; older asks fold
+   under a toggle that sits in the text column, so the agent name stays the
+   only thing in the left column and nothing floats to the far right. */
 .pending-agent-group { border-bottom: 1px solid var(--line); }
-.pending-agent-group > .pending-row:last-of-type { border-bottom: 0; }
-.pending-agent-group > .pending-row.no-agent { padding-left: 180px; }
+.pending-agent-group:last-of-type { border-bottom: 0; }
+.pending-agent-group > a.pending-row { border-bottom: 0; }
 .pending-agent-meta {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
-  padding: 0 16px 9px 180px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px;
+  margin-top: -4px; padding: 0 16px 9px 180px;
 }
-.pending-agent-meta .attn-more { align-self: center; }
-.pending-blocking {
-  padding: 1px 6px; border-radius: 4px;
-  font-family: var(--sans); font-size: var(--font-size-micro); text-transform: uppercase;
-  color: var(--red); background: var(--red-soft); border: 1px solid var(--red-border);
+.pending-agent-toggle {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 28px;
+  padding: 0; border: 0; background: none; cursor: pointer;
+  font-family: inherit; font-size: var(--font-size-caption); color: var(--muted);
+}
+.pending-agent-toggle:hover { color: var(--fg); }
+.pending-agent-toggle svg { transition: transform 120ms ease; }
+.pending-agent-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
+.page-home .pending-agent-meta .attn-dismiss-all { margin-left: 0; color: var(--amber); }
+.pending-agent-meta .attn-more { align-self: center; min-height: 28px; }
+/* Older asks: text and age in the summary column, one quiet line each. */
+.pending-older { padding: 0 0 6px 164px; }
+.pending-older a.pending-row.no-agent {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  min-height: 32px; padding: 5px 16px; border-bottom: 0; border-top: 1px dotted var(--line-strong);
+}
+.pending-row-tag.alert { color: var(--red); background: var(--red-soft); border-color: var(--red-border); }
+@media (max-width: 640px) {
+  /* The row stacks (agent + age, then the ask), so the fold indents a little
+     instead of lining up with a column that no longer exists. */
+  .pending-agent-meta { margin-top: 0; padding: 0 12px 10px; }
+  .pending-older { padding: 0 0 6px 12px; }
+  .pending-older a.pending-row.no-agent { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto; padding: 8px 12px; }
+  .pending-older a.pending-row.no-agent .pending-row-text { grid-column: 1; grid-row: 1; }
+  .pending-older a.pending-row.no-agent .pending-row-age { grid-column: 2; grid-row: 1; }
 }
 
 /* Failed runs, one row per stuck thing. */
@@ -5404,7 +5426,6 @@ a.metric-row:hover .metric-row-open { opacity: 1; }
 .broken-actions .attn-more { align-self: center; }
 .broken-review { font-size: var(--font-size-caption); white-space: nowrap; }
 @media (max-width: 560px) {
-  .pending-agent-meta, .pending-agent-group > .pending-row.no-agent { padding-left: 12px; }
   .broken-row { padding: 11px 12px; }
   .broken-message { white-space: normal; }
 }

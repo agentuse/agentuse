@@ -137,20 +137,27 @@ export function ApprovalAgentGroup(props: {
   const [newest, ...older] = group.rows;
   if (!newest) return null;
   const stale = older.filter((row) => now - (waitingSince(row) ?? now) > STALE_GATE_MS);
-  const hasMeta = older.length > 0 || props.blockingRuns > 0;
   return (
-    <div class="pending-agent-group">
-      <PendingApprovalRow row={newest} now={now} />
-      {open && older.map((row) => <PendingApprovalRow key={`${row.project}:${row.sessionId}`} row={row} now={now} hideAgent />)}
-      {hasMeta && (
+    <div class={`pending-agent-group${open ? ' is-open' : ''}`}>
+      <PendingApprovalRow
+        row={newest}
+        now={now}
+        {...(props.blockingRuns > 0 && { alert: `blocking ${plural(props.blockingRuns, 'run')}` })}
+      />
+      {older.length > 0 && (
         <div class="pending-agent-meta">
-          {props.blockingRuns > 0 && <span class="pending-blocking">blocking {plural(props.blockingRuns, 'run')}</span>}
-          {older.length > 0 && (
-            <button type="button" class="attn-more" aria-expanded={open} onClick={() => setOpen((on) => !on)}>
-              {open ? 'hide older' : `+${older.length} older`}
-            </button>
-          )}
+          <button type="button" class="pending-agent-toggle" aria-expanded={open} onClick={() => setOpen((on) => !on)}>
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m9 18 6-6-6-6" />
+            </svg>
+            {plural(older.length, 'older ask')}
+          </button>
           {stale.length > 0 && props.rejectStale(stale)}
+        </div>
+      )}
+      {open && (
+        <div class="pending-older">
+          {older.map((row) => <PendingApprovalRow key={`${row.project}:${row.sessionId}`} row={row} now={now} hideAgent />)}
         </div>
       )}
     </div>

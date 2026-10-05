@@ -73,6 +73,9 @@ export function PendingApprovalRow(props: {
   /** Approvals-only: a deadline inside six hours is the one thing that can
    *  reorder the reviewer's day, so it rides beside the age pill. */
   showExpiry?: boolean;
+  /** A red tag ahead of the summary for something worse than waiting, such
+   *  as "blocking 15 runs". */
+  alert?: string;
 }) {
   const { row, now } = props;
   const since = waitingSince(row);
@@ -92,6 +95,7 @@ export function PendingApprovalRow(props: {
         <span class="pending-row-agent">{displayAgentName(row.agentName, row.agentFilePath, row.agentId)}</span>
       )}
       <span class="pending-row-text">
+        {props.alert && <span class="pending-row-tag alert">{props.alert}</span>}
         {row.needsRevisionGuidance
           ? <span class="pending-row-tag revised">revision needed</span>
           : row.hasOptions && <span class="pending-row-tag">pick</span>}
