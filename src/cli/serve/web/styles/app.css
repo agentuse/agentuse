@@ -5427,7 +5427,7 @@ a.metric-row:hover .metric-row-open { opacity: 1; }
 .broken-review { font-size: var(--font-size-caption); white-space: nowrap; }
 @media (max-width: 560px) {
   .broken-row { padding: 11px 12px; }
-  .broken-message { white-space: normal; }
+  .broken-message { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 }
 .page-home .attn-dismiss-all { margin-left: auto; }
 .page-home .attn-dismiss-all:hover { color: var(--red); }
