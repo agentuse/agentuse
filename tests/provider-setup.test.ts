@@ -218,6 +218,38 @@ describe('Dashboard provider setup service', () => {
     })).resolves.toMatchObject({ api: 'openai-completions', models: ['live-model', 'retired-model'] });
   });
 
+  it('falls back to the next discovered model when the first cannot be served', async () => {
+    fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input).endsWith('/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'retired-model' }, { id: 'live-model' }] }), { status: 200 });
+      }
+      const { model } = JSON.parse(String(init?.body));
+      return model === 'live-model'
+        ? new Response(JSON.stringify({ choices: [] }), { status: 200 })
+        : new Response(JSON.stringify({ error: { message: 'model not found' } }), { status: 404 });
+    });
+    await expect(checkCustomProvider({
+      name: 'proxy',
+      baseURL: 'http://localhost:8080/v1',
+      api: 'auto',
+    })).resolves.toMatchObject({ api: 'openai-completions', models: ['retired-model', 'live-model'] });
+  });
+
+  it('names each probed model when none can be served', async () => {
+    fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input) => String(input).endsWith('/models')
+      ? new Response(JSON.stringify({ data: [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }] }), { status: 200 })
+      : new Response(JSON.stringify({ error: { message: 'model not found' } }), { status: 404 }));
+    const error = await checkCustomProvider({
+      name: 'proxy',
+      baseURL: 'http://localhost:8080/v1',
+      api: 'openai-completions',
+    }).catch((caught: Error) => caught);
+    expect(String(error)).toContain('Enter a model ID the endpoint serves');
+    expect(String(error)).toContain('a: openai-completions check returned HTTP 404');
+    expect(String(error)).toContain('c: ');
+    expect(String(error)).not.toContain('d: ');
+  });
+
   it('automatically detects an OpenAI Responses endpoint', async () => {
     fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);
