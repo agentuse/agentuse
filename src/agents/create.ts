@@ -184,11 +184,17 @@ async function modelsForProvider(provider: ProviderStatus['providers'][number]):
   if (plugin) {
     return (await suggestedProviderPluginModels(plugin)).map((model) => `${provider.id}:${model.id}`);
   }
-  return getSuggestedModelIds().filter((model) => {
-    if (!model.startsWith(`${provider.id}:`)) return false;
-    const info = getModelFromRegistry(model);
-    return info?.modalities.output.length === 1 && info.modalities.output[0] === 'text';
-  });
+  const suggested = getSuggestedModelIds().filter((model) => model.startsWith(`${provider.id}:`) && isTextModel(model));
+  // A registry refresh can drop the balanced default from the suggestions; keep
+  // it while the registry still has it instead of falling back to the first
+  // (most capable, most expensive) suggestion.
+  const balanced = BALANCED_CREATOR_DEFAULTS[provider.id];
+  return balanced && !suggested.includes(balanced) && isTextModel(balanced) ? [...suggested, balanced] : suggested;
+}
+
+function isTextModel(model: string): boolean {
+  const info = getModelFromRegistry(model);
+  return info?.modalities.output.length === 1 && info.modalities.output[0] === 'text';
 }
 
 function orderModels(models: readonly string[], preferredModel: string | undefined, balancedModel: string | undefined): string[] {
