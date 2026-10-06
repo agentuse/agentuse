@@ -376,8 +376,9 @@ interface GateStep {
  * thresholds, so it is a strict superset of `test`. Running both would double
  * the slowest part of the release for no extra signal.
  *
- * `test:e2e` is absent on purpose. It drives a real browser and never blocks a
- * release; it runs as its own advisory job.
+ * `test:e2e` runs as its own job rather than a step here, because it drives a
+ * real browser. It still blocks: publish needs it, and the ci workflow runs it
+ * on every push to a working branch.
  */
 function verify(): void {
   const steps: Array<{ name: string; run: () => void }> = [

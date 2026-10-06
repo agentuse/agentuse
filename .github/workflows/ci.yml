@@ -1,0 +1,41 @@
+# Run the release gate and the dashboard e2e on every push to a working branch.
+#
+# The release workflow only runs on a tag, so a regression could sit unseen until
+# release day (an AI SDK upgrade broke the e2e three weeks before v0.23.0 was
+# tagged). This runs the same blocking checks as soon as the change lands.
+#
+# Desktop packaging stays release-only: it needs macOS runners and is the slow,
+# expensive part. Only agentuse-lab runs this; pushes to the public repo are
+# releases, and the release workflow already gates them.
+name: ci
+
+on:
+  push:
+    branches: ['main', 'v*-working']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    if: github.repository == 'agentuse/agentuse-lab'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: ./.github/actions/setup
+      - name: Gate
+        run: bun scripts/release.ts verify
+
+  e2e:
+    if: github.repository == 'agentuse/agentuse-lab'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: ./.github/actions/setup
+      - run: npm install -g agent-browser
+      - run: bun run test:e2e
