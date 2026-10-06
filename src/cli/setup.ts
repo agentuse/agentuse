@@ -5,6 +5,7 @@ import { FIRST_PROJECT_DEFAULT_NAME, terminalFirstAgentPrompt, validateManagedPr
 import { loadGlobalConfig } from '../utils/global-config';
 import { createManagedProject, ManagedProjectError } from '../utils/managed-project';
 import { openBrowser } from '../utils/open-browser';
+import { cliCommand } from '../utils/npx';
 import { createServeCommand } from './serve';
 
 type SetupSurface = 'web' | 'terminal';
@@ -39,7 +40,7 @@ export function resolveSetupSurface(
   if (options.web) return 'web';
   if (options.terminal || options.name !== undefined || options.yes) return 'terminal';
   if (interactive) return 'prompt';
-  throw new Error('Choose a setup surface: --web or --terminal');
+  throw new Error(`Choose a setup surface: --web or --terminal (for example: ${cliCommand()} setup --terminal --yes)`);
 }
 
 /** The Mac app ships for Apple silicon only, so only offer it there. */
@@ -113,7 +114,7 @@ async function runWebSetup(options: SetupOptions): Promise<void> {
 function printTerminalNextSteps(projectRoot: string): void {
   console.log(chalk.bold('\nNext — create your first agent'));
   console.log(chalk.dim('\n1. Start AgentUse in another terminal and leave it running:'));
-  console.log(`\n   ${chalk.cyan('agentuse serve')}`);
+  console.log(`\n   ${chalk.cyan(`${cliCommand()} serve`)}`);
   console.log(chalk.dim('\n2. Install the AgentUse skill for your coding agent (one time):'));
   console.log(`\n   ${chalk.cyan('npx skills add agentuse/agentuse')}`);
   console.log(chalk.dim('\n3. Open the project with your preferred coding agent:'));
@@ -140,7 +141,7 @@ async function runTerminalSetup(options: SetupOptions, interactive: boolean): Pr
       console.log(`  ${chalk.cyan(project.id ?? 'project')}  ${chalk.dim(project.path)}`);
     }
     console.log(chalk.dim('\nStart AgentUse with:'));
-    console.log(`\n  ${chalk.cyan('agentuse serve')}`);
+    console.log(`\n  ${chalk.cyan(`${cliCommand()} serve`)}`);
     return;
   }
 
@@ -156,7 +157,7 @@ async function runTerminalSetup(options: SetupOptions, interactive: boolean): Pr
       }
     } else {
       console.error(chalk.red('Project name required in a non-interactive terminal.'));
-      console.error(chalk.dim(`Run: agentuse setup --terminal --name ${FIRST_PROJECT_DEFAULT_NAME} --yes`));
+      console.error(chalk.dim(`Run: ${cliCommand()} setup --terminal --name ${FIRST_PROJECT_DEFAULT_NAME} --yes`));
       process.exitCode = 1;
       return;
     }

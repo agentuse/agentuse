@@ -12,6 +12,7 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { atomicWriteFileSync } from './utils/atomic-write';
 import { getAgentuseDataDir } from './utils/data-dir';
+import { isNpxRun } from './utils/npx';
 
 export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export const UPDATE_REMINDER_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -144,11 +145,6 @@ export function updateCommand(packageManager: PackageManager): string {
     case 'yarn': return `yarn global add ${PACKAGE_NAME}@latest`;
     default: return `npm install -g ${PACKAGE_NAME}@latest`;
   }
-}
-
-function isNpxRun(scriptPath = process.argv[1] ?? ''): boolean {
-  const normalized = scriptPath.replaceAll('\\', '/');
-  return normalized.includes('/_npx/') || normalized.includes('/.npx-cache/');
 }
 
 function isLocalDevelopmentBuild(): boolean {

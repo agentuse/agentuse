@@ -20,6 +20,7 @@ import {
 import type { ExecutionResult, StartupError, ServerStartConfig, ServerShutdownStats, AddCommandResult, TimeoutUnitError, WebUITelemetryEvent } from './types';
 import type { ToolCallTrace } from '../plugin/types';
 import { toErrorMessage } from '../utils/error-message';
+import { isNpxRun } from '../utils/npx';
 export { aggregateToolCalls, configuredFeatureUsage, countSteps, emptyToolCallMetrics } from './metrics.js';
 export { classifyExecution, isCanonicalRemoteExample } from './classification.js';
 export type { ExecutionClassification, ToolCallMetrics } from './types.js';
@@ -69,25 +70,6 @@ function isDocker(): boolean {
   }
 }
 
-/**
- * Check if running via npx (not globally/locally installed)
- * npx runs from a cache directory like:
- * - ~/.npm/_npx/...
- * - node_modules/.npx-cache/...
- */
-function isNpx(): boolean {
-  try {
-    const scriptPath = process.argv[1] || '';
-    return (
-      scriptPath.includes('/_npx/') ||
-      scriptPath.includes('\\_npx\\') ||
-      scriptPath.includes('/.npx-cache/') ||
-      scriptPath.includes('\\.npx-cache\\')
-    );
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Check if running from a local development build
@@ -252,7 +234,7 @@ class TelemetryManager {
             node_version: process.version,
             is_ci: isCI(),
             is_docker: isDocker(),
-            is_npx: isNpx(),
+            is_npx: isNpxRun(),
             is_local_dev: isLocalDev(),
             identity_persisted: true,
             installation_created_at: identity.createdAt,
@@ -353,7 +335,7 @@ class TelemetryManager {
           node_version: process.version,
           is_ci: isCI(),
           is_docker: isDocker(),
-          is_npx: isNpx(),
+          is_npx: isNpxRun(),
           is_local_dev: isLocalDev(),
 
           // Execution metrics (no sensitive data)
@@ -437,7 +419,7 @@ class TelemetryManager {
           node_version: process.version,
           is_ci: isCI(),
           is_docker: isDocker(),
-          is_npx: isNpx(),
+          is_npx: isNpxRun(),
           is_local_dev: isLocalDev(),
         },
       });
@@ -468,7 +450,7 @@ class TelemetryManager {
           node_version: process.version,
           is_ci: isCI(),
           is_docker: isDocker(),
-          is_npx: isNpx(),
+          is_npx: isNpxRun(),
           is_local_dev: isLocalDev(),
 
           // Error details (anonymous)
@@ -507,7 +489,7 @@ class TelemetryManager {
           node_version: process.version,
           is_ci: isCI(),
           is_docker: isDocker(),
-          is_npx: isNpx(),
+          is_npx: isNpxRun(),
           is_local_dev: isLocalDev(),
 
           // Rejection details (anonymous - a timeout magnitude only)
@@ -543,7 +525,7 @@ class TelemetryManager {
           node_version: process.version,
           is_ci: isCI(),
           is_docker: isDocker(),
-          is_npx: isNpx(),
+          is_npx: isNpxRun(),
           is_local_dev: isLocalDev(),
 
           // Server configuration
@@ -587,7 +569,7 @@ class TelemetryManager {
           node_version: process.version,
           is_ci: isCI(),
           is_docker: isDocker(),
-          is_npx: isNpx(),
+          is_npx: isNpxRun(),
           is_local_dev: isLocalDev(),
 
           // Server stats
@@ -643,7 +625,7 @@ class TelemetryManager {
           node_version: process.version,
           is_ci: isCI(),
           is_docker: isDocker(),
-          is_npx: isNpx(),
+          is_npx: isNpxRun(),
           is_local_dev: isLocalDev(),
           client_surface: value.clientSurface,
           ...eventProperties,
@@ -676,7 +658,7 @@ class TelemetryManager {
           node_version: process.version,
           is_ci: isCI(),
           is_docker: isDocker(),
-          is_npx: isNpx(),
+          is_npx: isNpxRun(),
           is_local_dev: isLocalDev(),
 
           // Add command metrics
