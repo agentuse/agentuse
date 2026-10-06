@@ -157,6 +157,8 @@ model: anthropic:claude-sonnet-5:dev  # Uses ANTHROPIC_API_KEY_DEV
   API key for authenticating requests to the serve mode HTTP server.
   Required when binding to exposed hosts (not `127.0.0.1` or `localhost`).
 
+  The daemon reads it once at startup and removes it from its environment, so bash commands, MCP servers, and skill scripts that agents launch do not inherit it.
+
   ```bash
   export AGENTUSE_API_KEY="your-secret-key"
   agentuse serve --host 0.0.0.0
@@ -234,7 +236,7 @@ model: anthropic:claude-sonnet-5:dev  # Uses ANTHROPIC_API_KEY_DEV
 </ParamField>
 
 <ParamField path="AGENTUSE_RESUME_PUBLIC_URL" type="string">
-  Fallback public base URL used to build approval review links. Prefer `agentuse serve --public-url ...` or `serve.publicUrl` for hosted deployments.
+  Fallback public base URL used to build approval review links. Its host also joins the keyless daemon's allowed request hosts. Prefer `agentuse serve --public-url ...` or `serve.publicUrl` for hosted deployments.
 
   ```bash
   export AGENTUSE_RESUME_PUBLIC_URL="https://agentuse.mycompany.com"
@@ -495,7 +497,7 @@ Large tool results are re-sent to the model on every subsequent step. AgentUse s
   dashboard telemetry. AgentUse records installation and first-execution
   lifecycle events, execution metadata, and a fixed top-level dashboard page
   category. The browser sends that category only to its local AgentUse daemon,
-  which batches delivery; it does not contact PostHog directly. No prompts,
+  which batches delivery; it does not contact PostHog directly. Server telemetry reports only the kind of bind address (`host_class`: `loopback`, `any`, or `other`), never the host itself. No prompts,
   code, or file paths are ever collected.
   Default: false (telemetry enabled)
 

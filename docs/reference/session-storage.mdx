@@ -14,20 +14,27 @@ expose it as `errorCause`; full session records use `error.cause`.
 | --- | --- |
 | `run_deadline` | The execution deadline fired. Broad code remains `TIMEOUT`. |
 | `user_stopped`, `user_interrupt` | Explicit stop or CLI interruption. |
+| `client_disconnect` | The attached client disconnected mid-run. Broad code is `CLIENT_DISCONNECT`. |
 | `interrupted_unknown` | An abort without evidence of its source. Not a timeout. |
 | `model_stall` | No model progress or model-step hard limit. `phase` and optional `attempts` provide detail. |
 | `model_transport` | The model stream connection dropped. May include `attempts`. |
 | `provider_rate_limit`, `provider_overloaded` | HTTP 429 or a structured provider overload response. |
 | `provider_timeout`, `provider_server` | Provider request timeout or another provider server error, not the run deadline. |
+| `provider_content_filter` | The provider's content filter truncated the response. Broad code is `CONTENT_FILTER`. |
 | `provider_request`, `provider_permission` | Other provider request failure or HTTP 403. |
 | `authentication`, `configuration` | Authentication or validated configuration failure. |
+| `resume_state` | An approved run could not be resumed. The broad code is the specific resume failure. |
 | `worker_interrupted`, `worker_protocol` | Worker loss or an unreadable worker response. |
 | `request_deadline` | The daemon stopped waiting for a worker response. Does not prove the run stopped. |
 | `unknown` | No more specific classification is supported by the evidence. |
 
 Causes are additive. Consumers must tolerate missing or future values. Historical
 errors are not rewritten or guessed from message text. `INCOMPLETE` remains an
-agent-declared outcome, not a crash. Failure classification does not change retry
+agent-declared outcome, not a crash: its `cause` is the blocker kind
+(`missing_tool`, `no_access`, `waiting_on_human`, and so on), with `error.subject`
+naming the stuck thing and `error.causeSource` (`runtime`, `approval`, `agent`, or
+`inferred`) saying how it was established. `agentuse sessions list --json` exposes
+these as `errorCause` and `errorCauseSource`. Failure classification does not change retry
 policy or imply that replaying a run with prior side effects is safe.
 
 ## Reviewer-rejected incomplete runs

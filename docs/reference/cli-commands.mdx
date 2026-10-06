@@ -332,6 +332,7 @@ agentuse sessions list [options]
 agentuse sessions show <id> [options]
 agentuse sessions resume <id> [options]
 agentuse sessions reconcile [options]
+agentuse sessions backfill-blockers [options]
 agentuse sessions path [options]
 ```
 
@@ -453,6 +454,24 @@ agentuse sessions reconcile
 agentuse sessions reconcile --all --lookback 7 --json
 ```
 
+### Backfill Blockers
+
+Give older `INCOMPLETE` runs a blocker so they group with new ones, and dismiss failures too old to act on. It only adds fields: status and messages are never rewritten.
+
+```bash
+agentuse sessions backfill-blockers [options]
+```
+
+Backfill options:
+
+```bash
+--days <n>               Backfill failures last touched within this many days; dismiss older ones (default: 14)
+--dry-run                Report what would change without writing
+-j, --json               Output as JSON
+--all                    Sweep every project
+--project [path]         Sweep a project path; defaults to current project
+```
+
 ### Show Storage Path
 
 ```bash
@@ -479,8 +498,10 @@ agentuse serve [options]
 --default <id>          Default project for POST /api/run when `project` is omitted
 -d, --debug             Enable debug mode
 --no-code-mode          Disable the default code_exec tool for every run launched by this daemon
+--public-url <url>      Externally reachable base URL used in approval links (or config serve.publicUrl)
 --no-auth               Disable API key requirement for exposed hosts (dangerous)
 --no-log-file           Disable writing serve logs to a file
+--open                  Open the Web UI in the default browser after startup
 --hide-agent-source     Hide raw agent source in the dashboard and /api/agents/detail
 ```
 
@@ -706,6 +727,8 @@ Lists top-level runs as JSON, live first and then by most recent activity. Filte
 `?window=<1h|6h|24h|7d|30d|90d|all>` (default `24h`). Time windows use the
 last update, so a recently completed long-running session remains visible. The
 browsable HTML page is at `/sessions`.
+
+`?status=incomplete` matches only runs blocked on a person; incomplete runs with any other blocker are listed under `error`.
 
 Use `?status=idle` for successful checks with no action due, or
 `?status=completed` for Done runs excluding idle. Idle rows retain the durable
@@ -1037,6 +1060,8 @@ agentuse provider add myserver --url https://gpu.example.com/v1 --key sk-mykey
 ```
 
 Then use: `agentuse run agent.agentuse -m ollama:glm-5-flash:q4_K_M`
+
+The command prints `URL`, `API`, `Key`, and `Models` lines. Each URL and key is labelled `stored` or `from <NAME>_BASE_URL` / `from <NAME>_API_KEY` when an environment variable overrides it.
 
 <Info>
   Colons in model names are supported, `ollama:qwen3.5:0.8b` parses as provider `ollama`, model `qwen3.5:0.8b`.
@@ -1446,6 +1471,33 @@ Skill "my-skill" already exists.
 
 ---
 
+## agentuse setup
+
+First-run setup. Run it without flags in a terminal to choose how to continue:
+
+- **Mac app** (Apple silicon only): opens `https://agentuse.io/download/mac`. The app includes its own runtime.
+- **Browser**: starts `agentuse serve` and opens the guided setup in the Web UI.
+- **Terminal**: creates your first project and prints the next steps.
+
+```bash
+agentuse setup
+agentuse setup --terminal --name my-agents --yes
+```
+
+Options:
+
+```bash
+--web                 Continue setup in the Web UI
+--terminal            Continue setup in the terminal
+--name <name>         Managed project name (terminal)
+-y, --yes             Accept the default project name without prompting
+-p, --port <number>   Web setup server port (default: 12233)
+-H, --host <string>   Web setup server host (default: 127.0.0.1)
+--no-auth             Disable server API key requirement (dangerous on publicly reachable hosts)
+```
+
+`--name` and `--yes` imply `--terminal`; `--web` cannot be combined with them. Without a terminal, pass `--web` or `--terminal`.
+
 ## agentuse help
 
 Show help information.
@@ -1497,7 +1549,7 @@ AgentUse uses standard exit codes:
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | General error |
+| 1 | General error, including an `incomplete` run (exit 0 only when the blocker is a person: `waiting_on_human` or `rejected_by_human`) |
 | 2 | Authentication error |
 | 3 | File not found |
 | 4 | Model error |
@@ -1520,6 +1572,8 @@ agentuse serve schedules [pid] [--json]  # List schedules the running daemon is 
 agentuse serve agents [pid] [--json]     # List agents the running daemon has loaded
 agentuse sessions [list|show|resume|path] # View and resume sessions
 agentuse sessions reconcile [--all]      # Settle runs stuck at "running"
+agentuse sessions backfill-blockers      # Add blockers to older incomplete runs
+agentuse setup [--web|--terminal]        # First-run setup in the Mac app, browser, or terminal
 agentuse provider login [provider]       # Authenticate with a provider
 agentuse provider add <name> --url <url> # Add custom provider (Ollama, LM Studio, etc.)
 agentuse provider logout [provider]      # Remove stored credentials

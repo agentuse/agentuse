@@ -119,6 +119,7 @@ AgentUse runs one serve daemon at a time. Put every project that should accept `
 | `serve.default` | string | Default project id when `POST /run` omits `project` |
 | `serve.port` | number | Port to listen on |
 | `serve.host` | string | Host to bind to |
+| `serve.publicUrl` | string | Externally reachable base URL, used in approval links. A keyless daemon also accepts requests addressed to this URL's host |
 | `serve.auth` | boolean | Require API key authentication for exposed hosts |
 | `serve.logFile` | boolean | Write serve logs to a file |
 | `serve.hideAgentSource` | boolean | Hide raw `.agentuse` source in the dashboard and `/api/agents/detail`; capability summaries (model, tools, schedule) stay visible. For deployments where visitors may run and observe agents but should not read their instructions (demos, client sandboxes) |
@@ -134,6 +135,7 @@ CLI flags override config values:
 | `serve.default` | `--default <id>` |
 | `serve.port` | `--port <number>` |
 | `serve.host` | `--host <string>` |
+| `serve.publicUrl` | `--public-url <url>` |
 | `serve.auth` | `--no-auth` sets auth to `false` |
 | `serve.logFile` | `--no-log-file` sets log files to `false` |
 | `serve.hideAgentSource` | `--hide-agent-source` sets it to `true` (the flag can only hide, never re-expose a config that hides) |

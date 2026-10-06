@@ -32,7 +32,7 @@ JSON escaping and envelope overhead can reduce it. Actual boundaries determine
 within the configured 20KB wire budget. Exceptionally small budgets or large query
 metadata can still fail explicitly when the envelope itself cannot fit.
 Structured command results also support `grep` on their searchable output text;
-`list` returns reference metadata only. Code Mode's typed results API is unchanged.
+`list` returns reference metadata only.
 
 References are immutable and scoped to one session and agent. Reading one never
 replays its tool or side effect. Refresh the original tool only when current
@@ -117,6 +117,15 @@ Continue from `nextOffset` until it is `null`. Pages preserve UTF-8 characters
 and share the direct results tool's response limits. JSON pages need not parse
 individually. The one-argument `results.read(resultId)` still returns the original
 bounded value. Both forms count toward Code Mode's result-read budget.
+
+Numbered pages are also available through `results.page`:
+
+```typescript
+const page = await results.page({ action: "read", resultId: reference.resultId, page: 1, pageSizeBytes: 6000 });
+const more = page.next ? await results.page(page.next) : null;
+```
+
+Pass the returned `next` back unchanged; it is `null` on the last page. When numbered page fields are present they take precedence over the legacy `offset` and `maxBytes` options, which are still supported.
 
 Bash returns `{ output, stdout?, stderr?, metadata? }`. Completed processes have
 separate `stdout` and `stderr` strings, including empty strings for empty streams.
@@ -530,14 +539,17 @@ The `report_outcome` tool is always available, no configuration needed. Every ag
 | `details` | `string` | Optional | Markdown body, only when the headline cannot carry the substance |
 | `artifacts` | `string[]` | Required | Paths or URLs of substantive deliverables produced or changed in this run. Excludes routine bookkeeping and pre-existing outputs. `[]` for idle runs |
 | `rejectionOnly` | `boolean` | Optional | Incomplete only. `true` when a human rejection is the sole blocker |
+| `blocker` | `{ kind, subject }` | Required when `incomplete` | Why the run stopped. `kind` is one of `missing_tool`, `missing_package`, `bad_input`, `no_access`, `service_down`, `waiting_on_human`, `rejected_by_human`, `other`. `subject` is the one stuck thing as a short exact name (`birdc`, `boto3`, `quora.com`), not a sentence |
 
 What each status does:
 
 - **`complete`**: the objective was achieved. The call is the run's answer and ends the run. The session is `completed`.
 - **`idle`**: a successful check found no action due: nothing eligible, no alert condition met, or the intended work was already handled before this run. Routine logs, checkpoints, watermarks, audit notes, and monitoring-state updates do not turn an idle check into delivered work; exclude them from `artifacts`, which must be `[]`. A requested report, analysis, or other substantive deliverable actually produced by this run is `complete`, even when it recommends no action. An idle run ends successfully and its durable session status remains `completed`; the run JSON carries `result.idle: true`, and the sessions list exposes an Idle badge and filter separately from Done. A stretch of idle runs can help reveal changes in an agent's supply of eligible work.
-- **`incomplete`**: a required outcome was not delivered because something failed, including due work the agent found but could not move. The run keeps going only for bookkeeping. When it ends, the session is persisted as `error` with code `INCOMPLETE`:
-  - Session list (CLI and web) shows an `incomplete` status instead of a green `completed`
-  - Channel notifications fire the `failure` event, not `completion`
+- **`incomplete`**: a required outcome was not delivered because something failed, including due work the agent found but could not move. The run keeps going only for bookkeeping. When it ends, the session is persisted as `error` with code `INCOMPLETE`. The blocker kind is stored in `error.cause`, with `error.subject` and `error.causeSource` (`runtime`, `approval`, `agent`, or `inferred`) saying how it was established:
+  - A failed tool call about the same thing (`command not found`, `No module named`, `Cannot find module`) overrides the agent's chosen kind
+  - A sub-agent's proven blocker passes to its parent
+  - `waiting_on_human` and `rejected_by_human` show as `incomplete` in the session list, exit 0, and settle the Slack run card as "run incomplete" without a failure push
+  - Any other blocker, or none, stays an `error`: the `failure` event fires and the exit code is 1
   - `agentuse sessions show` displays the headline under the error section
 
 The runtime system prompt already teaches every agent these statuses and tells it to choose `incomplete` when unsure between idle and incomplete. Agent files should not restate this mechanic; only add domain judgment about what counts as blocked, done, or genuinely empty for that agent.

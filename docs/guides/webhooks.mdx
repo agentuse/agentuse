@@ -287,21 +287,23 @@ Use `--no-auth` to bypass authentication (dangerous for production).
     ```bash
     brew install tailscale
     tailscale up
-    agentuse serve
+    agentuse serve --public-url https://<machine>.<tailnet>.ts.net
+    tailscale serve --bg 12233
     ```
 
-    Connect via `http://<machine-name>:12233` from any device on your tailnet.
+    `agentuse serve` binds `127.0.0.1` by default, so put it behind `tailscale serve` and pass the resulting URL as `--public-url`. Without it, a keyless daemon rejects requests addressed to the tailnet hostname.
   </Tab>
   <Tab title="Cloudflare Tunnel (Public)">
     Expose to the internet for external webhooks:
 
     ```bash
     brew install cloudflared
-    agentuse serve
     cloudflared tunnel --url http://localhost:12233
+    # in another terminal, once the tunnel prints its URL:
+    AGENTUSE_API_KEY=your-secret-key agentuse serve --public-url https://xxx.trycloudflare.com
     ```
 
-    Prints a public `https://xxx.trycloudflare.com` URL with automatic HTTPS.
+    The tunnel prints a public `https://xxx.trycloudflare.com` URL with automatic HTTPS. Set `AGENTUSE_API_KEY` so the public endpoint is not open, and pass the tunnel URL as `--public-url` so approval links and the host check use it.
   </Tab>
 </Tabs>
 

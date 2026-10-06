@@ -111,6 +111,8 @@ Supported event names:
 - `completion`: the agent finished successfully
 - `failure`: the agent ended with an execution error
 
+A run whose blocker is a person (waiting on an approval or review, or rejected by one) does not fire `failure`. Its live run card settles as **run incomplete** with the agent's reason.
+
 Use `completion`, not `complete` or `completed`.
 
 If `events` is omitted, AgentUse enables all supported events.

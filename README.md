@@ -126,7 +126,7 @@ without a global installation:
 npx -y agentuse@latest setup
 ```
 
-Choose Browser for guided visual setup or Terminal for a headless Linux/SSH
+On Apple silicon Macs, choose Mac app to open the download page (the app bundles its own runtime). Otherwise choose Browser for guided visual setup or Terminal for a headless Linux/SSH
 flow. Browser and Desktop can create a managed project under
 `~/.agentuse/projects` or attach an existing project; Terminal creates and
 registers the managed project.

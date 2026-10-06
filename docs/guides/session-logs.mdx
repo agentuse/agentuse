@@ -154,7 +154,7 @@ Session logs provide a complete audit trail:
 When `agentuse serve` is running, the same sessions are browsable as web pages:
 
 - `/sessions` lists every run, newest first. Filter the list with `?agent=<id>`,
-  `?status=running|suspended|completed|error|incomplete`,
+  `?status=running|suspended|completed|error|incomplete` (`incomplete` matches only runs blocked on a person; other incomplete runs are listed under `error`),
   `?trigger=scheduled|manual|slack|api`, `?days=<n|all>`, and
   `?mock=include|only`. Mock/test runs are hidden by default; `include` adds
   them to the list and `only` shows nothing else. A mock session's detail page

@@ -261,6 +261,8 @@ After the run completes, the same session page becomes a lightweight continuatio
 
 If an approval decision was submitted but the resumed run failed downstream, the session page may offer **Retry**. Retry reopens the latest resolved approval gate, preserves the original session token, and lets the reviewer submit the decision again. Use it only when it is safe to retry the downstream work; the UI warns about possible duplicate external side effects.
 
+If a decision itself fails, the approval card says what failed, whether the decision was applied, and what to do next: **Reconnect** or **Connect** for a provider sign-in, **Retry** for a transient worker or provider failure, and nothing when the gate was already answered, changed, ended, or expired. Your typed comment is kept. Draft, revision, and change set pages show the same panel.
+
 ## Approval in delegated sub-agents
 
 A leaf agent's approval gate behaves identically whether you run it directly or a `type: manager` agent delegates to it. You define `approval: true` once on the leaf, and the same human gate fires in both modes. Only the channel the request surfaces through changes.
@@ -337,7 +339,7 @@ channels:
 
 Authentication follows the deployment invariant:
 
-- **Local bind** (`127.0.0.1` / `localhost`): no API key, no token. View and approve are fully open.
+- **Local bind** (`127.0.0.1` / `localhost` / `::1`): no API key, no token. View and approve are fully open. A keyless daemon only answers requests addressed to `localhost`, `127.0.0.1`, `[::1]`, `*.localhost`, or the host of its [public URL](/reference/configuration-files); anything else gets `403 HOST_NOT_ALLOWED`.
 - **Exposed host**: `serve` refuses to start without `AGENTUSE_API_KEY` (use `--no-auth` to bypass, dangerous). The API key (`Authorization: Bearer`) authorizes everything.
 
 Because a `Bearer` header is not clickable from a Slack message or an email, each session also has a **session token**: a stateless, per-session value that stands in for the API key on that one session's page.
@@ -347,6 +349,8 @@ sessionToken = base64url( HMAC-SHA256(key = AGENTUSE_API_KEY, msg = sessionId) )
 ```
 
 One token grants both **view** and **approve** for its session, and the same value works for every gate in that session. It is unguessable without the API key and is scoped to a single session (a token for session A never authorizes session B). On localhost there is no API key, so there is no token and links omit it. `await_human` mints this token when it builds the reviewer link, so Slack/email links are clickable without an API-key login.
+
+The token covers viewing and deciding only. It cannot continue a run with a new prompt, add or discard learnings, reach the parent session, or open project files other than that session's gate artifacts, snapshots, and saved deliverables. Those need the API key, or a local keyless daemon.
 
 <Note>
 While a run is suspended, anyone with its session link can approve it. A completed run has no pending gate, so a shared completed-log link cannot approve anything. The view + approve conflation only matters during the approval window.
@@ -388,6 +392,8 @@ curl -X POST "http://127.0.0.1:12233/sessions/session_abc123/decision?token=$ses
   -d '{ "status": "approve", "comment": "Looks good" }'
 ```
 
+When a decision fails, the open-gate payload carries `actionFailure: { kind, provider?, retryable }` (plus `action`, `code`, and `message`), which the approval card uses to pick Reconnect, Retry, or nothing.
+
 The decision endpoint returns immediately while the suspended session resumes in the background:
 
 ```json
@@ -397,10 +403,11 @@ The decision endpoint returns immediately while the suspended session resumes in
 }
 ```
 
-Continue a completed or errored session:
+Continue a completed or errored session (operator only; a session token is refused with `403 OPERATOR_REQUIRED`):
 
 ```bash
-curl -X POST "http://127.0.0.1:12233/sessions/session_abc123/continue?token=$sessionToken" \
+curl -X POST "http://127.0.0.1:12233/sessions/session_abc123/continue" \
+  -H "Authorization: Bearer $AGENTUSE_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{ "prompt": "Please revise the CTA and run the smoke test again" }'
 ```
@@ -433,7 +440,7 @@ The reopen endpoint returns the session to `suspended` so the normal decision fl
 ```
 
 <Note>
-**Legacy approval routes.** `GET /approvals/:id` now redirects to `/sessions/:id`, and the older `/approvals` JSON list plus the `/api/approvals/:id/{status,decision,continue}` action endpoints remain available for backward compatibility. Those legacy action endpoints still take a gate `resumeToken` in the body. In-flight Slack links from before the upgrade keep working: the session page also accepts a valid gate `resumeToken` as a credential until those approvals expire. Prefer the `/sessions` routes and the session token for new integrations.
+**Legacy approval routes.** `GET /approvals/:id` now redirects to `/sessions/:id`, and the older `/approvals` JSON list plus the `/api/approvals/:id/{status,decision,continue}` action endpoints remain available for backward compatibility. Those legacy action endpoints still take a gate `resumeToken` in the body. In-flight Slack links from before the upgrade keep working: the session page also accepts a valid gate `resumeToken` as a credential until those approvals expire. The legacy `/api/approvals/:id/continue` endpoint is operator-only as well. Prefer the `/sessions` routes and the session token for new integrations.
 </Note>
 
 ## Local Testing
