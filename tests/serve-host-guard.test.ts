@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { isAllowedRequestHost } from '../src/cli/serve/auth';
+import { isAllowedRequestHost, isExposedHost } from '../src/cli/serve/auth';
 import { hostForUrl, serverBaseUrl } from '../src/utils/server-registry';
 
 describe('keyless daemon host guard', () => {
@@ -41,5 +41,12 @@ describe('daemon URLs', () => {
     expect(serverBaseUrl({ host: '0.0.0.0', port: 1 })).toBe('http://127.0.0.1:1');
     expect(serverBaseUrl({ host: '::', port: 1 })).toBe('http://127.0.0.1:1');
     expect(serverBaseUrl({ host: '::1', port: 1 })).toBe('http://[::1]:1');
+  });
+});
+
+describe('isExposedHost', () => {
+  it('treats IPv6 loopback as local so a keyless bind is allowed', () => {
+    for (const host of ['127.0.0.1', 'localhost', '::1', '[::1]']) expect(isExposedHost(host)).toBe(false);
+    for (const host of ['0.0.0.0', '::', '192.168.1.5']) expect(isExposedHost(host)).toBe(true);
   });
 });

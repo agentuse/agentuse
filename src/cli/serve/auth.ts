@@ -70,7 +70,7 @@ export function isSpaPageRoute(routePath: string): boolean {
 }
 
 export function isExposedHost(host: string): boolean {
-  return host !== "127.0.0.1" && host !== "localhost";
+  return !["127.0.0.1", "localhost", "::1", "[::1]"].includes(host);
 }
 
 const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
