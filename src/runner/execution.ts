@@ -53,7 +53,7 @@ import { attachCommandToPendingGate, withGatePlanPreflight } from './gate-prefli
 import { isMockMode, resolveMockApprovalDecision, mockGateDecisionResult } from './mock-tools';
 import { registerSDKTelemetryOnce } from '../telemetry/sdk-telemetry';
 import { isHumanGateDecision, recordErrorMarker } from './session-helper';
-import { extractApiErrorDetail } from './api-error';
+import { extractApiErrorDetail, isToolChoiceViolation } from './api-error';
 import { toErrorMessage } from '../utils/error-message';
 import { completeApprovalValueDisplay, type CompleteApprovalValueDisplay } from '../utils/approval-value';
 import { getSessionUrl } from '../tools/await-human';
@@ -2873,6 +2873,13 @@ Current step: ${stepCount}/${options.maxSteps}`);
           if (suspendState) {
             // A consequence of our own drain abort; the suspension still surfaces.
             logger.debug(`Stream error during suspension drain (swallowed): ${toErrorMessage(chunk.error)}`);
+            break;
+          }
+          // Only recovery turns require a tool. A model that answers one in
+          // prose has declined it; the segment ends as it would without the
+          // requirement and the normal outcome handling settles the run.
+          if (isToolChoiceViolation(chunk.error)) {
+            logger.debug(`Recovery turn ended without the required tool call: ${toErrorMessage(chunk.error)}`);
             break;
           }
           yield { type: 'error', error: chunk.error };

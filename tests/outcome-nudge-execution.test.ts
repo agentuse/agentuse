@@ -85,10 +85,13 @@ const defaultStreamTextImplementation = (config: any) => {
 };
 const streamTextMock = mock(defaultStreamTextImplementation);
 
+const TOOL_CHOICE_VIOLATION = 'AI_ToolChoiceViolationError';
+
 mock.module('ai', () => ({
   streamText: streamTextMock,
   isStepCount: mock((n: number) => ({ isStepCount: n })),
   ...aiSdkErrorMocks(),
+  ToolChoiceViolationError: { isInstance: (error: unknown) => (error as Error)?.name === TOOL_CHOICE_VIOLATION },
 }));
 
 let executeAgentCore: typeof import('../src/runner/execution').executeAgentCore;
@@ -613,5 +616,36 @@ describe('direct tool approval contracts', () => {
     ]);
 
     expect(chunks.some(chunk => chunk.type === 'error' && chunk.error?.message === 'policy deadline')).toBe(true);
+  });
+
+  it('ends normally when the model answers the recovery turn without a tool call', async () => {
+    streamTextMock.mockImplementation((config: any) => {
+      streamConfigs.push(config);
+      return {
+        stream: (async function* () {
+          if (streamConfigs.length > 1) {
+            const violation = new Error('Model response did not contain a tool call even though tool choice was required.');
+            violation.name = TOOL_CHOICE_VIOLATION;
+            yield { type: 'error', error: violation };
+          }
+          yield { type: 'finish', finishReason: 'stop', usage: { inputTokens: 100, outputTokens: 5, totalTokens: 105 } };
+        })(),
+        response: Promise.resolve({ messages: [] }),
+        responseMessages: Promise.resolve(completedToolTrace),
+      };
+    });
+
+    const outcome: RunOutcome = {};
+    const events: any[] = [];
+    for await (const event of executeAgentCore(
+      { name: 'prose-agent', config: { model: 'demo:test' } } as any,
+      { report_outcome: createReportOutcomeTool(outcome) },
+      { userMessage: 'Check the inbox', systemMessages: [], maxSteps: 5, runOutcome: outcome },
+    )) events.push(event);
+
+    expect(streamConfigs).toHaveLength(2);
+    expect(streamConfigs[1].toolChoice).toBe('required');
+    expect(events.some((event) => event.type === 'error')).toBe(false);
+    expect(outcome.complete).toBeUndefined();
   });
 });

@@ -1,6 +1,6 @@
 type AiSdkRuntimeExports = Pick<
   typeof import('ai'),
-  'APICallError' | 'InvalidToolInputError' | 'RetryError' | 'StreamProviderError' | 'asSchema' | 'jsonSchema'
+  'APICallError' | 'InvalidToolInputError' | 'RetryError' | 'StreamProviderError' | 'ToolChoiceViolationError' | 'asSchema' | 'jsonSchema'
 >;
 
 async function validationResult(schema: any, value: unknown): Promise<unknown> {
@@ -46,6 +46,7 @@ export function aiSdkErrorMocks(): AiSdkRuntimeExports {
     InvalidToolInputError: neverMatches,
     RetryError: neverMatches,
     StreamProviderError: neverMatches,
+    ToolChoiceViolationError: neverMatches,
     asSchema,
     jsonSchema,
   } as unknown as AiSdkRuntimeExports;

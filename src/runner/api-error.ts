@@ -1,4 +1,4 @@
-import { APICallError, RetryError, StreamProviderError } from 'ai';
+import { APICallError, RetryError, StreamProviderError, ToolChoiceViolationError } from 'ai';
 
 /** Cap on how much provider response body we persist into the session error. */
 const MAX_ERROR_DETAIL_CHARS = 4000;
@@ -11,6 +11,16 @@ export interface ApiErrorDetail {
   detail?: string;
   /** The underlying provider error message, recovered from any retry wrapper. */
   message?: string;
+}
+
+/**
+ * The model answered a turn that required a tool call without making one. The
+ * AI SDK raises this itself, and some adapters relax a forced tool choice to
+ * `auto` for models that reject forced tool use, so the model is free to reply
+ * in prose. Recovery turns treat it as "the model declined", not a failed run.
+ */
+export function isToolChoiceViolation(error: unknown): boolean {
+  return ToolChoiceViolationError.isInstance(error);
 }
 
 /** A provider rejection: a failed HTTP call, or a failure reported inside an open stream. */
