@@ -2,8 +2,6 @@
 
 ## [Unreleased]
 
-## [0.23.0] - 2026-10-06
-
 ### Added
 
 - **Runs receive a chance to wrap up before their execution timeout.** A single notice asks the agent to finish its current useful operation, return established findings, and identify unfinished work. It arrives at a model boundary near the end of the budget, with room reserved for observed model latency. Active execution time survives approval suspension and resume without counting the human wait, and delegated agents inherit the parent's remaining budget unless they declare a shorter timeout. Session details distinguish wrapping up, an incomplete result returned before timeout, and a hard timeout; the deadline and verification and approval requirements still apply. Timeout records keep whether the budget came from `--timeout`, the agent's `timeout`, or the default.
