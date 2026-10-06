@@ -2207,10 +2207,17 @@ export default function SessionDetail() {
   // Keep distinct headlines, but avoid repeating the failure as a large title.
   const errorHeadline = finalOutcome.headline?.replace(/(?:\.{3}|…)$/, '').trim();
 
-  // The artifact tiles, rendered in the card's result slot.
-  const artifactTiles = artifacts.length > 0 ? (
+  // The artifact tiles, rendered in the card's result slot. Files the open
+  // gate already lists (with previews) are left out, so a pending review does
+  // not show the same files twice under different labels.
+  const gatePaths = new Set([
+    ...(gateEntry?.details?.artifactPaths ?? []),
+    ...(gateEntry?.details?.artifactSnapshots ?? []).map((s) => s.path),
+  ]);
+  const resultArtifacts = artifacts.filter((a) => !gatePaths.has(a.name));
+  const artifactTiles = resultArtifacts.length > 0 ? (
     <div class="artifact-tiles">
-      {[...artifacts]
+      {[...resultArtifacts]
         .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
         .map((a) => {
           const encoded = a.name.split('/').map(encodeURIComponent).join('/');
