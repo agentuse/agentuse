@@ -51,9 +51,17 @@ function parseModelIdentity(modelString: string): ModelIdentity {
   };
 }
 
-export function isGPT6Astra(modelString: string): boolean {
+/**
+ * GPT-6 and later always reason: `none` and `minimal` are rejected and low is
+ * the minimum effort. GPT-6 Sol and Luna are the exceptions that still accept
+ * `none`. Matches the OpenAI adapter's own capability table.
+ */
+export function isAlwaysReasoningGPT(modelString: string): boolean {
   const { model } = parseModelIdentity(modelString);
-  return /^gpt-6-astra(?:-\d{4}-\d{2}-\d{2})?$/.test(model.split('/').at(-1) ?? model);
+  const id = model.split('/').at(-1) ?? model;
+  const version = /^gpt-(\d+)(?:\.\d+)?(?:-|$)/.exec(id);
+  if (!version || Number(version[1]) < 6) return false;
+  return !/^gpt-6-(?:sol|luna)(?:-\d{4}-\d{2}-\d{2})?$/.test(id);
 }
 
 function isGPT56(model: string): boolean {
@@ -98,8 +106,7 @@ export function resolveReasoningCompatibility(
   if (!requested) return {};
   const { provider, model } = parseModelIdentity(modelString);
 
-  // Astra always reasons; low is its minimum supported effort.
-  if (isGPT6Astra(modelString) && (requested === 'none' || requested === 'minimal')) requested = 'low';
+  if (isAlwaysReasoningGPT(modelString) && (requested === 'none' || requested === 'minimal')) requested = 'low';
 
   // OpenRouter's unified API expects its own reasoning object rather than the
   // OpenAI-compatible reasoning_effort field. Keep this route-specific so the
@@ -114,7 +121,7 @@ export function resolveReasoningCompatibility(
 
   // GPT-5.6 removed `minimal`; low is the closest supported tier. The native
   // max tier is not yet represented by AI SDK 7's common reasoning enum.
-  if (isGPT56(model) || isGPT6Astra(modelString)) {
+  if (isGPT56(model) || isAlwaysReasoningGPT(modelString)) {
     if (requested === 'minimal') return { reasoning: 'low' };
     if (requested === 'max') {
       return { providerOptions: { openai: { reasoningEffort: 'max' } } };

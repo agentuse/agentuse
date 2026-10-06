@@ -12,7 +12,7 @@ import { BUILTIN_PROVIDERS } from '../providers/registry-sources';
 import { OPENCODE_GO_PROVIDER_ID } from '../providers/opencode-go';
 import {
   resolveModelRouteCompatibility,
-  isGPT6Astra,
+  isAlwaysReasoningGPT,
   resolveReasoningCompatibility,
   prepareThinkingReplay,
   type ReasoningLevel,
@@ -377,10 +377,10 @@ export function openAIOptionsWithCacheDefaults(agent: ParsedAgent): Record<strin
   return {
     promptCacheKey: configured.promptCacheKey ?? defaultOpenAIPromptCacheKey(agent),
     ...(isReasoningModel && { reasoningSummary: 'auto' }),
-    // The installed SDK predates Astra and otherwise drops reasoning options.
-    ...(isGPT6Astra(agent.config.model) && { forceReasoning: true }),
+    // Keep reasoning options for always-reasoning GPT models the SDK may not know yet.
+    ...(isAlwaysReasoningGPT(agent.config.model) && { forceReasoning: true }),
     ...configured,
-    ...(isGPT6Astra(agent.config.model) &&
+    ...(isAlwaysReasoningGPT(agent.config.model) &&
       (configured.reasoningEffort === 'none' || configured.reasoningEffort === 'minimal') &&
       { reasoningEffort: 'low' }),
   };
@@ -1440,7 +1440,7 @@ async function* executeAgentAttempt(
     } = resolveReasoning(agent);
     if (agent.config.reasoning) {
       logger.debug(
-        agent.config.reasoning === 'none' && !isGPT6Astra(agent.config.model)
+        agent.config.reasoning === 'none' && !isAlwaysReasoningGPT(agent.config.model)
           ? 'Reasoning disabled (reasoning: none).'
           : `Reasoning enabled. Requested effort: ${agent.config.reasoning}; resolved effort: ${reasoning ?? 'native'}`
       );

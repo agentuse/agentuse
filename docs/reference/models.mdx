@@ -14,7 +14,7 @@ This page lists recommended models for AgentUse, organized by provider.
 ## Quick Reference
 
 **Default models:**
-- **Anthropic**: `anthropic:claude-sonnet-5` (balanced performance)
+- **Anthropic**: `anthropic:claude-sonnet-5-5` (balanced performance)
 - **OpenAI**: `openai:gpt-5.6` (general-purpose GPT)
 - **OpenRouter**: `openrouter:z-ai/glm-5.3` (open source)
 - **OpenCode Go**: `opencode-go:gpt-6-luna` (open coding models)
@@ -27,7 +27,7 @@ agent file does not need editing every time a new model ships:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet   # -> anthropic:claude-sonnet-5 today
+model: anthropic:claude-sonnet   # -> anthropic:claude-sonnet-5-5 today
 ---
 ```
 
@@ -37,10 +37,10 @@ that exists for real always wins, so nothing you pin can be reinterpreted.
 | Alias | Currently resolves to |
 |-------|----------------------|
 | `anthropic:claude-opus` | `anthropic:claude-opus-5-5` |
+| `anthropic:claude-sonnet` | `anthropic:claude-sonnet-5-5` |
 | `anthropic:claude-fable` | `anthropic:claude-fable-5-1` |
-| `anthropic:claude-sonnet` | `anthropic:claude-sonnet-5` |
 | `anthropic:claude-haiku` | `anthropic:claude-haiku-4-5` |
-| `openai:gpt-sol` | `openai:gpt-6-sol` |
+| `openai:gpt-sol` | `openai:gpt-6.1-sol` |
 | `openai:gpt-luna` | `openai:gpt-6-luna` |
 | `openai:gpt-astra` | `openai:gpt-6-astra` |
 | `openai:gpt` | `openai:gpt-5.6` |
@@ -142,15 +142,15 @@ cooldown. See [Model defaults and aliases](/reference/configuration-files#model-
 | Model ID | Name | Input Context | Output | Capabilities |
 |----------|------|---------|--------|--------------|
 | `anthropic:claude-opus-5-5` | Claude Opus 5.5 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
+| `anthropic:claude-sonnet-5-5` | Claude Sonnet 5.5 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
 | `anthropic:claude-fable-5-1` | Claude Fable 5.1 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
-| `anthropic:claude-sonnet-5` | Claude Sonnet 5 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
 | `anthropic:claude-haiku-4-5` | Claude Haiku 4.5 (latest) | 200,000 | 64,000 | Reasoning, Vision, Tools |
 
 ### OpenAI
 
 | Model ID | Name | Input Context | Output | Capabilities |
 |----------|------|---------|--------|--------------|
-| `openai:gpt-6-sol` | GPT-6 Sol | 922,000 | 128,000 | Reasoning, Vision, Tools |
+| `openai:gpt-6.1-sol` | GPT-6.1 Sol | 922,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-6-luna` | GPT-6 Luna | 922,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-6-astra` | GPT-6 Astra | 922,000 | 128,000 | Reasoning, Vision, Tools |
 | `openai:gpt-5.6` | GPT-5.6 | 922,000 | 128,000 | Reasoning, Vision, Tools |
@@ -166,14 +166,14 @@ cooldown. See [Model defaults and aliases](/reference/configuration-files#model-
 
 | Model ID | Name | Input Context | Output | Capabilities |
 |----------|------|---------|--------|--------------|
-| `openrouter:z-ai/glm-5.3` | GLM-5.3 | 1,310,720 | 943,717 | Reasoning, Tools |
+| `openrouter:z-ai/glm-5.3` | GLM-5.3 | 1,048,576 | 943,718 | Reasoning, Tools |
 | `openrouter:z-ai/glm-5.3-prime` | GLM 5.3 Prime | 1,000,000 | 131,072 | Reasoning, Tools |
-| `openrouter:z-ai/glm-5.3-flash` | GLM-5.3-Flash | 1,310,720 | 128,000 | Reasoning, Vision, Tools |
+| `openrouter:z-ai/glm-5.3-flash` | GLM-5.3-Flash | 1,048,576 | 943,717 | Reasoning, Vision, Tools |
 | `openrouter:z-ai/glm-5.3-flashx` | GLM 5.3 FlashX | 1,048,576 | 131,072 | Reasoning, Vision, Tools |
 | `openrouter:z-ai/glm-5v-turbo` | GLM-5V-Turbo | 202,752 | 131,072 | Reasoning, Vision, Tools |
 | `openrouter:x-ai/grok-4.7` | Grok 4.7 | 500,000 | 450,000 | Reasoning, Vision, Tools |
 | `openrouter:deepseek/deepseek-v4-pro` | DeepSeek V4 Pro | 1,048,576 | 384,000 | Reasoning, Tools |
-| `openrouter:deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | 1,048,576 | 384,000 | Reasoning, Tools |
+| `openrouter:deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | 1,048,576 | 943,718 | Reasoning, Tools |
 | `openrouter:qwen/qwen3.8-max-0902` | Qwen3.8 Max 0902 | 1,000,000 | 131,072 | Reasoning, Vision, Tools |
 | `openrouter:google/gemini-3.8-flash` | Gemini 3.8 Flash | 1,048,576 | 65,536 | Reasoning, Vision, Tools |
 | `openrouter:qwen/qwen3.7-plus` | Qwen3.7 Plus | 1,000,000 | 131,072 | Reasoning, Vision, Tools |
@@ -251,7 +251,7 @@ Specify a model in your agent file, pinned to a version or tracking the line:
 
 ```yaml
 ---
-model: anthropic:claude-sonnet-5   # pinned
+model: anthropic:claude-sonnet-5-5   # pinned
 ---
 ```
 

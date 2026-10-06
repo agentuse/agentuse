@@ -60,3 +60,22 @@ describe('GPT-6 Astra', () => {
     });
   }
 });
+
+describe('GPT-6.1 Sol', () => {
+  it('registers published limits and is the gpt-sol alias', () => {
+    expect(getVersionAliases()['openai:gpt-sol']).toBe('openai:gpt-6.1-sol');
+    expect(MODELS.openai['gpt-6.1-sol'].limit).toEqual({ context: 1050000, input: 922000, output: 128000 });
+    expect(MODELS.openai['gpt-6.1-sol'].cost).toEqual({ input: 2, output: 10 });
+  });
+
+  it('raises none and minimal to low, unlike GPT-6 Sol and Luna', () => {
+    for (const effort of ['none', 'minimal'] as const) {
+      expect(resolveReasoningCompatibility('openai:gpt-6.1-sol', effort)).toEqual({ reasoning: 'low' });
+      expect(resolveReasoningCompatibility('openrouter:openai/gpt-6.1-sol', effort)).toEqual({
+        providerOptions: { openrouter: { reasoning: { effort: 'low' } } },
+      });
+    }
+    expect(resolveReasoningCompatibility('openai:gpt-6-sol', 'none')).toEqual({ reasoning: 'none' });
+    expect(resolveReasoningCompatibility('openai:gpt-6-luna', 'none')).toEqual({ reasoning: 'none' });
+  });
+});
