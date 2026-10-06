@@ -97,10 +97,14 @@ describe("stale learnings are held out of the injected prompt", () => {
     ]);
 
     await buildLearningPrompt(agent as never, agentFile, projectRoot);
-    // The counter is bumped without awaiting, so give the write a turn to land.
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // The counter is bumped without awaiting. Wait for the fresh entry's bump to
+    // land (a fixed delay flaked on slow CI runners under coverage).
+    let loaded = await store.load();
+    for (let i = 0; i < 100 && loaded.find((l) => l.id === "fresh001")!.injectedCount === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      loaded = await store.load();
+    }
 
-    const loaded = await store.load();
     expect(loaded.find((l) => l.id === "stale001")!.injectedCount).toBe(4);
     expect(loaded.find((l) => l.id === "fresh001")!.injectedCount).toBe(1);
   });
