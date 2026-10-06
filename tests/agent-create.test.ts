@@ -215,7 +215,7 @@ Triage support tickets.
       customProviders: [],
     });
 
-    expect(options[0]?.defaultModel).toBe('anthropic:claude-sonnet-5');
+    expect(options[0]?.defaultModel).toBe('anthropic:claude-sonnet-5-5');
     expect(options[1]?.defaultModel).toBe('openai:gpt-5.6-terra');
   });
 

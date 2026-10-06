@@ -171,7 +171,7 @@ function renderAgent(name: string, model: string, objective: string, description
 }
 
 const BALANCED_CREATOR_DEFAULTS: Readonly<Record<string, string>> = {
-  anthropic: 'anthropic:claude-sonnet-5',
+  anthropic: 'anthropic:claude-sonnet-5-5',
   openai: 'openai:gpt-5.6-terra',
   openrouter: 'openrouter:google/gemini-3.6-flash',
   [OPENCODE_GO_PROVIDER_ID]: `${OPENCODE_GO_PROVIDER_ID}:glm-5.3`,
