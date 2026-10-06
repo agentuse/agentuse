@@ -201,6 +201,23 @@ describe('Dashboard provider setup service', () => {
     expect(fetchSpy).toHaveBeenCalledWith('http://localhost:8080/v1/messages', expect.objectContaining({ method: 'POST' }));
   });
 
+  it('probes a named model before discovered models the endpoint may not serve', async () => {
+    fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input).endsWith('/models')) {
+        return new Response(JSON.stringify({ data: [{ id: 'retired-model' }, { id: 'live-model' }] }), { status: 200 });
+      }
+      const { model } = JSON.parse(String(init?.body));
+      return model === 'live-model'
+        ? new Response(JSON.stringify({ choices: [] }), { status: 200 })
+        : new Response(JSON.stringify({ error: { message: 'model not found' } }), { status: 404 });
+    });
+    await expect(checkCustomProvider({
+      name: 'proxy',
+      baseURL: 'http://localhost:8080/v1',
+      models: ['live-model'],
+    })).resolves.toMatchObject({ api: 'openai-completions', models: ['live-model', 'retired-model'] });
+  });
+
   it('automatically detects an OpenAI Responses endpoint', async () => {
     fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);

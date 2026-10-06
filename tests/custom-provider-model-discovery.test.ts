@@ -51,6 +51,18 @@ describe('custom provider model discovery', () => {
     }));
   });
 
+  it('discovers models from an Anthropic-format model list', async () => {
+    fetchSpy = spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      data: [
+        { id: 'claude-haiku-4-5-20251001', type: 'model', display_name: 'Claude Haiku 4.5' },
+        { id: 'claude-sonnet-4-5-20250929', type: 'model', display_name: 'Claude Sonnet 4.5' },
+      ],
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+
+    await expect(discoverCustomProviderModelIds('gateway', { baseURL: 'http://localhost:8317/v1' }))
+      .resolves.toEqual(['claude-haiku-4-5-20251001', 'claude-sonnet-4-5-20250929']);
+  });
+
   it('uses LM Studio native metadata to exclude embedding models', async () => {
     const provider = { baseURL: 'http://localhost:1234/v1' };
     fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input) => {

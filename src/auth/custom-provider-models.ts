@@ -4,6 +4,8 @@ import { toErrorMessage } from '../utils/error-message';
 const DISCOVERY_TIMEOUT_MS = 3_000;
 const COMPLETION_CHECK_TIMEOUT_MS = 30_000;
 const DISCOVERY_LIMIT = 200;
+// `llm` is LM Studio's native type; `model` is every entry in an Anthropic-format list.
+const TEXT_MODEL_TYPES = new Set<unknown>([undefined, 'llm', 'model']);
 export const CUSTOM_PROVIDER_APIS = ['openai-completions', 'openai-responses', 'anthropic-messages'] as const;
 export type CustomProviderApi = typeof CUSTOM_PROVIDER_APIS[number];
 export type CustomProviderApiSelection = CustomProviderApi | 'auto';
@@ -116,7 +118,7 @@ export async function discoverCustomProviderModelIds(
       }
     }
     return normalizeCustomProviderModelIds(candidates
-      .filter((model) => model?.type === undefined || model.type === 'llm')
+      .filter((model) => TEXT_MODEL_TYPES.has(model?.type))
       .map((model) => model?.id));
   } finally {
     clearTimeout(timer);

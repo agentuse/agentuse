@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Custom providers find models from Anthropic-format endpoints.** `agentuse provider add` no longer reports "Could not find any models" when the endpoint returns an Anthropic-style model list, where every entry has `"type": "model"`. Models you pass with `--model` are now the ones checked first, so an endpoint that lists a model it cannot serve no longer fails setup.
+
 ## [0.23.0] - 2026-10-06
 
 ### Added

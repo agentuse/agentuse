@@ -504,7 +504,9 @@ export async function prepareCustomProvider(input: CustomProviderInput): Promise
   } catch (error) {
     if (manualModels.length === 0) throw error;
   }
-  const models = normalizeCustomProviderModelIds([...discoveredModels, ...manualModels]);
+  // Models the user named come first: the format check probes models[0], and an
+  // endpoint may list models it cannot serve.
+  const models = normalizeCustomProviderModelIds([...manualModels, ...discoveredModels]);
   if (models.length === 0) {
     throw new Error('Could not find any models at this endpoint. Enter at least one model ID manually.');
   }
