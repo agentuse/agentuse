@@ -4,11 +4,12 @@
 
 ### Fixed
 
-- **The agent creator no longer writes bash patterns that can never match.** A pattern such as `du -sh ~/Downloads/* | sort -rh | head -5` passed review, but every segment of a pipeline or chain is checked on its own, so the agent's first run was blocked. The creator now rejects patterns that chain commands with `|`, `;` or `&&`, and its guidance says to list each command separately. Matching itself is unchanged.
+- **Code Mode works in installed builds.** In 0.23.0 every `code_exec` call from the npm package and the Mac app failed with "Unable to resolve the esbuild package required by AgentUse." The bundle looked for esbuild relative to a source path on the build machine; it now looks beside the installed bundle.
 - **The agent creator accepts a capability review with a note after it.** Some models, Claude Haiku among them, return the review as a fenced JSON block followed by a short rationale. The creator rejected every such review as invalid, so drafting an agent failed after retrying until it hit its step limit. Agent discovery and the learning helpers read model JSON the same way now.
-- **Code Mode works again in installed builds.** In 0.23.0 every `code_exec` call from the npm package and the Mac app failed with "Unable to resolve the esbuild package required by AgentUse." The bundle looked for esbuild relative to a source path on the build machine; it now looks beside the installed bundle.
+- **The agent creator no longer writes bash patterns that can never match.** A pattern such as `du -sh ~/Downloads/* | sort -rh | head -5` passed review, but every segment of a pipeline or chain is checked on its own, so the agent's first run was blocked. The creator now rejects patterns that chain commands with `|`, `;` or `&&`, and its guidance says to list each command separately. Matching itself is unchanged.
 - **Custom providers find models from Anthropic-format endpoints.** `agentuse provider add` no longer reports "Could not find any models" when the endpoint returns an Anthropic-style model list, where every entry has `"type": "model"`. Models you pass with `--model` are now the ones checked first, so an endpoint that lists a model it cannot serve no longer fails setup. Without `--model`, setup tries up to three listed models before failing, and the error says to name a model the endpoint serves.
 - **`agentuse setup` prints commands that work after `npx`.** Run through `npx`, setup now tells you to start the server with `npx agentuse serve` instead of `agentuse serve`, which is not installed. Without a terminal, the "choose --web or --terminal" error now includes a complete command to run.
+- **A pending approval's files show once on the session page.** The result area listed every saved artifact, including the files the open approval card already shows with previews, so a pending review showed the same files twice. It now leaves out files the open approval lists.
 
 ## [0.23.0] - 2026-10-06
 
