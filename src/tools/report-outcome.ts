@@ -437,6 +437,17 @@ export function composeSubagentResult(params: {
 }
 
 /**
+ * Whether prose written just before a work tool call only announced it ("I'll
+ * check the folder.") rather than delivering anything. One short line is
+ * narration; anything longer or multi-line is kept, so a document the agent
+ * streamed before saving it still reaches the report.
+ */
+export function isToolNarration(text: string): boolean {
+  const trimmed = text.trim();
+  return trimmed.length <= 280 && !trimmed.includes('\n');
+}
+
+/**
  * Drop a leading "✅ Complete: …" / "💤 Idle: …" / "⚠️ Incomplete: …" line, or a bare repeat of
  * the headline, from streamed prose. Models trained on the old contract still
  * open their report with one.

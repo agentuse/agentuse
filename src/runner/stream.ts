@@ -18,7 +18,7 @@ import { LIVE_OUTPUT_INTERVAL_MS, LIVE_OUTPUT_METADATA_KEY } from '../tools/type
 import { RESULTS_TOOL } from '../tools/results.js';
 import { withoutToolIntent } from './tool-intent';
 import { defaultTerminalPresenter, type TerminalPresenter } from './terminal-presenter';
-import { formatOutcomeLine, isOutcomeTool, mergeReportBodies, readOutcomeCall, stripLeadingOutcomeLine } from '../tools/report-outcome.js';
+import { formatOutcomeLine, isOutcomeTool, isToolNarration, mergeReportBodies, readOutcomeCall, stripLeadingOutcomeLine } from '../tools/report-outcome.js';
 import { sanitizeWALInput } from './effect-wal';
 
 /**
@@ -214,6 +214,8 @@ export async function processAgentStream(
   }
 ): Promise<{
   text: string;
+  /** finalText without pre-tool-call narration; what a report_outcome body merges with. */
+  reportText: string;
   usage?: LanguageModelUsage;
   usageKind?: 'cumulative';
   toolCalls?: Array<{ tool: string; args: unknown }>;
@@ -228,6 +230,11 @@ export async function processAgentStream(
   parts: AgentPart[];
 }> {
   let finalText = '';
+  // The report view of finalText: prose segments split at each work tool call,
+  // minus the one-line "I'll now..." narration that only announced that call.
+  const reportSegments: string[] = [];
+  let textSegment = '';
+  const reportText = () => [...reportSegments, textSegment].join('');
   let usage: LanguageModelUsage | null = null;
   let usageKind: 'cumulative' | undefined;
   const toolCalls: Array<{ tool: string; args: unknown }> = [];
@@ -400,6 +407,7 @@ export async function processAgentStream(
           timestamp: Date.now()
         });
         finalText += chunk.text!;
+        textSegment += chunk.text!;
         if (chunk.text && chunk.text.trim()) {
           hasTextOutput = true;
           hasTextSinceLastToolCall = true;
@@ -440,6 +448,10 @@ export async function processAgentStream(
           options.doomLoopDetector.recordNonToolEvent();
         }
         hasTextSinceLastToolCall = false;
+        if (!isOutcomeTool(chunk.toolName!)) {
+          if (!isToolNarration(textSegment)) reportSegments.push(textSegment);
+          textSegment = '';
+        }
 
         // Check for doom loop (repeated identical tool calls). Compare without
         // the injected intent phrase: a model stuck in a loop may vary the
@@ -482,7 +494,7 @@ export async function processAgentStream(
             // afterwards, so there is nothing yet to fold in.
             const call = readOutcomeCall(chunk.toolName!, chunk.toolInput);
             const body = call && call.status !== 'incomplete'
-              ? mergeReportBodies(details ?? '', stripLeadingOutcomeLine(finalText, call.headline))
+              ? mergeReportBodies(details ?? '', stripLeadingOutcomeLine(reportText(), call.headline))
               : details ?? '';
             // Held until the tool-call bookkeeping below has run, so the text
             // part lands after the call it came from.
@@ -925,6 +937,7 @@ export async function processAgentStream(
 
   return {
     text: finalText,
+    reportText: reportText(),
     ...(usage ? { usage } : {}),
     ...(usageKind ? { usageKind } : {}),
     ...(options?.collectToolCalls && { toolCalls }),

@@ -604,7 +604,7 @@ export async function runAgent(
       // A complete or idle report_outcome IS the report, so its headline + details become the
       // run's output for every consumer. Streamed prose is the fallback for a
       // run that never called it.
-      text: composeFinalOutput(complete, result.text),
+      text: complete ? composeFinalOutput(complete, result.reportText ?? result.text) : result.text,
       ...(result.usage && { usage: result.usage }),
       ...(result.usageKind && { usageKind: result.usageKind }),
       toolCallCount: result.toolCalls?.length || 0,
