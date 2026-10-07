@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-10-06
+
 ### Fixed
 
 - **Code Mode works in installed builds.** In 0.23.0 every `code_exec` call from the npm package and the Mac app failed with "Unable to resolve the esbuild package required by AgentUse." The bundle looked for esbuild relative to a source path on the build machine; it now looks beside the installed bundle.
