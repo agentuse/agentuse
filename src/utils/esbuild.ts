@@ -5,8 +5,11 @@ import { pathToFileURL } from 'node:url';
 
 type Esbuild = typeof import('esbuild');
 
+// import.meta.url first: Bun's ESM bundle inlines __filename as the build
+// machine's source path, so resolving from it fails on every install. The
+// desktop CJS bundle has no import.meta.url and falls back to a real __filename.
 const requireFromModule = createRequire(
-  typeof __filename === 'string' ? __filename : import.meta.url,
+  (import.meta as { url?: string }).url ?? __filename,
 );
 let esbuildPromise: Promise<Esbuild> | undefined;
 
