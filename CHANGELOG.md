@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **The agent creator accepts a capability review with a note after it.** Some models, Claude Haiku among them, return the review as a fenced JSON block followed by a short rationale. The creator rejected every such review as invalid, so drafting an agent failed after retrying until it hit its step limit. Agent discovery and the learning helpers read model JSON the same way now.
 - **Code Mode works again in installed builds.** In 0.23.0 every `code_exec` call from the npm package and the Mac app failed with "Unable to resolve the esbuild package required by AgentUse." The bundle looked for esbuild relative to a source path on the build machine; it now looks beside the installed bundle.
 - **Custom providers find models from Anthropic-format endpoints.** `agentuse provider add` no longer reports "Could not find any models" when the endpoint returns an Anthropic-style model list, where every entry has `"type": "model"`. Models you pass with `--model` are now the ones checked first, so an endpoint that lists a model it cannot serve no longer fails setup. Without `--model`, setup tries up to three listed models before failing, and the error says to name a model the endpoint serves.
 - **`agentuse setup` prints commands that work after `npx`.** Run through `npx`, setup now tells you to start the server with `npx agentuse serve` instead of `agentuse serve`, which is not installed. Without a terminal, the "choose --web or --terminal" error now includes a complete command to run.

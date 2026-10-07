@@ -49,6 +49,13 @@ describe('creator capability review', () => {
     await expect(reviewAuthoredAgentCapabilities(source, 'openai:gpt-5.6-luna', undefined)).rejects.toThrow('valid, source-grounded');
   });
 
+  it('reads a fenced review followed by the rationale some models add', async () => {
+    complete = spyOn(completion, 'completeText').mockResolvedValue(
+      '```json\n{\n  "issues": []\n}\n```\n\n**Rationale:**\n\nThe bash allowlist covers the command the agent needs.',
+    );
+    await expect(reviewAuthoredAgentCapabilities(source, 'openai:gpt-5.6-luna', undefined)).resolves.toBeUndefined();
+  });
+
   it('honors cancellation before starting the helper request', async () => {
     complete = spyOn(completion, 'completeText').mockResolvedValue('{"issues":[]}');
     const controller = new AbortController();

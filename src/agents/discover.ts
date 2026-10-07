@@ -9,6 +9,7 @@ import { discoverSkills } from '../skill/discovery.js';
 import { SAFE_ENV_FILENAMES, isPathInside } from '../utils/path-policy.js';
 import { validateAgentName } from './create.js';
 import { agentBaseName } from '../utils/agent-id.js';
+import { modelJsonText } from '../utils/model-json';
 
 const ADAPTIVE_MAX_FILES = 400;
 const ADAPTIVE_MAX_FILE_BYTES = 64_000;
@@ -245,12 +246,6 @@ export interface ProjectDiscoveryResult {
   suggestions: ProjectAgentSuggestion[];
 }
 
-function stripFence(value: string): string {
-  const trimmed = value.trim();
-  const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n```$/i.exec(trimmed);
-  return (fenced?.[1] ?? trimmed).trim();
-}
-
 function cleanText(value: unknown, label: string, max: number): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`The project scan returned an invalid ${label}`);
   const text = value.trim();
@@ -261,7 +256,7 @@ function cleanText(value: unknown, label: string, max: number): string {
 export function parseProjectDiscoveryResponse(response: string, projectName: string, inspectedFiles: number): ProjectDiscoveryResult {
   let raw: unknown;
   try {
-    raw = JSON.parse(stripFence(response));
+    raw = JSON.parse(modelJsonText(response));
   } catch {
     throw new Error('The model did not return valid project suggestions');
   }

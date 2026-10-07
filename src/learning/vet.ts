@@ -1,6 +1,7 @@
 import { completeText } from '../complete-text';
 import { providerHelperSystemPrompt as helperSystemPrompt } from '../plugin/provider-behavior';
 import { logger } from '../utils/logger';
+import { modelJsonText } from '../utils/model-json';
 import { splitInstructions } from './contract';
 import type { Learning, LearningDraft } from './types';
 
@@ -123,8 +124,7 @@ Respond with ONLY a JSON array, one object per candidate:
   let raw: RawVetVerdict[] = [];
   try {
     const text = responseText.trim();
-    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || [null, text];
-    raw = JSON.parse(jsonMatch[1] || text);
+    raw = JSON.parse(modelJsonText(text));
     if (!Array.isArray(raw)) raw = [];
   } catch {
     logger.debug(`[Learning] Vet returned unparseable verdicts: ${responseText.slice(0, 200)}`);

@@ -2,6 +2,7 @@ import { completeText } from '../complete-text';
 import type { AgentCompleteEvent, ToolCallTrace } from '../plugin/types';
 import type { Learning, LearningCategory, LearningDraft } from './types';
 import { logger } from '../utils/logger';
+import { modelJsonText } from '../utils/model-json';
 import { providerHelperSystemPrompt as helperSystemPrompt } from '../plugin/provider-behavior';
 import { splitInstructions } from './contract';
 import { generateLearningId } from './store';
@@ -189,8 +190,7 @@ Respond with ONLY a JSON object, no other text ("supersedes" is optional):
   const responseText = await completeText(agentModel, { ...system, prompt });
   try {
     const text = responseText.trim();
-    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || [null, text];
-    const parsed = JSON.parse(jsonMatch[1] || text);
+    const parsed = JSON.parse(modelJsonText(text));
     const cleaned = typeof parsed?.instruction === 'string' ? parsed.instruction.trim() : '';
     if (!cleaned) return null;
     const category: LearningCategory = LEARNING_CATEGORIES.includes(parsed?.category) ? parsed.category : 'tip';
@@ -346,10 +346,7 @@ If no learnings are applicable, respond with an empty array: []`;
   let rawLearnings: RawLearning[] = [];
   try {
     const text = responseText.trim();
-    // Handle markdown code blocks
-    const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || [null, text];
-    const jsonStr = jsonMatch[1] || text;
-    rawLearnings = JSON.parse(jsonStr);
+    rawLearnings = JSON.parse(modelJsonText(text));
     if (!Array.isArray(rawLearnings)) {
       rawLearnings = [];
     }

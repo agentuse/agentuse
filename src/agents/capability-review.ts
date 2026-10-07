@@ -3,6 +3,7 @@ import { completeText } from '../complete-text';
 import { providerHelperSystemPrompt } from '../plugin/provider-behavior';
 import { parseAgentContent } from '../parser';
 import { AgentCreationError } from './create';
+import { modelJsonText } from '../utils/model-json';
 
 const ReviewSchema = z.object({
   issues: z.array(z.object({
@@ -65,8 +66,7 @@ export async function reviewAuthoredAgentCapabilities(
   abortSignal.throwIfAborted();
   let review: z.infer<typeof ReviewSchema>;
   try {
-    const text = response.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/u, '$1');
-    review = ReviewSchema.parse(JSON.parse(text));
+    review = ReviewSchema.parse(JSON.parse(modelJsonText(response)));
     for (const issue of review.issues) {
       if (!source.includes(issue.quote) && !objective?.includes(issue.quote)) {
         throw new Error('The review cited text absent from the draft and objective');
