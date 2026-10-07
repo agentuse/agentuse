@@ -222,6 +222,11 @@ Note that a wildcard tail grants what it does not name: `birdc *` grants
 approval protocol in the body; declaring `gated` injects it, and implies
 `approval:`.
 
+Each pattern is one command. A run checks every segment of a pipeline or
+chain (`|`, `&&`, `;`) against the list on its own, so a pattern such as
+`du -sh ~/Downloads/* | sort -rh | head -5` never matches; list `du -sh *`,
+`sort *` and `head *` as separate patterns instead.
+
 ## Minimum Viable Agent
 
 Write the narrowest agent that safely completes the workflow the user actually

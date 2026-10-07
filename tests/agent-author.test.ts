@@ -54,6 +54,25 @@ tools:
     expect(parseAgentContent(authored.source, '').config.approval).toBe(true);
   });
 
+  it('rejects bash patterns that chain commands, which the per-segment matcher can never allow', () => {
+    const withCommands = (...commands: string[]) => source.replace(
+      'description: Triage support requests and surface urgent replies',
+      `description: Triage support requests and surface urgent replies
+tools:
+  bash:
+    commands:
+${commands.map((command) => `      - "${command.replaceAll('"', '\\"')}"`).join('\n')}`,
+    );
+    for (const chained of ['du -sh ~/Downloads/* | sort -rh | head -5', 'cd * && ls', 'make; make test', 'sleep 1 &']) {
+      expect(() => validateAuthoredAgentSource(withCommands(chained), ['opencode-go:glm-5.1']))
+        .toThrow(`chains commands: ${chained}`);
+    }
+    expect(() => validateAuthoredAgentSource(
+      withCommands('du -sh ~/Downloads/*', 'sort -rh', 'head -5', 'grep "a|b" *', 'make test 2>&1', "echo 'x; y'"),
+      ['opencode-go:glm-5.1'],
+    )).not.toThrow();
+  });
+
   it('accepts an explicitly requested notification channel', () => {
     const withChannel = source.replace(
       'description: Triage support requests and surface urgent replies',

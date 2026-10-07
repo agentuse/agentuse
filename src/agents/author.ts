@@ -17,6 +17,21 @@ function stripSingleFence(text: string): string {
   return (fenced?.[1] ?? trimmed).trim();
 }
 
+/** Whether a bash pattern contains an unquoted |, ;, & or &&, which the per-segment matcher never matches. */
+function chainsCommands(pattern: string): boolean {
+  let quote: string | undefined;
+  for (let i = 0; i < pattern.length; i++) {
+    const char = pattern[i]!;
+    if (char === '\\' && quote !== "'") { i++; continue; }
+    if (quote) { if (char === quote) quote = undefined; continue; }
+    if (char === "'" || char === '"') { quote = char; continue; }
+    if (char === '|' || char === ';') return true;
+    // `2>&1` and `&>file` redirect rather than chain.
+    if (char === '&' && pattern[i - 1] !== '>' && pattern[i - 1] !== '<' && pattern[i + 1] !== '>') return true;
+  }
+  return false;
+}
+
 export function validateAuthoredAgentSource(
   response: string,
   availableModels: readonly string[],
@@ -81,6 +96,11 @@ export function validateAuthoredAgentSource(
     }
   }
   const gated = parsed.config.tools?.bash?.gated ?? [];
+  const compoundPattern = [...(parsed.config.tools?.bash?.commands ?? []), ...gated].find(chainsCommands);
+  if (compoundPattern) {
+    throw new AgentCreationError('INVALID_GENERATED_AGENT', `The selected model wrote a bash pattern that chains commands: ${compoundPattern}. `
+      + 'Each segment of a pipeline or chain is checked on its own, so this pattern can never match. List each command as its own pattern instead.');
+  }
   const unsafeCommand = (parsed.config.tools?.bash?.commands ?? []).find((command) =>
     !gated.some((pattern) => wildcardMatch(command, pattern))
       && (grantsArbitraryCode(command) || grantsUnnamedSubcommands(command)));
