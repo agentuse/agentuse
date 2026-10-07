@@ -21,7 +21,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { glob } from 'glob';
-import { createReadTool, createWriteTool, createEditTool } from './filesystem.js';
+import { createReadTool, createWriteTool, createEditTool, directoryReadError } from './filesystem.js';
 import { resolveRealPath, type PathResolverContext } from './path-validator.js';
 import { withFileMutationQueue } from './file-mutation-queue.js';
 import { getToolOutputLimits, truncateEnd } from './tool-output-limits.js';
@@ -98,6 +98,14 @@ async function isFile(target: string): Promise<boolean> {
   try {
     const stats = await fs.stat(target);
     return stats.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function isDirectory(target: string): Promise<boolean> {
+  try {
+    return (await fs.stat(target)).isDirectory();
   } catch {
     return false;
   }
@@ -296,6 +304,10 @@ ${projectDescription}`,
       limit: z.number().optional().describe('Maximum number of lines to read, not characters or bytes. Ignored for image/PDF files.'),
     }),
     execute: async ({ file_path, offset, limit }: { file_path: string; offset?: number; limit?: number }): Promise<ToolOutput | MediaToolOutput> => {
+      const dir = resolveScopeDir(file_path);
+      if (typeof dir !== 'string' && (await isDirectory(dir.realPath) || await isDirectory(dir.editPath))) {
+        return errorOutput(directoryReadError(dir.realPath));
+      }
       const resolved = resolveScopePath(file_path);
       if (typeof resolved === 'string') return errorOutput(resolved);
 

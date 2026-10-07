@@ -310,3 +310,14 @@ describe('overlay concurrent mutations on one staged path', () => {
     }
   });
 });
+
+describe('overlay read on a directory', () => {
+  it('points at the list tool for the project root and its folders, and still refuses outside paths', async () => {
+    for (const target of [scopeRoot, `${scopeRoot}/`, join(scopeRoot, 'agents')]) {
+      const result = await run('tools__filesystem_read', { file_path: target });
+      expect(JSON.stringify(result)).toContain('is a directory. Use tools__filesystem_list');
+    }
+    expect(JSON.stringify(await run('tools__filesystem_read', { file_path: outside }))).toContain('outside the project');
+    expect(JSON.stringify(await run('tools__filesystem_read', { file_path: join(scopeRoot, 'node_modules') }))).toContain('Cannot access node_modules');
+  });
+});

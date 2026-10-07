@@ -99,6 +99,11 @@ function formatPathsForDescription(
 /**
  * Create the filesystem read tool
  */
+/** A read aimed at a directory: say so and point at the list tool instead of a misleading not-found. */
+export function directoryReadError(directoryPath: string): string {
+  return `${directoryPath} is a directory. Use tools__filesystem_list to see what it contains.`;
+}
+
 export function createReadTool(
   configs: FilesystemPathConfig[],
   context: PathResolverContext
@@ -145,7 +150,7 @@ Use absolute paths within these directories. Other paths will be rejected.`;
         if (!stats.isFile()) {
           const error: ToolErrorOutput = {
             success: false,
-            error: `Not a file: ${validation.resolvedPath}`,
+            error: stats.isDirectory() ? directoryReadError(validation.resolvedPath) : `Not a file: ${validation.resolvedPath}`,
           };
           return { output: JSON.stringify(error) };
         }
