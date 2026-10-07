@@ -124,3 +124,40 @@ it('persists execution intervals through suspension, restart, completion and ind
   expect(row!.timing!.activeMs).toBe(finished.time.execution!.reduce((sum, interval) => sum + interval.end! - interval.start, 0));
   expect(row!.timing!.running).toBe(false);
 });
+
+it('settles in-flight tool calls when a run fails, so none render as still running', async () => {
+  const { manager, agentId, sessionId } = await setup();
+  const messageId = await manager.createMessage(sessionId, agentId, {
+    user: { prompt: { task: 'Time out mid-tool' } },
+    assistant: {
+      system: ['system'],
+      modelID: 'test',
+      providerID: 'openai',
+      mode: 'build',
+      path: { cwd: root!, root: root! },
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    },
+  });
+  const start = Date.now() - 1_000;
+  const partId = await manager.addPart(sessionId, agentId, messageId, {
+    type: 'tool',
+    callID: 'bash-1',
+    tool: 'bash',
+    state: { status: 'running', input: { command: 'sleep 999' }, time: { start } },
+  } as any);
+
+  await manager.setSessionError(sessionId, agentId, {
+    code: 'TIMEOUT',
+    cause: 'run_deadline',
+    message: 'Agent execution timed out after 1800s',
+  });
+
+  const part = await manager.getPart(sessionId, agentId, messageId, partId);
+  expect(part?.type === 'tool' && part.state).toMatchObject({
+    status: 'error',
+    input: { command: 'sleep 999' },
+    error: 'Agent execution timed out after 1800s',
+    time: { start },
+  });
+});

@@ -778,7 +778,7 @@ export class SessionManager {
     }));
   }
 
-  private async stopPendingPartsAtPath(sessionPath: string, options: { message: string; time: number }): Promise<void> {
+  private async stopPendingPartsAtPath(sessionPath: string, options: { message: string; time: number; runningOnly?: boolean }): Promise<void> {
     const partKeys = (await listKeys(sessionPath))
       .filter((key) => key.startsWith(`${sessionPath}/`) && key.includes('/part/'));
 
@@ -787,7 +787,7 @@ export class SessionManager {
         const part = await readJSON<Part>(key);
         if (!part || part.type !== 'tool') return;
         const state = part.state;
-        if (state.status !== 'pending' && state.status !== 'running') return;
+        if (state.status !== 'running' && (options.runningOnly || state.status !== 'pending')) return;
 
         const input = 'input' in state ? state.input : undefined;
         const resumePayload = state.status === 'pending' ? state.resumePayload : undefined;
@@ -2234,14 +2234,19 @@ export class SessionManager {
     agentId: string,
     error: Omit<NonNullable<SessionInfo['error']>, 'time'>
   ): Promise<void> {
+    const time = Date.now();
     await this.updateSession(sessionID, agentId, {
       status: 'error',
       outcome: undefined,
       error: {
         ...error,
-        time: Date.now()
+        time
       }
     });
+    // A failed run (timeout, crash, auth) ends whatever tool calls were in
+    // flight; left open they render as still running forever. Pending parts
+    // stay: cascade recovery resumes a failed manager through its parked gate.
+    await this.stopPendingPartsAtPath(this.knownSessionPath(sessionID, agentId), { message: error.message, time, runningOnly: true });
   }
 
   /**
