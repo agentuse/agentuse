@@ -25,11 +25,13 @@ const path = require('path');
 const os = require('os');
 
 // PM2 retains its saved environment across restarts. Include the standard user
-// CLI install directory even when PM2 was launched without a login-shell PATH.
-// Append it to preserve the caller's existing command resolution order.
-const localBin = path.join(os.homedir(), '.local', 'bin');
+// CLI install directories even when PM2 was launched without a login-shell PATH.
+// Append them to preserve the caller's existing command resolution order.
+const userBins = [path.join(os.homedir(), '.local', 'bin'), path.join(os.homedir(), 'bin')];
 const executablePaths = (process.env.PATH || '/usr/local/bin:/usr/bin:/bin').split(path.delimiter);
-if (!executablePaths.includes(localBin)) executablePaths.push(localBin);
+for (const userBin of userBins) {
+  if (!executablePaths.includes(userBin)) executablePaths.push(userBin);
+}
 
 module.exports = {
   apps: [
