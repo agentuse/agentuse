@@ -657,6 +657,25 @@ mcpServers:
       - dangerous_operation
 ```
 
+### Keyless web search with Parallel
+
+[Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp) provides
+web search and page extraction without a Parallel API key. Add it to an agent's
+frontmatter:
+
+```yaml
+mcpServers:
+  parallel:
+    url: https://search.parallel.ai/mcp
+    headers:
+      User-Agent: AgentUse-Parallel-Search-Example (https://github.com/agentuse/agentuse)
+```
+
+The tools appear as `mcp__parallel__web_search` and `mcp__parallel__web_fetch`.
+Anonymous access has lower rate limits. Your model provider still needs to be
+connected. See the [runnable research example](https://github.com/agentuse/agentuse/tree/main/templates/parallel-search)
+for setup, instructions, and a command to run it.
+
 ### Multiple MCP Servers
 
 ```yaml
