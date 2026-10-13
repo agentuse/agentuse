@@ -48,6 +48,7 @@ const DEFAULT_MCP_CONNECT_TIMEOUT_SECONDS = 30;
 export interface MCPConnection {
   name: string;
   client: MCPClient;
+  allowedTools?: string[]; // When set, only tools matching these names/patterns load
   disallowedTools?: string[]; // List of disallowed tool names/patterns for this connection
   preloadedTools?: Record<string, Tool>; // Cached tools for HTTP connections (loaded immediately)
   config?: MCPServerConfig; // Original config for accessing toolTimeout and other settings
@@ -417,6 +418,7 @@ export async function connectMCP(
         client,
         config,  // Store config for accessing toolTimeout and other settings
         ...(preloadedTools && { preloadedTools }),
+        ...(config.allowedTools && { allowedTools: config.allowedTools }),
         ...(config.disallowedTools && { disallowedTools: config.disallowedTools })
       };
     } catch (error) {
@@ -593,38 +595,29 @@ function createResourceTools(connection: MCPConnection, resources: MCPResource[]
   return tools;
 }
 
+function matchesToolPattern(toolName: string, patterns: string[]): boolean {
+  return patterns.some(pattern => {
+    if (!pattern.includes('*')) return toolName === pattern;
+    // Escape regex special chars except * (wildcard)
+    const regexPattern = pattern
+      .split('*')
+      .map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+      .join('.*');
+    return new RegExp(`^${regexPattern}$`).test(toolName);
+  });
+}
+
 /**
- * Check if a tool name matches any disallowed patterns
- * @param toolName The tool name to check
- * @param disallowedPatterns Array of disallowed patterns (supports wildcards)
- * @returns True if the tool should be disallowed
+ * A tool is excluded when an allowlist is set and it doesn't match it, or
+ * when it matches the blocklist. The blocklist wins over the allowlist.
  */
-function isToolDisallowed(toolName: string, disallowedPatterns?: string[]): boolean {
-  if (!disallowedPatterns || disallowedPatterns.length === 0) {
-    return false;
-  }
-  
-  for (const pattern of disallowedPatterns) {
-    // Support wildcard patterns
-    if (pattern.includes('*')) {
-      // Escape regex special chars except * (wildcard)
-      const regexPattern = pattern
-        .split('*')
-        .map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
-        .join('.*');
-      const regex = new RegExp(`^${regexPattern}$`);
-      if (regex.test(toolName)) {
-        return true;
-      }
-    } else {
-      // Exact match
-      if (toolName === pattern) {
-        return true;
-      }
-    }
-  }
-  
-  return false;
+function isToolDisallowed(
+  toolName: string,
+  allowedPatterns?: string[],
+  disallowedPatterns?: string[],
+): boolean {
+  if (allowedPatterns && !matchesToolPattern(toolName, allowedPatterns)) return true;
+  return disallowedPatterns ? matchesToolPattern(toolName, disallowedPatterns) : false;
 }
 
 /**
@@ -656,7 +649,7 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
       const disallowedTools: string[] = [];
       for (const [toolName, tool] of Object.entries(clientTools)) {
         // Check if this tool is disallowed
-        if (isToolDisallowed(toolName, connection.disallowedTools)) {
+        if (isToolDisallowed(toolName, connection.allowedTools, connection.disallowedTools)) {
           disallowedTools.push(toolName);
           continue;
         }
@@ -749,8 +742,10 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
         connectionTools[prefixedName] = wrappedTool;
       }
       if (disallowedTools.length > 0) {
-        const toolsList = disallowedTools.map(name => `'${name}'`).join(', ');
-        logger.info(`[MCP] Tools disallowed for server ${connection.name}: ${toolsList}`);
+        // An allowlist can exclude most of a large server, so the info line
+        // carries the count and the names go to debug.
+        logger.info(`[MCP] ${disallowedTools.length} tools excluded for server ${connection.name}`);
+        logger.debug(`[MCP] Excluded tools for ${connection.name}: ${disallowedTools.map(name => `'${name}'`).join(', ')}`);
       }
     } catch (error) {
       logger.warn(`[MCP] Failed to get tools from ${connection.name}: ${toErrorMessage(error)}`);

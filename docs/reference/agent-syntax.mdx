@@ -629,6 +629,9 @@ mcpServers:
       - API_KEY
     allowedEnvVars:       # Optional variables
       - DEBUG_MODE
+    allowedTools:         # Optional: load only these tools
+      - read_*
+      - list_directory
     disallowedTools:      # Optional: tools to exclude
       - write_file
       - delete_file
@@ -653,6 +656,8 @@ mcpServers:
       - API_TOKEN
     allowedEnvVars:                     # Optional variables  
       - DEBUG_MODE
+    allowedTools:                       # Optional: load only these tools
+      - search
     disallowedTools:                    # Optional: tools to exclude
       - dangerous_operation
 ```
@@ -771,7 +776,8 @@ mcpServers:
 #### Common Fields (All Server Types)
 - **`requiredEnvVars`**: Variables that MUST exist. Agent fails if missing.
 - **`allowedEnvVars`**: Optional variables to pass through if they exist.
-- **`disallowedTools`**: Tool names/patterns to exclude (supports wildcards).
+- **`allowedTools`**: When set, only tools matching these names/patterns load (supports wildcards). Tools the server adds later stay off until you list them. Use it when you want a few tools from a large server.
+- **`disallowedTools`**: Tool names/patterns to exclude (supports wildcards). When both are set, `disallowedTools` wins.
 
 #### Stdio Server Fields
 - **`command`**: Executable command (required). Relative paths resolve from agent file's directory.
@@ -961,7 +967,7 @@ Assist the user with their request using all available capabilities.
    - Each object must have a `path` field (string)
    - Optional `name` (string) and `maxSteps` (number) fields
 6. **Authentication**: Only `bearer` type is supported for HTTP MCP servers
-7. **Tool Restrictions**: `disallowedTools` must be an array of strings (supports wildcards)
+7. **Tool Restrictions**: `allowedTools` and `disallowedTools` must be arrays of strings (support wildcards)
 8. **OpenAI Options**:
    - `openai` field is only valid for OpenAI models
    - `reasoningEffort` must be one of: `'none'`, `'minimal'`, `'low'`, `'medium'`, `'high'`, `'xhigh'`, `'max'`

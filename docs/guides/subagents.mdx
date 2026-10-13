@@ -401,7 +401,7 @@ agentuse run ./agents/researcher.agentuse "test query"
 - Use minimal necessary permissions in MCP server configs
 - Avoid loading sub-agents from untrusted sources
 - Review sub-agent instructions for potentially harmful commands
-- Use `disallowedTools` in MCP configs to restrict dangerous tools
+- Use `allowedTools` in MCP configs to load only the tools an agent needs, or `disallowedTools` to block specific ones
 
 ## Next Steps
 
