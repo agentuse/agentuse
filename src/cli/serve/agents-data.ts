@@ -7,6 +7,7 @@
 import { dirname, relative, resolve } from "path";
 import { readFile, stat } from "fs/promises";
 import { parseAgent } from "../../parser";
+import { mcpServerKey } from "../../auth/mcp-oauth-storage";
 import { formatScheduleHuman } from "../../scheduler/parser";
 import { mapLimit } from "../../utils/concurrency.js";
 import { toErrorMessage } from "../../utils/error-message.js";
@@ -38,6 +39,8 @@ export interface AgentSummary {
   store?: string;
   /** Frontmatter `type:` when declared (currently only 'manager'). */
   type?: string;
+  /** OAuth MCP server URLs (normalized); agents sharing one share its login. */
+  mcpOAuthServers?: string[];
   /** Server-computed relationship lint findings (dangling/self/cycle). */
   warnings?: string[];
 }
@@ -86,6 +89,8 @@ export async function collectAgents(projects: Project[]): Promise<CollectAgentsR
         const toRel = (p: string) => relative(project.root, resolve(agentDir, p));
         const subagents = parsed.config.subagents?.map((s) => toRel(s.path));
         const dependsOn = parsed.config.dependsOn?.map(toRel);
+        const mcpOAuthServers = Object.values(parsed.config.mcpServers ?? {})
+          .flatMap((server) => ('url' in server && server.auth?.type === 'oauth' ? [mcpServerKey(server.url)] : []));
         const summary: AgentSummary = {
           projectId: project.id,
           path: toProjectRelativeAgentPath(project, agentFile),
@@ -99,6 +104,7 @@ export async function collectAgents(projects: Project[]): Promise<CollectAgentsR
           ...(dependsOn?.length && { dependsOn }),
           ...(typeof parsed.config.store === 'string' && { store: parsed.config.store }),
           ...(parsed.config.type && { type: parsed.config.type }),
+          ...(mcpOAuthServers.length > 0 && { mcpOAuthServers }),
         };
         agentSummaryCache.set(absPath, { mtimeMs: fileStat.mtimeMs, size: fileStat.size, summary });
         return { ok: true, summary };

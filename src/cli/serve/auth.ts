@@ -21,6 +21,10 @@ import { IncomingMessage } from "http";
  * auth (session token / api key / local); the artifact handler validates the
  * `?token=` session token via `sessionAuthorized` before serving any file.
  *
+ * Also exempt: `/mcp/oauth/callback`, where an MCP authorization server sends
+ * the user's system browser after login. That browser carries no API key; the
+ * single-use OAuth state the daemon issued authorizes the request instead.
+ *
  * NOT exempt (stays header-gated): `/sessions` (the list page), and every
  * `/api/*` route including `/api/sessions` and `/api/sessions/:id`. The `isApi`
  * qualifier on the session branch is the security boundary that keeps the JSON
@@ -30,6 +34,7 @@ export function isHeaderGateExemptRoute(routePath: string, isApi: boolean): bool
   const legacyApprovalRoute = routePath.match(/^\/approvals\/([^/?#]+)(?:\/(requested|status|decision|continue))?$/);
   if (legacyApprovalRoute && legacyApprovalRoute[1] !== 'events') return true;
   if (isApi) return false;
+  if (routePath === '/mcp/oauth/callback') return true;
   if (routePath === '/sessions/events') return false;
   return /^\/sessions\/[^/?#]+(?:\/(?:decision|continue|resume|status|stop|started|finished|reopen|events|learnings|learnings\/[^/?#]+\/discard|artifacts-list|artifacts\/.+|tool-artifacts\/.+|context|context-stack))?$/.test(routePath);
 }

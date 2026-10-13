@@ -6673,6 +6673,31 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-agent-detail .cap-chip.amber { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
 .page-agent-detail .cap-chip.muted { color: var(--muted); }
 
+/* MCP server logins: one row per server, only when one of them uses OAuth */
+.page-agent-detail .mcp-panel { margin: 18px 0 4px; }
+.page-agent-detail .mcp-title {
+  margin: 0 0 8px; font-family: var(--sans); font-size: var(--font-size-micro); font-weight: var(--weight-normal);
+  letter-spacing: var(--tracking-caps); text-transform: uppercase; color: var(--muted);
+}
+.page-agent-detail .mcp-warn {
+  margin: 0 0 10px; padding: 9px 12px; border: 1px solid var(--amber-border); border-radius: 8px;
+  background: var(--amber-soft); color: var(--amber); font-family: var(--sans); font-size: var(--font-size-caption);
+}
+.page-agent-detail .mcp-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.page-agent-detail .mcp-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.page-agent-detail .mcp-row:last-child { border-bottom: 0; }
+.page-agent-detail .mcp-name { flex: 1; min-width: 0; display: grid; gap: 2px; font-family: var(--sans); }
+.page-agent-detail .mcp-name strong { font-size: var(--font-size-caption); font-weight: var(--weight-bold); color: var(--fg); }
+.page-agent-detail .mcp-name span { font-size: var(--font-size-micro); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-agent-detail .mcp-state {
+  padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted);
+  font-family: var(--sans); font-size: var(--font-size-micro); white-space: nowrap;
+}
+.page-agent-detail .mcp-state.is-logged-in { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
+.page-agent-detail .mcp-state.is-needs-login { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
+.page-agent-detail .mcp-row .run-cta-alt { padding: 5px 11px; }
+.page-agent-detail .mcp-error { margin: 8px 0 0; color: var(--red); font-family: var(--sans); font-size: var(--font-size-caption); }
+
 /* section headers (mirror agents group-title) */
 .page-agent-detail .group-title {
   display: flex; align-items: baseline; gap: 10px; margin: 30px 0 12px;

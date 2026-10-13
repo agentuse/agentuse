@@ -385,6 +385,12 @@ describe('header-gate exemption (capability routes)', () => {
     expect(__testing.isHeaderGateExemptRoute('/sessions/events', true)).toBe(false);
   });
 
+  it('exempts only the browser page of the MCP OAuth callback', () => {
+    expect(__testing.isHeaderGateExemptRoute('/mcp/oauth/callback', false)).toBe(true);
+    expect(__testing.isHeaderGateExemptRoute('/mcp/oauth/callback', true)).toBe(false);
+    expect(__testing.isHeaderGateExemptRoute('/agents/mcp/login', true)).toBe(false);
+  });
+
   it('does not exempt unrelated routes', () => {
     expect(__testing.isHeaderGateExemptRoute('/agents', false)).toBe(false);
     expect(__testing.isHeaderGateExemptRoute('/sessionsfoo', false)).toBe(false);

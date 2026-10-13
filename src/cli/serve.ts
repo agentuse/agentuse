@@ -68,6 +68,7 @@ import type { ServeContext, ServeMutableState, ServeRequest } from "./serve/cont
 import { agentCreateRoutes } from "./serve/routes/agent-create";
 import { agentLearningRoutes } from "./serve/routes/agent-learnings";
 import { agentRoutes } from "./serve/routes/agents";
+import { mcpAuthRoutes } from "./serve/routes/mcp-auth";
 import { approvalRoutes } from "./serve/routes/approvals";
 import { homeRoutes } from "./serve/routes/home";
 import { notificationRoutes } from "./serve/routes/notifications";
@@ -4945,6 +4946,7 @@ export function createServeCommand(): Command {
         // answers the request or hands the next one its turn.
         if (await pushRoutes(ctx, rq)) return;
         if (await homeRoutes(ctx, rq)) return;
+        if (await mcpAuthRoutes(ctx, rq)) return;
         if (await agentRoutes(ctx, rq)) return;
         if (await scheduleRoutes(ctx, rq)) return;
         if (await storeRoutes(ctx, rq)) return;

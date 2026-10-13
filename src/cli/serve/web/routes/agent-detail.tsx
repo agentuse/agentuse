@@ -22,6 +22,7 @@ import { isExecutingSessionStatus } from '../../../../session/status';
 import { Tabs } from '../components/tabs';
 import { CopyButton } from '../components/copy-button';
 import { BusyButton } from '../components/busy-button';
+import { McpServersPanel } from '../components/mcp-servers-panel';
 
 /**
  * Split an `.agentuse` file into its YAML frontmatter and Markdown body.
@@ -677,6 +678,8 @@ export default function AgentDetail() {
             </header>
 
             <Capabilities meta={data.meta} model={data.model} schedule={data.schedule} scheduleHuman={data.scheduleHuman} scheduleEnabled={data.scheduleEnabled} metadata={data.metadata} />
+
+            {data.meta.mcpServers.length > 0 && <McpServersPanel project={data.projectId} runPath={data.runPath} />}
 
             <StrandedLearningsBanner strandedAt={strandedAt} />
 

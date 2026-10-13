@@ -1029,6 +1029,28 @@ export function fetchAgentDetail(project: string, runPath: string): Promise<Agen
   return getJson('/api/agents/detail', { project, path: runPath });
 }
 
+export interface AgentMcpServer {
+  name: string;
+  transport: 'http' | 'stdio';
+  host?: string;
+  /** `token` = a bearer token or Authorization header from config; `none` = no login. */
+  auth: 'none' | 'token' | 'logged-in' | 'needs-login';
+  /** OAuth only: other agents using the same server URL, which share this login. */
+  sharedWith?: number;
+}
+
+export function fetchAgentMcpServers(project: string, runPath: string): Promise<{ success: true; servers: AgentMcpServer[] }> {
+  return getJson('/api/agents/mcp', { project, path: runPath });
+}
+
+export function startAgentMcpLogin(project: string, runPath: string, server: string): Promise<{ success: true; authorizationUrl: string }> {
+  return postJson('/api/agents/mcp/login', { project, path: runPath, server });
+}
+
+export function logoutAgentMcpServer(project: string, runPath: string, server: string): Promise<{ success: true }> {
+  return postJson('/api/agents/mcp/logout', { project, path: runPath, server });
+}
+
 export function setAgentSchedulePaused(project: string, path: string, paused: boolean): Promise<{ success: true; paused: boolean; scheduleEnabled: boolean }> {
   return postJson('/api/schedules/state', { project, path, paused });
 }
