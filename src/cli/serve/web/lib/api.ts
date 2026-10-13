@@ -1033,8 +1033,9 @@ export interface AgentMcpServer {
   name: string;
   transport: 'http' | 'stdio';
   host?: string;
-  /** `token` = a bearer token or Authorization header from config; `none` = no login. */
-  auth: 'none' | 'token' | 'logged-in' | 'needs-login';
+  /** `token` = a bearer token or Authorization header from config; `needs-token` = the
+   *  server refuses without one and offers no OAuth login; `none` = no login. */
+  auth: 'none' | 'token' | 'needs-token' | 'logged-in' | 'needs-login';
   /** OAuth only: other agents using the same server URL, which share this login. */
   sharedWith?: number;
 }

@@ -8,6 +8,7 @@ import { dirname, relative, resolve } from "path";
 import { readFile, stat } from "fs/promises";
 import { parseAgent } from "../../parser";
 import { mcpServerKey } from "../../auth/mcp-oauth-storage";
+import { oauthSettings } from "../../mcp-oauth";
 import { formatScheduleHuman } from "../../scheduler/parser";
 import { mapLimit } from "../../utils/concurrency.js";
 import { toErrorMessage } from "../../utils/error-message.js";
@@ -90,7 +91,7 @@ export async function collectAgents(projects: Project[]): Promise<CollectAgentsR
         const subagents = parsed.config.subagents?.map((s) => toRel(s.path));
         const dependsOn = parsed.config.dependsOn?.map(toRel);
         const mcpOAuthServers = Object.values(parsed.config.mcpServers ?? {})
-          .flatMap((server) => ('url' in server && server.auth?.type === 'oauth' ? [mcpServerKey(server.url)] : []));
+          .flatMap((server) => ('url' in server && oauthSettings(server) ? [mcpServerKey(server.url)] : []));
         const summary: AgentSummary = {
           projectId: project.id,
           path: toProjectRelativeAgentPath(project, agentFile),

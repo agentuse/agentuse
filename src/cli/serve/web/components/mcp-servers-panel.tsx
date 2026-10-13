@@ -8,13 +8,14 @@ import { BusyButton } from './busy-button';
 const AUTH_LABEL: Record<AgentMcpServer['auth'], string> = {
   'none': 'No login',
   'token': 'Token',
+  'needs-token': 'Needs a token',
   'logged-in': 'Logged in',
   'needs-login': 'Needs login',
 };
 
 /**
- * The agent's MCP servers and their logins. Shown only when at least one
- * server uses OAuth, since that is the only kind you can act on here.
+ * The agent's MCP servers and their logins. Shown only when a server has a
+ * login to manage or is refusing the agent, so plain setups stay quiet.
  * "Log in" opens the authorization page in the system browser (the desktop
  * app routes new windows there); the page re-checks while a login is open.
  */
@@ -39,7 +40,7 @@ export function McpServersPanel(props: { project: string; runPath: string }) {
     return () => clearTimeout(stop);
   }, [waiting]);
 
-  if (!servers.some((s) => s.auth === 'logged-in' || s.auth === 'needs-login')) return null;
+  if (!servers.some((s) => s.auth === 'logged-in' || s.auth === 'needs-login' || s.auth === 'needs-token')) return null;
 
   const logIn = async (server: string) => {
     setError(null);

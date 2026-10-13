@@ -661,26 +661,33 @@ HTTP servers speak the newest MCP protocol (2026-07-28) and fall back to older s
 
 ### OAuth MCP Servers
 
-For servers that sign you in through OAuth (most hosted MCP servers), set `auth.type: oauth`:
+Most hosted MCP servers sign you in with OAuth. You don't configure anything for that: give the server's URL and nothing else.
 
 ```yaml
 mcpServers:
   linear:
     url: https://mcp.linear.app/mcp
-    auth:
-      type: oauth
-      # clientId: ...                     # Optional: a pre-registered client
-      # clientSecret: ${env:LINEAR_SECRET} # Optional, with clientId
-      # scopes: [read, write]             # Optional
 ```
 
-Log in once, either from the agent's page in `agentuse serve` (choose **Log in** next to the server) or from the terminal:
+If the server asks for a login, the agent's page in `agentuse serve` shows a **Log in** button next to it, and a run fails that server with a message telling you to log in. You can also log in from the terminal:
 
 ```bash
 agentuse mcp login ./triage.agentuse linear
 ```
 
-Without `clientId`, AgentUse registers itself with the server. The login is saved per server URL, so every agent that uses the same server shares it, and runs refresh it on their own. If a run needs a fresh login, that server fails to connect with a message telling you to log in; it never waits for a browser. `agentuse mcp status <agent>` shows each server's state, and `agentuse mcp logout <agent> <server>` forgets a login.
+AgentUse registers itself with the server. The login is saved per server URL, so every agent that uses the same server shares it, and runs refresh it on their own. A run never waits for a browser. `agentuse mcp status <agent>` shows each server's state, and `agentuse mcp logout <agent> <server>` forgets a login.
+
+A server that refuses the connection but offers no OAuth login wants a key instead: set `auth.token` or an `Authorization` header. Setting either one also turns OAuth off for that server.
+
+Set `auth.type: oauth` only when the server needs a pre-registered client or specific scopes:
+
+```yaml
+    auth:
+      type: oauth
+      clientId: abc123
+      clientSecret: ${env:LINEAR_SECRET}  # Optional, with clientId
+      scopes: [read, write]               # Optional
+```
 
 ### Multiple MCP Servers
 
@@ -774,7 +781,7 @@ mcpServers:
 #### HTTP Server Fields
 - **`url`**: HTTPS URL of the MCP server (required)
 - **`sessionId`**: Session identifier (optional)
-- **`auth`**: Either `type: bearer` with `token` (supports `${env:VAR_NAME}`), or `type: oauth` with optional `clientId`, `clientSecret` and `scopes` (see OAuth MCP Servers)
+- **`auth`**: Optional. `token` sends a bearer token (supports `${env:VAR_NAME}`). Without it, a server that asks for an OAuth login gets one (see OAuth MCP Servers); `type: oauth` adds an optional `clientId`, `clientSecret` and `scopes`
 - **`headers`**: Custom HTTP headers (optional)
 
 ## System Prompt Sections

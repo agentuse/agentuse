@@ -6694,7 +6694,8 @@ a.lastrun.waiting { color: var(--cyan); }
   font-family: var(--sans); font-size: var(--font-size-micro); white-space: nowrap;
 }
 .page-agent-detail .mcp-state.is-logged-in { color: var(--green); border-color: var(--green-border); background: var(--green-soft); }
-.page-agent-detail .mcp-state.is-needs-login { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
+.page-agent-detail .mcp-state.is-needs-login,
+.page-agent-detail .mcp-state.is-needs-token { color: var(--amber); border-color: var(--amber-border); background: var(--amber-soft); }
 .page-agent-detail .mcp-row .run-cta-alt { padding: 5px 11px; }
 .page-agent-detail .mcp-error { margin: 8px 0 0; color: var(--red); font-family: var(--sans); font-size: var(--font-size-caption); }
 

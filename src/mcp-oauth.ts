@@ -35,8 +35,89 @@ export class MCPLoginRequiredError extends Error {
   }
 }
 
+function hasAuthorizationHeader(config: MCPHttpServerConfig): boolean {
+  return Object.keys(config.headers ?? {}).some((key) => key.toLowerCase() === 'authorization');
+}
+
+/**
+ * The OAuth settings for an HTTP server, or undefined when it signs in another
+ * way. OAuth is the default: a server with no token and no Authorization
+ * header may still need no login at all, and says so by never answering 401.
+ * `auth.type: oauth` is only needed for a pre-registered client or scopes.
+ */
+/** A server that answers 401 but does not offer OAuth: it wants a token. */
+export class MCPTokenRequiredError extends Error {
+  override name = 'MCPTokenRequiredError';
+  constructor(readonly serverName: string) {
+    super(
+      `MCP server "${serverName}" refused the connection (401) and does not offer an OAuth login. ` +
+      'If it needs an API key, set auth.token or an Authorization header for it.',
+    );
+  }
+}
+
+/**
+ * Whether a server publishes OAuth protected resource metadata (RFC 9728),
+ * which is how an MCP server says "log in with OAuth". Checked at the
+ * path-specific location first, then the root, as the MCP spec describes.
+ */
+async function advertisesOAuth(serverUrl: string, wwwAuthenticate?: string | null): Promise<boolean> {
+  if (wwwAuthenticate && /resource_metadata\s*=/.test(wwwAuthenticate)) return true;
+  const url = new URL(serverUrl);
+  const path = url.pathname === '/' ? '' : url.pathname.replace(/\/$/, '');
+  const candidates = [...new Set([
+    `${url.origin}/.well-known/oauth-protected-resource${path}`,
+    `${url.origin}/.well-known/oauth-protected-resource`,
+  ])];
+  for (const candidate of candidates) {
+    try {
+      const response = await fetch(candidate, { signal: AbortSignal.timeout(5_000) });
+      if (!response.ok) {
+        await response.body?.cancel();
+        continue;
+      }
+      const metadata = await response.json() as { authorization_servers?: unknown };
+      if (Array.isArray(metadata.authorization_servers) && metadata.authorization_servers.length > 0) return true;
+    } catch {
+      // Unreachable or not JSON: try the next location.
+    }
+  }
+  return false;
+}
+
+/** OAuth the config did not ask for: the server may want no login, or a token. */
+const IMPLICIT_OAUTH: MCPOAuthSettings = Object.freeze({ type: 'oauth' });
+
 export function oauthSettings(config: MCPServerConfig): MCPOAuthSettings | undefined {
-  return 'url' in config && config.auth?.type === 'oauth' ? config.auth : undefined;
+  if (!('url' in config)) return undefined;
+  if (config.auth?.type === 'oauth') return config.auth;
+  if (config.auth?.token || hasAuthorizationHeader(config)) return undefined;
+  return IMPLICIT_OAUTH;
+}
+
+/**
+ * What an unauthenticated request gets: `oauth` for a 401 from a server that
+ * offers an OAuth login, `token` for a 401 from one that does not, `open` for
+ * anything else (no login needed, or unreachable, which a run reports itself).
+ */
+async function probeServer(config: MCPHttpServerConfig): Promise<'oauth' | 'token' | 'open'> {
+  try {
+    const response = await fetch(config.url, {
+      method: 'POST',
+      headers: {
+        ...config.headers,
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'ping' }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    await response.body?.cancel();
+    if (response.status !== 401) return 'open';
+    return await advertisesOAuth(config.url, response.headers.get('www-authenticate')) ? 'oauth' : 'token';
+  } catch {
+    return 'open';
+  }
 }
 
 function configuredClient(settings: MCPOAuthSettings): OAuthClientInformation | undefined {
@@ -69,7 +150,12 @@ export function createRunAuthProvider(
   serverUrl: string,
   settings: MCPOAuthSettings,
 ): OAuthClientProvider {
-  const loginRequired = (): never => {
+  // Reached only after a 401. A server that never declared OAuth may just
+  // want an API key, so say that instead of sending the user to log in.
+  const loginRequired = async (): Promise<never> => {
+    if (settings === IMPLICIT_OAUTH && !await advertisesOAuth(serverUrl)) {
+      throw new MCPTokenRequiredError(serverName);
+    }
     throw new MCPLoginRequiredError(serverName);
   };
   return {
@@ -203,17 +289,19 @@ export async function finishMCPLogin(options: {
   if (result !== 'AUTHORIZED') throw new Error('The MCP server did not accept the login.');
 }
 
-export type MCPAuthState = 'none' | 'token' | 'logged-in' | 'needs-login';
+export type MCPAuthState = 'none' | 'token' | 'needs-token' | 'logged-in' | 'needs-login';
 
 export async function getMCPAuthState(config: MCPServerConfig): Promise<MCPAuthState> {
   if (!('url' in config)) return 'none';
-  if (config.auth?.type === 'oauth') {
-    const login = (await MCPAuthStorage.get(config.url)).login;
-    if (!login) return 'needs-login';
+  if (!oauthSettings(config)) return 'token';
+  const login = (await MCPAuthStorage.get(config.url)).login;
+  if (login) {
     const { expires_in, refresh_token } = login.tokens;
     const expired = expires_in !== undefined && login.savedAt + expires_in * 1000 < Date.now();
-    return expired && !refresh_token ? 'needs-login' : 'logged-in';
+    if (!expired || refresh_token) return 'logged-in';
   }
-  const hasAuthHeader = Object.keys(config.headers ?? {}).some((key) => key.toLowerCase() === 'authorization');
-  return config.auth?.token || hasAuthHeader ? 'token' : 'none';
+  // Declared OAuth always needs a login; otherwise ask the server.
+  if (config.auth?.type === 'oauth') return 'needs-login';
+  const probe = await probeServer(config);
+  return probe === 'oauth' ? 'needs-login' : probe === 'token' ? 'needs-token' : 'none';
 }

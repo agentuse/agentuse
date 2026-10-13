@@ -29,7 +29,7 @@ async function loadOAuthServer(rawAgent: string, serverName: string) {
   if (!config) throw new Error(`No MCP server named "${serverName}" in ${rawAgent}`);
   const settings = oauthSettings(config);
   if (!settings || !('url' in config)) {
-    throw new Error(`MCP server "${serverName}" does not use OAuth (set auth.type: oauth to log in).`);
+    throw new Error(`MCP server "${serverName}" signs in with a token, not OAuth (remove auth.token and the Authorization header to use OAuth).`);
   }
   return { url: config.url, settings };
 }
@@ -136,7 +136,13 @@ export function createMcpCommand(): Command {
           console.log(chalk.dim('This agent has no MCP servers.'));
           return;
         }
-        const labels = { none: 'no login', token: 'token', 'logged-in': chalk.green('logged in'), 'needs-login': chalk.yellow('needs login') };
+        const labels = {
+          none: 'no login',
+          token: 'token',
+          'needs-token': chalk.yellow('needs a token (auth.token)'),
+          'logged-in': chalk.green('logged in'),
+          'needs-login': chalk.yellow('needs login'),
+        };
         for (const [name, config] of servers) {
           console.log(`${name.padEnd(20)} ${labels[await getMCPAuthState(config)]}`);
         }

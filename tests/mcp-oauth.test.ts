@@ -9,7 +9,9 @@ import { MCPAuthStorage, resolveMCPAuthFilePath } from '../src/auth/mcp-oauth-st
 import { connectMCP } from '../src/mcp';
 import {
   MCPLoginRequiredError,
+  MCPTokenRequiredError,
   createRunAuthProvider,
+  oauthSettings,
   finishMCPLogin,
   getMCPAuthState,
   startMCPLogin,
@@ -161,6 +163,11 @@ describe('MCP over HTTP', () => {
     expect(seen.map((request) => request.version)).toContain('2025-11-25');
   });
 
+  it('treats a server with no auth config as OAuth when it offers a login', async () => {
+    expect(await getMCPAuthState({ url: `${base}/oauth-mcp` })).toBe('needs-login');
+    await expect(connectMCP({ auto: { url: `${base}/oauth-mcp` } })).rejects.toThrow('All MCP servers failed to connect');
+  });
+
   it('logs in through the browser flow and saves the tokens', async () => {
     const serverUrl = `${base}/oauth-mcp`;
     const redirectUrl = 'http://127.0.0.1:9/callback';
@@ -177,5 +184,42 @@ describe('MCP over HTTP', () => {
     const record = await MCPAuthStorage.get(serverUrl);
     expect(record.login).toMatchObject({ clientInformation: { client_id: 'registered' }, tokens: { access_token: 'from-login' } });
     expect(record.pending).toBeUndefined();
+  });
+});
+
+describe('MCP servers without OAuth', () => {
+  let server: ReturnType<typeof Bun.serve>;
+  let base = '';
+  beforeAll(() => {
+    server = Bun.serve({ port: 0, hostname: '127.0.0.1', async fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === '/keyed') return new Response('API key required', { status: 401 });
+      if (url.pathname !== '/open') return new Response('not found', { status: 404 });
+      const mcp = new McpServer({ name: 'open', version: '1' });
+      mcp.registerTool('ping', { description: 'ping' }, async () => ({ content: [{ type: 'text', text: 'pong' }] }));
+      const transport = new WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true });
+      await mcp.connect(transport);
+      return transport.handleRequest(req);
+    } });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+  afterAll(() => server.stop(true));
+
+  it('connects to a server that needs no login', async () => {
+    expect(await getMCPAuthState({ url: `${base}/open` })).toBe('none');
+    const [connection] = await connectMCP({ open: { url: `${base}/open` } });
+    expect(Object.keys(connection!.preloadedTools ?? {})).toEqual(['ping']);
+    await connection!.client.close();
+  });
+
+  it('asks for a token, not a login, when a 401 server offers no OAuth', async () => {
+    expect(await getMCPAuthState({ url: `${base}/keyed` })).toBe('needs-token');
+    const provider = createRunAuthProvider('keyed', `${base}/keyed`, oauthSettings({ url: `${base}/keyed` })!);
+    await expect(Promise.resolve().then(() => provider.clientInformation())).rejects.toBeInstanceOf(MCPTokenRequiredError);
+  });
+
+  it('leaves servers configured with a token or Authorization header alone', () => {
+    expect(oauthSettings({ url: `${base}/keyed`, auth: { token: 'x' } })).toBeUndefined();
+    expect(oauthSettings({ url: `${base}/keyed`, headers: { authorization: 'Bearer x' } })).toBeUndefined();
   });
 });

@@ -12,7 +12,7 @@ import { toErrorMessage } from './utils/error-message';
 import { setApprovalToolContract } from './tools/tool-contract';
 import { withDeadline } from './utils/deadline';
 import { MCPAuthStorage } from './auth/mcp-oauth-storage';
-import { MCPLoginRequiredError, createRunAuthProvider } from './mcp-oauth';
+import { MCPLoginRequiredError, createRunAuthProvider, oauthSettings } from './mcp-oauth';
 
 // Use the actual type from the parser to avoid mismatches
 // Note: Using mcpServers (the normalized field after transform)
@@ -164,17 +164,19 @@ function createTransport(
   // OAuth flow when an auth provider is given.
   if ('url' in config) {
     const headers: Record<string, string> = { ...config.headers };
-    const auth = config.auth;
-    if (auth?.type === 'oauth') {
+    const oauth = oauthSettings(config);
+    if (oauth) {
+      // Unused unless the server answers 401: then it runs the stored login.
       return {
         type: 'http',
         url: config.url,
         headers,
-        authProvider: createRunAuthProvider(name, config.url, auth),
+        authProvider: createRunAuthProvider(name, config.url, oauth),
         ...(config.sessionId && { initialSessionId: config.sessionId }),
       };
     }
-    if (auth?.token) {
+    const auth = config.auth;
+    if (auth?.type !== 'oauth' && auth?.token) {
       headers.Authorization = `Bearer ${resolveEnvVariables(auth.token)}`;
     }
     return {
