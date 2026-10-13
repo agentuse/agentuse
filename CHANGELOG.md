@@ -2,7 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **MCP servers that need an OAuth login.** Set `auth.type: oauth` on an HTTP MCP server and log in once, from the agent's page in the dashboard or the Mac app, or with `agentuse mcp login <agent> <server>`. The login is shared by every agent using the same server, and runs refresh it on their own. When a fresh login is needed, the run says so instead of waiting for a browser. `agentuse mcp status` and `agentuse mcp logout` round it out.
+- **HTTP MCP servers speak the newest MCP protocol (2026-07-28).** Older servers keep working: the client falls back to their version.
+
 ### Fixed
+
+- **`auth.token` on HTTP MCP servers works again.** Every server configured with a bearer token failed to connect with "tokens is not a function". The token is now sent in the `Authorization` header.
 
 - **A run's result no longer ends with the agent's step-by-step notes.** One-line notes such as "I'll check the Downloads folder." written right before a tool call were appended to the report of every run that declared an outcome. They are now left out; longer prose, including a document streamed before saving it, still reaches the report.
 - **Reading a folder with the file read tool says what to do instead.** Pointing `tools__filesystem_read` at a directory now says it is a directory and to use `tools__filesystem_list`. In the agent creator, the project root used to come back as "outside the project" and a subfolder as "File not found", which sent models into retries.

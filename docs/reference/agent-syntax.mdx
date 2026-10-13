@@ -657,6 +657,31 @@ mcpServers:
       - dangerous_operation
 ```
 
+HTTP servers speak the newest MCP protocol (2026-07-28) and fall back to older servers on their own.
+
+### OAuth MCP Servers
+
+For servers that sign you in through OAuth (most hosted MCP servers), set `auth.type: oauth`:
+
+```yaml
+mcpServers:
+  linear:
+    url: https://mcp.linear.app/mcp
+    auth:
+      type: oauth
+      # clientId: ...                     # Optional: a pre-registered client
+      # clientSecret: ${env:LINEAR_SECRET} # Optional, with clientId
+      # scopes: [read, write]             # Optional
+```
+
+Log in once, either from the agent's page in `agentuse serve` (choose **Log in** next to the server) or from the terminal:
+
+```bash
+agentuse mcp login ./triage.agentuse linear
+```
+
+Without `clientId`, AgentUse registers itself with the server. The login is saved per server URL, so every agent that uses the same server shares it, and runs refresh it on their own. If a run needs a fresh login, that server fails to connect with a message telling you to log in; it never waits for a browser. `agentuse mcp status <agent>` shows each server's state, and `agentuse mcp logout <agent> <server>` forgets a login.
+
 ### Multiple MCP Servers
 
 ```yaml
@@ -749,7 +774,7 @@ mcpServers:
 #### HTTP Server Fields
 - **`url`**: HTTPS URL of the MCP server (required)
 - **`sessionId`**: Session identifier (optional)
-- **`auth`**: Authentication config with `type: bearer` and `token` (supports `${env:VAR_NAME}`)
+- **`auth`**: Either `type: bearer` with `token` (supports `${env:VAR_NAME}`), or `type: oauth` with optional `clientId`, `clientSecret` and `scopes` (see OAuth MCP Servers)
 - **`headers`**: Custom HTTP headers (optional)
 
 ## System Prompt Sections
