@@ -2,6 +2,7 @@ import * as aiSdk from 'ai';
 import Ajv from 'ajv';
 import Ajv2019 from 'ajv/dist/2019.js';
 import Ajv2020 from 'ajv/dist/2020.js';
+import AjvDraft04 from 'ajv-draft-04';
 import addFormats from 'ajv-formats';
 import type { Tool, ToolExecutionOptions, ToolSet } from 'ai';
 import { isSuspendSignal } from './suspend';
@@ -368,10 +369,10 @@ function rawInputTransportSchema(
         // provider-facing contract structural, but retain standard JSON Schema
         // formats so the SDK can repair malformed URI/UUID/etc. arguments.
         // `strict: false` leaves provider-specific custom formats non-fatal.
-        const AjvForDraft = ajvForSchemaDraft(schema);
+        const { AjvForDraft, schema: body } = ajvForSchemaDraft(schema);
         const ajv = new AjvForDraft({ allErrors: true, strict: false, logger: false });
         addFormats(ajv);
-        return ajv.compile(schema as object) as (value: unknown) => boolean;
+        return ajv.compile(body) as (value: unknown) => boolean;
       });
       const validate = await validator;
       if (validate(transportInput)) return { success: true as const, value: transportInput };
@@ -384,16 +385,23 @@ function rawInputTransportSchema(
 }
 
 /**
- * Plain Ajv only knows draft-07 and throws on a schema that declares a newer
- * draft in `$schema` (MCP servers often send 2020-12). Pick the Ajv build for
- * the declared draft; schemas without one stay on draft-07.
+ * Each Ajv build knows one family of JSON Schema drafts and throws "no schema
+ * with key or ref" on a `$schema` it doesn't know. Pick the build for the
+ * declared draft, then drop `$schema` so the URL spelling never matters:
+ * draft-03/04 use the draft-04 build, 06/07 and undeclared use draft-07, and
+ * 2019-09 and 2020-12 have their own. A draft newer than these validates as
+ * 2020-12, the closest known one; `strict: false` ignores keywords it adds.
  */
-function ajvForSchemaDraft(schema: unknown): typeof Ajv {
-  const declared = (schema as { $schema?: unknown } | null)?.$schema;
-  if (typeof declared !== 'string') return Ajv;
-  if (declared.includes('2020-12')) return Ajv2020;
-  if (declared.includes('2019-09')) return Ajv2019;
-  return Ajv;
+function ajvForSchemaDraft(schema: unknown): {
+  AjvForDraft: typeof Ajv | typeof AjvDraft04;
+  schema: Record<string, unknown>;
+} {
+  const { $schema: declared, ...body } = schema as Record<string, unknown>;
+  if (typeof declared !== 'string') return { AjvForDraft: Ajv, schema: body };
+  if (/draft-0[34]\b/.test(declared)) return { AjvForDraft: AjvDraft04, schema: body };
+  if (/draft-0[67]\b/.test(declared)) return { AjvForDraft: Ajv, schema: body };
+  if (declared.includes('2019-09')) return { AjvForDraft: Ajv2019, schema: body };
+  return { AjvForDraft: Ajv2020, schema: body };
 }
 
 function ajvErrorMessage(errors: Array<{ instancePath?: string; dataPath?: string; message?: string }> | null | undefined): string {

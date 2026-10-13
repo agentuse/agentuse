@@ -10,7 +10,7 @@
 
 ### Fixed
 
-- **MCP tools whose input schema declares JSON Schema 2020-12 or 2019-09 can be called.** Every call to them used to fail with `no schema with key or ref`, before the call left AgentUse.
+- **MCP tools work whatever JSON Schema draft their input schema declares.** Tools declaring draft-04, draft-06, 2019-09 or 2020-12 used to fail every call with `no schema with key or ref` before the call left AgentUse. Each draft now gets its own checker, and a draft newer than 2020-12 is checked as 2020-12.
 - **`auth.token` on HTTP MCP servers works again.** Every server configured with a bearer token failed to connect with "tokens is not a function". The token is now sent in the `Authorization` header.
 
 - **A run's result no longer ends with the agent's step-by-step notes.** One-line notes such as "I'll check the Downloads folder." written right before a tool call were appended to the report of every run that declared an outcome. They are now left out; longer prose, including a document streamed before saving it, still reaches the report.
