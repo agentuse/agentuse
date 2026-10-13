@@ -20,6 +20,10 @@ import { buildContinuationPrompt } from './helpers.js';
 import { acquireOwnershipLock, OwnershipLockHeldError, type OwnershipLockHandle } from '../utils/ownership-lock';
 import { SCHEDULED_RUN_ACTIVE, scheduledRunLockPath } from '../utils/scheduler-lock';
 import { normalizeScheduleAgentPath } from '../scheduler/state';
+import { computeAgentId } from '../utils/agent-id';
+import { currentProcessRef } from '../utils/process-info';
+import { ulid } from 'ulid';
+import { version as packageVersion } from '../../package.json';
 import type { WorkerContext } from './context.js';
 import type { ExecuteRequest } from './types.js';
 
@@ -75,6 +79,19 @@ async function executeAgentRequest(ctx: WorkerContext, req: ExecuteRequest) {
   let continuationSession: { sessionId: string; agentId: string } | undefined;
   let activeSessionId: string | undefined;
   let executionBudget: ExecutionBudget | undefined;
+  // A fresh run's session exists from the moment its agent is known, as a
+  // preparing shell, so a failure during startup (env vars, MCP servers,
+  // plugins) is recorded on a session instead of vanishing. Set while that
+  // shell may still be preparing; the run promotes it once prepared.
+  let preparing: { sessionId: string; agentId: string } | undefined;
+  const failPreparing = async (failure: { code: string; message: string }) => {
+    if (!preparing || !sessionManager) return;
+    const found = await sessionManager.findSession(preparing.sessionId).catch(() => undefined);
+    if (found?.session.status !== 'preparing') return;
+    await sessionManager.setSessionError(preparing.sessionId, preparing.agentId, failure).catch((err) => {
+      logger.debug(`Failed to record startup failure on ${preparing?.sessionId}: ${(err as Error).message}`);
+    });
+  };
 
   const abortController = new AbortController();
   // Register the abort handle under the known session id up front, before the
@@ -305,20 +322,54 @@ async function executeAgentRequest(ctx: WorkerContext, req: ExecuteRequest) {
       ? parseAgentContent(req.agentContent!, req.agentName ?? 'in-memory-agent')
       : await parseAgent(agentPath);
 
-    const envValidation = validateAgentEnvVars(agent.config);
-    if (!envValidation.valid) {
-      return restoreResumeAndReturn({
-        id: req.id,
-        success: false,
-        error: { code: 'ENV_MISSING', message: formatEnvValidationError(envValidation) },
-      });
-    }
-
     let runModelOverride: RunModelOverride | undefined;
     if (req.model) {
       const resolved = resolveModelString(req.model);
       runModelOverride = { requested: req.model, resolved };
       applyRunModelOverride(agent.config, runModelOverride);
+    }
+
+    if (req.type === 'execute') {
+      const sessionId = req.newSessionId ?? ulid();
+      const agentId = computeAgentId(inMemoryAgent ? undefined : agentPath, req.projectRoot, agent.name);
+      // Hosts that already created the shell (agent creation, test runs) say so.
+      if (!req.preparedSession) {
+        await sessionManager.createSession({
+          id: sessionId,
+          initialStatus: 'preparing',
+          owner: currentProcessRef(),
+          agent: {
+            id: agentId,
+            name: agent.name,
+            ...(agent.config.description && { description: agent.config.description }),
+            ...(!inMemoryAgent && { filePath: agentPath }),
+            isSubAgent: false,
+          },
+          model: agent.config.model,
+          version: packageVersion,
+          config: {
+            ...(req.timeout !== undefined && { timeout: req.timeout }),
+            ...(req.maxSteps !== undefined && { maxSteps: req.maxSteps }),
+          },
+          project: { root: req.projectRoot, cwd: runCwd },
+          ...(req.trigger && { trigger: req.trigger }),
+        });
+        invalidateListCaches(req.projectRoot);
+      }
+      preparing = { sessionId, agentId };
+      // A Stop aimed at the shell during startup must find this run.
+      activeSessionId = sessionId;
+      if (!knownSessionId) ctx.activeExecutionControllers.set(sessionId, abortController);
+    }
+
+    const envValidation = validateAgentEnvVars(agent.config);
+    if (!envValidation.valid) {
+      await failPreparing({ code: 'ENV_MISSING', message: formatEnvValidationError(envValidation) });
+      return restoreResumeAndReturn({
+        id: req.id,
+        success: false,
+        error: { code: 'ENV_MISSING', message: formatEnvValidationError(envValidation) },
+      });
     }
 
     const mcpBasePath = inMemoryAgent ? undefined : dirname(agentPath);
@@ -355,13 +406,13 @@ async function executeAgentRequest(ctx: WorkerContext, req: ExecuteRequest) {
       // resumes deliberately keep the strict historical-snapshot requirement.
       ...(req.type === 'continue-session' && { rebuildMissingToolsSnapshot: true }),
       ...(req.trigger && { trigger: req.trigger }),
-      // Detached runs only: pre-assign the fresh session's id. Ignored on the
+      // Fresh runs promote the preparing shell created above. Ignored on the
       // resume/continue paths, which carry existingSessionId instead.
-      ...(req.type === 'execute' && req.newSessionId && { newSessionId: req.newSessionId }),
-      ...(req.type === 'execute' && req.preparedSession && { preparedSession: true })
+      ...(preparing && { newSessionId: preparing.sessionId, preparedSession: true })
     });
 
     activeSessionId = preparedExecution.sessionID ?? existingSessionId;
+    preparing = undefined;
 
     // runAgent's finally releases the prepared resources once it is called.
     // Until then they are still this worker's: a failure here must release
@@ -439,21 +490,22 @@ async function executeAgentRequest(ctx: WorkerContext, req: ExecuteRequest) {
     }
     if (abortController.signal.aborted) {
       const stoppedFailure = await userStopFailure();
-      if (stoppedFailure) return { id: req.id, success: false, error: stoppedFailure };
+      if (stoppedFailure) {
+        await failPreparing(stoppedFailure);
+        return { id: req.id, success: false, error: stoppedFailure };
+      }
     }
-    const failure = classifyFailure(err, abortController.signal);
-    return {
-      id: req.id,
-      success: false,
-      error: { ...failure, ...(failure.cause === 'unknown' && { code: 'INTERNAL_ERROR' }) },
-    };
+    const classified = classifyFailure(err, abortController.signal);
+    const failure = { ...classified, ...(classified.cause === 'unknown' && { code: 'INTERNAL_ERROR' }) };
+    await failPreparing(failure);
+    return { id: req.id, success: false, error: failure };
   } finally {
     await executionBudget?.finish();
     // Clear both the up-front (req.sessionId) and resolved (activeSessionId)
     // registrations; they usually coincide for resume/continue but may differ
     // defensively, and a stale entry would wrongly abort a later run reusing
     // the same id.
-    for (const id of new Set([activeSessionId, req.sessionId, req.newSessionId])) {
+    for (const id of new Set([activeSessionId, req.sessionId, req.newSessionId, preparing?.sessionId])) {
       if (!id) continue;
       ctx.activeExecutionControllers.delete(id);
       ctx.activeStoppedSessions.delete(id);
