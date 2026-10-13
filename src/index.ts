@@ -22,6 +22,7 @@ import { createAddCommand } from './cli/add';
 import { createDoctorCommand } from './cli/doctor';
 import { createLearningsCommand } from './cli/learnings';
 import { createSchedulesCommand } from './cli/schedules';
+import { createMcpCommand } from './cli/mcp';
 import { addPluginCommands } from './cli/plugins';
 import { BUILTIN_PROVIDERS } from './providers/registry-sources';
 import { resolveModelProvider } from './utils/model-utils';
@@ -226,6 +227,9 @@ program.addCommand(createAgentsCommand());
 
 // Add deployment-local schedule controls.
 program.addCommand(createSchedulesCommand());
+
+// MCP server logins (OAuth).
+program.addCommand(createMcpCommand());
 
 // Add add command
 program.addCommand(createAddCommand());

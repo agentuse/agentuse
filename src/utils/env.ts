@@ -1,3 +1,5 @@
+import { logger } from './logger';
+
 /**
  * Unescape a JSON string from environment variable
  * Handles escaped quotes and other escape sequences that might be present
@@ -48,4 +50,20 @@ export function parseJsonEnvVar<T = unknown>(value: string | undefined): T | nul
       return null;
     }
   }
+}
+
+/**
+ * Resolve ${env:VAR_NAME} placeholders in a string
+ * @param value The string that may contain ${env:VAR_NAME} placeholders
+ * @returns The string with placeholders replaced by environment variable values
+ */
+export function resolveEnvVariables(value: string): string {
+  return value.replace(/\$\{env:(\w+)\}/g, (match, varName) => {
+    const envValue = process.env[varName];
+    if (envValue === undefined) {
+      logger.warn(`Environment variable '${varName}' referenced in config is not set`);
+      return match; // Return original if not found
+    }
+    return envValue;
+  });
 }

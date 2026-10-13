@@ -77,10 +77,21 @@ const MCPServerSchema = z.union([
       { message: 'URL must use http:// or https:// protocol' }
     ),
     sessionId: z.string().optional(),
-    auth: z.object({
-      type: z.enum(['bearer']).optional(),
-      token: z.string().optional()
-    }).optional(),
+    auth: z.union([
+      z.object({
+        type: z.enum(['bearer']).optional(),
+        token: z.string().optional()
+      }),
+      // OAuth 2.1 per the MCP authorization spec. Without clientId the client
+      // registers itself (dynamic client registration). Log in once with
+      // `agentuse mcp login` or from the agent's page in serve.
+      z.object({
+        type: z.literal('oauth'),
+        clientId: z.string().optional(),
+        clientSecret: z.string().optional(),
+        scopes: z.array(z.string()).optional()
+      })
+    ]).optional(),
     headers: z.record(z.string()).optional(),
     requiredEnvVars: z.array(z.string()).optional(),
     allowedEnvVars: z.array(z.string()).optional(),

@@ -1,10 +1,9 @@
-import { createMCPClient } from '@ai-sdk/mcp';
+import { createMCPClient, type MCPClientConfig } from '@ai-sdk/mcp';
 import type { Tool } from 'ai';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { logger } from './utils/logger';
 import { closeMCPConnections } from './mcp-cleanup';
-import { parseJsonEnvVar } from './utils/env';
+import { parseJsonEnvVar, resolveEnvVariables } from './utils/env';
 import { resolveToolTimeout } from './utils/config';
 import { z } from 'zod';
 import type { AgentConfig } from './parser';
@@ -12,6 +11,8 @@ import { resolve, isAbsolute } from 'path';
 import { toErrorMessage } from './utils/error-message';
 import { setApprovalToolContract } from './tools/tool-contract';
 import { withDeadline } from './utils/deadline';
+import { MCPAuthStorage } from './auth/mcp-oauth-storage';
+import { MCPLoginRequiredError, createRunAuthProvider } from './mcp-oauth';
 
 // Use the actual type from the parser to avoid mismatches
 // Note: Using mcpServers (the normalized field after transform)
@@ -149,22 +150,6 @@ export function mcpResultToModelOutput({ output }: { output: unknown }): any {
 }
 
 /**
- * Resolve ${env:VAR_NAME} placeholders in a string
- * @param value The string that may contain ${env:VAR_NAME} placeholders
- * @returns The string with placeholders replaced by environment variable values
- */
-function resolveEnvVariables(value: string): string {
-  return value.replace(/\$\{env:(\w+)\}/g, (match, varName) => {
-    const envValue = process.env[varName];
-    if (envValue === undefined) {
-      logger.warn(`Environment variable '${varName}' referenced in config is not set`);
-      return match; // Return original if not found
-    }
-    return envValue;
-  });
-}
-
-/**
  * Create transport based on configuration (stdio or HTTP)
  */
 function createTransport(
@@ -173,31 +158,33 @@ function createTransport(
   debug: boolean = false,
   basePath?: string,
   cwd?: string
-): any {
-  // HTTP transport with SSE streaming
+): MCPClientConfig['transport'] {
+  // HTTP goes through the AI SDK's own transport: it speaks the newest MCP
+  // protocol (stateless HTTP) and falls back to older servers, and it runs the
+  // OAuth flow when an auth provider is given.
   if ('url' in config) {
-    const options: any = {};
-    
-    if (config.sessionId) {
-      options.sessionId = config.sessionId;
-    }
-    
-    if (config.auth?.token) {
-      const resolvedToken = resolveEnvVariables(config.auth.token);
-      options.authProvider = {
-        getToken: async () => resolvedToken
+    const headers: Record<string, string> = { ...config.headers };
+    const auth = config.auth;
+    if (auth?.type === 'oauth') {
+      return {
+        type: 'http',
+        url: config.url,
+        headers,
+        authProvider: createRunAuthProvider(name, config.url, auth),
+        ...(config.sessionId && { initialSessionId: config.sessionId }),
       };
     }
-    
-    if (config.headers) {
-      options.requestInit = {
-        headers: config.headers
-      };
+    if (auth?.token) {
+      headers.Authorization = `Bearer ${resolveEnvVariables(auth.token)}`;
     }
-    
-    return new StreamableHTTPClientTransport(new URL(config.url), options);
+    return {
+      type: 'http',
+      url: config.url,
+      headers,
+      ...(config.sessionId && { initialSessionId: config.sessionId }),
+    };
   }
-  
+
   // Stdio transport
   if ('command' in config) {
     // Prepare environment variables
@@ -346,7 +333,10 @@ export async function connectWithTimeout(
       // broken client also hangs during close.
       void client.close().catch(() => { /* ignore */ });
     } else {
-      void Promise.resolve(transport.close()).catch(() => { /* ignore */ });
+      // An HTTP config object has no close: the client owns that transport.
+      if (typeof transport.close === 'function') {
+        void Promise.resolve(transport.close()).catch(() => { /* ignore */ });
+      }
     }
     // The abandoned handshake/readiness probe may still settle; close it if it
     // wins the race late, and absorb its rejection so it is not unhandled.
@@ -391,6 +381,11 @@ export async function connectMCP(
     let client: MCPClient | undefined;
     try {
       logger.debug(`[MCP] Configuring server: ${name} - ${JSON.stringify(config)}`);
+
+      // Fail before any network call when an OAuth server was never logged in.
+      if ('url' in config && config.auth?.type === 'oauth' && !(await MCPAuthStorage.get(config.url)).login) {
+        throw new MCPLoginRequiredError(name);
+      }
 
       // Create transport based on config type
       const transport = createTransport(name, config, debug, basePath, cwd);
