@@ -1,5 +1,7 @@
 import * as aiSdk from 'ai';
 import Ajv from 'ajv';
+import Ajv2019 from 'ajv/dist/2019.js';
+import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import type { Tool, ToolExecutionOptions, ToolSet } from 'ai';
 import { isSuspendSignal } from './suspend';
@@ -366,7 +368,8 @@ function rawInputTransportSchema(
         // provider-facing contract structural, but retain standard JSON Schema
         // formats so the SDK can repair malformed URI/UUID/etc. arguments.
         // `strict: false` leaves provider-specific custom formats non-fatal.
-        const ajv = new Ajv({ allErrors: true, strict: false, logger: false });
+        const AjvForDraft = ajvForSchemaDraft(schema);
+        const ajv = new AjvForDraft({ allErrors: true, strict: false, logger: false });
         addFormats(ajv);
         return ajv.compile(schema as object) as (value: unknown) => boolean;
       });
@@ -378,6 +381,19 @@ function rawInputTransportSchema(
       };
     },
   }) as Tool['inputSchema'];
+}
+
+/**
+ * Plain Ajv only knows draft-07 and throws on a schema that declares a newer
+ * draft in `$schema` (MCP servers often send 2020-12). Pick the Ajv build for
+ * the declared draft; schemas without one stay on draft-07.
+ */
+function ajvForSchemaDraft(schema: unknown): typeof Ajv {
+  const declared = (schema as { $schema?: unknown } | null)?.$schema;
+  if (typeof declared !== 'string') return Ajv;
+  if (declared.includes('2020-12')) return Ajv2020;
+  if (declared.includes('2019-09')) return Ajv2019;
+  return Ajv;
 }
 
 function ajvErrorMessage(errors: Array<{ instancePath?: string; dataPath?: string; message?: string }> | null | undefined): string {
