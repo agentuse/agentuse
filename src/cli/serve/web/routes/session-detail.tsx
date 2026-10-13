@@ -14,6 +14,8 @@ import { DebugPromptButton } from '../components/debug-prompt-button';
 import { AgentRevisionLauncher, AgentRevisionSessionPanel, type AgentRevisionSessionIdentity } from '../components/agent-revision';
 import { ChangesetSessionPanel } from '../components/changeset-session-panel';
 import { SessionMenu } from '../components/session-menu';
+import { McpServersPanel } from '../components/mcp-servers-panel';
+import { useRunAgent } from '../hooks/use-run-agent';
 import { Loading } from '../components/loading';
 import { formatTokenCount } from '../components/token-usage-strip';
 import { postSessionDecision, postSessionContinue, postSessionResume, postSessionStop, postSessionReopen, postSessionReviewed, fetchSessionArtifacts, fetchApprovals, type SessionArtifact } from '../lib/api';
@@ -72,8 +74,10 @@ export function sessionResumeMode(options: {
   hasAgentFile: boolean;
   fatal: boolean;
   revision: boolean;
+  /** The run failed before it began: there is nothing to resume. */
+  neverStarted?: boolean;
 }): 'cascade' | 'continue' | null {
-  if (!options.ended || options.live || options.fatal || options.revision) return null;
+  if (!options.ended || options.live || options.fatal || options.revision || options.neverStarted) return null;
   if (options.cascadeRetryable && options.hasAgentFile) return 'cascade';
   return options.hasAgentFile ? 'continue' : null;
 }
@@ -225,7 +229,7 @@ export function failedSessionEntry(entries: readonly ApprovalLogEntry[]): Approv
 }
 
 export type SessionRunControl = {
-  id: 'retry' | 'revise' | 'resume' | 'cascade' | 'stop' | 'discard';
+  id: 'retry' | 'revise' | 'resume' | 'cascade' | 'run-again' | 'stop' | 'discard';
   label: string;
   title: string;
   icon: 'retry' | 'edit' | 'resume' | 'stop';
@@ -252,7 +256,9 @@ export function sessionRunControls(options: {
   stoppable: boolean;
   /** A failed run can be dismissed from "Needs your attention". */
   dismissable: boolean;
-  busy: { reopen: boolean; resume: boolean; stop: boolean };
+  /** The run failed before it began, so the recovery is a fresh run. */
+  runAgain?: boolean;
+  busy: { reopen: boolean; resume: boolean; stop: boolean; runAgain?: boolean };
 }): SessionRunControl[] {
   const controls: SessionRunControl[] = [];
   if (options.reopenable) {
@@ -286,6 +292,15 @@ export function sessionRunControls(options: {
       // The control list is ordered, so Resume renders immediately before
       // Discard in both the full and sticky session bars.
       placement: options.dismissable ? 'bar' : 'menu',
+    });
+  } else if (options.runAgain) {
+    controls.push({
+      id: 'run-again',
+      label: options.busy.runAgain ? 'Starting…' : 'Run again',
+      title: 'This run failed before it started. Start a fresh run of the agent',
+      icon: 'resume',
+      busy: options.busy.runAgain === true,
+      placement: 'bar',
     });
   } else if (options.resume === 'cascade') {
     controls.push({
@@ -1628,6 +1643,10 @@ export default function SessionDetail() {
     && !isRevisionSession
     && approval?.approvalKind !== 'tool_approval';
   const rememberApplies = approval?.learning?.apply === true;
+  // Failed during startup (env vars, MCP servers, plugins): the run never
+  // began, so recovery is a fresh run, after fixing what the error names.
+  const neverStarted = status === 'error' && approval?.errorPhase === 'startup';
+  const runAgainAgent = useRunAgent(approval?.agent.runPath ?? '', projectId ?? approval?.project);
   const resumeMode = sessionResumeMode({
     ended,
     live,
@@ -1635,6 +1654,7 @@ export default function SessionDetail() {
     hasAgentFile: Boolean(approval?.agent.filePath),
     fatal: Boolean(fatalError),
     revision: isRevisionSession,
+    neverStarted,
   });
   const cascadeRetryActionable = resumeMode === 'cascade';
   const continueActionable = resumeMode === 'continue';
@@ -2364,7 +2384,8 @@ export default function SessionDetail() {
     resume: resumeMode,
     stoppable,
     dismissable,
-    busy: { reopen: submittingReopen, resume: submittingContinue, stop: submittingStop },
+    runAgain: neverStarted && Boolean(approval.agent.runPath) && !isRevisionSession,
+    busy: { reopen: submittingReopen, resume: submittingContinue, stop: submittingStop, runAgain: runAgainAgent.busy },
   });
   const runControl = (control: SessionRunControl) => {
     switch (control.id) {
@@ -2372,6 +2393,7 @@ export default function SessionDetail() {
       case 'revise': setReviseRequest((n) => n + 1); return;
       case 'resume': setShowResume(true); return;
       case 'cascade': void submitCascadeRetry(); return;
+      case 'run-again': void runAgainAgent.run(); return;
       case 'stop':
       case 'discard': void submitStop(); return;
     }
@@ -2906,6 +2928,10 @@ export default function SessionDetail() {
         </header>
 
         {nowCard}
+        {neverStarted && approval.agent.runPath && sessionProjectId && (
+          <McpServersPanel project={sessionProjectId} runPath={approval.agent.runPath} />
+        )}
+        {runAgainAgent.error && <p class="notice error" role="alert">{runAgainAgent.error}</p>}
 
         {approval.additionalInstruction && (
           // The instruction a delegated run was handed can be the parent's

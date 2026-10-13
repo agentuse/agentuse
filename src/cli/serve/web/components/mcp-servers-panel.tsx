@@ -97,10 +97,10 @@ export function McpServersPanel(props: { project: string; runPath: string }) {
             </div>
             <span class={`mcp-state is-${s.auth}`}>{AUTH_LABEL[s.auth]}</span>
             {s.auth === 'needs-login' && (
-              <BusyButton class="run-cta-alt" busy={busy === s.name} label="Log in" busyLabel="Opening…" onClick={() => void logIn(s.name)} />
+              <BusyButton class="mcp-btn" busy={busy === s.name} label="Log in" busyLabel="Opening…" onClick={() => void logIn(s.name)} />
             )}
             {s.auth === 'logged-in' && (
-              <BusyButton class="run-cta-alt" busy={busy === s.name} label="Log out" onClick={() => void logOut(s.name)} />
+              <BusyButton class="mcp-btn" busy={busy === s.name} label="Log out" onClick={() => void logOut(s.name)} />
             )}
           </li>
         ))}

@@ -88,7 +88,13 @@ async function executeAgentRequest(ctx: WorkerContext, req: ExecuteRequest) {
     if (!preparing || !sessionManager) return;
     const found = await sessionManager.findSession(preparing.sessionId).catch(() => undefined);
     if (found?.session.status !== 'preparing') return;
-    await sessionManager.setSessionError(preparing.sessionId, preparing.agentId, failure).catch((err) => {
+    // `phase: startup` tells the session page the run never began, so it
+    // offers a fresh run instead of resuming one that has nothing to resume.
+    await sessionManager.setSessionError(preparing.sessionId, preparing.agentId, {
+      code: failure.code,
+      message: failure.message,
+      phase: 'startup',
+    }).catch((err) => {
       logger.debug(`Failed to record startup failure on ${preparing?.sessionId}: ${(err as Error).message}`);
     });
   };

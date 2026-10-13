@@ -237,6 +237,8 @@ export interface ApprovalSummary {
   errorSubject?: string;
   errorCauseSource?: string;
   errorCode?: string;
+  /** `startup` when the run failed before it began (env, MCP, plugins). */
+  errorPhase?: string;
   errorMessage?: string;
   channelMessage?: { type?: string; channel?: string; ts?: string; actionTs?: string; url?: string };
   channels?: {

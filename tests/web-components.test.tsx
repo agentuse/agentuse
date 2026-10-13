@@ -2046,6 +2046,19 @@ describe('SessionDetail header', () => {
     expect(failedSessionEntry([rejectedReply, laterDirectFailure])).toBe(laterDirectFailure);
   });
 
+  it('offers a fresh run, not a resume, when the run failed before it started', () => {
+    expect(sessionResumeMode({
+      ended: true, live: false, hasAgentFile: true, fatal: false, revision: false, neverStarted: true,
+    })).toBeNull();
+    const controls = sessionRunControls({
+      ended: true, live: false, atGate: false, hasAgentFile: true, revision: false,
+      reopenable: false, resume: null, stoppable: false, dismissable: true, runAgain: true,
+      busy: { reopen: false, resume: false, stop: false, runAgain: false },
+    });
+    expect(controls.map((c) => `${c.id}:${c.placement}`)).toEqual(['revise:menu', 'run-again:bar', 'discard:bar']);
+    expect(controls.find((c) => c.id === 'run-again')?.label).toBe('Run again');
+  });
+
   it('lists run controls once, in order, with the ending control pinned to the bar', () => {
     const base = {
       ended: false, live: true, atGate: false, hasAgentFile: true, revision: false,

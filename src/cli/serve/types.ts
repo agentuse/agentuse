@@ -476,6 +476,8 @@ export interface ApprovalPageInfo {
   errorSubject?: string;
   errorCauseSource?: string;
   errorCode?: string;
+  /** `startup` when the run failed before it began (env, MCP, plugins). */
+  errorPhase?: string;
   errorMessage?: string;
   /** Why the last decision on the still-open gate did not take effect. */
   actionFailure?: ApprovalActionFailure;
