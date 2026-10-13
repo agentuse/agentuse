@@ -36,6 +36,13 @@ describe('Bash command path placeholders', () => {
     expect(isEffectful('python3 /tmp/project/agents/read.py draft', config.gated!)).toBe(false);
   });
 
+  test('matches a pattern containing a bare numeric argument', async () => {
+    const validator = new CommandValidator(['./sweep.sh --idle 120'], context.projectRoot, [], context);
+    expect((await validator.validate('./sweep.sh --idle 120')).allowed).toBe(true);
+    expect((await validator.validate('./sweep.sh --idle 120 --close')).allowed).toBe(true);
+    expect((await validator.validate('./sweep.sh --idle 5')).allowed).toBe(false);
+  });
+
   test('tool description advertises resolved commands', () => {
     const tool = createBashTool({ commands: ['python3 ${agentDir}/check.py *'] }, context.projectRoot, context);
     expect(tool.description).toContain('python3 /tmp/project/agents/check.py *');

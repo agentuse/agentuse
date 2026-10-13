@@ -420,10 +420,13 @@ export async function parseBashCommand(commandString: string): Promise<ParsedCom
         const child = node.child(i);
         if (!child) continue;
 
-        // Only extract actual command parts (not syntax elements)
+        // Only extract actual command parts (not syntax elements). tree-sitter
+        // types a bare numeric argument (`--idle 120`) as `number`; dropping it
+        // made any allowlist pattern containing a number unmatchable.
         if (
           child.type === 'command_name' ||
           child.type === 'word' ||
+          child.type === 'number' ||
           child.type === 'concatenation'
         ) {
           parts.push(child.text);
