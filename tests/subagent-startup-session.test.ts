@@ -56,7 +56,8 @@ Attempt the delegated task.
       expect(children[0]?.session).toMatchObject({
         parentSessionID: parentId,
         status: 'error',
-        error: { code: 'EXECUTION_ERROR', message: 'All MCP servers failed to connect' },
+        // The message names each server's own reason after this prefix.
+        error: { code: 'EXECUTION_ERROR', message: expect.stringMatching(/^All MCP servers failed to connect/) },
       });
     } finally {
       if (priorDataHome === undefined) delete process.env.XDG_DATA_HOME;

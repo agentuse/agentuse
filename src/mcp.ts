@@ -456,6 +456,7 @@ export async function connectMCP(
   
   const connections: MCPConnection[] = [];
   const failedServers: string[] = [];
+  const failureReasons: string[] = [];
   let fatalError: unknown;
 
   for (const result of results) {
@@ -468,6 +469,7 @@ export async function connectMCP(
       }
 
       failedServers.push(result.reason?.serverName ?? 'unknown');
+      failureReasons.push(toErrorMessage(result.reason));
     }
   }
 
@@ -485,7 +487,8 @@ export async function connectMCP(
   
   // If all servers failed, throw an error
   if (connections.length === 0 && Object.keys(servers).length > 0) {
-    throw new Error('All MCP servers failed to connect');
+    // Keep each server's reason: "needs you to log in" is the actionable part.
+    throw new Error(`All MCP servers failed to connect. ${failureReasons.join(' ')}`);
   }
   
   return connections;
