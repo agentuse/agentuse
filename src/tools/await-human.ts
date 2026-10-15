@@ -66,7 +66,7 @@ function getConfigPublicUrl(): string | undefined {
   }
 }
 
-function getApprovalBaseUrl(projectRoot?: string): string {
+export function getApprovalBaseUrl(projectRoot?: string): string {
   // Precedence: explicit env override > running serve daemon's registered URL >
   // serve.publicUrl from global config.json (so standalone `agentuse run`
   // honors it without a daemon) > local host:port fallback.

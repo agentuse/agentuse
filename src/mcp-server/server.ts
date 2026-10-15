@@ -5,7 +5,8 @@ import { version as packageVersion } from '../../package.json';
 import type { AgentDetail, AgentSummary } from '../cli/serve/agents-data.js';
 import type { SessionsPayload } from '../cli/serve/list-payloads.js';
 import type { SessionSummary } from '../cli/serve/types.js';
-import { getSessionUrl } from '../tools/await-human.js';
+import type { ChangesetFile } from '../agents/changeset-types.js';
+import { getApprovalBaseUrl, getSessionUrl } from '../tools/await-human.js';
 import { toErrorMessage } from '../utils/error-message.js';
 import { McpToolError, type DaemonClient } from './daemon.js';
 
@@ -25,6 +26,33 @@ interface ServerInfoPayload {
     agentCount: number;
     about?: { name?: string; description?: string };
   }>;
+}
+
+/**
+ * Every daemon route an MCP tool may call. Apply, discard, approve, schedule
+ * and delete routes are not here, so no tool can reach them even by mistake;
+ * the operator key the tools carry would otherwise allow it.
+ */
+const ALLOWED_DAEMON_ROUTES: ReadonlyArray<readonly ['GET' | 'POST', RegExp]> = [
+  ['GET', /^$/u],
+  ['GET', /^\/agents$/u],
+  ['GET', /^\/agents\/detail$/u],
+  ['GET', /^\/sessions$/u],
+  ['GET', /^\/sessions\/[^/]+$/u],
+  ['POST', /^\/run$/u],
+  ['POST', /^\/projects\/[^/]+\/changesets$/u],
+];
+
+function allowlisted(daemon: DaemonClient): DaemonClient {
+  const check = (method: 'GET' | 'POST', path: string) => {
+    if (!ALLOWED_DAEMON_ROUTES.some(([m, pattern]) => m === method && pattern.test(path))) {
+      throw new McpToolError('NOT_ALLOWED', `MCP tools cannot call ${method} /api${path}`);
+    }
+  };
+  return {
+    get: (path, query) => { check('GET', path); return daemon.get(path, query); },
+    post: (path, body) => { check('POST', path); return daemon.post(path, body); },
+  };
 }
 
 const LIST_LIMIT_MAX = 100;
@@ -83,7 +111,22 @@ function sessionView(row: SessionRow, projectRoots: Map<string, string>) {
   };
 }
 
-export function createAgentUseMcpServer(daemon: DaemonClient): McpServer {
+interface ChatChangesetResponse {
+  changeset: {
+    sessionId: string;
+    status: string;
+    proposals: Array<{ index: number; entry?: string; files: Array<Omit<ChangesetFile, 'content' | 'patch'>> }>;
+  };
+  reviewHref: string;
+}
+
+const fileInput = z.array(z.object({
+  path: z.string().min(1).max(400).describe('Project-relative, e.g. agents/weekly-digest.agentuse'),
+  content: z.string().max(64_000).describe('The whole file'),
+})).min(1).max(12);
+
+export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
+  const daemon = allowlisted(rawDaemon);
   const server = new McpServer(
     { name: 'agentuse', version: packageVersion },
     {
@@ -260,6 +303,85 @@ export function createAgentUseMcpServer(daemon: DaemonClient): McpServer {
     ]);
     const url = getSessionUrl(result.sessionId, roots.get(project));
     return ok(`Started ${project}/${agent}: ${result.sessionId}${url ? `\n${url}` : ''}`, { session_id: result.sessionId, project, agent, url });
+  }));
+
+  /** Save chat-written files as a change set and hand back its review link. */
+  const submitChangeset = async (projectId: string, body: Record<string, unknown>) => {
+    const client = server.server.getClientVersion()?.name;
+    const [result, roots] = await Promise.all([
+      daemon.post<ChatChangesetResponse>(`/projects/${encodeURIComponent(projectId)}/changesets`, {
+        source: 'chat',
+        author: client ? `${client} (chat)` : 'Chat',
+        ...body,
+      }),
+      projectRoots(),
+    ]);
+    const proposal = result.changeset.proposals.at(-1);
+    const reviewUrl = `${getApprovalBaseUrl(roots.get(projectId)).replace(/\/$/u, '')}${result.reviewHref}`;
+    return {
+      id: result.changeset.sessionId,
+      status: result.changeset.status,
+      review_url: reviewUrl,
+      files: (proposal?.files ?? []).map((file) => ({
+        path: file.path,
+        op: file.op,
+        ...(file.capabilityChanges?.length && { capability_changes: file.capabilityChanges }),
+        ...(file.flags?.length && { flags: file.flags }),
+      })),
+    };
+  };
+
+  server.registerTool('draft_agent', {
+    title: 'Draft agent',
+    description: 'Save a new agent (its .agentuse file plus any helper files) as a draft for the user to review. '
+      + 'Nothing runs and nothing goes live: the user opens review_url to test it and turn it on. '
+      + 'Files are checked like any AgentUse agent; if they are rejected, fix them and call again. '
+      + 'To change a draft after the user comments, call again with its draft_id.',
+    inputSchema: {
+      project: z.string().describe('Project id'),
+      goal: z.string().min(1).max(12_000).describe('What the user wants automated, in their words'),
+      summary: z.string().min(1).max(1_000).describe('One plain sentence for the reviewer: what the agent does'),
+      entry: z.string().min(1).max(400).describe('Path of the .agentuse file among `files`'),
+      files: fileInput,
+      draft_id: z.string().optional().describe('Update this draft instead of starting a new one'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, guarded(async ({ project, goal, summary, entry, files, draft_id }) => {
+    const draft = await submitChangeset(project, {
+      mode: 'create', instruction: goal, summary, entry, files, ...(draft_id && { changesetId: draft_id }),
+    });
+    const { id, ...rest } = draft;
+    return ok(`Draft saved. The user reviews it and turns it on here:\n${draft.review_url}`, { draft_id: id, ...rest });
+  }));
+
+  server.registerTool('propose_fix', {
+    title: 'Propose fix',
+    description: 'Propose a change to an existing agent, usually after list_problems and get_session found the cause. '
+      + 'Send the whole new file for each file you change. Nothing changes until the user applies it at review_url. '
+      + 'Call again with fix_id to revise the proposal.',
+    inputSchema: {
+      project: z.string().describe('Project id'),
+      agent: z.string().describe('The `agent` value from list_agents'),
+      problem: z.string().min(1).max(12_000).describe('What is wrong, in plain words'),
+      summary: z.string().min(1).max(1_000).describe('One plain sentence: what the fix changes'),
+      files: fileInput,
+      from_session: z.string().optional().describe('The failed run this fixes'),
+      fix_id: z.string().optional().describe('Update this proposal instead of starting a new one'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, guarded(async ({ project, agent, problem, summary, files, from_session, fix_id }) => {
+    const fix = await submitChangeset(project, {
+      mode: 'revise',
+      target: agent,
+      instruction: problem,
+      summary,
+      entry: agent,
+      files,
+      ...(from_session && { originSessionId: from_session }),
+      ...(fix_id && { changesetId: fix_id }),
+    });
+    const { id, ...rest } = fix;
+    return ok(`Fix proposed. The user reviews and applies it here:\n${fix.review_url}`, { fix_id: id, ...rest });
   }));
 
   return server;

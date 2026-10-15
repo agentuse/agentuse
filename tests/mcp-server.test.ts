@@ -69,15 +69,14 @@ afterEach(async () => {
 });
 
 describe('agentuse MCP server', () => {
-  it('offers only the read tools and run_agent', async () => {
+  it('offers read tools, run_agent, and tools that only propose', async () => {
     client = await connect(fakeDaemon({}).daemon);
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual(
-      ['get_agent', 'get_session', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'run_agent'],
+      ['draft_agent', 'get_agent', 'get_session', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'propose_fix', 'run_agent'],
     );
     const readOnly = tools.filter((tool) => tool.annotations?.readOnlyHint).map((tool) => tool.name);
-    expect(readOnly).not.toContain('run_agent');
-    expect(readOnly).toHaveLength(6);
+    expect(readOnly.sort()).toEqual(['get_agent', 'get_session', 'list_agents', 'list_problems', 'list_projects', 'list_sessions']);
   });
 
   it('lists projects by name without their paths', async () => {
@@ -170,6 +169,73 @@ describe('agentuse MCP server', () => {
     const result = await call('run_agent', { project: 'eng', agent: 'agents/digest.agentuse' });
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({ project: 'eng', agent: 'agents/digest.agentuse', detach: true });
     expect(result.structuredContent).toMatchObject({ session_id: 'run1', url: 'http://agentuse.test/sessions/run1' });
+  });
+
+  it('saves a draft as a chat change set and returns an absolute review link', async () => {
+    const { daemon, calls } = fakeDaemon({
+      'GET ': serverInfo,
+      'POST /projects/eng/changesets': () => ({
+        success: true,
+        changeset: {
+          sessionId: 'CS1',
+          status: 'proposed',
+          projectRoot: '/work/eng',
+          proposals: [{ index: 1, entry: 'agents/note.agentuse', files: [{ path: 'agents/note.agentuse', op: 'add', kind: 'agent', baseHash: null, hash: 'h', capabilityChanges: ['Runtime model added: x'] }] }],
+        },
+        reviewHref: '/projects/eng/changesets/CS1?token=t',
+      }),
+    });
+    client = await connect(daemon);
+    const files = [{ path: 'agents/note.agentuse', content: '---\nname: note\n---\nHi' }];
+    const result = await call('draft_agent', { project: 'eng', goal: 'Daily note', summary: 'Writes a note.', entry: 'agents/note.agentuse', files });
+    expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
+      source: 'chat', author: 'test (chat)', mode: 'create', instruction: 'Daily note', summary: 'Writes a note.', entry: 'agents/note.agentuse', files,
+    });
+    expect(result.structuredContent).toEqual({
+      draft_id: 'CS1',
+      status: 'proposed',
+      review_url: 'http://agentuse.test/projects/eng/changesets/CS1?token=t',
+      files: [{ path: 'agents/note.agentuse', op: 'add', capability_changes: ['Runtime model added: x'] }],
+    });
+    expect(JSON.stringify(result)).not.toContain('/work/');
+  });
+
+  it('proposes a fix as a revise change set aimed at the agent', async () => {
+    const { daemon, calls } = fakeDaemon({
+      'GET ': serverInfo,
+      'POST /projects/eng/changesets': () => ({
+        success: true,
+        changeset: { sessionId: 'FX1', status: 'proposed', proposals: [{ index: 2, files: [] }] },
+        reviewHref: '/projects/eng/changesets/FX1',
+      }),
+    });
+    client = await connect(daemon);
+    const files = [{ path: 'agents/digest.agentuse', content: 'x' }];
+    const result = await call('propose_fix', {
+      project: 'eng', agent: 'agents/digest.agentuse', problem: 'Login expired', summary: 'Uses the new token.', files, from_session: 'e2', fix_id: 'FX1',
+    });
+    expect(calls.find((c) => c.method === 'POST')?.body).toMatchObject({
+      mode: 'revise', target: 'agents/digest.agentuse', entry: 'agents/digest.agentuse', originSessionId: 'e2', changesetId: 'FX1',
+    });
+    expect(result.structuredContent).toMatchObject({ fix_id: 'FX1', review_url: 'http://agentuse.test/projects/eng/changesets/FX1' });
+  });
+
+  it('cannot turn a crafted project id into another daemon route', async () => {
+    const reached: string[] = [];
+    const raw: DaemonClient = {
+      get: async <T>(path: string) => { reached.push(`GET ${path}`); return serverInfo() as T; },
+      post: async <T>(path: string) => { reached.push(`POST ${path}`); return {} as T; },
+    };
+    // The project id is caller-controlled; a crafted one must not turn the
+    // change set route into an apply route.
+    client = await connect(raw);
+    const result = await call('draft_agent', {
+      project: 'eng/changesets/CS1/apply#', goal: 'x', summary: 'x', entry: 'a.agentuse', files: [{ path: 'a.agentuse', content: 'x' }],
+    });
+    // The id is encoded into one path segment, so the only route reached is
+    // the change set create route, which then fails to find that project.
+    expect(reached.filter((r) => r.startsWith('POST'))).toEqual(['POST /projects/eng%2Fchangesets%2FCS1%2Fapply%23/changesets']);
+    expect(result.isError).toBe(true);
   });
 
   it('turns a daemon failure into a tool error with its code', async () => {

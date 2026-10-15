@@ -24,7 +24,7 @@ import { isPathInside } from "../../../utils/path-policy";
 import { sessionViewToken } from "../../../utils/session-token";
 import { agentSummaryCache, collectAgentDetail, collectAgents } from "../agents-data";
 import { isOperatorRequest } from "../auth";
-import { CHANGESET_ID_PATTERN, ChangesetActiveError, ChangesetTargetError, applyProjectChangeset, changesetAcceptsChangeRequest, changesetListSummary, changesetReviewHref, discardProjectChangeset, prepareChangesetStart, removeChangesetWorkspace, resolveChangesetTargetPath, settleChangesetSession } from "../changesets";
+import { CHANGESET_ID_PATTERN, ChangesetActiveError, ChangesetTargetError, ChatChangesetError, applyProjectChangeset, submitChatChangeset, changesetAcceptsChangeRequest, changesetListSummary, changesetReviewHref, discardProjectChangeset, prepareChangesetStart, removeChangesetWorkspace, resolveChangesetTargetPath, settleChangesetSession } from "../changesets";
 import { parseJSONBody, sendError, sendJSON, sendRequestParseError } from "../http";
 import { OnboardingModelJob } from "../internal-jobs";
 import { resolveScopedAgentPath } from "../project";
@@ -150,6 +150,99 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
      * preparing shell. The session agent is persisted like the reviser's so
      * request-changes can continue it.
      */
+    /* POST /api/projects/:id/changesets {source: 'chat', ...}: files an MCP
+       client wrote, saved as a change set waiting for review. Validated like
+       an authoring session's submit_changes; nothing goes live until a person
+       applies it on the review page. */
+    const submitChangesetFromChat = async (
+      res: ServerResponse,
+      project: Project,
+      body: Record<string, unknown>,
+    ): Promise<void> => {
+      const text = (value: unknown, max: number): string | undefined =>
+        typeof value === 'string' && value.trim() && value.length <= max ? value.trim() : undefined;
+      const mode = body.mode;
+      if (mode !== 'create' && mode !== 'revise') {
+        sendError(res, 400, 'CHANGESET_MODE_INVALID', 'A change set is either a create or a revise');
+        return;
+      }
+      const instruction = text(body.instruction, 12_000);
+      const summary = text(body.summary, 1_000);
+      const entry = text(body.entry, 400);
+      const author = text(body.author, 80) ?? 'Chat';
+      if (!instruction || !summary || !entry) {
+        sendError(res, 400, 'CHANGESET_FIELDS_REQUIRED', 'instruction, summary and entry are required');
+        return;
+      }
+      const files = Array.isArray(body.files) ? body.files : [];
+      if (!files.every((file): file is { path: string; content: string } =>
+        !!file && typeof file === 'object' && typeof (file as { path?: unknown }).path === 'string'
+        && typeof (file as { content?: unknown }).content === 'string')) {
+        sendError(res, 400, 'CHANGESET_FILES_INVALID', 'files must be a list of {path, content}');
+        return;
+      }
+      let target: { path: string; name: string } | undefined;
+      if (mode === 'revise') {
+        const requested = text(body.target, 400);
+        if (!requested) {
+          sendError(res, 400, 'CHANGESET_TARGET_REQUIRED', 'Name the agent this fix changes');
+          return;
+        }
+        let requestedPath: string;
+        try {
+          requestedPath = await resolveChangesetTargetPath(project.scopeRoot, requested);
+        } catch (error) {
+          if (!(error instanceof ChangesetTargetError)) throw error;
+          sendError(res, 400, 'INVALID_AGENT_PATH', error.message);
+          return;
+        }
+        const currentSource = await readFile(resolveScopedAgentPath(project, requestedPath), 'utf8');
+        target = { path: requestedPath, name: parseAgentContent(currentSource, agentBaseName(requestedPath)).name };
+      }
+      const originSessionId = text(body.originSessionId, 80);
+      const existingId = text(body.changesetId, 80);
+      const snapshot = await providerSetupSnapshot();
+      const availableModels = [...new Set(
+        (await agentCreationProviders(snapshot.status, preferredAgentCreationModel)).flatMap((provider) => provider.models),
+      )];
+      const availableSkills = (await discoverProjectSkillCatalog(project.root))
+        .filter((skill) => !skill.ambiguous)
+        .map((skill) => skill.name);
+      try {
+        const record = await submitChatChangeset({
+          projectId: project.id,
+          projectRoot: project.root,
+          scopeRoot: project.scopeRoot,
+          mode,
+          instruction,
+          summary,
+          entry,
+          author,
+          files,
+          availableModels,
+          availableSkills,
+          ...(target && { target }),
+          ...(originSessionId && { originSessionId }),
+          ...(existingId && { existingId }),
+          reconcile: (existing) => reconcileChangesetRecord(project, existing),
+        });
+        wakeListHubs();
+        const token = sessionViewToken(record.sessionId, apiKey);
+        sendJSON(res, existingId ? 200 : 201, {
+          success: true,
+          changeset: changesetListSummary(record),
+          reviewHref: `${changesetReviewHref(project.id, record.sessionId)}${token ? `?token=${encodeURIComponent(token)}` : ''}`,
+        });
+      } catch (error) {
+        if (!(error instanceof ChatChangesetError)) throw error;
+        const status = error.code === 'CHANGESET_NOT_FOUND' ? 404 : error.code === 'CHANGESET_ACTIVE' || error.code === 'CHANGESET_CLOSED' ? 409 : 400;
+        sendJSON(res, status, {
+          success: false,
+          error: { code: error.code, message: error.message, ...(error.changesetId && { changesetId: error.changesetId }) },
+        });
+      }
+    };
+
     const startChangeset = async (
       res: ServerResponse,
       project: Project,
@@ -760,7 +853,9 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
             sendError(res, 403, 'OPERATOR_REQUIRED', 'Only an authenticated operator can start a change set');
             return;
           }
-          await startChangeset(res, project, await parseJSONBody(req));
+          const body = await parseJSONBody(req);
+          if (body.source === 'chat') await submitChangesetFromChat(res, project, body);
+          else await startChangeset(res, project, body);
           return;
         }
 
@@ -844,6 +939,10 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
           const record = await readChangesetRecord(project.root, sessionId);
           if (!record) {
             sendError(res, 404, 'CHANGESET_NOT_FOUND', 'Change set not found');
+            return;
+          }
+          if (record.origin === 'chat') {
+            sendError(res, 409, 'CHANGESET_FROM_CHAT', 'A chat wrote this change set. Ask for the change in that chat.');
             return;
           }
           if (!changesetAcceptsChangeRequest(record.status)) {

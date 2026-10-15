@@ -116,8 +116,10 @@ export default function ChangesetReview() {
     sessionId,
     token: sessionToken ?? token,
     project: projectId,
-    enabled: Boolean(sessionId && projectId),
+    // A chat-written change set has no authoring session to stream.
+    enabled: Boolean(sessionId && projectId && changeset && changeset.origin !== 'chat'),
   });
+  const fromChat = changeset?.origin === 'chat';
 
   const proposal = changeset?.proposals[changeset.proposals.length - 1];
   const exchangeTurns = useMemo(() => changeset ? changesetExchangeTurns(changeset) : [], [changeset]);
@@ -380,14 +382,16 @@ export default function ChangesetReview() {
           <div class="draft-meta">
             <span><span class="draft-meta-key">Project</span> {changeset.projectId}</span>
             <span><span class="draft-meta-key">Files</span> {files.length}</span>
-            <span><span class="draft-meta-key">Model</span> {changeset.authoringModel}</span>
-            <span class="changeset-session-id">
-              <span class="draft-meta-key">Session</span>{' '}
-              {changeset.mode === 'revise'
-                ? <span class="changeset-session-value">{sessionId}</span>
-                : <a class="draft-quiet-link" href={sessionHref} title="Open the full session log">{sessionId}</a>}
-              <CopyButton text={sessionId} label="session id" />
-            </span>
+            <span><span class="draft-meta-key">{fromChat ? 'From' : 'Model'}</span> {changeset.authoringModel}</span>
+            {!fromChat && (
+              <span class="changeset-session-id">
+                <span class="draft-meta-key">Session</span>{' '}
+                {changeset.mode === 'revise'
+                  ? <span class="changeset-session-value">{sessionId}</span>
+                  : <a class="draft-quiet-link" href={sessionHref} title="Open the full session log">{sessionId}</a>}
+                <CopyButton text={sessionId} label="session id" />
+              </span>
+            )}
           </div>
           <DraftUsageLine
             tokenUsage={authorSession.approval?.tokenUsage}
@@ -538,6 +542,8 @@ export default function ChangesetReview() {
           failure={authorSession.approval?.actionFailure}
           onShowContext={() => selectTab('changes')}
         />
+      ) : fromChat ? (
+        <p class="draft-waiting" role="status">A chat wrote this change. To change it, ask in that chat.</p>
       ) : (
         <ChangesetComposer
           changeset={changeset}

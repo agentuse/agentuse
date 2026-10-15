@@ -5,10 +5,10 @@
  * the list surface, and applying, discarding or settling one. Moved verbatim
  * out of serve.ts.
  */
-import { createChangesetRecord, discardChangeset, failChangeset, listChangesetRecords, readChangesetRecord } from "../../agents/changeset";
+import { appendChangesetProposal, contentHash, createChangesetRecord, discardChangeset, failChangeset, listChangesetRecords, readChangesetRecord, writeChangesetRecord } from "../../agents/changeset";
 import { applyChangeset } from "../../agents/changeset-apply";
 import type { ChangesetValidate } from "../../agents/changeset-apply";
-import { assertChangesetId, changesetBasePath, changesetDir, changesetEditRoot } from "../../agents/changeset-types";
+import { CHANGESET_LIMITS, assertChangesetId, changesetBasePath, changesetDir, changesetEditRoot } from "../../agents/changeset-types";
 import type { ChangesetFile, ChangesetMode, ChangesetProposal, ChangesetRecord, ChangesetStatus } from "../../agents/changeset-types";
 import { validateChangesetFiles } from "../../agents/changeset-validate";
 import { projectFileReader as changesetProjectFileReader, listProjectAgents as listChangesetProjectAgents } from "../../onboarding/submit-changes";
@@ -17,7 +17,8 @@ import type { SessionPurpose } from "./types";
 import { WorkerExecuteError, WorkerExecuteResult } from "./worker-types";
 import { CHANGESET_SESSION_FAILURES, settleRunningAuthoringRecord, type AuthoringSessionStatusSource } from "./authoring-session";
 import { lstat, mkdir, realpath, rm, writeFile } from "fs/promises";
-import { join, relative, resolve } from "path";
+import { join, posix, relative, resolve } from "path";
+import { ulid } from "ulid";
 
 /** ULID, the only shape a change set id can take. Checked before the record
  *  helpers throw on it, so a junk path is a 404 rather than a 400. */
@@ -211,6 +212,136 @@ export function changesetApplyValidator(input: {
       listProjectAgents: () => listChangesetProjectAgents(input.scopeRoot),
     });
   };
+}
+
+/** A change set a chat (an MCP client) wrote, as opposed to an AgentUse
+ *  authoring session. Rejections carry a message the chat can act on. */
+export class ChatChangesetError extends Error {
+  constructor(readonly code: string, message: string, readonly changesetId?: string) {
+    super(message);
+    this.name = 'ChatChangesetError';
+  }
+}
+
+export interface ChatChangesetInput {
+  projectId: string;
+  projectRoot: string;
+  scopeRoot: string;
+  mode: ChangesetMode;
+  /** What the chat was asked to automate or fix, shown as the request. */
+  instruction: string;
+  /** One sentence for the reviewer. */
+  summary: string;
+  /** Project-relative path of the agent a test run executes. */
+  entry: string;
+  /** Revise only. */
+  target?: { path: string; name: string };
+  /** Revise from a run: the failed run the fix answers. */
+  originSessionId?: string;
+  /** Shown where an authoring session shows its model, e.g. "Claude (chat)". */
+  author: string;
+  files: ReadonlyArray<{ path: string; content: string }>;
+  availableModels: readonly string[];
+  availableSkills: readonly string[];
+  /** Update this chat change set with a new proposal instead of starting one. */
+  existingId?: string;
+  reconcile?: (record: ChangesetRecord) => Promise<ChangesetRecord>;
+}
+
+/**
+ * Turn files a chat wrote into a change set waiting for review. The files pass
+ * the same validation an authoring session's `submit_changes` does, and again
+ * at Apply; nothing here writes into the project. Going live stays a person's
+ * click on the review page.
+ */
+export async function submitChatChangeset(input: ChatChangesetInput): Promise<ChangesetRecord> {
+  if (input.files.length === 0) throw new ChatChangesetError('CHANGESET_EMPTY', 'Send at least one file');
+  if (input.files.length > CHANGESET_LIMITS.maxFiles) {
+    throw new ChatChangesetError('CHANGESET_TOO_LARGE', `A change set holds at most ${CHANGESET_LIMITS.maxFiles} files`);
+  }
+  const entry = posix.normalize(input.entry).replace(/^\.\//u, '');
+  const readProjectFile = changesetProjectFileReader(input.scopeRoot);
+
+  let existing: ChangesetRecord | undefined;
+  if (input.existingId) {
+    if (!CHANGESET_ID_PATTERN.test(input.existingId)) throw new ChatChangesetError('CHANGESET_NOT_FOUND', 'Change set not found');
+    existing = await readChangesetRecord(input.projectRoot, input.existingId);
+    if (!existing || existing.origin !== 'chat') throw new ChatChangesetError('CHANGESET_NOT_FOUND', 'Change set not found');
+    if (existing.status !== 'proposed' && existing.status !== 'no-change') {
+      throw new ChatChangesetError('CHANGESET_CLOSED', `This change set is ${existing.status}; start a new one`, existing.sessionId);
+    }
+    if (existing.mode !== input.mode || existing.target?.path !== input.target?.path) {
+      throw new ChatChangesetError('CHANGESET_MISMATCH', 'This change set is for a different agent');
+    }
+  } else if (input.mode === 'revise') {
+    if (!input.target) throw new ChatChangesetError('CHANGESET_TARGET_REQUIRED', 'Name the agent this fix changes');
+    const records = await listChangesetRecords(input.projectRoot, { targetPath: input.target.path });
+    const conflict = activeChangesetForTarget(
+      input.reconcile ? await Promise.all(records.map(input.reconcile)) : records,
+      input.target.path,
+    );
+    if (conflict) {
+      throw new ChatChangesetError(
+        'CHANGESET_ACTIVE',
+        `This agent already has a change waiting for review (id ${conflict.sessionId}). Update that one instead, or ask the user to apply or discard it.`,
+        conflict.sessionId,
+      );
+    }
+  }
+
+  const staged = await Promise.all(input.files.map(async (file) => {
+    const path = posix.normalize(file.path).replace(/^\.\//u, '');
+    const baseContent = await readProjectFile(path);
+    return baseContent === undefined
+      ? { path, op: 'add' as const, baseHash: null, content: file.content }
+      : { path, op: 'modify' as const, baseHash: contentHash(baseContent), baseContent, content: file.content };
+  }));
+
+  let files: ChangesetFile[];
+  try {
+    files = await validateChangesetFiles({
+      mode: input.mode,
+      scopeRoot: input.scopeRoot,
+      projectRoot: input.projectRoot,
+      ...(input.target && { target: { path: input.target.path } }),
+      entry,
+      files: staged,
+      availableModels: input.availableModels,
+      availableSkills: input.availableSkills,
+      readProjectFile,
+      listProjectAgents: () => listChangesetProjectAgents(input.scopeRoot),
+    });
+  } catch (error) {
+    throw new ChatChangesetError('INVALID_AGENT', (error as Error).message);
+  }
+
+  const proposal = { reply: input.summary, entry, files };
+  if (existing) return appendChangesetProposal(input.projectRoot, existing.sessionId, proposal);
+
+  const now = Date.now();
+  const record: ChangesetRecord = {
+    version: 1,
+    sessionId: ulid(),
+    projectId: input.projectId,
+    projectRoot: input.projectRoot,
+    scopeRoot: input.scopeRoot,
+    mode: input.mode,
+    ...(input.target && { target: input.target }),
+    ...(input.originSessionId && { originSessionId: input.originSessionId }),
+    instruction: input.instruction,
+    authoringModel: input.author,
+    origin: 'chat',
+    // Written whole and already proposed: a `running` record with no session
+    // behind it would be failed by the reconcile pass.
+    status: 'proposed',
+    createdAt: now,
+    updatedAt: now,
+    proposals: [{ ...proposal, index: 1, submittedAt: now }],
+    exchange: [{ reply: input.summary }],
+    testRuns: [],
+  };
+  await writeChangesetRecord(record);
+  return record;
 }
 
 /** Apply, then drop the staged workspace: the record carries everything the

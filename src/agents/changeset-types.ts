@@ -106,6 +106,10 @@ export interface ChangesetRecord {
   originTranscript?: string;
   instruction: string;
   authoringModel: string;
+  /** `chat`: the files came from an MCP client (Claude, ChatGPT), not an
+   *  AgentUse authoring session, so there is no session log and changes are
+   *  requested in that chat. Absent for every authoring-session change set. */
+  origin?: 'chat';
   status: ChangesetStatus;
   createdAt: number;
   updatedAt: number;
