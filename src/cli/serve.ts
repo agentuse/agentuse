@@ -73,6 +73,7 @@ import { approvalRoutes } from "./serve/routes/approvals";
 import { homeRoutes } from "./serve/routes/home";
 import { mcpServerRoutes } from "./serve/routes/mcp-server";
 import { projectContextRoutes } from "./serve/routes/project-context";
+import { activeTunnel, CloudTunnel } from "../cloud/tunnel";
 import { notificationRoutes } from "./serve/routes/notifications";
 import { onboardingRoutes } from "./serve/routes/onboarding";
 import { projectRoutes } from "./serve/routes/projects";
@@ -4977,8 +4978,17 @@ export function createServeCommand(): Command {
       }));
 
       // Graceful shutdown
+      // This computer's line to AgentUse Cloud, idle until `agentuse connect`.
+      const cloudTunnel = new CloudTunnel({
+        selfUrl: serverBaseUrl({ host: effectiveHost, port }),
+        apiKey,
+        log: (message) => console.log(`  ${chalk.cyan("Cloud")} ${message}`),
+      });
+      activeTunnel.current = cloudTunnel;
+
       const shutdown = createIdempotentShutdown(async () => {
         console.log("\nShutting down...");
+        cloudTunnel.stop();
 
         // Do not enqueue another maintenance RPC while workers are being cut
         // loose; any pass already in flight is included in activeRequestCount.
@@ -5084,6 +5094,7 @@ export function createServeCommand(): Command {
       }, APPROVAL_SWEEP_INTERVAL_MS);
 
       server.listen(port, effectiveHost, () => {
+        cloudTunnel.start();
         const schedules = scheduler.list();
         const totalAgents = projects.reduce((a, p) => a + p.agentFiles.length, 0);
         const registryProjects: ServerProjectEntry[] = projects.map((p) => ({

@@ -5,7 +5,9 @@ import { createAgentUseMcpServer } from "../../../mcp-server/server";
 import { serverBaseUrl } from "../../../utils/server-registry";
 import { toErrorMessage } from "../../../utils/error-message";
 import { logger } from "../../../utils/logger";
-import { sendError } from "../http";
+import { sendError, sendJSON } from "../http";
+import { readCloudConnection } from "../../../cloud/config";
+import { activeTunnel } from "../../../cloud/tunnel";
 import type { ServeContext, ServeRequest } from "../context";
 
 /**
@@ -18,7 +20,17 @@ import type { ServeContext, ServeRequest } from "../context";
  * relay will forward to this same handler.
  */
 export async function mcpServerRoutes(ctx: ServeContext, rq: ServeRequest): Promise<boolean> {
-  const { req, res, routePath } = rq;
+  const { req, res, routePath, isApi } = rq;
+  // GET /api/cloud: this daemon's line to AgentUse Cloud, for `agentuse status` and the Mac app.
+  if (isApi && req.method === "GET" && routePath === "/cloud") {
+    const connection = (() => { try { return readCloudConnection(); } catch { return undefined; } })();
+    sendJSON(res, 200, {
+      success: true,
+      ...(activeTunnel.current?.state ?? { status: "not connected" }),
+      ...(connection && { account: connection.account, name: connection.name, mcpUrl: connection.mcpUrl, url: connection.url }),
+    });
+    return true;
+  }
   if (routePath !== "/mcp") return false;
 
   const { serverUrl, apiKey } = ctx;
