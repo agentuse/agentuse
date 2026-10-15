@@ -72,6 +72,7 @@ import { mcpAuthRoutes } from "./serve/routes/mcp-auth";
 import { approvalRoutes } from "./serve/routes/approvals";
 import { homeRoutes } from "./serve/routes/home";
 import { mcpServerRoutes } from "./serve/routes/mcp-server";
+import { projectContextRoutes } from "./serve/routes/project-context";
 import { notificationRoutes } from "./serve/routes/notifications";
 import { onboardingRoutes } from "./serve/routes/onboarding";
 import { projectRoutes } from "./serve/routes/projects";
@@ -4949,6 +4950,7 @@ export function createServeCommand(): Command {
         if (await homeRoutes(ctx, rq)) return;
         if (await mcpAuthRoutes(ctx, rq)) return;
         if (await mcpServerRoutes(ctx, rq)) return;
+        if (await projectContextRoutes(ctx, rq)) return;
         if (await agentRoutes(ctx, rq)) return;
         if (await scheduleRoutes(ctx, rq)) return;
         if (await storeRoutes(ctx, rq)) return;

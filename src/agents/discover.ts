@@ -5,6 +5,7 @@ import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { glob } from 'glob';
+import { minimatch } from 'minimatch';
 import { parseFrontmatter } from '../utils/frontmatter';
 import { formatScheduleHuman, parseScheduleExpression } from '../scheduler/parser.js';
 import { discoverSkills } from '../skill/discovery.js';
@@ -211,6 +212,80 @@ async function listGitVisibleFiles(root: string): Promise<Set<string> | undefine
     if (typeof stderr === 'string' && /not a git repository/iu.test(stderr)) return undefined;
     throw new Error('Project discovery could not list the files git tracks', { cause: error });
   }
+}
+
+const CHAT_LIST_MAX_ENTRIES = 400;
+// Below the reader cap (ADAPTIVE_MAX_FILE_BYTES), so the one-byte overread can show truncation.
+const CHAT_READ_MAX_BYTES = 60_000;
+
+/** The same skip rules discovery uses, as one predicate over a relative path. */
+const isIgnoredByDiscovery = (relativePath: string): boolean =>
+  IGNORED.some((pattern) => minimatch(relativePath, pattern, { dot: true, nocase: true }))
+  || !isProjectDiscoveryPathAllowed(relativePath);
+
+/** Every file discovery would show from `projectRoot`, relative and sorted. */
+async function listVisibleProjectFiles(root: string): Promise<string[]> {
+  const gitVisible = await listGitVisibleFiles(root);
+  return (await glob('**/*', { cwd: root, nodir: true, dot: true, posix: true, maxDepth: 8, ignore: IGNORED }))
+    .filter((relativePath) => !gitVisible || gitVisible.has(relativePath.normalize('NFC')))
+    .filter((relativePath) => !isIgnoredByDiscovery(relativePath))
+    .sort();
+}
+
+export interface ProjectFileListing {
+  /** Files, or `folder/` with a file count when there are too many to list. */
+  entries: Array<{ path: string; files?: number }>;
+  truncated: boolean;
+}
+
+/**
+ * File names in one project, for a chat deciding what to read. Names only,
+ * after the same skips as discovery (secrets, generated folders, .gitignore).
+ * Over the cap, folders collapse to counts so the chat can list one of them.
+ */
+export async function listProjectFilesForChat(projectRoot: string, folder?: string): Promise<ProjectFileListing> {
+  const root = await realpath(projectRoot);
+  if (await isProjectRootTooBroad(root)) throw new Error('This project covers your home folder, so its files are not listed');
+  const prefix = folder ? `${folder.replace(/\/+$/u, '')}/` : '';
+  if (folder && !isSafeRelativePathText(folder.replace(/\/+$/u, ''))) throw new Error('Not a folder in this project');
+  const files = (await listVisibleProjectFiles(root)).filter((path) => path.startsWith(prefix));
+  if (files.length <= CHAT_LIST_MAX_ENTRIES) return { entries: files.map((path) => ({ path })), truncated: false };
+  const grouped = new Map<string, number>();
+  for (const path of files) {
+    const rest = path.slice(prefix.length);
+    const slash = rest.indexOf('/');
+    const key = slash === -1 ? path : `${prefix}${rest.slice(0, slash)}/`;
+    grouped.set(key, (grouped.get(key) ?? 0) + 1);
+  }
+  const entries = [...grouped].map(([path, count]) => (path.endsWith('/') ? { path, files: count } : { path }));
+  return { entries: entries.slice(0, CHAT_LIST_MAX_ENTRIES), truncated: entries.length > CHAT_LIST_MAX_ENTRIES };
+}
+
+export type ProjectFileReadResult =
+  | { ok: true; content: string; bytes: number; truncated: boolean; redacted: boolean }
+  | { ok: false };
+
+/**
+ * One text file for a chat (`read_project_file`). On top of the reader's own
+ * checks (path text, links, hard links, swaps, secret names, broad roots) it
+ * applies the discovery skip list and .gitignore, refuses binary files, and
+ * redacts secret-shaped text. Every refusal is the same `{ ok: false }`, so a
+ * caller cannot tell a secret file from a missing one.
+ */
+export async function readProjectFileForChat(projectRoot: string, relativePath: string, maxBytes = CHAT_READ_MAX_BYTES): Promise<ProjectFileReadResult> {
+  if (!isSafeRelativePathText(relativePath) || isIgnoredByDiscovery(relativePath)) return { ok: false };
+  const root = await realpath(projectRoot).catch(() => undefined);
+  if (!root) return { ok: false };
+  const gitVisible = await listGitVisibleFiles(root);
+  if (gitVisible && !gitVisible.has(relativePath.normalize('NFC'))) return { ok: false };
+  const limit = Math.min(maxBytes, CHAT_READ_MAX_BYTES);
+  // One byte past the limit tells a full file from a truncated one.
+  const buffer = await readProjectDiscoveryFile(root, relativePath, limit + 1);
+  if (!buffer || buffer.includes(0)) return { ok: false };
+  const truncated = buffer.length > limit;
+  const raw = buffer.subarray(0, limit).toString('utf8');
+  const content = redactProjectDiscoveryText(raw);
+  return { ok: true, content, bytes: Buffer.byteLength(content), truncated, redacted: content !== raw };
 }
 
 async function readExistingProjectAgentSummary(

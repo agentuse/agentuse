@@ -73,10 +73,10 @@ describe('agentuse MCP server', () => {
     client = await connect(fakeDaemon({}).daemon);
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual(
-      ['draft_agent', 'get_agent', 'get_session', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'propose_fix', 'run_agent'],
+      ['draft_agent', 'get_agent', 'get_project', 'get_session', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'propose_fix', 'read_project_file', 'run_agent'],
     );
     const readOnly = tools.filter((tool) => tool.annotations?.readOnlyHint).map((tool) => tool.name);
-    expect(readOnly.sort()).toEqual(['get_agent', 'get_session', 'list_agents', 'list_problems', 'list_projects', 'list_sessions']);
+    expect(readOnly.sort()).toEqual(['get_agent', 'get_project', 'get_session', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'read_project_file']);
   });
 
   it('lists projects by name without their paths', async () => {
@@ -236,6 +236,48 @@ describe('agentuse MCP server', () => {
     // the change set create route, which then fails to find that project.
     expect(reached.filter((r) => r.startsWith('POST'))).toEqual(['POST /projects/eng%2Fchangesets%2FCS1%2Fapply%23/changesets']);
     expect(result.isError).toBe(true);
+  });
+
+  it('asks the daemon for only the project context parts the chat wants', async () => {
+    const { daemon, calls } = fakeDaemon({
+      'GET /projects/eng/context': () => ({ success: true, project: 'eng', agents: [{ agent: 'a.agentuse' }], mcpServers: [], files: { entries: [], truncated: false } }),
+    });
+    client = await connect(daemon);
+    const result = await call('get_project', { project: 'eng', include: ['agents', 'files'], path: 'reports' });
+    expect(calls[0]!.query).toEqual({ include: 'agents,files', path: 'reports' });
+    expect(result.structuredContent).toEqual({ project: 'eng', agents: [{ agent: 'a.agentuse' }], mcpServers: [], files: { entries: [], truncated: false } });
+    expect(result.content[0]!.text).toBe('eng: 1 agents, 0 MCP servers');
+  });
+
+  it('reads a file and says when it was cut or redacted', async () => {
+    client = await connect(fakeDaemon({
+      'GET /projects/eng/files': ({ query }) => ({ success: true, path: query?.path, content: 'key = [REDACTED]', bytes: 16, truncated: true, redacted: true }),
+    }).daemon);
+    const result = await call('read_project_file', { project: 'eng', path: 'config.yaml' });
+    expect(result.content[0]!.text).toBe('key = [REDACTED]\n\n[cut at 60 KB; secret-looking values redacted]');
+    expect(result.structuredContent).toMatchObject({ path: 'config.yaml', truncated: true, redacted: true });
+  });
+
+  it('passes a refused read through as NOT_READABLE', async () => {
+    client = await connect(fakeDaemon({
+      'GET /projects/eng/files': () => { throw new McpToolError('NOT_READABLE', 'That file is not readable'); },
+    }).daemon);
+    const result = await call('read_project_file', { project: 'eng', path: '.env' });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.error.code).toBe('NOT_READABLE');
+  });
+
+  it('offers /automate and /triage with the installed authoring guide', async () => {
+    client = await connect(fakeDaemon({}).daemon);
+    const { prompts } = await client.listPrompts();
+    expect(prompts.map((prompt) => prompt.name).sort()).toEqual(['automate', 'triage']);
+    const automate = await client.getPrompt({ name: 'automate', arguments: { goal: 'Weekly digest' } });
+    const automateText = (automate.messages[0]!.content as { text: string }).text;
+    expect(automateText).toContain('Call draft_agent');
+    expect(automateText).toContain("The user's goal: Weekly digest");
+    expect(automateText).toContain('# AgentUse Creator');
+    const audit = await client.getPrompt({ name: 'triage', arguments: { audit_only: 'yes' } });
+    expect((audit.messages[0]!.content as { text: string }).text).toContain('Do not call propose_fix');
   });
 
   it('turns a daemon failure into a tool error with its code', async () => {

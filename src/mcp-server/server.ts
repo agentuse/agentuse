@@ -9,6 +9,7 @@ import type { ChangesetFile } from '../agents/changeset-types.js';
 import { getApprovalBaseUrl, getSessionUrl } from '../tools/await-human.js';
 import { toErrorMessage } from '../utils/error-message.js';
 import { McpToolError, type DaemonClient } from './daemon.js';
+import { registerAgentUsePrompts } from './prompts.js';
 
 /**
  * AgentUse as an MCP server: what Claude, ChatGPT and coding agents can call.
@@ -39,6 +40,8 @@ const ALLOWED_DAEMON_ROUTES: ReadonlyArray<readonly ['GET' | 'POST', RegExp]> = 
   ['GET', /^\/agents\/detail$/u],
   ['GET', /^\/sessions$/u],
   ['GET', /^\/sessions\/[^/]+$/u],
+  ['GET', /^\/projects\/[^/]+\/context$/u],
+  ['GET', /^\/projects\/[^/]+\/files$/u],
   ['POST', /^\/run$/u],
   ['POST', /^\/projects\/[^/]+\/changesets$/u],
 ];
@@ -154,6 +157,49 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
     }));
     const lines = projects.map((p) => `${p.id}: ${p.name}, ${p.agent_count} agent${p.agent_count === 1 ? '' : 's'}`);
     return ok(lines.join('\n') || 'No projects yet.', { projects, ...(info.default && { default: info.default }) });
+  }));
+
+  server.registerTool('get_project', {
+    title: 'Get project',
+    description: 'What one project already has, so a new agent only uses what exists: its agents, the MCP servers those agents use '
+      + '(with login status), installed skills, and the models AgentUse can run. Add "files" to `include` for file names '
+      + '(no contents; secrets and ignored files are left out). Call before draft_agent.',
+    inputSchema: {
+      project: z.string().describe('Project id from list_projects'),
+      include: z.array(z.enum(['agents', 'mcp', 'skills', 'models', 'files'])).optional()
+        .describe('Default: agents, mcp, skills, models'),
+      path: z.string().max(400).optional().describe('With files: list inside this folder only'),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, guarded(async ({ project, include, path }) => {
+    const { success: _success, ...context } = await daemon.get<Record<string, unknown>>(
+      `/projects/${encodeURIComponent(project)}/context`,
+      { include: include?.join(','), path },
+    );
+    const counts = ['agents', 'mcpServers', 'skills'].flatMap((key) => {
+      const value = context[key];
+      return Array.isArray(value) ? [`${value.length} ${key === 'mcpServers' ? 'MCP servers' : key}`] : [];
+    });
+    return ok(`${project}: ${counts.join(', ') || 'context loaded'}`, context);
+  }));
+
+  server.registerTool('read_project_file', {
+    title: 'Read project file',
+    description: 'Read one text file in a project, up to 60 KB, for templates, data headers or script options a new agent must match. '
+      + 'Secret-looking values come back redacted. Secret, ignored, binary and linked files are refused with NOT_READABLE. '
+      + 'Read only what the task needs.',
+    inputSchema: {
+      project: z.string().describe('Project id'),
+      path: z.string().min(1).max(512).describe('Project-relative path, e.g. reports/template.md'),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, guarded(async ({ project, path }) => {
+    const { success: _success, ...file } = await daemon.get<{ success: true; path: string; content: string; truncated: boolean; redacted: boolean }>(
+      `/projects/${encodeURIComponent(project)}/files`,
+      { path },
+    );
+    const notes = [file.truncated && 'cut at 60 KB', file.redacted && 'secret-looking values redacted'].filter(Boolean);
+    return ok(`${file.content}${notes.length ? `\n\n[${notes.join('; ')}]` : ''}`, file);
   }));
 
   server.registerTool('list_agents', {
@@ -384,5 +430,6 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
     return ok(`Fix proposed. The user reviews and applies it here:\n${fix.review_url}`, { fix_id: id, ...rest });
   }));
 
+  registerAgentUsePrompts(server);
   return server;
 }
