@@ -187,9 +187,9 @@ describe('agentuse MCP server', () => {
     });
     client = await connect(daemon);
     const files = [{ path: 'agents/note.agentuse', content: '---\nname: note\n---\nHi' }];
-    const result = await call('draft_agent', { project: 'eng', goal: 'Daily note', summary: 'Writes a note.', entry: 'agents/note.agentuse', files });
+    const result = await call('draft_agent', { project: 'eng', goal: 'Daily note', summary: 'Writes a note.', entry: 'agents/note.agentuse', files, schedule: '0 8 * * 1-5' });
     expect(calls.find((c) => c.method === 'POST')?.body).toEqual({
-      source: 'chat', author: 'test (chat)', mode: 'create', instruction: 'Daily note', summary: 'Writes a note.', entry: 'agents/note.agentuse', files,
+      source: 'chat', author: 'test (chat)', mode: 'create', instruction: 'Daily note', summary: 'Writes a note.', entry: 'agents/note.agentuse', files, schedule: '0 8 * * 1-5',
     });
     expect(result.structuredContent).toEqual({
       draft_id: 'CS1',

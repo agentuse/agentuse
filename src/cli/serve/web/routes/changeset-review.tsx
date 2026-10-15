@@ -291,7 +291,9 @@ export default function ChangesetReview() {
 
   const decision = changeset.status === 'proposed'
     ? {
-      note: 'This proposal is waiting on you. Until it is applied or discarded, a new revision of this agent cannot be started.',
+      note: proposal?.schedule
+        ? `Apply adds this agent and turns on its schedule: ${proposal.schedule.human} (${proposal.schedule.expression}).`
+        : 'This proposal is waiting on you. Until it is applied or discarded, a new revision of this agent cannot be started.',
       buttons: (
         <>
           {/* A disabled button swallows its own hover, so the reason for the
@@ -382,6 +384,9 @@ export default function ChangesetReview() {
           <div class="draft-meta">
             <span><span class="draft-meta-key">Project</span> {changeset.projectId}</span>
             <span><span class="draft-meta-key">Files</span> {files.length}</span>
+            {proposal?.schedule && (
+              <span><span class="draft-meta-key">Runs</span> {proposal.schedule.human}</span>
+            )}
             <span><span class="draft-meta-key">{fromChat ? 'From' : 'Model'}</span> {changeset.authoringModel}</span>
             {!fromChat && (
               <span class="changeset-session-id">

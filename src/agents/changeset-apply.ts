@@ -123,6 +123,23 @@ interface PlannedFile {
   before: string | null;
 }
 
+/** The proposal's files, with a chat draft's reviewed schedule written into
+ *  its entry agent's frontmatter. */
+function withProposedSchedule(proposal: ChangesetProposal): ChangesetFile[] {
+  const { schedule, entry } = proposal;
+  if (!schedule) return proposal.files;
+  return proposal.files.map((file) => {
+    if (file.path !== entry) return file;
+    if (!file.content.startsWith('---\n')) throw new Error(`${file.path} has no frontmatter to add the schedule to`);
+    if (/^schedule\s*:/mu.test(file.content.split(/^---\s*$/mu)[1] ?? '')) {
+      throw new Error(`${file.path} already declares a schedule`);
+    }
+    // JSON string syntax is valid YAML and quotes cron's asterisks safely.
+    const content = `---\nschedule: ${JSON.stringify(schedule.expression)}\n${file.content.slice(4)}`;
+    return { ...file, content, hash: contentHash(content) };
+  });
+}
+
 async function planFile(
   projectRoot: string,
   scopeRoot: string,
@@ -168,7 +185,7 @@ async function applyChangesetLocked(input: {
   await input.validate(record, proposal);
 
   const planned: PlannedFile[] = [];
-  for (const file of proposal.files) {
+  for (const file of withProposedSchedule(proposal)) {
     planned.push(await planFile(input.projectRoot, input.scopeRoot, file));
   }
 

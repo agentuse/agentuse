@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readChangesetRecord } from '../src/agents/changeset';
+import { applyChangeset } from '../src/agents/changeset-apply';
+import { parseAgentContent } from '../src/parser';
 import { changesetRecordPath } from '../src/agents/changeset-types';
 import { ChatChangesetError, chatTestBlocker, submitChatChangeset, type ChatChangesetInput } from '../src/cli/serve/changesets';
 
@@ -121,6 +123,39 @@ describe('chat change sets', () => {
     expect(secret.message).toContain('.env');
     const model = await rejection(submit({ availableModels: ['other:model'] }));
     expect(model.message).toContain(MODEL);
+  });
+});
+
+describe('chat draft schedules', () => {
+  it('keeps the schedule beside the file, with a readable form for the review page', async () => {
+    const record = await submit({ schedule: '0 8 * * 1-5' });
+    expect(record.proposals[0]!.schedule).toMatchObject({ expression: '0 8 * * 1-5' });
+    expect(record.proposals[0]!.schedule!.human.length).toBeGreaterThan(0);
+    expect(record.proposals[0]!.files[0]!.content).not.toContain('schedule');
+  });
+
+  it('refuses a schedule that does not parse', async () => {
+    expect((await rejection(submit({ schedule: 'every morning' }))).code).toBe('INVALID_SCHEDULE');
+  });
+
+  it('refuses a separate schedule on a fix', async () => {
+    const error = await rejection(submit({
+      mode: 'revise',
+      target: { path: 'agents/existing.agentuse', name: 'Daily note' },
+      entry: 'agents/existing.agentuse',
+      files: [{ path: 'agents/existing.agentuse', content: agent('Fixed.') }],
+      schedule: '1h',
+    }));
+    expect(error.code).toBe('INVALID_SCHEDULE');
+  });
+
+  it('writes the reviewed schedule into the agent on Apply', async () => {
+    const record = await submit({ schedule: '0 8 * * 1-5' });
+    const applied = await applyChangeset({ projectRoot: root, scopeRoot: root, sessionId: record.sessionId, validate: async () => {} });
+    const written = await readFile(join(root, 'agents', 'daily.agentuse'), 'utf8');
+    expect(parseAgentContent(written, 'daily.agentuse').config.schedule).toBe('0 8 * * 1-5');
+    expect(written).toContain('Write one line about today.');
+    expect(applied.applied?.files[0]!.afterHash).toBe(new Bun.CryptoHasher('sha256').update(written).digest('hex'));
   });
 });
 

@@ -69,6 +69,12 @@ export interface ChangesetProposal {
   loadedSkills?: string[];
   /** Web URLs fetched while producing this proposal, for provenance in review. */
   externalReads?: string[];
+  /**
+   * Chat drafts only: the schedule Apply writes into the entry agent. Kept
+   * out of the file because a new agent may not carry a schedule before a
+   * person has reviewed it; the review page shows it, and Apply is that review.
+   */
+  schedule?: { expression: string; human: string };
 }
 
 export type ChangesetTestRunStatus = 'running' | 'completed' | 'error';

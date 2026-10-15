@@ -14,6 +14,7 @@ import { validateChangesetFiles } from "../../agents/changeset-validate";
 import { projectFileReader as changesetProjectFileReader, listProjectAgents as listChangesetProjectAgents } from "../../onboarding/submit-changes";
 import { isPathInside } from "../../utils/path-policy";
 import { parseAgentContent } from "../../parser";
+import { formatScheduleHuman, parseScheduleExpression } from "../../scheduler/parser";
 import type { SessionPurpose } from "./types";
 import { WorkerExecuteError, WorkerExecuteResult } from "./worker-types";
 import { CHANGESET_SESSION_FAILURES, settleRunningAuthoringRecord, type AuthoringSessionStatusSource } from "./authoring-session";
@@ -241,6 +242,8 @@ export interface ChatChangesetInput {
   originSessionId?: string;
   /** Shown where an authoring session shows its model, e.g. "Claude (chat)". */
   author: string;
+  /** Create only: the schedule Apply adds, shown on the review page first. */
+  schedule?: string;
   files: ReadonlyArray<{ path: string; content: string }>;
   availableModels: readonly string[];
   availableSkills: readonly string[];
@@ -262,6 +265,19 @@ export async function submitChatChangeset(input: ChatChangesetInput): Promise<Ch
   }
   const entry = posix.normalize(input.entry).replace(/^\.\//u, '');
   const readProjectFile = changesetProjectFileReader(input.scopeRoot);
+  let schedule: { expression: string; human: string } | undefined;
+  if (input.schedule) {
+    if (input.mode !== 'create') {
+      throw new ChatChangesetError('INVALID_SCHEDULE', 'A fix changes the schedule inside the agent file, not as a separate field');
+    }
+    const expression = input.schedule.trim();
+    try {
+      parseScheduleExpression(expression);
+    } catch (error) {
+      throw new ChatChangesetError('INVALID_SCHEDULE', (error as Error).message);
+    }
+    schedule = { expression, human: formatScheduleHuman(expression) };
+  }
 
   let existing: ChangesetRecord | undefined;
   if (input.existingId) {
@@ -316,7 +332,7 @@ export async function submitChatChangeset(input: ChatChangesetInput): Promise<Ch
     throw new ChatChangesetError('INVALID_AGENT', (error as Error).message);
   }
 
-  const proposal = { reply: input.summary, entry, files };
+  const proposal = { reply: input.summary, entry, files, ...(schedule && { schedule }) };
   if (existing) return appendChangesetProposal(input.projectRoot, existing.sessionId, proposal);
 
   const now = Date.now();

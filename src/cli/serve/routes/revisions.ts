@@ -201,6 +201,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
       }
       const originSessionId = text(body.originSessionId, 80);
       const existingId = text(body.changesetId, 80);
+      const schedule = text(body.schedule, 100);
       const snapshot = await providerSetupSnapshot();
       const availableModels = [...new Set(
         (await agentCreationProviders(snapshot.status, preferredAgentCreationModel)).flatMap((provider) => provider.models),
@@ -224,6 +225,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
           ...(target && { target }),
           ...(originSessionId && { originSessionId }),
           ...(existingId && { existingId }),
+          ...(schedule && { schedule }),
           reconcile: (existing) => reconcileChangesetRecord(project, existing),
         });
         wakeListHubs();

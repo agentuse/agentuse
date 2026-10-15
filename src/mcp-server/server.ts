@@ -391,12 +391,17 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
       summary: z.string().min(1).max(1_000).describe('One plain sentence for the reviewer: what the agent does'),
       entry: z.string().min(1).max(400).describe('Path of the .agentuse file among `files`'),
       files: fileInput,
+      schedule: z.string().max(100).optional()
+        .describe('When it should run, e.g. "0 8 * * 1-5" (cron) or "2h". Never put schedule: in the file; '
+          + 'the review page shows this and Apply turns it on.'),
       draft_id: z.string().optional().describe('Update this draft instead of starting a new one'),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  }, guarded(async ({ project, goal, summary, entry, files, draft_id }) => {
+  }, guarded(async ({ project, goal, summary, entry, files, schedule, draft_id }) => {
     const draft = await submitChangeset(project, {
-      mode: 'create', instruction: goal, summary, entry, files, ...(draft_id && { changesetId: draft_id }),
+      mode: 'create', instruction: goal, summary, entry, files,
+      ...(schedule && { schedule }),
+      ...(draft_id && { changesetId: draft_id }),
     });
     const { id, ...rest } = draft;
     return ok(`Draft saved. The user reviews it and turns it on here:\n${draft.review_url}`, { draft_id: id, ...rest });
