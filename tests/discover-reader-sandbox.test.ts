@@ -117,6 +117,18 @@ describe('project file reader: folder swapped during the read', () => {
     expect(buffer).toBeUndefined();
   });
 
+  it('refuses a hard link made after the open (nlink on the identity check)', async () => {
+    const buffer = await readProjectDiscoveryFile(project, 'docs/guide.md', 16_000, {
+      beforeOpen: swapDocsToOutside,
+      afterOpen: async () => {
+        await swapDocsBack();
+        await rm(join(project, 'docs', 'guide.md'));
+        await link(join(outside, 'guide.md'), join(project, 'docs', 'guide.md'));
+      },
+    });
+    expect(buffer).toBeUndefined();
+  });
+
   it('does not hang when the file is replaced by a FIFO before the open', async () => {
     const buffer = await readProjectDiscoveryFile(project, 'README.md', 16_000, {
       beforeOpen: async () => {
@@ -169,8 +181,15 @@ describe('project path filter: secret names', () => {
     // NFD "Secréts" stays distinct after NFC, so the real lookalike risk is
     // a compatibility form: fullwidth "ｓｅｃｒｅｔｓ" folds to "secrets" under NFKC.
     expect(isProjectDiscoveryPathAllowed('ｓｅｃｒｅｔｓ/app.yaml')).toBe(false);
-    expect(isProjectDiscoveryPathAllowed('.env'.normalize('NFD'))).toBe(false);
     expect(isProjectDiscoveryPathAllowed('．ｅｎｖ')).toBe(false);
+  });
+
+  it('makes the reader itself refuse secret names, not only the view', async () => {
+    await writeFile(join(project, '.env'), 'TOKEN=x');
+    await mkdir(join(project, 'secrets'));
+    await writeFile(join(project, 'secrets', 'prod.yaml'), 'key: x');
+    expect(await read('.env')).toBeUndefined();
+    expect(await read('secrets/prod.yaml')).toBeUndefined();
   });
 
   it('keeps ordinary source folders such as src/auth', () => {
@@ -202,6 +221,34 @@ describe('project discovery view', () => {
     } finally {
       await view.cleanup();
     }
+  });
+
+  it('keeps a file whose name is stored in NFD', async () => {
+    execFileSync('git', ['init', '-q'], { cwd: project });
+    await writeFile(join(project, 'café.md'.normalize('NFD')), 'accented name');
+    const view = await prepareProjectDiscoveryView(project);
+    try {
+      expect(view.availableFiles.map((file) => file.normalize('NFC'))).toContain('café.md');
+    } finally {
+      await view.cleanup();
+    }
+  });
+
+  it('fails closed when git errors for a reason other than "not a repository"', async () => {
+    execFileSync('git', ['init', '-q'], { cwd: project });
+    await writeFile(join(project, '.git', 'index'), 'not an index');
+    await expect(prepareProjectDiscoveryView(project)).rejects.toThrow('git');
+  });
+
+  it('does not run a core.fsmonitor command planted in the project', async () => {
+    execFileSync('git', ['init', '-q'], { cwd: project });
+    const marker = join(base, 'fsmonitor-ran');
+    const hook = join(base, 'fsmonitor-hook.sh');
+    await writeFile(hook, `#!/bin/sh\ntouch '${marker}'\n`, { mode: 0o755 });
+    execFileSync('git', ['config', 'core.fsmonitor', hook], { cwd: project });
+    const view = await prepareProjectDiscoveryView(project);
+    await view.cleanup();
+    expect(await Bun.file(marker).exists()).toBe(false);
   });
 });
 

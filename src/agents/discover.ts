@@ -147,7 +147,8 @@ export async function readProjectDiscoveryFile(
   maxBytes: number,
   hooks: ProjectFileReadHooks = {},
 ): Promise<Buffer | undefined> {
-  if (!isSafeRelativePathText(relativePath)) return undefined;
+  // The name filter lives here too, so no caller can read a secret by skipping it.
+  if (!isSafeRelativePathText(relativePath) || !isProjectDiscoveryPathAllowed(relativePath)) return undefined;
   let root: string;
   let sourcePath: string;
   try {
@@ -179,7 +180,8 @@ export async function readProjectDiscoveryFile(
     const resolvedSource = await realpath(sourcePath);
     if (!isPathInside(root, resolvedSource, { allowEqual: false })) return undefined;
     const resolvedStats = await lstat(resolvedSource);
-    if (resolvedStats.dev !== openedStats.dev || resolvedStats.ino !== openedStats.ino) return undefined;
+    // nlink again: a hard link made after the fstat would otherwise pass the identity check.
+    if (resolvedStats.dev !== openedStats.dev || resolvedStats.ino !== openedStats.ino || resolvedStats.nlink !== 1) return undefined;
     const buffer = Buffer.alloc(Math.min(maxBytes, ADAPTIVE_MAX_FILE_BYTES));
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     return buffer.subarray(0, bytesRead);
@@ -190,9 +192,11 @@ export async function readProjectDiscoveryFile(
   }
 }
 
-/** Files git would not ignore, relative to `root`, or `undefined` when git is
- *  missing or the root is not in a repository. fsmonitor is forced off because
- *  a planted `.git/config` could otherwise run a command in the server. */
+/** Files git would not ignore, relative to `root` and NFC-normalized, or
+ *  `undefined` when git is missing or the root is not in a repository. Any other
+ *  git failure throws, so a timeout cannot quietly let ignored files through.
+ *  fsmonitor is forced off because a planted `.git/config` could otherwise run a
+ *  command in the server. */
 async function listGitVisibleFiles(root: string): Promise<Set<string> | undefined> {
   try {
     const { stdout } = await execFileAsync(
@@ -200,9 +204,12 @@ async function listGitVisibleFiles(root: string): Promise<Set<string> | undefine
       ['-c', 'core.fsmonitor=false', 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
       { cwd: root, timeout: GIT_LIST_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' },
     );
-    return new Set(stdout.split('\0').filter(Boolean));
-  } catch {
-    return undefined;
+    return new Set(stdout.split('\0').filter(Boolean).map((path) => path.normalize('NFC')));
+  } catch (error) {
+    const { code, stderr } = error as { code?: unknown; stderr?: unknown };
+    if (code === 'ENOENT') return undefined;
+    if (typeof stderr === 'string' && /not a git repository/iu.test(stderr)) return undefined;
+    throw new Error('Project discovery could not list the files git tracks', { cause: error });
   }
 }
 
@@ -244,8 +251,10 @@ export async function prepareProjectDiscoveryView(projectRoot: string): Promise<
   if (await isProjectRootTooBroad(resolvedProjectRoot)) {
     throw new Error('Project discovery cannot scan your home folder or a folder that contains it');
   }
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'agentuse-onboarding-project-')));
+  // Before mkdtemp, so a git failure leaves no temporary folder behind.
   const gitVisible = await listGitVisibleFiles(resolvedProjectRoot);
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'agentuse-onboarding-project-')));
+  // git prints NFC; glob returns names as stored, which is NFD for many Finder-made files.
   const candidates = (await glob('**/*', {
     cwd: resolvedProjectRoot,
     nodir: true,
@@ -253,7 +262,7 @@ export async function prepareProjectDiscoveryView(projectRoot: string): Promise<
     posix: true,
     maxDepth: 8,
     ignore: IGNORED,
-  })).filter((relativePath) => !gitVisible || gitVisible.has(relativePath)).sort();
+  })).filter((relativePath) => !gitVisible || gitVisible.has(relativePath.normalize('NFC'))).sort();
   const availableFiles: string[] = [];
   const existingAgents: ExistingProjectAgentSummary[] = [];
   let usedBytes = 0;

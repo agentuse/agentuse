@@ -89,7 +89,7 @@ function denyReason(relPath: string): string | undefined {
     return `"${denied}/" is on the never-touch list (version control, dependencies, build output, or agent state)`;
   }
   if (!isProjectDiscoveryPathAllowed(relPath)) {
-    return `"${segments[segments.length - 1]}" looks like a secret, key, or credential file`;
+    return `"${relPath}" looks like a secret, key, or credential path`;
   }
   return undefined;
 }
