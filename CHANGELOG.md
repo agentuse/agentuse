@@ -15,6 +15,7 @@
 
 - **A run's result no longer ends with the agent's step-by-step notes.** One-line notes such as "I'll check the Downloads folder." written right before a tool call were appended to the report of every run that declared an outcome. They are now left out; longer prose, including a document streamed before saving it, still reaches the report.
 - **Reading a folder with the file read tool says what to do instead.** Pointing `tools__filesystem_read` at a directory now says it is a directory and to use `tools__filesystem_list`. In the agent creator, the project root used to come back as "outside the project" and a subfolder as "File not found", which sent models into retries.
+- **Project discovery stays inside the project.** The files sent to your model when suggesting agents can no longer reach outside the project through hard links, a folder swapped for a link mid-read, or a link anywhere in the path. Files in folders named `secrets` or `credentials` (any case), `.ENV`-style names, and files git ignores are left out, and discovery refuses to scan your home folder or a folder above it.
 
 ## [0.23.1] - 2026-10-06
 

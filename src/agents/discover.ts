@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process';
 import { constants } from 'node:fs';
 import { lstat, mkdir, mkdtemp, open, realpath, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { basename, isAbsolute, join, resolve } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { promisify } from 'node:util';
 import { glob } from 'glob';
 import { parseFrontmatter } from '../utils/frontmatter';
 import { formatScheduleHuman, parseScheduleExpression } from '../scheduler/parser.js';
@@ -24,6 +26,13 @@ const IGNORED = [
 
 const SENSITIVE_BASENAMES = /^(?:id_[a-z0-9_-]+|credentials?|secrets?|auth|tokens?)(?:\.[a-z0-9_-]+)?$/iu;
 const SENSITIVE_EXTENSIONS = /\.(?:pem|key|p12|pfx|jks|keystore)$/iu;
+/** Folder names that hold secrets wherever they sit. Narrower than
+ *  SENSITIVE_BASENAMES on purpose: `src/auth/` and design `tokens/` are source. */
+const SENSITIVE_DIRECTORIES = /^(?:credentials?|secrets?|\.ssh|\.aws|\.gnupg)(?:\.[a-z0-9_-]+)?$/iu;
+const GENERATED_SEGMENTS = ['.git', 'node_modules', 'vendor', 'dist', 'build', 'coverage', '.next', '.turbo', '.cache', '.venv', 'venv'];
+const MAX_RELATIVE_PATH_LENGTH = 512;
+const GIT_LIST_TIMEOUT_MS = 5_000;
+const execFileAsync = promisify(execFile);
 /** The credential shapes AgentUse refuses to move between a project and a model.
  *  Declared without the `g` flag so `.test()` is stateless; `redactProjectDiscoveryText`
  *  builds global copies for replacement. Shared with `changeset-validate.ts`, which
@@ -38,14 +47,18 @@ const SECRET_ASSIGNMENT_ALL = everyMatch(SECRET_ASSIGNMENT);
 const PRIVATE_KEY_BLOCK_ALL = everyMatch(PRIVATE_KEY_BLOCK);
 const KNOWN_SECRET_TOKEN_ALL = everyMatch(KNOWN_SECRET_TOKEN);
 
+const isEnvName = (name: string): boolean => name === '.env' || name.startsWith('.env.');
+
 export function isProjectDiscoveryPathAllowed(path: string): boolean {
-  const normalized = path.replace(/\\/g, '/');
-  const name = basename(normalized);
-  if (SAFE_ENV_FILENAMES.has(name.toLowerCase())) return true;
-  if (name === '.env' || name.toLowerCase().startsWith('.env.')) return false;
-  if (SENSITIVE_BASENAMES.test(name) || SENSITIVE_EXTENSIONS.test(name)) return false;
-  const segments = normalized.toLowerCase().split('/');
-  return !segments.some((segment) => ['.git', 'node_modules', 'vendor', 'dist', 'build', 'coverage', '.next', '.turbo', '.cache', '.venv', 'venv'].includes(segment));
+  // NFKC also folds compatibility lookalikes (fullwidth letters) onto the names below.
+  const segments = path.normalize('NFKC').toLowerCase().replace(/\\/g, '/').split('/');
+  const name = segments[segments.length - 1] ?? '';
+  const directories = segments.slice(0, -1);
+  if (segments.some((segment) => GENERATED_SEGMENTS.includes(segment))) return false;
+  if (directories.some((segment) => isEnvName(segment) || SENSITIVE_DIRECTORIES.test(segment) || SENSITIVE_EXTENSIONS.test(segment))) return false;
+  if (SAFE_ENV_FILENAMES.has(name)) return true;
+  if (isEnvName(name)) return false;
+  return !SENSITIVE_BASENAMES.test(name) && !SENSITIVE_EXTENSIONS.test(name);
 }
 
 export function redactProjectDiscoveryText(text: string): string {
@@ -102,23 +115,71 @@ export async function discoverProjectSkillCatalog(projectRoot: string): Promise<
     });
 }
 
-async function readBoundedDiscoveryFile(projectRoot: string, relativePath: string, maxBytes: number): Promise<Buffer | undefined> {
-  if (!relativePath || isAbsolute(relativePath) || relativePath.split(/[\\/]/u).includes('..')) return undefined;
-  const sourcePath = join(projectRoot, relativePath);
+/** A project root that is `/`, the home folder, or above it would expose every
+ *  credential the user owns, so discovery and the reader refuse it outright. */
+async function isProjectRootTooBroad(resolvedRoot: string): Promise<boolean> {
+  if (dirname(resolvedRoot) === resolvedRoot) return true;
+  const home = await realpath(homedir()).catch(() => resolve(homedir()));
+  return isPathInside(resolvedRoot, home);
+}
+
+function isSafeRelativePathText(relativePath: string): boolean {
+  if (!relativePath || relativePath.length > MAX_RELATIVE_PATH_LENGTH) return false;
+  if (isAbsolute(relativePath) || relativePath.includes('\\') || /[\u0000-\u001f\u007f]/u.test(relativePath)) return false;
+  return relativePath.split('/').every((segment) => segment !== '' && segment !== '.' && segment !== '..');
+}
+
+/** Test seams for the two windows a swapped directory could strike: between the
+ *  path walk and the open, and between the open and the identity check. */
+export interface ProjectFileReadHooks {
+  beforeOpen?: () => Promise<void>;
+  afterOpen?: () => Promise<void>;
+}
+
+/** Read at most `maxBytes` of one regular file inside `projectRoot`. Every refusal
+ *  is `undefined`, whatever the reason, so a caller learns nothing about paths
+ *  outside the project. The checks hold against a project whose contents are
+ *  hostile: symlinks or junctions at any depth, hard links to outside files, and
+ *  a directory swapped for a link between the checks and the open. */
+export async function readProjectDiscoveryFile(
+  projectRoot: string,
+  relativePath: string,
+  maxBytes: number,
+  hooks: ProjectFileReadHooks = {},
+): Promise<Buffer | undefined> {
+  if (!isSafeRelativePathText(relativePath)) return undefined;
+  let root: string;
+  let sourcePath: string;
   try {
-    const sourceStats = await lstat(sourcePath);
-    if (!sourceStats.isFile() || sourceStats.isSymbolicLink()) return undefined;
-    const resolvedSource = await realpath(sourcePath);
-    if (!isPathInside(projectRoot, resolvedSource, { allowEqual: false })) return undefined;
+    root = await realpath(projectRoot);
+    if (await isProjectRootTooBroad(root)) return undefined;
+    // Walk down from the root so no segment, not just the last one, is a link.
+    const segments = relativePath.split('/');
+    sourcePath = root;
+    for (const [index, segment] of segments.entries()) {
+      sourcePath = join(sourcePath, segment);
+      const stats = await lstat(sourcePath);
+      if (stats.isSymbolicLink()) return undefined;
+      if (index < segments.length - 1 ? !stats.isDirectory() : !stats.isFile()) return undefined;
+    }
+    await hooks.beforeOpen?.();
   } catch {
     return undefined;
   }
 
   let handle;
   try {
-    handle = await open(sourcePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    // O_NONBLOCK keeps a FIFO swapped in after the walk from hanging the open.
+    handle = await open(sourcePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
     const openedStats = await handle.stat();
-    if (!openedStats.isFile()) return undefined;
+    if (!openedStats.isFile() || openedStats.nlink !== 1) return undefined;
+    await hooks.afterOpen?.();
+    // The walk and the open are separate steps; prove the opened file is the one
+    // the path names now, and that the path still resolves inside the root.
+    const resolvedSource = await realpath(sourcePath);
+    if (!isPathInside(root, resolvedSource, { allowEqual: false })) return undefined;
+    const resolvedStats = await lstat(resolvedSource);
+    if (resolvedStats.dev !== openedStats.dev || resolvedStats.ino !== openedStats.ino) return undefined;
     const buffer = Buffer.alloc(Math.min(maxBytes, ADAPTIVE_MAX_FILE_BYTES));
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
     return buffer.subarray(0, bytesRead);
@@ -129,11 +190,27 @@ async function readBoundedDiscoveryFile(projectRoot: string, relativePath: strin
   }
 }
 
+/** Files git would not ignore, relative to `root`, or `undefined` when git is
+ *  missing or the root is not in a repository. fsmonitor is forced off because
+ *  a planted `.git/config` could otherwise run a command in the server. */
+async function listGitVisibleFiles(root: string): Promise<Set<string> | undefined> {
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      ['-c', 'core.fsmonitor=false', 'ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+      { cwd: root, timeout: GIT_LIST_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' },
+    );
+    return new Set(stdout.split('\0').filter(Boolean));
+  } catch {
+    return undefined;
+  }
+}
+
 async function readExistingProjectAgentSummary(
   projectRoot: string,
   relativePath: string,
 ): Promise<ExistingProjectAgentSummary | undefined> {
-  const buffer = await readBoundedDiscoveryFile(projectRoot, relativePath, 16_000);
+  const buffer = await readProjectDiscoveryFile(projectRoot, relativePath, 16_000);
   if (!buffer || buffer.includes(0)) return undefined;
   const text = redactProjectDiscoveryText(buffer.toString('utf8'));
   try {
@@ -163,15 +240,20 @@ async function readExistingProjectAgentSummary(
  * view excludes sensitive/generated paths and redacts common credential forms
  * inside otherwise useful text files. */
 export async function prepareProjectDiscoveryView(projectRoot: string): Promise<ProjectDiscoveryView> {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'agentuse-onboarding-project-')));
   const resolvedProjectRoot = await realpath(projectRoot);
+  if (await isProjectRootTooBroad(resolvedProjectRoot)) {
+    throw new Error('Project discovery cannot scan your home folder or a folder that contains it');
+  }
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'agentuse-onboarding-project-')));
+  const gitVisible = await listGitVisibleFiles(resolvedProjectRoot);
   const candidates = (await glob('**/*', {
     cwd: resolvedProjectRoot,
     nodir: true,
     dot: true,
+    posix: true,
     maxDepth: 8,
     ignore: IGNORED,
-  })).sort();
+  })).filter((relativePath) => !gitVisible || gitVisible.has(relativePath)).sort();
   const availableFiles: string[] = [];
   const existingAgents: ExistingProjectAgentSummary[] = [];
   let usedBytes = 0;
@@ -198,7 +280,7 @@ export async function prepareProjectDiscoveryView(projectRoot: string): Promise<
       if (availableFiles.length >= ADAPTIVE_MAX_FILES || usedBytes >= ADAPTIVE_MAX_TOTAL_BYTES) break;
       if (!isProjectDiscoveryPathAllowed(relativePath)) continue;
       const remaining = ADAPTIVE_MAX_TOTAL_BYTES - usedBytes;
-      const buffer = await readBoundedDiscoveryFile(resolvedProjectRoot, relativePath, remaining);
+      const buffer = await readProjectDiscoveryFile(resolvedProjectRoot, relativePath, remaining);
       if (!buffer) continue;
       if (buffer.includes(0)) continue;
       const text = redactProjectDiscoveryText(buffer.toString('utf8'));
