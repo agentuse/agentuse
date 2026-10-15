@@ -1,0 +1,212 @@
+---
+title: AgentUse Cloud
+description: Use AgentUse on your computer from Claude, ChatGPT, Cursor, or any app that supports MCP
+---
+
+AgentUse Cloud lets a chat app reach AgentUse on your own computer. Connect the
+computer once, add one address to your chat app, and type `/automate` to turn
+the conversation into an agent, or `/triage` to fix agents that fail.
+
+Your agents still run on your computer, with your model keys, files, and
+logins. AgentUse Cloud handles your account and sign-in, and passes messages
+between the chat app and your computer. The computer opens that line itself,
+so you don't open any ports.
+
+<Note>
+  AgentUse Cloud is in early access.
+</Note>
+
+## How it fits together
+
+```text
+Claude / ChatGPT / Cursor ──▶ cloud.agentuse.io/mcp ──▶ your computer (agentuse serve)
+        (signed in as you)        (checks what the app            (runs the tools,
+                                   is allowed to do)               the same as locally)
+```
+
+There are two separate permissions, and you control both:
+
+- **This computer is connected to your account.** Set with **Connect** in the
+  Mac app or `agentuse connect` in a terminal. Undo it with **Disconnect**.
+- **A chat app may use your account.** Set with **Allow** the first time you
+  add AgentUse to that app. Each app gets its own permission, which you can
+  remove without touching the others.
+
+## 1. Connect your computer
+
+### Mac app
+
+Open **Settings → AgentUse Cloud** and select **Connect**. Your browser opens
+on AgentUse Cloud:
+
+1. Sign in with Google, GitHub, or an emailed code. The first sign-in creates
+   your account.
+2. Check that the page shows the same code as Settings, then select
+   **Connect**.
+
+Settings then shows **Connected**, your account, this Mac's name, and the
+address to add to chat apps, with a **Copy** button.
+
+### Terminal (macOS, Linux, Windows)
+
+```bash
+agentuse connect
+```
+
+```text
+Connect MacBook Pro to AgentUse Cloud.
+Open https://cloud.agentuse.io/connect and enter WDJB-MJHT
+
+Opened your browser. Sign in there and press Connect.
+Waiting…
+
+Connected as MacBook Pro (you@example.com).
+Add this address in Claude, ChatGPT, Cursor, or any app that supports MCP:
+  https://cloud.agentuse.io/mcp
+```
+
+On a computer without a screen, such as a Linux server over SSH, no browser
+opens. Open the printed address on your phone or laptop, enter the code, sign
+in, and select **Connect**. The terminal finishes on its own. The code works
+once and expires after 10 minutes.
+
+| Option | What it does |
+| --- | --- |
+| `--name <name>` | How this computer appears in your account. The default is the Mac's name or the host name. |
+| `--no-browser` | Print the address and code without opening a browser. |
+| `--url <url>` | Use a different AgentUse Cloud address. `AGENTUSE_CLOUD_URL` does the same. |
+
+The connection is saved in `~/.agentuse/cloud.json`, readable only by your
+user. It holds this computer's own token. That token can open this computer's
+line to the cloud and nothing else: it cannot sign in to your account.
+
+### Keep `agentuse serve` running
+
+Chat apps reach your computer through `agentuse serve`. When it finds the
+connection file, it opens its line to the cloud within a minute, and reconnects
+on its own if the network drops.
+
+- **Mac app:** keeps the server running. Turn on **Launch AgentUse at Login** so
+  it is there after a restart.
+- **Terminal:** run `agentuse serve` and leave it running. On a Linux server,
+  run it as a background service (for example, a systemd user service) so it
+  survives logouts and restarts.
+
+## 2. Add AgentUse to your chat app
+
+Add `https://cloud.agentuse.io/mcp` as a remote MCP server in any app that
+supports MCP. Common places:
+
+- **Claude** (claude.ai, Desktop, mobile): **Settings → Connectors → Add custom
+  connector**.
+- **ChatGPT:** add it as a connector in developer mode.
+- **Claude Code:** `claude mcp add --transport http agentuse https://cloud.agentuse.io/mcp`
+- **Cursor, VS Code, and other MCP apps:** add a remote (HTTP) MCP server with
+  that address.
+
+The app opens AgentUse Cloud to sign you in, then shows the **Allow** page,
+which names the app and what it may do:
+
+| Permission | Lets the app |
+| --- | --- |
+| See your agents and their runs | List projects, agents, and runs, read agent files, and find failed runs. |
+| Draft new agents and propose fixes for you to review | Save drafts and fixes for review, and practice-run them with every tool faked. |
+| Start runs you ask for | Run an existing agent now. Steps that need approval still wait for you. |
+| Read files in your AgentUse projects | Read one text file at a time, with secrets left out. |
+
+Under **Only you can**, the page also lists what no app can do: turn agents on,
+approve their steps, or change live agents.
+
+An app only sees the tools it was allowed. AgentUse Cloud checks every request
+before it reaches your computer.
+
+## 3. Use it
+
+In a chat, type `/automate` (in some apps it is listed under the AgentUse
+connector's prompts):
+
+1. The chat looks at what your project already has: agents, MCP servers and
+   their logins, skills, and the models you can run. It reads only the files
+   the task needs.
+2. It writes the agent and saves it as a **draft**.
+3. It practice-runs the draft. Every tool is faked by a mock model, so nothing
+   on your computer changes. It then fixes what went wrong.
+4. It gives you a review link and a short summary.
+
+Open the link and select **Apply**. If the agent should run on a schedule, the
+review page shows it ("Runs: At 08:00 AM, Monday through Friday"), and the same
+**Apply** turns the schedule on.
+
+Type `/triage` when agents fail. The chat lists open failures grouped by agent
+and cause, and reads the failed run and the agent's file. If the agent file is
+at fault, it proposes a fix for you to review and apply. If the cause is
+elsewhere (a login, a key, project code), it tells you what to change.
+
+You can also just ask: "what ran last night?", "why did the digest fail?",
+"run the inbox agent now".
+
+### What a chat can never do
+
+A chat proposes and you click. No tool can turn an agent on, apply a change,
+approve or reject a step, or delete anything. Those are always a click on the
+review or run page. This keeps a chat that read a hostile web page from planting
+an agent that runs commands on your computer.
+
+Practice runs are refused when a draft would start a local MCP server, or send
+headers or keys to a remote one, because connecting happens before any tool
+call can be faked. Test those yourself with **Test run** on the review page.
+
+## Check and disconnect
+
+```bash
+agentuse status
+```
+
+```text
+AgentUse Cloud: https://cloud.agentuse.io
+Account:        you@example.com
+This computer:  MacBook Pro
+MCP address:    https://cloud.agentuse.io/mcp
+Live line:      connected
+```
+
+To disconnect:
+
+- **This computer, from itself:** `agentuse disconnect`, or **Disconnect** in
+  the Mac app. This revokes the token and removes `~/.agentuse/cloud.json`.
+- **Any computer, from anywhere:** sign in at `cloud.agentuse.io` and select
+  **Disconnect** next to it. The computer drops off at once, and `agentuse
+  status` explains how to connect it again.
+- **One chat app:** remove the connector in that app.
+
+## Without the cloud
+
+On the same computer, an MCP client can talk to AgentUse directly, without an
+account:
+
+- `agentuse serve` answers MCP at `http://127.0.0.1:12233/mcp`. If the server
+  has an API key, send it as `Authorization: Bearer <key>`.
+- `agentuse mcp serve` runs AgentUse as a local (stdio) MCP server, for apps
+  that start MCP servers as commands. It needs `agentuse serve` running.
+
+## Privacy
+
+- Your agents, model keys, and files stay on your computer. The cloud keeps
+  your account, the list of your computers, and the permissions you gave each
+  app.
+- Requests and answers pass through the cloud on their way between the app and
+  your computer.
+- File reads skip `.env` files, keys, credential folders, files your
+  `.gitignore` skips, binary files, and links that point outside the project.
+  Secret-looking values in the files it does read are blanked out.
+
+## Troubleshooting
+
+| You see | Do this |
+| --- | --- |
+| "No computer is connected to this account yet" | Run `agentuse connect` or select **Connect** in the Mac app. |
+| `agentuse status` shows `agentuse serve is not running` | Start the Mac app or `agentuse serve`. |
+| Live line: `retrying` | The computer can't reach the cloud. Check the network. It reconnects on its own. |
+| Live line: `disconnected from the cloud` | The computer was removed from your account. Run `agentuse disconnect`, then `agentuse connect`. |
+| The chat says a tool was not allowed | The app wasn't granted that permission. Remove the connector and add it again, so the app asks for it and the **Allow** page lists it. |
+| "The code expired" | Run `agentuse connect` again. Codes last 10 minutes. |
