@@ -99,7 +99,7 @@ function fail(error: unknown): void {
 }
 
 export function createMcpCommand(): Command {
-  const command = new Command('mcp').description('Manage logins for an agent\'s MCP servers');
+  const command = new Command('mcp').description('Manage logins for an agent\'s MCP servers, or run AgentUse as an MCP server');
 
   command
     .command('login <agent> <server>')
@@ -147,6 +147,23 @@ export function createMcpCommand(): Command {
         for (const [name, config] of servers) {
           console.log(`${name.padEnd(20)} ${labels[await getMCPAuthState(config)]}`);
         }
+      } catch (error) {
+        fail(error);
+      }
+    });
+
+  command
+    .command('serve')
+    .description('Run AgentUse as an MCP server over stdio, for Claude Desktop, Claude Code and other MCP clients on this computer. Needs `agentuse serve` running.')
+    .action(async () => {
+      try {
+        // Lazy: only this subcommand needs the SDK server and the tool set.
+        const [{ StdioServerTransport }, { createAgentUseMcpServer }, { localDaemonClient }] = await Promise.all([
+          import('@modelcontextprotocol/sdk/server/stdio.js'),
+          import('../mcp-server/server.js'),
+          import('../mcp-server/daemon.js'),
+        ]);
+        await createAgentUseMcpServer(localDaemonClient()).connect(new StdioServerTransport());
       } catch (error) {
         fail(error);
       }

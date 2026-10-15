@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **AgentUse is an MCP server too.** Point Claude Code or another MCP client at `http://<your serve address>/mcp` (send your API key as a bearer token when one is set), or add `agentuse mcp serve` as a local command for Claude Desktop. A chat can list projects, agents and runs, see failed runs grouped by cause, read an agent's file, and start a run. It cannot turn agents on, approve steps or change agents: those stay a click on the links it returns.
+
 ## [0.24.0] - 2026-10-17
 
 ### Added
