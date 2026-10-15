@@ -24,7 +24,7 @@ import { isPathInside } from "../../../utils/path-policy";
 import { sessionViewToken } from "../../../utils/session-token";
 import { agentSummaryCache, collectAgentDetail, collectAgents } from "../agents-data";
 import { isOperatorRequest } from "../auth";
-import { CHANGESET_ID_PATTERN, ChangesetActiveError, ChangesetTargetError, ChatChangesetError, applyProjectChangeset, submitChatChangeset, changesetAcceptsChangeRequest, changesetListSummary, changesetReviewHref, discardProjectChangeset, prepareChangesetStart, removeChangesetWorkspace, resolveChangesetTargetPath, settleChangesetSession } from "../changesets";
+import { CHANGESET_ID_PATTERN, ChangesetActiveError, ChangesetTargetError, ChatChangesetError, applyProjectChangeset, chatTestBlocker, submitChatChangeset, changesetAcceptsChangeRequest, changesetListSummary, changesetReviewHref, discardProjectChangeset, prepareChangesetStart, removeChangesetWorkspace, resolveChangesetTargetPath, settleChangesetSession } from "../changesets";
 import { parseJSONBody, sendError, sendJSON, sendRequestParseError } from "../http";
 import { OnboardingModelJob } from "../internal-jobs";
 import { resolveScopedAgentPath } from "../project";
@@ -816,7 +816,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
        review actions. The draft and revision routes stay live until the
        dashboard has finished moving over. */
     const changesetMatch = isApi
-      ? routePath.match(/^\/projects\/([^/?#]+)\/changesets(?:\/([^/?#]+))?(?:\/(apply|discard|restore|request-changes|cancel|test-run))?$/)
+      ? routePath.match(/^\/projects\/([^/?#]+)\/changesets(?:\/([^/?#]+))?(?:\/(apply|discard|restore|request-changes|cancel|test-run|mock-test))?$/)
       : null;
     if (changesetMatch) {
       let mutationKey: string | undefined;
@@ -1008,7 +1008,10 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
           return;
         }
 
-        if (action === 'test-run') {
+        // mock-test: the chat's test (MCP test_draft). Every tool faked, and
+        // refused when an MCP server would run a program or carry keys on
+        // connect. The review page's Test run keeps the adaptive scope.
+        if (action === 'test-run' || action === 'mock-test') {
           const stored = await readChangesetRecord(project.root, sessionId);
           const record = stored ? await settleStaleChangesetTestRuns(project, stored) : undefined;
           const proposal = record ? latestChangesetProposal(record) : undefined;
@@ -1021,7 +1024,14 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
             sendError(res, 409, 'CHANGESET_TEST_RUN_ACTIVE', 'A test run of this change set is already in flight');
             return;
           }
-          const started = await startChangesetTestRun(project, record, proposal);
+          if (action === 'mock-test') {
+            const blocker = chatTestBlocker(proposal);
+            if (blocker) {
+              sendError(res, 409, 'TEST_NEEDS_REVIEW', blocker);
+              return;
+            }
+          }
+          const started = await startChangesetTestRun(project, record, proposal, action === 'mock-test' ? { scope: 'all' } : {});
           await recordChangesetTestRun(project.root, sessionId, {
             sessionId: started.sessionId,
             proposalIndex: proposal.index,

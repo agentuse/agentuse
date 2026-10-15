@@ -44,6 +44,8 @@ const ALLOWED_DAEMON_ROUTES: ReadonlyArray<readonly ['GET' | 'POST', RegExp]> = 
   ['GET', /^\/projects\/[^/]+\/files$/u],
   ['POST', /^\/run$/u],
   ['POST', /^\/projects\/[^/]+\/changesets$/u],
+  // mock-test only: never test-run, which runs non-gated tools for real.
+  ['POST', /^\/projects\/[^/]+\/changesets\/[^/]+\/mock-test$/u],
 ];
 
 function allowlisted(daemon: DaemonClient): DaemonClient {
@@ -398,6 +400,33 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
     });
     const { id, ...rest } = draft;
     return ok(`Draft saved. The user reviews it and turns it on here:\n${draft.review_url}`, { draft_id: id, ...rest });
+  }));
+
+  server.registerTool('test_draft', {
+    title: 'Test draft',
+    description: 'Practice run of a draft or proposed fix: the agent really reasons through its steps, but every tool call '
+      + '(commands, files, MCP, stores) is faked by a mock model and approvals are auto-approved, so nothing on the computer changes. '
+      + 'Returns at once; call get_session with the session_id until it finishes, then fix what went wrong and call draft_agent '
+      + 'or propose_fix again. A pass means the steps hold together, not that real output will be good. '
+      + 'Drafts that start a local MCP server or send keys to one are refused: the user must test those on the review page.',
+    inputSchema: {
+      project: z.string().describe('Project id'),
+      id: z.string().describe('draft_id from draft_agent or fix_id from propose_fix'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, guarded(async ({ project, id }) => {
+    const [{ testRun }, roots] = await Promise.all([
+      daemon.post<{ testRun: { sessionId: string } }>(
+        `/projects/${encodeURIComponent(project)}/changesets/${encodeURIComponent(id)}/mock-test`,
+        {},
+      ),
+      projectRoots(),
+    ]);
+    const url = getSessionUrl(testRun.sessionId, roots.get(project));
+    return ok(
+      `Practice run started: ${testRun.sessionId}. Check it with get_session.${url ? `\n${url}` : ''}`,
+      { session_id: testRun.sessionId, project, mock: true, url },
+    );
   }));
 
   server.registerTool('propose_fix', {

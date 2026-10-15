@@ -272,6 +272,7 @@ export interface ServeContext {
     project: Project,
     record: ChangesetRecord,
     proposal: ChangesetProposal,
+    options?: { scope?: 'all' },
   ) => Promise<{ sessionId: string; proposalIndex: number; sessionToken?: string }>;
   settleStaleChangesetTestRuns: (project: Project, record: ChangesetRecord) => Promise<ChangesetRecord>;
 }

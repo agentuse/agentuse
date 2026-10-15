@@ -2539,6 +2539,9 @@ export function createServeCommand(): Command {
         project: Project,
         record: ChangesetRecord,
         proposal: ChangesetProposal,
+        // `all` overrides the adaptive scope, which runs non-gated tools live.
+        // A test nobody has reviewed yet (a chat's) must fake every tool.
+        runOptions: { scope?: 'all' } = {},
       ): Promise<{ sessionId: string; proposalIndex: number; sessionToken?: string }> => {
         const entry = proposal.entry;
         if (!entry) throw new Error('This change set has no entry agent to run');
@@ -2561,11 +2564,13 @@ export function createServeCommand(): Command {
           const fileName = entry.split('/').pop() ?? 'agent.agentuse';
           const parsed = parseAgentContent(await readFile(entryPath, 'utf8'), fileName);
           let scope: 'all' | 'gated' = 'all';
-          try {
-            scope = resolveMockScope(parsed.config);
-          } catch {
-            // An unparseable entry cannot reach here through submit_changes; if
-            // it ever did, the run pipeline reports it better than we can.
+          if (!runOptions.scope) {
+            try {
+              scope = resolveMockScope(parsed.config);
+            } catch {
+              // An unparseable entry cannot reach here through submit_changes; if
+              // it ever did, the run pipeline reports it better than we can.
+            }
           }
           const testSessionId = ulid();
           const worker = new AgentWorker({

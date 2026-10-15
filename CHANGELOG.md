@@ -4,7 +4,7 @@
 
 ### Added
 
-- **AgentUse is an MCP server too.** Point Claude Code or another MCP client at `http://<your serve address>/mcp` (send your API key as a bearer token when one is set), or add `agentuse mcp serve` as a local command for Claude Desktop. Type `/automate` to turn the chat into a draft agent, or `/triage` to find failing agents and propose fixes. A chat can see what a project already has (agents, MCP servers, skills, models), read a text file with secrets left out and blanked, look at runs, and start one. Drafts and fixes open on a review page, where you test and apply them: a chat cannot turn agents on, apply changes or approve steps.
+- **AgentUse is an MCP server too.** Point Claude Code or another MCP client at `http://<your serve address>/mcp` (send your API key as a bearer token when one is set), or add `agentuse mcp serve` as a local command for Claude Desktop. Type `/automate` to turn the chat into a draft agent, or `/triage` to find failing agents and propose fixes. A chat can see what a project already has (agents, MCP servers, skills, models), read a text file with secrets left out and blanked, look at runs, and start one. Before handing over, the chat practice-runs its draft with every tool faked, so nothing on your computer changes; drafts that would start a local MCP server or send keys to one are left for you to test. Drafts and fixes open on a review page, where you apply them: a chat cannot turn agents on, apply changes or approve steps.
 
 ## [0.24.0] - 2026-10-17
 

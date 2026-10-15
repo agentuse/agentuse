@@ -13,6 +13,7 @@ import type { ChangesetFile, ChangesetMode, ChangesetProposal, ChangesetRecord, 
 import { validateChangesetFiles } from "../../agents/changeset-validate";
 import { projectFileReader as changesetProjectFileReader, listProjectAgents as listChangesetProjectAgents } from "../../onboarding/submit-changes";
 import { isPathInside } from "../../utils/path-policy";
+import { parseAgentContent } from "../../parser";
 import type { SessionPurpose } from "./types";
 import { WorkerExecuteError, WorkerExecuteResult } from "./worker-types";
 import { CHANGESET_SESSION_FAILURES, settleRunningAuthoringRecord, type AuthoringSessionStatusSource } from "./authoring-session";
@@ -342,6 +343,41 @@ export async function submitChatChangeset(input: ChatChangesetInput): Promise<Ch
   };
   await writeChangesetRecord(record);
   return record;
+}
+
+/**
+ * Why a chat may not start a mock test of this proposal, or undefined when it
+ * may. Mock mode fakes every tool call, but MCP servers connect before any
+ * call: a local server launches its command for real, and a remote one sends
+ * whatever headers and env-filled tokens it is configured with. So a chat-run
+ * test refuses both until a person has reviewed the files.
+ */
+export function chatTestBlocker(proposal: { files: ReadonlyArray<Pick<ChangesetFile, 'path' | 'kind' | 'content'>> }): string | undefined {
+  for (const file of proposal.files) {
+    if (file.kind !== 'agent') continue;
+    let servers: Record<string, unknown>;
+    try {
+      const config = parseAgentContent(file.content, posix.basename(file.path)).config as { mcpServers?: Record<string, unknown> };
+      servers = config.mcpServers ?? {};
+    } catch {
+      // Fail closed: what cannot be read here cannot be shown to be safe.
+      return `${file.path} could not be checked for MCP servers. Fix it, or ask the user to press Test run on the review page.`;
+    }
+    for (const [name, server] of Object.entries(servers)) {
+      const entry = server as Record<string, unknown>;
+      if (typeof entry.command === 'string') {
+        return `${file.path} starts a local MCP server (${name}), which would run a program before any review. Ask the user to press Test run on the review page instead.`;
+      }
+      const auth = entry.auth as Record<string, unknown> | undefined;
+      const carriesSecrets = entry.headers !== undefined || auth?.token !== undefined
+        || entry.requiredEnvVars !== undefined || entry.allowedEnvVars !== undefined
+        || JSON.stringify(entry).includes('${');
+      if (carriesSecrets) {
+        return `${file.path} sends headers or keys to the MCP server ${name}. Ask the user to press Test run on the review page instead.`;
+      }
+    }
+  }
+  return undefined;
 }
 
 /** Apply, then drop the staged workspace: the record carries everything the

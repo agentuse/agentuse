@@ -73,7 +73,7 @@ describe('agentuse MCP server', () => {
     client = await connect(fakeDaemon({}).daemon);
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual(
-      ['draft_agent', 'get_agent', 'get_project', 'get_session', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'propose_fix', 'read_project_file', 'run_agent'],
+      ['draft_agent', 'get_agent', 'get_project', 'get_session', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'propose_fix', 'read_project_file', 'run_agent', 'test_draft'],
     );
     const readOnly = tools.filter((tool) => tool.annotations?.readOnlyHint).map((tool) => tool.name);
     expect(readOnly.sort()).toEqual(['get_agent', 'get_project', 'get_session', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'read_project_file']);
@@ -278,6 +278,17 @@ describe('agentuse MCP server', () => {
     expect(automateText).toContain('# AgentUse Creator');
     const audit = await client.getPrompt({ name: 'triage', arguments: { audit_only: 'yes' } });
     expect((audit.messages[0]!.content as { text: string }).text).toContain('Do not call propose_fix');
+  });
+
+  it('starts only the all-mocked practice run, never the live test run', async () => {
+    const { daemon, calls } = fakeDaemon({
+      'GET ': serverInfo,
+      'POST /projects/eng/changesets/CS1/mock-test': () => ({ success: true, testRun: { sessionId: 'T1' } }),
+    });
+    client = await connect(daemon);
+    const result = await call('test_draft', { project: 'eng', id: 'CS1' });
+    expect(calls.filter((c) => c.method === 'POST').map((c) => c.path)).toEqual(['/projects/eng/changesets/CS1/mock-test']);
+    expect(result.structuredContent).toMatchObject({ session_id: 'T1', mock: true, url: 'http://agentuse.test/sessions/T1' });
   });
 
   it('turns a daemon failure into a tool error with its code', async () => {
