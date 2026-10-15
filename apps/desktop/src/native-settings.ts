@@ -1,4 +1,6 @@
-export interface DesktopSettingsState {
+import type { CloudSettingsState } from "./cloud-settings";
+
+export interface DesktopSettingsState extends CloudSettingsState {
   status: "running" | "stopped" | "starting" | "stopping";
   title: string;
   detail: string;
@@ -31,6 +33,7 @@ export type NativeSettingsCommand =
   | { type: "refresh" }
   | { type: "toggleServer" }
   | { type: "toggleCliLink" }
+  | { type: "toggleCloud" }
   | { type: "checkForUpdates" }
   | { type: "downloadUpdate" }
   | { type: "installUpdate" }
@@ -60,6 +63,7 @@ export function parseNativeSettingsCommand(line: string): NativeSettingsCommand 
     case "refresh":
     case "toggleServer":
     case "toggleCliLink":
+    case "toggleCloud":
     case "clearDashboardShortcut":
     case "checkForUpdates":
     case "downloadUpdate":

@@ -40,6 +40,8 @@ import {
 } from "./dashboard-shortcut";
 import { getProviderStatus } from "../../../src/auth/provider-status";
 import { loadGlobalConfig } from "../../../src/utils/global-config";
+import { readCloudConnection } from "../../../src/cloud/config";
+import { CloudConnector, cloudSettingsState, type CloudApiState } from "./cloud-settings";
 import { initializeDesktopGlobalDefaults } from "./global-defaults";
 import { DesktopUpdater, type DesktopUpdateState } from "./updater";
 import { DesktopUpdateScheduler } from "./update-scheduler";
@@ -65,6 +67,16 @@ const desktopServerSupervisor: DesktopServerSupervisor = {
 let window: BrowserWindow | undefined;
 let setupWindow: BrowserWindow | undefined;
 let settingsProcess: ChildProcess | undefined;
+// `agentuse connect` / `disconnect`, run with the bundled CLI so the app and
+// the terminal share one flow and one ~/.agentuse/cloud.json.
+const cloudConnector = new CloudConnector(
+  (args) => spawn(process.execPath, [resolveCliPath(), ...args], {
+    cwd: app.getPath("home"),
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", NO_TTY: "true" },
+  }),
+  () => { void pushNativeSettingsState(); },
+);
 let settingsOutputBuffer = "";
 let settingsCommandQueue = Promise.resolve();
 // Shown as an alert once Settings is on screen, e.g. why the dashboard could
@@ -979,6 +991,20 @@ async function handleNativeSettingsCommand(line: string, child: ChildProcess): P
       }
       break;
     }
+    case "toggleCloud": {
+      const view = cloudConnector.view;
+      try {
+        if (view.connecting) cloudConnector.cancel();
+        else if (readCloudConnection()) await cloudConnector.disconnect();
+        else cloudConnector.connect();
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        sendNativeSettingsMessage({ type: "error", message: detail }, child);
+      } finally {
+        await pushNativeSettingsState(child);
+      }
+      break;
+    }
     case "checkForUpdates":
       await desktopUpdateScheduler?.checkNow();
       await pushNativeSettingsState(child);
@@ -1127,8 +1153,38 @@ async function readLogTail(logFile: string | undefined, maxBytes = 200_000): Pro
   }
 }
 
+/** The running server's line to AgentUse Cloud, or undefined when no server answers. */
+async function cloudApiState(server: RegisteredServer | undefined): Promise<CloudApiState | undefined> {
+  if (!server) return undefined;
+  try {
+    const response = await fetch(`${serverUrl(server)}/api/cloud`, {
+      headers: dashboardApiKey ? { Authorization: `Bearer ${dashboardApiKey}` } : {},
+      signal: AbortSignal.timeout(1_500),
+    });
+    return response.ok ? await response.json() as CloudApiState : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function savedCloudConnection() {
+  try {
+    const saved = readCloudConnection();
+    return saved && { name: saved.name, mcpUrl: saved.mcpUrl, ...(saved.account && { account: saved.account }) };
+  } catch {
+    return undefined;
+  }
+}
+
 async function desktopSettingsState() {
   const activeServer = currentServer && listRegisteredServers().find((server) => server.pid === currentServer?.pid);
+  const api = await cloudApiState(activeServer);
+  const saved = savedCloudConnection();
+  const cloud = cloudSettingsState({
+    ...(api && { api }),
+    ...(saved && { saved }),
+    ...cloudConnector.view,
+  });
   const launchAtLogin = app.getLoginItemSettings().openAtLogin;
   const cli = inspectCliAvailability(
     defaultCliLinkPath(),
@@ -1147,6 +1203,7 @@ async function desktopSettingsState() {
     cliActionLabel: cli.actionLabel,
     cliActionDisabled: cli.actionDisabled,
     cliCommands: cli.commands.map(displayHomePath),
+    ...cloud,
     ...desktopUpdateSettingsState(),
   };
   if (serverOperation === "starting") {

@@ -34,6 +34,15 @@ private struct SettingsState: Codable, Equatable {
     var updateDetail: String
     var updateActionLabel: String
     var updateActionDisabled: Bool
+    var cloudStatus: String
+    var cloudTitle: String
+    var cloudDetail: String
+    var cloudCode: String?
+    var cloudAccount: String?
+    var cloudComputer: String?
+    var cloudMcpUrl: String?
+    var cloudActionLabel: String
+    var cloudActionDisabled: Bool
 
     static let loading = SettingsState(
         status: .starting,
@@ -60,7 +69,16 @@ private struct SettingsState: Codable, Equatable {
         updateProgress: nil,
         updateDetail: "Update checks are not ready yet.",
         updateActionLabel: "Check for Updates",
-        updateActionDisabled: true
+        updateActionDisabled: true,
+        cloudStatus: "notConnected",
+        cloudTitle: "Checking…",
+        cloudDetail: "",
+        cloudCode: nil,
+        cloudAccount: nil,
+        cloudComputer: nil,
+        cloudMcpUrl: nil,
+        cloudActionLabel: "Connect",
+        cloudActionDisabled: true
     )
 }
 
@@ -192,6 +210,12 @@ private final class SettingsModel: ObservableObject {
         guard !state.cliActionDisabled, !actionInFlight else { return }
         actionInFlight = true
         HostConnection.shared.send(HelperCommand(type: "toggleCliLink"))
+    }
+
+    func toggleCloud() {
+        guard !state.cloudActionDisabled, !actionInFlight else { return }
+        actionInFlight = true
+        HostConnection.shared.send(HelperCommand(type: "toggleCloud"))
     }
 
     func performUpdateAction() {
@@ -514,6 +538,79 @@ private struct GeneralSettingsView: View {
     }
 }
 
+private struct CloudSettingsView: View {
+    @ObservedObject var model: SettingsModel
+
+    private var dotColor: Color {
+        switch model.state.cloudStatus {
+        case "connected": .green
+        case "connecting", "reconnecting": .orange
+        case "disconnected", "serverStopped": .red
+        default: .secondary
+        }
+    }
+
+    var body: some View {
+        Form {
+            Section("AgentUse Cloud") {
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(dotColor)
+                        .frame(width: 8, height: 8)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.state.cloudTitle)
+                        Text(model.state.cloudDetail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 16)
+                    Button(model.state.cloudActionLabel) {
+                        model.toggleCloud()
+                    }
+                    .disabled(model.state.cloudActionDisabled || model.actionInFlight)
+                }
+
+                if let code = model.state.cloudCode {
+                    LabeledContent("Code") {
+                        Text(code)
+                            .font(.system(.title3, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                }
+                if let account = model.state.cloudAccount {
+                    LabeledContent("Account", value: account)
+                }
+                if let computer = model.state.cloudComputer {
+                    LabeledContent("This Mac", value: computer)
+                }
+            }
+
+            if let mcpUrl = model.state.cloudMcpUrl {
+                Section("Use from any MCP app") {
+                    HStack {
+                        Text(mcpUrl)
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 12)
+                        Button("Copy") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(mcpUrl, forType: .string)
+                        }
+                    }
+                    Text("Add this address in Claude, ChatGPT, Cursor, or any app that supports MCP.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
 private struct LogsSettingsView: View {
     @ObservedObject var model: SettingsModel
 
@@ -729,6 +826,9 @@ private struct SettingsView: View {
         TabView {
             GeneralSettingsView(model: model)
                 .tabItem { Label("General", systemImage: "gearshape") }
+
+            CloudSettingsView(model: model)
+                .tabItem { Label("AgentUse Cloud", systemImage: "cloud") }
 
             LogsSettingsView(model: model)
                 .tabItem { Label("Logs", systemImage: "doc.text") }
