@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "agentuse": {
+      "type": "http",
+      "url": "__AGENTUSE_MCP_URL__"
+    }
+  }
+}

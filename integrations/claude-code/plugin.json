@@ -1,11 +1,11 @@
 {
   "name": "agentuse",
   "version": "__AGENTUSE_VERSION__",
-  "description": "Turn completed Claude Code work into a tested, reusable AgentUse agent.",
+  "description": "AgentUse on your own computer, through AgentUse Cloud: /automate turns this work into an agent that runs on its own, /triage fixes agents that fail.",
   "author": {
     "name": "AgentUse"
   },
-  "homepage": "https://docs.agentuse.io/",
+  "homepage": "https://docs.agentuse.io/guides/agentuse-cloud",
   "license": "Apache-2.0",
-  "keywords": ["agentuse", "automation", "agents", "scheduling"]
+  "keywords": ["agentuse", "automation", "agents", "scheduling", "mcp"]
 }

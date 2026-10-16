@@ -1,20 +1,22 @@
-# AgentUse for Codex
+# AgentUse for Codex and ChatGPT
 
-Turn a workflow from the current Codex conversation into a focused, validated
-AgentUse agent.
+Adds AgentUse Cloud as an MCP server, so Codex can reach AgentUse on your own
+computer. Ask it to automate the work in this conversation, or to find and fix
+agents that fail. Drafts and fixes open on a review page, where you turn them
+on.
 
-## Install
+## Before you start
 
-For normal use, install the repository skill with the cross-host Agent Skills
-installer:
+Connect your computer to AgentUse Cloud once, in the AgentUse app
+(**Settings → AgentUse Cloud → Connect**) or in a terminal:
 
 ```sh
-npx skills add agentuse/agentuse
+agentuse connect
 ```
 
-Start a new Codex task, then ask Codex to use AgentUse to make the workflow
-repeatable. See the [installation guide](https://docs.agentuse.io/guides/coding-agent-integrations)
-for the complete authoring and validation flow.
+The first time Codex uses the plugin, it opens AgentUse Cloud to sign you in
+and asks you to allow it. See the
+[AgentUse Cloud guide](https://docs.agentuse.io/guides/agentuse-cloud).
 
 ## Local development
 

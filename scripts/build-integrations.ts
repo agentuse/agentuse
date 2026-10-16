@@ -1,33 +1,25 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import {
-  cpSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { tmpdir } from 'node:os';
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
+
+/**
+ * Builds the AgentUse plugins for Claude Code and Codex. Each plugin is only
+ * an MCP server entry for AgentUse Cloud: the /automate and /triage workflows
+ * are served by the AgentUse MCP server itself, so no plugin carries a copy.
+ */
 
 const repoRoot = resolve(import.meta.dir, '..');
 const defaultOutputRoot = resolve(repoRoot, 'dist/integrations');
-const skills = ['automate', 'core', 'creator', 'tester'] as const;
-type SkillName = (typeof skills)[number];
+export const AGENTUSE_MCP_URL = 'https://cloud.agentuse.io/mcp';
 
 export interface IntegrationArtifacts {
   outputRoot: string;
   codexMarketplace: string;
   claudeMarketplace: string;
-  piPackage: string;
-  portableSkill: string;
   archives: {
     codex: string;
     claude: string;
-    pi: string;
-    skill: string;
   };
 }
 
@@ -54,42 +46,6 @@ function renderTemplate(relativePath: string, replacements: Record<string, strin
   return content;
 }
 
-function skillContents(): Record<SkillName, string> {
-  return Object.fromEntries(skills.map((name) => [
-    name,
-    readText(resolve(repoRoot, 'skill-data', name, 'SKILL.md')),
-  ])) as Record<SkillName, string>;
-}
-
-function buildFreshnessAdapter(automate: string): string {
-  const frontmatter = automate.match(/^---\n[\s\S]*?\n---\n/)?.[0];
-  if (!frontmatter) throw new Error('automate skill is missing YAML frontmatter');
-  return `${frontmatter}\n${readText(resolve(repoRoot, 'integrations/shared/automate-adapter.md'))}`;
-}
-
-function bundleFiles(contents: Record<SkillName, string>, sourceVersion: string): Record<string, string> {
-  const manifest = {
-    generatedBy: 'bun scripts/build-integrations.ts',
-    sourcePackage: 'agentuse',
-    sourceVersion,
-    skills: Object.fromEntries(skills.map((name) => [name, { sha256: sha256(contents[name]) }])),
-  };
-  return {
-    'SKILL.md': buildFreshnessAdapter(contents.automate),
-    'references/automate.md': contents.automate,
-    'references/core.md': contents.core,
-    'references/creator.md': contents.creator,
-    'references/tester.md': contents.tester,
-    'bundle.json': `${JSON.stringify(manifest, null, 2)}\n`,
-  };
-}
-
-function writeBundle(destination: string, files: Record<string, string>): void {
-  for (const [relativePath, content] of Object.entries(files)) {
-    writeText(resolve(destination, relativePath), content);
-  }
-}
-
 function zipDirectory(cwd: string, entry: string | string[], destination: string): void {
   mkdirSync(dirname(destination), { recursive: true });
   const result = spawnSync('zip', ['-X', '-q', '-r', destination, ...[entry].flat()], {
@@ -101,36 +57,12 @@ function zipDirectory(cwd: string, entry: string | string[], destination: string
   }
 }
 
-function packPi(piRoot: string, artifactRoot: string): string {
-  const npmCache = mkdtempSync(resolve(tmpdir(), 'agentuse-integration-npm-cache-'));
-  try {
-    const result = spawnSync('npm', ['pack', '--json', '--pack-destination', artifactRoot], {
-      cwd: piRoot,
-      encoding: 'utf8',
-      env: { ...process.env, npm_config_cache: npmCache },
-    });
-    if (result.status !== 0) {
-      throw new Error(`npm pack failed: ${(result.stderr || result.stdout || 'unknown error').trim()}`);
-    }
-    const output = JSON.parse(result.stdout) as Array<{ filename?: string }>;
-    const filename = output[0]?.filename;
-    if (!filename) throw new Error('npm pack did not return an artifact filename');
-    const packed = resolve(artifactRoot, filename);
-    const stable = resolve(artifactRoot, 'agentuse-pi-package.tgz');
-    renameSync(packed, stable);
-    return stable;
-  } finally {
-    rmSync(npmCache, { recursive: true, force: true });
-  }
-}
-
 export function buildIntegrationArtifacts(outputRoot = defaultOutputRoot): IntegrationArtifacts {
   const output = resolve(outputRoot);
   const packageJson = JSON.parse(readText(resolve(repoRoot, 'package.json'))) as { version: string };
   const sourceVersion = packageJson.version;
-  const contents = skillContents();
-  const files = bundleFiles(contents, sourceVersion);
-  const contentId = sha256(Object.values(files).join('\0')).slice(0, 12);
+  const mcpConfig = renderTemplate('shared/mcp.json', { '__AGENTUSE_MCP_URL__': AGENTUSE_MCP_URL });
+  const contentId = sha256(mcpConfig).slice(0, 12);
   const replacements = {
     '__AGENTUSE_VERSION__': sourceVersion,
     '__CODEX_VERSION__': `${sourceVersion}+codex.${contentId}`,
@@ -142,40 +74,27 @@ export function buildIntegrationArtifacts(outputRoot = defaultOutputRoot): Integ
   rmSync(output, { recursive: true, force: true });
   mkdirSync(output, { recursive: true });
 
-  const portableSkill = resolve(output, 'skill/automate');
-  writeBundle(portableSkill, files);
-  writeText(resolve(portableSkill, 'VERSION'), sourceVersion);
-
   const codexMarketplace = resolve(output, 'codex-marketplace');
   const codexPlugin = resolve(codexMarketplace, 'plugins/agentuse');
   writeText(resolve(codexMarketplace, '.agents/plugins/marketplace.json'), renderTemplate('codex/marketplace.json', replacements));
   writeText(resolve(codexPlugin, '.codex-plugin/plugin.json'), renderTemplate('codex/plugin.json', replacements));
+  writeText(resolve(codexPlugin, '.mcp.json'), mcpConfig);
   writeText(resolve(codexPlugin, 'README.md'), renderTemplate('codex/README.md', replacements));
   cpSync(resolve(repoRoot, 'LICENSE'), resolve(codexPlugin, 'LICENSE'));
-  writeBundle(resolve(codexPlugin, 'skills/automate'), files);
 
   const claudeMarketplace = resolve(output, 'claude-marketplace');
   const claudePlugin = resolve(claudeMarketplace, 'plugins/agentuse');
   writeText(resolve(claudeMarketplace, '.claude-plugin/marketplace.json'), renderTemplate('claude-code/marketplace.json', replacements));
   writeText(resolve(claudePlugin, '.claude-plugin/plugin.json'), renderTemplate('claude-code/plugin.json', replacements));
+  writeText(resolve(claudePlugin, '.mcp.json'), mcpConfig);
   writeText(resolve(claudePlugin, 'README.md'), renderTemplate('claude-code/README.md', replacements));
   cpSync(resolve(repoRoot, 'LICENSE'), resolve(claudePlugin, 'LICENSE'));
-  writeBundle(resolve(claudePlugin, 'skills/automate'), files);
-
-  const piPackage = resolve(output, 'pi');
-  writeText(resolve(piPackage, 'package.json'), renderTemplate('pi/package.json', replacements));
-  writeText(resolve(piPackage, 'README.md'), renderTemplate('pi/README.md', replacements));
-  writeText(resolve(piPackage, 'prompts/automate.md'), renderTemplate('pi/prompts/automate.md', replacements));
-  cpSync(resolve(repoRoot, 'LICENSE'), resolve(piPackage, 'LICENSE'));
-  writeBundle(resolve(piPackage, 'skills/automate'), files);
 
   const artifactRoot = resolve(output, 'artifacts');
   mkdirSync(artifactRoot, { recursive: true });
   const archives = {
     codex: resolve(artifactRoot, 'agentuse-codex-plugin.zip'),
     claude: resolve(artifactRoot, 'agentuse-claude-plugin.zip'),
-    pi: '',
-    skill: resolve(artifactRoot, 'agentuse-skill.zip'),
   };
   // Keep the existing agentuse/ plugin entry while making each release ZIP
   // directly installable as a local marketplace after extraction.
@@ -194,17 +113,8 @@ export function buildIntegrationArtifacts(outputRoot = defaultOutputRoot): Integ
     writeText(resolve(releaseRoot, metadata), renderTemplate(`${host}/marketplace.json`, releaseReplacements));
     zipDirectory(releaseRoot, ['agentuse', metadata.split('/')[0]!], archive);
   }
-  zipDirectory(dirname(portableSkill), basename(portableSkill), archives.skill);
-  archives.pi = packPi(piPackage, artifactRoot);
 
-  return {
-    outputRoot: output,
-    codexMarketplace,
-    claudeMarketplace,
-    piPackage,
-    portableSkill,
-    archives,
-  };
+  return { outputRoot: output, codexMarketplace, claudeMarketplace, archives };
 }
 
 function main(): void {

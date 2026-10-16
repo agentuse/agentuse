@@ -1,57 +1,62 @@
 # Coding-agent integrations
 
-Use AgentUse from Codex, Claude Code, or Pi to turn a workflow in your current
-conversation into a reusable `.agentuse` file. The integration helps define the
-agent, prepare its runtime, and validate it before its first real run.
+Use AgentUse from Claude Code, Codex, Cursor, or any coding agent that supports
+MCP. Type `/automate` to turn the workflow in your conversation into an agent
+that runs on its own, or `/triage` to find and fix agents that fail. Both come
+from the AgentUse MCP server, so every app gets the same version-matched
+workflow.
 
-## Install
+## Connect your computer
 
-Install the repository skill with the cross-host Agent Skills installer:
+The coding agent reaches AgentUse on your computer through
+[AgentUse Cloud](/guides/agentuse-cloud). Connect the computer once, in the
+AgentUse app (**Settings → AgentUse Cloud → Connect**) or in a terminal:
+
+```bash
+agentuse connect
+```
+
+## Add AgentUse to your coding agent
+
+- **Claude Code and Codex:** install the AgentUse plugin. It adds the AgentUse
+  Cloud MCP server, and nothing else.
+- **Any other MCP app:** add `https://cloud.agentuse.io/mcp` as a remote (HTTP)
+  MCP server. For Claude Code without the plugin:
+
+  ```bash
+  claude mcp add --transport http agentuse https://cloud.agentuse.io/mcp
+  ```
+
+The first time the app uses AgentUse, it opens AgentUse Cloud to sign you in
+and asks you to allow it.
+
+To use AgentUse on the same computer without the cloud, point the app at your
+local server instead: `http://127.0.0.1:12233/mcp`.
+
+## Use it
+
+```text
+/automate turn the workflow we just completed into a reusable agent
+```
+
+The app checks what your project already has, writes the agent, saves it as a
+draft, and practice-runs it with every tool faked. It gives you a review link.
+Open it and select **Apply** to turn the agent on, with its schedule if it has
+one. A chat can never turn an agent on by itself.
+
+## CLI guide for coding agents
+
+The `agentuse` discovery skill teaches a coding agent the AgentUse CLI
+(running, listing, and inspecting agents):
 
 ```bash
 npx skills add agentuse/agentuse
 ```
 
-This is the supported installation path for Codex, Claude Code, Cursor, Gemini
-CLI, GitHub Copilot, Goose, OpenCode, Windsurf, and other compatible hosts.
-New GitHub Releases do not contain separate coding-assistant packages.
+It loads the `core`, `creator`, and `tester` guidance from the installed
+AgentUse CLI, so it matches the version that runs your agents.
 
-Start a new conversation after installation, then ask your assistant:
-
-```text
-Use AgentUse to turn the workflow we just completed into a reusable agent.
-```
-
-The installed discovery skill loads the `automate`, `core`, `creator`, and
-`tester` guidance from the installed AgentUse CLI. This keeps the authoring
-workflow aligned with the CLI version that will validate and run the resulting
-agent.
-
-The Pi-specific adapter is currently available to contributors from a source
-checkout. Run `bun run integrations:build`, install
-`./dist/integrations/pi` with Pi, and start a new session before using
-`/automate`.
-
-## Validate and run the resulting agent
-
-The assistant loads current AgentUse guidance from the installed `agentuse`
-command. Running and validating the file requires the
-[AgentUse CLI](/installation) and a configured model provider.
-
-Review the generated source and setup requirements, then validate and test it:
-
-```bash
-agentuse doctor my-agent.agentuse
-agentuse test workflow my-agent.agentuse
-```
-
-See [testing agents](/guides/testing-agents) for test scope and limitations.
-Review the test output before a real run or enabling a schedule.
-
-## Updates and local development
-
-Run `npx skills add agentuse/agentuse` again when you want the latest discovery
-skill. Its workflow guidance is version-matched at runtime by the AgentUse CLI.
+## Local development
 
 Contributors can run `bun run integrations:build` in the AgentUse repository.
 The generated local-development marketplaces use `agentuse-development`; their

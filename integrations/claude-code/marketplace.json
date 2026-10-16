@@ -8,10 +8,16 @@
     {
       "name": "agentuse",
       "source": "__PLUGIN_PATH__",
-      "description": "Turn completed Claude Code work into a tested, reusable AgentUse agent.",
+      "description": "AgentUse on your own computer, through AgentUse Cloud: /automate turns this work into an agent that runs on its own, /triage fixes agents that fail.",
       "version": "__AGENTUSE_VERSION__",
       "category": "productivity",
-      "tags": ["agentuse", "automation", "agents", "scheduling"]
+      "tags": [
+        "agentuse",
+        "automation",
+        "agents",
+        "scheduling",
+        "mcp"
+      ]
     }
   ]
 }

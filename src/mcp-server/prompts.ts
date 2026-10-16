@@ -3,14 +3,33 @@ import { z } from 'zod';
 import { loadBuiltinSkillSource } from '../skill/builtin.js';
 
 /**
- * `/automate` and `/triage`: the slash commands Claude and ChatGPT show once
- * AgentUse is connected. `/automate` is the built-in automate skill in its
- * chat mode, the same text a coding agent gets from `agentuse skills get
- * automate`, so there is one source for both. Each prompt also carries the
- * core and creator guidance shipped with this exact AgentUse build.
+ * `/automate` and `/triage`: the slash commands an MCP app (Claude, ChatGPT,
+ * Codex, Cursor) shows once AgentUse is connected. These texts are the only
+ * source of both workflows. Each prompt also carries the core and creator
+ * guidance shipped with this exact AgentUse build, so a chat writes agents by
+ * the same rules as the dashboard's own creator.
  */
 
-const TRIAGE_STEPS = `You are fixing AgentUse agents that fail on the user's own computer.
+const AUTOMATE = `You are turning work from this conversation into an AgentUse agent that runs on the user's own computer. Treat the conversation as the source: do not make the user restate a workflow that is already clear.
+
+Define the job:
+- Work out the narrowest repeatable job: where its input comes from, what done looks like, when it runs (manual, a schedule, or HTTP), where the result goes, and which actions need a person to approve them.
+- Ask one short question only when a missing answer changes the agent or what it may do. Do not grow a focused workflow into a general automation system.
+- Default to an agent that runs without input each time: it finds its own work from a configured source. A manual trigger means the user starts it, not that they supply files or a prompt every run. Ask once for a missing source rather than designing a recurring request for work.
+- Record progress so repeated runs do not redo or duplicate items, and define a successful "nothing to do" outcome. A failure to look for work is blocked work, not an empty result.
+- Reuse the skills, files, and scripts the manual workflow used, following the creator guidance's "Reuse Existing Workflow Dependencies".
+
+Steps:
+1. Call list_projects. With one project, use it; with several, pick from the conversation or ask which.
+2. Call get_project for it. Use only models in models.available, and only MCP servers and skills it lists. A server nobody has added yet may still go in the agent: say so, and the review flags its missing login. If no model is available, tell the user to run \`agentuse provider login\` on their computer, and stop until they have.
+3. If the agent must match an existing template, data header, or script, call read_project_file for just those files.
+4. Write one focused .agentuse file under agents/, plus helper files only when the guidance below says they are worth it. Put any command with side effects under tools.bash.gated so it waits for approval; wording in the prompt is not a safety boundary.
+5. Do not put a schedule in the file: a new agent may not carry one before review. Pass it to draft_agent as \`schedule\` instead (cron such as "0 8 * * 1-5", or an interval such as "2h"). The review page shows it, and Apply turns it on.
+6. Call draft_agent with the files, the user's goal, a one-sentence summary, and the entry file. If it rejects the files, fix them and call it again with the same draft_id.
+7. Call test_draft for a practice run, then get_session until it ends. Every tool is faked there, so judge whether the steps and approvals make sense, not the made-up data. Fix and test again, at most three rounds. If test_draft refuses the draft, say why and leave the test to the user.
+8. Give the user the review_url and a short summary: what the agent does, when it runs, what it will ask approval for, and what the practice run showed. Tell them to open the link and press Apply, which also turns on the schedule shown there. You cannot turn the agent on, and must not say you did. Never write the agent file anywhere yourself.`;
+
+const TRIAGE = `You are fixing AgentUse agents that fail on the user's own computer.
 
 Steps:
 1. Call list_problems (for one agent if the user named one). No problems: say so and stop.
@@ -21,13 +40,13 @@ Steps:
 6. Give the user the review_url when there is one, and tell them to press Apply on that page. You cannot apply fixes, approve steps or dismiss runs, and must not claim you did.
 7. Move to the next problem only if the user asks.`;
 
-const AUDIT_STEPS = `Audit only: report the problems, their causes and the fix you would propose. Do not call propose_fix.`;
+const AUDIT = `Audit only: report the problems, their causes and the fix you would propose. Do not call propose_fix.`;
 
 async function guide(): Promise<string> {
   const [core, creator] = await Promise.all([loadBuiltinSkillSource('core'), loadBuiltinSkillSource('creator')]);
   return [
     '---',
-    'AgentUse guide, from the version installed on the user\'s computer. Where it mentions CLI commands, use the tools above instead.',
+    'AgentUse guide, from the version installed on the user\'s computer. Where it mentions CLI commands, use the AgentUse tools instead.',
     '',
     core.trim(),
     '',
@@ -45,14 +64,7 @@ export function registerAgentUsePrompts(server: McpServer): void {
       role: 'user',
       content: {
         type: 'text',
-        text: [
-          'Use chat mode of the skill below: the AgentUse tools are connected and you cannot run commands on the user\'s computer.',
-          goal ? `The user's goal: ${goal}` : '',
-          '',
-          (await loadBuiltinSkillSource('automate')).trim(),
-          '',
-          await guide(),
-        ].join('\n'),
+        text: [AUTOMATE, goal ? `\nThe user's goal: ${goal}` : '', '', await guide()].join('\n'),
       },
     }],
   }));
@@ -70,9 +82,9 @@ export function registerAgentUsePrompts(server: McpServer): void {
       content: {
         type: 'text',
         text: [
-          TRIAGE_STEPS,
+          TRIAGE,
           agent ? `\nLook only at this agent: ${agent}` : '',
-          audit_only && /^(yes|true|1)$/iu.test(audit_only) ? `\n${AUDIT_STEPS}` : '',
+          audit_only && /^(yes|true|1)$/iu.test(audit_only) ? `\n${AUDIT}` : '',
           '',
           await guide(),
         ].join('\n'),

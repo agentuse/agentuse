@@ -1,34 +1,35 @@
 {
   "name": "agentuse",
   "version": "__CODEX_VERSION__",
-  "description": "Turn completed Codex work into a tested, reusable AgentUse agent.",
+  "description": "AgentUse on your own computer, through AgentUse Cloud: automate turns this work into an agent that runs on its own, triage fixes agents that fail.",
   "author": {
     "name": "AgentUse"
   },
-  "homepage": "https://docs.agentuse.io/",
+  "homepage": "https://docs.agentuse.io/guides/agentuse-cloud",
   "license": "Apache-2.0",
   "keywords": [
     "agentuse",
     "automation",
     "agents",
-    "scheduling"
+    "scheduling",
+    "mcp"
   ],
-  "skills": "./skills/",
   "interface": {
     "displayName": "AgentUse",
-    "shortDescription": "Turn completed work into a reusable agent.",
-    "longDescription": "Use Automate to convert a workflow from the current Codex conversation into a focused AgentUse agent, prepare missing runtime setup, and validate the result before its first real run.",
+    "shortDescription": "Turn this work into an agent that runs on its own.",
+    "longDescription": "Connects to AgentUse Cloud, which reaches AgentUse on your own computer. Use automate to turn a workflow from this conversation into an agent you review and turn on with one click, and triage to find and fix agents that fail. Your agents run on your computer, with your keys. Connect the computer once with the AgentUse app or `agentuse connect`.",
     "developerName": "AgentUse",
     "category": "Productivity",
     "capabilities": [
       "Interactive",
       "Write"
     ],
-    "websiteURL": "https://docs.agentuse.io/",
+    "websiteURL": "https://docs.agentuse.io/guides/agentuse-cloud",
     "defaultPrompt": [
-      "Use $automate to make the workflow we just completed repeatable.",
-      "Use $automate to create a weekday automation for this task.",
-      "Use $automate to turn this process into a tested AgentUse agent."
+      "Use AgentUse to automate the workflow we just completed.",
+      "Use AgentUse to run this every weekday morning.",
+      "Use AgentUse to find and fix my failing agents."
     ]
-  }
+  },
+  "mcpServers": "./.mcp.json"
 }
