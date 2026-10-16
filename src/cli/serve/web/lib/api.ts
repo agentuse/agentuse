@@ -69,10 +69,9 @@ async function getJson<T>(
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined) url.searchParams.set(key, value);
   }
-  const response = await fetch(url, {
-    headers: { Accept: 'application/json' },
-    ...(options.signal && { signal: options.signal }),
-  });
+  // A daemon restart can briefly break a background refresh. Retry reads
+  // before surfacing a network error; writes must never be replayed here.
+  const response = await fetchRead(url, options.signal);
   const payload = await response.json().catch(() => null);
   if (!response.ok || payload?.success === false) {
     throw new ApiRequestError(
@@ -83,6 +82,37 @@ async function getJson<T>(
     );
   }
   return payload as T;
+}
+
+async function fetchRead(url: URL, signal?: AbortSignal): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    signal?.throwIfAborted();
+    try {
+      return await fetch(url, {
+        headers: { Accept: 'application/json' },
+        ...(signal && { signal }),
+      });
+    } catch (err) {
+      // Browser fetch rejects with TypeError on a network failure. HTTP
+      // responses and cancellation retain their normal error handling.
+      if (!(err instanceof TypeError) || signal?.aborted || attempt >= 2) throw err;
+      await waitForReadRetry(1_000 * (attempt + 1), signal);
+    }
+  }
+}
+
+function waitForReadRetry(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 async function postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
