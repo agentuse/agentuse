@@ -2,7 +2,7 @@
 
 Templates for the AgentUse plugins for Claude Code and Codex. Each plugin is
 only an MCP server entry pointing at AgentUse Cloud
-(`https://cloud.agentuse.io/mcp`). The `/automate` and `/triage` workflows come
+(`https://cloud.agentuse.io/mcp`). The `/agentuse`, `/automate` and `/triage` prompts come
 from the AgentUse MCP server itself (`src/mcp-server/prompts.ts`), so the
 plugins carry no copy of them.
 

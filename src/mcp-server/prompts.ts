@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { loadBuiltinSkillSource } from '../skill/builtin.js';
 
 /**
- * `/automate` and `/triage`: the slash commands an MCP app (Claude, ChatGPT,
+ * `/agentuse`, `/automate` and `/triage`: the slash commands an MCP app (Claude, ChatGPT,
  * Codex, Cursor) shows once AgentUse is connected. These texts are the only
  * source of both workflows. Each prompt also carries the core and creator
  * guidance shipped with this exact AgentUse build, so a chat writes agents by
@@ -41,6 +41,14 @@ Steps:
 6. Summarise the fix and ask whether to apply it, with the review_url for the full details. Only when the user's latest message says yes, call apply_draft with the fix_id; if it answers NEEDS_TAP, ask them to press Apply on the review page. You cannot approve steps or dismiss runs.
 7. Move to the next problem only if the user asks.`;
 
+const ASK = `Answer the user's request with the AgentUse tools, which reach AgentUse on the user's own computer. Use what the tools return, not memory or guesses.
+
+- If the request needs a project and none is clear, call list_projects first. With one project, use it; with several, pick from the conversation or ask which.
+- Look things up with get_project, list_agents, get_agent, list_sessions, get_session and list_problems. Keep answers short: names, states and times the user can act on.
+- Call run_agent only when the user asked for that run.
+- To build a new agent or fix a failing one, say that /automate or /triage does it, and use that workflow if the user agrees.
+- You cannot approve steps, dismiss runs or turn on drafts on your own; the user does that.`;
+
 const AUDIT = `Audit only: report the problems, their causes and the fix you would propose. Do not call propose_fix.`;
 
 async function guide(): Promise<string> {
@@ -56,6 +64,17 @@ async function guide(): Promise<string> {
 }
 
 export function registerAgentUsePrompts(server: McpServer): void {
+  server.registerPrompt('agentuse', {
+    title: 'Ask AgentUse',
+    description: 'Ask about or use AgentUse on your computer: projects, agents, runs, problems',
+    argsSchema: { request: z.string().optional().describe('What you want, e.g. "list my projects" or "run the digest agent"') },
+  }, ({ request }) => ({
+    messages: [{
+      role: 'user',
+      content: { type: 'text', text: [ASK, request ? `\nThe user's request: ${request}` : ''].join('\n') },
+    }],
+  }));
+
   server.registerPrompt('automate', {
     title: 'Automate this',
     description: 'Turn this chat into an agent that runs on its own',

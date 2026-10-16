@@ -272,10 +272,14 @@ describe('agentuse MCP server', () => {
     expect(result.structuredContent?.error.code).toBe('NOT_READABLE');
   });
 
-  it('offers /automate and /triage with the installed authoring guide', async () => {
+  it('offers /agentuse, /automate and /triage with the installed authoring guide', async () => {
     client = await connect(fakeDaemon({}).daemon);
     const { prompts } = await client.listPrompts();
-    expect(prompts.map((prompt) => prompt.name).sort()).toEqual(['automate', 'triage']);
+    expect(prompts.map((prompt) => prompt.name).sort()).toEqual(['agentuse', 'automate', 'triage']);
+    const ask = await client.getPrompt({ name: 'agentuse', arguments: { request: 'list my projects' } });
+    const askText = (ask.messages[0]!.content as { text: string }).text;
+    expect(askText).toContain('call list_projects first');
+    expect(askText).toContain("The user's request: list my projects");
     const automate = await client.getPrompt({ name: 'automate', arguments: { goal: 'Weekly digest' } });
     const automateText = (automate.messages[0]!.content as { text: string }).text;
     expect(automateText).toContain('Call draft_agent');
