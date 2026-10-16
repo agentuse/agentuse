@@ -1,6 +1,6 @@
 ---
 name: automate
-description: Turn a workflow described or just completed in a coding agent into one focused, validated AgentUse agent. Use for make-this-repeatable, scheduled-workflow, and first-automation handoffs from third-party coding agents.
+description: Turn a workflow described or just completed in a coding agent or chat into one focused, validated AgentUse agent. Use for make-this-repeatable, scheduled-workflow, and first-automation handoffs from coding agents, and from chat apps connected to AgentUse over MCP.
 ---
 
 # Automate with AgentUse
@@ -45,12 +45,25 @@ reconstructing the workflow from its outcome alone.
 
 ## Choose the execution mode
 
-Choose the freshest available AgentUse command prefix:
+Pick exactly one mode and follow only its steps below. Never mix them, for
+example by writing the agent file to disk and also saving a draft.
+
+- **CLI-backed mode:** you can run commands on the user's computer (a coding
+  agent with a terminal). The agent file lands in the repository, and the user
+  reviews it there.
+- **Chat mode:** you cannot run commands, but the AgentUse MCP tools are
+  available (`list_projects`, `get_project`, `draft_agent`, `test_draft`). The
+  agent is saved as a draft that the user reviews and applies on a page.
+- **Artifact-only mode:** neither. You write a portable file for later
+  validation.
+
+For CLI-backed mode, choose the freshest available AgentUse command prefix:
 
 - Prefer `npx -y agentuse@latest` when `npx` is available and the package can
   execute under the host's network and sandbox policy.
 - Otherwise use `agentuse` when that command is installed.
-- When neither command can execute, use the host bundle's
+- When neither command can execute and the AgentUse MCP tools are not
+  available either, use artifact-only mode: the host bundle's
   `references/core.md` for general CLI and project semantics, then
   `references/creator.md` to author one portable `.agentuse` file. Do not try
   to install AgentUse silently. Skip provider discovery, model-catalog
@@ -83,6 +96,13 @@ In CLI-backed mode, before writing an agent, run using the selected prefix:
 agentuse provider list --json
 ```
 
+In chat mode, call `list_projects`. With one project, use it; with several,
+pick from the conversation or ask which. Then call `get_project` for it. Use
+only models in `models.available`, and only MCP servers and skills it lists. A
+server nobody has added yet may still go in the agent: say so, and the review
+flags its missing login. If no model is available, tell the user to run
+`agentuse provider login` on their computer, and stop until they have.
+
 A coding-agent login is not an AgentUse runtime credential.
 
 - Continue only with a provider whose entry has `configured: true`.
@@ -103,6 +123,11 @@ agentuse skills get core --full
 agentuse skills get creator --full
 agentuse skills get tester --full
 ```
+
+In chat mode, the core and creator guidance is attached below these
+instructions. Where it mentions CLI commands, use the AgentUse tools instead.
+Read a project file with `read_project_file` only when the agent must match it
+(a template, a data header, a script's options).
 
 In artifact-only mode, read the bundled `references/core.md` and
 `references/creator.md` instead. Use a model family or role alias supported by
@@ -135,6 +160,20 @@ tester skill:
 4. Correct failures and repeat until the agent validates or a real blocker is
    identified.
 
+In chat mode, save and check the agent with the tools instead:
+
+1. Call `draft_agent` with the files, the user's goal, a one-sentence summary,
+   and the entry file. Do not put `schedule:` in the file: a new agent may not
+   carry one before review. Pass the schedule as `schedule` instead (cron such
+   as `0 8 * * 1-5`, or an interval such as `2h`). The review page shows it,
+   and Apply turns it on.
+2. If `draft_agent` rejects the files, fix them and call it again with the
+   same `draft_id`.
+3. Call `test_draft` for a practice run, then `get_session` until it ends.
+   Every tool is faked there, so judge whether the steps and approvals make
+   sense, not the made-up data. Fix and test again, at most three rounds. If
+   `test_draft` refuses the draft, say why and leave the test to the user.
+
 Do not perform the first real run, publish output, start a persistent daemon,
 or configure an external integration unless the user explicitly asks for that
 additional action.
@@ -152,6 +191,12 @@ Return a compact activation summary containing:
 
 Distinguish clearly between what was completed and what still requires the
 user.
+
+In chat mode, the summary carries the `review_url` in place of a file path and
+commands. Give what the agent does, when it runs, what it will ask approval
+for, and what the practice run showed. Tell the user to open the link and press
+Apply, which also turns on the schedule shown there. You cannot turn the agent
+on, and must not say you did.
 
 For artifact-only mode, explicitly say `Not runtime validated`, identify the
 missing AgentUse CLI as the reason, and provide these activation steps:

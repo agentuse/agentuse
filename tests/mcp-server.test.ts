@@ -273,7 +273,10 @@ describe('agentuse MCP server', () => {
     expect(prompts.map((prompt) => prompt.name).sort()).toEqual(['automate', 'triage']);
     const automate = await client.getPrompt({ name: 'automate', arguments: { goal: 'Weekly digest' } });
     const automateText = (automate.messages[0]!.content as { text: string }).text;
-    expect(automateText).toContain('Call draft_agent');
+    // One source: the prompt is the built-in automate skill, run in chat mode.
+    expect(automateText).toContain('Use chat mode of the skill below');
+    expect(automateText).toContain('# Automate with AgentUse');
+    expect(automateText).toContain('`draft_agent`');
     expect(automateText).toContain("The user's goal: Weekly digest");
     expect(automateText).toContain('# AgentUse Creator');
     const audit = await client.getPrompt({ name: 'triage', arguments: { audit_only: 'yes' } });

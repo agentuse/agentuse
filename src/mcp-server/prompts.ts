@@ -4,22 +4,11 @@ import { loadBuiltinSkillSource } from '../skill/builtin.js';
 
 /**
  * `/automate` and `/triage`: the slash commands Claude and ChatGPT show once
- * AgentUse is connected. Each carries the chat-side steps plus the authoring
- * guidance shipped with this exact AgentUse build, so a chat writes agents by
- * the same rules as the dashboard's own creator.
+ * AgentUse is connected. `/automate` is the built-in automate skill in its
+ * chat mode, the same text a coding agent gets from `agentuse skills get
+ * automate`, so there is one source for both. Each prompt also carries the
+ * core and creator guidance shipped with this exact AgentUse build.
  */
-
-const AUTOMATE_STEPS = `You are turning work from this conversation into an AgentUse agent that runs on the user's own computer.
-
-Steps:
-1. Work out the narrowest repeatable job from this conversation: where its input comes from, what done looks like, when it runs (manual, a schedule, or HTTP), where the result goes, and which actions need a person to approve them. Ask one short question only when a missing answer changes the agent or what it may do.
-2. Call list_projects. One project: use it. Several: pick from the conversation or ask which one.
-3. Call get_project for that project. Use only models in models.available, and only MCP servers and skills listed there. If the job needs an MCP server nobody has added, say so and put it in the agent anyway: the review will flag the missing login.
-4. If the agent must match an existing template, data header or script, call read_project_file for just those files.
-5. Write one focused .agentuse file under agents/, plus helper files only when the guide below says they are worth it. Put any command with side effects under tools.bash.gated so it waits for approval; wording in the prompt is not a safety boundary. Do not put a schedule in the file. If it should run on its own, pass the schedule to draft_agent as \`schedule\` (cron like "0 8 * * 1-5", or an interval like "2h"): the review page shows it, and Apply turns it on.
-6. Call draft_agent. If it is rejected, fix the files and call it again with the same draft. Repeat until it is saved.
-7. Call test_draft for a practice run, then get_session until it ends. Every tool is faked there, so judge whether the steps and approvals make sense, not the made-up data. Fix what went wrong with draft_agent (same draft_id) and test again, at most three rounds. If test_draft refuses the draft, say why and leave the test to the user.
-8. Give the user the review_url and a three-line summary: what the agent does, when it should run, and what it will ask approval for, plus what the practice run showed. Tell them to open the link and press Apply, which also turns on the schedule shown there. You cannot turn it on, and must not claim you did.`;
 
 const TRIAGE_STEPS = `You are fixing AgentUse agents that fail on the user's own computer.
 
@@ -56,7 +45,14 @@ export function registerAgentUsePrompts(server: McpServer): void {
       role: 'user',
       content: {
         type: 'text',
-        text: [AUTOMATE_STEPS, goal ? `\nThe user's goal: ${goal}` : '', '', await guide()].join('\n'),
+        text: [
+          'Use chat mode of the skill below: the AgentUse tools are connected and you cannot run commands on the user\'s computer.',
+          goal ? `The user's goal: ${goal}` : '',
+          '',
+          (await loadBuiltinSkillSource('automate')).trim(),
+          '',
+          await guide(),
+        ].join('\n'),
       },
     }],
   }));
