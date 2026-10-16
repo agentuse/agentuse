@@ -232,9 +232,12 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
         });
         wakeListHubs();
         const token = sessionViewToken(record.sessionId, apiKey);
+        const latest = latestChangesetProposal(record);
         sendJSON(res, existingId ? 200 : 201, {
           success: true,
           changeset: changesetListSummary(record),
+          // Whether a typed yes (or the chat card's Turn on) may apply it.
+          applyBlockers: latest ? chatApplyBlockers(latest) : [],
           reviewHref: `${changesetReviewHref(project.id, record.sessionId)}${token ? `?token=${encodeURIComponent(token)}` : ''}`,
         });
       } catch (error) {

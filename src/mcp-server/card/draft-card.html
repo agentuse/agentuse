@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AgentUse draft</title>
+<style>
+:root{--ink:#0f172a;--muted:#475569;--line:#e5e7eb;--card:#ffffff;--soft:#f8fafc;--signal:#00dc82;--signal-ink:#0f172a}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--ink:#f8fafc;--muted:#94a3b8;--line:#1e293b;--card:#0b1220;--soft:#111827}}
+:root[data-theme="dark"]{--ink:#f8fafc;--muted:#94a3b8;--line:#1e293b;--card:#0b1220;--soft:#111827}
+*{box-sizing:border-box}
+body{margin:0;background:transparent;color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+#card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.title{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.kind{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.name{font-weight:700;font-size:16px}
+.summary{margin:0;color:var(--muted)}
+.facts{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;background:var(--soft);border-radius:8px;padding:10px 12px}
+.facts dt{color:var(--muted)}
+.facts dd{margin:0;overflow-wrap:anywhere}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+button{font:inherit;min-height:36px;padding:0 14px;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--ink);cursor:pointer}
+button.primary{background:var(--signal);border-color:var(--signal);color:var(--signal-ink);font-weight:700}
+button:disabled{opacity:.6;cursor:default}
+.status{margin:0;color:var(--muted);min-height:1.2em}
+</style>
+</head>
+<body>
+<div id="card"><p class="status">Loading…</p></div>
+<script>/*__CARD_SCRIPT__*/</script>
+</body>
+</html>

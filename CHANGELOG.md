@@ -4,6 +4,7 @@
 
 ### Added
 
+- **A Turn on card in Claude, ChatGPT, and VS Code.** In apps that show MCP cards, a new draft or fix appears as a card with what it does, when it runs, and what it can touch. Tap **Turn on** for a low-risk one; a risky one says why and links to the review page.
 - **Say yes in the chat to turn on a simple agent.** After `/automate` or `/triage`, saying yes turns on a low-risk draft or fix, schedule included, and you get a notification with a link to undo it. Agents that run commands without asking, reach files outside the project, or use MCP services or channels still need a tap on the review page.
 - **`/automate` and `/triage` come from AgentUse itself, over MCP.** The AgentUse plugins for Claude Code and Codex now only add the AgentUse Cloud MCP server, so every app gets the workflow that matches the AgentUse on your computer. The separate `automate` skill and the Pi package are gone; `agentuse skills get automate` no longer exists.
 - **AgentUse Cloud: use AgentUse from anywhere.** `agentuse connect` links this computer to your AgentUse Cloud account: it opens a browser page where you sign in (the first time creates the account) and press Connect. `agentuse serve` then keeps a line open to the cloud, so Claude, ChatGPT, Cursor, or any app that supports MCP can reach AgentUse here through one address, without opening a port. Your agents still run on this computer. `agentuse status` shows the connection and `agentuse disconnect` removes it; disconnecting from the account page cuts it off at once.

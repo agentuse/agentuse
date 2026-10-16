@@ -179,6 +179,7 @@ describe('agentuse MCP server', () => {
         changeset: {
           sessionId: 'CS1',
           status: 'proposed',
+          mode: 'create',
           projectRoot: '/work/eng',
           proposals: [{ index: 1, entry: 'agents/note.agentuse', files: [{ path: 'agents/note.agentuse', op: 'add', kind: 'agent', baseHash: null, hash: 'h', capabilityChanges: ['Runtime model added: x'] }] }],
         },
@@ -193,6 +194,10 @@ describe('agentuse MCP server', () => {
     });
     expect(result.structuredContent).toEqual({
       draft_id: 'CS1',
+      project: 'eng',
+      kind: 'draft',
+      name: 'note',
+      can_turn_on_by_yes: true,
       status: 'proposed',
       review_url: 'http://agentuse.test/projects/eng/changesets/CS1?token=t',
       files: [{ path: 'agents/note.agentuse', op: 'add', capability_changes: ['Runtime model added: x'] }],
@@ -310,6 +315,20 @@ describe('agentuse MCP server', () => {
     const refused = await call('apply_draft', { project: 'eng', id: 'CS1' });
     expect(refused.isError).toBe(true);
     expect(refused.structuredContent?.error.code).toBe('NEEDS_TAP');
+  });
+
+  it('shows the Turn on card under drafts and fixes', async () => {
+    client = await connect(fakeDaemon({}).daemon);
+    const { tools } = await client.listTools();
+    for (const name of ['draft_agent', 'propose_fix']) {
+      const meta = tools.find((tool) => tool.name === name)?._meta as { ui?: { resourceUri?: string } } | undefined;
+      expect(meta?.ui?.resourceUri).toBe('ui://agentuse/draft-card');
+    }
+    const card = await client.readResource({ uri: 'ui://agentuse/draft-card' });
+    const content = card.contents[0] as { mimeType?: string; text?: string };
+    expect(content.mimeType).toBe('text/html;profile=mcp-app');
+    expect(content.text).toContain('apply_draft');
+    expect(content.text).not.toContain('__require');
   });
 
   it('turns a daemon failure into a tool error with its code', async () => {

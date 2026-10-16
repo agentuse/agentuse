@@ -89,7 +89,8 @@
     "release:brief": "bun scripts/release-brief.ts",
     "docs:dev": "cd docs && mintlify dev --port 4747",
     "docs:preview": "cd docs && mintlify preview --port 4747",
-    "generate:models": "npx tsx scripts/generate-models.ts"
+    "generate:models": "npx tsx scripts/generate-models.ts",
+    "mcp-card:build": "bun scripts/build-mcp-card.ts"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "5.0.106",
@@ -99,6 +100,7 @@
     "@ai-sdk/openai-compatible": "3.0.63",
     "@ai-sdk/provider": "4.0.22",
     "@clack/prompts": "^0.11.0",
+    "@modelcontextprotocol/ext-apps": "1.7.5",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@slack/socket-mode": "2.0.7",
     "@slack/web-api": "7.15.1",

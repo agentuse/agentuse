@@ -10,6 +10,11 @@ import { getApprovalBaseUrl, getSessionUrl } from '../tools/await-human.js';
 import { toErrorMessage } from '../utils/error-message.js';
 import { McpToolError, type DaemonClient } from './daemon.js';
 import { registerAgentUsePrompts } from './prompts.js';
+import { RESOURCE_MIME_TYPE, registerAppResource, registerAppTool } from '@modelcontextprotocol/ext-apps/server';
+import { DRAFT_CARD_HTML } from '../generated/mcp-draft-card.js';
+
+/** The "Turn on" card MCP apps draw under draft_agent and propose_fix results. */
+const DRAFT_CARD_URI = 'ui://agentuse/draft-card';
 
 /**
  * AgentUse as an MCP server: what Claude, ChatGPT and coding agents can call.
@@ -124,9 +129,18 @@ interface ChatChangesetResponse {
   changeset: {
     sessionId: string;
     status: string;
-    proposals: Array<{ index: number; entry?: string; files: Array<Omit<ChangesetFile, 'content' | 'patch'>> }>;
+    mode: 'create' | 'revise';
+    target?: { name?: string };
+    proposals: Array<{
+      index: number;
+      entry?: string;
+      reply?: string;
+      schedule?: { expression: string; human: string };
+      files: Array<Omit<ChangesetFile, 'content' | 'patch'>>;
+    }>;
   };
   reviewHref: string;
+  applyBlockers?: string[];
 }
 
 const fileInput = z.array(z.object({
@@ -370,8 +384,16 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
     ]);
     const proposal = result.changeset.proposals.at(-1);
     const reviewUrl = `${getApprovalBaseUrl(roots.get(projectId)).replace(/\/$/u, '')}${result.reviewHref}`;
+    const entry = proposal?.entry ?? '';
     return {
       id: result.changeset.sessionId,
+      project: projectId,
+      kind: result.changeset.mode === 'create' ? 'draft' : 'fix',
+      name: result.changeset.target?.name ?? entry.split('/').pop()?.replace(/\.agentuse$/u, '') ?? 'agent',
+      ...(proposal?.reply && { summary: proposal.reply }),
+      ...(proposal?.schedule && { schedule: proposal.schedule.human }),
+      can_turn_on_by_yes: (result.applyBlockers ?? []).length === 0,
+      ...((result.applyBlockers ?? []).length > 0 && { needs_review_because: result.applyBlockers }),
       status: result.changeset.status,
       review_url: reviewUrl,
       files: (proposal?.files ?? []).map((file) => ({
@@ -383,7 +405,7 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
     };
   };
 
-  server.registerTool('draft_agent', {
+  registerAppTool(server, 'draft_agent', {
     title: 'Draft agent',
     description: 'Save a new agent (its .agentuse file plus any helper files) as a draft for the user to review. '
       + 'Nothing runs and nothing goes live: the user opens review_url to test it and turn it on. '
@@ -401,6 +423,7 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
       draft_id: z.string().optional().describe('Update this draft instead of starting a new one'),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    _meta: { ui: { resourceUri: DRAFT_CARD_URI } },
   }, guarded(async ({ project, goal, summary, entry, files, schedule, draft_id }) => {
     const draft = await submitChangeset(project, {
       mode: 'create', instruction: goal, summary, entry, files,
@@ -463,7 +486,7 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
     );
   }));
 
-  server.registerTool('propose_fix', {
+  registerAppTool(server, 'propose_fix', {
     title: 'Propose fix',
     description: 'Propose a change to an existing agent, usually after list_problems and get_session found the cause. '
       + 'Send the whole new file for each file you change. Nothing changes until the user applies it at review_url. '
@@ -478,6 +501,7 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
       fix_id: z.string().optional().describe('Update this proposal instead of starting a new one'),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    _meta: { ui: { resourceUri: DRAFT_CARD_URI } },
   }, guarded(async ({ project, agent, problem, summary, files, from_session, fix_id }) => {
     const fix = await submitChangeset(project, {
       mode: 'revise',
@@ -491,6 +515,12 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
     });
     const { id, ...rest } = fix;
     return ok(`Fix proposed. The user reviews and applies it here:\n${fix.review_url}`, { fix_id: id, ...rest });
+  }));
+
+  registerAppResource(server, 'AgentUse draft card', DRAFT_CARD_URI, {
+    description: 'Shows a draft or fix with a Turn on button',
+  }, async () => ({
+    contents: [{ uri: DRAFT_CARD_URI, mimeType: RESOURCE_MIME_TYPE, text: DRAFT_CARD_HTML }],
   }));
 
   registerAgentUsePrompts(server);
