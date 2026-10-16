@@ -6,7 +6,7 @@ import { readChangesetRecord } from '../src/agents/changeset';
 import { applyChangeset } from '../src/agents/changeset-apply';
 import { parseAgentContent } from '../src/parser';
 import { changesetRecordPath } from '../src/agents/changeset-types';
-import { ChatChangesetError, chatTestBlocker, submitChatChangeset, type ChatChangesetInput } from '../src/cli/serve/changesets';
+import { ChatChangesetError, chatApplyBlockers, chatTestBlocker, submitChatChangeset, type ChatChangesetInput } from '../src/cli/serve/changesets';
 
 const MODEL = 'opencode-go:glm-5.1';
 const agent = (body: string) => `---\nname: Daily note\nmodel: ${MODEL}\ndescription: Writes a one-line daily note\n---\n\n${body}\n`;
@@ -196,5 +196,33 @@ describe('chat practice-run guard', () => {
 
   it('ignores helper files that are not agents', () => {
     expect(chatTestBlocker({ files: [{ path: 'agents/x.md', kind: 'support', content: 'command: sh' }] })).toBeUndefined();
+  });
+});
+
+describe('turning on from a typed yes', () => {
+  const withFrontmatter = (extra: string, path = 'agents/a.agentuse') => ({
+    files: [{ path, kind: 'agent' as const, content: `---\nname: A\nmodel: ${MODEL}\ndescription: d\n${extra}---\n\nDo it.\n` }],
+  });
+
+  it('allows a low-risk agent: gated commands, files inside the project, stores', () => {
+    expect(chatApplyBlockers(withFrontmatter(
+      'tools:\n  bash:\n    gated:\n      - "git push *"\n  filesystem:\n    - path: ${root}/notes\n      permissions: [read, write]\n    - path: reports\n      permissions: [read]\n  await_human: true\n',
+    ))).toEqual([]);
+  });
+
+  it.each([
+    ['commands that run without asking', 'tools:\n  bash:\n    commands:\n      - "ls *"\n', 'runs commands without asking first'],
+    ['files outside the project', 'tools:\n  filesystem:\n    - path: ~/Documents\n      permissions: [read]\n', 'reaches files outside the project'],
+    ['a parent-folder path', 'tools:\n  filesystem:\n    - path: ${root}/../other\n      permissions: [write]\n', 'reaches files outside the project'],
+    ['an MCP service', 'mcpServers:\n  notion:\n    url: https://mcp.notion.com/mcp\n', 'uses MCP services'],
+    ['all skills trusted', 'skills: trusted\n', 'trusts skills, which can run their own commands'],
+    ['one skill trusted', 'skills:\n  release-notes: trusted\n', 'trusts skills, which can run their own commands'],
+  ])('needs a tap for %s', (_label, extra, reason) => {
+    expect(chatApplyBlockers(withFrontmatter(extra))).toContain(reason);
+  });
+
+  it('needs a tap for an added script and for a file it cannot read', () => {
+    expect(chatApplyBlockers({ files: [{ path: 'agents/scripts/run.sh', kind: 'support', content: 'echo hi' }] })).toEqual(['adds the script agents/scripts/run.sh']);
+    expect(chatApplyBlockers({ files: [{ path: 'agents/a.agentuse', kind: 'agent', content: '---\nname: [\n---\n' }] })[0]).toContain('could not be checked');
   });
 });

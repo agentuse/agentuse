@@ -13,7 +13,7 @@ import type { ChangesetFile, ChangesetMode, ChangesetProposal, ChangesetRecord, 
 import { validateChangesetFiles } from "../../agents/changeset-validate";
 import { projectFileReader as changesetProjectFileReader, listProjectAgents as listChangesetProjectAgents } from "../../onboarding/submit-changes";
 import { isPathInside } from "../../utils/path-policy";
-import { parseAgentContent } from "../../parser";
+import { parseAgentContent, type AgentConfig } from "../../parser";
 import { formatScheduleHuman, parseScheduleExpression } from "../../scheduler/parser";
 import type { SessionPurpose } from "./types";
 import { WorkerExecuteError, WorkerExecuteResult } from "./worker-types";
@@ -394,6 +394,48 @@ export function chatTestBlocker(proposal: { files: ReadonlyArray<Pick<ChangesetF
     }
   }
   return undefined;
+}
+
+const SCRIPT_EXTENSIONS = /\.(?:sh|bash|zsh|py|js|mjs|cjs|ts|mts|rb|pl|php|ps1|bat|cmd|exe|bin)$/iu;
+
+/** A filesystem path an agent grant names, kept to the project it lives in. */
+function staysInProject(path: string): boolean {
+  if (path.includes('..')) return false;
+  if (path.startsWith('${root}') || path.startsWith('${agentDir}')) return true;
+  return !path.startsWith('/') && !path.startsWith('~') && !path.startsWith('$') && !/^[A-Za-z]:[\\/]/u.test(path);
+}
+
+/**
+ * Why a chat's typed "yes" is not enough to turn this proposal on, so the
+ * person must tap Apply on the review page. Empty means low risk: no command
+ * runs without asking, files stay inside the project, and nothing reaches an
+ * outside service. Anything that cannot be read is treated as risky.
+ */
+export function chatApplyBlockers(proposal: { files: ReadonlyArray<Pick<ChangesetFile, 'path' | 'kind' | 'content'>> }): string[] {
+  const reasons = new Set<string>();
+  for (const file of proposal.files) {
+    if (file.kind !== 'agent') {
+      if (SCRIPT_EXTENSIONS.test(file.path)) reasons.add(`adds the script ${file.path}`);
+      continue;
+    }
+    let config: AgentConfig;
+    try {
+      config = parseAgentContent(file.content, posix.basename(file.path)).config;
+    } catch {
+      reasons.add(`${file.path} could not be checked`);
+      continue;
+    }
+    if ((config.tools?.bash?.commands ?? []).length > 0) reasons.add('runs commands without asking first');
+    if (config.skills?.trusted === true || Object.values(config.skills?.explicit ?? {}).some((skill) => skill.trusted === true)) {
+      reasons.add('trusts skills, which can run their own commands');
+    }
+    const paths = (config.tools?.filesystem ?? []).flatMap((grant) => [grant.path, ...(grant.paths ?? [])]).filter((p): p is string => !!p);
+    if (paths.some((path) => !staysInProject(path))) reasons.add('reaches files outside the project');
+    if (Object.keys(config.mcpServers ?? {}).length > 0) reasons.add('uses MCP services');
+    if ((config.subagents ?? []).length > 0) reasons.add('delegates to other agents');
+    if (config.channels) reasons.add('posts to outside channels');
+  }
+  return [...reasons];
 }
 
 /** Apply, then drop the staged workspace: the record carries everything the

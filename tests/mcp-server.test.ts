@@ -73,7 +73,7 @@ describe('agentuse MCP server', () => {
     client = await connect(fakeDaemon({}).daemon);
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual(
-      ['draft_agent', 'get_agent', 'get_project', 'get_session', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'propose_fix', 'read_project_file', 'run_agent', 'test_draft'],
+      ['apply_draft', 'draft_agent', 'get_agent', 'get_project', 'get_session', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'propose_fix', 'read_project_file', 'run_agent', 'test_draft'],
     );
     const readOnly = tools.filter((tool) => tool.annotations?.readOnlyHint).map((tool) => tool.name);
     expect(readOnly.sort()).toEqual(['get_agent', 'get_project', 'get_session', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'read_project_file']);
@@ -290,6 +290,26 @@ describe('agentuse MCP server', () => {
     const result = await call('test_draft', { project: 'eng', id: 'CS1' });
     expect(calls.filter((c) => c.method === 'POST').map((c) => c.path)).toEqual(['/projects/eng/changesets/CS1/mock-test']);
     expect(result.structuredContent).toMatchObject({ session_id: 'T1', mock: true, url: 'http://agentuse.test/sessions/T1' });
+  });
+
+  it('turns on only through the low-risk apply route, and passes NEEDS_TAP back', async () => {
+    let refuse = false;
+    const { daemon, calls } = fakeDaemon({
+      'POST /projects/eng/changesets/CS1/apply-from-chat': () => {
+        if (refuse) throw new McpToolError('NEEDS_TAP', 'This one needs a tap on the review page because it uses MCP services.');
+        return { success: true, changeset: { status: 'applied', mode: 'create' } };
+      },
+    });
+    client = await connect(daemon);
+    const { tools } = await client.listTools();
+    expect(tools.find((tool) => tool.name === 'apply_draft')?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    const applied = await call('apply_draft', { project: 'eng', id: 'CS1' });
+    expect(applied.structuredContent).toEqual({ id: 'CS1', status: 'applied' });
+    expect(calls.map((c) => c.path)).toEqual(['/projects/eng/changesets/CS1/apply-from-chat']);
+    refuse = true;
+    const refused = await call('apply_draft', { project: 'eng', id: 'CS1' });
+    expect(refused.isError).toBe(true);
+    expect(refused.structuredContent?.error.code).toBe('NEEDS_TAP');
   });
 
   it('turns a daemon failure into a tool error with its code', async () => {

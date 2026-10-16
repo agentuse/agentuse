@@ -24,7 +24,7 @@ import { isPathInside } from "../../../utils/path-policy";
 import { sessionViewToken } from "../../../utils/session-token";
 import { agentSummaryCache, collectAgentDetail, collectAgents } from "../agents-data";
 import { isOperatorRequest } from "../auth";
-import { CHANGESET_ID_PATTERN, ChangesetActiveError, ChangesetTargetError, ChatChangesetError, applyProjectChangeset, chatTestBlocker, submitChatChangeset, changesetAcceptsChangeRequest, changesetListSummary, changesetReviewHref, discardProjectChangeset, prepareChangesetStart, removeChangesetWorkspace, resolveChangesetTargetPath, settleChangesetSession } from "../changesets";
+import { CHANGESET_ID_PATTERN, ChangesetActiveError, ChangesetTargetError, ChatChangesetError, applyProjectChangeset, chatApplyBlockers, chatTestBlocker, submitChatChangeset, changesetAcceptsChangeRequest, changesetListSummary, changesetReviewHref, discardProjectChangeset, prepareChangesetStart, removeChangesetWorkspace, resolveChangesetTargetPath, settleChangesetSession } from "../changesets";
 import { parseJSONBody, sendError, sendJSON, sendRequestParseError } from "../http";
 import { OnboardingModelJob } from "../internal-jobs";
 import { resolveScopedAgentPath } from "../project";
@@ -97,6 +97,8 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
     startMockTestRun,
     startChangesetTestRun,
     settleStaleChangesetTestRuns,
+    deliverNotification,
+    effectivePublicUrl,
   } = ctx;
   // Verbatim slice of the original route chain. A `return` in here meant
   // "request answered", exactly as it did inside the server callback; falling
@@ -818,7 +820,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
        review actions. The draft and revision routes stay live until the
        dashboard has finished moving over. */
     const changesetMatch = isApi
-      ? routePath.match(/^\/projects\/([^/?#]+)\/changesets(?:\/([^/?#]+))?(?:\/(apply|discard|restore|request-changes|cancel|test-run|mock-test))?$/)
+      ? routePath.match(/^\/projects\/([^/?#]+)\/changesets(?:\/([^/?#]+))?(?:\/(apply|discard|restore|request-changes|cancel|test-run|mock-test|apply-from-chat))?$/)
       : null;
     if (changesetMatch) {
       let mutationKey: string | undefined;
@@ -1065,6 +1067,23 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
           return;
         }
 
+        // apply-from-chat: the person said yes in the chat instead of tapping
+        // Apply. Allowed only for a chat's own proposal that is low risk; the
+        // rest still need the tap on the review page.
+        if (action === 'apply-from-chat') {
+          const record = await readChangesetRecord(project.root, sessionId);
+          const proposal = record ? latestChangesetProposal(record) : undefined;
+          if (!record || record.origin !== 'chat' || record.status !== 'proposed' || !proposal) {
+            sendError(res, 409, 'CHANGESET_NOT_PROPOSED', 'This change is not waiting to be turned on');
+            return;
+          }
+          const blockers = chatApplyBlockers(proposal);
+          if (blockers.length > 0) {
+            sendError(res, 409, 'NEEDS_TAP', `This one needs a tap on the review page because it ${blockers.join(', ')}.`);
+            return;
+          }
+        }
+
         // apply
         const snapshot = await providerSetupSnapshot();
         const availableModels = [...new Set(
@@ -1095,6 +1114,17 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
           updateRegistryCounts();
         }
         wakeListHubs();
+        if (action === 'apply-from-chat') {
+          // Turned on without a tap, so say so where the person will see it,
+          // with the way back: the review page's Restore.
+          const name = applied.target?.name ?? latestChangesetProposal(applied)?.entry ?? 'An agent';
+          void deliverNotification('approvals', {
+            title: applied.mode === 'create' ? `${name} turned on from chat` : `Fix applied to ${name} from chat`,
+            body: 'Tap to review it or undo.',
+            url: `${effectivePublicUrl.replace(/\/$/u, '')}${changesetReviewHref(project.id, sessionId)}`,
+            tag: `changeset-${sessionId}`,
+          }).catch(() => undefined);
+        }
         sendJSON(res, 200, { success: true, changeset: applied });
       } catch (err) {
         if (sendRequestParseError(res, err)) return;
