@@ -184,4 +184,16 @@ describe('serve tunnel', () => {
     writeCloudConnection(connection(`http://127.0.0.1:${cloud.port}`));
     await until(() => tunnel!.state.status === 'connected');
   });
+
+  it('switches to a new connection as soon as the file changes, without waiting for the poll', async () => {
+    writeCloudConnection(connection(`http://127.0.0.1:${cloud.port}`, 'auc_old'));
+    tunnel = new CloudTunnel({ selfUrl: `http://127.0.0.1:${local.port}`, log: () => {}, configPollMs: 60_000 });
+    tunnel.start();
+    await until(() => tunnel!.state.status === 'connected');
+    cloudSocket!.close(4001, 'This computer was disconnected');
+    await until(() => tunnel!.state.status === 'disconnected from the cloud');
+
+    writeCloudConnection(connection(`http://127.0.0.1:${cloud.port}`, 'auc_new'));
+    await until(() => tunnel!.state.status === 'connected' && seenAuthorization === 'Bearer auc_new');
+  });
 });

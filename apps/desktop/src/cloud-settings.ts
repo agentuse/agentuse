@@ -120,6 +120,8 @@ export function parseJoinLink(url: string): string | undefined {
   return code && JOIN_CODE.test(code) ? code : undefined;
 }
 
+const SETTLE_REFRESH_MS = [300, 800, 1_500, 3_000];
+
 /** Runs `agentuse connect` / `agentuse disconnect` and tracks the one in flight. */
 export class CloudConnector {
   private child: ChildProcess | undefined;
@@ -168,6 +170,11 @@ export class CloudConnector {
         this.lastError = output.trim().split("\n").filter(Boolean).at(-1) ?? "Connecting did not finish.";
       }
       this.onChange();
+      // The server switches to the new connection within a second or so; look
+      // again a few times so the tab turns green then, not at the next poll.
+      if (exitCode === 0) {
+        for (const ms of SETTLE_REFRESH_MS) setTimeout(this.onChange, ms).unref?.();
+      }
     });
     this.onChange();
   }
