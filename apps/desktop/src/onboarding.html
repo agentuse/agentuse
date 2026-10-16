@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Set up AgentUse for Mac</title>
+  <title>Welcome to AgentUse</title>
   <style>
     @font-face {
       font-family: "Geist";
@@ -23,333 +23,534 @@
       color-scheme: light dark;
       --sans: "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
       --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      --bg: light-dark(#fafaf9, #0f1113);
-      --fg: light-dark(#0a0a0a, #f4f5f6);
-      --line: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.08));
-      --line-strong: light-dark(rgba(0, 0, 0, 0.16), rgba(255, 255, 255, 0.14));
-      --panel: light-dark(rgba(0, 0, 0, 0.025), rgba(255, 255, 255, 0.03));
-      --panel-hover: light-dark(rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0.06));
-      --surface: light-dark(#ffffff, #16181c);
-      --surface-shadow: light-dark(0 1px 2px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.4));
-      --muted: light-dark(rgba(0, 0, 0, 0.55), rgba(255, 255, 255, 0.48));
-      --muted-2: light-dark(rgba(0, 0, 0, 0.35), rgba(255, 255, 255, 0.3));
-      --muted-3: light-dark(rgba(0, 0, 0, 0.75), rgba(255, 255, 255, 0.72));
-      --cyan: light-dark(#0e7490, #22d3ee);
-      --cyan-soft: light-dark(rgba(8, 145, 178, 0.08), rgba(34, 211, 238, 0.08));
-      --cyan-border: light-dark(rgba(8, 145, 178, 0.35), rgba(34, 211, 238, 0.35));
-      --green: light-dark(#047857, #4ade80);
-      --green-soft: light-dark(rgba(4, 120, 87, 0.08), rgba(74, 222, 128, 0.08));
-      --green-border: light-dark(rgba(4, 120, 87, 0.35), rgba(74, 222, 128, 0.35));
-      --amber: light-dark(#b45309, #fbbf24);
-      --amber-soft: light-dark(rgba(180, 83, 9, 0.1), rgba(251, 191, 36, 0.08));
-      --amber-border: light-dark(rgba(180, 83, 9, 0.35), rgba(251, 191, 36, 0.35));
+      --bg: light-dark(#ffffff, #0f1113);
+      --fg: light-dark(#0f172a, #f4f5f6);
+      --muted: light-dark(#475569, rgba(255, 255, 255, 0.62));
+      --line: light-dark(#e5e7eb, rgba(255, 255, 255, 0.1));
+      --line-strong: light-dark(#cbd5e1, rgba(255, 255, 255, 0.22));
+      --panel: light-dark(#f8fafc, rgba(255, 255, 255, 0.04));
+      --accent: #00dc82;
+      --accent-hover: #00c574;
+      --accent-fg: #0f172a;
+      --accent-soft: light-dark(#f0fdf7, rgba(0, 220, 130, 0.08));
+      --accent-border: light-dark(#a7f3d0, rgba(0, 220, 130, 0.35));
+      --ok: light-dark(#047857, #4ade80);
+      --ok-text: light-dark(#065f46, #86efac);
+      --warn: light-dark(#b45309, #fbbf24);
       --red: light-dark(#b91c1c, #f87171);
-      --primary-fg: light-dark(#ffffff, #000000);
-      --primary-bg: light-dark(#047857, #4ade80);
-      --primary-bg-hover: light-dark(#065f46, #86efac);
+      --link: light-dark(#2563eb, #60a5fa);
+      --badge-bg: light-dark(#0f172a, #f4f5f6);
+      --badge-fg: light-dark(#ffffff, #0f172a);
+      --radio-dot: light-dark(#0f172a, #f4f5f6);
     }
     * { box-sizing: border-box; }
-    html, body { min-width: 700px; min-height: 600px; background: var(--bg); }
+    html, body { height: 100%; }
     body {
       margin: 0;
+      background: var(--bg);
       color: var(--fg);
-      font: 14px/1.55 var(--sans);
+      font: 15px/1.5 var(--sans);
       -webkit-font-smoothing: antialiased;
       user-select: none;
     }
-    .topbar {
+    a { color: var(--link); cursor: pointer; }
+    button { font: inherit; color: inherit; }
+    [hidden] { display: none !important; }
+    .step {
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      min-height: 62px;
-      padding: 0 24px;
-      border-bottom: 1px solid var(--line);
-      background: var(--bg);
-    }
-    .brand { display: inline-flex; align-items: center; }
-    .brand img { display: block; width: auto; height: 18px; }
-    .brand-dark { display: none !important; }
-    .surface-label {
-      color: var(--muted);
-      font: 10.5px/1 var(--mono);
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-    }
-    main {
-      width: min(828px, calc(100vw - 32px));
-      margin: 0 auto;
-      padding: 28px 0;
-    }
-    .setup-shell {
-      display: grid;
-      grid-template-columns: minmax(0, 1.08fr) minmax(300px, 0.92fr);
-      gap: 46px;
-      align-items: stretch;
-      min-height: 500px;
-      padding: 48px;
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      background: var(--surface);
-      box-shadow: var(--surface-shadow);
-    }
-    .setup-copy {
-      display: flex;
-      min-width: 0;
       flex-direction: column;
+      gap: 16px;
+      min-height: 100%;
+      padding: 28px 40px 24px;
     }
-    .eyebrow {
-      margin-bottom: 10px;
-      color: var(--cyan);
-      font: 11px/1 var(--mono);
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-    }
-    h1 {
-      max-width: 10ch;
-      margin: 0;
-      font-size: clamp(38px, 5vw, 48px);
-      font-weight: 520;
-      line-height: 1.04;
-      letter-spacing: -0.035em;
-    }
-    .lede {
-      max-width: 39ch;
-      margin: 18px 0 0;
-      color: var(--muted-3);
-      font-size: 15px;
-      line-height: 1.55;
-    }
-    .setup-actions { padding-top: 20px; }
-    button { font: inherit; }
-    .primary {
-      appearance: none;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 42px;
-      padding: 0 17px;
-      border: 1px solid transparent;
-      border-radius: 9px;
-      background: var(--primary-bg);
-      color: var(--primary-fg);
-      font: 600 13.5px/1 var(--sans);
-      cursor: pointer;
-      transition: background 120ms ease, transform 120ms ease, opacity 120ms ease;
-    }
-    .primary:hover:not(:disabled) { background: var(--primary-bg-hover); transform: translateY(-1px); }
-    .primary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; }
-    .primary:disabled { cursor: default; opacity: 0.45; }
-    .error { min-height: 18px; margin: 10px 0 0; color: var(--red); font-size: 12.5px; }
-    .setup-options {
-      align-self: center;
-      margin: 0;
-      padding: 0;
-      border-top: 1px solid var(--line);
-    }
-    .setup-option {
-      padding: 19px 0;
-      border-bottom: 1px solid var(--line);
-    }
-    .option-heading {
+    .meta { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+    .meta strong { color: var(--fg); }
+    .done { color: var(--ok); font-weight: 600; }
+    .heading { display: flex; flex-direction: column; gap: 6px; }
+    .step-number { font-size: 13px; font-weight: 700; }
+    h1 { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.15; }
+    .lede { margin: 0; font-size: 15px; color: var(--muted); }
+    .choices { display: flex; flex-direction: column; gap: 10px; }
+    .choice {
       display: flex;
+      gap: 14px;
       align-items: flex-start;
-      justify-content: space-between;
-      gap: 12px;
+      width: 100%;
+      padding: 14px 18px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--bg);
+      text-align: left;
+      cursor: pointer;
     }
-    .option-title { display: block; color: var(--fg); font-size: 13.5px; font-weight: 560; }
-    .option-copy { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; line-height: 1.45; }
-    .optional {
-      margin-left: 6px;
-      color: var(--muted-2);
-      font: 10.5px/1 var(--mono);
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-    }
-    .login-check { display: inline-flex; flex: none; align-items: center; color: var(--muted-3); cursor: pointer; }
-    .login-check input { width: 14px; height: 14px; margin: 2px 0 0; accent-color: var(--green); cursor: pointer; }
-    .launcher-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
-    .status {
-      display: inline-flex;
-      align-items: center;
-      min-height: 22px;
-      padding: 1px 8px;
-      border: 1px solid var(--cyan-border);
+    .choice:hover { border-color: var(--line-strong); }
+    .choice[aria-pressed="true"] { border: 2px solid var(--accent); background: var(--accent-soft); padding: 13px 17px; }
+    .choice:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+    .radio {
+      flex: none;
+      width: 18px;
+      height: 18px;
+      margin-top: 3px;
+      border: 1.5px solid var(--line-strong);
       border-radius: 999px;
-      background: var(--cyan-soft);
-      color: var(--cyan);
-      font: 10.5px/1 var(--mono);
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
     }
-    .status.ready { border-color: var(--green-border); background: var(--green-soft); color: var(--green); }
-    .status.missing, .status.outdated { border-color: var(--amber-border); background: var(--amber-soft); color: var(--amber); }
-    .status.conflict { border-color: light-dark(rgba(185, 28, 28, 0.35), rgba(248, 113, 113, 0.35)); background: light-dark(rgba(185, 28, 28, 0.08), rgba(248, 113, 113, 0.1)); color: var(--red); }
-    code {
-      display: block;
-      margin-top: 4px;
-      overflow-wrap: anywhere;
-      color: var(--muted-3);
-      font: 11.5px/1.45 var(--mono);
+    .choice[aria-pressed="true"] .radio { border: 5px solid var(--radio-dot); background: var(--bg); }
+    .choice-text { display: flex; flex-direction: column; gap: 3px; }
+    .choice-title { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700; }
+    .choice-copy { font-size: 14px; color: var(--muted); }
+    .badge { padding: 2px 8px; border-radius: 999px; background: var(--badge-bg); color: var(--badge-fg); font-size: 12px; font-weight: 600; }
+    .actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: auto; }
+    .actions .end { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+    .primary, .secondary {
+      min-height: 44px;
+      padding: 0 20px;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .primary { border: 0; background: var(--accent); color: var(--accent-fg); }
+    .primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .secondary { border: 1px solid var(--line-strong); background: var(--bg); font-weight: 600; }
+    .secondary:hover:not(:disabled) { background: var(--panel); }
+    .primary:disabled, .secondary:disabled { cursor: default; opacity: 0.5; }
+    .primary:focus-visible, .secondary:focus-visible, .link:focus-visible { outline: 2px solid var(--link); outline-offset: 3px; }
+    .link { border: 0; padding: 0; background: none; color: var(--link); font-size: 14px; cursor: pointer; text-decoration: underline; }
+    .code-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+    }
+    .code-box .label { font-size: 13px; color: var(--muted); }
+    .code { font: 700 40px/1.1 var(--mono); letter-spacing: 0.08em; user-select: text; }
+    .waiting { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--accent-border);
+      border-top-color: var(--ok);
+      border-radius: 999px;
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .hint { margin: 0; font-size: 14px; color: var(--muted); }
+    .error { margin: 0; min-height: 20px; color: var(--red); font-size: 13.5px; user-select: text; }
+    .lock { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+    .detail { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+    .detail p { margin: 0; font-size: 14px; color: var(--muted); }
+    .row { display: flex; gap: 8px; }
+    input[type="text"], input[type="password"], select {
+      min-height: 40px;
+      padding: 0 12px;
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--fg);
+      font: 14px var(--sans);
       user-select: text;
     }
-    .path-label {
-      display: block;
-      margin-top: 10px;
-      color: var(--muted-2);
-      font: 10.5px/1 var(--mono);
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-    }
-    .secondary {
-      appearance: none;
-      min-height: 28px;
-      padding: 4px 9px;
+    input.grow { flex-grow: 1; min-width: 0; }
+    input.mono { font-family: var(--mono); }
+    .note { margin: 0; padding: 14px 16px; border: 1px solid var(--accent-border); border-radius: 12px; background: var(--accent-soft); color: var(--ok-text); font-size: 15px; }
+    .field { display: flex; flex-direction: column; gap: 8px; }
+    .field label { font-size: 14px; font-weight: 600; }
+    .field a { font-size: 14px; }
+    .checklist {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px 16px;
+      margin: 0;
+      padding: 14px 16px;
+      list-style: none;
       border: 1px solid var(--line);
-      border-radius: 7px;
+      border-radius: 12px;
       background: var(--panel);
-      color: var(--muted-3);
-      font: 500 12px/1 var(--sans);
-      cursor: pointer;
+      font-size: 14px;
     }
-    .secondary:hover:not(:disabled) { border-color: var(--line-strong); background: var(--panel-hover); color: var(--fg); }
-    .secondary:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 2px; }
-    .secondary:disabled { cursor: wait; opacity: 0.55; }
-    @media (prefers-color-scheme: dark) {
-      .brand-light { display: none !important; }
-      .brand-dark { display: block !important; }
-    }
-    @media (max-width: 760px) {
-      .setup-shell { grid-template-columns: 1fr; gap: 34px; min-height: 0; padding: 36px; }
-      .setup-actions { padding-top: 20px; }
-      h1 { max-width: none; font-size: 38px; }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .primary { transition: none; }
-      .primary:hover:not(:disabled) { transform: none; }
-    }
+    .checklist li { display: flex; gap: 8px; }
+    .mark { color: var(--ok); font-weight: 700; }
+    .mark.warn { color: var(--warn); }
+    .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .card { display: flex; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; }
+    .card-title { font-size: 16px; font-weight: 700; }
+    .card-copy { font-size: 14px; color: var(--muted); }
+    .card button { margin-top: auto; }
+    .footer-hint { margin: auto 0 0; font-size: 13px; color: var(--muted); }
+    @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
   </style>
 </head>
 <body>
-  <header class="topbar">
-    <span class="brand" aria-label="AgentUse">
-      <img class="brand-light" src="assets/agentuse-wordmark-light.svg" alt="AgentUse">
-      <img class="brand-dark" src="assets/agentuse-wordmark-dark.svg" alt="AgentUse">
-    </span>
-    <span class="surface-label">Desktop app</span>
-  </header>
+  <!-- 1. Where you'll use it -->
+  <section class="step" id="step-route" aria-labelledby="route-title">
+    <div class="meta"><strong data-step-label>Step 1 of 4</strong><span>·</span><span>Takes about a minute</span></div>
+    <div class="heading">
+      <h1 id="route-title">Where will you use AgentUse?</h1>
+      <p class="lede">Either way, your agents and files stay on this Mac. You can change this later in Settings.</p>
+    </div>
+    <div class="choices" role="group" aria-label="Where you'll use AgentUse">
+      <button class="choice" type="button" data-route="cloud" aria-pressed="true">
+        <span class="radio" aria-hidden="true"></span>
+        <span class="choice-text">
+          <span class="choice-title">From your AI assistant <span class="badge">Recommended</span></span>
+          <span class="choice-copy">Sign in to AgentUse Cloud. Ask your assistant to build an agent, and it runs here. Works with Claude, ChatGPT, Claude Code, Codex and any assistant that supports MCP.</span>
+        </span>
+      </button>
+      <button class="choice" type="button" data-route="local" aria-pressed="false">
+        <span class="radio" aria-hidden="true"></span>
+        <span class="choice-text">
+          <span class="choice-title">Only on this Mac</span>
+          <span class="choice-copy">No account. Use the dashboard, or a coding agent on this Mac.</span>
+        </span>
+      </button>
+    </div>
+    <p class="error" role="alert" data-error></p>
+    <div class="actions"><div class="end"><button class="primary" type="button" id="route-continue">Continue</button></div></div>
+  </section>
 
-  <main>
-    <section class="setup-shell" aria-labelledby="setup-title">
-      <div class="setup-copy">
-        <div class="eyebrow">Desktop setup</div>
-        <h1 id="setup-title">Set up AgentUse for Mac</h1>
-        <p class="lede">Choose whether AgentUse starts at login, and optionally add its bundled CLI launcher for Terminal.</p>
+  <!-- 2. Sign in (Cloud only) -->
+  <section class="step" id="step-signin" aria-labelledby="signin-title" hidden>
+    <div class="meta"><strong data-step-label>Step 2 of 4</strong><span>·</span><span>AgentUse Cloud</span></div>
+    <div class="heading">
+      <h1 id="signin-title">Finish in your browser</h1>
+      <p class="lede" id="signin-lede">Opening AgentUse Cloud in your browser…</p>
+    </div>
+    <div class="code-box">
+      <span class="label" id="code-label">Code for this Mac</span>
+      <span class="code" id="code"></span>
+      <span class="waiting" id="waiting" role="status"><span class="spinner" aria-hidden="true"></span><span id="waiting-text">Waiting for you to press Connect…</span></span>
+    </div>
+    <p class="hint" id="signin-hint">Browser didn't open, or you'd rather use your phone? Go to <a id="connect-page" href="#" data-open-connect>cloud.agentuse.io/connect</a> and type the code.</p>
+    <p class="error" role="alert" data-error></p>
+    <div class="actions">
+      <button class="secondary" type="button" id="signin-back">Back</button>
+      <div class="end">
+        <button class="secondary" type="button" id="signin-again" data-open-connect>Open browser again</button>
+        <button class="primary" type="button" id="signin-retry" hidden>Try again</button>
       </div>
+    </div>
+  </section>
 
-      <div class="setup-options" aria-label="Desktop setup options">
-        <div class="setup-option">
-          <div class="option-heading">
-            <div>
-              <label class="option-title" for="launch-at-login">Launch AgentUse at login</label>
-              <span class="option-copy">Start quietly in the menu bar for schedules, approvals, and background runs.</span>
-            </div>
-            <span class="login-check">
-              <input id="launch-at-login" type="checkbox" checked>
-            </span>
-          </div>
-        </div>
-
-        <div class="setup-option">
-          <span class="option-title">Add CLI launcher <span class="optional">Optional</span></span>
-          <span class="option-copy" id="launcher-copy">Creates an agentuse command for Terminal. Make sure ~/.local/bin is in your PATH.</span>
-          <span class="path-label">Run in Terminal</span>
-          <code id="launcher-path">~/.local/bin/agentuse</code>
-          <div class="launcher-meta">
-            <span class="status missing" id="launcher-status"><span>Not added</span></span>
-            <button class="secondary" type="button" id="launcher-action">Add</button>
-          </div>
-        </div>
-
-        <div class="setup-actions">
-          <button class="primary" type="button" id="continue">Continue</button>
-          <p class="error" id="error" role="alert"></p>
+  <!-- 3. Pick the AI -->
+  <section class="step" id="step-ai" aria-labelledby="ai-title" hidden>
+    <div class="meta"><strong data-step-label>Step 3 of 4</strong><span>·</span><span id="ai-meta"></span></div>
+    <div class="heading">
+      <h1 id="ai-title">Which AI runs your agents?</h1>
+      <p class="lede" id="ai-lede"></p>
+    </div>
+    <div class="choices" role="group" aria-label="Which AI runs your agents">
+      <button class="choice" type="button" data-ai="chatgpt" aria-pressed="true">
+        <span class="radio" aria-hidden="true"></span>
+        <span class="choice-text">
+          <span class="choice-title">Sign in with ChatGPT</span>
+          <span class="choice-copy">Uses your ChatGPT plan. No key to paste.</span>
+        </span>
+      </button>
+      <div class="detail" id="chatgpt-detail" hidden>
+        <p>After you sign in, the browser may show an error page. That's expected. Copy the full address from the browser and paste it here.</p>
+        <div class="row">
+          <input class="grow mono" type="text" id="chatgpt-address" placeholder="http://localhost:1455/auth/callback?code=…" aria-label="Address from your browser" autocomplete="off" spellcheck="false">
+          <button class="secondary" type="button" id="chatgpt-reopen">Open again</button>
         </div>
       </div>
-    </section>
-  </main>
+      <button class="choice" type="button" data-ai="key" aria-pressed="false">
+        <span class="radio" aria-hidden="true"></span>
+        <span class="choice-text">
+          <span class="choice-title">Paste an API key</span>
+          <span class="choice-copy">Anthropic, OpenAI or OpenRouter. A Claude Pro or Max plan can't run agents.</span>
+        </span>
+      </button>
+      <div class="detail" id="key-detail" hidden>
+        <div class="row">
+          <select id="key-provider" aria-label="Whose key">
+            <option value="anthropic">Anthropic</option>
+            <option value="openai">OpenAI</option>
+            <option value="openrouter">OpenRouter</option>
+          </select>
+          <input class="grow mono" type="password" id="key-value" placeholder="Paste your API key" aria-label="API key" autocomplete="off" spellcheck="false">
+        </div>
+      </div>
+    </div>
+    <p class="error" role="alert" data-error></p>
+    <div class="actions">
+      <span class="lock">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></svg>
+        Logins and keys stay on this Mac.
+      </span>
+      <div class="end">
+        <button class="link" type="button" id="ai-skip">Skip for now</button>
+        <button class="secondary" type="button" id="ai-back">Back</button>
+        <button class="primary" type="button" id="ai-continue">Sign in with ChatGPT</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. Ready, Cloud -->
+  <section class="step" id="step-ready-cloud" aria-labelledby="ready-cloud-title" hidden>
+    <div class="heading">
+      <span class="step-number" data-step-label>Step 4 of 4</span>
+      <h1 id="ready-cloud-title">You're set</h1>
+      <p class="lede" id="ready-cloud-lede">Connected. Runs in the background.</p>
+    </div>
+    <p class="note">Came from the Claude or ChatGPT plugin? Go back and ask again.</p>
+    <div class="field">
+      <label for="mcp-url">Otherwise, add this address to your AI assistant</label>
+      <div class="row">
+        <input class="grow mono" type="text" id="mcp-url" readonly>
+        <button class="secondary" type="button" id="mcp-copy">Copy</button>
+      </div>
+      <a href="#" id="mcp-help">How to add it in Claude, ChatGPT, Claude Code and others</a>
+    </div>
+    <p class="hint" id="ready-cloud-ai" hidden>No AI is set up yet, so agents can't run. Add one later in the dashboard under Providers.</p>
+    <p class="error" role="alert" data-error></p>
+    <div class="actions"><div class="end"><button class="primary" type="button" id="cloud-done">Done</button></div></div>
+  </section>
+
+  <!-- 4. Ready, Local -->
+  <section class="step" id="step-ready-local" aria-labelledby="ready-local-title" hidden>
+    <div class="heading">
+      <span class="step-number" data-step-label>Step 3 of 3</span>
+      <h1 id="ready-local-title">You're set</h1>
+      <p class="lede">Everything runs on this Mac. No account.</p>
+    </div>
+    <ul class="checklist">
+      <li><span class="mark" id="local-ai-mark" aria-hidden="true">✓</span><span id="local-ai">AI</span></li>
+      <li><span class="mark" aria-hidden="true">✓</span><span id="local-project">Project: my-agents</span></li>
+      <li><span class="mark" aria-hidden="true">✓</span><span>Runs in the background</span></li>
+    </ul>
+    <div class="cards">
+      <div class="card">
+        <span class="card-title">Make an agent here</span>
+        <span class="card-copy">Describe the job in the dashboard and AgentUse writes it.</span>
+        <button class="primary" type="button" id="local-dashboard">Open dashboard</button>
+      </div>
+      <div class="card">
+        <span class="card-title">Or from Claude Code, Cursor</span>
+        <span class="card-copy">Adds AgentUse on this Mac only, then type /automate.</span>
+        <button class="secondary" type="button" id="local-copy">Copy setup command</button>
+      </div>
+    </div>
+    <p class="error" role="alert" data-error></p>
+    <p class="footer-hint">Want it in Claude or ChatGPT later? Settings › AgentUse Cloud › Connect.</p>
+  </section>
 
   <script>
-    const setupBridge = window.agentuseSetup;
-    const loginToggle = document.getElementById("launch-at-login");
-    const launcherCopy = document.getElementById("launcher-copy");
-    const launcherStatus = document.getElementById("launcher-status");
-    const launcherStatusText = launcherStatus.querySelector("span");
-    const launcherPath = document.getElementById("launcher-path");
-    const launcherAction = document.getElementById("launcher-action");
-    const continueButton = document.getElementById("continue");
-    const errorText = document.getElementById("error");
-    let currentState = {
-      launcher: {
-        path: "~/.local/bin/agentuse",
-        status: "missing",
-        detail: "Creates an agentuse command for Terminal. Make sure ~/.local/bin is in your PATH.",
-      },
-    };
+    const bridge = window.agentuseSetup;
+    const $ = (id) => document.getElementById(id);
+    const steps = ["step-route", "step-signin", "step-ai", "step-ready-cloud", "step-ready-local"];
+    let state = { cloud: { status: "none" }, ai: { ready: false }, connectPage: "cloud.agentuse.io/connect" };
+    let route = "cloud";
+    let ai = "chatgpt";
+    let chatGptStarted = false;
+    let current = "step-route";
+    let ready;
 
-    function render(state) {
-      currentState = state;
-      launcherPath.textContent = state.launcher.path.replace(/^\/Users\/[^/]+/, "~");
-      launcherStatus.className = `status ${state.launcher.status}`;
-      launcherStatusText.textContent = {
-        ready: "Available",
-        missing: "Not added",
-        outdated: "Needs repair",
-        conflict: "Path conflict",
-      }[state.launcher.status];
-      launcherCopy.textContent = state.launcher.detail;
-      launcherAction.hidden = state.launcher.status === "ready";
-      launcherAction.textContent = state.launcher.status === "outdated" ? "Repair" : state.launcher.status === "conflict" ? "Replace" : "Add";
+    function show(id) {
+      current = id;
+      for (const step of steps) $(step).hidden = step !== id;
+      for (const error of document.querySelectorAll("[data-error]")) error.textContent = "";
+      const total = route === "cloud" ? 4 : 3;
+      const number = { "step-route": 1, "step-signin": 2, "step-ai": total - 1, "step-ready-cloud": 4, "step-ready-local": 3 }[id];
+      for (const label of document.querySelectorAll(`#${id} [data-step-label]`)) label.textContent = `Step ${number} of ${total}`;
+      $(id).querySelector("button.primary:not([hidden])")?.focus();
+    }
+
+    function fail(error) {
+      const target = $(current).querySelector("[data-error]");
+      const message = error?.message ?? String(error);
+      if (target) target.textContent = message.replace(/^Error invoking remote method '[^']+': (?:\w*Error: )?/u, "");
+    }
+
+    function pick(attribute, value) {
+      for (const button of document.querySelectorAll(`[data-${attribute}]`)) {
+        button.setAttribute("aria-pressed", String(button.dataset[attribute] === value));
+      }
+    }
+
+    async function busy(button, label, work) {
+      const original = button.textContent;
+      button.disabled = true;
+      button.textContent = label;
+      try {
+        await work();
+      } catch (error) {
+        fail(error);
+      } finally {
+        button.disabled = false;
+        if (button.textContent === label) button.textContent = original;
+      }
+    }
+
+    // The steps after signing in, skipping an AI that is already set up.
+    function afterSignIn() {
+      if (state.ai.ready) return goReady();
+      show("step-ai");
+      renderAi();
+    }
+
+    async function goReady() {
+      show(route === "cloud" ? "step-ready-cloud" : "step-ready-local");
+      renderReady();
+      try {
+        ready = await bridge.prepareReady();
+        renderReady();
+      } catch (error) {
+        fail(error);
+      }
+    }
+
+    function renderSignIn() {
+      const cloud = state.cloud;
+      const connecting = cloud.status === "connecting" || cloud.status === "joining";
+      const joining = cloud.status === "joining";
+      $("connect-page").textContent = state.connectPage;
+      $("code").textContent = cloud.code ?? "";
+      $("code").hidden = !cloud.code;
+      $("code-label").hidden = !cloud.code;
+      $("waiting").hidden = !connecting;
+      $("signin-again").hidden = !connecting || joining;
+      $("signin-hint").hidden = joining;
+      $("signin-retry").hidden = connecting;
+      $("signin-lede").textContent = joining
+        ? "Linking this Mac with the code from the setup page."
+        : cloud.code
+          ? "We opened AgentUse Cloud. Sign in, check the code matches, and press Connect."
+          : connecting ? "Opening AgentUse Cloud in your browser…" : "This Mac isn't connected yet.";
+      $("waiting-text").textContent = joining ? "Linking this Mac…" : cloud.code ? "Waiting for you to press Connect…" : "Getting a code…";
+      const error = $("step-signin").querySelector("[data-error]");
+      error.textContent = !connecting && cloud.error ? cloud.error : "";
+    }
+
+    function renderAi() {
+      const signedIn = route === "cloud" && state.cloud.status === "connected";
+      $("ai-meta").textContent = signedIn
+        ? `✓ Signed in${state.cloud.account ? ` as ${state.cloud.account}` : ""}`
+        : "Only on this Mac";
+      $("ai-meta").className = signedIn ? "done" : "";
+      $("ai-lede").textContent = route === "cloud"
+        ? "Your assistant writes the agent. This AI runs it here, on schedule, even when the assistant is closed."
+        : "This AI writes and runs your agents here, on schedule.";
+      pick("ai", ai);
+      $("chatgpt-detail").hidden = ai !== "chatgpt" || !chatGptStarted;
+      $("key-detail").hidden = ai !== "key";
+      $("ai-continue").textContent = ai === "chatgpt" && !chatGptStarted ? "Sign in with ChatGPT" : "Continue";
+    }
+
+    function renderReady() {
+      const cloud = state.cloud;
+      $("ready-cloud-lede").textContent = `Connected${cloud.account ? ` as ${cloud.account}` : ""}. Runs in the background.`;
+      $("mcp-url").value = cloud.mcpUrl ?? "";
+      $("ready-cloud-ai").hidden = state.ai.ready;
+      $("local-ai").textContent = state.ai.ready ? `AI: ${state.ai.label}` : "AI: add one in the dashboard";
+      $("local-ai-mark").textContent = state.ai.ready ? "✓" : "!";
+      $("local-ai-mark").className = state.ai.ready ? "mark" : "mark warn";
+      $("local-project").textContent = `Project: ${ready?.project ?? "my-agents"}`;
+      $("local-copy").disabled = !ready;
+      $("local-dashboard").disabled = !ready;
     }
 
     async function refresh() {
-      if (!setupBridge) {
-        render(currentState);
-        return;
+      const previous = state.cloud.status;
+      state = await bridge.getState();
+      if (current === "step-signin") {
+        renderSignIn();
+        if (state.cloud.status === "connected" && previous !== "connected") afterSignIn();
+      } else if (current === "step-route" && (state.cloud.status === "joining" || state.cloud.status === "connecting")) {
+        // A join link from the setup page arrived: show its progress.
+        route = "cloud";
+        pick("route", route);
+        show("step-signin");
+        renderSignIn();
+      } else if (current === "step-ready-cloud") {
+        renderReady();
       }
-      errorText.textContent = "";
-      render(await setupBridge.getState());
     }
 
-    launcherAction.addEventListener("click", async () => {
-      if (!setupBridge) return;
-      launcherAction.disabled = true;
-      launcherAction.textContent = "Adding…";
-      errorText.textContent = "";
-      try {
-        render(await setupBridge.installCliLauncher());
-      } catch (error) {
-        errorText.textContent = error.message;
-        await refresh();
-      } finally {
-        launcherAction.disabled = false;
-      }
+    for (const button of document.querySelectorAll("[data-route]")) {
+      button.addEventListener("click", () => { route = button.dataset.route; pick("route", route); });
+    }
+    for (const button of document.querySelectorAll("[data-ai]")) {
+      button.addEventListener("click", () => {
+        ai = button.dataset.ai;
+        renderAi();
+        if (ai === "key") $("key-value").focus();
+      });
+    }
+
+    $("route-continue").addEventListener("click", () => busy($("route-continue"), "Continue", async () => {
+      state = await bridge.getState();
+      if (route === "local" || state.cloud.status === "connected") return afterSignIn();
+      if (state.cloud.status === "none") state.cloud = { status: "connecting" };
+      show("step-signin");
+      renderSignIn();
+      await bridge.connectCloud();
+      await refresh();
+    }));
+
+    $("signin-back").addEventListener("click", async () => {
+      await bridge.cancelCloud().catch(() => {});
+      show("step-route");
+    });
+    $("signin-retry").addEventListener("click", () => busy($("signin-retry"), "Starting…", async () => {
+      await bridge.connectCloud();
+      await refresh();
+    }));
+    for (const element of document.querySelectorAll("[data-open-connect]")) {
+      element.addEventListener("click", (event) => {
+        event.preventDefault();
+        bridge.openConnectPage().catch(fail);
+      });
+    }
+
+    $("ai-back").addEventListener("click", () => show("step-route"));
+    $("ai-skip").addEventListener("click", () => goReady());
+    $("chatgpt-reopen").addEventListener("click", () => busy($("chatgpt-reopen"), "Opening…", () => bridge.startChatGpt()));
+    $("ai-continue").addEventListener("click", () => {
+      const starting = ai === "chatgpt" && !chatGptStarted;
+      busy($("ai-continue"), starting ? "Opening…" : "Saving…", async () => {
+        if (starting) {
+          await bridge.startChatGpt();
+          chatGptStarted = true;
+          renderAi();
+          $("chatgpt-address").focus();
+          return;
+        }
+        state.ai = ai === "chatgpt"
+          ? await bridge.finishChatGpt($("chatgpt-address").value)
+          : await bridge.saveApiKey($("key-provider").value, $("key-value").value);
+        $("key-value").value = "";
+        await goReady();
+      });
     });
 
-    continueButton.addEventListener("click", async () => {
-      if (!setupBridge) return;
-      continueButton.disabled = true;
-      continueButton.textContent = "Opening…";
-      errorText.textContent = "";
-      try {
-        await setupBridge.complete(loginToggle.checked);
-      } catch (error) {
-        errorText.textContent = error.message;
-        continueButton.disabled = false;
-        continueButton.textContent = "Continue";
-      }
+    async function copy(button, text) {
+      await bridge.copyText(text);
+      const original = button.textContent;
+      button.textContent = "Copied";
+      setTimeout(() => { button.textContent = original; }, 1500);
+    }
+    $("mcp-copy").addEventListener("click", () => copy($("mcp-copy"), $("mcp-url").value).catch(fail));
+    $("mcp-help").addEventListener("click", (event) => {
+      event.preventDefault();
+      bridge.openHelp().catch(fail);
     });
+    $("local-copy").addEventListener("click", () => ready && copy($("local-copy"), ready.mcpCommand).catch(fail));
+    $("cloud-done").addEventListener("click", () => busy($("cloud-done"), "Finishing…", () => bridge.complete("cloud", false)));
+    $("local-dashboard").addEventListener("click", () => busy($("local-dashboard"), "Opening…", () => bridge.complete("local", true)));
 
-    refresh().catch((error) => { errorText.textContent = error.message; });
+    show("step-route");
+    if (bridge) {
+      bridge.onChange(() => { refresh().catch(fail); });
+      // The connection can also change outside this window (Terminal, Settings).
+      setInterval(() => {
+        if (current === "step-signin" || current === "step-route") refresh().catch(() => {});
+      }, 1500);
+      refresh().catch(fail);
+    }
   </script>
 </body>
 </html>

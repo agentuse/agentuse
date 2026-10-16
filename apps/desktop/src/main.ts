@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, Notification, powerMonitor, shell, Tray, type Event, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, Notification, powerMonitor, shell, Tray, type Event, type IpcMainInvokeEvent } from "electron";
 import { autoUpdater } from "electron-updater";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -26,7 +26,7 @@ import { readExternalServerTarget, writeExternalServerTarget, type ExternalServe
 import { findReadyExternalServer, probeServer } from "./server-connection";
 import { createAgentUseTrayIcon } from "./tray-icon";
 import { selectLoopbackPort } from "./port-selection";
-import { defaultCliLinkPath, inspectCliAvailability, loginShellPath, packagedCliLauncherPath, toggleCliLink, type CliLinkState } from "./cli-link";
+import { defaultCliLinkPath, inspectCliAvailability, loginShellPath, packagedCliLauncherPath, toggleCliLink } from "./cli-link";
 import {
   dashboardShortcutAccelerator,
   DEFAULT_DASHBOARD_SHORTCUT,
@@ -41,8 +41,10 @@ import {
 } from "./dashboard-shortcut";
 import { getProviderStatus } from "../../../src/auth/provider-status";
 import { loadGlobalConfig } from "../../../src/utils/global-config";
-import { readCloudConnection } from "../../../src/cloud/config";
+import { cloudUrl, readCloudConnection } from "../../../src/cloud/config";
+import { completeProviderOAuth, saveProviderApiKey, startProviderOAuth } from "../../../src/auth/provider-setup";
 import { CloudConnector, cloudSettingsState, parseJoinLink, type CloudApiState } from "./cloud-settings";
+import { connectPageUrl, isSetupApiKeyProvider, localMcpCommand, setupAiState, setupCloudState } from "./setup-wizard";
 import { initializeDesktopGlobalDefaults } from "./global-defaults";
 import { DesktopUpdater, type DesktopUpdateState } from "./updater";
 import { DesktopUpdateScheduler } from "./update-scheduler";
@@ -77,7 +79,10 @@ const cloudConnector = new CloudConnector(
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", NO_TTY: "true" },
   }),
-  () => { void pushNativeSettingsState(); },
+  () => {
+    void pushNativeSettingsState();
+    notifySetupWindow();
+  },
 );
 let settingsOutputBuffer = "";
 let settingsCommandQueue = Promise.resolve();
@@ -115,7 +120,8 @@ let serverAcquisition: Promise<void> | undefined;
 let dashboardPresentationQueue = Promise.resolve();
 let userLoginPath: Promise<string> | undefined;
 let desktopSetupStartedAt: number | undefined;
-let desktopCliLauncherAdded = false;
+// The ChatGPT sign-in the first-run window started, finished by pasting the address.
+let setupChatGptFlow: string | undefined;
 let dashboardShortcut: string | null = DEFAULT_DASHBOARD_SHORTCUT;
 let desktopNotificationPreferences: DesktopNotificationPreferences = { ...DEFAULT_DESKTOP_NOTIFICATION_PREFERENCES };
 let registeredDashboardShortcut: string | undefined;
@@ -181,34 +187,66 @@ function desktopPreferencesFile(): string {
   return desktopPreferencesPath(app.getPath("userData"));
 }
 
-function onboardingCliLinkState(link: CliLinkState) {
-  return {
-    path: defaultCliLinkPath(),
-    status: link.status === "installed"
-      ? "ready" as const
-      : link.status === "notInstalled"
-        ? "missing" as const
-        : "conflict" as const,
-    detail: link.status === "notInstalled"
-      ? "Creates an agentuse command for Terminal. Make sure ~/.local/bin is in your PATH."
-      : displayHomePath(link.detail),
-  };
-}
-
 function displayHomePath(value: string): string {
   const home = homedir();
   return value === home ? "~" : value.replaceAll(`${home}/`, "~/");
 }
 
 async function desktopSetupState() {
-  const link = inspectCliAvailability(
-    defaultCliLinkPath(),
-    packagedCliLauncherPath(process.resourcesPath),
-    await resolveUserLoginPath(),
-  );
+  const activeServer = currentServer && listRegisteredServers().find((server) => server.pid === currentServer?.pid);
+  const saved = savedCloudConnection();
+  const api = saved ? await cloudApiState(activeServer) : undefined;
+  const view = cloudConnector.view;
   return {
-    launcher: onboardingCliLinkState(link),
+    cloud: setupCloudState({
+      ...(api && { api }),
+      ...(saved && { saved }),
+      ...(view.connecting && { connecting: view.connecting }),
+      ...(view.error && { error: view.error }),
+    }),
+    ai: setupAiState(await getProviderStatus()),
+    connectPage: `${cloudUrl().replace(/^https?:\/\//u, "")}/connect`,
   };
+}
+
+function notifySetupWindow(): void {
+  if (setupWindow && !setupWindow.isDestroyed()) setupWindow.webContents.send("agentuse:setup:changed");
+}
+
+/** A call to the local server the first-run window needs, e.g. making the first project. */
+async function dashboardApi<T>(path: string, init: RequestInit = {}): Promise<T> {
+  await ensureServer();
+  const response = await fetch(new URL(path, dashboardUrl), {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(dashboardApiKey ? { Authorization: `Bearer ${dashboardApiKey}` } : {}),
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  const payload = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+  if (!response.ok) throw new Error(payload?.error?.message ?? `AgentUse answered ${response.status}.`);
+  return payload as T;
+}
+
+/** The project new agents go in: the default one, or my-agents made now. */
+async function ensureSetupProject(): Promise<string> {
+  type Project = { id: string; path: string; about?: { name?: string } };
+  const info = await dashboardApi<{ projects: Project[]; default?: string }>("/api");
+  const existing = info.projects.find((project) => project.id === info.default) ?? info.projects[0];
+  if (existing) return existing.about?.name ?? existing.id;
+  try {
+    const created = await dashboardApi<{ project: Project }>("/api/projects", {
+      method: "POST",
+      body: JSON.stringify({ name: "my-agents" }),
+    });
+    return created.project.about?.name ?? created.project.id;
+  } catch (error) {
+    // Made by another window a moment ago.
+    const again = await dashboardApi<{ projects: Project[] }>("/api");
+    if (again.projects[0]) return again.projects[0].about?.name ?? again.projects[0].id;
+    throw error;
+  }
 }
 
 function assertSetupSender(event: IpcMainInvokeEvent): void {
@@ -269,48 +307,67 @@ function registerDesktopIpc(): void {
     assertSetupSender(event);
     return desktopSetupState();
   });
-  ipcMain.handle("agentuse:setup:install-cli-launcher", async (event) => {
+  ipcMain.handle("agentuse:setup:connect-cloud", async (event) => {
     assertSetupSender(event);
-    try {
-      const linkPath = defaultCliLinkPath();
-      const launcherPath = packagedCliLauncherPath(process.resourcesPath);
-      const loginPath = await resolveUserLoginPath();
-      const current = inspectCliAvailability(linkPath, launcherPath, loginPath);
-      if (current.status === "notInstalled" || (current.status === "conflict" && !current.actionDisabled)) {
-        await toggleCliLink(linkPath, launcherPath, loginPath);
-        desktopCliLauncherAdded = true;
-      } else if (current.status !== "installed") {
-        throw new Error(current.detail);
-      }
-      return desktopSetupState();
-    } catch (error) {
-      queueDesktopOnboardingTelemetry({
-        event: "onboarding_step_failed",
-        step: "desktop_setup",
-        error_code: "cli_launcher_add_failed",
-      });
-      throw error;
-    }
+    if (cloudConnector.view.connecting) return;
+    if ((await desktopSetupState()).cloud.status === "connected") return;
+    cloudConnector.connect();
   });
-  ipcMain.handle("agentuse:setup:complete", async (event, launchAtLogin: unknown) => {
+  ipcMain.handle("agentuse:setup:cancel-cloud", (event) => {
     assertSetupSender(event);
-    if (typeof launchAtLogin !== "boolean") throw new TypeError("Launch at Login must be enabled or disabled.");
+    cloudConnector.cancel();
+  });
+  ipcMain.handle("agentuse:setup:open-connect-page", async (event) => {
+    assertSetupSender(event);
+    const code = cloudConnector.view.connecting?.code;
+    await shell.openExternal(code ? connectPageUrl(cloudUrl(), code) : `${cloudUrl()}/connect`);
+  });
+  ipcMain.handle("agentuse:setup:start-chatgpt", async (event) => {
+    assertSetupSender(event);
+    const flow = await startProviderOAuth("openai");
+    setupChatGptFlow = flow.flowId;
+    await shell.openExternal(flow.authorizationUrl);
+  });
+  ipcMain.handle("agentuse:setup:finish-chatgpt", async (event, address: unknown) => {
+    assertSetupSender(event);
+    if (!setupChatGptFlow) throw new Error("Press Sign in with ChatGPT first.");
+    if (typeof address !== "string" || !address.trim()) throw new Error("Paste the address from your browser.");
+    await completeProviderOAuth(setupChatGptFlow, address);
+    setupChatGptFlow = undefined;
+    return setupAiState(await getProviderStatus());
+  });
+  ipcMain.handle("agentuse:setup:save-api-key", async (event, provider: unknown, key: unknown) => {
+    assertSetupSender(event);
+    if (!isSetupApiKeyProvider(provider)) throw new TypeError("Pick Anthropic, OpenAI or OpenRouter.");
+    await saveProviderApiKey(provider, key);
+    return setupAiState(await getProviderStatus());
+  });
+  ipcMain.handle("agentuse:setup:prepare-ready", async (event) => {
+    assertSetupSender(event);
+    const project = await ensureSetupProject();
+    return { project, dashboardUrl: dashboardUrl!, mcpCommand: localMcpCommand(dashboardUrl!, dashboardApiKey) };
+  });
+  ipcMain.handle("agentuse:setup:copy", (event, text: unknown) => {
+    assertSetupSender(event);
+    if (typeof text !== "string") throw new TypeError("Nothing to copy.");
+    clipboard.writeText(text);
+  });
+  ipcMain.handle("agentuse:setup:open-help", async (event) => {
+    assertSetupSender(event);
+    await shell.openExternal("https://docs.agentuse.io/guides/agentuse-cloud");
+  });
+  ipcMain.handle("agentuse:setup:complete", async (event, route: unknown, openDashboard: unknown) => {
+    assertSetupSender(event);
+    if (route !== "cloud" && route !== "local") throw new TypeError("Pick where you'll use AgentUse.");
     try {
-      const launcher = (await desktopSetupState()).launcher;
-      const cliLauncherStatus = launcher.status === "ready"
-        ? desktopCliLauncherAdded ? "added" : "already_available"
-        : launcher.status === "conflict" ? "conflict" : "skipped";
-      app.setLoginItemSettings({
-        openAtLogin: launchAtLogin,
-        openAsHidden: launchAtLogin,
-        args: launchAtLogin ? ["--hidden"] : [],
-      });
-      await showDashboard();
+      // "Runs in the background": schedules and approvals need the app at login.
+      app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true, args: ["--hidden"] });
+      await ensureServer();
+      if (openDashboard === true) await showDashboard();
       queueDesktopOnboardingTelemetry({
         event: "onboarding_step_completed",
         step: "desktop_setup",
-        launch_at_login_enabled: launchAtLogin,
-        cli_launcher_status: cliLauncherStatus,
+        launch_at_login_enabled: true,
         ...(desktopSetupStartedAt !== undefined && { duration_ms: Date.now() - desktopSetupStartedAt }),
       });
       await flushDesktopTelemetry();
@@ -318,6 +375,7 @@ function registerDesktopIpc(): void {
       const completedWindow = setupWindow;
       setupWindow = undefined;
       completedWindow?.destroy();
+      refreshMenus();
     } catch (error) {
       queueDesktopOnboardingTelemetry({
         event: "onboarding_step_failed",
@@ -742,11 +800,11 @@ function createWindow(): BrowserWindow {
 
 function createSetupWindow(): BrowserWindow {
   const browser = new BrowserWindow({
-    width: 860,
-    height: 660,
-    minWidth: 720,
-    minHeight: 620,
-    title: "Set up AgentUse for Mac",
+    width: 720,
+    height: 620,
+    minWidth: 640,
+    minHeight: 560,
+    title: "Welcome to AgentUse",
     show: false,
     webPreferences: {
       preload: join(__dirname, "setup-preload.cjs"),
@@ -954,6 +1012,14 @@ async function startJoin(code: string): Promise<void> {
     pendingSettingsError = "This Mac is already connected to AgentUse Cloud. Disconnect first to link it to a different account.";
   } else {
     cloudConnector.connect(code);
+  }
+  // During first-run setup the setup window shows the progress itself.
+  if (setupWindow && !setupWindow.isDestroyed() && !await isDesktopOnboardingReady()) {
+    pendingSettingsTab = undefined;
+    pendingSettingsError = undefined;
+    setupWindow.show();
+    setupWindow.focus();
+    return;
   }
   showSettings();
 }
@@ -1557,11 +1623,13 @@ function refreshApplicationMenu(): void {
     {
       label: APP_NAME,
       submenu: [
-        { role: "about" },
+        // Labelled here: the roles take app.name, the package name, which also
+        // names the userData folder and so stays as it is.
+        { role: "about", label: `About ${APP_NAME}` },
         { type: "separator" },
         { label: "Settings…", accelerator: "Command+,", click: showSettings },
         { type: "separator" },
-        { role: "hide" },
+        { role: "hide", label: `Hide ${APP_NAME}` },
         { role: "hideOthers" },
         { role: "unhide" },
         { type: "separator" },
@@ -1653,6 +1721,7 @@ if (!app.requestSingleInstanceLock()) {
     // global .env and config.json env block as the CLI before any provider
     // status check, server authentication, or child-process construction.
     initializeDesktopGlobalDefaults();
+    app.setAboutPanelOptions({ applicationName: APP_NAME });
     if (app.isPackaged) app.setAsDefaultProtocolClient("agentuse");
     registerDesktopIpc();
     initializeDesktopUpdater();
