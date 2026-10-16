@@ -21,8 +21,9 @@ import {
 } from "./onboarding-state";
 import { createDesktopQuitPolicy, deferDesktopQuitAfterDrain, shouldWarnBeforeFullQuit } from "./quit-policy";
 import { shouldHideDashboardWindow } from "./dashboard-presentation";
-import { isAbandonedDesktopServer, isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, reconnectCandidates, selectServer, serverAcquisitionMode, serverRegistryDirectory, serverUrl, type RegisteredServer, type ServerEndpoint } from "./runtime";
+import { isAbandonedDesktopServer, isDashboardNavigation, isSafeExternalUrl, listRegisteredServers, selectServer, serverAcquisitionMode, serverRegistryDirectory, serverUrl, type RegisteredServer, type ServerEndpoint } from "./runtime";
 import { readExternalServerTarget, writeExternalServerTarget, type ExternalServerTarget } from "./external-server-state";
+import { findReadyExternalServer, probeServer } from "./server-connection";
 import { createAgentUseTrayIcon } from "./tray-icon";
 import { selectLoopbackPort } from "./port-selection";
 import { defaultCliLinkPath, inspectCliAvailability, loginShellPath, packagedCliLauncherPath, toggleCliLink, type CliLinkState } from "./cli-link";
@@ -57,6 +58,7 @@ const APP_NAME = "AgentUse";
 const STARTUP_TIMEOUT_MS = 15_000;
 const EXTERNAL_RECONNECT_TIMEOUT_MS = 10_000;
 const APPROVAL_POLL_INTERVAL_MS = 5_000;
+const SERVER_CONNECTION_POLL_INTERVAL_MS = 5_000;
 const DESKTOP_SERVER_LIFETIME_FD = 3;
 const desktopServerSupervisor: DesktopServerSupervisor = {
   kind: "desktop",
@@ -94,6 +96,8 @@ let disconnectedExternalServer: ExternalServerTarget | undefined;
 let externalServerStateLoaded = false;
 let ownedServer: ChildProcess | undefined;
 let approvalPollTimer: ReturnType<typeof setInterval> | undefined;
+let serverConnectionTimer: ReturnType<typeof setInterval> | undefined;
+let serverConnectionRefresh: Promise<void> | undefined;
 let notificationStreamController: AbortController | undefined;
 let notificationStreamOrigin: string | undefined;
 const activeNotifications = new Map<string, Notification>();
@@ -454,19 +458,6 @@ function startNotificationStream(): void {
   void consumeNotificationStream(dashboardUrl, dashboardApiKey, source, notificationStreamController.signal);
 }
 
-async function probeServer(url: string, apiKey?: string): Promise<"ready" | "unauthorized" | "unreachable"> {
-  try {
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(1_000),
-      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
-    });
-    if (response.status === 401) return "unauthorized";
-    return response.ok ? "ready" : "unreachable";
-  } catch {
-    return "unreachable";
-  }
-}
-
 async function waitForServer(pid: number, apiKey?: string): Promise<RegisteredServer> {
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
   while (Date.now() < deadline) {
@@ -480,16 +471,64 @@ async function waitForServer(pid: number, apiKey?: string): Promise<RegisteredSe
 async function waitForExternalServer(previous: ExternalServerTarget, apiKey?: string): Promise<RegisteredServer | undefined> {
   const deadline = Date.now() + EXTERNAL_RECONNECT_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    for (const candidate of reconnectCandidates(listRegisteredServers(), previous)) {
-      const probe = await probeServer(serverUrl(candidate), apiKey);
-      if (probe === "unauthorized") {
-        throw new Error("The restarted AgentUse backend requires a different API key. Set AGENTUSE_API_KEY before opening the desktop app, or restart the backend without operator authentication on loopback.");
-      }
-      if (probe === "ready") return candidate;
-    }
+    const candidate = await findReadyExternalServer(listRegisteredServers(), previous, apiKey);
+    if (candidate) return candidate;
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
   return undefined;
+}
+
+async function refreshExternalServerConnection(): Promise<void> {
+  if (serverConnectionRefresh) return serverConnectionRefresh;
+  if (isQuitting || serverOperation || ownedServer || !disconnectedExternalServer) return;
+  const previous = currentServer;
+  const target = disconnectedExternalServer;
+  const apiKey = dashboardApiKey ?? process.env.AGENTUSE_API_KEY;
+  serverConnectionRefresh = (async () => {
+    let replacement: RegisteredServer | undefined;
+    try {
+      replacement = await findReadyExternalServer(listRegisteredServers(), target, apiKey);
+    } catch {
+      // Authentication failure is disconnected too; explicit dashboard opens
+      // still surface the actionable error from the acquisition path.
+    }
+    // A settings action or dashboard open may have acquired a server while the
+    // probe was in flight. Never overwrite that newer connection or shutdown.
+    if (isQuitting || serverOperation || ownedServer || currentServer !== previous
+      || disconnectedExternalServer !== target) return;
+    if (replacement) {
+      const recovered = !previous || previous.pid !== replacement.pid
+        || previous.procStartedAt !== replacement.procStartedAt || !dashboardUrl;
+      currentServer = replacement;
+      dashboardUrl = serverUrl(replacement);
+      dashboardApiKey = apiKey;
+      if (recovered) {
+        stopNotificationStream();
+        startApprovalPolling();
+        startNotificationStream();
+        void refreshPendingApprovals();
+        void pushNativeSettingsState();
+      }
+    } else if (previous) {
+      currentServer = undefined;
+      dashboardUrl = undefined;
+      dashboardApiKey = undefined;
+      stopNotificationStream();
+      setPendingApprovals(0);
+      void pushNativeSettingsState();
+    }
+  })().finally(() => { serverConnectionRefresh = undefined; });
+  return serverConnectionRefresh;
+}
+
+function startServerConnectionPolling(): void {
+  if (serverConnectionTimer) return;
+  serverConnectionTimer = setInterval(() => {
+    void refreshExternalServerConnection().catch((error: unknown) => {
+      console.warn("Could not refresh the external AgentUse connection:", error);
+    });
+  }, SERVER_CONNECTION_POLL_INTERVAL_MS);
+  serverConnectionTimer.unref();
 }
 
 function registeredServerIsStillRunning(server: RegisteredServer): boolean {
@@ -1177,6 +1216,11 @@ function savedCloudConnection() {
 }
 
 async function desktopSettingsState() {
+  // Swift refreshes every second on a serial command queue. Keep a slow or
+  // restarting backend off that queue; reconciliation publishes its own result.
+  void refreshExternalServerConnection().catch((error: unknown) => {
+    console.warn("Could not refresh the external AgentUse connection:", error);
+  });
   const activeServer = currentServer && listRegisteredServers().find((server) => server.pid === currentServer?.pid);
   const api = await cloudApiState(activeServer);
   const saved = savedCloudConnection();
@@ -1536,6 +1580,7 @@ if (!app.requestSingleInstanceLock()) {
     isQuitting = true;
     sendNativeSettingsMessage({ type: "quit" });
     if (approvalPollTimer) clearInterval(approvalPollTimer);
+    if (serverConnectionTimer) clearInterval(serverConnectionTimer);
     stopNotificationStream();
     // electron-updater/Squirrel must own this quit from start to finish. Its
     // transaction was prepared above, including draining the owned server, so
@@ -1560,6 +1605,7 @@ if (!app.requestSingleInstanceLock()) {
     createTray();
     await initializeDesktopPreferences();
     const onboardingReady = await isDesktopOnboardingReady();
+    startServerConnectionPolling();
     const hiddenLaunch = process.argv.includes("--hidden");
     queueDesktopTelemetry({
       event: "desktop_app_launched",
