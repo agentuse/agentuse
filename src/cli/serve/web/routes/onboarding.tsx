@@ -1,4 +1,5 @@
 import { useLocation } from 'preact-iso';
+import { CodingAgentFirstRun } from '../components/coding-agent-first-run';
 import { FirstProjectEmptyState } from '../components/first-project-empty-state';
 import { Loading } from '../components/loading';
 import { ProjectAgentDiscovery } from '../components/project-agent-discovery';
@@ -36,14 +37,19 @@ export default function Onboarding() {
               // and `agentuse setup` make one) instead of asking for a folder again.
               : !info.data || !project
                 ? <FirstProjectEmptyState folderPickerAvailable={info.data?.capabilities?.projectFolderPicker === true} />
-                : project
-                  ? <ProjectAgentDiscovery
+                // A local first run leads with the coding agent; ?project (Find agent ideas) still scans.
+                : !requestedProjectId && project.agentCount === 0 && info.data.capabilities?.codingAgentSetup === true
+                  ? <CodingAgentFirstRun
+                      projectId={project.id}
+                      projectName={project.about?.name ?? project.id}
+                      projectPath={project.scope ?? project.path}
+                    />
+                  : <ProjectAgentDiscovery
                       projectId={project.id}
                       {...(project.about?.name ? { projectName: project.about.name } : {})}
                       projectPath={project.scope ?? project.path}
                       existingAgents={project.agentCount > 0}
-                    />
-                  : null}
+                    />}
       </main>
     </div>
   );

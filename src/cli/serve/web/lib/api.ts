@@ -1,4 +1,5 @@
 import type { AgentSummary, ApprovalLogEntry, ApprovalPageInfo, ApprovalSummary, SessionContextPayload, SessionSummary } from "../../types";
+import type { CodingAgentId, CodingAgentStatus } from "../../../../onboarding/coding-agents";
 import type { StoreBrowserRows, StoreBrowserSummary, StoreItemRef } from "../../stores";
 import type { StoreItem } from "../../../../store/types";
 import type { SerializedSchedule } from "../../../../scheduler";
@@ -640,12 +641,24 @@ export interface InfoPayload {
   publicUrl?: string;
   capabilities?: {
     projectFolderPicker: boolean;
+    /** This server can add itself to Claude Code and Codex on this computer. */
+    codingAgentSetup?: boolean;
   };
   projects: ProjectInfo[];
 }
 
 export function fetchInfo(): Promise<InfoPayload> {
   return getJson('/api');
+}
+
+export type { CodingAgentId, CodingAgentStatus };
+
+export function fetchCodingAgents(): Promise<{ success: true; agents: CodingAgentStatus[] }> {
+  return getJson('/api/coding-agents');
+}
+
+export function setUpCodingAgent(id: CodingAgentId): Promise<{ success: true; agent: CodingAgentStatus }> {
+  return postJson('/api/coding-agents/setup', { id });
 }
 
 export function createManagedProject(name: string): Promise<{ success: true; project: ProjectInfo }> {

@@ -56,14 +56,6 @@ export function connectPageUrl(cloud: string, code: string): string {
   return `${cloud.replace(/\/+$/u, "")}/connect?code=${encodeURIComponent(code)}`;
 }
 
-/** What to paste in a terminal so Claude Code uses AgentUse on this Mac. */
-export function localMcpCommand(dashboard: string, apiKey?: string): string {
-  const url = `${dashboard.replace(/\/+$/u, "")}/mcp`;
-  return apiKey
-    ? `claude mcp add --transport http agentuse ${url} --header "Authorization: Bearer ${apiKey}"`
-    : `claude mcp add --transport http agentuse ${url}`;
-}
-
 export const SETUP_API_KEY_PROVIDERS = ["anthropic", "openai", "openrouter"] as const;
 export type SetupApiKeyProvider = typeof SETUP_API_KEY_PROVIDERS[number];
 

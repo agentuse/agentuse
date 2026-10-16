@@ -76,6 +76,7 @@ import { projectContextRoutes } from "./serve/routes/project-context";
 import { activeTunnel, CloudTunnel } from "../cloud/tunnel";
 import { notificationRoutes } from "./serve/routes/notifications";
 import { onboardingRoutes } from "./serve/routes/onboarding";
+import { codingAgentRoutes } from "./serve/routes/coding-agents";
 import { projectRoutes } from "./serve/routes/projects";
 import { providerRoutes } from "./serve/routes/providers";
 import { pushRoutes } from "./serve/routes/push";
@@ -4972,6 +4973,7 @@ export function createServeCommand(): Command {
         if (await projectRoutes(ctx, rq)) return;
         if (await revisionRoutes(ctx, rq)) return;
         if (await onboardingRoutes(ctx, rq)) return;
+        if (await codingAgentRoutes(ctx, rq)) return;
         if (await runRoutes(ctx, rq)) return;
       }, (err, req) => {
         logger.error(`serve: ${req.method} ${req.url?.split('?')[0]} failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);

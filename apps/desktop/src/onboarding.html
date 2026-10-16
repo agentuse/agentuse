@@ -180,6 +180,18 @@
     .card-title { font-size: 16px; font-weight: 700; }
     .card-copy { font-size: 14px; color: var(--muted); }
     .card button { margin-top: auto; }
+    .agents { padding: 16px 18px; border: 2px solid var(--accent-border); border-radius: 12px; }
+    .agent-rows { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; border: 1px solid var(--line); border-radius: 10px; }
+    .agent-rows li { display: flex; align-items: center; gap: 12px; padding: 10px 14px; font-size: 14px; }
+    .agent-rows li + li { border-top: 1px solid var(--line); }
+    .agent-name { display: flex; flex-direction: column; flex-grow: 1; min-width: 0; }
+    .agent-name strong { font-size: 15px; font-weight: 600; }
+    .agent-name code { font: 12px var(--mono); color: var(--muted); }
+    .agent-state { color: var(--muted); }
+    .agent-state.ok { color: var(--ok); font-weight: 600; }
+    .agent-rows .primary { min-height: 36px; padding: 0 16px; }
+    .dashboard-row { display: flex; align-items: center; gap: 12px; }
+    .dashboard-row span { flex-grow: 1; font-size: 14px; color: var(--muted); }
     .footer-hint { margin: auto 0 0; font-size: 13px; color: var(--muted); }
     @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
   </style>
@@ -322,17 +334,15 @@
       <li><span class="mark" aria-hidden="true">✓</span><span id="local-project">Project: my-agents</span></li>
       <li><span class="mark" aria-hidden="true">✓</span><span>Runs in the background</span></li>
     </ul>
-    <div class="cards">
-      <div class="card">
-        <span class="card-title">Make an agent here</span>
-        <span class="card-copy">Describe the job in the dashboard and AgentUse writes it.</span>
-        <button class="primary" type="button" id="local-dashboard">Open dashboard</button>
-      </div>
-      <div class="card">
-        <span class="card-title">Or from Claude Code, Cursor</span>
-        <span class="card-copy">Adds AgentUse on this Mac only, then type /automate.</span>
-        <button class="secondary" type="button" id="local-copy">Copy setup command</button>
-      </div>
+    <div class="card agents">
+      <span class="card-title">Connect your coding agents</span>
+      <span class="card-copy">AgentUse adds itself to these apps. Then ask one to automate a job you do often.</span>
+      <ul class="agent-rows" id="coding-agents" aria-label="Coding agents on this Mac"><li class="agent-state">Looking for coding agents…</li></ul>
+      <span class="card-copy">Another app? <button class="link" type="button" id="local-copy-url">Copy the MCP address</button></span>
+    </div>
+    <div class="dashboard-row">
+      <span>The dashboard shows runs, approvals and schedules.</span>
+      <button class="secondary" type="button" id="local-dashboard">Open dashboard</button>
     </div>
     <p class="error" role="alert" data-error></p>
     <p class="footer-hint">Want it in Claude or ChatGPT later? Settings › AgentUse Cloud › Connect.</p>
@@ -449,8 +459,45 @@
       $("local-ai-mark").textContent = state.ai.ready ? "✓" : "!";
       $("local-ai-mark").className = state.ai.ready ? "mark" : "mark warn";
       $("local-project").textContent = `Project: ${ready?.project ?? "my-agents"}`;
-      $("local-copy").disabled = !ready;
+      $("local-copy-url").disabled = !ready;
       $("local-dashboard").disabled = !ready;
+      // The server is still starting until prepareReady answers: say so instead of a bare grey button.
+      if (!ready) $("local-dashboard").textContent = "Starting…";
+      else if ($("local-dashboard").textContent === "Starting…") $("local-dashboard").textContent = "Open dashboard";
+      renderCodingAgents();
+    }
+
+    function renderCodingAgents() {
+      if (!ready) return;
+      $("coding-agents").replaceChildren(...ready.codingAgents.map((agent) => {
+        const row = document.createElement("li");
+        const name = document.createElement("span");
+        name.className = "agent-name";
+        const title = document.createElement("strong");
+        title.textContent = agent.name;
+        const file = document.createElement("code");
+        file.textContent = agent.configPath;
+        name.append(title, file);
+        row.append(name);
+        if (agent.state === "set-up" || agent.state === "not-installed") {
+          const label = document.createElement("span");
+          label.className = agent.state === "set-up" ? "agent-state ok" : "agent-state";
+          label.textContent = agent.state === "set-up" ? "✓ Set up" : "Not installed";
+          row.append(label);
+        } else {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "primary";
+          button.textContent = agent.state === "outdated" ? "Update" : "Set up";
+          button.addEventListener("click", () => busy(button, "Setting up…", async () => {
+            const updated = await bridge.setUpCodingAgent(agent.id);
+            ready.codingAgents = ready.codingAgents.map((candidate) => candidate.id === updated.id ? updated : candidate);
+            renderCodingAgents();
+          }));
+          row.append(button);
+        }
+        return row;
+      }));
     }
 
     async function refresh() {
@@ -538,7 +585,7 @@
       event.preventDefault();
       bridge.openHelp().catch(fail);
     });
-    $("local-copy").addEventListener("click", () => ready && copy($("local-copy"), ready.mcpCommand).catch(fail));
+    $("local-copy-url").addEventListener("click", () => ready && copy($("local-copy-url"), ready.mcpUrl).catch(fail));
     $("cloud-done").addEventListener("click", () => busy($("cloud-done"), "Finishing…", () => bridge.complete("cloud", false)));
     $("local-dashboard").addEventListener("click", () => busy($("local-dashboard"), "Opening…", () => bridge.complete("local", true)));
 

@@ -44,7 +44,8 @@ import { loadGlobalConfig } from "../../../src/utils/global-config";
 import { cloudUrl, readCloudConnection } from "../../../src/cloud/config";
 import { completeProviderOAuth, saveProviderApiKey, startProviderOAuth } from "../../../src/auth/provider-setup";
 import { CloudConnector, cloudSettingsState, parseJoinLink, type CloudApiState } from "./cloud-settings";
-import { connectPageUrl, isSetupApiKeyProvider, localMcpCommand, setupAiState, setupCloudState } from "./setup-wizard";
+import { codingAgentStatuses, isCodingAgentId, setUpCodingAgent, type McpTarget } from "../../../src/onboarding/coding-agents";
+import { connectPageUrl, isSetupApiKeyProvider, setupAiState, setupCloudState } from "./setup-wizard";
 import { initializeDesktopGlobalDefaults } from "./global-defaults";
 import { DesktopUpdater, type DesktopUpdateState } from "./updater";
 import { DesktopUpdateScheduler } from "./update-scheduler";
@@ -97,6 +98,12 @@ let tray: Tray | undefined;
 let trayMenu: Menu | undefined;
 let dashboardUrl: string | undefined;
 let dashboardApiKey: string | undefined;
+
+/** The local server's MCP endpoint, for Claude Code and Codex on this Mac. */
+function localMcpTarget(): McpTarget {
+  if (!dashboardUrl) throw new Error("AgentUse is still starting. Try again in a moment.");
+  return { url: `${dashboardUrl.replace(/\/+$/u, "")}/mcp`, ...(dashboardApiKey && { apiKey: dashboardApiKey }) };
+}
 let currentServer: RegisteredServer | undefined;
 // Keep external ownership sticky across a restart gap. Without this hint, a
 // one-second failed probe can make Desktop see port 12233 as unowned and bind
@@ -345,7 +352,13 @@ function registerDesktopIpc(): void {
   ipcMain.handle("agentuse:setup:prepare-ready", async (event) => {
     assertSetupSender(event);
     const project = await ensureSetupProject();
-    return { project, dashboardUrl: dashboardUrl!, mcpCommand: localMcpCommand(dashboardUrl!, dashboardApiKey) };
+    const target = localMcpTarget();
+    return { project, dashboardUrl: dashboardUrl!, mcpUrl: target.url, codingAgents: await codingAgentStatuses(target) };
+  });
+  ipcMain.handle("agentuse:setup:set-up-coding-agent", async (event, id: unknown) => {
+    assertSetupSender(event);
+    if (!isCodingAgentId(id)) throw new TypeError("Pick Claude Code or Codex.");
+    return setUpCodingAgent(id, localMcpTarget());
   });
   ipcMain.handle("agentuse:setup:copy", (event, text: unknown) => {
     assertSetupSender(event);
@@ -801,7 +814,7 @@ function createWindow(): BrowserWindow {
 function createSetupWindow(): BrowserWindow {
   const browser = new BrowserWindow({
     width: 720,
-    height: 620,
+    height: 660,
     minWidth: 640,
     minHeight: 560,
     title: "Welcome to AgentUse",

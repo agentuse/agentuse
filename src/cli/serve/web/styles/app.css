@@ -4867,6 +4867,18 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 .onboarding-project code { overflow-wrap: anywhere; color: var(--fg); font-family: var(--mono); font-size: var(--font-size-caption); line-height: var(--lh-snug); }
 .onboarding-project small { color: var(--muted); font-size: var(--font-size-micro); line-height: var(--lh-snug); }
 .onboarding-project small code { color: inherit; font-size: inherit; }
+.coding-agent-list {
+  list-style: none; display: grid; max-width: 560px; margin: 22px 0 0; padding: 0;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
+}
+.coding-agent-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px 14px; }
+.coding-agent-list li + li { border-top: 1px solid var(--line); }
+.coding-agent-list .coding-agent-name { display: grid; flex: 1 1 200px; gap: 2px; }
+.coding-agent-list strong { color: var(--fg); font-family: var(--sans); font-size: var(--font-size-supporting); font-weight: var(--weight-medium); }
+.coding-agent-list code { color: var(--muted); font-family: var(--mono); font-size: var(--font-size-micro); }
+.coding-agent-list .coding-agent-state { color: var(--muted); font-size: var(--font-size-caption); }
+.coding-agent-list .coding-agent-state.is-ready { color: var(--green); }
+.coding-agent-list .onboarding-primary { min-height: 36px; }
 .onboarding-actions {
   display: flex;
   flex-wrap: wrap;

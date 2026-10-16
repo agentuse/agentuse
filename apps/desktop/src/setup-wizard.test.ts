@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { connectPageUrl, isSetupApiKeyProvider, localMcpCommand, setupAiState, setupCloudState } from "./setup-wizard";
+import { connectPageUrl, isSetupApiKeyProvider, setupAiState, setupCloudState } from "./setup-wizard";
 
 const saved = { account: "leon@example.com", name: "Leon's Mac", mcpUrl: "https://cloud.agentuse.io/mcp" };
 
@@ -23,10 +23,8 @@ describe("first-run setup", () => {
     expect(setupAiState({ providers: [], customProviders: [] })).toEqual({ ready: false });
   });
 
-  it("builds the links and commands the page offers", () => {
+  it("builds the links the page offers", () => {
     expect(connectPageUrl("https://cloud.agentuse.io/", "BCDF-GHJK")).toBe("https://cloud.agentuse.io/connect?code=BCDF-GHJK");
-    expect(localMcpCommand("http://127.0.0.1:12233")).toBe("claude mcp add --transport http agentuse http://127.0.0.1:12233/mcp");
-    expect(localMcpCommand("http://127.0.0.1:12233", "k")).toContain('--header "Authorization: Bearer k"');
     expect(isSetupApiKeyProvider("openrouter")).toBe(true);
     expect(isSetupApiKeyProvider("ollama")).toBe(false);
   });
