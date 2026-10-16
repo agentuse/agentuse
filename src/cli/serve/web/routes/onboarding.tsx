@@ -30,10 +30,12 @@ export default function Onboarding() {
           ? <Loading label="Loading onboarding…" />
           : info.error
             ? <InlineError>Failed to load: {info.error.message}</InlineError>
-            : !info.data || !requestedProjectId
-              ? <FirstProjectEmptyState folderPickerAvailable={info.data?.capabilities?.projectFolderPicker === true} />
-              : requestedProjectId && !project
-                ? <div class="panel"><div class="empty">That project is not loaded. <a href="/onboarding">Choose another project</a>.</div></div>
+            : requestedProjectId && info.data && !project
+              ? <div class="panel"><div class="empty">That project is not loaded. <a href="/onboarding">Choose another project</a>.</div></div>
+              // Without ?project, carry on in the default project (the Mac app
+              // and `agentuse setup` make one) instead of asking for a folder again.
+              : !info.data || !project
+                ? <FirstProjectEmptyState folderPickerAvailable={info.data?.capabilities?.projectFolderPicker === true} />
                 : project
                   ? <ProjectAgentDiscovery
                       projectId={project.id}
