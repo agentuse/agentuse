@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server, ServerWebSocket } from 'bun';
 import { readCloudConnection, removeCloudConnection, writeCloudConnection, type CloudConnection } from '../src/cloud/config';
-import { waitForApproval, type PairingStart } from '../src/cloud/pairing';
+import { redeemJoinCode, waitForApproval, type PairingStart } from '../src/cloud/pairing';
 import { CloudTunnel } from '../src/cloud/tunnel';
 
 const savedConfigDir = process.env.AGENTUSE_CONFIG_DIR;
@@ -73,6 +73,29 @@ describe('waiting for approval', () => {
     await expect(waitForApproval('https://c', start, async () => {})).rejects.toThrow('cancelled');
     answer([{ error: 'expired_token' }]);
     await expect(waitForApproval('https://c', start, async () => {})).rejects.toThrow('expired');
+  });
+});
+
+describe('join codes', () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => { globalThis.fetch = realFetch; });
+
+  it('links this computer with the code, sending it upper-cased', async () => {
+    let sent: Record<string, unknown> = {};
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      sent = JSON.parse(String(init.body));
+      return new Response(JSON.stringify({ machine_id: 'm2', machine_token: 'auc_j', name: 'Laptop', account: 'you@example.com', mcp_url: 'https://c/mcp' }));
+    }) as unknown as typeof fetch;
+    const linked = await redeemJoinCode('https://c', ' bcdf-ghjk-lmnp ', 'Laptop', 'Linux');
+    expect(sent).toEqual({ code: 'BCDF-GHJK-LMNP', name: 'Laptop', platform: 'Linux' });
+    expect(linked).toEqual({ machineId: 'm2', machineToken: 'auc_j', name: 'Laptop', account: 'you@example.com', mcpUrl: 'https://c/mcp' });
+  });
+
+  it('says to get a new code when it was used or expired, and to wait when rate limited', async () => {
+    globalThis.fetch = (async () => new Response(JSON.stringify({ error: 'invalid_code' }), { status: 400 })) as unknown as typeof fetch;
+    await expect(redeemJoinCode('https://c', 'X', 'n', 'p')).rejects.toThrow('not valid any more');
+    globalThis.fetch = (async () => new Response(JSON.stringify({ error: 'rate_limited' }), { status: 429 })) as unknown as typeof fetch;
+    await expect(redeemJoinCode('https://c', 'X', 'n', 'p')).rejects.toThrow('Too many tries');
   });
 });
 

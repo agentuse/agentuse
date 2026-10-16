@@ -5,7 +5,7 @@ import { join } from 'path';
 import { FIRST_PROJECT_DEFAULT_NAME, managedProjectSlug, terminalFirstAgentPrompt, validateManagedProjectName } from '../src/onboarding';
 import { getManagedProjectsRoot, removeServeProject } from '../src/utils/global-config';
 import { createManagedProject, createManagedProjectTransaction, rollbackManagedProject } from '../src/utils/managed-project';
-import { createSetupCommand, resolveSetupSurface, setupChoices, webSetupServeArgs } from '../src/cli/setup';
+import { createSetupCommand, webSetupServeArgs } from '../src/cli/setup';
 
 describe('managed onboarding projects', () => {
   const roots: string[] = [];
@@ -111,21 +111,6 @@ describe('managed onboarding projects', () => {
 
     expect(existsSync(projectRoot)).toBe(false);
     expect(JSON.parse(readFileSync(configPath, 'utf8')).serve.projects).toEqual([]);
-  });
-
-  it('selects browser or terminal setup without guessing in non-interactive shells', () => {
-    expect(resolveSetupSurface({ web: true }, false)).toBe('web');
-    expect(resolveSetupSurface({ terminal: true }, false)).toBe('terminal');
-    expect(resolveSetupSurface({ yes: true }, false)).toBe('terminal');
-    expect(resolveSetupSurface({}, true)).toBe('prompt');
-    expect(() => resolveSetupSurface({}, false)).toThrow('--web or --terminal');
-    expect(() => resolveSetupSurface({ web: true, terminal: true }, true)).toThrow('not both');
-  });
-
-  it('offers the Mac app first only on Apple silicon Macs', () => {
-    expect(setupChoices('darwin', 'arm64').map((c) => c.value)).toEqual(['mac-app', 'web', 'terminal']);
-    expect(setupChoices('darwin', 'x64').map((c) => c.value)).toEqual(['web', 'terminal']);
-    expect(setupChoices('linux', 'arm64').map((c) => c.value)).toEqual(['web', 'terminal']);
   });
 
   it('forwards Web setup transport and authentication options to serve', () => {

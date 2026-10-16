@@ -47,22 +47,27 @@ on AgentUse Cloud:
 Settings then shows **Connected**, your account, this Mac's name, and the
 address to add to chat apps, with a **Copy** button.
 
-### Terminal (macOS, Linux, Windows)
+### Terminal (macOS, Linux, Windows with WSL)
 
 ```bash
 agentuse connect
 ```
 
+`agentuse connect` is `agentuse setup` with AgentUse Cloud already picked. It
+signs this computer in, then finishes whatever else is missing: the AI that
+runs your agents, a first project, and AgentUse running in the background.
+Steps that are already done show a ✓ and are skipped.
+
 ```text
-Connect MacBook Pro to AgentUse Cloud.
-Open https://cloud.agentuse.io/connect and enter WDJB-MJHT
-
-Opened your browser. Sign in there and press Connect.
-Waiting…
-
-Connected as MacBook Pro (you@example.com).
-Add this address in Claude, ChatGPT, Cursor, or any app that supports MCP:
-  https://cloud.agentuse.io/mcp
+◆  AgentUse setup
+✓  Where  AgentUse Cloud
+│  Open   https://cloud.agentuse.io/connect
+│  Code   WDJB-MJHT
+✓  Signed in  you@example.com · MacBook Pro
+✓  AI  OpenAI (ChatGPT OAuth)
+✓  Project  ~/.agentuse/projects/my-agents
+✓  Background  starts when you log in
+└  You're set.
 ```
 
 On a computer without a screen, such as a Linux server over SSH, no browser
@@ -70,9 +75,24 @@ opens. Open the printed address on your phone or laptop, enter the code, sign
 in, and select **Connect**. The terminal finishes on its own. The code works
 once and expires after 10 minutes.
 
+#### From the plugin: a join code
+
+If you added AgentUse in Claude or ChatGPT first, the **Set up your computer**
+page that opens after **Allow** shows a command with a join code:
+
+```bash
+npm i -g agentuse && agentuse setup --join BCDF-GHJK-LMNP
+```
+
+The join code signs this computer in to the account you are already signed in
+to, so there is nothing to approve. It works once, for 15 minutes, and can only
+link a computer. The page turns green when the computer connects.
+
 | Option | What it does |
 | --- | --- |
-| `--name <name>` | How this computer appears in your account. The default is the Mac's name or the host name. |
+| `--name <name>` | How this computer appears in your account (`--computer-name` on `agentuse setup`). The default is the Mac's name or the host name. |
+| `--join <code>` | Sign in with a join code from the setup page. |
+| `--no-service` | Don't start AgentUse in the background. |
 | `--no-browser` | Print the address and code without opening a browser. |
 | `--url <url>` | Use a different AgentUse Cloud address. `AGENTUSE_CLOUD_URL` does the same. |
 
@@ -88,9 +108,15 @@ on its own if the network drops.
 
 - **Mac app:** keeps the server running. Turn on **Launch AgentUse at Login** so
   it is there after a restart.
-- **Terminal:** run `agentuse serve` and leave it running. On a Linux server,
-  run it as a background service (for example, a systemd user service) so it
-  survives logouts and restarts.
+- **Terminal:** setup starts `agentuse serve` in the background: a launchd
+  agent (`~/Library/LaunchAgents/io.agentuse.serve.plist`) on macOS, a systemd
+  user service (`agentuse.service`) on Linux. It starts again when you log in.
+  Logs go to `~/.agentuse/logs/serve.log` on macOS and `journalctl --user -u
+  agentuse` on Linux. If AgentUse is already running some other way, such as
+  pm2, setup leaves it alone. Installed with `npx` instead of `npm i -g`? Setup
+  asks you to install it first, because npm may clear its `npx` copy. On a
+  Linux server, run `loginctl enable-linger` so it keeps running after you log
+  out.
 
 ## 2. Add AgentUse to your chat app
 
@@ -221,3 +247,4 @@ account:
 | Live line: `disconnected from the cloud` | The computer was removed from your account. Run `agentuse disconnect`, then `agentuse connect`. |
 | The chat says a tool was not allowed | The app wasn't granted that permission. Remove the connector and add it again, so the app asks for it and the **Allow** page lists it. |
 | "The code expired" | Run `agentuse connect` again. Codes last 10 minutes. |
+| "That join code is not valid any more" | Join codes work once, for 15 minutes. Open the setup page again for a new one. |

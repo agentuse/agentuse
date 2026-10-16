@@ -71,6 +71,42 @@ export async function waitForApproval(
   throw new Error('The code expired. Run `agentuse connect` again.');
 }
 
+/**
+ * Link this computer with a join code from the setup page. The person is
+ * already signed in there, so there is nothing to approve: the code itself
+ * proves the account. It works once, for a short time, and only links a
+ * computer.
+ */
+export async function redeemJoinCode(
+  baseUrl: string,
+  code: string,
+  name: string,
+  platform: string,
+): Promise<Omit<CloudConnection, 'url' | 'connectedAt'>> {
+  const { ok, status, data } = await postJson<{
+    error?: string;
+    machine_id?: string;
+    machine_token?: string;
+    name?: string;
+    account?: string;
+    mcp_url?: string;
+  }>(`${baseUrl}/api/connect/join`, { code: code.trim().toUpperCase(), name, platform });
+  if (ok && data.machine_id && data.machine_token && data.mcp_url) {
+    return {
+      machineId: data.machine_id,
+      machineToken: data.machine_token,
+      name: data.name ?? name,
+      ...(data.account && { account: data.account }),
+      mcpUrl: data.mcp_url,
+    };
+  }
+  if (data.error === 'invalid_code') {
+    throw new Error('That join code is not valid any more. Open the setup page again for a new one.');
+  }
+  if (status === 429) throw new Error('Too many tries. Wait a minute, then open the setup page again for a new code.');
+  throw new Error(`AgentUse Cloud did not accept the join code (${data.error ?? status}).`);
+}
+
 /** Tell the cloud to forget this computer's token. */
 export async function revokeThisComputer(connection: CloudConnection): Promise<void> {
   const { ok, status } = await postJson(`${connection.url}/api/connect/disconnect`, {}, {

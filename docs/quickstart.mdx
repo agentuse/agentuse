@@ -27,15 +27,39 @@ agentuse --version
   See [Installation](/installation) for pnpm, Bun, Docker, and development setup options.
 </Info>
 
-Start the guided Web setup:
+Set up AgentUse:
 
 ```bash
 agentuse setup
 ```
 
-On Apple silicon Macs you can also choose **Mac app**, which opens the download page; the app bundles its own runtime. Otherwise choose **Browser** for the guided setup. AgentUse opens its Web UI and keeps the
-server running in your terminal. Both routes now follow the same onboarding
-flow.
+Setup asks four things, and skips any that are already done, so it is safe to
+run again:
+
+1. **Where you'll use AgentUse.** From your AI assistant (Claude, ChatGPT, Claude
+   Code, Codex, or any app that supports MCP) through
+   [AgentUse Cloud](/guides/agentuse-cloud), or only on this computer with no
+   account.
+2. **Sign in,** for AgentUse Cloud only. Your browser opens; press **Connect**.
+3. **The AI that runs your agents.** A key already in your shell comes first,
+   then ChatGPT sign-in or pasting an API key. Keys stay on this computer.
+4. **Ready.** Setup creates the `my-agents` project and starts AgentUse in the
+   background (launchd on macOS, a systemd user service on Linux), so it keeps
+   running after you close the terminal and starts again when you log in.
+
+Came from the AgentUse plugin in Claude or ChatGPT? Use the command on the
+setup page instead. Its join code signs this computer in for you:
+`agentuse setup --join <code>`.
+
+### Guided Web setup
+
+Prefer the dashboard? Start the guided Web setup:
+
+```bash
+agentuse setup --web
+```
+
+AgentUse opens its Web UI and keeps the server running in your terminal.
 
 <Steps>
   <Step title="Create or attach a project">
@@ -90,16 +114,16 @@ flow.
   chat.
 </Warning>
 
-### Terminal or headless setup
+### Headless setup
 
-If a browser cannot be opened, use the same setup flow in the terminal:
+On a server or in a script, choose the route and accept the defaults:
 
 ```bash
-agentuse setup --terminal
+agentuse setup --local --yes
 ```
 
-AgentUse creates and registers the project, prints its full path, and gives you
-the exact next steps. The dashboard is optional for this path.
+Without a browser, the Cloud route prints a link and a code: open the link on
+any phone or laptop, sign in, and press **Connect**.
 
 ## Create an agent without a coding agent
 

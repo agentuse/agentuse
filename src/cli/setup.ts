@@ -1,27 +1,50 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import type * as ClackPrompts from '@clack/prompts';
-import { FIRST_PROJECT_DEFAULT_NAME, terminalFirstAgentPrompt, validateManagedProjectName } from '../onboarding';
+import type { ProviderStatus } from '../auth/provider-status';
+import { cloudUrl, computerName, platformLabel, readCloudConnection, writeCloudConnection, type CloudConnection } from '../cloud/config';
+import { redeemJoinCode, startPairing, waitForApproval } from '../cloud/pairing';
+import { FIRST_PROJECT_DEFAULT_NAME } from '../onboarding';
 import { loadGlobalConfig } from '../utils/global-config';
 import { createManagedProject, ManagedProjectError } from '../utils/managed-project';
 import { openBrowser } from '../utils/open-browser';
 import { cliCommand } from '../utils/npx';
+import { findServerForProject, serverBaseUrl } from '../utils/server-registry';
 import { createServeCommand } from './serve';
+import { installService, serviceInstalled, serviceLogPath, serviceProgram } from './service';
 
-type SetupSurface = 'web' | 'terminal';
-type SetupChoice = SetupSurface | 'mac-app';
+/**
+ * `agentuse setup`: one flow from install to a running AgentUse, in four steps.
+ *
+ *   1. Where you use it: Cloud (from an AI assistant) or Local (this computer only)
+ *   2. Sign in, Cloud only. A join code from the setup page skips steps 1 and 2.
+ *   3. Pick the AI that runs agents
+ *   4. Ready: a project, and `agentuse serve` kept running in the background
+ *
+ * Every step that is already done shows a ✓ and is skipped, so running it
+ * again is safe. `agentuse connect` is this flow with Cloud already picked.
+ */
 
-export const MAC_APP_DOWNLOAD_URL = 'https://agentuse.io/download/mac';
-
-interface SetupOptions {
+export interface SetupOptions {
   web?: boolean;
   terminal?: boolean;
+  cloud?: boolean;
+  local?: boolean;
+  join?: string;
   name?: string;
+  computerName?: string;
+  url?: string;
   yes?: boolean;
+  /** `--no-service` sets this to false. */
+  service?: boolean;
+  /** `--no-browser` sets this to false. */
+  browser?: boolean;
   port?: string;
   host?: string;
   auth?: boolean;
 }
+
+export type SetupRoute = 'cloud' | 'local';
 
 let prompts: typeof ClackPrompts | undefined;
 async function loadPrompts(): Promise<typeof ClackPrompts> {
@@ -29,71 +52,46 @@ async function loadPrompts(): Promise<typeof ClackPrompts> {
   return prompts;
 }
 
-export function resolveSetupSurface(
-  options: Pick<SetupOptions, 'web' | 'terminal' | 'name' | 'yes'>,
+/** Which route to take without asking, or 'prompt' when the person should choose. */
+export function resolveRoute(
+  options: Pick<SetupOptions, 'cloud' | 'local' | 'join' | 'yes'>,
+  connected: boolean,
   interactive: boolean,
-): SetupSurface | 'prompt' {
-  if (options.web && options.terminal) throw new Error('Choose either --web or --terminal, not both');
-  if (options.web && (options.name !== undefined || options.yes)) {
-    throw new Error('--name and --yes are terminal setup options; remove --web or use --terminal');
+): SetupRoute | 'prompt' {
+  if (options.cloud && options.local) throw new Error('Choose either --cloud or --local, not both');
+  if (options.local && options.join) throw new Error('A join code links this computer to AgentUse Cloud; remove --local');
+  if (options.local && connected) {
+    throw new Error('This computer is connected to AgentUse Cloud. Run `agentuse disconnect` first to use it locally only.');
   }
-  if (options.web) return 'web';
-  if (options.terminal || options.name !== undefined || options.yes) return 'terminal';
-  if (interactive) return 'prompt';
-  throw new Error(`Choose a setup surface: --web or --terminal (for example: ${cliCommand()} setup --terminal --yes)`);
+  if (options.cloud || options.join || connected) return 'cloud';
+  if (options.local) return 'local';
+  if (interactive && !options.yes) return 'prompt';
+  return 'local';
 }
 
-/** The Mac app ships for Apple silicon only, so only offer it there. */
-export function setupChoices(
-  platform: NodeJS.Platform = process.platform,
-  arch: string = process.arch,
-): { value: SetupChoice; label: string; hint: string }[] {
-  const choices: { value: SetupChoice; label: string; hint: string }[] = [
-    { value: 'web', label: 'Browser', hint: 'guided visual setup' },
-    { value: 'terminal', label: 'Terminal', hint: 'guided text setup' },
-  ];
-  if (platform === 'darwin' && arch === 'arm64') {
-    choices.unshift({ value: 'mac-app', label: 'Mac app', hint: 'recommended on Mac · runtime included' });
+export type AiStep =
+  | { kind: 'ready'; label: string }
+  | { kind: 'save-env'; provider: string; providerName: string; envVar: string }
+  | { kind: 'ask' };
+
+/**
+ * Whether an AI is ready for agents. A key that only lives in this shell does
+ * not reach the background service, so it is offered for saving instead.
+ */
+export function aiStep(status: Pick<ProviderStatus, 'providers' | 'customProviders'>): AiStep {
+  for (const provider of status.providers) {
+    const stored = provider.sources.find((source) => source.stored);
+    if (provider.configured && stored) return { kind: 'ready', label: `${provider.name} (${stored.name})` };
   }
-  return choices;
-}
-
-async function chooseSurface(): Promise<SetupChoice | null> {
-  const p = await loadPrompts();
-  const options = setupChoices();
-  const selected = await p.select({
-    message: 'How would you like to continue?',
-    options,
-    initialValue: options[0].value,
-  });
-  if (p.isCancel(selected)) return null;
-  return selected as SetupChoice;
-}
-
-async function openMacAppDownload(): Promise<void> {
-  const p = await loadPrompts();
-  const opened = await openBrowser(MAC_APP_DOWNLOAD_URL);
-  p.outro(opened
-    ? `Opened ${MAC_APP_DOWNLOAD_URL}. Move AgentUse to Applications, open it, and follow the guided setup.`
-    : `Download the Mac app: ${MAC_APP_DOWNLOAD_URL}`);
-}
-
-async function promptProjectName(): Promise<string | null> {
-  const p = await loadPrompts();
-  const name = await p.text({
-    message: 'Project name',
-    initialValue: FIRST_PROJECT_DEFAULT_NAME,
-    validate: (value) => {
-      try {
-        validateManagedProjectName(value);
-      } catch (error) {
-        return (error as Error).message;
-      }
-      return undefined;
-    },
-  });
-  if (p.isCancel(name)) return null;
-  return String(name);
+  const custom = status.customProviders.find((provider) => provider.hasApiKey);
+  if (custom) return { kind: 'ready', label: custom.id };
+  for (const provider of status.providers) {
+    const env = provider.sources.find((source) => source.kind === 'environment');
+    if (provider.configured && env) {
+      return { kind: 'save-env', provider: provider.id, providerName: provider.name, envVar: env.name };
+    }
+  }
+  return { kind: 'ask' };
 }
 
 export function webSetupServeArgs(
@@ -106,113 +104,289 @@ export function webSetupServeArgs(
   return args;
 }
 
-async function runWebSetup(options: SetupOptions): Promise<void> {
-  const args = webSetupServeArgs(options);
-  await createServeCommand().parseAsync(args, { from: 'user' });
+class SetupCancelled extends Error {}
+
+async function ask<T>(value: Promise<T | symbol>): Promise<T> {
+  const p = await loadPrompts();
+  const answer = await value;
+  if (p.isCancel(answer)) throw new SetupCancelled();
+  return answer as T;
 }
 
-function printTerminalNextSteps(projectRoot: string): void {
-  console.log(chalk.bold('\nNext — create your first agent'));
-  console.log(chalk.dim('\n1. Start AgentUse in another terminal and leave it running:'));
-  console.log(`\n   ${chalk.cyan(`${cliCommand()} serve`)}`);
-  console.log(chalk.dim('\n2. Install the AgentUse skill for your coding agent (one time):'));
-  console.log(`\n   ${chalk.cyan('npx skills add agentuse/agentuse')}`);
-  console.log(chalk.dim('\n3. Open the project with your preferred coding agent:'));
-  console.log(`\n   ${chalk.cyan(`cd ${JSON.stringify(projectRoot)}`)}`);
-  console.log(`   ${chalk.cyan('codex')}  ${chalk.dim('# or: claude, pi')}`);
-  console.log(chalk.dim('\n4. Paste this prompt:'));
-  console.log(`\n${terminalFirstAgentPrompt(projectRoot)}`);
+async function chooseRoute(): Promise<SetupRoute> {
+  const p = await loadPrompts();
+  return ask(p.select<SetupRoute>({
+    message: 'Where will you use AgentUse?',
+    options: [
+      { value: 'cloud', label: 'From your AI assistant', hint: 'Cloud · Claude, ChatGPT, Claude Code, Codex and any MCP app' },
+      { value: 'local', label: 'Only on this computer', hint: 'no account' },
+    ],
+    initialValue: 'cloud',
+  }));
 }
 
-async function runTerminalSetup(options: SetupOptions, interactive: boolean): Promise<void> {
-  let config;
+const signedInLine = (connection: CloudConnection): string =>
+  `Signed in  ${chalk.dim(`${connection.account ?? 'your account'} · ${connection.name}`)}`;
+
+async function signIn(options: SetupOptions): Promise<CloudConnection> {
+  const p = await loadPrompts();
+  const url = cloudUrl(options.url);
+  const name = options.computerName ?? computerName();
+
+  if (options.join) {
+    const spin = p.spinner();
+    spin.start('Linking with your join code');
+    try {
+      const linked = await redeemJoinCode(url, options.join, name, platformLabel());
+      const connection = { ...linked, url, connectedAt: new Date().toISOString() };
+      writeCloudConnection(connection);
+      spin.stop(signedInLine(connection));
+      return connection;
+    } catch (error) {
+      spin.stop('Could not use the join code', 1);
+      throw error;
+    }
+  }
+
+  const start = await startPairing(url, name, platformLabel());
+  p.log.step('Sign in to AgentUse Cloud');
+  p.log.message([
+    `Open   ${chalk.cyan(start.verification_uri)}`,
+    `Code   ${chalk.bold(start.user_code)}`,
+    chalk.dim('No browser here (SSH, a server)? Open the link on any phone or laptop and type the code.'),
+  ].join('\n'));
+  if (options.browser !== false) await openBrowser(start.verification_uri_complete);
+  const spin = p.spinner();
+  spin.start('Waiting for you to press Connect');
   try {
-    config = loadGlobalConfig();
+    const approved = await waitForApproval(url, start);
+    const connection = { ...approved, url, connectedAt: new Date().toISOString() };
+    writeCloudConnection(connection);
+    spin.stop(signedInLine(connection));
+    return connection;
+  } catch (error) {
+    spin.stop('Not connected', 1);
+    throw error;
+  }
+}
+
+async function chatGptLogin(): Promise<void> {
+  const p = await loadPrompts();
+  const { startProviderOAuth, completeProviderOAuth } = await import('../auth/provider-setup');
+  const flow = await startProviderOAuth('openai');
+  p.log.message([
+    'Sign in to ChatGPT in your browser. Afterwards the page may show an error: that is expected.',
+    'Copy the full address from the browser and paste it here.',
+    '',
+    chalk.cyan(flow.authorizationUrl),
+  ].join('\n'));
+  await openBrowser(flow.authorizationUrl);
+  const callback = await ask(p.text({ message: 'Paste the address from your browser' }));
+  await completeProviderOAuth(flow.flowId, callback);
+}
+
+async function pasteKey(): Promise<void> {
+  const p = await loadPrompts();
+  const { saveProviderApiKey } = await import('../auth/provider-setup');
+  const provider = await ask(p.select<string>({
+    message: 'Whose key?',
+    options: [
+      { value: 'anthropic', label: 'Anthropic', hint: 'Claude models' },
+      { value: 'openai', label: 'OpenAI' },
+      { value: 'openrouter', label: 'OpenRouter', hint: 'many models' },
+      { value: 'opencode-go', label: 'OpenCode Go' },
+    ],
+  }));
+  const key = await ask(p.password({ message: 'API key', validate: (value) => (value?.trim() ? undefined : 'Paste the key') }));
+  await saveProviderApiKey(provider, key);
+}
+
+async function pickAi(interactive: boolean, yes: boolean | undefined): Promise<void> {
+  const p = await loadPrompts();
+  const { getProviderStatus } = await import('../auth/provider-status');
+  const step = aiStep(await getProviderStatus({ readiness: 'defer' }));
+  if (step.kind === 'ready') {
+    p.log.success(`AI  ${chalk.dim(step.label)}`);
+    return;
+  }
+  if (!interactive || yes) {
+    p.log.warn(step.kind === 'save-env'
+      ? `${step.envVar} is only set in this shell, so the background service won't see it. Run \`${cliCommand()} provider login\`.`
+      : `No AI is set up to run agents yet. Run \`${cliCommand()} provider login\`.`);
+    return;
+  }
+
+  type Choice = 'save-env' | 'chatgpt' | 'key' | 'skip';
+  const options: { value: Choice; label: string; hint?: string }[] = [];
+  if (step.kind === 'save-env') {
+    options.push({ value: 'save-env', label: `Use ${step.envVar} from your shell`, hint: 'found · saved so agents can use it in the background' });
+  }
+  options.push(
+    { value: 'chatgpt', label: 'Sign in with ChatGPT', hint: 'uses your ChatGPT plan' },
+    { value: 'key', label: 'Paste an API key', hint: 'Anthropic, OpenAI, OpenRouter' },
+    { value: 'skip', label: 'Skip for now' },
+  );
+  p.log.message(chalk.dim('Your assistant writes agents. This AI runs them here, on schedule.\nKeys stay on this computer. A Claude Pro or Max plan can\'t run agents here.'));
+  const choice = await ask(p.select<Choice>({ message: 'Which AI runs your agents?', options, initialValue: options[0]!.value }));
+
+  if (choice === 'skip') {
+    p.log.warn(`No AI yet. Agents can't run until you add one: \`${cliCommand()} provider login\`.`);
+    return;
+  }
+  if (choice === 'save-env' && step.kind === 'save-env') {
+    const { saveProviderApiKey } = await import('../auth/provider-setup');
+    await saveProviderApiKey(step.provider, process.env[step.envVar]);
+    p.log.success(`AI  ${chalk.dim(`${step.providerName}, from ${step.envVar}`)}`);
+    return;
+  }
+  if (choice === 'chatgpt') await chatGptLogin();
+  else await pasteKey();
+  p.log.success(`AI  ${chalk.dim(choice === 'chatgpt' ? 'your ChatGPT plan' : 'key saved')}`);
+}
+
+async function ensureProject(options: SetupOptions): Promise<void> {
+  const p = await loadPrompts();
+  const configured = loadGlobalConfig()?.serve?.projects ?? [];
+  if (configured.length > 0) {
+    p.log.success(`Project  ${chalk.dim(configured.map((project) => project.path).join(', '))}`);
+    return;
+  }
+  try {
+    const project = await createManagedProject(options.name ?? FIRST_PROJECT_DEFAULT_NAME);
+    p.log.success(`Project  ${chalk.dim(project.root)}`);
+  } catch (error) {
+    const message = error instanceof ManagedProjectError ? error.message : (error as Error).message;
+    throw new Error(`Could not create the project: ${message}`);
+  }
+}
+
+/** Keep `agentuse serve` running. Returns the dashboard address when one is known. */
+async function keepRunning(options: SetupOptions): Promise<string | undefined> {
+  const p = await loadPrompts();
+  const running = findServerForProject();
+  const runningUrl = running ? serverBaseUrl(running) : undefined;
+  if (options.service === false) {
+    p.log.info(runningUrl ? `Running  ${chalk.dim(runningUrl)}` : `Not started. Run \`${cliCommand()} serve\` and leave it open.`);
+    return runningUrl;
+  }
+  // Already running some other way (pm2, a terminal, the Mac app): leave it be.
+  if (running && !serviceInstalled()) {
+    p.log.success(`Running  ${chalk.dim(`${runningUrl}, started another way`)}`);
+    return runningUrl;
+  }
+  const resolved = serviceProgram();
+  if (!resolved.ok) {
+    p.log.warn(resolved.reason === 'npx'
+      ? 'To keep AgentUse running in the background, install it first with `npm i -g agentuse`, then run `agentuse setup` again.'
+      : `A background service isn't available here. Run \`${cliCommand()} serve\` and leave it open.`);
+    return runningUrl;
+  }
+  const spin = p.spinner();
+  spin.start('Starting AgentUse in the background');
+  try {
+    await installService(resolved.program);
+    let server = findServerForProject();
+    for (let tries = 0; !server && tries < 20; tries++) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      server = findServerForProject();
+    }
+    spin.stop(`Background  ${chalk.dim('starts when you log in')}`);
+    return server ? serverBaseUrl(server) : undefined;
+  } catch (error) {
+    spin.stop('Could not start the background service', 1);
+    p.log.warn(`${(error as Error).message}\nRun \`${cliCommand()} serve\` instead. Logs: ${serviceLogPath()}`);
+    return runningUrl;
+  }
+}
+
+export function readyText(route: SetupRoute, mcpUrl: string | undefined, dashboard: string | undefined, command = cliCommand()): string {
+  if (route === 'cloud' && mcpUrl) {
+    return [
+      chalk.bold('You\'re set.'),
+      '',
+      'Came from the Claude or ChatGPT plugin? Go back and ask again.',
+      '',
+      'Otherwise, add this to your AI assistant:',
+      `  ${chalk.green.bold(mcpUrl)}`,
+      chalk.dim('  How to add it: https://docs.agentuse.io/guides/agentuse-cloud'),
+      '',
+      chalk.dim(`Check any time: ${command} status`),
+    ].join('\n');
+  }
+  const base = dashboard ?? 'http://127.0.0.1:12233';
+  return [
+    chalk.bold('You\'re set.'),
+    '',
+    `Dashboard     ${chalk.cyan(base)}`,
+    `Claude Code   ${chalk.cyan(`claude mcp add --transport http agentuse ${base}/mcp`)}`,
+    '',
+    chalk.dim(`Use it from Claude or ChatGPT later: ${command} connect`),
+  ].join('\n');
+}
+
+export async function runSetup(options: SetupOptions): Promise<void> {
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  const p = await loadPrompts();
+  let connection: CloudConnection | undefined;
+  try {
+    connection = readCloudConnection();
   } catch (error) {
     console.error(chalk.red((error as Error).message));
     process.exitCode = 1;
     return;
   }
 
-  const configured = config?.serve?.projects ?? [];
-  if (configured.length > 0) {
-    console.log(chalk.green('AgentUse is already set up.'));
-    for (const project of configured) {
-      console.log(`  ${chalk.cyan(project.id ?? 'project')}  ${chalk.dim(project.path)}`);
-    }
-    console.log(chalk.dim('\nStart AgentUse with:'));
-    console.log(`\n  ${chalk.cyan(`${cliCommand()} serve`)}`);
-    return;
-  }
+  try {
+    const decided = resolveRoute(options, Boolean(connection), interactive);
+    p.intro(options.join && !connection ? 'AgentUse setup · linked from your browser' : 'AgentUse setup');
+    const route = decided === 'prompt' ? await chooseRoute() : decided;
+    p.log.success(`Where  ${chalk.dim(route === 'cloud' ? 'AgentUse Cloud' : 'Only on this computer')}`);
 
-  let name = options.name;
-  if (name === undefined) {
-    if (options.yes) {
-      name = FIRST_PROJECT_DEFAULT_NAME;
-    } else if (interactive) {
-      name = await promptProjectName() ?? undefined;
-      if (name === undefined) {
-        console.log(chalk.dim('Setup cancelled.'));
-        return;
-      }
-    } else {
-      console.error(chalk.red('Project name required in a non-interactive terminal.'));
-      console.error(chalk.dim(`Run: ${cliCommand()} setup --terminal --name ${FIRST_PROJECT_DEFAULT_NAME} --yes`));
-      process.exitCode = 1;
+    if (route === 'cloud') {
+      if (connection) p.log.success(signedInLine(connection));
+      else connection = await signIn(options);
+    }
+    await pickAi(interactive, options.yes);
+    await ensureProject(options);
+    const dashboard = await keepRunning(options);
+    p.outro(readyText(route, connection?.mcpUrl, dashboard));
+  } catch (error) {
+    if (error instanceof SetupCancelled) {
+      p.cancel('Setup cancelled. Run it again any time; finished steps are kept.');
       return;
     }
-  }
-
-  try {
-    const project = await createManagedProject(name);
-    console.log(chalk.green(`✓ Created project ${project.name}`));
-    console.log(`  ${chalk.dim('Location')}  ${project.root}`);
-    console.log(`  ${chalk.dim('Agents')}    ${project.root}/agents`);
-    printTerminalNextSteps(project.root);
-  } catch (error) {
-    const message = error instanceof ManagedProjectError ? error.message : (error as Error).message;
-    console.error(chalk.red(`Setup failed: ${message}`));
+    p.log.error((error as Error).message);
     process.exitCode = 1;
   }
 }
 
 export function createSetupCommand(): Command {
   return new Command('setup')
-    .description('Set up AgentUse in a browser or terminal')
-    .option('--web', 'Continue setup in the Web UI')
-    .option('--terminal', 'Continue setup in the terminal')
-    .option('--name <name>', `Managed project name (default: ${FIRST_PROJECT_DEFAULT_NAME})`)
-    .option('-y, --yes', 'Accept the default project name without prompting')
+    .description('Set up AgentUse: where you use it, sign in, the AI that runs agents, and keep it running')
+    .option('--cloud', 'Use AgentUse from your AI assistant (Claude, ChatGPT, any MCP app)')
+    .option('--local', 'Use AgentUse only on this computer, with no account')
+    .option('--join <code>', 'Join code from the AgentUse Cloud setup page')
+    .option('--name <name>', `Project name for a first project (default: ${FIRST_PROJECT_DEFAULT_NAME})`)
+    .option('--computer-name <name>', 'How this computer is shown in your account')
+    .option('--url <url>', 'AgentUse Cloud address')
+    .option('-y, --yes', 'Use the defaults without asking')
+    .option('--no-service', 'Do not install the background service')
+    .option('--no-browser', 'Print links instead of opening a browser')
+    .option('--web', 'Continue setup in the browser dashboard instead')
+    .option('--terminal', 'Set up in the terminal (the default)')
     .option('-p, --port <number>', 'Web setup server port (default: 12233)')
     .option('-H, --host <string>', 'Web setup server host (default: 127.0.0.1)')
     .option('--no-auth', 'Disable server API key requirement (dangerous on publicly reachable hosts)')
     .action(async (options: SetupOptions) => {
-      const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-      let surface: SetupSurface | 'prompt';
-      try {
-        surface = resolveSetupSurface(options, interactive);
-      } catch (error) {
-        console.error(chalk.red((error as Error).message));
+      if (options.web && options.terminal) {
+        console.error(chalk.red('Choose either --web or --terminal, not both'));
         process.exitCode = 1;
         return;
       }
-
-      if (surface === 'prompt') {
-        const p = await loadPrompts();
-        p.intro('AgentUse setup');
-        const selected = await chooseSurface();
-        if (!selected) {
-          p.cancel('Setup cancelled.');
-          return;
-        }
-        if (selected === 'mac-app') {
-          await openMacAppDownload();
-          return;
-        }
-        surface = selected;
+      if (options.web) {
+        await createServeCommand().parseAsync(webSetupServeArgs(options), { from: 'user' });
+        return;
       }
-
-      if (surface === 'web') await runWebSetup(options);
-      else await runTerminalSetup(options, interactive);
+      await runSetup(options);
     });
 }
