@@ -86,6 +86,7 @@ private struct HostMessage: Decodable {
     var type: String
     var state: SettingsState?
     var message: String?
+    var tab: String?
 }
 
 private struct HelperCommand: Encodable {
@@ -140,6 +141,7 @@ private final class HostConnection: @unchecked Sendable {
             case "error":
                 if let message = message.message { self?.model?.showError(message) }
             case "show":
+                if let tab = message.tab { self?.model?.selectedTab = tab }
                 NSApplication.shared.activate(ignoringOtherApps: true)
                 NSApplication.shared.windows.first?.makeKeyAndOrderFront(nil)
             case "hide":
@@ -158,6 +160,7 @@ private final class SettingsModel: ObservableObject {
     @Published private(set) var state = SettingsState.loading
     @Published private(set) var actionInFlight = false
     @Published var errorMessage: String?
+    @Published var selectedTab = "general"
 
     init() {
         HostConnection.shared.model = self
@@ -823,18 +826,22 @@ private struct SettingsView: View {
     @StateObject private var model = SettingsModel()
 
     var body: some View {
-        TabView {
+        TabView(selection: $model.selectedTab) {
             GeneralSettingsView(model: model)
                 .tabItem { Label("General", systemImage: "gearshape") }
+                .tag("general")
 
             CloudSettingsView(model: model)
                 .tabItem { Label("AgentUse Cloud", systemImage: "cloud") }
+                .tag("cloud")
 
             LogsSettingsView(model: model)
                 .tabItem { Label("Logs", systemImage: "doc.text") }
+                .tag("logs")
 
             AboutSettingsView(model: model)
                 .tabItem { Label("About", systemImage: "info.circle") }
+                .tag("about")
         }
         .frame(minWidth: 560, idealWidth: 620, minHeight: 440, idealHeight: 520)
         .alert(

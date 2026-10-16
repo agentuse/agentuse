@@ -42,7 +42,7 @@ import {
 import { getProviderStatus } from "../../../src/auth/provider-status";
 import { loadGlobalConfig } from "../../../src/utils/global-config";
 import { readCloudConnection } from "../../../src/cloud/config";
-import { CloudConnector, cloudSettingsState, type CloudApiState } from "./cloud-settings";
+import { CloudConnector, cloudSettingsState, parseJoinLink, type CloudApiState } from "./cloud-settings";
 import { initializeDesktopGlobalDefaults } from "./global-defaults";
 import { DesktopUpdater, type DesktopUpdateState } from "./updater";
 import { DesktopUpdateScheduler } from "./update-scheduler";
@@ -84,6 +84,10 @@ let settingsCommandQueue = Promise.resolve();
 // Shown as an alert once Settings is on screen, e.g. why the dashboard could
 // not open. A freshly spawned helper only reads it after it reports ready.
 let pendingSettingsError: string | undefined;
+// The tab Settings should show next, e.g. AgentUse Cloud after a join link.
+let pendingSettingsTab: "cloud" | undefined;
+// A join link that arrived before the app was ready.
+let pendingJoinCode: string | undefined;
 let tray: Tray | undefined;
 let trayMenu: Menu | undefined;
 let dashboardUrl: string | undefined;
@@ -910,6 +914,36 @@ function nativeSettingsExecutablePath(): string {
   return join(bundle, "Contents", "MacOS", "AgentUseSettings");
 }
 
+function settingsShowMessage(): NativeSettingsMessage {
+  const tab = pendingSettingsTab;
+  pendingSettingsTab = undefined;
+  return tab ? { type: "show", tab } : { type: "show" };
+}
+
+/**
+ * `agentuse://join?code=…` from the Cloud setup page: open the AgentUse Cloud
+ * tab and link this Mac with the code, so no second browser step is needed.
+ */
+function handleJoinLink(url: string): void {
+  const code = parseJoinLink(url);
+  if (!code) return;
+  if (!app.isReady()) {
+    pendingJoinCode = code;
+    return;
+  }
+  startJoin(code);
+}
+
+function startJoin(code: string): void {
+  pendingSettingsTab = "cloud";
+  if (readCloudConnection()) {
+    pendingSettingsError = "This Mac is already connected to AgentUse Cloud. Disconnect first to link it to a different account.";
+  } else {
+    cloudConnector.connect(code);
+  }
+  showSettings();
+}
+
 function flushPendingSettingsError(child = settingsProcess): void {
   if (!pendingSettingsError) return;
   sendNativeSettingsMessage({ type: "error", message: pendingSettingsError }, child);
@@ -951,7 +985,7 @@ async function handleNativeSettingsCommand(line: string, child: ChildProcess): P
       break;
     case "ready":
       await pushNativeSettingsState(child);
-      sendNativeSettingsMessage({ type: "show" }, child);
+      sendNativeSettingsMessage(settingsShowMessage(), child);
       flushPendingSettingsError(child);
       break;
     case "toggleServer": {
@@ -1060,7 +1094,7 @@ async function handleNativeSettingsCommand(line: string, child: ChildProcess): P
 
 function showSettings(): void {
   if (settingsProcess && settingsProcess.exitCode === null && !settingsProcess.killed) {
-    sendNativeSettingsMessage({ type: "show" });
+    sendNativeSettingsMessage(settingsShowMessage());
     void pushNativeSettingsState();
     flushPendingSettingsError();
     return;
@@ -1567,6 +1601,11 @@ if (!app.requestSingleInstanceLock()) {
   // server gets the same graceful shutdown as the menu-bar Quit command.
   process.once("SIGTERM", requestFullQuit);
   app.on("second-instance", () => void openPrimaryWindow());
+  // macOS delivers agentuse:// links here, at launch too, so register it now.
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    handleJoinLink(url);
+  });
   app.on("will-quit", unregisterDashboardShortcut);
   app.on("before-quit", (event) => {
     if (!quitPolicy.shouldTerminate()) {
@@ -1600,6 +1639,7 @@ if (!app.requestSingleInstanceLock()) {
     // global .env and config.json env block as the CLI before any provider
     // status check, server authentication, or child-process construction.
     initializeDesktopGlobalDefaults();
+    if (app.isPackaged) app.setAsDefaultProtocolClient("agentuse");
     registerDesktopIpc();
     initializeDesktopUpdater();
     createTray();
@@ -1634,6 +1674,11 @@ if (!app.requestSingleInstanceLock()) {
       return;
     }
     await openPrimaryWindow();
+    if (pendingJoinCode) {
+      const code = pendingJoinCode;
+      pendingJoinCode = undefined;
+      startJoin(code);
+    }
     await flushDesktopTelemetry();
   }).catch((error: unknown) => {
     // Only shell setup (tray, IPC, preferences) lands here: without a menu-bar

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { cloudSettingsState, parseConnectCode } from "./cloud-settings";
+import { EventEmitter } from "node:events";
+import { CloudConnector, cloudSettingsState, parseConnectCode, parseJoinLink } from "./cloud-settings";
 import { parseNativeSettingsCommand } from "./native-settings";
 
 describe("AgentUse Cloud settings", () => {
@@ -46,5 +47,26 @@ describe("AgentUse Cloud settings", () => {
 
   it("accepts the toggleCloud command from the settings helper", () => {
     expect(parseNativeSettingsCommand('{"type":"toggleCloud"}')).toEqual({ type: "toggleCloud" });
+  });
+
+  it("reads the join code from a setup page link and nothing else", () => {
+    expect(parseJoinLink("agentuse://join?code=bcdf-ghjk-lmnp")).toBe("BCDF-GHJK-LMNP");
+    expect(parseJoinLink("agentuse:join?code=BCDF-GHJK-LMNP")).toBe("BCDF-GHJK-LMNP");
+    expect(parseJoinLink("agentuse://join?code=BCDF-GHJK")).toBeUndefined();
+    expect(parseJoinLink("agentuse://join?code=AAAA-GHJK-LMNP")).toBeUndefined();
+    expect(parseJoinLink("agentuse://open?code=BCDF-GHJK-LMNP")).toBeUndefined();
+    expect(parseJoinLink("https://join?code=BCDF-GHJK-LMNP")).toBeUndefined();
+    expect(parseJoinLink("not a url")).toBeUndefined();
+  });
+
+  it("joins with the code and shows Connecting instead of a browser step", () => {
+    const calls: string[][] = [];
+    const child = Object.assign(new EventEmitter(), { stdout: null, stderr: null, kill() {} });
+    const connector = new CloudConnector((args) => { calls.push(args); return child as never; }, () => {});
+    connector.connect("BCDF-GHJK-LMNP");
+    expect(calls).toEqual([["connect", "--join", "BCDF-GHJK-LMNP"]]);
+    expect(cloudSettingsState(connector.view)).toMatchObject({ cloudStatus: "connecting", cloudTitle: "Connecting…", cloudActionLabel: "Cancel" });
+    child.emit("exit", 0, null);
+    expect(connector.view.connecting).toBeUndefined();
   });
 });

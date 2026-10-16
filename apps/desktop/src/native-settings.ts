@@ -45,7 +45,7 @@ export type NativeSettingsCommand =
 export type NativeSettingsMessage =
   | { type: "state"; state: DesktopSettingsState }
   | { type: "error"; message: string }
-  | { type: "show" }
+  | { type: "show"; tab?: "cloud" }
   | { type: "hide" }
   | { type: "quit" };
 

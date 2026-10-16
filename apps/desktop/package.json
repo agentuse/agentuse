@@ -33,6 +33,14 @@
   "build": {
     "appId": "io.agentuse.desktop",
     "productName": "AgentUse",
+    "protocols": [
+      {
+        "name": "AgentUse",
+        "schemes": [
+          "agentuse"
+        ]
+      }
+    ],
     "asar": true,
     "asarUnpack": [
       "node_modules/esbuild/**",
