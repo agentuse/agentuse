@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server, ServerWebSocket } from 'bun';
 import { readCloudConnection, removeCloudConnection, writeCloudConnection, type CloudConnection } from '../src/cloud/config';
-import { redeemJoinCode, waitForApproval, type PairingStart } from '../src/cloud/pairing';
+import { connectionRevoked, redeemJoinCode, waitForApproval, type PairingStart } from '../src/cloud/pairing';
 import { CloudTunnel } from '../src/cloud/tunnel';
 
 const savedConfigDir = process.env.AGENTUSE_CONFIG_DIR;
@@ -96,6 +96,16 @@ describe('join codes', () => {
     await expect(redeemJoinCode('https://c', 'X', 'n', 'p')).rejects.toThrow('not valid any more');
     globalThis.fetch = (async () => new Response(JSON.stringify({ error: 'rate_limited' }), { status: 429 })) as unknown as typeof fetch;
     await expect(redeemJoinCode('https://c', 'X', 'n', 'p')).rejects.toThrow('Too many tries');
+  });
+
+  it('treats a refused token as disconnected, but never a network failure', async () => {
+    const connection = { machineId: 'm', machineToken: 'auc_x', name: 'Mac', mcpUrl: 'https://c/mcp', url: 'https://c', connectedAt: '' };
+    globalThis.fetch = (async () => new Response('{}', { status: 401 })) as unknown as typeof fetch;
+    expect(await connectionRevoked(connection)).toBe(true);
+    globalThis.fetch = (async () => new Response('{}', { status: 200 })) as unknown as typeof fetch;
+    expect(await connectionRevoked(connection)).toBe(false);
+    globalThis.fetch = (async () => { throw new Error('offline'); }) as unknown as typeof fetch;
+    expect(await connectionRevoked(connection)).toBe(false);
   });
 });
 

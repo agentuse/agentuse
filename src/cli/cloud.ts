@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { cloudConfigPath, cloudUrl, computerName, platformLabel, readCloudConnection, removeCloudConnection, writeCloudConnection } from '../cloud/config.js';
-import { redeemJoinCode, revokeThisComputer, startPairing, waitForApproval } from '../cloud/pairing.js';
+import { connectionRevoked, redeemJoinCode, revokeThisComputer, startPairing, waitForApproval } from '../cloud/pairing.js';
 import { openBrowser } from '../utils/open-browser.js';
 import { daemonRequestHeaders, findServerForProject, serverBaseUrl } from '../utils/server-registry.js';
 import { runSetup } from './setup.js';
@@ -37,9 +37,14 @@ async function liveTunnelState(): Promise<string | undefined> {
 async function linkOnly(options: { name?: string; join?: string; url?: string; browser: boolean }): Promise<void> {
   try {
     const existing = readCloudConnection();
-    if (existing) {
+    if (existing && await connectionRevoked(existing)) {
+      // Disconnected from the account page: the saved token is dead, so link afresh.
+      removeCloudConnection();
+    } else if (existing) {
       console.log(`Already connected as ${chalk.bold(existing.name)}${existing.account ? ` (${existing.account})` : ''}.`);
       console.log(chalk.dim('Run `agentuse disconnect` first to connect it again.'));
+      // The Mac app shows the last line when a join link could not be used.
+      if (options.join) process.exitCode = 1;
       return;
     }
     const url = cloudUrl(options.url);

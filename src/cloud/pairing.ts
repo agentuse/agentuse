@@ -107,6 +107,23 @@ export async function redeemJoinCode(
   throw new Error(`AgentUse Cloud did not accept the join code (${data.error ?? status}).`);
 }
 
+/**
+ * True when the cloud refuses this computer's token, e.g. after Disconnect on
+ * the account page. A network failure counts as still connected, so a flaky
+ * line never throws away a working connection.
+ */
+export async function connectionRevoked(connection: CloudConnection): Promise<boolean> {
+  try {
+    const response = await fetch(`${connection.url}/api/connect/me`, {
+      headers: { Authorization: `Bearer ${connection.machineToken}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    return response.status === 401;
+  } catch {
+    return false;
+  }
+}
+
 /** Tell the cloud to forget this computer's token. */
 export async function revokeThisComputer(connection: CloudConnection): Promise<void> {
   const { ok, status } = await postJson(`${connection.url}/api/connect/disconnect`, {}, {

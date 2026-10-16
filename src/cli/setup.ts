@@ -2,8 +2,8 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import type * as ClackPrompts from '@clack/prompts';
 import type { ProviderStatus } from '../auth/provider-status';
-import { cloudUrl, computerName, platformLabel, readCloudConnection, writeCloudConnection, type CloudConnection } from '../cloud/config';
-import { redeemJoinCode, startPairing, waitForApproval } from '../cloud/pairing';
+import { cloudUrl, computerName, platformLabel, readCloudConnection, removeCloudConnection, writeCloudConnection, type CloudConnection } from '../cloud/config';
+import { connectionRevoked, redeemJoinCode, startPairing, waitForApproval } from '../cloud/pairing';
 import { FIRST_PROJECT_DEFAULT_NAME } from '../onboarding';
 import { loadGlobalConfig } from '../utils/global-config';
 import { createManagedProject, ManagedProjectError } from '../utils/managed-project';
@@ -336,6 +336,13 @@ export async function runSetup(options: SetupOptions): Promise<void> {
     return;
   }
 
+  // Disconnected from the account page: forget the dead token and sign in again.
+  const revoked = connection !== undefined && await connectionRevoked(connection);
+  if (revoked) {
+    removeCloudConnection();
+    connection = undefined;
+  }
+
   try {
     const decided = resolveRoute(options, Boolean(connection), interactive);
     p.intro(options.join && !connection ? 'AgentUse setup · linked from your browser' : 'AgentUse setup');
@@ -343,8 +350,13 @@ export async function runSetup(options: SetupOptions): Promise<void> {
     p.log.success(`Where  ${chalk.dim(route === 'cloud' ? 'AgentUse Cloud' : 'Only on this computer')}`);
 
     if (route === 'cloud') {
-      if (connection) p.log.success(signedInLine(connection));
-      else connection = await signIn(options);
+      if (revoked) p.log.warn('This computer was disconnected from your account, so it signs in again.');
+      if (connection) {
+        p.log.success(signedInLine(connection));
+        if (options.join) p.log.warn('Already connected, so the join code was not used. Run `agentuse disconnect` first to link it to another account.');
+      } else {
+        connection = await signIn(options);
+      }
     }
     await pickAi(interactive, options.yes);
     await ensureProject(options);

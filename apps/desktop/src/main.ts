@@ -931,12 +931,26 @@ function handleJoinLink(url: string): void {
     pendingJoinCode = code;
     return;
   }
-  startJoin(code);
+  void startJoin(code);
 }
 
-function startJoin(code: string): void {
+async function startJoin(code: string): Promise<void> {
   pendingSettingsTab = "cloud";
-  if (readCloudConnection()) {
+  // A link can come from any web page, so linking this Mac waits for a yes.
+  const { response } = await dialog.showMessageBox({
+    type: "question",
+    message: "Connect this Mac to AgentUse Cloud?",
+    detail: "Only continue if you just pressed Connect this Mac on cloud.agentuse.io. The account that made this link can then use AgentUse on this Mac.",
+    buttons: ["Connect", "Cancel"],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (response !== 0) return;
+  // Disconnected from the account page leaves a dead connection on disk; the
+  // CLI checks it with the cloud and replaces it. A live one is kept.
+  const activeServer = currentServer && listRegisteredServers().find((server) => server.pid === currentServer?.pid);
+  const live = savedCloudConnection() ? (await cloudApiState(activeServer))?.status : undefined;
+  if (live && live !== "disconnected from the cloud") {
     pendingSettingsError = "This Mac is already connected to AgentUse Cloud. Disconnect first to link it to a different account.";
   } else {
     cloudConnector.connect(code);
@@ -1677,7 +1691,7 @@ if (!app.requestSingleInstanceLock()) {
     if (pendingJoinCode) {
       const code = pendingJoinCode;
       pendingJoinCode = undefined;
-      startJoin(code);
+      await startJoin(code);
     }
     await flushDesktopTelemetry();
   }).catch((error: unknown) => {
