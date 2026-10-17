@@ -49,6 +49,7 @@ export function ConnectAppsSettingsGroup() {
                 They reach this computer through AgentUse Cloud{cloud.data?.account ? `, signed in as ${cloud.data.account}` : ''}. Add this address as a connector, sign in, then ask it to automate something.
               </p>
               <CopyField value={mcpUrl} />
+              {!agents.error && <p>Claude Code on this Mac already has AgentUse. If it shows up twice there, turn off the claude.ai one in Claude Code's /mcp.</p>}
             </>
           : <>
               <p class="settings-group-hint">They reach this computer through AgentUse Cloud, which isn't connected yet.</p>
