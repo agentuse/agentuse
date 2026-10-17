@@ -4,28 +4,28 @@
 
 ### Added
 
-- **MCP servers that need an OAuth login.** Give an HTTP MCP server just its `url`; if it asks for a login, log in once from the agent's page in the dashboard or the Mac app, or with `agentuse mcp login <agent> <server>`. The login is shared by every agent using the same server, and runs refresh it on their own. When a fresh login is needed, the run says so instead of waiting for a browser, and a server that wants an API key instead says that. `auth.type: oauth` is only needed for a pre-registered `clientId` or `scopes`. `agentuse mcp status` and `agentuse mcp logout` round it out.
+- **MCP servers that need an OAuth login.** Give an HTTP MCP server just its `url`; if it asks for a login, log in once from the agent's page in the dashboard or the Mac app, or with `agentuse mcp login <agent> <server>`. The login is shared by every agent using the same server, and runs refresh it on their own. When a fresh login is needed, the run says so instead of waiting for a browser, and a server that wants an API key instead says that. A run that stopped for a login shows the Log in button on its own page, with **Run again** to repeat the same request and model. If a server stops accepting the client AgentUse registered, the next login registers a new one. `auth.type: oauth` is only needed for a pre-registered `clientId` or `scopes`. `agentuse mcp status` and `agentuse mcp logout` round it out.
 - **`allowedTools` for MCP servers.** List the tools an agent may use and every other tool on that server stays off, including tools the server adds later and the `list_resources` / `read_resource` tools for servers with resources. Handy for a few safe tools on a large server. `disallowedTools` still wins when both are set.
-- **HTTP MCP servers speak the newest MCP protocol (2026-07-28).** Older servers keep working: the client falls back to their version.
+- **HTTP MCP servers speak the newest MCP protocol (2026-07-28).** Older servers keep working: the client falls back to their version. Redirects on the same host, such as `/mcp` to `/mcp/` or http to https, are followed; a redirect to another host is refused, so tokens and headers never leave the server they were set for.
 - **Claude Haiku 5.5 is in the bundled model catalog.** It has a 1M-token context window and 128K output, and every `reasoning` level works on it, including `max`.
 
 ### Changed
 
 - **`anthropic:claude-haiku` now resolves to Claude Haiku 5.5** instead of Claude Haiku 4.5. Agents pinned to `anthropic:claude-haiku-4-5` keep using it. Claude Haiku 5.5 does not accept a manual thinking budget, so set its depth with `reasoning` rather than `anthropic.thinking.budgetTokens`.
-- **The `opencode-go:deepseek-flash` alias is gone,** because OpenCode Go no longer lists DeepSeek V4 Flash. It is still available as `openrouter:deepseek/deepseek-v4-flash`.
+- **OpenCode Go models it no longer offers are gone from the catalog:** DeepSeek V4 Flash, Grok 4.5 and 4.6, Kimi K2.6, Qwen3.6 Plus and Qwen3.7 Max. The `opencode-go:deepseek-flash` alias goes with them; DeepSeek V4 Flash is still available as `openrouter:deepseek/deepseek-v4-flash`.
 
 ### Fixed
 
-- **MCP tools work whatever JSON Schema draft their input schema declares.** Tools declaring draft-04, draft-06, 2019-09 or 2020-12 used to fail every call with `no schema with key or ref` before the call left AgentUse. Each draft now gets its own checker, and a draft newer than 2020-12 is checked as 2020-12.
-- **HTTP MCP servers that redirect keep working.** A server that moves `/mcp` to `/mcp/`, or http to https on the same host, is followed as before. A redirect to another host is refused, so tokens and headers never leave the server they were set for.
-- **A login the server stopped accepting can be replaced.** When an OAuth server drops the client AgentUse registered with it, the next login registers a new one instead of failing the same way, a run asks for a new login, and `agentuse mcp logout` forgets the registration too. Two logins started at once for the same server no longer swap clients.
-- **A damaged `mcp-auth.json` no longer stops HTTP MCP servers that need no login.** It is ignored with a warning.
-- **Debug logs no longer print MCP secrets.** Auth, header and env values are hidden when a server's config is logged.
-- **Run again after a startup failure repeats the original request,** with its instruction and model.
+- **A run that fails while starting shows up as a failed session.** A failed env check, MCP connection or plugin load used to leave the Run button's page on "Loading session..." forever, and a scheduled run that failed this way never appeared in Sessions. It is now a failed session with the reason.
+- **When no MCP server connects, the error says why for each one,** such as a server that needs a login or wants a token, instead of only "All MCP servers failed to connect".
 - **`auth.token` on HTTP MCP servers works again.** Every server configured with a bearer token failed to connect with "tokens is not a function". The token is now sent in the `Authorization` header.
+- **MCP tools work whatever JSON Schema draft their input schema declares.** Tools declaring draft-04, draft-06, 2019-09 or 2020-12 used to fail every call with `no schema with key or ref` before the call left AgentUse. Each draft now gets its own checker, and a draft newer than 2020-12 is checked as 2020-12.
+- **Bash allowlist patterns with numbers match.** A pattern such as `x.sh --idle 120` never matched, so the identical command was blocked. Numeric arguments are now kept when commands are checked.
+- **A run that fails no longer leaves spinners in its log.** Tool calls still running when a run failed, for example at its execution deadline, stayed "running" forever. They are now marked as errored with the failure.
+- **Debug logs no longer print MCP secrets.** Auth, header and env values are hidden when a server's config is logged.
 - **A run's result no longer ends with the agent's step-by-step notes.** One-line notes such as "I'll check the Downloads folder." written right before a tool call were appended to the report of every run that declared an outcome. They are now left out; a one-line finding and longer prose, including a document streamed before saving it, still reach the report.
 - **Reading a folder with the file read tool says what to do instead.** Pointing `tools__filesystem_read` at a directory now says it is a directory and to use `tools__filesystem_list`. In the agent creator, the project root used to come back as "outside the project" and a subfolder as "File not found", which sent models into retries.
-- **Project discovery stays inside the project.** The files sent to your model when suggesting agents can no longer reach outside the project through hard links, a folder swapped for a link mid-read, or a link anywhere in the path. Files in folders named `secrets` or `credentials` (any case), `.ENV`-style names, and files git ignores are left out, and discovery refuses to scan your home folder or a folder above it.
+- **Project discovery stays inside the project.** The files sent to your model when suggesting agents can no longer reach outside the project through hard links, a folder swapped for a link mid-read, or a link anywhere in the path. Files in folders such as `secrets`, `credentials`, `.ssh`, `.aws` and `.gnupg` (any case), secret-looking names such as `.ENV` or `id_rsa`, and files git ignores are left out, and discovery refuses to scan your home folder or a folder above it.
 
 ## [0.23.1] - 2026-10-06
 
