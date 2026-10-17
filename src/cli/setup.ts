@@ -3,7 +3,7 @@ import chalk from 'chalk';
 import type * as ClackPrompts from '@clack/prompts';
 import type { ProviderStatus } from '../auth/provider-status';
 import { cloudUrl, computerName, platformLabel, readCloudConnection, removeCloudConnection, writeCloudConnection, type CloudConnection } from '../cloud/config';
-import { connectionRevoked, redeemJoinCode, startPairing, waitForApproval } from '../cloud/pairing';
+import { connectionRevoked, startPairing, waitForApproval } from '../cloud/pairing';
 import { FIRST_PROJECT_DEFAULT_NAME } from '../onboarding';
 import { loadGlobalConfig } from '../utils/global-config';
 import { createManagedProject, ManagedProjectError } from '../utils/managed-project';
@@ -17,7 +17,7 @@ import { installService, serviceInstalled, serviceLogPath, serviceProgram } from
  * `agentuse setup`: one flow from install to a running AgentUse, in four steps.
  *
  *   1. Where you use it: Cloud (from an AI assistant) or Local (this computer only)
- *   2. Sign in, Cloud only. A join code from the setup page skips steps 1 and 2.
+ *   2. Sign in, Cloud only: this computer shows a code, the person types it on the web
  *   3. Pick the AI that runs agents
  *   4. Ready: a project, and `agentuse serve` kept running in the background
  *
@@ -30,7 +30,6 @@ export interface SetupOptions {
   terminal?: boolean;
   cloud?: boolean;
   local?: boolean;
-  join?: string;
   name?: string;
   computerName?: string;
   url?: string;
@@ -54,16 +53,15 @@ async function loadPrompts(): Promise<typeof ClackPrompts> {
 
 /** Which route to take without asking, or 'prompt' when the person should choose. */
 export function resolveRoute(
-  options: Pick<SetupOptions, 'cloud' | 'local' | 'join' | 'yes'>,
+  options: Pick<SetupOptions, 'cloud' | 'local' | 'yes'>,
   connected: boolean,
   interactive: boolean,
 ): SetupRoute | 'prompt' {
   if (options.cloud && options.local) throw new Error('Choose either --cloud or --local, not both');
-  if (options.local && options.join) throw new Error('A join code links this computer to AgentUse Cloud; remove --local');
   if (options.local && connected) {
     throw new Error('This computer is connected to AgentUse Cloud. Run `agentuse disconnect` first to use it locally only.');
   }
-  if (options.cloud || options.join || connected) return 'cloud';
+  if (options.cloud || connected) return 'cloud';
   if (options.local) return 'local';
   if (interactive && !options.yes) return 'prompt';
   return 'local';
@@ -133,31 +131,18 @@ async function signIn(options: SetupOptions): Promise<CloudConnection> {
   const url = cloudUrl(options.url);
   const name = options.computerName ?? computerName();
 
-  if (options.join) {
-    const spin = p.spinner();
-    spin.start('Linking with your join code');
-    try {
-      const linked = await redeemJoinCode(url, options.join, name, platformLabel());
-      const connection = { ...linked, url, connectedAt: new Date().toISOString() };
-      writeCloudConnection(connection);
-      spin.stop(signedInLine(connection));
-      return connection;
-    } catch (error) {
-      spin.stop('Could not use the join code', 1);
-      throw error;
-    }
-  }
-
   const start = await startPairing(url, name, platformLabel());
   p.log.step('Sign in to AgentUse Cloud');
   p.log.message([
     `Open   ${chalk.cyan(start.verification_uri)}`,
     `Code   ${chalk.bold(start.user_code)}`,
-    chalk.dim('No browser here (SSH, a server)? Open the link on any phone or laptop and type the code.'),
+    chalk.dim('Sign in there and type the code. No browser here (SSH, a server)? Open the link on any phone or laptop.'),
   ].join('\n'));
-  if (options.browser !== false) await openBrowser(start.verification_uri_complete);
+  // Like `gh auth login`: the page asks for the code, so a link someone sends
+  // can never carry one that adds their computer to your account.
+  if (options.browser !== false) await openBrowser(start.verification_uri);
   const spin = p.spinner();
-  spin.start('Waiting for you to press Connect');
+  spin.start('Waiting for you to type the code');
   try {
     const approved = await waitForApproval(url, start);
     const connection = { ...approved, url, connectedAt: new Date().toISOString() };
@@ -345,7 +330,7 @@ export async function runSetup(options: SetupOptions): Promise<void> {
 
   try {
     const decided = resolveRoute(options, Boolean(connection), interactive);
-    p.intro(options.join && !connection ? 'AgentUse setup · linked from your browser' : 'AgentUse setup');
+    p.intro('AgentUse setup');
     const route = decided === 'prompt' ? await chooseRoute() : decided;
     p.log.success(`Where  ${chalk.dim(route === 'cloud' ? 'AgentUse Cloud' : 'Only on this computer')}`);
 
@@ -353,7 +338,6 @@ export async function runSetup(options: SetupOptions): Promise<void> {
       if (revoked) p.log.warn('This computer was disconnected from your account, so it signs in again.');
       if (connection) {
         p.log.success(signedInLine(connection));
-        if (options.join) p.log.warn('Already connected, so the join code was not used. Run `agentuse disconnect` first to link it to another account.');
       } else {
         connection = await signIn(options);
       }
@@ -377,7 +361,6 @@ export function createSetupCommand(): Command {
     .description('Set up AgentUse: where you use it, sign in, the AI that runs agents, and keep it running')
     .option('--cloud', 'Use AgentUse from your AI assistant (Claude, ChatGPT, any MCP app)')
     .option('--local', 'Use AgentUse only on this computer, with no account')
-    .option('--join <code>', 'Join code from the AgentUse Cloud setup page')
     .option('--name <name>', `Project name for a first project (default: ${FIRST_PROJECT_DEFAULT_NAME})`)
     .option('--computer-name <name>', 'How this computer is shown in your account')
     .option('--url <url>', 'AgentUse Cloud address')

@@ -12,16 +12,14 @@ describe('setup route', () => {
     expect(resolveRoute({ yes: true }, false, true)).toBe('local');
   });
 
-  it('goes to Cloud for --cloud, a join code, or an existing connection', () => {
+  it('goes to Cloud for --cloud or an existing connection', () => {
     expect(resolveRoute({ cloud: true }, false, true)).toBe('cloud');
-    expect(resolveRoute({ join: 'BCDF-GHJK' }, false, false)).toBe('cloud');
     expect(resolveRoute({}, true, true)).toBe('cloud');
     expect(resolveRoute({ local: true }, false, true)).toBe('local');
   });
 
   it('refuses choices that contradict each other', () => {
     expect(() => resolveRoute({ cloud: true, local: true }, false, true)).toThrow('not both');
-    expect(() => resolveRoute({ local: true, join: 'X' }, false, true)).toThrow('remove --local');
     expect(() => resolveRoute({ local: true }, true, true)).toThrow('agentuse disconnect');
   });
 });
