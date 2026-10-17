@@ -11760,21 +11760,46 @@ html[data-page="draft-panel"] .app-route {
 }
 .page-approval-detail .additional-instruction.is-foldable[open] > summary .additional-instruction-meta { display: none; }
 
-/* Home with no agents yet: how to reach AgentUse from an assistant. */
-.no-agents { display: flex; flex-direction: column; gap: 14px; max-width: 760px; padding: 48px 0; }
-.no-agents h1 { margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -0.02em; }
-.no-agents-lede { margin: 0; color: var(--muted-3); font-size: 15px; }
+/* Home with no agents yet: a three-step tutorial for the first agent. */
+.no-agents { display: flex; flex-direction: column; gap: 28px; max-width: 720px; padding: 48px 0; }
+.no-agents-head { display: flex; flex-direction: column; gap: 8px; }
+.no-agents-eyebrow { margin: 0; color: var(--muted); font-size: var(--font-size-caption); font-weight: 600; letter-spacing: var(--tracking-caps); text-transform: uppercase; }
+.no-agents h1 { margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -0.02em; text-wrap: balance; }
+.no-agents-lede { margin: 0; max-width: 60ch; color: var(--muted-3); font-size: 15px; }
 .no-agents-note { margin: 0; color: var(--muted); font-size: var(--font-size-caption); }
-.no-agents-way { display: flex; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; }
-.no-agents-way h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.tutorial { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.tutorial-step { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 16px; padding-bottom: 28px; }
+.tutorial-step:last-child { padding-bottom: 0; }
+/* The line joining each step's marker to the next one. */
+.tutorial-step:not(:last-child)::before { content: ""; position: absolute; left: 13.5px; top: 32px; bottom: 4px; width: 1px; background: var(--line); }
+.tutorial-mark { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--bg); color: var(--muted); font-family: var(--mono); font-size: var(--font-size-caption); font-weight: 600; }
+.tutorial-step.is-current .tutorial-mark { border-color: var(--fg); background: var(--fg); color: var(--bg); }
+.tutorial-step.is-done .tutorial-mark { border-color: var(--green-border); color: var(--green); }
+.tutorial-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding-top: 3px; }
+.tutorial-body h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.tutorial-step:not(.is-current):not(.is-done) .tutorial-body h2 { color: var(--muted-3); }
+.tutorial-body p { margin: 0; color: var(--muted); font-size: var(--font-size-caption); }
+.tutorial-ideas { display: flex; flex-wrap: wrap; gap: 6px; }
+.tutorial-ideas button { padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--muted-3); font: inherit; font-size: var(--font-size-caption); cursor: pointer; }
+.tutorial-ideas button:hover { background: var(--panel-hover); color: var(--fg); }
+.tutorial-ideas button[aria-pressed="true"] { border-color: var(--fg); color: var(--fg); }
+.tutorial-prompt { display: flex; gap: 12px; align-items: flex-start; padding: 12px 12px 12px 14px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel); }
+.tutorial-prompt code { flex: 1; min-width: 0; font-family: var(--mono); font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; user-select: all; }
+.tutorial-prompt button { flex: none; padding: 6px 14px; border: 0; border-radius: 6px; background: var(--primary-bg); color: var(--primary-fg); font: inherit; font-size: var(--font-size-caption); font-weight: 600; cursor: pointer; }
+.no-agents button:focus-visible, .no-agents summary:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 2px; }
+.no-agents-more { border-top: 1px solid var(--line); padding-top: 16px; }
+.no-agents-more summary { color: var(--muted-3); font-size: var(--font-size-caption); cursor: pointer; }
+.no-agents-more summary:hover { color: var(--fg); }
+.no-agents-more-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 14px; }
+.no-agents-way { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 10px; }
+.no-agents-way h3 { margin: 0; font-size: 14px; font-weight: 600; }
 .no-agents-way p { margin: 0; color: var(--muted); font-size: var(--font-size-caption); }
 .no-agents-copy { display: flex; gap: 8px; align-items: center; margin-top: auto; }
-.no-agents-copy code { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); user-select: all; }
+.no-agents-copy code { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); overflow-wrap: anywhere; user-select: all; }
 .no-agents-copy button { padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 6px; background: none; color: var(--fg); font: inherit; font-size: var(--font-size-caption); cursor: pointer; }
 .no-agents-copy button:hover { background: var(--panel-hover); }
 .no-agents-error { color: var(--red) !important; }
-.no-agents-link { padding: 0; border: 0; background: none; color: var(--fg); font: inherit; font-family: inherit; text-decoration: underline; cursor: pointer; }
-.coding-agents { list-style: none; margin: 4px 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; }
+.coding-agents { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; }
 .coding-agents li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; }
 .coding-agents li + li { border-top: 1px solid var(--line); }
 .coding-agents li.is-missing strong { color: var(--muted); }
