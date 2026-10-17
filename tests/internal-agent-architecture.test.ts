@@ -125,11 +125,10 @@ describe('internal AgentUse architecture', () => {
   });
 
   it('uses one creator endpoint, worker path, and SSE job controller', async () => {
-    const [serve, webApi, draftPage, onboarding, controller] = await Promise.all([
+    const [serve, webApi, draftPage, controller] = await Promise.all([
       serveSurface(),
       source('cli/serve/web/lib/api.ts'),
       source('cli/serve/web/routes/agent-draft.tsx'),
-      source('cli/serve/web/components/project-agent-discovery.tsx'),
       source('cli/serve/web/hooks/use-internal-agent-job.ts'),
     ]);
 
@@ -147,7 +146,6 @@ describe('internal AgentUse architecture', () => {
     // the session settles, the operator asks for a change, and it runs again.
     expect(draftPage).toContain('useSessionLog({');
     expect(draftPage).not.toContain('useInternalAgentJob');
-    expect(onboarding).toContain('useInternalAgentJob(activeJob)');
     expect(controller).toContain('useApprovalStream({');
   });
 

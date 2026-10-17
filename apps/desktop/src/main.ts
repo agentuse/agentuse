@@ -44,8 +44,7 @@ import { loadGlobalConfig } from "../../../src/utils/global-config";
 import { cloudUrl, readCloudConnection } from "../../../src/cloud/config";
 import { completeProviderOAuth, saveProviderApiKey, startProviderOAuth } from "../../../src/auth/provider-setup";
 import { CloudConnector, cloudSettingsState, type CloudApiState } from "./cloud-settings";
-import { codingAgentStatuses, isCodingAgentId, setUpCodingAgent, type McpTarget } from "../../../src/onboarding/coding-agents";
-import { automateWorkflow } from "../../../src/mcp-server/prompts";
+import { isCodingAgentId, type CodingAgentStatus } from "../../../src/onboarding/coding-agents";
 import { connectPageUrl, isSetupApiKeyProvider, setupAiState, setupCloudState } from "./setup-wizard";
 import { initializeDesktopGlobalDefaults } from "./global-defaults";
 import { DesktopUpdater, type DesktopUpdateState } from "./updater";
@@ -97,12 +96,6 @@ let tray: Tray | undefined;
 let trayMenu: Menu | undefined;
 let dashboardUrl: string | undefined;
 let dashboardApiKey: string | undefined;
-
-/** The local server's MCP endpoint, for Claude Code and Codex on this Mac. */
-function localMcpTarget(): McpTarget {
-  if (!dashboardUrl) throw new Error("AgentUse is still starting. Try again in a moment.");
-  return { url: `${dashboardUrl.replace(/\/+$/u, "")}/mcp`, ...(dashboardApiKey && { apiKey: dashboardApiKey }) };
-}
 let currentServer: RegisteredServer | undefined;
 // Keep external ownership sticky across a restart gap. Without this hint, a
 // one-second failed probe can make Desktop see port 12233 as unowned and bind
@@ -352,18 +345,19 @@ function registerDesktopIpc(): void {
   ipcMain.handle("agentuse:setup:prepare-ready", async (event) => {
     assertSetupSender(event);
     const project = await ensureSetupProject();
-    return { project, dashboardUrl: dashboardUrl!, mcpUrl: localMcpTarget().url };
+    return { project, dashboardUrl: dashboardUrl!, mcpUrl: `${dashboardUrl!.replace(/\/+$/u, "")}/mcp` };
   });
+  // Through the local server: it owns the address and the automate skill text
+  // (read from the builtin skills, which this bundle cannot resolve).
   ipcMain.handle("agentuse:setup:coding-agents", async (event) => {
     assertSetupSender(event);
-    return codingAgentStatuses(localMcpTarget());
+    return (await dashboardApi<{ agents: CodingAgentStatus[] }>("/api/coding-agents")).agents;
   });
   ipcMain.handle("agentuse:setup:set-up-agent", async (event, id: unknown) => {
     assertSetupSender(event);
     if (!isCodingAgentId(id)) throw new TypeError("Pick Claude Code or Codex.");
-    const target = localMcpTarget();
-    await setUpCodingAgent(id, target, await automateWorkflow());
-    return codingAgentStatuses(target);
+    await dashboardApi("/api/coding-agents/setup", { method: "POST", body: JSON.stringify({ id }) });
+    return (await dashboardApi<{ agents: CodingAgentStatus[] }>("/api/coding-agents")).agents;
   });
   ipcMain.handle("agentuse:setup:copy", (event, text: unknown) => {
     assertSetupSender(event);
