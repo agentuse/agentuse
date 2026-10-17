@@ -13,7 +13,7 @@ describe('getModelInfo', () => {
   it('resolves real limits for opencode-go and bedrock (not the fallback)', async () => {
     // Regression: these first-class providers used to collapse to the fallback
     // window because only anthropic/openai/openrouter were in the registry.
-    const og = await getModelInfo('opencode-go:kimi-k2.6');
+    const og = await getModelInfo('opencode-go:kimi-k3');
     expect(og.contextLimit).toBeGreaterThan(200_000);
 
     const bedrock = await getModelInfo('bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0');
