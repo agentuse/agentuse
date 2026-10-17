@@ -144,6 +144,16 @@ const codex: CodingAgent = {
 
 const CODING_AGENTS: readonly CodingAgent[] = [claudeCode, codex];
 
+/**
+ * The address coding agents get: AgentUse Cloud's once this computer is
+ * connected to it, so Claude Code sees one AgentUse next to a claude.ai
+ * connector (it merges servers with the same address), otherwise this
+ * daemon's own. The cloud address carries no key: each tool signs in itself.
+ */
+export function codingAgentTarget(local: McpTarget, cloud?: { mcpUrl: string }): McpTarget {
+  return cloud ? { url: cloud.mcpUrl } : local;
+}
+
 export function isCodingAgentId(value: unknown): value is CodingAgentId {
   return typeof value === 'string' && (CODING_AGENT_IDS as readonly string[]).includes(value);
 }

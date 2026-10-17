@@ -1,4 +1,5 @@
-import { codingAgentStatuses, isCodingAgentId, setUpCodingAgent, type McpTarget } from "../../../onboarding/coding-agents";
+import { codingAgentStatuses, codingAgentTarget, isCodingAgentId, setUpCodingAgent } from "../../../onboarding/coding-agents";
+import { readCloudConnection } from "../../../cloud/config";
 import { automateWorkflow } from "../../../mcp-server/prompts";
 import { toErrorMessage } from "../../../utils/error-message.js";
 import { canUseHostFolderPicker } from "../../../utils/local-request";
@@ -18,10 +19,13 @@ export async function codingAgentRoutes(ctx: ServeContext, rq: ServeRequest): Pr
     sendError(res, 403, "CODING_AGENTS_LOCAL_ONLY", "Coding agents can only be set up from a local AgentUse server");
     return true;
   }
-  const target: McpTarget = { url: `${ctx.serverUrl.replace(/\/+$/, "")}/mcp`, ...(ctx.apiKey && { apiKey: ctx.apiKey }) };
+  // An unreadable cloud.json counts as not connected, as on /api/cloud.
+  const cloud = (() => { try { return readCloudConnection(); } catch { return undefined; } })();
+  const target = codingAgentTarget({ url: `${ctx.serverUrl.replace(/\/+$/, "")}/mcp`, ...(ctx.apiKey && { apiKey: ctx.apiKey }) }, cloud);
+  const via = cloud ? "cloud" : "this-mac";
 
   if (req.method === "GET" && routePath === "/coding-agents") {
-    sendJSON(res, 200, { success: true, agents: await codingAgentStatuses(target) });
+    sendJSON(res, 200, { success: true, via, agents: await codingAgentStatuses(target) });
     return true;
   }
   if (req.method === "POST" && routePath === "/coding-agents/setup") {
@@ -41,7 +45,7 @@ export async function codingAgentRoutes(ctx: ServeContext, rq: ServeRequest): Pr
       return true;
     }
     try {
-      sendJSON(res, 200, { success: true, agent: await setUpCodingAgent(body.id, target, await automateWorkflow()) });
+      sendJSON(res, 200, { success: true, via, agent: await setUpCodingAgent(body.id, target, await automateWorkflow()) });
     } catch (err) {
       sendError(res, 500, "CODING_AGENT_SETUP_FAILED", toErrorMessage(err));
     }

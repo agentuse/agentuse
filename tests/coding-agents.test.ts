@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { codingAgentStatuses, setUpCodingAgent } from '../src/onboarding/coding-agents';
+import { codingAgentStatuses, codingAgentTarget, setUpCodingAgent } from '../src/onboarding/coding-agents';
 
 
 const target = { url: 'http://127.0.0.1:12233/mcp' };
@@ -121,5 +121,21 @@ describe('coding agents', () => {
     writeFileSync(skill, 'mine');
     await setUpCodingAgent('claude-code', target, 'Steps', home);
     expect(readFileSync(skill, 'utf8')).toBe('mine');
+  });
+
+  it('points coding agents at AgentUse Cloud once this computer is connected, with no key', async () => {
+    const local = { url: target.url, apiKey: 'k' };
+    expect(codingAgentTarget(local)).toEqual(local);
+    const cloud = codingAgentTarget(local, { mcpUrl: 'https://cloud.agentuse.io/mcp' });
+    expect(cloud).toEqual({ url: 'https://cloud.agentuse.io/mcp' });
+
+    // Set up locally, then connected: the entry is outdated until set up again.
+    mkdirSync(path.join(home, '.codex'));
+    await setUpCodingAgent('codex', local, 'Steps', home, []);
+    expect((await codingAgentStatuses(cloud, home, []))[1].state).toBe('outdated');
+    await setUpCodingAgent('codex', cloud, 'Steps', home, []);
+    const toml = readFileSync(path.join(home, '.codex', 'config.toml'), 'utf8');
+    expect(toml).toContain('url = "https://cloud.agentuse.io/mcp"');
+    expect(toml).not.toContain('Authorization');
   });
 });

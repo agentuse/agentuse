@@ -35,11 +35,11 @@ export function useCodingAgents() {
       setBusy(null);
     }
   };
-  return { rows, error: listed.error, busy, failed, setUp };
+  return { rows, via: listed.data?.via, error: listed.error, busy, failed, setUp };
 }
 
 export function CodingAgentList(props: { agents: ReturnType<typeof useCodingAgents> }) {
-  const { rows, busy, failed, setUp } = props.agents;
+  const { rows, via, busy, failed, setUp } = props.agents;
   return (
     <>
       <ul class="coding-agents">
@@ -61,6 +61,14 @@ export function CodingAgentList(props: { agents: ReturnType<typeof useCodingAgen
       </ul>
       {rows.length > 0 && rows.every((agent) => agent.state === 'not-installed') && (
         <p>Install <a href="https://claude.com/download" target="_blank" rel="noreferrer">the Claude app</a> or <a href="https://developers.openai.com/codex" target="_blank" rel="noreferrer">Codex</a> and open it once. This list updates when you come back.</p>
+      )}
+      {rows.some((agent) => agent.state === 'outdated') && (
+        <p>{via === 'cloud'
+          ? 'This Mac is now connected to AgentUse Cloud. Press Update to switch to it.'
+          : 'AgentUse has a new address on this Mac. Press Update to switch to it.'}</p>
+      )}
+      {via === 'cloud' && rows.some((agent) => agent.state === 'set-up') && (
+        <p>They reach AgentUse through AgentUse Cloud, so each asks you to sign in once. In Claude Code, open <code>/mcp</code> or run <code>claude mcp login agentuse</code>. In Codex, run <code>codex mcp login agentuse</code>, or sign in when the Codex app asks.</p>
       )}
       {failed && <p class="no-agents-error" role="alert">{failed}</p>}
     </>

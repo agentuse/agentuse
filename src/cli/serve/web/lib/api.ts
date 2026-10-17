@@ -656,7 +656,10 @@ export function fetchCloudState(): Promise<{ status: string; account?: string; m
 
 export type { CodingAgentId, CodingAgentStatus };
 
-export function fetchCodingAgents(): Promise<{ success: true; agents: CodingAgentStatus[] }> {
+/** `via`: whether coding agents reach AgentUse through AgentUse Cloud or this computer's own address. */
+export type CodingAgentsVia = 'cloud' | 'this-mac';
+
+export function fetchCodingAgents(): Promise<{ success: true; via: CodingAgentsVia; agents: CodingAgentStatus[] }> {
   return getJson('/api/coding-agents');
 }
 
