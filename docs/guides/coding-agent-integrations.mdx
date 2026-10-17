@@ -27,8 +27,20 @@ agentuse connect
   claude mcp add --transport http agentuse https://cloud.agentuse.io/mcp
   ```
 
-The first time the app uses AgentUse, it opens AgentUse Cloud to sign you in
-and asks you to allow it.
+Complete your coding agent's OAuth sign-in to AgentUse Cloud after installation.
+For a Codex CLI plugin install, run:
+
+```bash
+codex mcp login agentuse
+```
+
+Finish sign-in and consent in the browser, then start a new Codex task. The Codex
+CLI installs plugins without starting OAuth; mentioning AgentUse in a chat or
+starting a new task does not complete that step. `agentuse connect` connects your
+computer, while this OAuth sign-in authorizes Codex to reach it.
+
+Other MCP clients may start sign-in on first use or expose an Authenticate action
+in their MCP settings.
 
 To use AgentUse on the same computer without the cloud, point the app at your
 local server instead: `http://127.0.0.1:12233/mcp`.

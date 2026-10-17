@@ -68,6 +68,7 @@ export function buildIntegrationArtifacts(outputRoot = defaultOutputRoot): Integ
   const contentId = sha256([
     mcpConfig,
     readText(resolve(repoRoot, 'integrations/codex/plugin.json')),
+    readText(resolve(repoRoot, 'integrations/codex/README.md')),
     readText(resolve(codexAssets, 'icon.svg')),
   ].join('\n')).slice(0, 12);
   const replacements = {

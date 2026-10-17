@@ -14,8 +14,19 @@ Connect your computer to AgentUse Cloud once, in the AgentUse app
 agentuse connect
 ```
 
-The first time Codex uses the plugin, it opens AgentUse Cloud to sign you in
-and asks you to allow it. See the
+After installing the plugin with the Codex CLI, start its OAuth sign-in:
+
+```sh
+codex mcp login agentuse
+```
+
+Finish sign-in and consent in the browser, then start a new Codex task. Connecting
+your computer with `agentuse connect` and authorizing Codex are separate steps.
+`codex plugin add` installs the plugin but does not start OAuth, even when the
+marketplace declares authentication on install.
+
+If AgentUse is mentioned in a chat but no tools appear, check Codex's MCP status
+and run `codex mcp login agentuse`. A new chat alone does not sign you in. See the
 [AgentUse Cloud guide](https://docs.agentuse.io/guides/agentuse-cloud).
 
 ## Local development
@@ -26,6 +37,7 @@ generated marketplace and install the plugin:
 ```sh
 codex plugin marketplace add ./dist/integrations/codex-marketplace
 codex plugin add agentuse@agentuse-development
+codex mcp login agentuse
 ```
 
 Start a new task after rebuilding or reinstalling the plugin.
