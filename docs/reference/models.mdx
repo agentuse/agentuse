@@ -37,9 +37,9 @@ that exists for real always wins, so nothing you pin can be reinterpreted.
 | Alias | Currently resolves to |
 |-------|----------------------|
 | `anthropic:claude-opus` | `anthropic:claude-opus-5-5` |
+| `anthropic:claude-haiku` | `anthropic:claude-haiku-5-5` |
 | `anthropic:claude-sonnet` | `anthropic:claude-sonnet-5-5` |
 | `anthropic:claude-fable` | `anthropic:claude-fable-5-1` |
-| `anthropic:claude-haiku` | `anthropic:claude-haiku-4-5` |
 | `openai:gpt-sol` | `openai:gpt-6.1-sol` |
 | `openai:gpt-luna` | `openai:gpt-6-luna` |
 | `openai:gpt-astra` | `openai:gpt-6-astra` |
@@ -71,7 +71,6 @@ that exists for real always wins, so nothing you pin can be reinterpreted.
 | `opencode-go:grok` | `opencode-go:grok-4.7` |
 | `opencode-go:hy-preview` | `opencode-go:hy4-preview` |
 | `opencode-go:deepseek-pro` | `opencode-go:deepseek-v4-pro` |
-| `opencode-go:deepseek-flash` | `opencode-go:deepseek-v4-flash` |
 | `opencode-go:qwen-max` | `opencode-go:qwen3.8-max` |
 | `opencode-go:qwen-flash` | `opencode-go:qwen3.8-flash` |
 | `opencode-go:qwen-plus` | `opencode-go:qwen3.7-plus` |
@@ -142,9 +141,9 @@ cooldown. See [Model defaults and aliases](/reference/configuration-files#model-
 | Model ID | Name | Input Context | Output | Capabilities |
 |----------|------|---------|--------|--------------|
 | `anthropic:claude-opus-5-5` | Claude Opus 5.5 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
+| `anthropic:claude-haiku-5-5` | Claude Haiku 5.5 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
 | `anthropic:claude-sonnet-5-5` | Claude Sonnet 5.5 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
 | `anthropic:claude-fable-5-1` | Claude Fable 5.1 | 1,000,000 | 128,000 | Reasoning, Vision, Tools |
-| `anthropic:claude-haiku-4-5` | Claude Haiku 4.5 (latest) | 200,000 | 64,000 | Reasoning, Vision, Tools |
 
 ### OpenAI
 
@@ -173,7 +172,7 @@ cooldown. See [Model defaults and aliases](/reference/configuration-files#model-
 | `openrouter:z-ai/glm-5v-turbo` | GLM-5V-Turbo | 202,752 | 131,072 | Reasoning, Vision, Tools |
 | `openrouter:x-ai/grok-4.7` | Grok 4.7 | 500,000 | 450,000 | Reasoning, Vision, Tools |
 | `openrouter:deepseek/deepseek-v4-pro` | DeepSeek V4 Pro | 1,048,576 | 384,000 | Reasoning, Tools |
-| `openrouter:deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | 1,048,576 | 943,718 | Reasoning, Tools |
+| `openrouter:deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | 1,048,576 | 943,717 | Reasoning, Tools |
 | `openrouter:qwen/qwen3.8-max-0902` | Qwen3.8 Max 0902 | 1,000,000 | 131,072 | Reasoning, Vision, Tools |
 | `openrouter:google/gemini-3.8-flash` | Gemini 3.8 Flash | 1,048,576 | 65,536 | Reasoning, Vision, Tools |
 | `openrouter:qwen/qwen3.7-plus` | Qwen3.7 Plus | 1,000,000 | 131,072 | Reasoning, Vision, Tools |
@@ -192,7 +191,6 @@ cooldown. See [Model defaults and aliases](/reference/configuration-files#model-
 | `opencode-go:grok-4.7` | Grok 4.7 | 500,000 | 500,000 | Reasoning, Vision, Tools |
 | `opencode-go:hy4-preview` | Hy4 preview | 1,024,000 | 64,000 | Reasoning, Tools |
 | `opencode-go:deepseek-v4-pro` | DeepSeek V4 Pro (New) | 1,000,000 | 384,000 | Reasoning, Tools |
-| `opencode-go:deepseek-v4-flash` | DeepSeek V4 Flash | 1,000,000 | 384,000 | Reasoning, Tools |
 | `opencode-go:qwen3.8-max` | Qwen3.8 Max | 1,000,000 | 131,072 | Reasoning, Vision, Tools |
 | `opencode-go:qwen3.8-flash` | Qwen3.8 Flash | 1,000,000 | 131,072 | Reasoning, Vision, Tools |
 | `opencode-go:qwen3.7-plus` | Qwen3.7 Plus | 1,000,000 | 65,536 | Reasoning, Vision, Tools |

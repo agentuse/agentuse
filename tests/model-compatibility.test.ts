@@ -82,6 +82,11 @@ describe('model compatibility registry', () => {
         anthropic: { thinking: { type: 'adaptive' }, effort: 'max' },
       },
     });
+    expect(resolveReasoningCompatibility('anthropic:claude-haiku-5-5', 'max')).toEqual({
+      providerOptions: {
+        anthropic: { thinking: { type: 'adaptive' }, effort: 'max' },
+      },
+    });
   });
 
   it('clamps unconfirmed max support to the previous strongest common tier', () => {

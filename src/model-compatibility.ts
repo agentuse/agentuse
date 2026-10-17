@@ -73,7 +73,7 @@ function isModernAdaptiveClaude(model: string): boolean {
   if (!normalized.startsWith('claude-')) return false;
   return (
     /claude-(?:opus|sonnet)-4-(?:6|7|8)(?:-|$)/.test(normalized) ||
-    /claude-(?:opus|sonnet|fable|mythos)-5(?:-|$)/.test(normalized)
+    /claude-(?:opus|sonnet|haiku|fable|mythos)-5(?:-|$)/.test(normalized)
   );
 }
 

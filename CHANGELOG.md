@@ -7,6 +7,12 @@
 - **MCP servers that need an OAuth login.** Give an HTTP MCP server just its `url`; if it asks for a login, log in once from the agent's page in the dashboard or the Mac app, or with `agentuse mcp login <agent> <server>`. The login is shared by every agent using the same server, and runs refresh it on their own. When a fresh login is needed, the run says so instead of waiting for a browser, and a server that wants an API key instead says that. `auth.type: oauth` is only needed for a pre-registered `clientId` or `scopes`. `agentuse mcp status` and `agentuse mcp logout` round it out.
 - **`allowedTools` for MCP servers.** List the tools an agent may use and every other tool on that server stays off, including tools the server adds later and the `list_resources` / `read_resource` tools for servers with resources. Handy for a few safe tools on a large server. `disallowedTools` still wins when both are set.
 - **HTTP MCP servers speak the newest MCP protocol (2026-07-28).** Older servers keep working: the client falls back to their version.
+- **Claude Haiku 5.5 is in the bundled model catalog.** It has a 1M-token context window and 128K output, and every `reasoning` level works on it, including `max`.
+
+### Changed
+
+- **`anthropic:claude-haiku` now resolves to Claude Haiku 5.5** instead of Claude Haiku 4.5. Agents pinned to `anthropic:claude-haiku-4-5` keep using it. Claude Haiku 5.5 does not accept a manual thinking budget, so set its depth with `reasoning` rather than `anthropic.thinking.budgetTokens`.
+- **The `opencode-go:deepseek-flash` alias is gone,** because OpenCode Go no longer lists DeepSeek V4 Flash. It is still available as `openrouter:deepseek/deepseek-v4-flash`.
 
 ### Fixed
 
@@ -17,7 +23,6 @@
 - **Debug logs no longer print MCP secrets.** Auth, header and env values are hidden when a server's config is logged.
 - **Run again after a startup failure repeats the original request,** with its instruction and model.
 - **`auth.token` on HTTP MCP servers works again.** Every server configured with a bearer token failed to connect with "tokens is not a function". The token is now sent in the `Authorization` header.
-
 - **A run's result no longer ends with the agent's step-by-step notes.** One-line notes such as "I'll check the Downloads folder." written right before a tool call were appended to the report of every run that declared an outcome. They are now left out; a one-line finding and longer prose, including a document streamed before saving it, still reach the report.
 - **Reading a folder with the file read tool says what to do instead.** Pointing `tools__filesystem_read` at a directory now says it is a directory and to use `tools__filesystem_list`. In the agent creator, the project root used to come back as "outside the project" and a subfolder as "File not found", which sent models into retries.
 - **Project discovery stays inside the project.** The files sent to your model when suggesting agents can no longer reach outside the project through hard links, a folder swapped for a link mid-read, or a link anywhere in the path. Files in folders named `secrets` or `credentials` (any case), `.ENV`-style names, and files git ignores are left out, and discovery refuses to scan your home folder or a folder above it.
