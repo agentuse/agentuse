@@ -8,6 +8,7 @@ import { usePushBell } from '../hooks/use-push';
 import { debugSettingsEnabled, requestUpdatePreview } from '../lib/update-preview';
 import { ProviderSettingsGroup } from '../components/provider-setup';
 import { ProjectsSettingsGroup } from '../components/project-settings';
+import { ConnectAppsSettingsGroup } from '../components/connect-apps-settings';
 import { SettingsGroup as Group, SettingsRow as Row } from '../components/settings-layout';
 import { BusyButton } from '../components/busy-button';
 import { DeveloperSettings } from '../components/developer-settings';
@@ -63,10 +64,11 @@ function BrowserNotificationsGroup() {
   );
 }
 
-type SettingsTab = 'general' | 'projects' | 'providers' | 'plugins' | 'developer';
+type SettingsTab = 'general' | 'apps' | 'projects' | 'providers' | 'plugins' | 'developer';
 
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: 'general', label: 'General' },
+  { id: 'apps', label: 'Connect apps' },
   { id: 'projects', label: 'Projects' },
   { id: 'providers', label: 'Providers' },
   { id: 'plugins', label: 'Plugins' },
@@ -184,6 +186,7 @@ export default function Settings() {
             section={activeTab}
             {...(activeTab === 'providers' && providerParam ? { initialExpanded: providerParam } : {})}
           />}
+          {activeTab === 'apps' && <ConnectAppsSettingsGroup />}
           {activeTab === 'projects' && <ProjectsSettingsGroup />}
           {typeof __AGENTUSE_WEB_DEV__ !== 'undefined' && __AGENTUSE_WEB_DEV__ && activeTab === 'developer' && <DeveloperSettings />}
           {activeTab === 'general' && (

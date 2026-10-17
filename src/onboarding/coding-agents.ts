@@ -24,6 +24,8 @@ export interface CodingAgentStatus {
   state: CodingAgentState;
   /** What to type in that agent once it's set up. */
   command: string;
+  /** Where people use it: its Mac app or the terminal, which share one config. */
+  where: string;
 }
 
 /** The MCP server to add: this daemon's `/mcp`, and its operator key when it has one. */
@@ -41,6 +43,7 @@ interface CodingAgent {
   id: CodingAgentId;
   name: string;
   command: string;
+  where: string;
   configFile: (home: string) => string;
   skillFile: (home: string) => string;
   installed: (home: string) => boolean;
@@ -59,6 +62,7 @@ const claudeCode: CodingAgent = {
   id: 'claude-code',
   name: 'Claude Code',
   command: '/automate',
+  where: 'Claude app (Code) or terminal',
   configFile: (home) => path.join(home, '.claude.json'),
   skillFile: (home) => path.join(home, '.claude', 'skills', SKILL_NAME, 'SKILL.md'),
   installed: (home) => existsSync(path.join(home, '.claude.json')) || existsSync(path.join(home, '.claude')),
@@ -111,6 +115,7 @@ const codex: CodingAgent = {
   id: 'codex',
   name: 'OpenAI Codex',
   command: '$automate',
+  where: 'Codex app or terminal',
   configFile: (home) => path.join(home, '.codex', 'config.toml'),
   skillFile: (home) => path.join(home, '.agents', 'skills', SKILL_NAME, 'SKILL.md'),
   installed: (home) => existsSync(path.join(home, '.codex')),
@@ -171,7 +176,7 @@ export function automateSkill(workflow: string): string {
 
 async function statusOf(agent: CodingAgent, target: McpTarget, home: string): Promise<CodingAgentStatus> {
   const file = agent.configFile(home);
-  const base = { id: agent.id, name: agent.name, configPath: displayPath(file, home), command: agent.command };
+  const base = { id: agent.id, name: agent.name, configPath: displayPath(file, home), command: agent.command, where: agent.where };
   if (!agent.installed(home)) return { ...base, state: 'not-installed' };
   const entry = agent.read(await readText(file));
   if (!entry) return { ...base, state: 'not-set-up' };

@@ -188,7 +188,7 @@
     .agent-list li + li { border-top: 1px solid var(--line); }
     .agent-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
     .agent-name strong { font-size: 15px; }
-    .agent-name code { font: 12px var(--mono); color: var(--muted); }
+    .agent-name span { font-size: 12px; color: var(--muted); }
     .agent-list li.missing strong { color: var(--muted); font-weight: 600; }
     .agent-state { font-size: 14px; color: var(--muted); white-space: nowrap; }
     .agent-state.ok { color: var(--ok); font-weight: 600; }
@@ -310,7 +310,7 @@
       <p class="lede" id="ready-cloud-lede">Connected. Ask your assistant to build an agent, and it runs here on this Mac.</p>
     </div>
     <div class="agents">
-      <div class="agents-head"><span class="card-title">Connect your coding agents</span><span class="card-copy">Then type /automate in Claude Code, $automate in Codex.</span></div>
+      <div class="agents-head"><span class="card-title">Connect your coding agents</span><span class="card-copy">Then go back to a chat where it did a job and type /automate ($automate in Codex).</span></div>
       <ul class="agent-list" data-agent-list></ul>
     </div>
     <div class="field">
@@ -344,13 +344,12 @@
       <li><span class="mark" aria-hidden="true">✓</span><span>Runs in the background</span></li>
     </ul>
     <div class="agents">
-      <div class="agents-head"><span class="card-title">Connect your coding agents</span><span class="card-copy">Then type /automate in Claude Code, $automate in Codex.</span></div>
+      <div class="agents-head"><span class="card-title">Connect your coding agents</span><span class="card-copy">Then go back to a chat where it did a job and type /automate ($automate in Codex).</span></div>
       <ul class="agent-list" data-agent-list></ul>
     </div>
-    <p class="hint">Another app, like Cursor? <a href="#" id="local-copy">Copy the MCP address</a> and add it there.</p>
     <p class="error" role="alert" data-error></p>
     <div class="actions">
-      <span class="footer-hint">Want it in Claude or ChatGPT later? Settings › AgentUse Cloud.</span>
+      <span class="footer-hint">Claude or ChatGPT on the web, or Cursor? Connect them later in Settings.</span>
       <div class="end"><button class="primary" type="button" id="local-dashboard" data-needs-ready>Open dashboard</button></div>
     </div>
   </section>
@@ -439,11 +438,9 @@
           const title = document.createElement("strong");
           title.textContent = agent.name;
           name.append(title);
-          if (installed) {
-            const path = document.createElement("code");
-            path.textContent = agent.configPath;
-            name.append(path);
-          }
+          const where = document.createElement("span");
+          where.textContent = agent.where;
+          name.append(where);
           item.append(name);
           if (!installed || done) {
             const status = document.createElement("span");
@@ -625,10 +622,6 @@
     $("mcp-help").addEventListener("click", (event) => {
       event.preventDefault();
       bridge.openHelp().catch(fail);
-    });
-    $("local-copy").addEventListener("click", (event) => {
-      event.preventDefault();
-      if (ready) copy($("local-copy"), ready.mcpUrl).catch(fail);
     });
     $("cloud-done").addEventListener("click", () => busy($("cloud-done"), "Finishing…", () => bridge.complete("cloud", false)));
     $("cloud-dashboard").addEventListener("click", () => busy($("cloud-dashboard"), "Opening…", () => bridge.complete("cloud", true)));
