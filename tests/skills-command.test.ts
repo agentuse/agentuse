@@ -136,6 +136,14 @@ ${body}
     expect(output).toContain('Ordinary agents should land around 300-700 body words');
   });
 
+  it('keeps the creator rules free of commands and gives them with --full', async () => {
+    const rules = await runSkillsCommand(['get', 'creator']);
+    expect(rules).not.toMatch(/`agentuse [a-z]/);
+    const full = await runSkillsCommand(['get', 'creator', '--full']);
+    expect(full).toContain('references/cli.md');
+    expect(full).toContain('`agentuse doctor <file>`');
+  });
+
   it('prints raw installed skill content with installed get', async () => {
     await writeSkill('code-review', 'Review code', '# Review\n\nUse sharp judgment.');
 

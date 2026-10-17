@@ -36,7 +36,7 @@ Add a field only when the described workflow uses it:
 
 - `timeout` / `maxSteps`: observed work needs a different run ceiling.
 - `reasoning`: genuine judgment, planning, or debugging benefits from it.
-- `schedule`: the job actually recurs under `agentuse serve`.
+- `schedule`: the job actually recurs.
 - `verify`: output needs an independent quality gate.
 - `tools` / `mcpServers`: the job calls those capabilities.
 - `skills`: the job relies on known reusable instructions.
@@ -49,8 +49,8 @@ absent configuration and absent body instructions.
 ## Choosing the Model and Thinking Budget
 
 `model:` is required and has the biggest effect on quality and cost. Thinking is
-opt-in: add it only when the work benefits from deliberate reasoning. Validate
-every model id against `agentuse models` (the catalog moves).
+opt-in: add it only when the work benefits from deliberate reasoning. Use only
+model ids from the current catalog (it moves).
 
 **Model: pick by the hardest reasoning the agent actually does, not by how
 important the agent feels.**
@@ -167,14 +167,13 @@ item whose feature is absent from the described workflow.
 - Examples and untrusted runtime content bounded by XML tags, not left under a
   heading (see Bound What Is Not an Instruction).
 - Multi-role work: subagents with clear names and `maxSteps` limits.
-- Recurring work: YAML `schedule:` + a note that `agentuse serve` must run.
+- Recurring work: YAML `schedule:`.
 - Custom labels (draft, owner, team): put them under `metadata:`. It is the
-  only place custom keys survive parsing; `agentuse agents` shows them as chips
-  and `--json` exposes them under `.metadata` for filtering. Metadata is an
+  only place custom keys survive parsing; the agent list shows them as chips
+  and exposes them under `.metadata` for filtering. Metadata is an
   annotation, not runtime input (it is not injected into the prompt).
-- Validated before real use: `agentuse doctor <file>`, then `agentuse test
-  <file>` and a session-log review. Load the `tester` builtin skill for the
-  workflow.
+- Validated before real use: a config check, then a practice run and a review
+  of its session log.
 
 ## Goals for Judgment Agents, Procedures for Compliance Agents
 
@@ -287,7 +286,7 @@ Run a subtraction pass after every draft and substantive edit:
 2. Remove duplicated rules, incident history, and derivable branches.
 3. Move reusable mechanics and learnings to their proper layers.
 4. Split dense lines; preserve unambiguous negation, conditions, order, scope.
-5. Run `agentuse doctor <file>`.
+5. Run the config check again.
 
 **Editing a live agent is where bloat actually enters.** New agents get reviewed
 whole; edits get appended and never re-read. When adding a rule to an existing
@@ -321,7 +320,7 @@ limit:
 - Over 1,500: split/reference before handoff unless the job is genuinely complex.
 - Over 800 characters on one line: usually multiple rules; split it.
 
-The agent body is not the whole per-request prompt. `agentuse doctor` also
+The agent body is not the whole per-request prompt. The config check also
 prices the skill surface, which recurs on every model request:
 
 - Preloaded skills ship their full text. Over ~2,000 tokens: preload only what
@@ -380,7 +379,7 @@ into an agent body:
    writes: once the set is full, every new rule has to supersede an existing one
    or trade against the weakest auto-extracted one. So a rule the agent must
    never lose belongs in the body or the skill, where nothing can evict it.
-   `agentuse doctor` reports the applied/stored split.
+   The config check reports the applied/stored split.
 2. **Does the line only work by contradicting a lower layer?** Then it is not a
    rule, it is a patch over the wrong layer: fix the layer that says the
    opposite. (Body: "do not read the tool's docs." That tool's skill: "load the
@@ -401,8 +400,8 @@ reads as a rule, because then it is copied into the next agent, mutates, and is
 never removed when the limit is lifted. Two moves keep it honest:
 
 - **Say what it works around, in `metadata:`.** Free-form, never interpreted,
-  never injected into the prompt, still visible in the file, and queryable via
-  `agentuse agents --json`. Not a body comment: the body IS the prompt, and the
+  never injected into the prompt, still visible in the file, and queryable from
+  the agent list. Not a body comment: the body IS the prompt, and the
   model obeys imperatives inside `<!-- -->`.
 - **File the gap once**, at https://github.com/agentuse/agentuse/issues, so it
   can be closed and the patch deleted. If it is not worth filing, it is not a
@@ -466,7 +465,7 @@ skills: [x-personal] # preloads x-personal; all discovered skills remain visible
 
 Skills are instructions, not tool grants: declare an agent's tools in
 frontmatter even when a skill documents them with `allowed-tools`. Put reusable
-instructions in `.agentuse/skills/<name>/SKILL.md` or install with `agentuse add`.
+instructions in `.agentuse/skills/<name>/SKILL.md`, or install a published skill there.
 
 ## Inline Charts in Agent Output
 
@@ -557,8 +556,8 @@ names like `data` instead of `values`):
 - **Frontmatter must be the first bytes of the file.** Any content above the
   opening `---` - a `#` heading OR an HTML `<!-- -->` comment - makes the parser
   (`gray-matter`) miss the frontmatter and fail with `Invalid agent
-  configuration: model: Required`. `agentuse doctor <file>` catches this in ~1s
-  for free; run it before any token-heavy `agentuse test` / `--mock` run.
+  configuration: model: Required`. The config check catches this in about a
+  second for free; run it before any token-heavy practice run.
 
 - **The body IS the prompt; nothing strips comments.** `matter()` splits off
   only the frontmatter; everything after becomes the agent's `instructions`
@@ -572,20 +571,6 @@ names like `data` instead of `values`):
   `README.md` published alongside (`gh gist create agent.agentuse README.md
   --public`), which GitHub renders and which never touches the prompt.
 
-- **Agents run from a URL; state does not follow them.** `agentuse run <url>`
-  executes a remote agent directly (`npx agentuse run <raw-gist-url> "args"`, no
-  clone). The first URL run shows a trust prompt (`[p]review / [y]es / [N]o`);
-  only `agentuse.io` URLs skip it, so a gist/raw URL always asks - fine
-  interactively, but pipe `y` (or otherwise answer it) in non-interactive tests
-  or the run hangs on stdin. But `store:` state lives at
-  `<projectRoot>/.agentuse/store/`, and for a
-  URL/copy-paste run `projectRoot = findProjectRoot(process.cwd())` (walks up for
-  `.agentuse`/`.git`/`package.json`, else cwd). So a portable agent that leans on
-  the store silently re-baselines when run from a different directory. Prefer
-  stateless; use `store:` only when cross-run memory is the actual point. For a
-  "what's new" feel without state, scope by data (items dated in the last N days),
-  not by remembered deltas. Pin the store with `-C <path>` when cron'ing a URL run.
-
 - **Runs declare their own outcome automatically.** The runtime system prompt
   already tells every agent to end with the always-on `report_outcome` tool as
   complete, idle (checked, nothing to do), or incomplete (a blocker, including
@@ -596,7 +581,7 @@ names like `data` instead of `values`):
   idle; a sweep that found due items stuck behind a failed check, or never got
   to score because the session was logged out, is incomplete").
 
-- **Validate models against `agentuse models`.** The catalog moves; check it
+- **Validate models against the current catalog.** It moves; check it
   before calling a name invalid. Don't infer limits from other providers'
   naming (e.g. "5.5 can't exist because provider Y stops at 5.2").
 

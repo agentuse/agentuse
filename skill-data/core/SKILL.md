@@ -27,7 +27,8 @@ agentuse skills installed [list|get|path] <name>   # project/user skills
 - `agentuse skills get onboarding`, terminal or Web UI handoff from a confirmed
   project to one validated first agent and its first real run.
 - `agentuse skills get runner`, running, listing, sessions, serve, schedules.
-- `agentuse skills get creator`, authoring, improving, reviewing `.agentuse`.
+- `agentuse skills get creator --full`, authoring, improving, reviewing
+  `.agentuse`; `--full` adds the command for each step the rules name.
 - `agentuse skills get tester`, validating agents with mock runs (no real
   side effects), unattended approval-gate testing, the closed edit-run-inspect
   loop.
