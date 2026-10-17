@@ -5,6 +5,8 @@ import { join } from 'path';
 import type { ParsedAgent } from '../src/parser';
 import type { LoadedSuite } from '../src/benchmark/loader';
 import type { BenchmarkRunConfig, Scenario, SuiteConfig } from '../src/benchmark/types';
+import { calculateCost } from '../src/benchmark/types';
+import { getVersionAliases } from '../src/utils/model-alias';
 
 mock.restore();
 
@@ -163,11 +165,14 @@ describe('benchmark model identity', () => {
   });
 
   it('resolves a version alias to the concrete id it ran and prices it', async () => {
+    // Read the target from the registry so a model refresh can move the alias.
+    const target = getVersionAliases()['anthropic:claude-haiku']!;
     const result = await runBenchmarkSuite(suite({ models: ['anthropic:claude-haiku'] }), runConfig());
 
-    expect(runs.map((r) => r.model)).toEqual([PRICED]);
-    expect(Object.keys(result.modelResults)).toEqual([PRICED]);
-    expect(result.ranking[0]!.costUsd).toBeCloseTo(1);
+    expect(runs.map((r) => r.model)).toEqual([target]);
+    expect(Object.keys(result.modelResults)).toEqual([target]);
+    expect(result.ranking[0]!.costUsd).toBeCloseTo(calculateCost(target, 1_000_000, 0)!);
+    expect(result.ranking[0]!.costUsd).toBeGreaterThan(0);
   });
 });
 
