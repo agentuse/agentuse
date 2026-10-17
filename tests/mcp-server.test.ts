@@ -3,6 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpToolError, type DaemonClient } from '../src/mcp-server/daemon';
 import { createAgentUseMcpServer } from '../src/mcp-server/server';
+import { AUTHORING_RULES_URI, getWorkflowResult, getWorkflowTool, promptsList } from '../src/mcp-server/workflow-text';
 
 // A fake daemon answering the same /api routes `agentuse serve` does, so the
 // tools are tested against recorded payload shapes without a live server.
@@ -302,6 +303,19 @@ describe('agentuse MCP server', () => {
     const triage = await call('get_workflow', { workflow: 'triage', agent: 'digest' });
     expect((triage.content as Array<{ text: string }>)[0]!.text).toContain('Look only at this agent: digest');
     expect(client.getInstructions()).toContain('call get_workflow first');
+  });
+
+  it('lists the prompts, get_workflow and the authoring rules exactly as the cloud copy builds them', async () => {
+    client = await connect(fakeDaemon({}).daemon);
+    expect((await client.listPrompts()).prompts).toEqual(promptsList());
+    const listed = (await client.listTools()).tools.find((tool) => tool.name === 'get_workflow')!;
+    const { $schema: _schema, ...inputSchema } = listed.inputSchema as Record<string, unknown>;
+    expect({ name: listed.name, title: listed.title, description: listed.description, inputSchema, annotations: listed.annotations }).toEqual(getWorkflowTool());
+    const rules = await client.readResource({ uri: AUTHORING_RULES_URI });
+    const text = (rules.contents[0] as { text: string }).text;
+    expect(text).toContain('# AgentUse Creator');
+    const workflow = await call('get_workflow', { workflow: 'automate' });
+    expect(workflow.content[0]!.text).toBe(getWorkflowResult({ workflow: 'automate' }, text).content[0].text);
   });
 
   it('starts only the all-mocked practice run, never the live test run', async () => {

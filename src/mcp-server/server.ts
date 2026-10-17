@@ -10,6 +10,7 @@ import { getApprovalBaseUrl, getSessionUrl } from '../tools/await-human.js';
 import { toErrorMessage } from '../utils/error-message.js';
 import { McpToolError, type DaemonClient } from './daemon.js';
 import { registerAgentUsePrompts } from './prompts.js';
+import { SERVER_INSTRUCTIONS } from './workflow-text.js';
 import { RESOURCE_MIME_TYPE, registerAppResource, registerAppTool } from '@modelcontextprotocol/ext-apps/server';
 import { DRAFT_CARD_HTML } from '../generated/mcp-draft-card.js';
 
@@ -152,14 +153,7 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
   const daemon = allowlisted(rawDaemon);
   const server = new McpServer(
     { name: 'agentuse', version: packageVersion },
-    {
-      instructions:
-        'AgentUse runs agents on the user\'s own computer. Use these tools to look at projects, agents and runs, '
-        + 'and to start a run the user asked for. New agents and fixes are drafts until the user says yes; only then '
-        + 'call apply_draft, and if it refuses, the user presses Apply on the review page. Nothing here approves a step. '
-        + 'To build, change or fix an agent, call get_workflow first and follow it. These tools are the whole way in: '
-        + 'do not run the agentuse command line, read AgentUse skill files, or open the AgentUse app for this work.',
-    },
+    { instructions: SERVER_INSTRUCTIONS },
   );
 
   const serverInfo = () => daemon.get<ServerInfoPayload>('');
