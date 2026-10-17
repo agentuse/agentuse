@@ -43,8 +43,9 @@ import { getProviderStatus } from "../../../src/auth/provider-status";
 import { loadGlobalConfig } from "../../../src/utils/global-config";
 import { cloudUrl, readCloudConnection } from "../../../src/cloud/config";
 import { completeProviderOAuth, saveProviderApiKey, startProviderOAuth } from "../../../src/auth/provider-setup";
-import { CloudConnector, cloudSettingsState, parseJoinLink, type CloudApiState } from "./cloud-settings";
+import { CloudConnector, cloudSettingsState, type CloudApiState } from "./cloud-settings";
 import { codingAgentStatuses, isCodingAgentId, setUpCodingAgent, type McpTarget } from "../../../src/onboarding/coding-agents";
+import { automateWorkflow } from "../../../src/mcp-server/prompts";
 import { connectPageUrl, isSetupApiKeyProvider, setupAiState, setupCloudState } from "./setup-wizard";
 import { initializeDesktopGlobalDefaults } from "./global-defaults";
 import { DesktopUpdater, type DesktopUpdateState } from "./updater";
@@ -84,16 +85,14 @@ const cloudConnector = new CloudConnector(
     void pushNativeSettingsState();
     notifySetupWindow();
   },
+  // Like `gh auth login`: the code is ready to paste on the page that opens.
+  (code) => clipboard.writeText(code),
 );
 let settingsOutputBuffer = "";
 let settingsCommandQueue = Promise.resolve();
 // Shown as an alert once Settings is on screen, e.g. why the dashboard could
 // not open. A freshly spawned helper only reads it after it reports ready.
 let pendingSettingsError: string | undefined;
-// The tab Settings should show next, e.g. AgentUse Cloud after a join link.
-let pendingSettingsTab: "cloud" | undefined;
-// A join link that arrived before the app was ready.
-let pendingJoinCode: string | undefined;
 let tray: Tray | undefined;
 let trayMenu: Menu | undefined;
 let dashboardUrl: string | undefined;
@@ -327,7 +326,8 @@ function registerDesktopIpc(): void {
   ipcMain.handle("agentuse:setup:open-connect-page", async (event) => {
     assertSetupSender(event);
     const code = cloudConnector.view.connecting?.code;
-    await shell.openExternal(code ? connectPageUrl(cloudUrl(), code) : `${cloudUrl()}/connect`);
+    if (code) clipboard.writeText(code);
+    await shell.openExternal(connectPageUrl(cloudUrl()));
   });
   ipcMain.handle("agentuse:setup:start-chatgpt", async (event) => {
     assertSetupSender(event);
@@ -352,13 +352,18 @@ function registerDesktopIpc(): void {
   ipcMain.handle("agentuse:setup:prepare-ready", async (event) => {
     assertSetupSender(event);
     const project = await ensureSetupProject();
-    const target = localMcpTarget();
-    return { project, dashboardUrl: dashboardUrl!, mcpUrl: target.url, codingAgents: await codingAgentStatuses(target) };
+    return { project, dashboardUrl: dashboardUrl!, mcpUrl: localMcpTarget().url };
   });
-  ipcMain.handle("agentuse:setup:set-up-coding-agent", async (event, id: unknown) => {
+  ipcMain.handle("agentuse:setup:coding-agents", async (event) => {
+    assertSetupSender(event);
+    return codingAgentStatuses(localMcpTarget());
+  });
+  ipcMain.handle("agentuse:setup:set-up-agent", async (event, id: unknown) => {
     assertSetupSender(event);
     if (!isCodingAgentId(id)) throw new TypeError("Pick Claude Code or Codex.");
-    return setUpCodingAgent(id, localMcpTarget());
+    const target = localMcpTarget();
+    await setUpCodingAgent(id, target, await automateWorkflow());
+    return codingAgentStatuses(target);
   });
   ipcMain.handle("agentuse:setup:copy", (event, text: unknown) => {
     assertSetupSender(event);
@@ -373,8 +378,6 @@ function registerDesktopIpc(): void {
     assertSetupSender(event);
     if (route !== "cloud" && route !== "local") throw new TypeError("Pick where you'll use AgentUse.");
     try {
-      // "Runs in the background": schedules and approvals need the app at login.
-      app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true, args: ["--hidden"] });
       await ensureServer();
       if (openDashboard === true) await showDashboard();
       queueDesktopOnboardingTelemetry({
@@ -388,6 +391,9 @@ function registerDesktopIpc(): void {
       const completedWindow = setupWindow;
       setupWindow = undefined;
       completedWindow?.destroy();
+      // "Runs in the background": schedules and approvals need the app at login.
+      // Last, so macOS's "Login Item Added" notice comes after setup, not over it.
+      app.setLoginItemSettings({ openAtLogin: true, openAsHidden: true, args: ["--hidden"] });
       refreshMenus();
     } catch (error) {
       queueDesktopOnboardingTelemetry({
@@ -986,55 +992,7 @@ function nativeSettingsExecutablePath(): string {
 }
 
 function settingsShowMessage(): NativeSettingsMessage {
-  const tab = pendingSettingsTab;
-  pendingSettingsTab = undefined;
-  return tab ? { type: "show", tab } : { type: "show" };
-}
-
-/**
- * `agentuse://join?code=…` from the Cloud setup page: open the AgentUse Cloud
- * tab and link this Mac with the code, so no second browser step is needed.
- */
-function handleJoinLink(url: string): void {
-  const code = parseJoinLink(url);
-  if (!code) return;
-  if (!app.isReady()) {
-    pendingJoinCode = code;
-    return;
-  }
-  void startJoin(code);
-}
-
-async function startJoin(code: string): Promise<void> {
-  pendingSettingsTab = "cloud";
-  // A link can come from any web page, so linking this Mac waits for a yes.
-  const { response } = await dialog.showMessageBox({
-    type: "question",
-    message: "Connect this Mac to AgentUse Cloud?",
-    detail: "Only continue if you just pressed Connect this Mac on cloud.agentuse.io. The account that made this link can then use AgentUse on this Mac.",
-    buttons: ["Connect", "Cancel"],
-    defaultId: 0,
-    cancelId: 1,
-  });
-  if (response !== 0) return;
-  // Disconnected from the account page leaves a dead connection on disk; the
-  // CLI checks it with the cloud and replaces it. A live one is kept.
-  const activeServer = currentServer && listRegisteredServers().find((server) => server.pid === currentServer?.pid);
-  const live = savedCloudConnection() ? (await cloudApiState(activeServer))?.status : undefined;
-  if (live && live !== "disconnected from the cloud") {
-    pendingSettingsError = "This Mac is already connected to AgentUse Cloud. Disconnect first to link it to a different account.";
-  } else {
-    cloudConnector.connect(code);
-  }
-  // During first-run setup the setup window shows the progress itself.
-  if (setupWindow && !setupWindow.isDestroyed() && !await isDesktopOnboardingReady()) {
-    pendingSettingsTab = undefined;
-    pendingSettingsError = undefined;
-    setupWindow.show();
-    setupWindow.focus();
-    return;
-  }
-  showSettings();
+  return { type: "show" };
 }
 
 function flushPendingSettingsError(child = settingsProcess): void {
@@ -1696,11 +1654,6 @@ if (!app.requestSingleInstanceLock()) {
   // server gets the same graceful shutdown as the menu-bar Quit command.
   process.once("SIGTERM", requestFullQuit);
   app.on("second-instance", () => void openPrimaryWindow());
-  // macOS delivers agentuse:// links here, at launch too, so register it now.
-  app.on("open-url", (event, url) => {
-    event.preventDefault();
-    handleJoinLink(url);
-  });
   app.on("will-quit", unregisterDashboardShortcut);
   app.on("before-quit", (event) => {
     if (!quitPolicy.shouldTerminate()) {
@@ -1735,7 +1688,6 @@ if (!app.requestSingleInstanceLock()) {
     // status check, server authentication, or child-process construction.
     initializeDesktopGlobalDefaults();
     app.setAboutPanelOptions({ applicationName: APP_NAME });
-    if (app.isPackaged) app.setAsDefaultProtocolClient("agentuse");
     registerDesktopIpc();
     initializeDesktopUpdater();
     createTray();
@@ -1770,11 +1722,6 @@ if (!app.requestSingleInstanceLock()) {
       return;
     }
     await openPrimaryWindow();
-    if (pendingJoinCode) {
-      const code = pendingJoinCode;
-      pendingJoinCode = undefined;
-      await startJoin(code);
-    }
     await flushDesktopTelemetry();
   }).catch((error: unknown) => {
     // Only shell setup (tray, IPC, preferences) lands here: without a menu-bar

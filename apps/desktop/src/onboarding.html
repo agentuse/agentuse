@@ -180,19 +180,20 @@
     .card-title { font-size: 16px; font-weight: 700; }
     .card-copy { font-size: 14px; color: var(--muted); }
     .card button { margin-top: auto; }
-    .agents { padding: 16px 18px; border: 2px solid var(--accent-border); border-radius: 12px; }
-    .agent-rows { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; border: 1px solid var(--line); border-radius: 10px; }
-    .agent-rows li { display: flex; align-items: center; gap: 12px; padding: 10px 14px; font-size: 14px; }
-    .agent-rows li + li { border-top: 1px solid var(--line); }
-    .agent-name { display: flex; flex-direction: column; flex-grow: 1; min-width: 0; }
-    .agent-name strong { font-size: 15px; font-weight: 600; }
+    .footer-hint { margin: 0; font-size: 13px; color: var(--muted); }
+    .agents { display: flex; flex-direction: column; gap: 8px; }
+    .agents-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+    .agent-list { margin: 0; padding: 0; list-style: none; border: 1px solid var(--line); border-radius: 12px; }
+    .agent-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; }
+    .agent-list li + li { border-top: 1px solid var(--line); }
+    .agent-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .agent-name strong { font-size: 15px; }
     .agent-name code { font: 12px var(--mono); color: var(--muted); }
-    .agent-state { color: var(--muted); }
+    .agent-list li.missing strong { color: var(--muted); font-weight: 600; }
+    .agent-state { font-size: 14px; color: var(--muted); white-space: nowrap; }
     .agent-state.ok { color: var(--ok); font-weight: 600; }
-    .agent-rows .primary { min-height: 36px; padding: 0 16px; }
-    .dashboard-row { display: flex; align-items: center; gap: 12px; }
-    .dashboard-row span { flex-grow: 1; font-size: 14px; color: var(--muted); }
-    .footer-hint { margin: auto 0 0; font-size: 13px; color: var(--muted); }
+    .agent-list button { min-height: 32px; padding: 0 14px; border: 0; border-radius: 8px; background: var(--accent); color: var(--accent-fg); font-size: 14px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+    .agent-list button:disabled { opacity: 0.5; cursor: default; }
     @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
   </style>
 </head>
@@ -234,14 +235,14 @@
     <div class="code-box">
       <span class="label" id="code-label">Code for this Mac</span>
       <span class="code" id="code"></span>
-      <span class="waiting" id="waiting" role="status"><span class="spinner" aria-hidden="true"></span><span id="waiting-text">Waiting for you to press Connect…</span></span>
+      <span class="waiting" id="waiting" role="status"><span class="spinner" aria-hidden="true"></span><span id="waiting-text">Getting a code…</span></span>
     </div>
-    <p class="hint" id="signin-hint">Browser didn't open, or you'd rather use your phone? Go to <a id="connect-page" href="#" data-open-connect>cloud.agentuse.io/connect</a> and type the code.</p>
+    <p class="hint" id="signin-hint">On your phone instead? Go to <a id="connect-page" href="#" data-open-connect>cloud.agentuse.io/connect</a> and type the code.</p>
     <p class="error" role="alert" data-error></p>
     <div class="actions">
       <button class="secondary" type="button" id="signin-back">Back</button>
       <div class="end">
-        <button class="secondary" type="button" id="signin-again" data-open-connect>Open browser again</button>
+        <button class="secondary" type="button" id="signin-again" data-open-connect>Copy and open again</button>
         <button class="primary" type="button" id="signin-retry" hidden>Try again</button>
       </div>
     </div>
@@ -305,47 +306,53 @@
   <section class="step" id="step-ready-cloud" aria-labelledby="ready-cloud-title" hidden>
     <div class="heading">
       <span class="step-number" data-step-label>Step 4 of 4</span>
-      <h1 id="ready-cloud-title">You're set</h1>
-      <p class="lede" id="ready-cloud-lede">Connected. Runs in the background.</p>
+      <h1 id="ready-cloud-title">You're set up</h1>
+      <p class="lede" id="ready-cloud-lede">Connected. Ask your assistant to build an agent, and it runs here on this Mac.</p>
     </div>
-    <p class="note">Came from the Claude or ChatGPT plugin? Go back and ask again.</p>
+    <div class="agents">
+      <div class="agents-head"><span class="card-title">Connect your coding agents</span><span class="card-copy">Then type /automate in it.</span></div>
+      <ul class="agent-list" data-agent-list></ul>
+    </div>
     <div class="field">
-      <label for="mcp-url">Otherwise, add this address to your AI assistant</label>
+      <label for="mcp-url">Claude, ChatGPT or another chat app: add this address as a connector and sign in</label>
       <div class="row">
         <input class="grow mono" type="text" id="mcp-url" readonly>
         <button class="secondary" type="button" id="mcp-copy">Copy</button>
       </div>
-      <a href="#" id="mcp-help">How to add it in Claude, ChatGPT, Claude Code and others</a>
     </div>
     <p class="hint" id="ready-cloud-ai" hidden>No AI is set up yet, so agents can't run. Add one later in the dashboard under Providers.</p>
     <p class="error" role="alert" data-error></p>
-    <div class="actions"><div class="end"><button class="primary" type="button" id="cloud-done">Done</button></div></div>
+    <div class="actions">
+      <a href="#" id="mcp-help">Help</a>
+      <div class="end">
+        <button class="secondary" type="button" id="cloud-dashboard" data-needs-ready>Open dashboard</button>
+        <button class="primary" type="button" id="cloud-done" data-needs-ready>Done</button>
+      </div>
+    </div>
   </section>
 
   <!-- 4. Ready, Local -->
   <section class="step" id="step-ready-local" aria-labelledby="ready-local-title" hidden>
     <div class="heading">
       <span class="step-number" data-step-label>Step 3 of 3</span>
-      <h1 id="ready-local-title">You're set</h1>
-      <p class="lede">Everything runs on this Mac. No account.</p>
+      <h1 id="ready-local-title">You're set up</h1>
+      <p class="lede">Make agents from a coding agent on this Mac. Watch and approve them in the dashboard.</p>
     </div>
     <ul class="checklist">
       <li><span class="mark" id="local-ai-mark" aria-hidden="true">✓</span><span id="local-ai">AI</span></li>
       <li><span class="mark" aria-hidden="true">✓</span><span id="local-project">Project: my-agents</span></li>
       <li><span class="mark" aria-hidden="true">✓</span><span>Runs in the background</span></li>
     </ul>
-    <div class="card agents">
-      <span class="card-title">Connect your coding agents</span>
-      <span class="card-copy">AgentUse adds itself to these apps. Then ask one to automate a job you do often.</span>
-      <ul class="agent-rows" id="coding-agents" aria-label="Coding agents on this Mac"><li class="agent-state">Looking for coding agents…</li></ul>
-      <span class="card-copy">Another app? <button class="link" type="button" id="local-copy-url">Copy the MCP address</button></span>
+    <div class="agents">
+      <div class="agents-head"><span class="card-title">Connect your coding agents</span><span class="card-copy">Then type /automate in it.</span></div>
+      <ul class="agent-list" data-agent-list></ul>
     </div>
-    <div class="dashboard-row">
-      <span>The dashboard shows runs, approvals and schedules.</span>
-      <button class="secondary" type="button" id="local-dashboard">Open dashboard</button>
-    </div>
+    <p class="hint">Another app, like Cursor? <a href="#" id="local-copy">Copy the MCP address</a> and add it there.</p>
     <p class="error" role="alert" data-error></p>
-    <p class="footer-hint">Want it in Claude or ChatGPT later? Settings › AgentUse Cloud › Connect.</p>
+    <div class="actions">
+      <span class="footer-hint">Want it in Claude or ChatGPT later? Settings › AgentUse Cloud.</span>
+      <div class="end"><button class="primary" type="button" id="local-dashboard" data-needs-ready>Open dashboard</button></div>
+    </div>
   </section>
 
   <script>
@@ -357,10 +364,14 @@
     let ai = "chatgpt";
     let chatGptStarted = false;
     let current = "step-route";
+    let shownAt = 0;
     let ready;
+    let agents = [];
+    let settingUp;
 
     function show(id) {
       current = id;
+      shownAt = Date.now();
       for (const step of steps) $(step).hidden = step !== id;
       for (const error of document.querySelectorAll("[data-error]")) error.textContent = "";
       const total = route === "cloud" ? 4 : 3;
@@ -408,29 +419,77 @@
       try {
         ready = await bridge.prepareReady();
         renderReady();
+        agents = await bridge.codingAgents();
+        renderAgents();
       } catch (error) {
         fail(error);
       }
     }
 
+    // Claude Code, Codex: Set up adds AgentUse to its config and the automate skill.
+    function renderAgents() {
+      for (const list of document.querySelectorAll("[data-agent-list]")) {
+        list.replaceChildren(...agents.map((agent) => {
+          const item = document.createElement("li");
+          const installed = agent.state !== "not-installed";
+          const done = agent.state === "set-up";
+          item.className = installed ? "" : "missing";
+          const name = document.createElement("span");
+          name.className = "agent-name";
+          const title = document.createElement("strong");
+          title.textContent = agent.name;
+          name.append(title);
+          if (installed) {
+            const path = document.createElement("code");
+            path.textContent = agent.configPath;
+            name.append(path);
+          }
+          item.append(name);
+          if (!installed || done) {
+            const status = document.createElement("span");
+            status.className = done ? "agent-state ok" : "agent-state";
+            status.textContent = done ? `✓ Set up · type ${agent.command}` : "Not installed";
+            item.append(status);
+          } else {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.disabled = settingUp !== undefined;
+            // Update: set up before, for another address (the server moved) or without the skill.
+            button.textContent = settingUp === agent.id ? "Setting up…" : agent.state === "outdated" ? "Update" : "Set up";
+            button.addEventListener("click", async () => {
+              settingUp = agent.id;
+              renderAgents();
+              try {
+                agents = await bridge.setUpAgent(agent.id);
+              } catch (error) {
+                fail(error);
+              } finally {
+                settingUp = undefined;
+                renderAgents();
+              }
+            });
+            item.append(button);
+          }
+          return item;
+        }));
+      }
+    }
+
     function renderSignIn() {
       const cloud = state.cloud;
-      const connecting = cloud.status === "connecting" || cloud.status === "joining";
-      const joining = cloud.status === "joining";
+      const connecting = cloud.status === "connecting";
       $("connect-page").textContent = state.connectPage;
       $("code").textContent = cloud.code ?? "";
       $("code").hidden = !cloud.code;
       $("code-label").hidden = !cloud.code;
       $("waiting").hidden = !connecting;
-      $("signin-again").hidden = !connecting || joining;
-      $("signin-hint").hidden = joining;
+      $("signin-again").hidden = !connecting || !cloud.code;
       $("signin-retry").hidden = connecting;
-      $("signin-lede").textContent = joining
-        ? "Linking this Mac with the code from the setup page."
-        : cloud.code
-          ? "We opened AgentUse Cloud. Sign in, check the code matches, and press Connect."
-          : connecting ? "Opening AgentUse Cloud in your browser…" : "This Mac isn't connected yet.";
-      $("waiting-text").textContent = joining ? "Linking this Mac…" : cloud.code ? "Waiting for you to press Connect…" : "Getting a code…";
+      // Like `gh auth login`: the code is on the clipboard, and the page asks for it.
+      $("signin-lede").textContent = cloud.code
+        ? `We copied this code and opened ${state.connectPage}. Sign in and paste it there.`
+        : connecting ? "Getting a code for this Mac…" : "This Mac isn't connected yet.";
+      $("waiting-text").textContent = cloud.code ? "Copied. Waiting for you to paste it…" : "Getting a code…";
       const error = $("step-signin").querySelector("[data-error]");
       error.textContent = !connecting && cloud.error ? cloud.error : "";
     }
@@ -448,56 +507,27 @@
       $("chatgpt-detail").hidden = ai !== "chatgpt" || !chatGptStarted;
       $("key-detail").hidden = ai !== "key";
       $("ai-continue").textContent = ai === "chatgpt" && !chatGptStarted ? "Sign in with ChatGPT" : "Continue";
+      // Nothing to check yet: an empty key or address can't be saved.
+      $("ai-continue").disabled = ai === "key"
+        ? !$("key-value").value.trim()
+        : chatGptStarted && !$("chatgpt-address").value.trim();
     }
 
     function renderReady() {
       const cloud = state.cloud;
-      $("ready-cloud-lede").textContent = `Connected${cloud.account ? ` as ${cloud.account}` : ""}. Runs in the background.`;
+      $("ready-cloud-lede").textContent = `Connected${cloud.account ? ` as ${cloud.account}` : ""}. Ask your assistant to build an agent, and it runs here on this Mac.`;
       $("mcp-url").value = cloud.mcpUrl ?? "";
       $("ready-cloud-ai").hidden = state.ai.ready;
       $("local-ai").textContent = state.ai.ready ? `AI: ${state.ai.label}` : "AI: add one in the dashboard";
       $("local-ai-mark").textContent = state.ai.ready ? "✓" : "!";
       $("local-ai-mark").className = state.ai.ready ? "mark" : "mark warn";
       $("local-project").textContent = `Project: ${ready?.project ?? "my-agents"}`;
-      $("local-copy-url").disabled = !ready;
-      $("local-dashboard").disabled = !ready;
-      // The server is still starting until prepareReady answers: say so instead of a bare grey button.
-      if (!ready) $("local-dashboard").textContent = "Starting…";
-      else if ($("local-dashboard").textContent === "Starting…") $("local-dashboard").textContent = "Open dashboard";
-      renderCodingAgents();
-    }
-
-    function renderCodingAgents() {
-      if (!ready) return;
-      $("coding-agents").replaceChildren(...ready.codingAgents.map((agent) => {
-        const row = document.createElement("li");
-        const name = document.createElement("span");
-        name.className = "agent-name";
-        const title = document.createElement("strong");
-        title.textContent = agent.name;
-        const file = document.createElement("code");
-        file.textContent = agent.configPath;
-        name.append(title, file);
-        row.append(name);
-        if (agent.state === "set-up" || agent.state === "not-installed") {
-          const label = document.createElement("span");
-          label.className = agent.state === "set-up" ? "agent-state ok" : "agent-state";
-          label.textContent = agent.state === "set-up" ? "✓ Set up" : "Not installed";
-          row.append(label);
-        } else {
-          const button = document.createElement("button");
-          button.type = "button";
-          button.className = "primary";
-          button.textContent = agent.state === "outdated" ? "Update" : "Set up";
-          button.addEventListener("click", () => busy(button, "Setting up…", async () => {
-            const updated = await bridge.setUpCodingAgent(agent.id);
-            ready.codingAgents = ready.codingAgents.map((candidate) => candidate.id === updated.id ? updated : candidate);
-            renderCodingAgents();
-          }));
-          row.append(button);
-        }
-        return row;
-      }));
+      // The server starts in the background; say so instead of a greyed button.
+      for (const button of document.querySelectorAll("[data-needs-ready]")) {
+        button.dataset.label ??= button.textContent;
+        button.disabled = !ready;
+        button.textContent = ready ? button.dataset.label : "Starting AgentUse…";
+      }
     }
 
     async function refresh() {
@@ -506,12 +536,6 @@
       if (current === "step-signin") {
         renderSignIn();
         if (state.cloud.status === "connected" && previous !== "connected") afterSignIn();
-      } else if (current === "step-route" && (state.cloud.status === "joining" || state.cloud.status === "connecting")) {
-        // A join link from the setup page arrived: show its progress.
-        route = "cloud";
-        pick("route", route);
-        show("step-signin");
-        renderSignIn();
       } else if (current === "step-ready-cloud") {
         renderReady();
       }
@@ -556,7 +580,11 @@
     $("ai-back").addEventListener("click", () => show("step-route"));
     $("ai-skip").addEventListener("click", () => goReady());
     $("chatgpt-reopen").addEventListener("click", () => busy($("chatgpt-reopen"), "Opening…", () => bridge.startChatGpt()));
+    $("key-value").addEventListener("input", renderAi);
+    $("chatgpt-address").addEventListener("input", renderAi);
     $("ai-continue").addEventListener("click", () => {
+      // A double-click on Continue in step 1 lands here; don't let it open sign-in.
+      if (Date.now() - shownAt < 500) return;
       const starting = ai === "chatgpt" && !chatGptStarted;
       busy($("ai-continue"), starting ? "Opening…" : "Saving…", async () => {
         if (starting) {
@@ -585,8 +613,12 @@
       event.preventDefault();
       bridge.openHelp().catch(fail);
     });
-    $("local-copy-url").addEventListener("click", () => ready && copy($("local-copy-url"), ready.mcpUrl).catch(fail));
+    $("local-copy").addEventListener("click", (event) => {
+      event.preventDefault();
+      if (ready) copy($("local-copy"), ready.mcpUrl).catch(fail);
+    });
     $("cloud-done").addEventListener("click", () => busy($("cloud-done"), "Finishing…", () => bridge.complete("cloud", false)));
+    $("cloud-dashboard").addEventListener("click", () => busy($("cloud-dashboard"), "Opening…", () => bridge.complete("cloud", true)));
     $("local-dashboard").addEventListener("click", () => busy($("local-dashboard"), "Opening…", () => bridge.complete("local", true)));
 
     show("step-route");

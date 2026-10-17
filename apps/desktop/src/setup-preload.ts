@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { CodingAgentId, CodingAgentStatus } from "../../../src/onboarding/coding-agents";
+import type { CodingAgentStatus } from "../../../src/onboarding/coding-agents";
 import type { SetupAiState, SetupApiKeyProvider, SetupCloudState } from "./setup-wizard";
 
 export interface DesktopSetupState {
@@ -14,7 +14,6 @@ export interface DesktopSetupReady {
   dashboardUrl: string;
   /** This Mac's MCP address, for apps AgentUse cannot set up itself. */
   mcpUrl: string;
-  codingAgents: CodingAgentStatus[];
 }
 
 contextBridge.exposeInMainWorld("agentuseSetup", Object.freeze({
@@ -30,7 +29,8 @@ contextBridge.exposeInMainWorld("agentuseSetup", Object.freeze({
   saveApiKey: (provider: SetupApiKeyProvider, key: string): Promise<SetupAiState> => ipcRenderer.invoke("agentuse:setup:save-api-key", provider, key),
   prepareReady: (): Promise<DesktopSetupReady> => ipcRenderer.invoke("agentuse:setup:prepare-ready"),
   copyText: (text: string): Promise<void> => ipcRenderer.invoke("agentuse:setup:copy", text),
-  setUpCodingAgent: (id: CodingAgentId): Promise<CodingAgentStatus> => ipcRenderer.invoke("agentuse:setup:set-up-coding-agent", id),
+  codingAgents: (): Promise<CodingAgentStatus[]> => ipcRenderer.invoke("agentuse:setup:coding-agents"),
+  setUpAgent: (id: string): Promise<CodingAgentStatus[]> => ipcRenderer.invoke("agentuse:setup:set-up-agent", id),
   openHelp: (): Promise<void> => ipcRenderer.invoke("agentuse:setup:open-help"),
   complete: (route: "cloud" | "local", openDashboard: boolean): Promise<void> => ipcRenderer.invoke("agentuse:setup:complete", route, openDashboard),
 }));

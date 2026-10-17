@@ -6,7 +6,6 @@ const saved = { account: "leon@example.com", name: "Leon's Mac", mcpUrl: "https:
 describe("first-run setup", () => {
   it("shows the pairing code while the browser step runs", () => {
     expect(setupCloudState({ connecting: { code: "BCDF-GHJK" } })).toEqual({ status: "connecting", code: "BCDF-GHJK" });
-    expect(setupCloudState({ connecting: { joining: true } })).toEqual({ status: "joining" });
   });
 
   it("counts a saved connection as signed in unless the account page removed it", () => {
@@ -23,8 +22,8 @@ describe("first-run setup", () => {
     expect(setupAiState({ providers: [], customProviders: [] })).toEqual({ ready: false });
   });
 
-  it("builds the links the page offers", () => {
-    expect(connectPageUrl("https://cloud.agentuse.io/", "BCDF-GHJK")).toBe("https://cloud.agentuse.io/connect?code=BCDF-GHJK");
+  it("builds the links and commands the page offers", () => {
+    expect(connectPageUrl("https://cloud.agentuse.io/")).toBe("https://cloud.agentuse.io/connect");
     expect(isSetupApiKeyProvider("openrouter")).toBe(true);
     expect(isSetupApiKeyProvider("ollama")).toBe(false);
   });

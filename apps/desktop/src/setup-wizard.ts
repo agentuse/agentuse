@@ -7,7 +7,7 @@ import type { CloudApiState } from "./cloud-settings";
  */
 
 export interface SetupCloudState {
-  status: "none" | "connecting" | "joining" | "connected";
+  status: "none" | "connecting" | "connected";
   code?: string;
   account?: string;
   mcpUrl?: string;
@@ -22,10 +22,9 @@ export interface SetupAiState {
 export function setupCloudState(input: {
   api?: CloudApiState;
   saved?: { account?: string; name: string; mcpUrl: string };
-  connecting?: { code?: string; joining?: boolean };
+  connecting?: { code?: string };
   error?: string;
 }): SetupCloudState {
-  if (input.connecting?.joining) return { status: "joining" };
   if (input.connecting) return { status: "connecting", ...(input.connecting.code && { code: input.connecting.code }) };
   // Disconnected from the account page leaves a dead connection on disk.
   if (input.saved && input.api?.status !== "disconnected from the cloud") {
@@ -51,9 +50,12 @@ export function setupAiState(status: Pick<ProviderStatus, "providers" | "customP
   return custom ? { ready: true, label: custom.id } : { ready: false };
 }
 
-/** The address in the browser for a pairing code, for "Open browser again". */
-export function connectPageUrl(cloud: string, code: string): string {
-  return `${cloud.replace(/\/+$/u, "")}/connect?code=${encodeURIComponent(code)}`;
+/**
+ * The page where the person types the code. Like `gh auth login`, the code is
+ * never in the link, so a link someone sends can't add their computer instead.
+ */
+export function connectPageUrl(cloud: string): string {
+  return `${cloud.replace(/\/+$/u, "")}/connect`;
 }
 
 export const SETUP_API_KEY_PROVIDERS = ["anthropic", "openai", "openrouter"] as const;

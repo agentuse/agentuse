@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { EventEmitter } from "node:events";
-import { CloudConnector, cloudSettingsState, parseConnectCode, parseJoinLink } from "./cloud-settings";
+import { CloudConnector, cloudSettingsState, parseConnectCode } from "./cloud-settings";
 import { parseNativeSettingsCommand } from "./native-settings";
 
 describe("AgentUse Cloud settings", () => {
@@ -49,23 +49,18 @@ describe("AgentUse Cloud settings", () => {
     expect(parseNativeSettingsCommand('{"type":"toggleCloud"}')).toEqual({ type: "toggleCloud" });
   });
 
-  it("reads the join code from a setup page link and nothing else", () => {
-    expect(parseJoinLink("agentuse://join?code=bcdf-ghjk-lmnp")).toBe("BCDF-GHJK-LMNP");
-    expect(parseJoinLink("agentuse:join?code=BCDF-GHJK-LMNP")).toBe("BCDF-GHJK-LMNP");
-    expect(parseJoinLink("agentuse://join?code=BCDF-GHJK")).toBeUndefined();
-    expect(parseJoinLink("agentuse://join?code=AAAA-GHJK-LMNP")).toBeUndefined();
-    expect(parseJoinLink("agentuse://open?code=BCDF-GHJK-LMNP")).toBeUndefined();
-    expect(parseJoinLink("https://join?code=BCDF-GHJK-LMNP")).toBeUndefined();
-    expect(parseJoinLink("not a url")).toBeUndefined();
-  });
-
-  it("joins with the code and shows Connecting instead of a browser step", () => {
+  it("hands each new code over to be copied, once", () => {
     const calls: string[][] = [];
-    const child = Object.assign(new EventEmitter(), { stdout: null, stderr: null, kill() {} });
-    const connector = new CloudConnector((args) => { calls.push(args); return child as never; }, () => {});
-    connector.connect("BCDF-GHJK-LMNP");
-    expect(calls).toEqual([["connect", "--join", "BCDF-GHJK-LMNP"]]);
-    expect(cloudSettingsState(connector.view)).toMatchObject({ cloudStatus: "connecting", cloudTitle: "Connecting…", cloudActionLabel: "Cancel" });
+    const copied: string[] = [];
+    const stdout = new EventEmitter();
+    const child = Object.assign(new EventEmitter(), { stdout, stderr: null, kill() {} });
+    const connector = new CloudConnector((args) => { calls.push(args); return child as never; }, () => {}, (code) => copied.push(code));
+    connector.connect();
+    stdout.emit("data", Buffer.from("Open https://cloud.agentuse.io/connect and enter BCDF-GHJK\n"));
+    stdout.emit("data", Buffer.from("Waiting…\n"));
+    expect(calls).toEqual([["connect"]]);
+    expect(copied).toEqual(["BCDF-GHJK"]);
+    expect(cloudSettingsState(connector.view)).toMatchObject({ cloudStatus: "connecting", cloudCode: "BCDF-GHJK", cloudActionLabel: "Cancel" });
     child.emit("exit", 0, null);
     expect(connector.view.connecting).toBeUndefined();
   });
