@@ -1081,6 +1081,19 @@ agentuse provider list
 agentuse provider list --json   # machine-readable status; never includes secrets
 ```
 
+## agentuse mcp
+
+Manage logins for the HTTP MCP servers an agent uses. See [OAuth MCP Servers](/reference/agent-syntax#oauth-mcp-servers) for the agent-file side.
+
+```bash
+agentuse mcp login <agent> <server>               # Log in; every agent using the same server URL shares it
+agentuse mcp login <agent> <server> --no-browser  # Print the login URL instead of opening a browser
+agentuse mcp status <agent>                       # Show how each of the agent's MCP servers signs in
+agentuse mcp logout <agent> <server>              # Forget the saved login
+```
+
+`<agent>` is the agent file and `<server>` is the server's name under `mcpServers`.
+
 ---
 
 ## agentuse skills
@@ -1580,6 +1593,9 @@ agentuse provider logout [provider]      # Remove stored credentials
 agentuse provider remove <name>          # Remove a custom provider
 agentuse provider list                   # Show all providers and credentials
 agentuse provider help                   # Show detailed auth help
+agentuse mcp login <agent> <server>      # Log in to an OAuth MCP server
+agentuse mcp status <agent>              # Show how an agent's MCP servers sign in
+agentuse mcp logout <agent> <server>     # Forget an MCP server login
 agentuse models [provider] [options]     # List models, aliases, and the configured default
 agentuse models unpin [path]             # Swap pinned model versions for version aliases
 agentuse models bump [path]              # Move superseded pins to the current model

@@ -543,7 +543,7 @@ For Claude models, you can enable extended thinking so the model's reasoning str
 
 ```yaml
 ---
-model: anthropic:claude-opus-5
+model: anthropic:claude-haiku-4-5
 anthropic:
   thinking:
     budgetTokens: 4096  # Minimum 1024
@@ -553,6 +553,10 @@ anthropic:
 <Warning>
   Extended thinking is **off by default**, an explicit opt-in. Enabling it generates new thinking tokens billed at **output rates**, a real cost increase that scales with the budget (unlike OpenAI's `reasoningSummary`, where the reasoning is billed either way). AgentUse automatically raises `max_tokens` above the budget so Anthropic's `max_tokens > budget` constraint is met and there's headroom for the answer.
 </Warning>
+
+<Note>
+  Only older Claude models such as Claude Haiku 4.5 accept a manual budget. Claude Opus 4.7 and later, Sonnet 5 and later, Fable, and Claude Haiku 5.5 reject it, so set their depth with `reasoning` instead.
+</Note>
 
 These options help you optimize for:
 - **Speed vs Quality**: Lower reasoning effort for faster responses
