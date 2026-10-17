@@ -1,7 +1,7 @@
 # AgentUse for Codex and ChatGPT
 
 Adds AgentUse Cloud as an MCP server, so Codex can reach AgentUse on your own
-computer. Ask it to automate the work in this conversation, or to find and fix
+computer. Ask it about your agents and runs, to automate the work in this conversation, or to find and fix
 agents that fail. Drafts and fixes open on a review page, where you turn them
 on.
 

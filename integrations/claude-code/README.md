@@ -1,7 +1,7 @@
 # AgentUse for Claude Code
 
 Adds AgentUse Cloud as an MCP server, so Claude Code can reach AgentUse on your
-own computer. Type `/automate` to turn the work in this conversation into an
+own computer. Type `/agentuse` to ask about your agents and runs, `/automate` to turn the work in this conversation into an
 agent that runs on its own, or `/triage` to find and fix agents that fail.
 Drafts and fixes open on a review page, where you turn them on.
 
