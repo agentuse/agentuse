@@ -52,15 +52,16 @@ const ASK = `Answer the user's request with the AgentUse tools, which reach Agen
 const AUDIT = `Audit only: report the problems, their causes and the fix you would propose. Do not call propose_fix.`;
 
 async function guide(): Promise<string> {
-  const [core, creator] = await Promise.all([loadBuiltinSkillSource('core'), loadBuiltinSkillSource('creator')]);
+  // Only the creator guide: its rules for writing agents are what a draft
+  // needs. The core guide is a map of CLI commands, which pulled chats to the
+  // terminal instead of these tools.
+  const creator = await loadBuiltinSkillSource('creator');
   return [
     '---',
-    'AgentUse guide, from the version installed on the user\'s computer. It was written for the command line; here the AgentUse tools replace it. '
+    'AgentUse authoring guide, from the version installed on the user\'s computer. It was written for the command line; here the AgentUse tools replace it. '
       + 'Do not run any `agentuse` command and do not open the AgentUse app. '
-      + 'Instead of `agentuse skills get creator` or `core`, use this guide; instead of `tester`, use test_draft; '
-      + 'instead of `agentuse models`, use models.available from get_project; instead of `agentuse run` or `serve`, use run_agent and get_session.',
-    '',
-    core.trim(),
+      + 'Instead of `agentuse doctor`, draft_agent checks the files; instead of `agentuse test` or `--mock`, use test_draft; '
+      + 'instead of `agentuse models`, use models.available from get_project; instead of `agentuse run`, `agents` or `serve`, use run_agent, list_agents and get_session.',
     '',
     creator.trim(),
   ].join('\n');

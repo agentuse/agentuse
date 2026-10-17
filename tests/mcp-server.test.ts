@@ -287,6 +287,7 @@ describe('agentuse MCP server', () => {
     expect(automateText).toContain("The user's goal: Weekly digest");
     expect(automateText).toContain('# AgentUse Creator');
     expect(automateText).toContain('Do not run any `agentuse` command');
+    expect(automateText).not.toContain('agentuse skills get');
     const audit = await client.getPrompt({ name: 'triage', arguments: { audit_only: 'yes' } });
     expect((audit.messages[0]!.content as { text: string }).text).toContain('Do not call propose_fix');
   });
