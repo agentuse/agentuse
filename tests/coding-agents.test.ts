@@ -13,9 +13,17 @@ describe('coding agents', () => {
   afterEach(() => { rmSync(home, { recursive: true, force: true }); });
 
   it('reports apps that are not installed', async () => {
-    const statuses = await codingAgentStatuses(target, home);
+    const statuses = await codingAgentStatuses(target, home, []);
     expect(statuses.map((s) => [s.id, s.state])).toEqual([['claude-code', 'not-installed'], ['codex', 'not-installed']]);
-    await expect(setUpCodingAgent('codex', target, 'Steps', home)).rejects.toThrow('not installed');
+    await expect(setUpCodingAgent('codex', target, 'Steps', home, [])).rejects.toThrow('not installed');
+  });
+
+  it('counts Claude Code as installed when only the Claude app is there', async () => {
+    const apps = path.join(home, 'Applications');
+    mkdirSync(path.join(apps, 'Claude.app'), { recursive: true });
+    expect((await codingAgentStatuses(target, home, [apps])).map((s) => s.state)).toEqual(['not-set-up', 'not-installed']);
+    expect((await setUpCodingAgent('claude-code', target, 'Steps', home, [apps])).state).toBe('set-up');
+    expect(JSON.parse(readFileSync(path.join(home, '.claude.json'), 'utf8')).mcpServers.agentuse.url).toBe(target.url);
   });
 
   it('adds AgentUse to Claude Code and keeps the rest of ~/.claude.json', async () => {

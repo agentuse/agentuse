@@ -46,7 +46,8 @@ interface CodingAgent {
   where: string;
   configFile: (home: string) => string;
   skillFile: (home: string) => string;
-  installed: (home: string) => boolean;
+  /** Installed: its folder exists, or (Claude) its Mac app, which makes no folder until signed in. */
+  installed: (home: string, appDirs: readonly string[]) => boolean;
   read: (text: string) => Entry | undefined;
   write: (text: string, target: McpTarget) => string;
 }
@@ -65,7 +66,8 @@ const claudeCode: CodingAgent = {
   where: 'Claude app (Code) or terminal',
   configFile: (home) => path.join(home, '.claude.json'),
   skillFile: (home) => path.join(home, '.claude', 'skills', SKILL_NAME, 'SKILL.md'),
-  installed: (home) => existsSync(path.join(home, '.claude.json')) || existsSync(path.join(home, '.claude')),
+  installed: (home, appDirs) => existsSync(path.join(home, '.claude.json')) || existsSync(path.join(home, '.claude'))
+    || appDirs.some((dir) => existsSync(path.join(dir, 'Claude.app'))),
   read(text) {
     const entry = parseClaudeConfig(text).mcpServers?.[SERVER_NAME];
     if (!entry || typeof entry !== 'object') return undefined;
@@ -118,6 +120,7 @@ const codex: CodingAgent = {
   where: 'Codex app or terminal',
   configFile: (home) => path.join(home, '.codex', 'config.toml'),
   skillFile: (home) => path.join(home, '.agents', 'skills', SKILL_NAME, 'SKILL.md'),
+  // The Codex app makes ~/.codex on first open, before sign-in.
   installed: (home) => existsSync(path.join(home, '.codex')),
   read(text) {
     const { table } = splitCodexTable(text);
@@ -174,10 +177,15 @@ export function automateSkill(workflow: string): string {
   ].join('\n');
 }
 
-async function statusOf(agent: CodingAgent, target: McpTarget, home: string): Promise<CodingAgentStatus> {
+/** Where Mac apps are installed. */
+export function appFolders(home = homedir()): string[] {
+  return ['/Applications', path.join(home, 'Applications')];
+}
+
+async function statusOf(agent: CodingAgent, target: McpTarget, home: string, appDirs: readonly string[]): Promise<CodingAgentStatus> {
   const file = agent.configFile(home);
   const base = { id: agent.id, name: agent.name, configPath: displayPath(file, home), command: agent.command, where: agent.where };
-  if (!agent.installed(home)) return { ...base, state: 'not-installed' };
+  if (!agent.installed(home, appDirs)) return { ...base, state: 'not-installed' };
   const entry = agent.read(await readText(file));
   if (!entry) return { ...base, state: 'not-set-up' };
   const current = entry.url === target.url && entry.authorization === bearer(target) && existsSync(agent.skillFile(home));
@@ -195,8 +203,8 @@ async function writeAtomically(target: string, text: string): Promise<void> {
   await rename(temp, file);
 }
 
-export async function codingAgentStatuses(target: McpTarget, home = homedir()): Promise<CodingAgentStatus[]> {
-  return Promise.all(CODING_AGENTS.map((agent) => statusOf(agent, target, home)));
+export async function codingAgentStatuses(target: McpTarget, home = homedir(), appDirs = appFolders(home)): Promise<CodingAgentStatus[]> {
+  return Promise.all(CODING_AGENTS.map((agent) => statusOf(agent, target, home, appDirs)));
 }
 
 /**
@@ -204,14 +212,20 @@ export async function codingAgentStatuses(target: McpTarget, home = homedir()): 
  * other settings, and writes the automate skill. `workflow` is the /automate
  * text. A person's own `automate` skill is left alone.
  */
-export async function setUpCodingAgent(id: CodingAgentId, target: McpTarget, workflow: string, home = homedir()): Promise<CodingAgentStatus> {
+export async function setUpCodingAgent(
+  id: CodingAgentId,
+  target: McpTarget,
+  workflow: string,
+  home = homedir(),
+  appDirs = appFolders(home),
+): Promise<CodingAgentStatus> {
   const agent = CODING_AGENTS.find((candidate) => candidate.id === id);
   if (!agent) throw new Error(`Unknown coding agent: ${id}`);
-  if (!agent.installed(home)) throw new Error(`${agent.name} is not installed on this computer.`);
+  if (!agent.installed(home, appDirs)) throw new Error(`${agent.name} is not installed on this computer.`);
   const file = agent.configFile(home);
   await writeAtomically(file, agent.write(await readText(file), target));
   const skill = agent.skillFile(home);
   const existing = existsSync(skill) ? await readText(skill) : undefined;
   if (existing === undefined || existing.includes(SKILL_MARKER)) await writeAtomically(skill, automateSkill(workflow));
-  return statusOf(agent, target, home);
+  return statusOf(agent, target, home, appDirs);
 }
