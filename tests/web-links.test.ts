@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { agentDetailHref, agentDetailViewState, projectDiscoveryHref } from '../src/cli/serve/web/lib/links';
+import { agentDetailHref, agentDetailViewState } from '../src/cli/serve/web/lib/links';
 
 describe('agent detail links', () => {
   it('preserves the existing plain detail link by default', () => {
@@ -48,13 +48,5 @@ describe('agent detail links', () => {
       metric: 'linkedin_posts_scheduled',
     });
     expect(agentDetailViewState('?metric=%20').metric).toBeUndefined();
-  });
-});
-
-describe('project discovery links', () => {
-  it('persists the selected project and optional provider step in the URL', () => {
-    expect(projectDiscoveryHref('my project')).toBe('/onboarding?project=my+project');
-    expect(projectDiscoveryHref('my project', { connectProvider: true }))
-      .toBe('/onboarding?project=my+project&provider=connect');
   });
 });

@@ -1,4 +1,4 @@
-import { ErrorBoundary, LocationProvider, Router, Route, lazy, useLocation } from 'preact-iso';
+import { ErrorBoundary, LocationProvider, Router, Route, lazy } from 'preact-iso';
 import { useEffect } from 'preact/hooks';
 import { AppShell } from './components/app-shell';
 import { AgentPalette } from './components/agent-palette';
@@ -20,7 +20,6 @@ import {
 } from './lib/keyed-route';
 
 const Home = lazy(reloadOnChunkError(() => import('./routes/home')));
-const Onboarding = lazy(reloadOnChunkError(() => import('./routes/onboarding')));
 const Agents = lazy(reloadOnChunkError(() => import('./routes/agents')));
 const AgentDetail = lazy(reloadOnChunkError(() => import('./routes/agent-detail')));
 const Schedules = lazy(reloadOnChunkError(() => import('./routes/schedules')));
@@ -97,7 +96,8 @@ function AppRoutes() {
       }}
     >
       <Route path="/" component={Home} />
-      <Route path="/onboarding" component={Onboarding} />
+      {/* The old guided onboarding; agents now come from coding agents and assistants. */}
+      <Route path="/onboarding" component={HomeRedirect} />
       <Route path="/agents" component={Agents} />
       {/* Query-addressed (?project=&job=): a draft has no agent path yet, and
           /agents/:project/:agent* would swallow the segment. */}
@@ -126,10 +126,12 @@ function AppRoutes() {
   );
 }
 
+function HomeRedirect() {
+  useEffect(() => { window.location.replace('/'); }, []);
+  return null;
+}
+
 function RoutedApp() {
-  const location = useLocation();
-  const pathname = new URL(location.url, 'https://agentuse.local').pathname;
-  if (pathname === '/onboarding') return <AppRoutes />;
   return <AppShell><AppRoutes /></AppShell>;
 }
 

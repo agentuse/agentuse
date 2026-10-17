@@ -7,7 +7,7 @@ import { HOME_SECTIONS, useHomeSections } from '../hooks/use-home-sections';
 import { usePushBell } from '../hooks/use-push';
 import { debugSettingsEnabled, requestUpdatePreview } from '../lib/update-preview';
 import { ProviderSettingsGroup } from '../components/provider-setup';
-import { ProjectsSettingsGroup, RestartOnboardingGroup } from '../components/project-settings';
+import { ProjectsSettingsGroup } from '../components/project-settings';
 import { SettingsGroup as Group, SettingsRow as Row } from '../components/settings-layout';
 import { BusyButton } from '../components/busy-button';
 import { DeveloperSettings } from '../components/developer-settings';
@@ -197,8 +197,6 @@ export default function Settings() {
                   </Row>
                 </Group>
               )}
-
-              <RestartOnboardingGroup />
 
               <Group title="Appearance">
                 <Row label="Theme" hint="Light, dark, or follow the system.">

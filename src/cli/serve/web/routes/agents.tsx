@@ -23,7 +23,7 @@ import { AgentGraphView } from '../components/agent-graph-view';
 import { GroupRail } from '../components/group-rail';
 import { SchedulePill } from '../components/schedule-pill';
 import { LastRunCell, RunHistorySpark } from '../components/run-health';
-import { agentDetailHref, projectDiscoveryHref } from '../lib/links';
+import { agentDetailHref } from '../lib/links';
 import { NewAgentButton } from '../components/agent-create-dialog';
 import { fetchSiteWorkflow } from '../lib/site-workflows';
 import { InlineError } from '../components/error-banner';
@@ -177,11 +177,6 @@ function projectAnchor(projectId: string): string {
 /** Link to the focused single-project agents view (/agents/:project). */
 export function agentsProjectHref(projectId: string): string {
   return `/agents/${encodeURIComponent(projectId)}`;
-}
-
-function LegacyOnboardingRedirect(props: { projectId: string }) {
-  useEffect(() => { window.location.replace(projectDiscoveryHref(props.projectId)); }, [props.projectId]);
-  return <Loading label="Opening onboarding…" />;
 }
 
 /**
@@ -758,16 +753,6 @@ export default function Agents({ project }: { project?: string } = {}) {
         ? `This ${term('project')} has no agents.`
       : 'No agents loaded yet.';
 
-  const discoveryProjectId = location.query.onboarding === 'discover' && typeof location.query.project === 'string'
-    ? location.query.project
-    : undefined;
-  const discoveryProject = discoveryProjectId
-    ? info.data?.projects.find((candidate) => candidate.id === discoveryProjectId)
-    : undefined;
-  if (discoveryProject) {
-    return <LegacyOnboardingRedirect projectId={discoveryProject.id} />;
-  }
-
   return (
     <div class="page-agents">
       <GroupRail items={railItems} />
@@ -911,7 +896,7 @@ export default function Agents({ project }: { project?: string } = {}) {
           </section>
         )}
         {noProjects && !scoped
-          ? <div class="panel"><div class="empty">No projects loaded. <a href="/onboarding">Start onboarding</a> to create or choose one.</div></div>
+          ? <div class="panel"><div class="empty">No projects loaded. <a href="/settings">Add one in Settings</a>, or ask your coding agent to make one.</div></div>
           : byProject.size === 0
           ? <div class="panel">{loading && !data
             ? <Loading label="Loading agents…" />
@@ -921,7 +906,7 @@ export default function Agents({ project }: { project?: string } = {}) {
                 <button type="button" class="empty-action" onClick={() => updateFilter('')}>Clear filter</button>
               )}
               {!filterActive && !projectMissing && (
-                <a class="empty-action" href={scoped ? projectDiscoveryHref(project) : '/onboarding'}>Find agent ideas</a>
+                <a class="empty-action" href="/">Connect a coding agent</a>
               )}
             </div>}</div>
           : [...byProject.entries()].map(([projectId, agents]) => (

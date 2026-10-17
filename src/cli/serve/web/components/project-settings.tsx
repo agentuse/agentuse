@@ -1,19 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { attachExistingProject, fetchInfo, removeProject, type InfoPayload } from '../lib/api';
 import { ProjectFolderField } from './project-folder-field';
-import { SettingsGroup, SettingsRow } from './settings-layout';
-
-export function RestartOnboardingGroup() {
-  return (
-    <SettingsGroup title="Onboarding">
-      <SettingsRow label="Create or connect a project" hint="Restart the guided setup, then build an agent step by step.">
-        <a class="settings-item" href="/onboarding">
-          Start onboarding again
-        </a>
-      </SettingsRow>
-    </SettingsGroup>
-  );
-}
+import { SettingsGroup } from './settings-layout';
 
 export function ProjectsSettingsGroup() {
   const [info, setInfo] = useState<InfoPayload | null>(null);

@@ -54,15 +54,6 @@ export function agentDetailViewState(search: string): { tab: AgentDetailTab; tut
   return { tab, tutorialStep, metric };
 }
 
-/** Stable onboarding destination used across provider setup reloads and app
- * focus changes. Keeping project discovery in the URL prevents an established
- * project from falling back to the dashboard mid-flow. */
-export function projectDiscoveryHref(projectId: string, options: { connectProvider?: boolean } = {}): string {
-  const params = new URLSearchParams({ project: projectId });
-  if (options.connectProvider) params.set('provider', 'connect');
-  return `/onboarding?${params.toString()}`;
-}
-
 /**
  * The tidy-up progress/result page.
  *

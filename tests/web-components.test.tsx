@@ -51,9 +51,8 @@ import {
 } from '../src/cli/serve/web/hooks/use-internal-agent-job';
 import { DraftAnswerComposer, pendingDraftQuestion } from '../src/cli/serve/web/components/draft-answer-composer';
 import { DraftThread, groupDraftTurns } from '../src/cli/serve/web/components/draft-thread';
-import { firstUsefulAgentSetupSteps } from '../src/cli/serve/web/components/onboarding-shell';
 import { ProjectFolderField } from '../src/cli/serve/web/components/project-folder-field';
-import { ProjectsSettingsGroup, RestartOnboardingGroup } from '../src/cli/serve/web/components/project-settings';
+import { ProjectsSettingsGroup } from '../src/cli/serve/web/components/project-settings';
 import { AgentRevisionLauncher, AgentRevisionStopButton, revisionLabel, revisionOriginAction, revisionOriginDescription, revisionReturnHref } from '../src/cli/serve/web/components/agent-revision';
 
 const noop = () => {};
@@ -188,14 +187,6 @@ describe('agent revision entry', () => {
 });
 
 describe('project settings', () => {
-  it('positions guided project creation as restarting onboarding from General', () => {
-    const html = renderToString(<RestartOnboardingGroup />);
-
-    expect(html).toContain('Create or connect a project');
-    expect(html).toContain('Start onboarding again');
-    expect(html).toContain('/onboarding');
-  });
-
   it('keeps the Projects tab focused on attaching a directory', () => {
     const html = renderToString(<ProjectsSettingsGroup />);
 
@@ -220,22 +211,6 @@ describe('project settings', () => {
 
     expect(withPicker).toContain('Choose folder…');
     expect(withoutPicker).not.toContain('Choose folder…');
-  });
-});
-
-describe('first-agent onboarding steps', () => {
-  it('uses a create-first journey for a new empty project', () => {
-    const steps = firstUsefulAgentSetupSteps({ currentStep: 3, flow: 'new', providerReady: true });
-
-    expect(steps.map((step) => step.title)).toEqual(['Create project', 'Connect model', 'Create agent', 'Run agent']);
-    expect(steps.find((step) => step.current)?.title).toBe('Create agent');
-  });
-
-  it('keeps discovery in the journey for an existing project', () => {
-    const steps = firstUsefulAgentSetupSteps({ currentStep: 3, flow: 'existing', providerReady: true });
-
-    expect(steps.map((step) => step.title)).toEqual(['Add existing project', 'Connect model', 'Find work', 'Create and run']);
-    expect(steps.find((step) => step.current)?.title).toBe('Find work');
   });
 });
 
