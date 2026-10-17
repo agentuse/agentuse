@@ -224,8 +224,13 @@ describe('reconcileOrphanedSessions', () => {
       oldWorker.kill('SIGTERM');
       await exited;
 
+      // The sweep writes the status before it returns, so the count can lag
+      // the status by a tick. Wait for both.
       const deadline = Date.now() + 2_000;
-      while ((await sessionManager.findSession(sessionID))?.session.status === 'running' && Date.now() < deadline) {
+      while (
+        ((await sessionManager.findSession(sessionID))?.session.status === 'running' || sweepCount < 2)
+        && Date.now() < deadline
+      ) {
         await sleep(20);
       }
       const recovered = await sessionManager.findSession(sessionID);
