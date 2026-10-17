@@ -73,10 +73,10 @@ describe('agentuse MCP server', () => {
     client = await connect(fakeDaemon({}).daemon);
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual(
-      ['apply_draft', 'draft_agent', 'get_agent', 'get_project', 'get_session', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'propose_fix', 'read_project_file', 'run_agent', 'test_draft'],
+      ['apply_draft', 'draft_agent', 'get_agent', 'get_project', 'get_session', 'get_workflow', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'propose_fix', 'read_project_file', 'run_agent', 'test_draft'],
     );
     const readOnly = tools.filter((tool) => tool.annotations?.readOnlyHint).map((tool) => tool.name);
-    expect(readOnly.sort()).toEqual(['get_agent', 'get_project', 'get_session', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'read_project_file']);
+    expect(readOnly.sort()).toEqual(['get_agent', 'get_project', 'get_session', 'get_workflow', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'read_project_file']);
   });
 
   it('lists projects by name without their paths', async () => {
@@ -286,8 +286,21 @@ describe('agentuse MCP server', () => {
     expect(automateText).toContain('Never write the agent file anywhere yourself');
     expect(automateText).toContain("The user's goal: Weekly digest");
     expect(automateText).toContain('# AgentUse Creator');
+    expect(automateText).toContain('Do not run any `agentuse` command');
     const audit = await client.getPrompt({ name: 'triage', arguments: { audit_only: 'yes' } });
     expect((audit.messages[0]!.content as { text: string }).text).toContain('Do not call propose_fix');
+  });
+
+  it('serves the same workflows as a tool for apps that do not show prompts', async () => {
+    client = await connect(fakeDaemon({}).daemon);
+    const automate = await call('get_workflow', { workflow: 'automate', goal: 'Weekly digest' });
+    const automateText = (automate.content as Array<{ text: string }>)[0]!.text;
+    expect(automateText).toContain('Call draft_agent');
+    expect(automateText).toContain("The user's goal: Weekly digest");
+    expect(automateText).toContain('# AgentUse Creator');
+    const triage = await call('get_workflow', { workflow: 'triage', agent: 'digest' });
+    expect((triage.content as Array<{ text: string }>)[0]!.text).toContain('Look only at this agent: digest');
+    expect(client.getInstructions()).toContain('call get_workflow first');
   });
 
   it('starts only the all-mocked practice run, never the live test run', async () => {

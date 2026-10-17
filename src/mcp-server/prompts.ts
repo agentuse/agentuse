@@ -55,7 +55,10 @@ async function guide(): Promise<string> {
   const [core, creator] = await Promise.all([loadBuiltinSkillSource('core'), loadBuiltinSkillSource('creator')]);
   return [
     '---',
-    'AgentUse guide, from the version installed on the user\'s computer. Where it mentions CLI commands, use the AgentUse tools instead.',
+    'AgentUse guide, from the version installed on the user\'s computer. It was written for the command line; here the AgentUse tools replace it. '
+      + 'Do not run any `agentuse` command and do not open the AgentUse app. '
+      + 'Instead of `agentuse skills get creator` or `core`, use this guide; instead of `tester`, use test_draft; '
+      + 'instead of `agentuse models`, use models.available from get_project; instead of `agentuse run` or `serve`, use run_agent and get_session.',
     '',
     core.trim(),
     '',
@@ -66,6 +69,20 @@ async function guide(): Promise<string> {
 /** The /automate workflow on its own, for the skill AgentUse adds to coding agents. */
 export async function automateWorkflow(): Promise<string> {
   return [AUTOMATE, '', await guide()].join('\n');
+}
+
+function automateText(goal?: string): Promise<string> {
+  return guide().then((text) => [AUTOMATE, goal ? `\nThe user's goal: ${goal}` : '', '', text].join('\n'));
+}
+
+function triageText(agent?: string, auditOnly?: boolean): Promise<string> {
+  return guide().then((text) => [
+    TRIAGE,
+    agent ? `\nLook only at this agent: ${agent}` : '',
+    auditOnly ? `\n${AUDIT}` : '',
+    '',
+    text,
+  ].join('\n'));
 }
 
 export function registerAgentUsePrompts(server: McpServer): void {
@@ -85,13 +102,7 @@ export function registerAgentUsePrompts(server: McpServer): void {
     description: 'Turn this chat into an agent that runs on its own',
     argsSchema: { goal: z.string().optional().describe('What to automate, if the chat does not already say') },
   }, async ({ goal }) => ({
-    messages: [{
-      role: 'user',
-      content: {
-        type: 'text',
-        text: [AUTOMATE, goal ? `\nThe user's goal: ${goal}` : '', '', await guide()].join('\n'),
-      },
-    }],
+    messages: [{ role: 'user', content: { type: 'text', text: await automateText(goal) } }],
   }));
 
   server.registerPrompt('triage', {
@@ -104,16 +115,24 @@ export function registerAgentUsePrompts(server: McpServer): void {
   }, async ({ agent, audit_only }) => ({
     messages: [{
       role: 'user',
-      content: {
-        type: 'text',
-        text: [
-          TRIAGE,
-          agent ? `\nLook only at this agent: ${agent}` : '',
-          audit_only && /^(yes|true|1)$/iu.test(audit_only) ? `\n${AUDIT}` : '',
-          '',
-          await guide(),
-        ].join('\n'),
-      },
+      content: { type: 'text', text: await triageText(agent, Boolean(audit_only && /^(yes|true|1)$/iu.test(audit_only))) },
     }],
+  }));
+
+  // Codex and some other MCP apps never show prompts, so the same workflows
+  // are also a tool the model can call on its own.
+  server.registerTool('get_workflow', {
+    title: 'Get workflow',
+    description: 'The steps for building a new agent ("automate") or fixing failing agents ("triage"), with the AgentUse authoring guide. '
+      + 'Call this first whenever the user wants to create, automate, change or fix an agent, and follow what it returns. '
+      + 'It is the same text as the /automate and /triage prompts, for apps that do not show prompts.',
+    inputSchema: {
+      workflow: z.enum(['automate', 'triage']).describe('"automate" to build a new agent, "triage" to fix failing ones'),
+      goal: z.string().optional().describe('automate: what to automate, if the chat does not already say'),
+      agent: z.string().optional().describe('triage: only this agent'),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, async ({ workflow, goal, agent }) => ({
+    content: [{ type: 'text', text: workflow === 'automate' ? await automateText(goal) : await triageText(agent) }],
   }));
 }
