@@ -62,7 +62,14 @@ export function buildIntegrationArtifacts(outputRoot = defaultOutputRoot): Integ
   const packageJson = JSON.parse(readText(resolve(repoRoot, 'package.json'))) as { version: string };
   const sourceVersion = packageJson.version;
   const mcpConfig = renderTemplate('shared/mcp.json', { '__AGENTUSE_MCP_URL__': AGENTUSE_MCP_URL });
-  const contentId = sha256(mcpConfig).slice(0, 12);
+  const codexAssets = resolve(repoRoot, 'integrations/codex/assets');
+  // Codex keeps an installed plugin per version, so the version changes
+  // whenever anything in the plugin does, including its icon.
+  const contentId = sha256([
+    mcpConfig,
+    readText(resolve(repoRoot, 'integrations/codex/plugin.json')),
+    readText(resolve(codexAssets, 'icon.svg')),
+  ].join('\n')).slice(0, 12);
   const replacements = {
     '__AGENTUSE_VERSION__': sourceVersion,
     '__CODEX_VERSION__': `${sourceVersion}+codex.${contentId}`,
@@ -80,6 +87,8 @@ export function buildIntegrationArtifacts(outputRoot = defaultOutputRoot): Integ
   writeText(resolve(codexPlugin, '.codex-plugin/plugin.json'), renderTemplate('codex/plugin.json', replacements));
   writeText(resolve(codexPlugin, '.mcp.json'), mcpConfig);
   writeText(resolve(codexPlugin, 'README.md'), renderTemplate('codex/README.md', replacements));
+  mkdirSync(resolve(codexPlugin, 'assets'), { recursive: true });
+  cpSync(resolve(codexAssets, 'icon.svg'), resolve(codexPlugin, 'assets/icon.svg'));
   cpSync(resolve(repoRoot, 'LICENSE'), resolve(codexPlugin, 'LICENSE'));
 
   const claudeMarketplace = resolve(output, 'claude-marketplace');

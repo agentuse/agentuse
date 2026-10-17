@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { AGENTUSE_MCP_URL, buildIntegrationArtifacts } from '../scripts/build-integrations';
@@ -31,6 +31,7 @@ describe('AgentUse integration artifacts', () => {
     const codexEntries = archiveEntries('unzip', ['-Z1', artifacts.archives.codex]);
     expect(codexEntries).toContain('agentuse/.codex-plugin/plugin.json');
     expect(codexEntries).toContain('agentuse/.mcp.json');
+    expect(codexEntries).toContain('agentuse/assets/icon.svg');
     expect(codexEntries).toContain('.agents/plugins/marketplace.json');
     expect(codexEntries.some((entry) => entry.includes('skills/'))).toBe(false);
     const codexRelease = JSON.parse(archiveEntries('unzip', ['-p', artifacts.archives.codex, '.agents/plugins/marketplace.json']).join('\n'));
@@ -62,6 +63,8 @@ describe('AgentUse integration artifacts', () => {
     const claudeManifest = JSON.parse(readFileSync(resolve(artifacts.claudeMarketplace, 'plugins/agentuse/.claude-plugin/plugin.json'), 'utf8'));
     expect(codexManifest.mcpServers).toBe('./.mcp.json');
     expect(codexManifest.skills).toBeUndefined();
+    expect(codexManifest.interface.composerIcon).toBe('./assets/icon.svg');
+    expect(existsSync(resolve(artifacts.codexMarketplace, 'plugins/agentuse/assets/icon.svg'))).toBe(true);
     expect(codexManifest.version).toStartWith(`${sourceVersion}+codex.`);
     expect(claudeManifest.version).toBe(sourceVersion);
     for (const plugin of [

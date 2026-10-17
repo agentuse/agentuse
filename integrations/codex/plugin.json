@@ -16,6 +16,9 @@
   ],
   "interface": {
     "displayName": "AgentUse",
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/icon.svg",
+    "brandColor": "#0A0A0A",
     "shortDescription": "Turn this work into an agent that runs on its own.",
     "longDescription": "Connects to AgentUse Cloud, which reaches AgentUse on your own computer. Ask AgentUse about your projects, agents and runs, use automate to turn a workflow from this conversation into an agent you review and turn on with one click, and triage to find and fix agents that fail. Your agents run on your computer, with your keys. Connect the computer once with the AgentUse app or `agentuse connect`.",
     "developerName": "AgentUse",
