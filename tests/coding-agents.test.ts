@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { codingAgentStatuses, setUpCodingAgent } from '../src/onboarding/coding-agents';
+
 
 const target = { url: 'http://127.0.0.1:12233/mcp' };
 
@@ -14,7 +15,7 @@ describe('coding agents', () => {
   it('reports apps that are not installed', async () => {
     const statuses = await codingAgentStatuses(target, home);
     expect(statuses.map((s) => [s.id, s.state])).toEqual([['claude-code', 'not-installed'], ['codex', 'not-installed']]);
-    await expect(setUpCodingAgent('codex', target, home)).rejects.toThrow('not installed');
+    await expect(setUpCodingAgent('codex', target, 'Steps', home)).rejects.toThrow('not installed');
   });
 
   it('adds AgentUse to Claude Code and keeps the rest of ~/.claude.json', async () => {
@@ -22,7 +23,7 @@ describe('coding agents', () => {
     writeFileSync(file, JSON.stringify({ numStartups: 3, mcpServers: { other: { type: 'stdio', command: 'x' } } }), { mode: 0o600 });
     expect((await codingAgentStatuses(target, home))[0]).toMatchObject({ configPath: '~/.claude.json', state: 'not-set-up' });
 
-    const status = await setUpCodingAgent('claude-code', target, home);
+    const status = await setUpCodingAgent('claude-code', target, 'Steps', home);
     expect(status.state).toBe('set-up');
     const config = JSON.parse(readFileSync(file, 'utf8'));
     expect(config.numStartups).toBe(3);
@@ -36,7 +37,7 @@ describe('coding agents', () => {
 
   it('sends the operator key to Claude Code when the server has one', async () => {
     mkdirSync(path.join(home, '.claude'));
-    await setUpCodingAgent('claude-code', { ...target, apiKey: 'k' }, home);
+    await setUpCodingAgent('claude-code', { ...target, apiKey: 'k' }, 'Steps', home);
     const config = JSON.parse(readFileSync(path.join(home, '.claude.json'), 'utf8'));
     expect(config.mcpServers.agentuse.headers).toEqual({ Authorization: 'Bearer k' });
     expect((await codingAgentStatuses(target, home))[0].state).toBe('outdated');
@@ -44,7 +45,7 @@ describe('coding agents', () => {
 
   it('refuses to overwrite a ~/.claude.json it cannot read', async () => {
     writeFileSync(path.join(home, '.claude.json'), '{ not json');
-    await expect(setUpCodingAgent('claude-code', target, home)).rejects.toThrow();
+    await expect(setUpCodingAgent('claude-code', target, 'Steps', home)).rejects.toThrow();
     expect(readFileSync(path.join(home, '.claude.json'), 'utf8')).toBe('{ not json');
   });
 
@@ -52,7 +53,7 @@ describe('coding agents', () => {
     const real = path.join(home, 'dotfiles.json');
     writeFileSync(real, '{}');
     symlinkSync(real, path.join(home, '.claude.json'));
-    await setUpCodingAgent('claude-code', target, home);
+    await setUpCodingAgent('claude-code', target, 'Steps', home);
     expect(JSON.parse(readFileSync(real, 'utf8')).mcpServers.agentuse.url).toBe(target.url);
   });
 
@@ -74,7 +75,7 @@ describe('coding agents', () => {
     ].join('\n'));
     expect((await codingAgentStatuses(target, home))[1]).toMatchObject({ configPath: '~/.codex/config.toml', state: 'outdated' });
 
-    await setUpCodingAgent('codex', { ...target, apiKey: 'k' }, home);
+    await setUpCodingAgent('codex', { ...target, apiKey: 'k' }, 'Steps', home);
     const text = readFileSync(file, 'utf8');
     expect(text).toContain('model = "gpt-5"');
     expect(text).toContain('[mcp_servers.other]\nurl = "https://example.com/mcp"');
@@ -86,7 +87,31 @@ describe('coding agents', () => {
 
   it('creates Codex config.toml when only ~/.codex exists', async () => {
     mkdirSync(path.join(home, '.codex'));
-    await setUpCodingAgent('codex', target, home);
+    await setUpCodingAgent('codex', target, 'Steps', home);
     expect(readFileSync(path.join(home, '.codex', 'config.toml'), 'utf8')).toBe('[mcp_servers.agentuse]\nurl = "http://127.0.0.1:12233/mcp"\n');
+  });
+
+  it('writes the automate skill, and says Update when it is missing', async () => {
+    writeFileSync(path.join(home, '.claude.json'), '{}');
+    mkdirSync(path.join(home, '.codex'));
+    await setUpCodingAgent('claude-code', target, 'Steps', home);
+    await setUpCodingAgent('codex', target, 'Steps', home);
+    const claudeSkill = path.join(home, '.claude', 'skills', 'automate', 'SKILL.md');
+    const codexSkill = path.join(home, '.agents', 'skills', 'automate', 'SKILL.md');
+    expect(readFileSync(claudeSkill, 'utf8')).toContain('name: automate');
+    expect(readFileSync(codexSkill, 'utf8')).toContain('Steps');
+    expect((await codingAgentStatuses(target, home)).map((s) => [s.command, s.state])).toEqual([['/automate', 'set-up'], ['$automate', 'set-up']]);
+
+    rmSync(codexSkill);
+    expect(existsSync(codexSkill)).toBe(false);
+    expect((await codingAgentStatuses(target, home))[1].state).toBe('outdated');
+  });
+
+  it("never replaces a person's own automate skill", async () => {
+    const skill = path.join(home, '.claude', 'skills', 'automate', 'SKILL.md');
+    mkdirSync(path.dirname(skill), { recursive: true });
+    writeFileSync(skill, 'mine');
+    await setUpCodingAgent('claude-code', target, 'Steps', home);
+    expect(readFileSync(skill, 'utf8')).toBe('mine');
   });
 });

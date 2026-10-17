@@ -641,14 +641,17 @@ export interface InfoPayload {
   publicUrl?: string;
   capabilities?: {
     projectFolderPicker: boolean;
-    /** This server can add itself to Claude Code and Codex on this computer. */
-    codingAgentSetup?: boolean;
   };
   projects: ProjectInfo[];
 }
 
 export function fetchInfo(): Promise<InfoPayload> {
   return getJson('/api');
+}
+
+/** This daemon's line to AgentUse Cloud; `mcpUrl` once the computer is connected. */
+export function fetchCloudState(): Promise<{ status: string; account?: string; mcpUrl?: string }> {
+  return getJson('/api/cloud');
 }
 
 export type { CodingAgentId, CodingAgentStatus };

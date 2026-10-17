@@ -1,4 +1,5 @@
 import { codingAgentStatuses, isCodingAgentId, setUpCodingAgent, type McpTarget } from "../../../onboarding/coding-agents";
+import { automateWorkflow } from "../../../mcp-server/prompts";
 import { toErrorMessage } from "../../../utils/error-message.js";
 import { canUseHostFolderPicker } from "../../../utils/local-request";
 import { parseJSONBody, sendError, sendJSON, sendRequestParseError } from "../http";
@@ -40,7 +41,7 @@ export async function codingAgentRoutes(ctx: ServeContext, rq: ServeRequest): Pr
       return true;
     }
     try {
-      sendJSON(res, 200, { success: true, agent: await setUpCodingAgent(body.id, target) });
+      sendJSON(res, 200, { success: true, agent: await setUpCodingAgent(body.id, target, await automateWorkflow()) });
     } catch (err) {
       sendError(res, 500, "CODING_AGENT_SETUP_FAILED", toErrorMessage(err));
     }

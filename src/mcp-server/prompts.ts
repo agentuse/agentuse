@@ -63,6 +63,11 @@ async function guide(): Promise<string> {
   ].join('\n');
 }
 
+/** The /automate workflow on its own, for the skill AgentUse adds to coding agents. */
+export async function automateWorkflow(): Promise<string> {
+  return [AUTOMATE, '', await guide()].join('\n');
+}
+
 export function registerAgentUsePrompts(server: McpServer): void {
   server.registerPrompt('agentuse', {
     title: 'Ask AgentUse',

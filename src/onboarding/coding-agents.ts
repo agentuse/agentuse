@@ -4,9 +4,10 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 /**
- * Adds AgentUse's local MCP server to the coding agents on this computer, so
- * they can make and fix agents. The Mac app's setup and the dashboard's first
- * run share it. Claude Code and Codex for now.
+ * Adds AgentUse's local MCP server to the coding agents on this computer, plus
+ * an `automate` skill, so the person types /automate (Claude Code) or
+ * $automate (Codex) to make an agent. The Mac app's setup and the dashboard's
+ * empty Home share it. Claude Code and Codex for now.
  */
 
 export const CODING_AGENT_IDS = ['claude-code', 'codex'] as const;
@@ -21,6 +22,8 @@ export interface CodingAgentStatus {
   /** The file AgentUse writes, with the home folder shown as `~`. */
   configPath: string;
   state: CodingAgentState;
+  /** What to type in that agent once it's set up. */
+  command: string;
 }
 
 /** The MCP server to add: this daemon's `/mcp`, and its operator key when it has one. */
@@ -37,20 +40,27 @@ interface Entry {
 interface CodingAgent {
   id: CodingAgentId;
   name: string;
+  command: string;
   configFile: (home: string) => string;
+  skillFile: (home: string) => string;
   installed: (home: string) => boolean;
   read: (text: string) => Entry | undefined;
   write: (text: string, target: McpTarget) => string;
 }
 
 const SERVER_NAME = 'agentuse';
+const SKILL_NAME = 'automate';
+/** Marks a skill file AgentUse wrote, so a person's own `automate` skill is never replaced. */
+const SKILL_MARKER = '<!-- agentuse:automate -->';
 
 const bearer = (target: McpTarget): string | undefined => target.apiKey ? `Bearer ${target.apiKey}` : undefined;
 
 const claudeCode: CodingAgent = {
   id: 'claude-code',
   name: 'Claude Code',
+  command: '/automate',
   configFile: (home) => path.join(home, '.claude.json'),
+  skillFile: (home) => path.join(home, '.claude', 'skills', SKILL_NAME, 'SKILL.md'),
   installed: (home) => existsSync(path.join(home, '.claude.json')) || existsSync(path.join(home, '.claude')),
   read(text) {
     const entry = parseClaudeConfig(text).mcpServers?.[SERVER_NAME];
@@ -100,7 +110,9 @@ function splitCodexTable(text: string): { rest: string[]; table: string[] } {
 const codex: CodingAgent = {
   id: 'codex',
   name: 'OpenAI Codex',
+  command: '$automate',
   configFile: (home) => path.join(home, '.codex', 'config.toml'),
+  skillFile: (home) => path.join(home, '.agents', 'skills', SKILL_NAME, 'SKILL.md'),
   installed: (home) => existsSync(path.join(home, '.codex')),
   read(text) {
     const { table } = splitCodexTable(text);
@@ -141,33 +153,60 @@ function displayPath(file: string, home: string): string {
   return file.startsWith(`${home}${path.sep}`) ? `~${file.slice(home.length)}` : file;
 }
 
+/** The skill: the same workflow as the MCP server's /automate prompt. */
+export function automateSkill(workflow: string): string {
+  return [
+    '---',
+    `name: ${SKILL_NAME}`,
+    'description: Turn work from this conversation into an AgentUse agent that runs on its own on this computer. Use when the person asks to automate a job, or types automate.',
+    '---',
+    SKILL_MARKER,
+    '',
+    'The tools named below come from the `agentuse` MCP server.',
+    '',
+    workflow.trim(),
+    '',
+  ].join('\n');
+}
+
 async function statusOf(agent: CodingAgent, target: McpTarget, home: string): Promise<CodingAgentStatus> {
   const file = agent.configFile(home);
-  const base = { id: agent.id, name: agent.name, configPath: displayPath(file, home) };
+  const base = { id: agent.id, name: agent.name, configPath: displayPath(file, home), command: agent.command };
   if (!agent.installed(home)) return { ...base, state: 'not-installed' };
   const entry = agent.read(await readText(file));
   if (!entry) return { ...base, state: 'not-set-up' };
-  const current = entry.url === target.url && entry.authorization === bearer(target);
+  const current = entry.url === target.url && entry.authorization === bearer(target) && existsSync(agent.skillFile(home));
   return { ...base, state: current ? 'set-up' : 'outdated' };
+}
+
+/** Write next to the file and rename over it, keeping its mode (these configs can hold keys) and following a symlink. */
+async function writeAtomically(target: string, text: string): Promise<void> {
+  // A symlinked config (dotfiles repos): replace its target, not the link.
+  const file = await realpath(target).catch(() => target);
+  const mode = await stat(file).then((info) => info.mode & 0o777, () => 0o600);
+  await mkdir(path.dirname(file), { recursive: true });
+  const temp = `${file}.agentuse-${process.pid}.tmp`;
+  await writeFile(temp, text, { mode });
+  await rename(temp, file);
 }
 
 export async function codingAgentStatuses(target: McpTarget, home = homedir()): Promise<CodingAgentStatus[]> {
   return Promise.all(CODING_AGENTS.map((agent) => statusOf(agent, target, home)));
 }
 
-/** Adds (or points again) AgentUse in this coding agent's config. Other settings in the file are kept. */
-export async function setUpCodingAgent(id: CodingAgentId, target: McpTarget, home = homedir()): Promise<CodingAgentStatus> {
+/**
+ * Adds (or points again) AgentUse in this coding agent's config, keeping its
+ * other settings, and writes the automate skill. `workflow` is the /automate
+ * text. A person's own `automate` skill is left alone.
+ */
+export async function setUpCodingAgent(id: CodingAgentId, target: McpTarget, workflow: string, home = homedir()): Promise<CodingAgentStatus> {
   const agent = CODING_AGENTS.find((candidate) => candidate.id === id);
   if (!agent) throw new Error(`Unknown coding agent: ${id}`);
   if (!agent.installed(home)) throw new Error(`${agent.name} is not installed on this computer.`);
-  // Follow a symlinked config (dotfiles repos) so the rename replaces its target, not the link.
-  const file = await realpath(agent.configFile(home)).catch(() => agent.configFile(home));
-  const next = agent.write(await readText(file), target);
-  // Keep the file's permissions: these configs can hold keys.
-  const mode = await stat(file).then((info) => info.mode & 0o777, () => 0o600);
-  await mkdir(path.dirname(file), { recursive: true });
-  const temp = `${file}.agentuse-${process.pid}.tmp`;
-  await writeFile(temp, next, { mode });
-  await rename(temp, file);
+  const file = agent.configFile(home);
+  await writeAtomically(file, agent.write(await readText(file), target));
+  const skill = agent.skillFile(home);
+  const existing = existsSync(skill) ? await readText(skill) : undefined;
+  if (existing === undefined || existing.includes(SKILL_MARKER)) await writeAtomically(skill, automateSkill(workflow));
   return statusOf(agent, target, home);
 }

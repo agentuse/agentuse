@@ -10,6 +10,7 @@ import { isAttentionSessionDismissed, useGlobalApprovals } from '../hooks/use-gl
 import { useSessionTail } from '../hooks/use-session-tail';
 import { useTitle } from '../hooks/use-title';
 import { UpdateBanner } from '../components/update-banner';
+import { NoAgentsYet } from '../components/no-agents-yet';
 import { Loading } from '../components/loading';
 import { AgentResultsRows } from '../components/metric-results';
 import { groupPendingByAgent, PendingChangesetRow } from '../components/pending-approval-card';
@@ -36,11 +37,6 @@ function formatCountdown(ms: number): string {
 }
 
 const LIVE_STATUSES = new Set(['running', 'resuming', 'continuing']);
-
-function OnboardingRedirect() {
-  useEffect(() => { window.location.replace('/onboarding'); }, []);
-  return <Loading label="Opening onboarding…" />;
-}
 
 function isLiveRow(row: SessionRow): boolean {
   // A suspended parent parked on a running delegated child is live work ("running
@@ -762,7 +758,11 @@ export default function Home() {
   const successPct = ended24h > 0 ? Math.round(((ended24h - failed24h) / ended24h) * 100) : null;
 
   if (noProjects || noAgents) {
-    return <OnboardingRedirect />;
+    return (
+      <div class="page-home" data-ambient="idle">
+        <main class="home-boot"><NoAgentsYet noProjects={noProjects} /></main>
+      </div>
+    );
   }
 
   return (

@@ -61,8 +61,6 @@ export async function homeRoutes(ctx: ServeContext, rq: ServeRequest): Promise<b
           publicUrl: effectivePublicUrl,
           capabilities: {
             projectFolderPicker: canUseHostFolderPicker(effectiveHost, req.socket.remoteAddress, req.headers.host),
-            // Same rule: it writes the person's own Claude Code and Codex config.
-            codingAgentSetup: canUseHostFolderPicker(effectiveHost, req.socket.remoteAddress, req.headers.host),
           },
           default: defaultProject,
           projects: projectInfo,

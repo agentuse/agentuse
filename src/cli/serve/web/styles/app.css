@@ -4867,18 +4867,6 @@ html[data-agentuse-desktop-mac] .onboarding-route-exit {
 .onboarding-project code { overflow-wrap: anywhere; color: var(--fg); font-family: var(--mono); font-size: var(--font-size-caption); line-height: var(--lh-snug); }
 .onboarding-project small { color: var(--muted); font-size: var(--font-size-micro); line-height: var(--lh-snug); }
 .onboarding-project small code { color: inherit; font-size: inherit; }
-.coding-agent-list {
-  list-style: none; display: grid; max-width: 560px; margin: 22px 0 0; padding: 0;
-  border: 1px solid var(--line); border-radius: 9px; background: var(--panel);
-}
-.coding-agent-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px 14px; }
-.coding-agent-list li + li { border-top: 1px solid var(--line); }
-.coding-agent-list .coding-agent-name { display: grid; flex: 1 1 200px; gap: 2px; }
-.coding-agent-list strong { color: var(--fg); font-family: var(--sans); font-size: var(--font-size-supporting); font-weight: var(--weight-medium); }
-.coding-agent-list code { color: var(--muted); font-family: var(--mono); font-size: var(--font-size-micro); }
-.coding-agent-list .coding-agent-state { color: var(--muted); font-size: var(--font-size-caption); }
-.coding-agent-list .coding-agent-state.is-ready { color: var(--green); }
-.coding-agent-list .onboarding-primary { min-height: 36px; }
 .onboarding-actions {
   display: flex;
   flex-wrap: wrap;
@@ -11771,3 +11759,28 @@ html[data-page="draft-panel"] .app-route {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
 }
 .page-approval-detail .additional-instruction.is-foldable[open] > summary .additional-instruction-meta { display: none; }
+
+/* Home with no agents yet: how to reach AgentUse from an assistant. */
+.no-agents { display: flex; flex-direction: column; gap: 14px; max-width: 760px; padding: 48px 0; }
+.no-agents h1 { margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -0.02em; }
+.no-agents-lede { margin: 0; color: var(--muted-3); font-size: 15px; }
+.no-agents-note { margin: 0; color: var(--muted); font-size: var(--font-size-caption); }
+.no-agents-way { display: flex; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; }
+.no-agents-way h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.no-agents-way p { margin: 0; color: var(--muted); font-size: var(--font-size-caption); }
+.no-agents-copy { display: flex; gap: 8px; align-items: center; margin-top: auto; }
+.no-agents-copy code { flex: 1; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); user-select: all; }
+.no-agents-copy button { padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 6px; background: none; color: var(--fg); font: inherit; font-size: var(--font-size-caption); cursor: pointer; }
+.no-agents-copy button:hover { background: var(--panel-hover); }
+.no-agents-error { color: var(--red) !important; }
+.no-agents-link { padding: 0; border: 0; background: none; color: var(--fg); font: inherit; font-family: inherit; text-decoration: underline; cursor: pointer; }
+.coding-agents { list-style: none; margin: 4px 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; }
+.coding-agents li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; }
+.coding-agents li + li { border-top: 1px solid var(--line); }
+.coding-agents li.is-missing strong { color: var(--muted); }
+.coding-agents-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.coding-agents-name code { color: var(--muted); font-size: var(--font-size-caption); }
+.coding-agents-state { color: var(--muted); font-size: var(--font-size-caption); white-space: nowrap; }
+.coding-agents-state.is-done { color: var(--green); font-weight: 600; }
+.coding-agents button { padding: 6px 14px; border: 0; border-radius: 6px; background: var(--primary-bg); color: var(--primary-fg); font: inherit; font-size: var(--font-size-caption); font-weight: 600; cursor: pointer; white-space: nowrap; }
+.coding-agents button:disabled { opacity: 0.6; cursor: default; }
