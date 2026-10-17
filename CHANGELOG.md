@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-10-17
+
 ### Added
 
 - **MCP servers that need an OAuth login.** Give an HTTP MCP server just its `url`; if it asks for a login, log in once from the agent's page in the dashboard or the Mac app, or with `agentuse mcp login <agent> <server>`. The login is shared by every agent using the same server, and runs refresh it on their own. When a fresh login is needed, the run says so instead of waiting for a browser, and a server that wants an API key instead says that. A run that stopped for a login shows the Log in button on its own page, with **Run again** to repeat the same request and model. If a server stops accepting the client AgentUse registered, the next login registers a new one. `auth.type: oauth` is only needed for a pre-registered `clientId` or `scopes`. `agentuse mcp status` and `agentuse mcp logout` round it out.
