@@ -475,6 +475,19 @@
       }
     }
 
+    // Installed Claude Code or Codex while this step was open: check again on coming back.
+    window.addEventListener("focus", async () => {
+      if (!current.startsWith("step-ready") || agents.length === 0 || settingUp !== undefined) return;
+      try {
+        const latest = await bridge.codingAgents();
+        if (settingUp !== undefined) return;
+        agents = latest;
+        renderAgents();
+      } catch (error) {
+        fail(error);
+      }
+    });
+
     function renderSignIn() {
       const cloud = state.cloud;
       const connecting = cloud.status === "connecting";

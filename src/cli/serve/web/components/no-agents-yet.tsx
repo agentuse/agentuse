@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useState } from 'preact/hooks';
 import { useFetch } from '../hooks/use-fetch';
 import { fetchCloudState, fetchCodingAgents, setUpCodingAgent, type CodingAgentStatus } from '../lib/api';
 
@@ -15,6 +15,15 @@ export function NoAgentsYet(props: { noProjects: boolean }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  // Installed Claude Code or Codex in another window: check again on coming back.
+  const { refetch } = listed;
+  useEffect(() => {
+    if (busy) return;
+    window.addEventListener('focus', refetch);
+    return () => window.removeEventListener('focus', refetch);
+  }, [busy, refetch]);
+  // A fresh list replaces the rows a Set up updated.
+  useEffect(() => setAgents(null), [listed.data]);
   const rows = agents ?? listed.data?.agents ?? [];
   const mcpUrl = cloud.data?.mcpUrl;
   const localUrl = `${location.origin}/mcp`;
