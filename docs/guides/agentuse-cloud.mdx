@@ -41,8 +41,9 @@ on AgentUse Cloud:
 
 1. Sign in with Google, GitHub, or an emailed code. The first sign-in creates
    your account.
-2. Check that the page shows the same code as Settings, then select
-   **Connect**.
+2. Paste the code Settings shows (the app already copied it), then select
+   **Connect**. Like `gh auth login`, the code is never in the link, so a link
+   someone sends you can't add their computer to your account.
 
 Settings then shows **Connected**, your account, this Mac's name, and the
 address to add to chat apps, with a **Copy** button.
@@ -75,23 +76,17 @@ opens. Open the printed address on your phone or laptop, enter the code, sign
 in, and select **Connect**. The terminal finishes on its own. The code works
 once and expires after 10 minutes.
 
-#### From the plugin: a join code
+#### From the plugin
 
 If you added AgentUse in Claude or ChatGPT first, the **Set up your computer**
-page that opens after **Allow** shows a command with a join code:
-
-```bash
-npm i -g agentuse && agentuse setup --join BCDF-GHJK-LMNP
-```
-
-The join code signs this computer in to the account you are already signed in
-to, so there is nothing to approve. It works once, for 15 minutes, and can only
-link a computer. The page turns green when the computer connects.
+page that opens after **Allow** sends you here: get the Mac app, or run
+`npm i -g agentuse && agentuse setup`. Either one shows a code and opens
+AgentUse Cloud, where you're already signed in. Paste the code and select
+**Connect**.
 
 | Option | What it does |
 | --- | --- |
 | `--name <name>` | How this computer appears in your account (`--computer-name` on `agentuse setup`). The default is the Mac's name or the host name. |
-| `--join <code>` | Sign in with a join code from the setup page. |
 | `--no-service` | Don't start AgentUse in the background. |
 | `--no-browser` | Print the address and code without opening a browser. |
 | `--url <url>` | Use a different AgentUse Cloud address. `AGENTUSE_CLOUD_URL` does the same. |
@@ -247,4 +242,3 @@ account:
 | Live line: `disconnected from the cloud` | The computer was removed from your account. Run `agentuse disconnect`, then `agentuse connect`. |
 | The chat says a tool was not allowed | The app wasn't granted that permission. Remove the connector and add it again, so the app asks for it and the **Allow** page lists it. |
 | "The code expired" | Run `agentuse connect` again. Codes last 10 minutes. |
-| "That join code is not valid any more" | Join codes work once, for 15 minutes. Open the setup page again for a new one. |

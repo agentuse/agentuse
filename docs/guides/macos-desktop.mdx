@@ -28,17 +28,10 @@ The Desktop setup screen has two independent options:
 - **Add CLI launcher** creates `~/.local/bin/agentuse`, pointing to the CLI
   bundled inside AgentUse.app. It is optional and never blocks **Continue**.
 
-After **Continue**, Desktop joins the same onboarding flow as the Web UI: create
-a project, run the credential-free sample, connect a runtime provider, and hand
-the first agent to your coding assistant. Desktop reads provider status from
-the same bundled runtime that will run the agent. If login is required, the
-coding agent stops and asks you to run it in Terminal rather than passing
-credentials or OAuth details through coding-agent chat.
-
-After you copy the first-agent prompt, onboarding stays on the current screen
-and checks for the new agent. When it appears, select **Open agent** to review
-and run it. If creation takes too long, you can copy the prompt again or check
-for the agent manually.
+The last setup step lists the coding agents on this Mac. Select **Set up**
+next to Claude Code or Codex to add AgentUse and its `automate` skill, then
+type `/automate` in Claude Code or `$automate` in Codex to make your first
+agent. The dashboard shows its runs, approvals, and schedules.
 
 ## Command line launcher
 

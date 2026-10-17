@@ -47,9 +47,9 @@ run again:
    background (launchd on macOS, a systemd user service on Linux), so it keeps
    running after you close the terminal and starts again when you log in.
 
-Came from the AgentUse plugin in Claude or ChatGPT? Use the command on the
-setup page instead. Its join code signs this computer in for you:
-`agentuse setup --join <code>`.
+Came from the AgentUse plugin in Claude or ChatGPT? Run the same command. It
+shows a code and opens AgentUse Cloud, where you're already signed in: paste
+the code and select **Connect**.
 
 ### Guided Web setup
 
@@ -61,51 +61,12 @@ agentuse setup --web
 
 AgentUse opens its Web UI and keeps the server running in your terminal.
 
-<Steps>
-  <Step title="Create or attach a project">
-    Keep the suggested name, `my-agents`, to create a dedicated project under
-    `~/.agentuse/projects/`, or attach an existing project. AgentUse shows the
-    full path before anything writes an agent file. For an existing project,
-    the guided flow can scan a sanitized, read-only view and suggest recurring
-    work grounded in the repository while accounting for agents already there.
-  </Step>
-
-  <Step title="Run the sample agent">
-    Select **Run sample agent** to see a complete session in the dashboard. The
-    sample uses built-in data, needs no provider credentials, and does not
-    create an agent file.
-  </Step>
-
-  <Step title="Connect a provider">
-    In the sample result, select **Create my first agent**. If no provider is
-    ready, AgentUse opens the same provider setup used in Preferences before
-    any model call or agent file write.
-  </Step>
-
-  <Step title="Create your agent">
-    Describe what the agent should do, choose a creator model from a connected
-    provider, and select **Create agent**. That model is used only to design and
-    name a focused agent using AgentUse authoring guidance; it independently
-    chooses a suitable runtime model from the connected providers. AgentUse
-    validates the generated source, runtime-model choice, and static safety
-    guardrails, then performs a separate read-only model review of whether the
-    declared tools can support the draft's operations. For example, exact parser
-    diagnostics require a callable parser, not just permission to read files.
-    Review the draft, request changes if needed, then select **Save agent**.
-    This capability review does not execute or test the finished agent, which
-    still needs validation before its first real run. A schedule
-    proposed by project discovery starts paused until you test and enable it. If
-    you prefer to work hands-on, use **Copy prompt to coding agent** instead;
-    the prepared handoff carries your task and keeps the existing validation
-    workflow as an escape hatch.
-  </Step>
-
-  <Step title="Run it">
-    When AgentUse detects the new agent, select **Review agent**, review it, and
-    start its first real run. If detection takes too long, you can copy the
-    prompt again or check manually without leaving onboarding.
-  </Step>
-</Steps>
+With no agents yet, Home lists the coding agents on this computer. Select
+**Set up** next to Claude Code or Codex: AgentUse adds itself to that app and
+adds an `automate` skill. Then type `/automate` in Claude Code, or `$automate`
+in Codex, and say what you want done. The agent it writes shows up in the
+dashboard, where you review and run it. Chat apps such as Claude and ChatGPT
+use the AgentUse Cloud address shown on the same page.
 
 <Warning>
   Your coding agent's own login does not authenticate the agents it creates.
