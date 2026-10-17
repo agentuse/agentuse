@@ -99,6 +99,13 @@
     .choice-title { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700; }
     .choice-copy { font-size: 14px; color: var(--muted); }
     .badge { padding: 2px 8px; border-radius: 999px; background: var(--badge-bg); color: var(--badge-fg); font-size: 12px; font-weight: 600; }
+    .points { display: flex; flex-direction: column; gap: 18px; margin: 4px 0 0; padding: 0; list-style: none; }
+    .points li { display: grid; grid-template-columns: 36px minmax(0, 1fr); gap: 14px; align-items: start; }
+    .point-icon { width: 36px; height: 36px; padding: 8px; box-sizing: border-box; border-radius: 10px; background: var(--accent-soft); color: var(--fg); }
+    .points li > span { display: flex; flex-direction: column; gap: 2px; font-size: 14px; color: var(--muted); }
+    .points strong { font-size: 15px; color: var(--fg); }
+    .welcome-actions { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: auto; }
+    .welcome-actions .primary { width: 100%; }
     .actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: auto; }
     .actions .end { display: flex; align-items: center; gap: 12px; margin-left: auto; }
     .primary, .secondary {
@@ -198,31 +205,23 @@
   </style>
 </head>
 <body>
-  <!-- 1. Where you'll use it -->
+  <!-- 1. Welcome: sign in for Cloud, or skip to this Mac only -->
   <section class="step" id="step-route" aria-labelledby="route-title">
-    <div class="meta"><strong data-step-label>Step 1 of 4</strong><span>·</span><span>Takes about a minute</span></div>
     <div class="heading">
-      <h1 id="route-title">Where will you use AgentUse?</h1>
-      <p class="lede">Either way, your agents and files stay on this Mac. You can change this later in Settings.</p>
+      <h1 id="route-title">Agents you own, built by any AI</h1>
+      <p class="lede">Ask the AI you already use to automate a job. The agent lives on your Mac and runs on whichever AI you choose.</p>
     </div>
-    <div class="choices" role="group" aria-label="Where you'll use AgentUse">
-      <button class="choice" type="button" data-route="cloud" aria-pressed="true">
-        <span class="radio" aria-hidden="true"></span>
-        <span class="choice-text">
-          <span class="choice-title">From your AI assistant <span class="badge">Recommended</span></span>
-          <span class="choice-copy">Sign in to AgentUse Cloud. Ask your assistant to build an agent, and it runs here. Works with Claude, ChatGPT, Claude Code, Codex and any assistant that supports MCP.</span>
-        </span>
-      </button>
-      <button class="choice" type="button" data-route="local" aria-pressed="false">
-        <span class="radio" aria-hidden="true"></span>
-        <span class="choice-text">
-          <span class="choice-title">Only on this Mac</span>
-          <span class="choice-copy">No account. Use the dashboard, or a coding agent on this Mac.</span>
-        </span>
-      </button>
-    </div>
+    <ul class="points">
+      <li><svg class="point-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><span><strong>Open to any assistant</strong><span>Build agents from Claude, ChatGPT, Claude Code, Codex or any app that supports MCP.</span></span></li>
+      <li><svg class="point-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 8h10M7 12h10M7 16h6"/></svg><span><strong>Any AI provider</strong><span>Run them on your ChatGPT plan, an API key or a model on your Mac. Switch any time.</span></span></li>
+      <li><svg class="point-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span><strong>Your agents stay with you</strong><span>They live in a folder on your Mac, with your files and logins. Not locked in our cloud.</span></span></li>
+    </ul>
     <p class="error" role="alert" data-error></p>
-    <div class="actions"><div class="end"><button class="primary" type="button" id="route-continue">Continue</button></div></div>
+    <div class="welcome-actions">
+      <button class="primary" type="button" id="route-cloud">Sign in or create an account</button>
+      <span class="footer-hint">With your email. No password to remember.</span>
+      <button class="link" type="button" id="route-local">Skip, and use it only on this Mac</button>
+    </div>
   </section>
 
   <!-- 2. Sign in (Cloud only) -->
@@ -552,9 +551,6 @@
       }
     }
 
-    for (const button of document.querySelectorAll("[data-route]")) {
-      button.addEventListener("click", () => { route = button.dataset.route; pick("route", route); });
-    }
     for (const button of document.querySelectorAll("[data-ai]")) {
       button.addEventListener("click", () => {
         ai = button.dataset.ai;
@@ -563,9 +559,15 @@
       });
     }
 
-    $("route-continue").addEventListener("click", () => busy($("route-continue"), "Continue", async () => {
+    $("route-local").addEventListener("click", () => busy($("route-local"), "Skip, and use it only on this Mac", async () => {
+      route = "local";
       state = await bridge.getState();
-      if (route === "local" || state.cloud.status === "connected") return afterSignIn();
+      afterSignIn();
+    }));
+    $("route-cloud").addEventListener("click", () => busy($("route-cloud"), "Sign in or create an account", async () => {
+      route = "cloud";
+      state = await bridge.getState();
+      if (state.cloud.status === "connected") return afterSignIn();
       if (state.cloud.status === "none") state.cloud = { status: "connecting" };
       show("step-signin");
       renderSignIn();
