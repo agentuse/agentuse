@@ -43,4 +43,27 @@ describe('report text without tool-call narration', () => {
 
     expect(result.reportText).toBe(`${document}Saved the report.`);
   });
+
+  it('keeps a one-line finding written before a tool call', async () => {
+    const result = await processAgentStream(makeStream([
+      { type: 'text', text: 'Build is red because migration 42 failed.' },
+      { type: 'tool-call', toolName: 'tools__bash', toolCallId: 'call_1', toolInput: { command: 'git log -1' } },
+      { type: 'tool-result', toolCallId: 'call_1', toolResult: 'abc' },
+      outcome(),
+    ]));
+
+    expect(result.reportText).toBe('Build is red because migration 42 failed.');
+  });
+});
+
+describe('isToolNarration', () => {
+  it('treats announcements as narration and findings as content', async () => {
+    const { isToolNarration } = await import('../src/tools/report-outcome');
+    for (const line of ["I'll check the folder.", 'Let me look at the logs.', 'Okay, now running the tests.', 'Here are the results:', 'Checking the Downloads folder...', 'I’ll read it.']) {
+      expect(isToolNarration(line)).toBe(true);
+    }
+    for (const line of ['Build is red because migration 42 failed.', 'Nowhere in the logs is the key set.', 'The 5 largest files total 1.2 GB.']) {
+      expect(isToolNarration(line)).toBe(false);
+    }
+  });
 });

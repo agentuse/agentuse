@@ -89,7 +89,9 @@ export async function getApprovalInfoUncached(req: ExecuteRequest) {
     const firstUserPrompt = messages[0]?.user?.prompt?.user;
     const additionalInstruction = typeof firstUserPrompt === 'string' && firstUserPrompt.trim()
       ? firstUserPrompt
-      : undefined;
+      : found.session.config?.startupInstruction;
+    // The model this run was explicitly asked for, so "Run again" can ask again.
+    const runModel = found.session.config?.modelOverride?.requested;
     const parts = (await Promise.all(
       messages.map((message) => sessionManager.getMessageParts(req.sessionId!, found.agentId, message.id))
     )).flat();
@@ -259,6 +261,7 @@ export async function getApprovalInfoUncached(req: ExecuteRequest) {
           ...(learning && { learning }),
           ...viewOnlyFields,
           ...(additionalInstruction && { additionalInstruction }),
+          ...(runModel && { runModel }),
           ...(childSessions.length > 0 && { childSessions }),
           ...(importantDescendants.length > 0 && { importantDescendants }),
           ...(importantDescendantEvents.length > 0 && { importantDescendantEvents }),
@@ -308,6 +311,7 @@ export async function getApprovalInfoUncached(req: ExecuteRequest) {
           ...originAgentFields,
           ...viewOnlyFields,
           ...(additionalInstruction && { additionalInstruction }),
+          ...(runModel && { runModel }),
           ...(childSessions.length > 0 && { childSessions }),
           ...(importantDescendants.length > 0 && { importantDescendants }),
           ...(importantDescendantEvents.length > 0 && { importantDescendantEvents }),
@@ -459,6 +463,7 @@ export async function getApprovalInfoUncached(req: ExecuteRequest) {
         ...originAgentFields,
         ...viewOnlyFields,
         ...(additionalInstruction && { additionalInstruction }),
+        ...(runModel && { runModel }),
         ...(fullToolApproval && { toolApproval: fullToolApproval }),
         ...(approvalPrompt && { prompt: approvalPrompt }),
         ...(typeof input.summary === 'string' && { summary: repairEscapedText(input.summary) }),

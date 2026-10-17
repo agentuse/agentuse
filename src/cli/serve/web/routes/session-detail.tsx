@@ -2393,7 +2393,11 @@ export default function SessionDetail() {
       case 'revise': setReviseRequest((n) => n + 1); return;
       case 'resume': setShowResume(true); return;
       case 'cascade': void submitCascadeRetry(); return;
-      case 'run-again': void runAgainAgent.run(); return;
+      // Same request as the failed run: its instruction and model override.
+      case 'run-again': void runAgainAgent.run({
+        ...(approval.additionalInstruction && { instruction: approval.additionalInstruction }),
+        ...(approval.runModel && { model: approval.runModel }),
+      }); return;
       case 'stop':
       case 'discard': void submitStop(); return;
     }

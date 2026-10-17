@@ -448,6 +448,8 @@ export interface ApprovalPageInfo {
   /** The per-run instruction the session was started with (CLI args / the "run
    *  with custom instruction" composer), appended to the agent's own body. */
   additionalInstruction?: string;
+  /** The model the run was explicitly started on, when it overrode the agent's. */
+  runModel?: string;
   summary?: string;
   draft?: string;
   changes?: ApprovalChange[];

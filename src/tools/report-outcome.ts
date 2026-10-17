@@ -436,15 +436,21 @@ export function composeSubagentResult(params: {
   };
 }
 
+/** How a line that only announces the next step usually opens. */
+const NARRATION_OPENING = /^(?:(?:ok(?:ay)?|great|alright|good)[,!.]?\s+)?(?:i'?ll|i will|i'm going to|i am going to|i need to|let me|let's|now|next|first|then|checking|looking|reading|running|searching|fetching|getting|listing|opening)\b/i;
+
 /**
  * Whether prose written just before a work tool call only announced it ("I'll
- * check the folder.") rather than delivering anything. One short line is
- * narration; anything longer or multi-line is kept, so a document the agent
- * streamed before saving it still reaches the report.
+ * check the folder.") rather than delivering anything. Narration is one short
+ * line that opens like an announcement or ends with a colon or ellipsis; a
+ * one-line finding ("Build is red because migration 42 failed.") and anything
+ * longer or multi-line are kept, so a document the agent streamed before
+ * saving it still reaches the report.
  */
 export function isToolNarration(text: string): boolean {
   const trimmed = text.trim();
-  return trimmed.length <= 280 && !trimmed.includes('\n');
+  if (trimmed.length > 280 || trimmed.includes('\n')) return false;
+  return NARRATION_OPENING.test(trimmed.replace(/[’]/g, "'")) || /(?::|\.\.\.|…)$/.test(trimmed);
 }
 
 /**

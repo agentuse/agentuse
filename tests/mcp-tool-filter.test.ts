@@ -3,7 +3,11 @@ import { z } from 'zod';
 import { getMCPTools, type MCPConnection } from '../src/mcp';
 import { parseAgentContent } from '../src/parser';
 
-function connectionWith(toolNames: string[], filters: Pick<MCPConnection, 'allowedTools' | 'disallowedTools'>) {
+function connectionWith(
+  toolNames: string[],
+  filters: Pick<MCPConnection, 'allowedTools' | 'disallowedTools'>,
+  resources: { uri: string; name: string }[] = [],
+) {
   const tool = {
     description: 'fixture',
     inputSchema: z.object({}),
@@ -15,7 +19,8 @@ function connectionWith(toolNames: string[], filters: Pick<MCPConnection, 'allow
     ...filters,
     client: {
       tools: async () => Object.fromEntries(toolNames.map((name) => [name, tool])),
-      listResources: async () => ({ resources: [] }),
+      initializeResult: { capabilities: { resources: {} } },
+      listResources: async () => ({ resources }),
       listResourceTemplates: async () => ({ resourceTemplates: [] }),
     },
   } as unknown as MCPConnection;
@@ -42,6 +47,15 @@ describe('MCP tool filters', () => {
   test('without allowedTools every tool not blocked loads', async () => {
     expect(await loaded(connectionWith(tools, { disallowedTools: ['generate_*'] })))
       .toEqual(['3d_scene', 'Upload', 'balance', 'buy_credits']);
+  });
+
+  test('the filters cover the resource tools too', async () => {
+    const resources = [{ uri: 'file:///notes.md', name: 'notes' }];
+    expect(await loaded(connectionWith(tools, { allowedTools: ['balance'] }, resources))).toEqual(['balance']);
+    expect(await loaded(connectionWith(tools, { allowedTools: ['balance', 'list_resources'] }, resources)))
+      .toEqual(['balance', 'list_resources']);
+    expect(await loaded(connectionWith(['balance'], { disallowedTools: ['read_resource'] }, resources)))
+      .toEqual(['balance', 'list_resources']);
   });
 
   test('parser keeps allowedTools on stdio and HTTP servers', () => {

@@ -1,14 +1,17 @@
 import { randomBytes } from 'crypto';
 import {
   auth,
+  MCPClientOAuthError,
   type OAuthAuthorizationServerInformation,
   type OAuthClientInformation,
   type OAuthClientMetadata,
   type OAuthClientProvider,
 } from '@ai-sdk/mcp';
 import type { AgentConfig } from './parser';
-import { MCPAuthStorage, type PendingMCPLogin } from './auth/mcp-oauth-storage';
+import { MCPAuthStorage, type MCPServerAuthRecord, type PendingMCPLogin } from './auth/mcp-oauth-storage';
 import { resolveEnvVariables } from './utils/env';
+import { logger } from './utils/logger';
+import { toErrorMessage } from './utils/error-message';
 
 type MCPServerConfig = NonNullable<AgentConfig['mcpServers']>[string];
 export type MCPHttpServerConfig = Extract<MCPServerConfig, { url: string }>;
@@ -120,6 +123,22 @@ async function probeServer(config: MCPHttpServerConfig): Promise<'oauth' | 'toke
   }
 }
 
+/** The SDK's invalid_client / unauthorized_client errors, which it does not export. */
+function isRejectedClientError(error: unknown): boolean {
+  if (!MCPClientOAuthError.isInstance(error)) return false;
+  const code = (error.constructor as { errorCode?: string }).errorCode;
+  return code === 'invalid_client' || code === 'unauthorized_client';
+}
+
+/** Remove every stored registration of this client id. */
+function dropClient(record: MCPServerAuthRecord, clientId: string): void {
+  if (!record.clients) return;
+  for (const [redirect, info] of Object.entries(record.clients)) {
+    if (info.client_id === clientId) delete record.clients[redirect];
+  }
+  if (Object.keys(record.clients).length === 0) delete record.clients;
+}
+
 function configuredClient(settings: MCPOAuthSettings): OAuthClientInformation | undefined {
   if (!settings.clientId) return undefined;
   return {
@@ -162,8 +181,15 @@ export function createRunAuthProvider(
     get redirectUrl() { return RUN_REDIRECT_URL; },
     get clientMetadata() { return clientMetadata(settings, RUN_REDIRECT_URL); },
     // Read from disk each time: another run may have rotated the tokens.
+    // An unreadable auth file must not break servers that need no login, so
+    // it reads as "no tokens"; a server that does need one then answers 401.
     async tokens() {
-      return (await MCPAuthStorage.get(serverUrl)).login?.tokens;
+      try {
+        return (await MCPAuthStorage.get(serverUrl)).login?.tokens;
+      } catch (error) {
+        logger.warn(`[MCP] Ignoring stored login for "${serverName}": ${toErrorMessage(error)}`);
+        return undefined;
+      }
     },
     async saveTokens(tokens) {
       await MCPAuthStorage.update(serverUrl, (record) => {
@@ -179,7 +205,18 @@ export function createRunAuthProvider(
     saveCodeVerifier() { /* only a browser login stores a verifier */ },
     codeVerifier: loginRequired,
     redirectToAuthorization: loginRequired,
+    // A registration the server rejects is dropped with the login, so the
+    // user's next login registers a new client instead of reusing it.
+    isClientInformationDynamicallyRegistered: () => !configuredClient(settings),
     async invalidateCredentials(scope, context) {
+      if (scope === 'client' || (scope === 'all' && !context)) {
+        await MCPAuthStorage.update(serverUrl, (record) => {
+          const clientId = record.login?.clientInformation.client_id;
+          delete record.login;
+          if (clientId) dropClient(record, clientId);
+        });
+        return;
+      }
       if (scope !== 'tokens' && scope !== 'all') return;
       await MCPAuthStorage.update(serverUrl, (record) => {
         const stored = record.login?.tokens;
@@ -205,8 +242,15 @@ function createLoginProvider(
 ) {
   let authorizationServer: OAuthAuthorizationServerInformation | undefined = pending?.authorizationServer;
   let authorizationUrl: URL | undefined;
-  const clientInformation = async () =>
-    configuredClient(settings) ?? (await MCPAuthStorage.get(serverUrl)).clients?.[redirectUrl];
+  // The client this login uses, fixed once known: the one it was started
+  // with, else one it registers, else the stored registration.
+  let client: OAuthClientInformation | undefined = pending?.clientInformation;
+  const clientInformation = async () => {
+    const configured = configuredClient(settings);
+    if (configured) return configured;
+    client ??= (await MCPAuthStorage.get(serverUrl)).clients?.[redirectUrl];
+    return client;
+  };
 
   const provider: OAuthClientProvider = {
     get redirectUrl() { return redirectUrl; },
@@ -223,9 +267,17 @@ function createLoginProvider(
     },
     clientInformation,
     async saveClientInformation(info) {
+      client = info;
       await MCPAuthStorage.update(serverUrl, (record) => {
         record.clients = { ...record.clients, [redirectUrl]: info };
       });
+    },
+    isClientInformationDynamicallyRegistered: () => !configuredClient(settings),
+    async invalidateCredentials(scope) {
+      if (scope !== 'client' && scope !== 'all') return;
+      const dropped = client;
+      client = undefined;
+      if (dropped) await MCPAuthStorage.update(serverUrl, (record) => dropClient(record, dropped.client_id));
     },
     authorizationServerInformation: () => authorizationServer,
     saveAuthorizationServerInformation(info) { authorizationServer = info; },
@@ -240,6 +292,7 @@ function createLoginProvider(
             codeVerifier,
             createdAt: Date.now(),
             ...(authorizationServer && { authorizationServer }),
+            ...(client && { clientInformation: client }),
           },
         };
       });
@@ -280,12 +333,23 @@ export async function finishMCPLogin(options: {
   const login = createLoginProvider(
     options.serverUrl, options.settings, pending.redirectUrl, options.state, pending,
   );
-  const result = await auth(login.provider, {
-    serverUrl: options.serverUrl,
-    authorizationCode: options.code,
-    callbackState: options.state,
-    ...(options.issuer && { callbackIssuer: options.issuer }),
-  });
+  let result;
+  try {
+    result = await auth(login.provider, {
+      serverUrl: options.serverUrl,
+      authorizationCode: options.code,
+      callbackState: options.state,
+      ...(options.issuer && { callbackIssuer: options.issuer }),
+    });
+  } catch (error) {
+    // The SDK will not re-register mid-exchange. Drop the rejected client so
+    // the next login registers a new one instead of failing the same way.
+    if (isRejectedClientError(error)) {
+      await login.provider.invalidateCredentials?.('client');
+      throw new Error('The MCP server no longer accepts this login\'s client registration. Start the login again.', { cause: error });
+    }
+    throw error;
+  }
   if (result !== 'AUTHORIZED') throw new Error('The MCP server did not accept the login.');
 }
 

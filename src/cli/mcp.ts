@@ -52,7 +52,8 @@ async function browserLogin(url: string, settings: MCPOAuthSettings, openInBrows
     }
     const error = callback.searchParams.get('error');
     const code = callback.searchParams.get('code');
-    if (callback.searchParams.get('state') !== state) {
+    // `state` is empty until the login has started, so nothing matches early.
+    if (!state || callback.searchParams.get('state') !== state) {
       res.writeHead(400, { 'Content-Type': 'text/html' }).end(page('This login link does not match. Start the login again.'));
       return;
     }

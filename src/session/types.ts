@@ -69,6 +69,9 @@ export interface SessionInfo {
     }>;
     /** Explicit run-wide model override; absent for ordinary agent config. */
     modelOverride?: RunModelOverride;
+    /** The per-run instruction, kept on a preparing shell until the run's first
+     *  message holds it, so a run that fails at startup can be run again as asked. */
+    startupInstruction?: string;
     /** Ordered fallback policy captured at session creation for durable resume. */
     modelFallback?: ModelFallbackPolicy;
   };

@@ -150,6 +150,52 @@ export function mcpResultToModelOutput({ output }: { output: unknown }): any {
   return { type: 'content', value };
 }
 
+/** A server config safe to log: auth, header and env values are hidden. */
+export function redactServerConfig(config: MCPServerConfig): Record<string, unknown> {
+  const copy: Record<string, unknown> = { ...config };
+  for (const key of ['auth', 'headers', 'env']) {
+    const values = copy[key] as Record<string, unknown> | undefined;
+    if (!values) continue;
+    copy[key] = Object.fromEntries(Object.entries(values).map(([name, value]) =>
+      [name, name === 'type' ? value : '[redacted]']));
+  }
+  return copy;
+}
+
+/** Redirect hops followed for one MCP request before giving up. */
+const MAX_MCP_REDIRECTS = 5;
+
+/**
+ * A fetch for an HTTP MCP server that follows the server's own redirects
+ * (`/mcp` to `/mcp/`, http to https on the same host), as 0.23 did, but never
+ * one to another host, so headers and tokens stay with the server they were
+ * written for. Requests to any other origin, such as an OAuth token endpoint,
+ * keep the transport's own redirect handling.
+ */
+export function createMCPServerFetch(serverUrl: string): typeof fetch {
+  const server = new URL(serverUrl);
+  const sameServer = (url: URL) =>
+    url.origin === server.origin ||
+    (url.hostname === server.hostname && url.protocol === 'https:' && server.protocol === 'http:');
+  const mcpFetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    let url = new URL(input instanceof Request ? input.url : String(input));
+    if (!sameServer(url)) return fetch(input, init);
+    for (let hop = 0; ; hop++) {
+      const response = await fetch(url, { ...init, redirect: 'manual' });
+      const location = response.headers.get('location');
+      if (response.status < 300 || response.status >= 400 || !location) return response;
+      await response.body?.cancel();
+      const next = new URL(location, url);
+      if (!sameServer(next)) {
+        throw new Error(`MCP server ${server.origin} redirected to another host (${next.origin}), which AgentUse does not follow`);
+      }
+      if (hop >= MAX_MCP_REDIRECTS) throw new Error(`MCP server ${server.origin} redirected too many times`);
+      url = next;
+    }
+  };
+  return mcpFetch as typeof fetch;
+}
+
 /**
  * Create transport based on configuration (stdio or HTTP)
  */
@@ -173,6 +219,7 @@ function createTransport(
         url: config.url,
         headers,
         authProvider: createRunAuthProvider(name, config.url, oauth),
+        fetch: createMCPServerFetch(config.url),
         ...(config.sessionId && { initialSessionId: config.sessionId }),
       };
     }
@@ -184,6 +231,7 @@ function createTransport(
       type: 'http',
       url: config.url,
       headers,
+      fetch: createMCPServerFetch(config.url),
       ...(config.sessionId && { initialSessionId: config.sessionId }),
     };
   }
@@ -383,7 +431,7 @@ export async function connectMCP(
     // a live stdio subprocess.
     let client: MCPClient | undefined;
     try {
-      logger.debug(`[MCP] Configuring server: ${name} - ${JSON.stringify(config)}`);
+      logger.debug(`[MCP] Configuring server: ${name} - ${JSON.stringify(redactServerConfig(config))}`);
 
       // Fail before any network call when an OAuth server was never logged in.
       if ('url' in config && config.auth?.type === 'oauth' && !(await MCPAuthStorage.get(config.url)).login) {
@@ -759,6 +807,13 @@ export async function getMCPTools(connections: MCPConnection[]): Promise<Record<
       if (resources.length > 0) {
         logger.info(`[MCP] Found ${resources.length} resources in ${connection.name}`);
         const resourceTools = createResourceTools(connection, resources);
+        // allowedTools and disallowedTools cover these too, by their short names.
+        for (const prefixedName of Object.keys(resourceTools)) {
+          const toolName = prefixedName.slice(`mcp__${connection.name}__`.length);
+          if (isToolDisallowed(toolName, connection.allowedTools, connection.disallowedTools)) {
+            delete resourceTools[prefixedName];
+          }
+        }
         Object.assign(connectionTools, resourceTools);
         logger.info(`[MCP] Created ${Object.keys(resourceTools).length} resource tools for ${connection.name}: ${Object.keys(resourceTools).join(', ')}`);
       } else {

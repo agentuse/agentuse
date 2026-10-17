@@ -78,4 +78,27 @@ describe('fresh runs that fail during startup', () => {
     const sessions = await sessionsFor('nightly');
     expect(sessions.map((s) => [s.id, s.status])).toEqual([['01TESTSTARTUPFAILURE000000', 'error']]);
   });
+
+  it('keeps the instruction and model so the run can be repeated as asked', async () => {
+    await writeAgent(`mcpServers:
+  needs-key:
+    command: /bin/true
+    requiredEnvVars: [AGENTUSE_TEST_SURELY_UNSET_VAR]`);
+
+    await executeAgent(createWorkerContext(), {
+      id: 'req-3',
+      type: 'execute',
+      agentPath: './nightly.agentuse',
+      projectRoot,
+      prompt: 'Only look at last week.',
+      model: 'openai:gpt-5-mini',
+      trigger: 'api',
+    });
+
+    const [session] = await sessionsFor('nightly');
+    expect(session?.config).toMatchObject({
+      startupInstruction: 'Only look at last week.',
+      modelOverride: { requested: 'openai:gpt-5-mini' },
+    });
+  });
 });

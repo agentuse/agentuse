@@ -776,7 +776,7 @@ mcpServers:
 #### Common Fields (All Server Types)
 - **`requiredEnvVars`**: Variables that MUST exist. Agent fails if missing.
 - **`allowedEnvVars`**: Optional variables to pass through if they exist.
-- **`allowedTools`**: When set, only tools matching these names/patterns load (supports wildcards). Tools the server adds later stay off until you list them. Use it when you want a few tools from a large server.
+- **`allowedTools`**: When set, only tools matching these names/patterns load (supports wildcards). Tools the server adds later stay off until you list them. Use it when you want a few tools from a large server. Both lists also cover the `list_resources` and `read_resource` tools AgentUse adds for servers with resources.
 - **`disallowedTools`**: Tool names/patterns to exclude (supports wildcards). When both are set, `disallowedTools` wins.
 
 #### Stdio Server Fields

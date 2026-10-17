@@ -356,6 +356,8 @@ async function executeAgentRequest(ctx: WorkerContext, req: ExecuteRequest) {
           config: {
             ...(req.timeout !== undefined && { timeout: req.timeout }),
             ...(req.maxSteps !== undefined && { maxSteps: req.maxSteps }),
+            ...(runModelOverride && { modelOverride: runModelOverride }),
+            ...(req.prompt?.trim() && { startupInstruction: req.prompt }),
           },
           project: { root: req.projectRoot, cwd: runCwd },
           ...(req.trigger && { trigger: req.trigger }),

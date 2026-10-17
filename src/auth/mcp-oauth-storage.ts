@@ -14,6 +14,9 @@ export interface PendingMCPLogin {
   redirectUrl: string;
   codeVerifier: string;
   authorizationServer?: OAuthAuthorizationServerInformation;
+  /** The client this login was started with, so a concurrent login that
+   *  registers another client cannot swap it out before the callback. */
+  clientInformation?: OAuthClientInformation;
   createdAt: number;
 }
 
@@ -94,10 +97,13 @@ export const MCPAuthStorage = {
     }, { maxWaitMs: LOCK_TIMEOUT_MS, label: "mcp-auth" });
   },
 
+  /** Forget the login and the client registrations, so the next login
+   *  registers afresh instead of reusing a client the server may have dropped. */
   async logout(url: string): Promise<boolean> {
     return this.update(url, (record) => {
       const had = record.login !== undefined;
       delete record.login;
+      delete record.clients;
       return had;
     });
   },
