@@ -14,6 +14,7 @@ import {
 import { isPathInside } from '../utils/path-policy.js';
 import { atomicWriteFile } from '../utils/atomic-write.js';
 import { toErrorMessage } from '../utils/error-message';
+import { isProjectRelativeArtifactDir } from './artifact-path-policy.js';
 
 export interface ArtifactToolContext {
   projectRoot: string;
@@ -25,6 +26,48 @@ export interface ArtifactToolContext {
 
 function errOut(error: string): ToolOutput {
   return { output: JSON.stringify({ success: false, error } satisfies ToolErrorOutput) };
+}
+
+/** Resolve missing descendants too, without overlooking a dangling symlink. */
+async function realArtifactPath(candidate: string): Promise<string> {
+  try {
+    return await fs.realpath(candidate);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    const info = await fs.lstat(candidate).catch((statError: NodeJS.ErrnoException) => {
+      if (statError.code !== 'ENOENT') throw statError;
+      return undefined;
+    });
+    if (info?.isSymbolicLink()) throw new Error('Refusing artifact path through a dangling symlink');
+    const parent = path.dirname(candidate);
+    if (parent === candidate) throw error;
+    return path.join(await realArtifactPath(parent), path.basename(candidate));
+  }
+}
+
+/** Check before creating directories, writing output, or reading the manifest. */
+async function assertArtifactPaths(projectRoot: string, dir: string, children: string[] = []): Promise<void> {
+  if (!isProjectRelativeArtifactDir(dir)) {
+    throw new Error('Artifact directory must be a project-relative directory without parent traversal');
+  }
+  const realProject = await fs.realpath(projectRoot);
+  const artifactsRoot = path.resolve(projectRoot, dir);
+  const realRoot = await realArtifactPath(artifactsRoot);
+  if (!isPathInside(realProject, realRoot, { allowEqual: false })) {
+    throw new Error('Refusing artifact directory outside the project');
+  }
+  for (const candidate of [getManifestPath(projectRoot, dir), ...children]) {
+    if (!isPathInside(realRoot, await realArtifactPath(candidate), { allowEqual: false })) {
+      throw new Error('Refusing artifact path outside the artifact directory');
+    }
+  }
+  // The ownership lock must be a directory owned by the manifest writer, not
+  // an alias through which lock recovery could touch files elsewhere.
+  const lock = await fs.lstat(`${getManifestPath(projectRoot, dir)}.lock`).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error;
+    return undefined;
+  });
+  if (lock?.isSymbolicLink()) throw new Error('Refusing artifact manifest lock symlink');
 }
 
 /** URL-safe slug: lowercase, non-alphanumerics → hyphen, trimmed, capped. */
@@ -93,6 +136,7 @@ export function createArtifactTool(context: ArtifactToolContext): Tool {
         if (!isPathInside(artifactsRoot, targetAbs, { allowEqual: false })) {
           return errOut(`Refusing to write artifact outside ${dir}/`);
         }
+        await assertArtifactPaths(context.projectRoot, dir, [targetAbs]);
 
         const ext = path.extname(fileName).slice(1).toLowerCase();
         const finalContent = (ext === 'md' || ext === 'markdown')
@@ -100,6 +144,7 @@ export function createArtifactTool(context: ArtifactToolContext): Tool {
           : content;
 
         await fs.mkdir(path.dirname(targetAbs), { recursive: true });
+        await assertArtifactPaths(context.projectRoot, dir, [targetAbs]);
         await atomicWriteFile(targetAbs, finalContent);
 
         const relName = path.relative(context.projectRoot, targetAbs).split(path.sep).join('/');
@@ -150,6 +195,7 @@ export function createListArtifactsTool(context: ArtifactToolContext): Tool {
       group?: string;
     }): Promise<ToolOutput> => {
       try {
+        await assertArtifactPaths(context.projectRoot, dir);
         const manifest = await readArtifactManifest(getManifestPath(context.projectRoot, dir));
         let items = manifest.artifacts;
         if (session === 'current') {

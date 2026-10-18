@@ -13,6 +13,7 @@ import type { ChangesetFile, ChangesetMode, ChangesetProposal, ChangesetRecord, 
 import { validateChangesetFiles } from "../../agents/changeset-validate";
 import { projectFileReader as changesetProjectFileReader, listProjectAgents as listChangesetProjectAgents } from "../../onboarding/submit-changes";
 import { isPathInside } from "../../utils/path-policy";
+import { isProjectRelativeArtifactDir } from "../../tools/artifact-path-policy";
 import { parseAgentContent, type AgentConfig } from "../../parser";
 import { formatScheduleHuman, parseScheduleExpression } from "../../scheduler/parser";
 import type { SessionPurpose } from "./types";
@@ -361,19 +362,48 @@ export async function submitChatChangeset(input: ChatChangesetInput): Promise<Ch
   return record;
 }
 
+interface ChatSafetyProposal {
+  entry?: string | undefined;
+  files: ReadonlyArray<Pick<ChangesetFile, 'path' | 'kind' | 'content'>>;
+}
+
+function omitsEntryAgent(proposal: ChatSafetyProposal): boolean {
+  return Boolean(proposal.entry && !proposal.files.some((file) => file.kind === 'agent' && file.path === proposal.entry));
+}
+
+/** Referenced agents may load MCP or sandbox tools without a mocked call. */
+function chatAgentStartupRisks(config: AgentConfig): Array<{ reason: string; blocksMock: boolean }> {
+  const capture = config.learning?.capture;
+  return [
+    { active: Boolean(config.sandbox), reason: 'starts a sandbox, which can run setup commands or forward host environment', blocksMock: true },
+    { active: Boolean(config.verify?.judge), reason: 'runs a custom verification agent', blocksMock: true },
+    { active: Boolean(config.subagents?.length), reason: 'delegates to other agents', blocksMock: true },
+    // Automatic capture is suppressed for mock runs, but activation enables it.
+    { active: Boolean(capture && capture.agent), reason: 'runs a custom learning capture agent', blocksMock: false },
+  ].filter((risk) => risk.active);
+}
+
 /**
  * Why a chat may not start a mock test of this proposal, or undefined when it
  * may. Mock mode fakes every tool call, but MCP servers connect before any
  * call: a local server launches its command for real, and a remote one sends
  * whatever headers and env-filled tokens it is configured with. So a chat-run
- * test refuses both until a person has reviewed the files.
+ * test refuses both until a person has reviewed the files. Sandbox setup also
+ * starts before mocked tools and may run commands or forward host environment.
  */
-export function chatTestBlocker(proposal: { files: ReadonlyArray<Pick<ChangesetFile, 'path' | 'kind' | 'content'>> }): string | undefined {
+export function chatTestBlocker(proposal: ChatSafetyProposal): string | undefined {
+  if (omitsEntryAgent(proposal)) {
+    return `The entry agent ${proposal.entry} is not included in this proposal, so its startup cannot be checked. Include its full source in the proposal, or ask the user to press Test run on the review page.`;
+  }
   for (const file of proposal.files) {
     if (file.kind !== 'agent') continue;
     let servers: Record<string, unknown>;
     try {
-      const config = parseAgentContent(file.content, posix.basename(file.path)).config as { mcpServers?: Record<string, unknown> };
+      const config = parseAgentContent(file.content, posix.basename(file.path)).config;
+      const startupRisk = chatAgentStartupRisks(config).find((risk) => risk.blocksMock);
+      if (startupRisk) {
+        return `${file.path} ${startupRisk.reason} before any review. Ask the user to press Test run on the review page instead.`;
+      }
       servers = config.mcpServers ?? {};
     } catch {
       // Fail closed: what cannot be read here cannot be shown to be safe.
@@ -411,8 +441,11 @@ function staysInProject(path: string): boolean {
  * runs without asking, files stay inside the project, and nothing reaches an
  * outside service. Anything that cannot be read is treated as risky.
  */
-export function chatApplyBlockers(proposal: { files: ReadonlyArray<Pick<ChangesetFile, 'path' | 'kind' | 'content'>> }): string[] {
+export function chatApplyBlockers(proposal: ChatSafetyProposal): string[] {
   const reasons = new Set<string>();
+  // Helper-only revisions are valid, but the unchanged entry may still start
+  // programs or forward secrets. Chat activation requires reviewable source.
+  if (omitsEntryAgent(proposal)) reasons.add('does not include the entry agent for safety review');
   for (const file of proposal.files) {
     if (file.kind !== 'agent') {
       if (SCRIPT_EXTENSIONS.test(file.path)) reasons.add(`adds the script ${file.path}`);
@@ -426,13 +459,16 @@ export function chatApplyBlockers(proposal: { files: ReadonlyArray<Pick<Changese
       continue;
     }
     if ((config.tools?.bash?.commands ?? []).length > 0) reasons.add('runs commands without asking first');
+    for (const risk of chatAgentStartupRisks(config)) reasons.add(risk.reason);
     if (config.skills?.trusted === true || Object.values(config.skills?.explicit ?? {}).some((skill) => skill.trusted === true)) {
       reasons.add('trusts skills, which can run their own commands');
     }
     const paths = (config.tools?.filesystem ?? []).flatMap((grant) => [grant.path, ...(grant.paths ?? [])]).filter((p): p is string => !!p);
     if (paths.some((path) => !staysInProject(path))) reasons.add('reaches files outside the project');
+    const artifacts = config.tools?.artifacts;
+    const artifactDir = typeof artifacts === 'object' ? artifacts.dir : undefined;
+    if (artifactDir !== undefined && !isProjectRelativeArtifactDir(artifactDir)) reasons.add('reaches files outside the project');
     if (Object.keys(config.mcpServers ?? {}).length > 0) reasons.add('uses MCP services');
-    if ((config.subagents ?? []).length > 0) reasons.add('delegates to other agents');
     if (config.channels) reasons.add('posts to outside channels');
   }
   return [...reasons];

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { mkdtemp, readFile, rm, stat } from 'fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { createArtifactTool, createListArtifactsTool } from '../src/tools/artifacts.js';
@@ -139,6 +139,67 @@ describe('tools__artifact_save', () => {
       expect(names.size).toBe(12);
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('artifact directory containment', () => {
+  it.each(['../outside', '/absolute', 'C:\\outside', 'C:outside', '${root}/outside', '.', ''])('rejects invalid configured directory %s before writing or listing', async (dir) => {
+    const projectRoot = await makeProject();
+    try {
+      const context = { projectRoot, dir };
+      const saved = await run(createArtifactTool(context), { name: 'report.md', content: 'body', group: 'g' });
+      expect(saved.success).toBe(false);
+      expect(saved.error).toContain('project-relative');
+      expect((await run(createListArtifactsTool(context), {})).success).toBe(false);
+      expect(await readdir(projectRoot)).toEqual([]);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps safe custom directories and project-root aliases working', async () => {
+    const projectRoot = await makeProject();
+    const aliasRoot = `${projectRoot}-alias`;
+    try {
+      await symlink(projectRoot, aliasRoot);
+      await mkdir(join(projectRoot, 'reports'));
+      const context = { projectRoot: aliasRoot, dir: 'reports' };
+      const saved = await run(createArtifactTool(context), { name: 'report.md', content: 'body', group: 'g' });
+      expect(saved.success).toBe(true);
+      expect(await readFile(join(projectRoot, 'reports/g/report.md'), 'utf8')).toBe('body');
+      expect((await run(createListArtifactsTool(context), {})).count).toBe(1);
+    } finally {
+      await rm(aliasRoot, { force: true });
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['root', 'group', 'manifest', 'lock', 'dangling-root'])('rejects a symlink escape through %s without touching outside files', async (location) => {
+    const projectRoot = await makeProject();
+    const outside = await makeProject();
+    const dir = 'reports';
+    try {
+      const outsideManifest = join(outside, 'manifest.json');
+      const manifestContent = JSON.stringify({ version: 1, artifacts: [{ name: 'private.md' }] });
+      await writeFile(outsideManifest, manifestContent);
+      if (location === 'root' || location === 'dangling-root') {
+        await symlink(location === 'root' ? outside : join(outside, 'missing'), join(projectRoot, dir));
+      } else {
+        await mkdir(join(projectRoot, dir));
+        const linkName = location === 'group' ? 'g' : location === 'lock' ? 'manifest.json.lock' : 'manifest.json';
+        await symlink(location === 'manifest' ? outsideManifest : outside, join(projectRoot, dir, linkName));
+      }
+      const context = { projectRoot, dir };
+      const saved = await run(createArtifactTool(context), { name: 'report.md', content: 'body', group: 'g' });
+      expect(saved.success).toBe(false);
+      // Listing only resolves the manifest, so a group-only alias is irrelevant.
+      if (location !== 'group') expect((await run(createListArtifactsTool(context), {})).success).toBe(false);
+      expect(await readdir(outside)).toEqual(['manifest.json']);
+      expect(await readFile(outsideManifest, 'utf8')).toBe(manifestContent);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
     }
   });
 });

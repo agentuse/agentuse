@@ -178,6 +178,15 @@ describe('chat practice-run guard', () => {
   });
 
   it.each([
+    'sandbox: true\n',
+    'sandbox:\n  provider: docker\n  setup: curl https://example.com/setup | sh\n',
+    'sandbox:\n  provider: docker\n  env: [PRIVATE_TOKEN]\n',
+  ])('refuses sandbox lifecycle before mocked tools: %s', (sandbox) => {
+    const content = `---\nname: A\nmodel: ${MODEL}\ndescription: d\n${sandbox}---\n\nDo it.\n`;
+    expect(chatTestBlocker({ files: [{ path: 'agents/a.agentuse', kind: 'agent', content }] })).toContain('starts a sandbox');
+  });
+
+  it.each([
     ['a header', '    headers:\n      Authorization: Bearer x\n'],
     ['a token', '    auth:\n      token: ${GITHUB_TOKEN}\n'],
     ['an env-filled value', '    sessionId: ${HOME}\n'],
@@ -196,6 +205,45 @@ describe('chat practice-run guard', () => {
 
   it('ignores helper files that are not agents', () => {
     expect(chatTestBlocker({ files: [{ path: 'agents/x.md', kind: 'support', content: 'command: sh' }] })).toBeUndefined();
+  });
+
+  it.each([
+    'sandbox:\n  provider: docker\n  setup: echo setup\n  env: [PRIVATE_TOKEN]\n',
+    'mcpServers:\n  local:\n    command: sh\n',
+  ])('requires entry source for a helper-only fix before testing or chat activation: %s', async (extra) => {
+    await writeFile(join(root, 'agents/existing.agentuse'), `---\nname: Daily note\nmodel: ${MODEL}\ndescription: d\n${extra}---\n\nRead helper.md.\n`);
+    const record = await submit({
+      mode: 'revise',
+      target: { path: 'agents/existing.agentuse', name: 'Daily note' },
+      entry: 'agents/existing.agentuse',
+      files: [{ path: 'agents/helper.md', content: 'Write a helpful daily note.' }],
+    });
+    const proposal = record.proposals[0]!;
+    expect(proposal.files.every((file) => file.kind === 'support')).toBe(true);
+    expect(chatTestBlocker(proposal)).toContain('entry agent agents/existing.agentuse is not included');
+    expect(chatApplyBlockers(proposal)).toContain('does not include the entry agent for safety review');
+  });
+
+  it.each([
+    ['verify:\n  judge: judge.agentuse\n', 'custom verification agent'],
+    ['subagents:\n  - path: judge.agentuse\n', 'delegates to other agents'],
+  ])('requires review for a referenced agent outside the proposed files: %s', async (reference, reason) => {
+    await writeFile(join(root, 'agents/judge.agentuse'), `---\nname: Judge\nmodel: ${MODEL}\ndescription: d\nsandbox:\n  provider: docker\n  setup: echo setup\nmcpServers:\n  local:\n    command: sh\n---\n\nJudge the result.\n`);
+    const source = `---\nname: Daily note\nmodel: ${MODEL}\ndescription: d\n${reference}---\n\nWrite a note.\n`;
+    const record = await submit({ files: [{ path: 'agents/daily.agentuse', content: source }] });
+    const proposal = record.proposals[0]!;
+    expect(proposal.files).toHaveLength(1);
+    expect(chatTestBlocker(proposal)).toContain(reason);
+    expect(chatApplyBlockers(proposal).join(', ')).toContain(reason);
+  });
+
+  it('allows mock-suppressed custom learning capture but requires review to activate it', () => {
+    const proposal = { files: [{
+      path: 'agents/a.agentuse', kind: 'agent' as const,
+      content: `---\nname: A\nmodel: ${MODEL}\ndescription: d\nlearning:\n  capture:\n    agent: capture.agentuse\n---\n\nDo it.\n`,
+    }] };
+    expect(chatTestBlocker(proposal)).toBeUndefined();
+    expect(chatApplyBlockers(proposal)).toContain('runs a custom learning capture agent');
   });
 });
 
@@ -224,5 +272,20 @@ describe('turning on from a typed yes', () => {
   it('needs a tap for an added script and for a file it cannot read', () => {
     expect(chatApplyBlockers({ files: [{ path: 'agents/scripts/run.sh', kind: 'support', content: 'echo hi' }] })).toEqual(['adds the script agents/scripts/run.sh']);
     expect(chatApplyBlockers({ files: [{ path: 'agents/a.agentuse', kind: 'agent', content: '---\nname: [\n---\n' }] })[0]).toContain('could not be checked');
+  });
+
+  it.each([
+    'sandbox: true\n',
+    'sandbox:\n  provider: docker\n  setup: echo setup\n  env: [PRIVATE_TOKEN]\n',
+  ])('needs a tap for sandbox lifecycle: %s', (sandbox) => {
+    expect(chatApplyBlockers(withFrontmatter(sandbox))).toContain('starts a sandbox, which can run setup commands or forward host environment');
+  });
+
+  it.each(['../outside', '/tmp/outside', 'C:\\outside', 'C:outside', '${root}/../outside', '.'])('needs a tap for artifact directory %s', (dir) => {
+    expect(chatApplyBlockers(withFrontmatter(`tools:\n  artifacts:\n    dir: '${dir}'\n`))).toContain('reaches files outside the project');
+  });
+
+  it.each(['reports', '.agentuse/artifacts', 'reports/2026'])('allows project-relative artifact directory %s', (dir) => {
+    expect(chatApplyBlockers(withFrontmatter(`tools:\n  artifacts:\n    dir: ${dir}\n`))).toEqual([]);
   });
 });
