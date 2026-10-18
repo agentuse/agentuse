@@ -169,7 +169,8 @@
     .field a { font-size: 14px; }
     .checklist {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(3, auto);
+      justify-content: space-between;
       gap: 8px 16px;
       margin: 0;
       padding: 14px 16px;
@@ -201,6 +202,43 @@
     .agent-state.ok { color: var(--ok); font-weight: 600; }
     .agent-list button { min-height: 32px; padding: 0 14px; border: 0; border-radius: 8px; background: var(--accent); color: var(--accent-fg); font-size: 14px; font-weight: 700; cursor: pointer; white-space: nowrap; }
     .agent-list button:disabled { opacity: 0.5; cursor: default; }
+    .detail .link { align-self: flex-start; }
+    .agents-head .card-title { white-space: nowrap; }
+    .model-list { display: flex; flex-direction: column; gap: 6px; }
+    .model-server { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+    .model-server::before { content: ""; width: 8px; height: 8px; border-radius: 999px; background: var(--ok); }
+    .model {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--bg);
+      text-align: left;
+      cursor: pointer;
+    }
+    .model .radio { width: 16px; height: 16px; margin-top: 0; }
+    .model[aria-pressed="true"] .radio { border: 5px solid var(--radio-dot); background: var(--bg); }
+    .model-name { flex-grow: 1; font: 14px var(--mono); }
+    .model-size { font-size: 13px; color: var(--muted); }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .form-grid label, .detail > label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; }
+    .optional { font-weight: 400; color: var(--muted); }
+    .apps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .apps li { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+    .apps li.missing strong { color: var(--muted); font-weight: 600; }
+    .app-action { display: flex; flex-direction: column; justify-content: center; min-height: 32px; margin-top: auto; font-size: 12px; color: var(--muted); }
+    .app-action.ok { font-size: 13px; font-weight: 600; color: var(--ok); }
+    .app-action button { width: 100%; min-height: 32px; padding: 0 10px; border-radius: 8px; font-size: 13px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+    .app-action button.go { border: 0; background: var(--accent); color: var(--accent-fg); }
+    .app-action button.plain { border: 1px solid var(--line-strong); background: var(--bg); font-weight: 600; }
+    .app-action button[aria-expanded="true"] { border-color: var(--accent); background: var(--accent-soft); }
+    .app-action button:disabled { opacity: 0.5; cursor: default; }
+    .app-action a { font-size: 12px; }
+    .app-steps { margin: 0; padding-left: 20px; font-size: 14px; color: var(--muted); }
+    .app-steps li + li { margin-top: 4px; }
     @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
   </style>
 </head>
@@ -286,6 +324,33 @@
           <input class="grow mono" type="password" id="key-value" placeholder="Paste your API key" aria-label="API key" autocomplete="off" spellcheck="false">
         </div>
       </div>
+      <button class="choice" type="button" data-ai="custom" aria-pressed="false">
+        <span class="radio" aria-hidden="true"></span>
+        <span class="choice-text">
+          <span class="choice-title">Use a model on this Mac or another provider</span>
+          <span class="choice-copy">Ollama, LM Studio, or any OpenAI-compatible address.</span>
+        </span>
+      </button>
+      <div class="detail" id="local-detail" hidden>
+        <p id="local-looking" role="status">Looking for Ollama or LM Studio on this Mac…</p>
+        <div id="local-found" hidden></div>
+        <button class="link" type="button" id="local-other" hidden>Use another address instead</button>
+      </div>
+      <div class="detail" id="custom-detail" hidden>
+        <div class="form-grid">
+          <label>Address
+            <input class="mono" type="text" id="custom-url" placeholder="http://localhost:1234/v1" autocomplete="off" spellcheck="false">
+          </label>
+          <label>Model
+            <input class="mono" type="text" id="custom-model" placeholder="qwen2.5-coder-14b" autocomplete="off" spellcheck="false">
+          </label>
+        </div>
+        <label>
+          <span>API key <span class="optional">(optional)</span></span>
+          <input type="password" id="custom-key" placeholder="Leave empty if it doesn't need one" autocomplete="off" spellcheck="false">
+        </label>
+        <p>Any address that speaks the OpenAI API. Continue checks that the model answers.</p>
+      </div>
     </div>
     <p class="error" role="alert" data-error></p>
     <div class="actions">
@@ -308,18 +373,8 @@
       <h1 id="ready-cloud-title">You're set up</h1>
       <p class="lede" id="ready-cloud-lede">Connected. Ask your assistant to build a work agent, and it runs here on this Mac.</p>
     </div>
-    <div class="agents">
-      <div class="agents-head"><span class="card-title">Connect your coding agents</span><span class="card-copy">Go back to a chat where your assistant completed a job and say: “Use AgentUse to automate this workflow.”</span></div>
-      <ul class="agent-list" data-agent-list></ul>
-    </div>
-    <p class="hint">They reach AgentUse through AgentUse Cloud, so each asks you to sign in once: in Claude Code open /mcp (or run claude mcp login agentuse), in Codex run codex mcp login agentuse.</p>
-    <div class="field">
-      <label for="mcp-url">Claude, ChatGPT or another chat app: add this address as a connector and sign in</label>
-      <div class="row">
-        <input class="grow mono" type="text" id="mcp-url" readonly>
-        <button class="secondary" type="button" id="mcp-copy">Copy</button>
-      </div>
-    </div>
+    <div class="agents" data-apps></div>
+    <p class="footer-hint">Claude Code and Codex ask you to sign in to AgentUse once, the first time you use it.</p>
     <p class="hint" id="ready-cloud-ai" hidden>No AI is set up yet, so agents can't run. Add one later in the dashboard under Providers.</p>
     <p class="error" role="alert" data-error></p>
     <div class="actions">
@@ -340,24 +395,61 @@
     </div>
     <ul class="checklist">
       <li><span class="mark" id="local-ai-mark" aria-hidden="true">✓</span><span id="local-ai">AI</span></li>
-      <li><span class="mark" aria-hidden="true">✓</span><span id="local-project">Project: my-agents</span></li>
+      <li><span class="mark" aria-hidden="true">✓</span><span>Project: <span id="local-project">my-agents</span> · <button class="link" type="button" id="project-change">Change</button></span></li>
       <li><span class="mark" aria-hidden="true">✓</span><span>Runs in the background</span></li>
     </ul>
-    <div class="agents">
-      <div class="agents-head"><span class="card-title">Connect your coding agents</span><span class="card-copy">Go back to a chat where your assistant completed a job and say: “Use AgentUse to automate this workflow.”</span></div>
-      <ul class="agent-list" data-agent-list></ul>
+    <div class="agents" data-apps></div>
+    <p class="error" role="alert" data-error></p>
+    <div class="actions">
+      <span class="footer-hint">Claude and ChatGPT reach this Mac through AgentUse Cloud.</span>
+      <div class="end"><button class="primary" type="button" id="local-dashboard" data-needs-ready>Open dashboard</button></div>
+    </div>
+  </section>
+
+  <!-- 4f. Where your agents live (from Change on Ready, this Mac) -->
+  <section class="step" id="step-project" aria-labelledby="project-title" hidden>
+    <div class="meta"><strong data-step-label>Step 3 of 3</strong><span>·</span><span>Project</span></div>
+    <div class="heading">
+      <h1 id="project-title">Where should your agents live?</h1>
+      <p class="lede">A project is the folder your agents belong to. Most people start with a new one. You can add more projects later in Settings.</p>
+    </div>
+    <div class="choices" role="group" aria-label="Where your agents live">
+      <button class="choice" type="button" data-project="new" aria-pressed="true">
+        <span class="radio" aria-hidden="true"></span>
+        <span class="choice-text">
+          <span class="choice-title">A new folder, my-agents</span>
+          <span class="choice-copy">Best when agents work with apps and websites, like email, Slack or a CRM. Nothing of yours is touched.</span>
+        </span>
+      </button>
+      <button class="choice" type="button" data-project="existing" aria-pressed="false">
+        <span class="radio" aria-hidden="true"></span>
+        <span class="choice-text">
+          <span class="choice-title">A repo or folder you already have</span>
+          <span class="choice-copy">Pick this when agents should work on the files in it, like a codebase, docs or notes. They can read and change those files, and you can keep the agents in git with your work.</span>
+        </span>
+      </button>
+      <div class="detail" id="project-detail" hidden>
+        <div class="field">
+          <label for="project-folder">Folder</label>
+          <div class="row">
+            <input class="grow mono" type="text" id="project-folder" readonly placeholder="No folder chosen">
+            <button class="secondary" type="button" id="project-choose">Choose…</button>
+          </div>
+        </div>
+        <p>New agents go in its agents folder. AgentUse keeps run state in a .agentuse folder and leaves your other files alone.</p>
+      </div>
     </div>
     <p class="error" role="alert" data-error></p>
     <div class="actions">
-      <span class="footer-hint">Claude or ChatGPT on the web, or Cursor? Connect them later in Settings.</span>
-      <div class="end"><button class="primary" type="button" id="local-dashboard" data-needs-ready>Open dashboard</button></div>
+      <button class="secondary" type="button" id="project-back">Back</button>
+      <div class="end"><button class="primary" type="button" id="project-use">Use this folder</button></div>
     </div>
   </section>
 
   <script>
     const bridge = window.agentuseSetup;
     const $ = (id) => document.getElementById(id);
-    const steps = ["step-route", "step-signin", "step-ai", "step-ready-cloud", "step-ready-local"];
+    const steps = ["step-route", "step-signin", "step-ai", "step-ready-cloud", "step-ready-local", "step-project"];
     let state = { cloud: { status: "none" }, ai: { ready: false }, connectPage: "cloud.agentuse.io/connect" };
     let route = "cloud";
     let ai = "chatgpt";
@@ -367,6 +459,14 @@
     let ready;
     let agents = [];
     let settingUp;
+    // A model on this Mac: what Ollama or LM Studio offered, and which one is picked.
+    let localServers;
+    let localModel;
+    let customForm = false;
+    // The Claude or ChatGPT card whose Connect steps are open.
+    let openApp;
+    let projectChoice = "new";
+    let projectFolder;
 
     function show(id) {
       current = id;
@@ -374,7 +474,7 @@
       for (const step of steps) $(step).hidden = step !== id;
       for (const error of document.querySelectorAll("[data-error]")) error.textContent = "";
       const total = route === "cloud" ? 4 : 3;
-      const number = { "step-route": 1, "step-signin": 2, "step-ai": total - 1, "step-ready-cloud": 4, "step-ready-local": 3 }[id];
+      const number = { "step-route": 1, "step-signin": 2, "step-ai": total - 1, "step-ready-cloud": 4, "step-ready-local": 3, "step-project": 3 }[id];
       for (const label of document.querySelectorAll(`#${id} [data-step-label]`)) label.textContent = `Step ${number} of ${total}`;
       $(id).querySelector("button.primary:not([hidden])")?.focus();
     }
@@ -415,60 +515,136 @@
     async function goReady() {
       show(route === "cloud" ? "step-ready-cloud" : "step-ready-local");
       renderReady();
+      renderApps();
       try {
         ready = await bridge.prepareReady();
         renderReady();
+        renderApps();
         agents = await bridge.codingAgents();
-        renderAgents();
+        renderApps();
       } catch (error) {
         fail(error);
       }
     }
 
-    // Claude Code, Codex: Set up adds AgentUse to its config and the automate skill.
-    function renderAgents() {
-      for (const list of document.querySelectorAll("[data-agent-list]")) {
-        list.replaceChildren(...agents.map((agent) => {
-          const item = document.createElement("li");
+    const CHAT_APPS = [
+      {
+        id: "claude",
+        name: "Claude",
+        steps: ["In Claude, open Settings › Connectors and choose Add custom connector.", "Paste this address, then press Connect and sign in to AgentUse."],
+      },
+      {
+        id: "chatgpt",
+        name: "ChatGPT",
+        steps: ["In ChatGPT, turn on developer mode in Settings, then add a connector.", "Paste this address, then sign in to AgentUse."],
+      },
+    ];
+
+    function el(tag, text, className) {
+      const node = document.createElement(tag);
+      if (text !== undefined) node.textContent = text;
+      if (className) node.className = className;
+      return node;
+    }
+
+    // The address other apps add: AgentUse Cloud once connected, else this Mac's own.
+    function appAddress() {
+      return route === "cloud" && state.cloud.mcpUrl ? state.cloud.mcpUrl : ready?.mcpUrl ?? "";
+    }
+
+    function appCard(name, where, action, missing) {
+      const item = el("li", undefined, missing ? "missing" : "");
+      const title = el("span", undefined, "agent-name");
+      title.append(el("strong", name), el("span", where));
+      item.append(title, action);
+      return item;
+    }
+
+    // Claude Code, Codex: Set up adds AgentUse to its config. Claude, ChatGPT:
+    // Connect shows the address and that app's two steps; they need Cloud.
+    function renderApps() {
+      const cloud = route === "cloud" && state.cloud.status === "connected";
+      for (const box of document.querySelectorAll("[data-apps]")) {
+        const head = el("div", undefined, "agents-head");
+        head.append(el("span", "Connect your AI assistant", "card-title"), el("span", "Then go back to a chat where it did a job for you and say: “Use AgentUse to automate this.”", "card-copy"));
+        const list = el("ul", undefined, "apps");
+        for (const agent of agents) {
           const installed = agent.state !== "not-installed";
-          const done = agent.state === "set-up";
-          item.className = installed ? "" : "missing";
-          const name = document.createElement("span");
-          name.className = "agent-name";
-          const title = document.createElement("strong");
-          title.textContent = agent.name;
-          name.append(title);
-          const where = document.createElement("span");
-          where.textContent = agent.where;
-          name.append(where);
-          item.append(name);
-          if (!installed || done) {
-            const status = document.createElement("span");
-            status.className = done ? "agent-state ok" : "agent-state";
-            status.textContent = done ? "✓ Set up" : "Not installed";
-            item.append(status);
+          const action = el("span", undefined, "app-action");
+          if (agent.state === "set-up") {
+            action.classList.add("ok");
+            action.textContent = "✓ Set up";
+          } else if (!installed) {
+            action.textContent = "Not installed";
           } else {
-            const button = document.createElement("button");
+            const button = el("button", settingUp === agent.id ? "Setting up…" : agent.state === "outdated" ? "Update" : "Set up", "go");
             button.type = "button";
             button.disabled = settingUp !== undefined;
-            // Update: set up before, for another address (the server moved) or without the skill.
-            button.textContent = settingUp === agent.id ? "Setting up…" : agent.state === "outdated" ? "Update" : "Set up";
             button.addEventListener("click", async () => {
               settingUp = agent.id;
-              renderAgents();
+              renderApps();
               try {
                 agents = await bridge.setUpAgent(agent.id);
               } catch (error) {
                 fail(error);
               } finally {
                 settingUp = undefined;
-                renderAgents();
+                renderApps();
               }
             });
-            item.append(button);
+            action.append(button);
           }
-          return item;
-        }));
+          list.append(appCard(agent.name, agent.where, action, !installed));
+        }
+        for (const chat of CHAT_APPS) {
+          const action = el("span", undefined, "app-action");
+          if (cloud) {
+            const button = el("button", "Connect", "plain");
+            button.type = "button";
+            button.setAttribute("aria-expanded", String(openApp === chat.id));
+            button.addEventListener("click", () => {
+              openApp = openApp === chat.id ? undefined : chat.id;
+              renderApps();
+            });
+            action.append(button);
+          } else {
+            action.append("Needs AgentUse Cloud ");
+            const signIn = el("a", "Sign in");
+            signIn.href = "#";
+            signIn.addEventListener("click", (event) => {
+              event.preventDefault();
+              startCloud().catch(fail);
+            });
+            action.append(signIn);
+          }
+          list.append(appCard(chat.name, "Web, desktop, phone", action, false));
+        }
+        box.replaceChildren(head, list);
+        const chat = cloud && CHAT_APPS.find((candidate) => candidate.id === openApp);
+        if (chat) {
+          const detail = el("div", undefined, "detail");
+          const steps = el("ol", undefined, "app-steps");
+          for (const step of chat.steps) steps.append(el("li", step));
+          const row = el("div", undefined, "row");
+          const address = el("input", undefined, "grow mono");
+          address.type = "text";
+          address.readOnly = true;
+          address.value = appAddress();
+          address.setAttribute("aria-label", `Address for ${chat.name}`);
+          const copyButton = el("button", "Copy", "secondary");
+          copyButton.type = "button";
+          copyButton.addEventListener("click", () => copy(copyButton, address.value).catch(fail));
+          row.append(address, copyButton);
+          detail.append(steps, row);
+          box.append(detail);
+        }
+        const other = el("p", "Using Cursor or another app? ", "footer-hint");
+        const copyLink = el("button", "Copy the address", "link");
+        copyLink.type = "button";
+        copyLink.disabled = !appAddress();
+        copyLink.addEventListener("click", () => copy(copyLink, appAddress()).catch(fail));
+        other.append(copyLink);
+        box.append(other);
       }
     }
 
@@ -479,7 +655,7 @@
         const latest = await bridge.codingAgents();
         if (settingUp !== undefined) return;
         agents = latest;
-        renderAgents();
+        renderApps();
       } catch (error) {
         fail(error);
       }
@@ -516,22 +692,75 @@
       pick("ai", ai);
       $("chatgpt-detail").hidden = ai !== "chatgpt" || !chatGptStarted;
       $("key-detail").hidden = ai !== "key";
+      const listing = ai === "custom" && !customForm;
+      $("local-detail").hidden = !listing;
+      $("custom-detail").hidden = ai !== "custom" || !customForm;
+      if (listing) renderLocalModels();
       $("ai-continue").textContent = ai === "chatgpt" && !chatGptStarted ? "Sign in with ChatGPT" : "Continue";
       // Nothing to check yet: an empty key or address can't be saved.
       $("ai-continue").disabled = ai === "key"
         ? !$("key-value").value.trim()
-        : chatGptStarted && !$("chatgpt-address").value.trim();
+        : ai === "custom"
+          ? customForm ? !$("custom-url").value.trim() : !localModel
+          : chatGptStarted && !$("chatgpt-address").value.trim();
+    }
+
+    function formatSize(bytes) {
+      return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`;
+    }
+
+    // Ollama or LM Studio running: pick one of its models. Neither: the address form.
+    function renderLocalModels() {
+      $("local-looking").hidden = localServers !== undefined;
+      $("local-other").hidden = localServers === undefined;
+      const found = $("local-found");
+      found.hidden = !localServers?.length;
+      found.replaceChildren(...(localServers ?? []).map((server) => {
+        const group = el("div", undefined, "model-list");
+        group.setAttribute("role", "group");
+        group.setAttribute("aria-label", `Models in ${server.name}`);
+        group.append(el("span", `${server.name} is running on this Mac`, "model-server"));
+        for (const model of server.models) {
+          const button = el("button", undefined, "model");
+          button.type = "button";
+          button.setAttribute("aria-pressed", String(localModel?.server.id === server.id && localModel.id === model.id));
+          const radio = el("span", undefined, "radio");
+          radio.setAttribute("aria-hidden", "true");
+          button.append(radio, el("span", model.id, "model-name"));
+          if (model.size) button.append(el("span", formatSize(model.size), "model-size"));
+          button.addEventListener("click", () => {
+            localModel = { server, id: model.id };
+            renderAi();
+          });
+          group.append(button);
+        }
+        return group;
+      }));
+    }
+
+    async function findLocalModels() {
+      if (localServers !== undefined) return;
+      try {
+        localServers = await bridge.localModels();
+      } catch {
+        localServers = [];
+      }
+      const first = localServers[0];
+      if (first && !localModel) localModel = { server: first, id: first.models[0].id };
+      if (!first) customForm = true;
+      renderAi();
+      if (customForm && ai === "custom") $("custom-url").focus();
     }
 
     function renderReady() {
       const cloud = state.cloud;
       $("ready-cloud-lede").textContent = `Connected${cloud.account ? ` as ${cloud.account}` : ""}. Ask your assistant to build a work agent, and it runs here on this Mac.`;
-      $("mcp-url").value = cloud.mcpUrl ?? "";
       $("ready-cloud-ai").hidden = state.ai.ready;
       $("local-ai").textContent = state.ai.ready ? `AI: ${state.ai.label}` : "AI: add one in the dashboard";
       $("local-ai-mark").textContent = state.ai.ready ? "✓" : "!";
       $("local-ai-mark").className = state.ai.ready ? "mark" : "mark warn";
-      $("local-project").textContent = `Project: ${ready?.project ?? "my-agents"}`;
+      $("local-project").textContent = ready?.project ?? "my-agents";
+      $("project-change").disabled = !ready;
       // The server starts in the background; say so instead of a greyed button.
       for (const button of document.querySelectorAll("[data-needs-ready]")) {
         button.dataset.label ??= button.textContent;
@@ -548,6 +777,7 @@
         if (state.cloud.status === "connected" && previous !== "connected") afterSignIn();
       } else if (current === "step-ready-cloud") {
         renderReady();
+        renderApps();
       }
     }
 
@@ -556,6 +786,7 @@
         ai = button.dataset.ai;
         renderAi();
         if (ai === "key") $("key-value").focus();
+        if (ai === "custom") findLocalModels().catch(fail);
       });
     }
 
@@ -564,7 +795,8 @@
       state = await bridge.getState();
       afterSignIn();
     }));
-    $("route-cloud").addEventListener("click", () => busy($("route-cloud"), "Sign in or create an account", async () => {
+    // From Welcome, or from Sign in on a Claude or ChatGPT card on Ready, this Mac.
+    async function startCloud() {
       route = "cloud";
       state = await bridge.getState();
       if (state.cloud.status === "connected") return afterSignIn();
@@ -573,7 +805,8 @@
       renderSignIn();
       await bridge.connectCloud();
       await refresh();
-    }));
+    }
+    $("route-cloud").addEventListener("click", () => busy($("route-cloud"), "Sign in or create an account", startCloud));
 
     $("signin-back").addEventListener("click", async () => {
       await bridge.cancelCloud().catch(() => {});
@@ -594,12 +827,18 @@
     $("ai-skip").addEventListener("click", () => goReady());
     $("chatgpt-reopen").addEventListener("click", () => busy($("chatgpt-reopen"), "Opening…", () => bridge.startChatGpt()));
     $("key-value").addEventListener("input", renderAi);
+    $("custom-url").addEventListener("input", renderAi);
+    $("local-other").addEventListener("click", () => {
+      customForm = true;
+      renderAi();
+      $("custom-url").focus();
+    });
     $("chatgpt-address").addEventListener("input", renderAi);
     $("ai-continue").addEventListener("click", () => {
       // A double-click on Continue in step 1 lands here; don't let it open sign-in.
       if (Date.now() - shownAt < 500) return;
       const starting = ai === "chatgpt" && !chatGptStarted;
-      busy($("ai-continue"), starting ? "Opening…" : "Saving…", async () => {
+      busy($("ai-continue"), starting ? "Opening…" : ai === "custom" ? "Checking…" : "Saving…", async () => {
         if (starting) {
           await bridge.startChatGpt();
           chatGptStarted = true;
@@ -609,8 +848,13 @@
         }
         state.ai = ai === "chatgpt"
           ? await bridge.finishChatGpt($("chatgpt-address").value)
-          : await bridge.saveApiKey($("key-provider").value, $("key-value").value);
+          : ai === "key"
+            ? await bridge.saveApiKey($("key-provider").value, $("key-value").value)
+            : customForm
+              ? await bridge.saveCustomProvider({ baseURL: $("custom-url").value, model: $("custom-model").value, key: $("custom-key").value })
+              : await bridge.saveCustomProvider({ baseURL: localModel.server.baseURL, model: localModel.id, name: localModel.server.id });
         $("key-value").value = "";
+        $("custom-key").value = "";
         await goReady();
       });
     });
@@ -621,7 +865,39 @@
       button.textContent = "Copied";
       setTimeout(() => { button.textContent = original; }, 1500);
     }
-    $("mcp-copy").addEventListener("click", () => copy($("mcp-copy"), $("mcp-url").value).catch(fail));
+    function renderProject() {
+      pick("project", projectChoice);
+      $("project-detail").hidden = projectChoice !== "existing";
+      $("project-folder").value = projectFolder?.display ?? "";
+      $("project-use").disabled = projectChoice === "existing" && !projectFolder;
+    }
+    for (const button of document.querySelectorAll("[data-project]")) {
+      button.addEventListener("click", () => {
+        projectChoice = button.dataset.project;
+        renderProject();
+      });
+    }
+    $("project-change").addEventListener("click", () => {
+      show("step-project");
+      renderProject();
+    });
+    $("project-choose").addEventListener("click", () => busy($("project-choose"), "Choosing…", async () => {
+      const folder = await bridge.chooseProjectFolder();
+      if (folder) projectFolder = folder;
+      renderProject();
+    }));
+    $("project-back").addEventListener("click", () => {
+      show("step-ready-local");
+      renderReady();
+      renderApps();
+    });
+    $("project-use").addEventListener("click", () => busy($("project-use"), "Setting up…", async () => {
+      const { project } = await bridge.useProject(projectChoice === "existing" ? { kind: "existing", path: projectFolder.path } : { kind: "new" });
+      ready = { ...ready, project };
+      show("step-ready-local");
+      renderReady();
+      renderApps();
+    }));
     $("mcp-help").addEventListener("click", (event) => {
       event.preventDefault();
       bridge.openHelp().catch(fail);

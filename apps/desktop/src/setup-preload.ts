@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { CodingAgentStatus } from "../../../src/onboarding/coding-agents";
-import type { SetupAiState, SetupApiKeyProvider, SetupCloudState } from "./setup-wizard";
+import type { LocalModelServer, SetupAiState, SetupApiKeyProvider, SetupCloudState } from "./setup-wizard";
 
 export interface DesktopSetupState {
   cloud: SetupCloudState;
@@ -27,6 +27,10 @@ contextBridge.exposeInMainWorld("agentuseSetup", Object.freeze({
   startChatGpt: (): Promise<void> => ipcRenderer.invoke("agentuse:setup:start-chatgpt"),
   finishChatGpt: (address: string): Promise<SetupAiState> => ipcRenderer.invoke("agentuse:setup:finish-chatgpt", address),
   saveApiKey: (provider: SetupApiKeyProvider, key: string): Promise<SetupAiState> => ipcRenderer.invoke("agentuse:setup:save-api-key", provider, key),
+  localModels: (): Promise<LocalModelServer[]> => ipcRenderer.invoke("agentuse:setup:local-models"),
+  saveCustomProvider: (input: { baseURL: string; model?: string; key?: string; name?: string }): Promise<SetupAiState> => ipcRenderer.invoke("agentuse:setup:save-custom-provider", input),
+  chooseProjectFolder: (): Promise<{ path: string; display: string } | null> => ipcRenderer.invoke("agentuse:setup:choose-project-folder"),
+  useProject: (choice: { kind: "new" } | { kind: "existing"; path: string }): Promise<{ project: string }> => ipcRenderer.invoke("agentuse:setup:use-project", choice),
   prepareReady: (): Promise<DesktopSetupReady> => ipcRenderer.invoke("agentuse:setup:prepare-ready"),
   copyText: (text: string): Promise<void> => ipcRenderer.invoke("agentuse:setup:copy", text),
   codingAgents: (): Promise<CodingAgentStatus[]> => ipcRenderer.invoke("agentuse:setup:coding-agents"),

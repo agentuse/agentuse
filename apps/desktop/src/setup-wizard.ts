@@ -1,4 +1,5 @@
 import type { ProviderStatus } from "../../../src/auth/provider-status";
+import { BUILTIN_PROVIDERS } from "../../../src/providers/registry-sources";
 import type { CloudApiState } from "./cloud-settings";
 
 /**
@@ -46,8 +47,66 @@ export function setupAiState(status: Pick<ProviderStatus, "providers" | "customP
     if (provider.id === "openai" && source?.kind === "oauth") return { ready: true, label: "your ChatGPT plan" };
     return { ready: true, label: provider.name };
   }
-  const custom = status.customProviders.find((provider) => provider.hasApiKey);
-  return custom ? { ready: true, label: custom.id } : { ready: false };
+  // A model on this Mac (Ollama, LM Studio) needs no key; it was checked when saved.
+  const custom = status.customProviders.find((provider) => provider.hasApiKey || (provider.models?.length ?? 0) > 0);
+  if (!custom) return { ready: false };
+  const model = custom.models?.[0];
+  const where = LOCAL_MODEL_SERVERS.find((server) => server.id === custom.id)?.name ?? custom.id;
+  return { ready: true, label: model ? `${model} on ${where}` : where };
+}
+
+/** Apps that serve models on this Mac, at their default addresses. */
+export const LOCAL_MODEL_SERVERS = [
+  { id: "ollama", name: "Ollama", baseURL: "http://127.0.0.1:11434/v1" },
+  { id: "lmstudio", name: "LM Studio", baseURL: "http://127.0.0.1:1234/v1" },
+] as const;
+
+export interface LocalModelServer {
+  id: string;
+  name: string;
+  baseURL: string;
+  models: { id: string; size?: number }[];
+}
+
+type Fetch = (url: string, init?: { signal?: AbortSignal }) => Promise<{ ok: boolean; json(): Promise<unknown> }>;
+
+/** Ollama or LM Studio, if running, with the chat models each has downloaded. */
+export async function detectLocalModels(fetchImpl: Fetch = fetch, timeoutMs = 1_500): Promise<LocalModelServer[]> {
+  const found = await Promise.all(LOCAL_MODEL_SERVERS.map(async (server): Promise<LocalModelServer | undefined> => {
+    try {
+      const response = await fetchImpl(`${server.baseURL}/models`, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!response.ok) return undefined;
+      const listed = (await response.json() as { data?: { id?: unknown }[] }).data ?? [];
+      const ids = listed.map((model) => model.id).filter((id): id is string => typeof id === "string" && !/embed/iu.test(id));
+      // Ollama's own list has sizes; the OpenAI-style list doesn't.
+      const sizes = new Map<string, number>();
+      if (server.id === "ollama") {
+        const tags = await fetchImpl(new URL("/api/tags", server.baseURL).toString(), { signal: AbortSignal.timeout(timeoutMs) })
+          .then((res) => res.ok ? res.json() as Promise<{ models?: { name?: unknown; size?: unknown }[] }> : {})
+          .catch(() => ({})) as { models?: { name?: unknown; size?: unknown }[] };
+        for (const tag of tags.models ?? []) {
+          if (typeof tag.name === "string" && typeof tag.size === "number") sizes.set(tag.name, tag.size);
+        }
+      }
+      return { ...server, models: ids.map((id) => ({ id, ...(sizes.has(id) && { size: sizes.get(id) }) })) };
+    } catch {
+      return undefined;
+    }
+  }));
+  return found.filter((server): server is LocalModelServer => Boolean(server && server.models.length > 0));
+}
+
+/** A name to save a typed-in provider under: Ollama and LM Studio by their port, else the host. */
+export function customProviderName(baseURL: string): string {
+  let url: URL;
+  try { url = new URL(baseURL.trim()); } catch { throw new Error("Enter an address like http://localhost:1234/v1."); }
+  const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  if (local && url.port === "11434") return "ollama";
+  if (local && url.port === "1234") return "lmstudio";
+  if (local) return "local";
+  const label = url.hostname.split(".").find((part) => !["api", "www", "app"].includes(part)) ?? "custom";
+  const name = label.replace(/[^a-zA-Z0-9_-]/gu, "-").replace(/^[^a-zA-Z]+/u, "") || "custom";
+  return BUILTIN_PROVIDERS.includes(name.toLowerCase()) ? `${name}-custom` : name;
 }
 
 /**

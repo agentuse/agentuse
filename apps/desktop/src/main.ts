@@ -40,12 +40,12 @@ import {
   type DesktopNotificationPreferences,
 } from "./dashboard-shortcut";
 import { getProviderStatus } from "../../../src/auth/provider-status";
-import { loadGlobalConfig } from "../../../src/utils/global-config";
+import { getManagedProjectsRoot, loadGlobalConfig } from "../../../src/utils/global-config";
 import { cloudUrl, readCloudConnection } from "../../../src/cloud/config";
-import { completeProviderOAuth, saveProviderApiKey, startProviderOAuth } from "../../../src/auth/provider-setup";
+import { completeProviderOAuth, configureCustomProvider, saveProviderApiKey, startProviderOAuth } from "../../../src/auth/provider-setup";
 import { CloudConnector, cloudSettingsState, type CloudApiState } from "./cloud-settings";
 import { isCodingAgentId, type CodingAgentStatus } from "../../../src/onboarding/coding-agents";
-import { connectPageUrl, isSetupApiKeyProvider, setupAiState, setupCloudState } from "./setup-wizard";
+import { connectPageUrl, customProviderName, detectLocalModels, isSetupApiKeyProvider, setupAiState, setupCloudState } from "./setup-wizard";
 import { initializeDesktopGlobalDefaults } from "./global-defaults";
 import { DesktopUpdater, type DesktopUpdateState } from "./updater";
 import { DesktopUpdateScheduler } from "./update-scheduler";
@@ -121,6 +121,8 @@ let userLoginPath: Promise<string> | undefined;
 let desktopSetupStartedAt: number | undefined;
 // The ChatGPT sign-in the first-run window started, finished by pasting the address.
 let setupChatGptFlow: string | undefined;
+/** The project the first-run window picked, and whether setup added it (so a switch can take it back). */
+let setupProject: { id: string; added: boolean } | undefined;
 let dashboardShortcut: string | null = DEFAULT_DASHBOARD_SHORTCUT;
 let desktopNotificationPreferences: DesktopNotificationPreferences = { ...DEFAULT_DESKTOP_NOTIFICATION_PREFERENCES };
 let registeredDashboardShortcut: string | undefined;
@@ -228,24 +230,60 @@ async function dashboardApi<T>(path: string, init: RequestInit = {}): Promise<T>
   return payload as T;
 }
 
+type SetupProjectInfo = { id: string; path: string; agentCount?: number; about?: { name?: string } };
+const projectName = (project: SetupProjectInfo): string => project.about?.name ?? project.id;
+
 /** The project new agents go in: the default one, or my-agents made now. */
 async function ensureSetupProject(): Promise<string> {
-  type Project = { id: string; path: string; about?: { name?: string } };
-  const info = await dashboardApi<{ projects: Project[]; default?: string }>("/api");
+  const info = await dashboardApi<{ projects: SetupProjectInfo[]; default?: string }>("/api");
+  const chosen = setupProject && info.projects.find((project) => project.id === setupProject?.id);
+  if (chosen) return projectName(chosen);
   const existing = info.projects.find((project) => project.id === info.default) ?? info.projects[0];
-  if (existing) return existing.about?.name ?? existing.id;
+  if (existing) return projectName(existing);
   try {
-    const created = await dashboardApi<{ project: Project }>("/api/projects", {
+    const created = await dashboardApi<{ project: SetupProjectInfo }>("/api/projects", {
       method: "POST",
       body: JSON.stringify({ name: "my-agents" }),
     });
-    return created.project.about?.name ?? created.project.id;
+    setupProject = { id: created.project.id, added: true };
+    return projectName(created.project);
   } catch (error) {
     // Made by another window a moment ago.
-    const again = await dashboardApi<{ projects: Project[] }>("/api");
-    if (again.projects[0]) return again.projects[0].about?.name ?? again.projects[0].id;
+    const again = await dashboardApi<{ projects: SetupProjectInfo[] }>("/api");
+    if (again.projects[0]) return projectName(again.projects[0]);
     throw error;
   }
+}
+
+/**
+ * "Where should your agents live?": a new my-agents folder, or a folder the
+ * person already has. Switching away from a project setup itself added, with
+ * no agents yet, takes it back out of AgentUse (its folder stays on disk), so
+ * the one picked is the only project and the default.
+ */
+async function useSetupProject(choice: { kind: "new" } | { kind: "existing"; path: string }): Promise<string> {
+  const before = await dashboardApi<{ projects: SetupProjectInfo[] }>("/api");
+  const known = new Set(before.projects.map((project) => project.id));
+  let next: SetupProjectInfo;
+  if (choice.kind === "existing") {
+    next = (await dashboardApi<{ project: SetupProjectInfo }>("/api/projects/attach", {
+      method: "POST",
+      body: JSON.stringify({ path: choice.path }),
+    })).project;
+  } else {
+    const managed = join(getManagedProjectsRoot(), "my-agents");
+    const loaded = before.projects.find((project) => project.path === managed);
+    next = loaded ?? (existsSync(managed)
+      ? (await dashboardApi<{ project: SetupProjectInfo }>("/api/projects/attach", { method: "POST", body: JSON.stringify({ path: managed }) })).project
+      : (await dashboardApi<{ project: SetupProjectInfo }>("/api/projects", { method: "POST", body: JSON.stringify({ name: "my-agents" }) })).project);
+  }
+  const previous = setupProject;
+  setupProject = { id: next.id, added: !known.has(next.id) || (previous?.id === next.id && previous.added) };
+  const old = previous && previous.id !== next.id && previous.added ? before.projects.find((project) => project.id === previous.id) : undefined;
+  if (old && !old.agentCount) {
+    await dashboardApi(`/api/projects/${encodeURIComponent(old.id)}`, { method: "DELETE" }).catch(() => {});
+  }
+  return projectName(next);
 }
 
 function assertSetupSender(event: IpcMainInvokeEvent): void {
@@ -341,6 +379,41 @@ function registerDesktopIpc(): void {
     if (!isSetupApiKeyProvider(provider)) throw new TypeError("Pick Anthropic, OpenAI or OpenRouter.");
     await saveProviderApiKey(provider, key);
     return setupAiState(await getProviderStatus());
+  });
+  ipcMain.handle("agentuse:setup:local-models", async (event) => {
+    assertSetupSender(event);
+    return detectLocalModels();
+  });
+  ipcMain.handle("agentuse:setup:save-custom-provider", async (event, input: unknown) => {
+    assertSetupSender(event);
+    const { baseURL, model, key, name } = (input ?? {}) as Record<string, unknown>;
+    if (typeof baseURL !== "string" || !baseURL.trim()) throw new Error("Enter the address of the model server.");
+    // Continue checks the model answers before anything is saved.
+    await configureCustomProvider({
+      name: typeof name === "string" && name ? name : customProviderName(baseURL),
+      baseURL: baseURL.trim(),
+      ...(typeof key === "string" && key.trim() && { key: key.trim() }),
+      ...(typeof model === "string" && model.trim() && { models: [model.trim()] }),
+    });
+    return setupAiState(await getProviderStatus());
+  });
+  ipcMain.handle("agentuse:setup:choose-project-folder", async (event) => {
+    assertSetupSender(event);
+    if (!setupWindow || setupWindow.isDestroyed()) return null;
+    const result = await dialog.showOpenDialog(setupWindow, {
+      title: "Choose a folder for your agents",
+      buttonLabel: "Choose",
+      properties: ["openDirectory", "createDirectory"],
+    });
+    const folder = result.canceled ? undefined : result.filePaths[0];
+    return folder ? { path: folder, display: displayHomePath(folder) } : null;
+  });
+  ipcMain.handle("agentuse:setup:use-project", async (event, choice: unknown) => {
+    assertSetupSender(event);
+    const { kind, path } = (choice ?? {}) as Record<string, unknown>;
+    if (kind === "new") return { project: await useSetupProject({ kind: "new" }) };
+    if (kind !== "existing" || typeof path !== "string" || !path) throw new TypeError("Choose a folder first.");
+    return { project: await useSetupProject({ kind: "existing", path }) };
   });
   ipcMain.handle("agentuse:setup:prepare-ready", async (event) => {
     assertSetupSender(event);

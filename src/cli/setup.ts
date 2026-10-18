@@ -81,7 +81,8 @@ export function aiStep(status: Pick<ProviderStatus, 'providers' | 'customProvide
     const stored = provider.sources.find((source) => source.stored);
     if (provider.configured && stored) return { kind: 'ready', label: `${provider.name} (${stored.name})` };
   }
-  const custom = status.customProviders.find((provider) => provider.hasApiKey);
+  // A model on this computer (Ollama, LM Studio) needs no key; it was checked when saved.
+  const custom = status.customProviders.find((provider) => provider.hasApiKey || (provider.models?.length ?? 0) > 0);
   if (custom) return { kind: 'ready', label: custom.id };
   for (const provider of status.providers) {
     const env = provider.sources.find((source) => source.kind === 'environment');
