@@ -4,7 +4,7 @@ import { fetchCloudState } from '../lib/api';
 import { CodingAgentList, useCodingAgents } from './coding-agent-list';
 import { SettingsGroup as Group } from './settings-layout';
 
-function CopyField(props: { value: string }) {
+export function CopyField(props: { value: string }) {
   const [copied, setCopied] = useState(false);
   const copy = () => {
     void navigator.clipboard?.writeText(props.value).then(() => {
@@ -37,7 +37,7 @@ export function ConnectAppsSettingsGroup() {
     <div class="connect-apps">
       {!agents.error && (
         <Group title="Claude Code and Codex">
-          <p class="settings-group-hint">Set up once, then type /automate in Claude Code or $automate in Codex. Works in their apps and in the terminal. {agents.via === 'cloud' ? 'They use AgentUse Cloud, like your chat apps.' : 'They use this Mac directly.'}</p>
+          <p class="settings-group-hint">Set up once, then say “Use AgentUse to…” in either one. Works in their apps and in the terminal. {agents.via === 'cloud' ? 'They use AgentUse Cloud, like your chat apps.' : 'They use this Mac directly.'}</p>
           <CodingAgentList agents={agents} />
         </Group>
       )}
@@ -46,15 +46,15 @@ export function ConnectAppsSettingsGroup() {
         {mcpUrl
           ? <>
               <p class="settings-group-hint">
-                They reach this computer through AgentUse Cloud{cloud.data?.account ? `, signed in as ${cloud.data.account}` : ''}. Add this address as a connector, sign in, then ask it to automate something.
+                They reach this machine through AgentUse Cloud{cloud.data?.account ? `, signed in as ${cloud.data.account}` : ''}. Add this address as a connector, sign in, then ask it to automate something.
               </p>
               <CopyField value={mcpUrl} />
             </>
           : <>
-              <p class="settings-group-hint">They reach this computer through AgentUse Cloud, which isn't connected yet.</p>
+              <p class="settings-group-hint">They reach this machine through AgentUse Cloud, which isn't connected yet.</p>
               {isDesktop
                 ? <div><button type="button" class="settings-item" onClick={() => void window.agentuseDesktop?.openSettings()}>Connect in Mac Settings…</button></div>
-                : <p class="settings-group-hint">Run <code>agentuse setup</code> on this computer to connect it.</p>}
+                : <p class="settings-group-hint">Run <code>agentuse setup</code> on this machine to connect it.</p>}
             </>}
       </Group>
 

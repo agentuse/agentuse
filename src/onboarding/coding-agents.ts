@@ -63,7 +63,7 @@ const claudeCode: CodingAgent = {
   id: 'claude-code',
   name: 'Claude Code',
   command: '/automate',
-  where: 'Claude app (Code) or terminal',
+  where: 'App or terminal',
   configFile: (home) => path.join(home, '.claude.json'),
   skillFile: (home) => path.join(home, '.claude', 'skills', SKILL_NAME, 'SKILL.md'),
   installed: (home, appDirs) => existsSync(path.join(home, '.claude.json')) || existsSync(path.join(home, '.claude'))
@@ -115,9 +115,9 @@ function splitCodexTable(text: string): { rest: string[]; table: string[] } {
 
 const codex: CodingAgent = {
   id: 'codex',
-  name: 'OpenAI Codex',
+  name: 'Codex',
   command: '$automate',
-  where: 'Codex app or terminal',
+  where: 'App or terminal',
   configFile: (home) => path.join(home, '.codex', 'config.toml'),
   skillFile: (home) => path.join(home, '.agents', 'skills', SKILL_NAME, 'SKILL.md'),
   // The Codex app makes ~/.codex on first open, before sign-in.

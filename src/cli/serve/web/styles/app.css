@@ -11803,6 +11803,20 @@ html[data-page="draft-panel"] .app-route {
 .coding-agents-state.is-done { color: var(--green); font-weight: 600; }
 .coding-agents button { padding: 6px 14px; border: 0; border-radius: 6px; background: var(--primary-bg); color: var(--primary-fg); font: inherit; font-size: var(--font-size-caption); font-weight: 600; cursor: pointer; white-space: nowrap; }
 .coding-agents button:disabled { opacity: 0.6; cursor: default; }
+.assistant-cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.assistant-cards li { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+.assistant-cards li.is-missing strong { color: var(--muted); }
+.assistant-cards-action { display: flex; flex-direction: column; justify-content: center; min-height: 32px; margin-top: auto; }
+.assistant-cards-action button { width: 100%; min-height: 32px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; font-size: var(--font-size-caption); font-weight: 600; cursor: pointer; white-space: nowrap; }
+.assistant-cards-action button.is-primary { border: 0; background: var(--primary-bg); color: var(--primary-fg); font-weight: 700; }
+.assistant-cards-action button[aria-expanded="true"] { border-color: var(--fg); }
+.assistant-cards-action button:disabled { opacity: 0.6; cursor: default; }
+.assistant-cards-action .coding-agents-state { white-space: normal; }
+.assistant-cards-action a { color: var(--fg); }
+.assistant-cards-steps { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.assistant-cards-steps ol { margin: 0; padding-left: 20px; color: var(--muted); font-size: var(--font-size-caption); }
+.assistant-cards-copy { padding: 0; border: 0; background: none; color: var(--fg); font: inherit; text-decoration: underline; cursor: pointer; }
+@media (max-width: 720px) { .assistant-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 /* AgentUse Cloud: the computer switcher and the screens shown instead of the
    dashboard when no computer can be reached (components/cloud-gate.tsx). */
