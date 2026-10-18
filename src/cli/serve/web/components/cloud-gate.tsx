@@ -13,9 +13,9 @@ import {
 import { formatRelativeTime } from '../lib/format';
 
 /**
- * Cloud mode only: decide which computer this page shows before any daemon
+ * Cloud mode only: decide which machine this page shows before any daemon
  * request goes out, and stand in for the dashboard when there is nothing to
- * reach (no computer chosen, offline, or too old to relay the dashboard).
+ * reach (no machine chosen, offline, or too old to relay the dashboard).
  */
 
 type GateState =
@@ -36,7 +36,7 @@ function dismissBootLoader() {
   document.getElementById('boot')?.remove();
 }
 
-/** Open the dashboard on another computer: a full load, so nothing from the last one lingers. */
+/** Open the dashboard on another machine: a full load, so nothing from the last one lingers. */
 export function switchMachine(id: string): void {
   selectMachine(id);
   location.assign(`/?m=${encodeURIComponent(id)}`);
@@ -44,7 +44,7 @@ export function switchMachine(id: string): void {
 
 let machinesCache: CloudMachinesPayload | undefined;
 
-/** The account's computers, as the gate last loaded them (for the header switcher). */
+/** The account's machines, as the gate last loaded them (for the header switcher). */
 export function cloudMachines(): CloudMachine[] {
   return machinesCache?.machines ?? [];
 }
@@ -73,7 +73,7 @@ export function CloudGate(props: { children: ComponentChildren }) {
   if (!machine.online) {
     return (
       <GatePage
-        title="This computer is offline"
+        title="This machine is offline"
         body={`${machine.name} is not connected to AgentUse Cloud right now${machine.lastSeen ? `. It was last seen ${formatRelativeTime(machine.lastSeen)}` : ''}. Open AgentUse on it, or start agentuse serve, and this page will work again.`}
         machines={payload.machines}
         current={machine.id}
@@ -96,11 +96,11 @@ function GatePage(props: { title: string; body: string; machines?: CloudMachine[
         {props.children}
         {others.length > 0 && (
           <>
-            <p class="cloud-gate-label">Or open another computer</p>
+            <p class="cloud-gate-label">Or open another machine</p>
             <MachineList machines={others} />
           </>
         )}
-        <p class="cloud-gate-foot"><CloudPageLink href="/account">Your account and computers</CloudPageLink></p>
+        <p class="cloud-gate-foot"><CloudPageLink href="/account">Your account and machines</CloudPageLink></p>
       </main>
     </div>
   );
@@ -110,15 +110,15 @@ function MachinePicker(props: { machines: CloudMachine[] }) {
   if (props.machines.length === 0) {
     return (
       <GatePage
-        title="No computers yet"
-        body="Connect a computer to see its agents, runs and approvals here."
+        title="No machines yet"
+        body="Connect a machine to see its agents, runs and approvals here."
       >
-        <p><CloudPageLink class="empty-action" href="/setup">Connect a computer</CloudPageLink></p>
+        <p><CloudPageLink class="empty-action" href="/setup">Connect a machine</CloudPageLink></p>
       </GatePage>
     );
   }
   return (
-    <GatePage title="Pick a computer" body="Your agents run on your own computers. Pick the one to open.">
+    <GatePage title="Pick a machine" body="Your agents run on your own machines. Pick the one to open.">
       <MachineList machines={props.machines} />
     </GatePage>
   );
@@ -153,7 +153,7 @@ function NeedsUpdate(props: { machine: CloudMachine; machines: CloudMachine[] })
   };
   return (
     <GatePage
-      title="This computer needs an update"
+      title="This machine needs an update"
       body={`${props.machine.name} runs AgentUse ${props.machine.version ?? '(an older version)'}, which cannot show this dashboard through AgentUse Cloud yet.`}
       machines={props.machines}
       current={props.machine.id}
@@ -168,18 +168,18 @@ function NeedsUpdate(props: { machine: CloudMachine; machines: CloudMachine[] })
             {status === 'error' && <span class="cloud-gate-note"> {error}</span>}
           </p>
         )
-        : <p class="cloud-gate-note">On that computer, update the AgentUse app, or run <code>npm i -g agentuse@latest</code> and restart <code>agentuse serve</code>.</p>}
+        : <p class="cloud-gate-note">On that machine, update the AgentUse app, or run <code>npm i -g agentuse@latest</code> and restart <code>agentuse serve</code>.</p>}
     </GatePage>
   );
 }
 
-/** Menu entries that open Cloud's own pages instead of switching computer. */
+/** Menu entries that open Cloud's own pages instead of switching machine. */
 const CLOUD_PAGE_OPTIONS = [
   { value: '__setup', label: 'Add machine', href: '/setup' },
   { value: '__account', label: 'Manage', href: '/account' },
 ] as const;
 
-/** The header's computer switcher, shown in cloud mode once a computer is open. */
+/** The header's machine switcher, shown in cloud mode once a machine is open. */
 export function MachineSwitcher() {
   const machines = cloudMachines();
   const current = selectedMachineId();
@@ -193,7 +193,7 @@ export function MachineSwitcher() {
           const select = event.currentTarget as HTMLSelectElement;
           const page = CLOUD_PAGE_OPTIONS.find((option) => option.value === select.value);
           if (page) {
-            // Keep showing this computer until the page loads.
+            // Keep showing this machine until the page loads.
             select.value = current;
             location.assign(page.href);
             return;

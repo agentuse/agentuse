@@ -1,12 +1,12 @@
 // Cloud mode: the same dashboard served by AgentUse Cloud (cloud.agentuse.io)
-// for a signed-in account, reaching one of its computers at a time. The Cloud
+// for a signed-in account, reaching one of its machines at a time. The Cloud
 // Worker marks its shell with `window.__AGENTUSE_CLOUD__` (as static.ts does
 // the brand), so the first render already knows. Locally nothing here
 // changes a URL.
 //
 // Every daemon request goes through `daemonUrl`: locally the path is used as
 // is; in cloud mode it is prefixed with `/api/m/<machine>`, and Cloud relays
-// the rest of the path, unchanged, to that computer. The computer's tunnel
+// the rest of the path, unchanged, to that machine. The machine's tunnel
 // relays only `/api/*`, so a session route the app calls by its root name
 // (`/sessions/:id/status`, kept locally so `?token=` links work without the
 // API key) goes by its `/api` name there.
@@ -33,7 +33,7 @@ export interface CloudMachine {
 export interface CloudMachinesPayload {
   machines: CloudMachine[];
   minApiVersion: number;
-  /** For a `?m=` id that is no longer connected: the newest connected computer with its name. */
+  /** For a `?m=` id that is no longer connected: the newest connected machine with its name. */
   resolved?: string;
 }
 
@@ -41,7 +41,7 @@ const STORAGE_KEY = 'agentuse-cloud-machine';
 
 /**
  * Web Push belongs to the account in cloud mode: Cloud keeps the devices and
- * sends what the computers hand it, so these stay on Cloud's own origin.
+ * sends what the machines hand it, so these stay on Cloud's own origin.
  */
 const CLOUD_OWNED_PATHS = new Set(['/api/push/public-key', '/api/push/subscription', '/api/push/unsubscribe']);
 
@@ -79,15 +79,15 @@ export function rememberedMachineId(): string | undefined {
 /** The browser path for a daemon path such as `/api/agents` or `/sessions/s1/status`. */
 export function daemonUrl(path: string): string {
   if (!isCloudMode() || CLOUD_OWNED_PATHS.has(path.split('?')[0]!)) return path;
-  if (!selected) throw new Error('No computer is selected.');
+  if (!selected) throw new Error('No machine is selected.');
   const apiPath = path === '/api' || path.startsWith('/api/') || path.startsWith('/api?') ? path : `/api${path}`;
   return `/api/m/${encodeURIComponent(selected)}${apiPath}`;
 }
 
 /**
- * Which computer this page shows. A deep link's `?m=` wins; a computer that
+ * Which machine this page shows. A deep link's `?m=` wins; a machine that
  * was disconnected and connected again (a new id, the same name) is followed
- * through Cloud's `resolved`. Without a link, the computer this browser used
+ * through Cloud's `resolved`. Without a link, the machine this browser used
  * last, else the only one. Undefined means the person picks.
  */
 export function chooseMachine(
@@ -100,7 +100,7 @@ export function chooseMachine(
   return known(remembered) ?? (payload.machines.length === 1 ? payload.machines[0]!.id : undefined);
 }
 
-/** A dashboard link that opens on the same computer, for copying or sharing. */
+/** A dashboard link that opens on the same machine, for copying or sharing. */
 export function withMachine(url: string): string {
   if (!isCloudMode() || !selected) return url;
   const parsed = new URL(url, location.origin);
@@ -116,7 +116,7 @@ export async function fetchCloudMachines(requested?: string): Promise<CloudMachi
     location.assign(`/login?next=${encodeURIComponent(`${location.pathname}${location.search}`)}`);
     throw new Error('Signed out');
   }
-  if (!response.ok) throw new Error(`Could not list your computers (${response.status})`);
+  if (!response.ok) throw new Error(`Could not list your machines (${response.status})`);
   return response.json() as Promise<CloudMachinesPayload>;
 }
 
@@ -124,6 +124,6 @@ export async function requestMachineUpdate(id: string): Promise<void> {
   const response = await fetch(`/api/machines/${encodeURIComponent(id)}/update`, { method: 'POST', headers: { Accept: 'application/json' } });
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { error?: string } | null;
-    throw new Error(payload?.error ?? `Could not ask this computer to update (${response.status})`);
+    throw new Error(payload?.error ?? `Could not ask this machine to update (${response.status})`);
   }
 }
