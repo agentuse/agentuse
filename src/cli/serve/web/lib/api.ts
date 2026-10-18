@@ -162,14 +162,25 @@ export function webUIPageForPath(pathname: string): WebUIPage {
     : 'other';
 }
 
-/** Best-effort local reporting; the browser never contacts PostHog. */
-export function reportWebUIPageView(page: WebUIPage): void {
-  void fetch(daemonUrl('/api/telemetry'), {
+/** Best-effort report to the daemon. On Cloud, nothing is sent until a computer is open. */
+function sendTelemetry(body: Record<string, unknown>): void {
+  let url: string;
+  try {
+    url = daemonUrl('/api/telemetry');
+  } catch {
+    return;
+  }
+  void fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ event: 'page_viewed', page }),
+    body: JSON.stringify(body),
     keepalive: true,
   }).catch(() => {});
+}
+
+/** Best-effort local reporting; the browser never contacts PostHog. */
+export function reportWebUIPageView(page: WebUIPage): void {
+  sendTelemetry({ event: 'page_viewed', page });
 }
 
 export type OnboardingTelemetryStep =
@@ -205,12 +216,7 @@ export function currentOnboardingRoute(): 'desktop' | 'web' {
 
 /** Best-effort onboarding reporting; names, paths, and prompt text are never accepted. */
 export function reportOnboardingTelemetry(payload: OnboardingTelemetryPayload): void {
-  void fetch(daemonUrl('/api/telemetry'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...payload, onboarding_route: currentOnboardingRoute() }),
-    keepalive: true,
-  }).catch(() => {});
+  sendTelemetry({ ...payload, onboarding_route: currentOnboardingRoute() });
 }
 
 export type ApprovalRow = ApprovalSummary & { project: string };
