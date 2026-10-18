@@ -271,12 +271,7 @@ export class CloudTunnel {
       this.lastPong = Date.now();
       this.setState('connected');
       this.options.log(`Connected to AgentUse Cloud as ${connection.name}`);
-      socket.send(JSON.stringify({
-        type: 'hello',
-        version: this.options.version ?? 'unknown',
-        apiVersion: TUNNEL_API_VERSION,
-        features: TUNNEL_FEATURES,
-      }));
+      this.sayHello(socket);
       this.heartbeat(socket);
     });
 
@@ -347,8 +342,20 @@ export class CloudTunnel {
         return;
       }
       socket.send(JSON.stringify({ type: 'ping' }));
+      // Cloud can be redeployed under an open socket and come back without
+      // the hello it was sent. Until it acknowledges one, say it again.
+      if (this.cloudFeatures.size === 0) this.sayHello(socket);
       this.heartbeat(socket);
     });
+  }
+
+  private sayHello(socket: WebSocket): void {
+    socket.send(JSON.stringify({
+      type: 'hello',
+      version: this.options.version ?? 'unknown',
+      apiVersion: TUNNEL_API_VERSION,
+      features: TUNNEL_FEATURES,
+    }));
   }
 
   private async onFrame(socket: WebSocket, text: string): Promise<void> {
