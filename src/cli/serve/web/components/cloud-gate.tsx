@@ -175,8 +175,8 @@ function NeedsUpdate(props: { machine: CloudMachine; machines: CloudMachine[] })
 
 /** Menu entries that open Cloud's own pages instead of switching computer. */
 const CLOUD_PAGE_OPTIONS = [
-  { value: '__setup', label: 'Add a computer…', href: '/setup' },
-  { value: '__account', label: 'Manage computers…', href: '/account' },
+  { value: '__setup', label: 'Add machine', href: '/setup' },
+  { value: '__account', label: 'Manage', href: '/account' },
 ] as const;
 
 /** The header's computer switcher, shown in cloud mode once a computer is open. */
@@ -187,7 +187,7 @@ export function MachineSwitcher() {
   return (
     <div class="cloud-switcher">
       <select
-        aria-label="Computer"
+        aria-label="Machine"
         value={current}
         onChange={(event) => {
           const select = event.currentTarget as HTMLSelectElement;
@@ -206,7 +206,7 @@ export function MachineSwitcher() {
             {machine.name}{machine.online ? '' : ' (offline)'}
           </option>
         ))}
-        <option disabled>──────────</option>
+        <option disabled>────────</option>
         {CLOUD_PAGE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
     </div>
