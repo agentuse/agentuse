@@ -159,8 +159,13 @@ export class CloudTunnel {
     const file = cloudConfigPath();
     try {
       // Watch the folder: the file is replaced by rename, which a file watch loses.
+      // On macOS the rename is reported under the temporary name the atomic
+      // write used (`cloud.json.<pid>.<id>.tmp`), never `cloud.json` itself,
+      // so any name starting with the file's name counts. recheck() compares
+      // tokens, so a stray event costs one small read.
+      const base = path.basename(file);
       this.watcher = watch(path.dirname(file), (_event, name) => {
-        if (name && name !== path.basename(file)) return;
+        if (name && !String(name).startsWith(base)) return;
         if (this.recheckTimer) clearTimeout(this.recheckTimer);
         this.recheckTimer = setTimeout(() => this.recheck(), 200);
         this.recheckTimer.unref?.();
