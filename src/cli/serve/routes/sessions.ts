@@ -170,7 +170,7 @@ export async function sessionRoutes(ctx: ServeContext, rq: ServeRequest): Promis
     // per session and pushes only changes. The poll closure reproduces the
     // /status?logs=1 body exactly, so the stream and the polling fallback are
     // equivalent.
-    const sessionEventsMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/events$/) : null;
+    const sessionEventsMatch = req.method === "GET" ? routePath.match(/^\/sessions\/([^/?#]+)\/events$/) : null;
     if (sessionEventsMatch) {
       const sessionId = decodeURIComponent(sessionEventsMatch[1]);
       const token = requestUrl.searchParams.get('token') ?? undefined;
@@ -227,7 +227,7 @@ export async function sessionRoutes(ctx: ServeContext, rq: ServeRequest): Promis
     }
 
     // GET /sessions/:id/status: live status poll for the session page.
-    const sessionStatusMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/status$/) : null;
+    const sessionStatusMatch = req.method === "GET" ? routePath.match(/^\/sessions\/([^/?#]+)\/status$/) : null;
     if (sessionStatusMatch) {
       const sessionId = decodeURIComponent(sessionStatusMatch[1]);
       const token = requestUrl.searchParams.get('token') ?? undefined;
@@ -323,7 +323,7 @@ export async function sessionRoutes(ctx: ServeContext, rq: ServeRequest): Promis
     // read from the artifact manifest. Token-gated like the rest of the
     // session page data so the SPA fetches it with ?token=. The file bytes are
     // served separately by /sessions/:id/artifacts/<path>.
-    const sessionArtifactsListMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/artifacts-list$/) : null;
+    const sessionArtifactsListMatch = req.method === "GET" ? routePath.match(/^\/sessions\/([^/?#]+)\/artifacts-list$/) : null;
     if (sessionArtifactsListMatch) {
       const sessionId = decodeURIComponent(sessionArtifactsListMatch[1]);
       const token = requestUrl.searchParams.get('token') ?? undefined;
@@ -361,7 +361,7 @@ export async function sessionRoutes(ctx: ServeContext, rq: ServeRequest): Promis
     // reconstructed from what the run already persisted. Named
     // `context-stack` because `/sessions/:id/context` is the SPA page that
     // renders it.
-    const sessionContextMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/context-stack$/) : null;
+    const sessionContextMatch = req.method === "GET" ? routePath.match(/^\/sessions\/([^/?#]+)\/context-stack$/) : null;
     if (sessionContextMatch) {
       const sessionId = decodeURIComponent(sessionContextMatch[1]);
       const token = requestUrl.searchParams.get('token') ?? undefined;
@@ -409,7 +409,7 @@ export async function sessionRoutes(ctx: ServeContext, rq: ServeRequest): Promis
     // by an await_human gate, for the in-page popup viewer. Same session auth
     // as the page; the file is resolved against the project root with a
     // traversal + secrets guard.
-    const sessionArtifactMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/artifacts\/(.+)$/) : null;
+    const sessionArtifactMatch = req.method === "GET" ? routePath.match(/^\/sessions\/([^/?#]+)\/artifacts\/(.+)$/) : null;
     if (sessionArtifactMatch) {
       const sessionId = decodeURIComponent(sessionArtifactMatch[1]);
       const token = requestUrl.searchParams.get('token') ?? undefined;
@@ -445,7 +445,7 @@ export async function sessionRoutes(ctx: ServeContext, rq: ServeRequest): Promis
     // persisted under session storage. Same session auth as the page; the
     // handler validates the path stays under the resolved storage root and
     // belongs to the requested session id.
-    const sessionToolArtifactMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/tool-artifacts\/(.+)$/) : null;
+    const sessionToolArtifactMatch = req.method === "GET" ? routePath.match(/^\/sessions\/([^/?#]+)\/tool-artifacts\/(.+)$/) : null;
     if (sessionToolArtifactMatch) {
       const sessionId = decodeURIComponent(sessionToolArtifactMatch[1]);
       const token = requestUrl.searchParams.get('token') ?? undefined;
@@ -466,7 +466,7 @@ export async function sessionRoutes(ctx: ServeContext, rq: ServeRequest): Promis
     // POST /sessions/:id/decision: approve / reject / comment on the current
     // pending gate. Authorized via session token / api key / local; the gate
     // resumeToken is resolved server-side from session state.
-    const sessionDecisionMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/decision$/) : null;
+    const sessionDecisionMatch = req.method === "POST" ? routePath.match(/^\/sessions\/([^/?#]+)\/decision$/) : null;
     if (sessionDecisionMatch) {
       try {
         const sessionId = decodeURIComponent(sessionDecisionMatch[1]);
@@ -537,7 +537,7 @@ export async function sessionRoutes(ctx: ServeContext, rq: ServeRequest): Promis
     // POST /sessions/:id/resume: recover a parent whose delegated child was
     // interrupted by a model-stream stall. No prompt is needed because the
     // child continues from its own durable transcript.
-    const sessionResumeMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/resume$/) : null;
+    const sessionResumeMatch = req.method === "POST" ? routePath.match(/^\/sessions\/([^/?#]+)\/resume$/) : null;
     if (sessionResumeMatch) {
       try {
         const sessionId = decodeURIComponent(sessionResumeMatch[1]);
@@ -574,7 +574,7 @@ export async function sessionRoutes(ctx: ServeContext, rq: ServeRequest): Promis
 
     // POST /sessions/:id/continue: send a follow-up instruction to an ended
     // session, continuing it with its existing context.
-    const sessionContinueMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/continue$/) : null;
+    const sessionContinueMatch = req.method === "POST" ? routePath.match(/^\/sessions\/([^/?#]+)\/continue$/) : null;
     if (sessionContinueMatch) {
       try {
         const sessionId = decodeURIComponent(sessionContinueMatch[1]);

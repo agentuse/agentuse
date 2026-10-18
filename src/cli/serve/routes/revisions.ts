@@ -106,7 +106,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
   let matched = true;
   const run = async (): Promise<void> => {
 
-    const originRevisionsMatch = !isApi && req.method === 'GET'
+    const originRevisionsMatch = req.method === 'GET'
       ? routePath.match(/^\/sessions\/([^/?#]+)\/revisions$/)
       : null;
     if (originRevisionsMatch) {
@@ -726,7 +726,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
 
     // POST /sessions/:id/revisions: revise the agent behind a finished (or
     // gated) run, with that run's transcript as evidence.
-    const startRevisionMatch = !isApi && req.method === 'POST'
+    const startRevisionMatch = req.method === 'POST'
       ? routePath.match(/^\/sessions\/([^/?#]+)\/revisions$/)
       : null;
     if (startRevisionMatch) {
@@ -1316,9 +1316,7 @@ export async function revisionRoutes(ctx: ServeContext, rq: ServeRequest): Promi
       return;
     }
 
-    const revisionActionMatch = !isApi
-      ? routePath.match(/^\/agent-revisions\/([^/?#]+)(?:\/(apply|discard|restore|request-changes|cancel|test-run))?$/)
-      : null;
+    const revisionActionMatch = routePath.match(/^\/agent-revisions\/([^/?#]+)(?:\/(apply|discard|restore|request-changes|cancel|test-run))?$/);
     if (revisionActionMatch) {
       let mutationKey: string | undefined;
       try {

@@ -17,7 +17,7 @@ import type { ServeContext, ServeRequest } from "../context";
  * plus adding and discarding from that view.
  */
 export async function sessionLearningRoutes(ctx: ServeContext, rq: ServeRequest): Promise<boolean> {
-  const { req, res, requestUrl, isApi, routePath, sessionAuthorized } = rq;
+  const { req, res, requestUrl, routePath, sessionAuthorized } = rq;
   const {
     apiKey,
     findSessionInfo,
@@ -75,7 +75,7 @@ export async function sessionLearningRoutes(ctx: ServeContext, rq: ServeRequest)
       });
 
     // GET /sessions/:id/learnings: list the learnings captured in this session.
-    const sessionLearningsMatch = (req.method === "GET" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/learnings$/) : null;
+    const sessionLearningsMatch = req.method === "GET" ? routePath.match(/^\/sessions\/([^/?#]+)\/learnings$/) : null;
     if (sessionLearningsMatch) {
       try {
         const sessionId = decodeURIComponent(sessionLearningsMatch[1]);
@@ -102,7 +102,7 @@ export async function sessionLearningRoutes(ctx: ServeContext, rq: ServeRequest)
     }
 
     // POST /sessions/:id/learnings: add a manual rule (standalone, no resume).
-    const sessionAddLearningMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/learnings$/) : null;
+    const sessionAddLearningMatch = req.method === "POST" ? routePath.match(/^\/sessions\/([^/?#]+)\/learnings$/) : null;
     if (sessionAddLearningMatch) {
       try {
         const sessionId = decodeURIComponent(sessionAddLearningMatch[1]);
@@ -154,7 +154,7 @@ export async function sessionLearningRoutes(ctx: ServeContext, rq: ServeRequest)
     }
 
     // POST /sessions/:id/learnings/:lid/discard: drop a stored learning.
-    const sessionDiscardLearningMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/learnings\/([^/?#]+)\/discard$/) : null;
+    const sessionDiscardLearningMatch = req.method === "POST" ? routePath.match(/^\/sessions\/([^/?#]+)\/learnings\/([^/?#]+)\/discard$/) : null;
     if (sessionDiscardLearningMatch) {
       try {
         const sessionId = decodeURIComponent(sessionDiscardLearningMatch[1]);

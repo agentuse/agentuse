@@ -42,7 +42,7 @@ export async function sessionLifecycleRoutes(ctx: ServeContext, rq: ServeRequest
     // tree is hard-stopped as a fallback. Pass { force: true } to skip the
     // reject and hard-stop immediately. Authorized the same way as the
     // session page: local, session token, or API key.
-    const sessionStopMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/stop$/) : null;
+    const sessionStopMatch = req.method === "POST" ? routePath.match(/^\/sessions\/([^/?#]+)\/stop$/) : null;
     if (sessionStopMatch) {
       try {
         const sessionId = decodeURIComponent(sessionStopMatch[1]);
@@ -259,7 +259,7 @@ export async function sessionLifecycleRoutes(ctx: ServeContext, rq: ServeRequest
     // flow takes over once it is suspended again.
     // POST /sessions/:id/reviewed: the session page opened on an ended run.
     // Stamps reviewedAt (idempotent) so "results you haven't seen" drops it.
-    const sessionReviewedMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/reviewed$/) : null;
+    const sessionReviewedMatch = req.method === "POST" ? routePath.match(/^\/sessions\/([^/?#]+)\/reviewed$/) : null;
     if (sessionReviewedMatch) {
       try {
         const sessionId = decodeURIComponent(sessionReviewedMatch[1]);
@@ -300,7 +300,7 @@ export async function sessionLifecycleRoutes(ctx: ServeContext, rq: ServeRequest
       return;
     }
 
-    const sessionReopenMatch = (req.method === "POST" && !isApi) ? routePath.match(/^\/sessions\/([^/?#]+)\/reopen$/) : null;
+    const sessionReopenMatch = req.method === "POST" ? routePath.match(/^\/sessions\/([^/?#]+)\/reopen$/) : null;
     if (sessionReopenMatch) {
       try {
         const sessionId = decodeURIComponent(sessionReopenMatch[1]);

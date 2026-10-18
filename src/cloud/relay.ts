@@ -65,22 +65,13 @@ export function requestActor(headers: HeaderBag): RequestActor {
 export const isKnownRelayRole = (role: string): boolean => (KNOWN_RELAY_ROLES as readonly string[]).includes(role);
 
 /**
- * Data routes the dashboard calls. `/api/*` is the main surface; the session,
- * approval and revision routes below are JSON twins that predate it and that
- * the web app still calls by their root paths. Pages, assets, `/mcp` (which
- * has its own frame) and its OAuth callback are not relayed.
+ * Cloud reaches this daemon's `/api/*` and nothing else: pages, assets,
+ * `/mcp` (which has its own frame), its OAuth callback and the root-path
+ * session routes kept for old links are not relayed.
  */
-const RELAYABLE_ROOT_ROUTES: RegExp[] = [
-  /^\/sessions\/events$/,
-  /^\/sessions\/[^/]+\/(?:status|decision|continue|resume|stop|reviewed|reopen|events|revisions|learnings|learnings\/[^/]+\/discard|artifacts-list|artifacts\/.+|tool-artifacts\/.+|context|context-stack)$/,
-  /^\/approvals\/[^/]+\/(?:status|decision|continue)$/,
-  /^\/agent-revisions\/[^/]+(?:\/[^/]+)?$/,
-];
-
 export function isRelayablePath(pathname: string): boolean {
   if (pathname.includes('/../') || pathname.endsWith('/..')) return false;
-  if (pathname === '/api' || pathname.startsWith('/api/')) return true;
-  return RELAYABLE_ROOT_ROUTES.some((route) => route.test(pathname));
+  return pathname === '/api' || pathname.startsWith('/api/');
 }
 
 /**
@@ -104,15 +95,15 @@ export function dashboardPath(url: string): string {
 export function relayedActionName(method: string | undefined, pathname: string): string | undefined {
   if (method !== 'POST') return undefined;
   if (pathname === '/api/run' || pathname === '/api/onboarding/run') return 'run';
-  const session = pathname.match(/^\/(?:sessions|approvals)\/[^/]+\/(decision|continue|resume|stop|reopen)$/);
+  const session = pathname.match(/^\/api\/(?:sessions|approvals)\/[^/]+\/(decision|continue|resume|stop|reopen)$/);
   if (session) return session[1];
-  if (/^\/agent-revisions\/[^/]+\/test-run$/.test(pathname)) return 'test-run';
+  if (/^\/api\/agent-revisions\/[^/]+\/test-run$/.test(pathname)) return 'test-run';
   return undefined;
 }
 
 /** The session id a relayed action path names, if any. */
 export function relayedSessionId(pathname: string): string | undefined {
-  const match = pathname.match(/^\/(?:sessions|approvals|agent-revisions)\/([^/]+)\//);
+  const match = pathname.match(/^\/api\/(?:sessions|approvals|agent-revisions)\/([^/]+)\//);
   if (!match) return undefined;
   try {
     return decodeURIComponent(match[1]!);

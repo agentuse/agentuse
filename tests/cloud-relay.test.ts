@@ -31,25 +31,23 @@ afterEach(async () => {
 });
 
 describe('relay paths', () => {
-  it('relays the data routes the dashboard calls and nothing else', () => {
+  it('relays /api and nothing else', () => {
+    for (const path of ['/api', '/api/agents', '/api/sessions/events', '/api/sessions/s1/status', '/api/sessions/s1/artifacts/out/report.html', '/api/approvals/s1/decision', '/api/agent-revisions/r1/test-run'])
+      expect(isRelayablePath(path)).toBe(true);
     for (const path of [
-      '/api', '/api/agents', '/api/sessions', '/sessions/events', '/sessions/s1/status', '/sessions/s1/events',
-      '/sessions/s1/decision', '/sessions/s1/artifacts/out/report.html', '/sessions/s1/learnings/l1/discard',
-      '/approvals/s1/status', '/approvals/s1/decision', '/agent-revisions/r1', '/agent-revisions/r1/test-run',
-    ]) expect(isRelayablePath(path)).toBe(true);
-    for (const path of [
-      '/', '/mcp', '/mcp/oauth/callback', '/sessions', '/sessions/s1', '/approvals/s1', '/assets/app.js',
-      '/sw.js', '/apix', '/sessions/s1/started', '/sessions/s1/finished',
+      '/', '/mcp', '/mcp/oauth/callback', '/sessions', '/sessions/s1', '/sessions/events', '/sessions/s1/status',
+      '/sessions/s1/decision', '/approvals/s1/decision', '/agent-revisions/r1', '/assets/app.js', '/sw.js', '/apix', '/api/../mcp',
     ]) expect(isRelayablePath(path)).toBe(false);
   });
 
   it('names the relayed actions worth recording', () => {
-    expect(relayedActionName('POST', '/sessions/s1/decision')).toBe('decision');
-    expect(relayedActionName('POST', '/approvals/s1/continue')).toBe('continue');
+    expect(relayedActionName('POST', '/api/sessions/s1/decision')).toBe('decision');
+    expect(relayedActionName('POST', '/api/approvals/s1/continue')).toBe('continue');
+    expect(relayedActionName('POST', '/api/agent-revisions/r1/test-run')).toBe('test-run');
     expect(relayedActionName('POST', '/api/run')).toBe('run');
     expect(relayedActionName('GET', '/api/run')).toBeUndefined();
     expect(relayedActionName('POST', '/api/agents')).toBeUndefined();
-    expect(relayedSessionId('/sessions/a%20b/decision')).toBe('a b');
+    expect(relayedSessionId('/api/sessions/a%20b/decision')).toBe('a b');
     expect(dashboardPath('http://127.0.0.1:12233/sessions/s1?project=p#x')).toBe('/sessions/s1?project=p#x');
   });
 
@@ -85,7 +83,7 @@ describe('tunnel dashboard frames', () => {
       port: 0,
       fetch: async (request) => {
         const url = new URL(request.url);
-        if (url.pathname === '/sessions/events') {
+        if (url.pathname === '/api/sessions/events') {
           // A live stream that stays open until the test ends it or the tunnel cancels it.
           const stream = new ReadableStream<Uint8Array>({
             start(controller) {
@@ -193,7 +191,7 @@ describe('tunnel dashboard frames', () => {
 
   it('streams a live response and stops it when Cloud cancels', async () => {
     await connect();
-    cloudSocket!.send(JSON.stringify({ type: 'http', id: 's1', method: 'GET', path: '/sessions/events', headers: { accept: 'text/event-stream' } }));
+    cloudSocket!.send(JSON.stringify({ type: 'http', id: 's1', method: 'GET', path: '/api/sessions/events', headers: { accept: 'text/event-stream' } }));
     await until(() => answerFor('s1').body.includes('event: sessions'));
     expect(answerFor('s1').start).toMatchObject({ status: 200, headers: { 'content-type': 'text/event-stream' } });
     cloudSocket!.send(JSON.stringify({ type: 'http_cancel', id: 's1' }));

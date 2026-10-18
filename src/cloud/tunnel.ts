@@ -12,9 +12,8 @@ import { isRelayablePath, RELAY_SECRET_HEADER, relaySecret } from './relay.js';
  *   computer → cloud  { type: 'mcp_result', id, status, contentType, body }
  *
  *   cloud → computer  { type: 'http', id, method, path, headers, body? }
- *                     one dashboard request, replayed only for the data paths
- *                     `isRelayablePath` lists (`/api/*` and the session and
- *                     approval JSON twins); anything else answers 404
+ *                     one dashboard request, replayed only under `/api/*`;
+ *                     anything else answers 404
  *   computer → cloud  { type: 'http_start', id, status, headers }
  *                     { type: 'http_chunk', id, data }   base64, in order
  *                     { type: 'http_end', id, error? }
@@ -26,8 +25,12 @@ import { isRelayablePath, RELAY_SECRET_HEADER, relaySecret } from './relay.js';
  *   cloud → computer  { type: 'update' }               install an update when idle
  */
 
-/** Bumped when the dashboard needs a daemon route or frame older daemons lack. Cloud gates on it. */
-export const TUNNEL_API_VERSION = 1;
+/**
+ * Bumped when the dashboard needs a daemon route or frame older daemons lack.
+ * Cloud gates on it. 2: the session, approval and revision routes answer
+ * under `/api`, which is all the tunnel relays.
+ */
+export const TUNNEL_API_VERSION = 2;
 /** What this daemon understands, sent in `hello`. */
 export const TUNNEL_FEATURES = ['http', 'notify', 'update'] as const;
 
@@ -404,7 +407,7 @@ export class CloudTunnel {
 
   /**
    * Replay one dashboard request against this daemon and stream the answer
-   * back. Only the data paths the dashboard reads go through; the request
+   * back. Only `/api/*` goes through; the request
    * carries the operator key (as `/mcp` frames do) and this process's relay
    * secret, which is what lets serve believe the X-AgentUse-User and
    * X-AgentUse-Role headers Cloud put on it.

@@ -39,7 +39,8 @@ describe('daemon URLs', () => {
     globals.location = new URL('https://cloud.example/sessions/s1?project=p');
     selectMachine('m 1');
     expect(daemonUrl('/api/agents')).toBe('/api/m/m%201/api/agents');
-    expect(daemonUrl('/sessions/s1/events')).toBe('/api/m/m%201/sessions/s1/events');
+    expect(daemonUrl('/sessions/s1/events')).toBe('/api/m/m%201/api/sessions/s1/events');
+    expect(daemonUrl('/api')).toBe('/api/m/m%201/api');
     expect(daemonUrl('/api/push/subscription?endpoint=x')).toBe('/api/push/subscription?endpoint=x');
     expect(withMachine('https://cloud.example/sessions/s1?project=p')).toBe('https://cloud.example/sessions/s1?project=p&m=m+1');
   });

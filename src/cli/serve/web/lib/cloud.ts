@@ -6,7 +6,10 @@
 //
 // Every daemon request goes through `daemonUrl`: locally the path is used as
 // is; in cloud mode it is prefixed with `/api/m/<machine>`, and Cloud relays
-// the rest of the path, unchanged, to that computer.
+// the rest of the path, unchanged, to that computer. The computer's tunnel
+// relays only `/api/*`, so a session route the app calls by its root name
+// (`/sessions/:id/status`, kept locally so `?token=` links work without the
+// API key) goes by its `/api` name there.
 
 declare global {
   interface Window {
@@ -77,7 +80,8 @@ export function rememberedMachineId(): string | undefined {
 export function daemonUrl(path: string): string {
   if (!isCloudMode() || CLOUD_OWNED_PATHS.has(path.split('?')[0]!)) return path;
   if (!selected) throw new Error('No computer is selected.');
-  return `/api/m/${encodeURIComponent(selected)}${path}`;
+  const apiPath = path === '/api' || path.startsWith('/api/') || path.startsWith('/api?') ? path : `/api${path}`;
+  return `/api/m/${encodeURIComponent(selected)}${apiPath}`;
 }
 
 /**
