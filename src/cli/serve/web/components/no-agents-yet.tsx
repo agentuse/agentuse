@@ -19,9 +19,9 @@ export function NoAgentsYet(props: { noProjects: boolean }) {
     <section class="no-agents" aria-labelledby="no-agents-title">
       <header class="no-agents-head">
         <p class="no-agents-eyebrow">No agents yet</p>
-        <h1 id="no-agents-title">Make your first agent</h1>
+        <h1 id="no-agents-title">Make your first work agent</h1>
         <p class="no-agents-lede">
-          Did Claude Code or Codex just do a job for you? Ask it to turn that into an agent, and it runs here on schedule.
+          Did Claude Code or Codex just do a job for you? Ask it to turn that into a work agent, and it runs here on schedule.
         </p>
         {props.noProjects && (
           <p class="no-agents-note">There's no project yet. <a href="/settings?tab=projects">Add one in Settings</a>, or your coding agent makes one for you.</p>

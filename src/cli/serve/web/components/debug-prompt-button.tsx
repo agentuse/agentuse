@@ -492,7 +492,7 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
           aria-busy={providerStatusLoading}
           onClick={() => void openPrompt()}
           title={onboarding
-            ? 'Give a coding agent a ready-to-paste prompt for creating your first real agent'
+            ? 'Give a coding agent a ready-to-paste prompt for creating your first work agent'
             : 'Hand this run to a coding agent (Claude Code, Codex…) to debug, fix, or improve it'}
         >
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -515,11 +515,11 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
           ? buildOnboardingPrompt(props.context, detail, currentOnboardingExecutionContext(providerStatus))
           : buildDebugPrompt(props.context, detail)}
         {...(onboarding ? {
-          title: 'create your first agent',
+          title: 'create your first work agent',
           detailFirst: true,
           promptCollapsed: true,
           copyLabel: 'Copy instructions',
-          copyHint: 'Paste into Codex, Claude Code, Cursor, or another coding agent. AgentUse will detect your new agent automatically.',
+          copyHint: 'Paste into Codex, Claude Code, Cursor, or another coding agent. AgentUse will detect your new work agent automatically.',
           ...(props.context.projectPath ? {
             contextLabel: 'Your agent will be saved in',
             contextValue: props.context.projectPath,
@@ -535,7 +535,7 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
       {onboarding && (
         <AgentCreateDialog
           open={agentCreateOpen}
-          title="create your first agent"
+          title="create your first work agent"
           initialDraft={nativeCreationDraft}
           {...(props.context.projectId ? { initialProjectId: props.context.projectId } : {})}
           lockProject
@@ -568,7 +568,7 @@ export function DebugPromptButton(props: { context: DebugPromptContext; mode?: '
       )}
       <ProviderSetupDialog
         open={providerSetupOpen}
-        title="create your first agent"
+        title="create your first work agent"
         onComplete={(payload) => {
           setProviderStatus(payload.status);
           setProviderSetupOpen(false);

@@ -306,7 +306,7 @@
     <div class="heading">
       <span class="step-number" data-step-label>Step 4 of 4</span>
       <h1 id="ready-cloud-title">You're set up</h1>
-      <p class="lede" id="ready-cloud-lede">Connected. Ask your assistant to build an agent, and it runs here on this Mac.</p>
+      <p class="lede" id="ready-cloud-lede">Connected. Ask your assistant to build a work agent, and it runs here on this Mac.</p>
     </div>
     <div class="agents">
       <div class="agents-head"><span class="card-title">Connect your coding agents</span><span class="card-copy">Go back to a chat where your assistant completed a job and say: “Use AgentUse to automate this workflow.”</span></div>
@@ -336,7 +336,7 @@
     <div class="heading">
       <span class="step-number" data-step-label>Step 3 of 3</span>
       <h1 id="ready-local-title">You're set up</h1>
-      <p class="lede">Make agents from a coding agent on this Mac. Watch and approve them in the dashboard.</p>
+      <p class="lede">Make work agents with a coding agent on this Mac. Watch and approve them in the dashboard.</p>
     </div>
     <ul class="checklist">
       <li><span class="mark" id="local-ai-mark" aria-hidden="true">✓</span><span id="local-ai">AI</span></li>
@@ -525,7 +525,7 @@
 
     function renderReady() {
       const cloud = state.cloud;
-      $("ready-cloud-lede").textContent = `Connected${cloud.account ? ` as ${cloud.account}` : ""}. Ask your assistant to build an agent, and it runs here on this Mac.`;
+      $("ready-cloud-lede").textContent = `Connected${cloud.account ? ` as ${cloud.account}` : ""}. Ask your assistant to build a work agent, and it runs here on this Mac.`;
       $("mcp-url").value = cloud.mcpUrl ?? "";
       $("ready-cloud-ai").hidden = state.ai.ready;
       $("local-ai").textContent = state.ai.ready ? `AI: ${state.ai.label}` : "AI: add one in the dashboard";

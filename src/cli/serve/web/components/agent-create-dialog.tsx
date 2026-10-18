@@ -345,7 +345,7 @@ export function NewAgentButton(props: { initialProjectId?: string; autoOpen?: bo
       />
       <SendToCodingAgentDialog
         open={codingOpen && draft !== null}
-        title="create an agent with a coding agent"
+        title="create a work agent with a coding agent"
         buildPrompt={(detail) => draft ? buildAgentCreationPrompt({ ...draft, objective: detail.trim() || draft.objective }, providerStatus) : ''}
         initialDetail={draft?.objective ?? ''}
         detailFirst

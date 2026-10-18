@@ -8,7 +8,7 @@
     {
       "name": "agentuse",
       "source": "__PLUGIN_PATH__",
-      "description": "AgentUse on your own computer, through AgentUse Cloud: /agentuse asks about your agents, /automate turns this work into an agent that runs on its own, /triage fixes agents that fail.",
+      "description": "AgentUse on your own computer, through AgentUse Cloud: /agentuse asks about your agents, /automate turns this into a work agent that runs on its own, /triage fixes agents that fail.",
       "version": "__AGENTUSE_VERSION__",
       "category": "productivity",
       "tags": [

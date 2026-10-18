@@ -11,7 +11,7 @@
  * each computer's AgentUse (skill-data/creator) and are passed in.
  */
 
-export const SERVER_INSTRUCTIONS = 'AgentUse runs agents on the user\'s own computer. Use these tools to look at projects, agents and runs, '
+export const SERVER_INSTRUCTIONS = 'AgentUse runs work agents on the user\'s own computer. Call them work agents when you talk to the user, so they are not mistaken for you, the coding agent. Use these tools to look at projects, agents and runs, '
   + 'and to start a run the user asked for. New agents and fixes are drafts until the user says yes; only then '
   + 'call apply_draft, and if it refuses, the user presses Apply on the review page. Nothing here approves a step. '
   + 'To build, change or fix an agent, call get_workflow first and follow it. These tools are the whole way in: '
@@ -107,7 +107,7 @@ export const PROMPTS: readonly PromptDefinition[] = [
   {
     name: 'automate',
     title: 'Automate this',
-    description: 'Turn this chat into an agent that runs on its own',
+    description: 'Turn this chat into a work agent that runs on its own',
     arguments: [{ name: 'goal', description: 'What to automate, if the chat does not already say' }],
   },
   {

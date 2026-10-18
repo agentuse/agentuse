@@ -1,7 +1,7 @@
 {
   "name": "agentuse",
   "version": "__CODEX_VERSION__",
-  "description": "AgentUse on your own computer, through AgentUse Cloud: ask about your agents, automate this work into an agent that runs on its own, or find and fix agents that fail.",
+  "description": "AgentUse on your own computer, through AgentUse Cloud: ask about your agents, turn this into a work agent that runs on its own, or find and fix agents that fail.",
   "author": {
     "name": "AgentUse"
   },
@@ -19,7 +19,7 @@
     "composerIcon": "./assets/icon.svg",
     "logo": "./assets/icon.svg",
     "brandColor": "#0A0A0A",
-    "shortDescription": "Turn this work into an agent that runs on its own.",
+    "shortDescription": "Turn this into a work agent that runs on its own.",
     "longDescription": "Connects to AgentUse Cloud, which reaches AgentUse on your own computer. Ask AgentUse about your projects, agents and runs, use automate to turn a workflow from this conversation into an agent you review and turn on with one click, and triage to find and fix agents that fail. Your agents run on your computer, with your keys. Connect the computer once with the AgentUse app or `agentuse connect`.",
     "developerName": "AgentUse",
     "category": "Productivity",
