@@ -208,7 +208,7 @@
   <!-- 1. Welcome: sign in for Cloud, or skip to this Mac only -->
   <section class="step" id="step-route" aria-labelledby="route-title">
     <div class="heading">
-      <h1 id="route-title">Agents you own, built by any AI</h1>
+      <h1 id="route-title">Work agents you own, built by any AI</h1>
       <p class="lede">Ask the AI you already use to automate a job. The agent lives on your Mac and runs on whichever AI you choose.</p>
     </div>
     <ul class="points">
@@ -511,7 +511,7 @@
         : "Only on this Mac";
       $("ai-meta").className = signedIn ? "done" : "";
       $("ai-lede").textContent = route === "cloud"
-        ? "Your assistant writes the agent. This AI runs it here, on schedule, even when the assistant is closed."
+        ? "Your assistant writes the work agent. This AI runs it here, on schedule, even when the assistant is closed."
         : "This AI writes and runs your agents here, on schedule.";
       pick("ai", ai);
       $("chatgpt-detail").hidden = ai !== "chatgpt" || !chatGptStarted;
