@@ -14,6 +14,7 @@ interface DraftResult {
   draft_id?: string;
   fix_id?: string;
   project?: string;
+  context?: string;
   kind?: 'draft' | 'fix';
   name?: string;
   summary?: string;
@@ -63,7 +64,10 @@ function render(app: App, data: DraftResult): void {
       turnOn.disabled = true;
       status.textContent = 'Turning on…';
       try {
-        const result = await app.callServerTool({ name: 'apply_draft', arguments: { project: data.project, id } });
+        const result = await app.callServerTool({
+          name: 'apply_draft',
+          arguments: { project: data.project, id, ...(data.context ? { context: data.context } : {}) },
+        });
         const text = result.content?.find((part) => part.type === 'text');
         if (result.isError) {
           status.textContent = text && 'text' in text ? text.text : 'Could not turn it on. Open Details to review it.';
