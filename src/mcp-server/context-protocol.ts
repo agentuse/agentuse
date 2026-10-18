@@ -35,3 +35,32 @@ export interface ContextPickerResult {
   setup_url?: string;
   error?: { code: string; message: string };
 }
+
+/** Cloud's setup card: works before sign-in and reports whether AgentUse is ready. */
+export const GET_STARTED_URI = 'ui://agentuse/get-started';
+export const GET_STARTED_TOOL = 'get_started';
+
+export interface GetStartedArgs {
+  /** The user's original request, picked up again once AgentUse is ready. */
+  request?: string;
+}
+
+export interface GetStartedMachine {
+  id: string;
+  name: string;
+  online: boolean;
+  /** Milliseconds since the epoch. */
+  lastSeen?: number;
+}
+
+export interface GetStartedResult {
+  state: 'sign_in' | 'no_machine' | 'ready' | 'offline';
+  account?: string;
+  machine?: GetStartedMachine;
+  machines?: GetStartedMachine[];
+  project?: string;
+  connect_url: string;
+  download_url: string;
+  install_command: string;
+  request?: string;
+}

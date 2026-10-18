@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Set up AgentUse</title>
+<style>
+:root{--ink:#0f172a;--muted:#475569;--line:#e5e7eb;--card:#ffffff;--soft:#f8fafc;--signal:#00dc82;--signal-ink:#0f172a;--done:#059669;--wait-bg:#eff6ff;--wait-ink:#1d4ed8;--warn-bg:#fffbeb;--warn-ink:#b45309}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--ink:#f8fafc;--muted:#94a3b8;--line:#1e293b;--card:#0b1220;--soft:#111827;--done:#34d399;--wait-bg:#172554;--wait-ink:#93c5fd;--warn-bg:#2a1d06;--warn-ink:#fcd34d}}
+:root[data-theme="dark"]{--ink:#f8fafc;--muted:#94a3b8;--line:#1e293b;--card:#0b1220;--soft:#111827;--done:#34d399;--wait-bg:#172554;--wait-ink:#93c5fd;--warn-bg:#2a1d06;--warn-ink:#fcd34d}
+*{box-sizing:border-box}
+body{margin:0;background:transparent;color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+#card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+h1{margin:0;font-size:16px;font-weight:700}
+p{margin:0;color:var(--muted)}
+.head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.small{font-size:12px;color:var(--muted)}
+button{font:inherit;min-height:36px;padding:0 14px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
+button.primary{background:var(--signal);border-color:var(--signal);color:var(--signal-ink);font-weight:700}
+button.link{border-color:transparent;background:transparent;padding:0 6px;text-decoration:underline}
+button.copy{min-height:28px;padding:0 10px;font-size:12px}
+button:disabled{opacity:.6;cursor:default}
+button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.status{min-height:1.2em;overflow-wrap:anywhere}
+.steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.step{display:grid;grid-template-columns:24px 1fr;gap:10px;padding:8px 10px;border-radius:8px;border:1px solid transparent}
+.step.current{background:var(--soft);border-color:var(--line)}
+.mark{width:24px;height:24px;border-radius:50%;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--muted)}
+.step.current .mark{background:var(--signal);border-color:var(--signal);color:var(--signal-ink)}
+.mark.done{border-color:var(--done);color:var(--done)}
+.body{display:flex;flex-direction:column;gap:6px;min-width:0}
+.name{font-weight:600}
+.step:not(.current) .name{color:var(--ink)}
+.code{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 6px 6px 10px}
+.code code{flex:1;min-width:0;overflow-wrap:anywhere;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+code{font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+.pill{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:600}
+.pill.wait{background:var(--wait-bg);color:var(--wait-ink)}
+.pill.warn{background:var(--warn-bg);color:var(--warn-ink)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+.facts{margin:0;display:flex;flex-direction:column;gap:4px;background:var(--soft);border-radius:8px;padding:10px 12px}
+.fact{display:grid;grid-template-columns:20px 80px 1fr;gap:8px;align-items:baseline}
+.fact .ok{color:var(--done);font-weight:700}
+.fact dt{color:var(--muted)}
+.fact dd{margin:0;overflow-wrap:anywhere}
+.soft{margin:0;padding:10px 12px 10px 28px;background:var(--soft);border-radius:8px;color:var(--ink);display:flex;flex-direction:column;gap:4px}
+</style>
+</head>
+<body>
+<section id="card" aria-label="Set up AgentUse"><p class="status" role="status">Checking AgentUse…</p></section>
+<script>/*__CARD_SCRIPT__*/</script>
+</body>
+</html>

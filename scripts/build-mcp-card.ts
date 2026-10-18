@@ -9,7 +9,7 @@ import { resolve } from 'node:path';
 const root = resolve(import.meta.dir, '..');
 const cardDir = resolve(root, 'src/mcp-server/card');
 
-for (const [name, exportName] of [['draft-card', 'DRAFT_CARD_HTML'], ['context-picker', 'CONTEXT_PICKER_HTML']] as const) {
+for (const [name, exportName] of [['draft-card', 'DRAFT_CARD_HTML'], ['context-picker', 'CONTEXT_PICKER_HTML'], ['get-started', 'GET_STARTED_HTML']] as const) {
   const built = await Bun.build({
     entrypoints: [resolve(cardDir, `${name}.ts`)],
     target: 'browser',
