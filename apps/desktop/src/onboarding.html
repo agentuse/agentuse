@@ -309,7 +309,7 @@
       <p class="lede" id="ready-cloud-lede">Connected. Ask your assistant to build an agent, and it runs here on this Mac.</p>
     </div>
     <div class="agents">
-      <div class="agents-head"><span class="card-title">Connect your coding agents</span><span class="card-copy">Then go back to a chat where it did a job and type /automate ($automate in Codex).</span></div>
+      <div class="agents-head"><span class="card-title">Connect your coding agents</span><span class="card-copy">Go back to a chat where your assistant completed a job and say: “Use AgentUse to automate this workflow.”</span></div>
       <ul class="agent-list" data-agent-list></ul>
     </div>
     <p class="hint">They reach AgentUse through AgentUse Cloud, so each asks you to sign in once: in Claude Code open /mcp (or run claude mcp login agentuse), in Codex run codex mcp login agentuse.</p>
@@ -344,7 +344,7 @@
       <li><span class="mark" aria-hidden="true">✓</span><span>Runs in the background</span></li>
     </ul>
     <div class="agents">
-      <div class="agents-head"><span class="card-title">Connect your coding agents</span><span class="card-copy">Then go back to a chat where it did a job and type /automate ($automate in Codex).</span></div>
+      <div class="agents-head"><span class="card-title">Connect your coding agents</span><span class="card-copy">Go back to a chat where your assistant completed a job and say: “Use AgentUse to automate this workflow.”</span></div>
       <ul class="agent-list" data-agent-list></ul>
     </div>
     <p class="error" role="alert" data-error></p>
@@ -445,7 +445,7 @@
           if (!installed || done) {
             const status = document.createElement("span");
             status.className = done ? "agent-state ok" : "agent-state";
-            status.textContent = done ? `✓ Set up · type ${agent.command}` : "Not installed";
+            status.textContent = done ? "✓ Set up" : "Not installed";
             item.append(status);
           } else {
             const button = document.createElement("button");
