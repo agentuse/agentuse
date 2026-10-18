@@ -24,6 +24,15 @@ describe("native notification stream", () => {
       'event: notification\ndata: nope\n\nevent: approvals\ndata: {}\n\nevent: notification\ndata: {"category":"other","payload":{}}\n\n',
     );
     expect(parsed.events).toEqual([]);
+    expect(parsed.updateRequested).toBe(false);
+  });
+
+  test("notices Cloud's update request alongside notifications", () => {
+    const parsed = parseNotificationFrames(
+      'event: update\ndata: {}\n\nevent: notification\ndata: {"category":"sessions","payload":{"title":"Done","body":"Agent","url":"http://127.0.0.1/sessions/s3"}}\n\n',
+    );
+    expect(parsed.updateRequested).toBe(true);
+    expect(parsed.events).toHaveLength(1);
   });
 });
 

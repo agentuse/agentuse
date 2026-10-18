@@ -515,6 +515,9 @@ async function consumeNotificationStream(
         const parsed = parseNotificationFrames(buffer);
         buffer = parsed.remainder;
         for (const event of parsed.events) showNativeNotification(event, source);
+        // Cloud's Update button: check now. The updater downloads quietly and
+        // still asks before it restarts (onUpdateReady).
+        if (parsed.updateRequested) void desktopUpdateScheduler?.checkNow();
       }
     } catch (error) {
       if (!signal.aborted) console.debug("AgentUse notification stream disconnected:", error);

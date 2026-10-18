@@ -15,15 +15,22 @@ export interface NativeNotificationEvent {
 
 export function parseNotificationFrames(buffer: string): {
   events: NativeNotificationEvent[];
+  /** AgentUse Cloud asked this computer to update; serve sends it only once no agent is running. */
+  updateRequested: boolean;
   remainder: string;
 } {
   const normalized = buffer.replaceAll("\r\n", "\n");
   const frames = normalized.split("\n\n");
   const remainder = frames.pop() ?? "";
   const events: NativeNotificationEvent[] = [];
+  let updateRequested = false;
 
   for (const frame of frames) {
     const lines = frame.split("\n");
+    if (lines.some((line) => line === "event: update")) {
+      updateRequested = true;
+      continue;
+    }
     if (!lines.some((line) => line === "event: notification")) continue;
     const data = lines
       .filter((line) => line.startsWith("data:"))
@@ -45,7 +52,7 @@ export function parseNotificationFrames(buffer: string): {
     }
   }
 
-  return { events, remainder };
+  return { events, updateRequested, remainder };
 }
 
 /**

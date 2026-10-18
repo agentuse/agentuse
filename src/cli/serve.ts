@@ -74,6 +74,7 @@ import { homeRoutes } from "./serve/routes/home";
 import { mcpServerRoutes } from "./serve/routes/mcp-server";
 import { projectContextRoutes } from "./serve/routes/project-context";
 import { activeTunnel, CloudTunnel } from "../cloud/tunnel";
+import { appendRelayAudit, dashboardPath, isKnownRelayRole, relayedActionName, relayedSessionId, requestActor } from "../cloud/relay";
 import { notificationRoutes } from "./serve/routes/notifications";
 import { onboardingRoutes } from "./serve/routes/onboarding";
 import { codingAgentRoutes } from "./serve/routes/coding-agents";
@@ -4124,6 +4125,8 @@ export function createServeCommand(): Command {
       // subscriptions persist in the data dir; notifications fire on pending
       // approvals and session completions (see pushService.notify call sites).
       const pushService = new PushService(getAgentuseDataDir(), (msg) => console.log(msg));
+      // Who did what through the Cloud dashboard (src/cloud/relay.ts).
+      const relayAuditFile = join(getAgentuseDataDir(), "cloud", "relay-audit.jsonl");
       type NativeNotificationEvent = {
         category: PushCategory;
         payload: Pick<PushPayload, 'title' | 'body' | 'url' | 'tag' | 'appBadge'>;
@@ -4140,6 +4143,18 @@ export function createServeCommand(): Command {
             ...(payload.appBadge !== undefined && { appBadge: payload.appBadge }),
           },
         });
+        // Connected to a Cloud that delivers notifications: it sends them to
+        // the account's devices, with links into the Cloud dashboard. Otherwise
+        // this daemon's own Web Push does, as before.
+        const cloudPayload = {
+          category,
+          title: payload.title,
+          body: payload.body,
+          url: dashboardPath(payload.url),
+          ...(payload.tag && { tag: payload.tag }),
+          ...(payload.appBadge !== undefined && { appBadge: payload.appBadge }),
+        };
+        if (activeTunnel.current?.notify(cloudPayload)) return Promise.resolve();
         return pushService.notify(category, payload);
       };
       // Push session/approval state to the SPA over SSE (one worker poll per
@@ -4922,6 +4937,32 @@ export function createServeCommand(): Command {
           return;
         }
 
+        // A dashboard request relayed by AgentUse Cloud names its person. Only
+        // the tunnel in this process can vouch for that (src/cloud/relay.ts);
+        // without its secret the headers are ignored and the caller is the
+        // owner, as before. Approvals and runs record who asked.
+        const actor = requestActor(req.headers);
+        if (actor.via === "cloud") {
+          if (!isKnownRelayRole(actor.role)) {
+            sendError(res, 403, "ROLE_NOT_SUPPORTED", `AgentUse on this computer does not know the role "${actor.role}". Update it to use the dashboard with this account.`);
+            return;
+          }
+          const action = relayedActionName(req.method, requestUrl.pathname);
+          if (action) {
+            const sessionId = relayedSessionId(requestUrl.pathname);
+            const project = requestUrl.searchParams.get("project") ?? undefined;
+            res.on("finish", () => appendRelayAudit(relayAuditFile, {
+              at: new Date().toISOString(),
+              ...(actor.user && { user: actor.user }),
+              role: actor.role,
+              action,
+              ...(sessionId && { sessionId }),
+              ...(project && { project }),
+              status: res.statusCode,
+            }));
+          }
+        }
+
         // Capability auth for the unified session page + its action subroutes:
         // local (no api key) is open; otherwise either a Bearer api key header
         // OR a valid per-session `?token=` (sessionViewToken) authorizes.
@@ -4984,12 +5025,49 @@ export function createServeCommand(): Command {
       const cloudTunnel = new CloudTunnel({
         selfUrl: serverBaseUrl({ host: effectiveHost, port }),
         apiKey,
+        version: packageVersion,
         log: (message) => console.log(`  ${chalk.cyan("Cloud")} ${message}`),
+        onUpdate: () => updateWhenIdle(),
       });
       activeTunnel.current = cloudTunnel;
 
+      // Cloud's Update button. Nothing restarts under a running agent: wait
+      // until every worker is idle, then hand off to whoever can update.
+      let updateWaiter: ReturnType<typeof setInterval> | undefined;
+      const runsInProgress = (): number =>
+        [...workers.values(), ...testRunWorkers.values()].reduce((sum, worker) => sum + worker.activeRunCount(), 0);
+      const requestUpdate = (): void => {
+        if (notificationHub.activeSubscriberCount() > 0) {
+          // The Mac app listens on the notification stream; its updater checks,
+          // downloads, and asks before restarting (apps/desktop/src/main.ts).
+          notificationHub.publishUpdate();
+          console.log(`  ${chalk.cyan("Cloud")} Update requested; the AgentUse app will install it`);
+          return;
+        }
+        // TODO(cloud-dashboard): a CLI install has no safe self-update path yet
+        // (global npm, pnpm, a source checkout, pm2 or launchd all differ), so
+        // say what to run instead of guessing.
+        console.log(`  ${chalk.cyan("Cloud")} Update requested. Run \`npm i -g agentuse@latest\`, then restart \`agentuse serve\`.`);
+      };
+      const updateWhenIdle = (): void => {
+        if (updateWaiter) return;
+        if (runsInProgress() === 0) {
+          requestUpdate();
+          return;
+        }
+        console.log(`  ${chalk.cyan("Cloud")} Update requested; waiting for running agents to finish`);
+        updateWaiter = setInterval(() => {
+          if (runsInProgress() > 0) return;
+          clearInterval(updateWaiter);
+          updateWaiter = undefined;
+          requestUpdate();
+        }, 5_000);
+        updateWaiter.unref?.();
+      };
+
       const shutdown = createIdempotentShutdown(async () => {
         console.log("\nShutting down...");
+        if (updateWaiter) clearInterval(updateWaiter);
         cloudTunnel.stop();
 
         // Do not enqueue another maintenance RPC while workers are being cut

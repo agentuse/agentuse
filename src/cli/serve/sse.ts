@@ -513,6 +513,17 @@ export class NotificationEventHub<TEvent> {
     }
   }
 
+  /** Ask the listening app (the Mac app) to install an update. It ignores the event if it has no updater. */
+  publishUpdate(): void {
+    for (const res of [...this.subscribers]) {
+      if (res.destroyed) {
+        this.subscribers.delete(res);
+        continue;
+      }
+      res.write(`event: update\ndata: {}\n\n`);
+    }
+  }
+
   activeSubscriberCount(): number {
     return this.subscribers.size;
   }
