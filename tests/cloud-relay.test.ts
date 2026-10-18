@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server, ServerWebSocket } from 'bun';
 import { writeCloudConnection } from '../src/cloud/config';
+import { AccessLog, type AccessEntry } from '../src/cloud/access-log';
 import {
-  appendRelayAudit,
   dashboardPath,
   isKnownRelayRole,
   isRelayablePath,
@@ -58,12 +58,20 @@ describe('relay paths', () => {
     expect(isKnownRelayRole('viewer')).toBe(false);
   });
 
-  it('appends one audit line per action', async () => {
-    const file = join(configDir, 'cloud', 'relay-audit.jsonl');
-    appendRelayAudit(file, { at: 't1', user: 'u1', role: 'owner', action: 'decision', sessionId: 's1', status: 200 });
-    appendRelayAudit(file, { at: 't2', role: 'owner', action: 'run', status: 202 });
-    const lines = (await readFile(file, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
-    expect(lines.map((line) => line.action)).toEqual(['decision', 'run']);
+});
+
+describe('cloud access log', () => {
+  it('rolls at its size limit and keeps a fixed number of files', async () => {
+    const file = join(configDir, 'cloud', 'access.jsonl');
+    const log = new AccessLog(file, { maxBytes: 200, keep: 2 });
+    for (let i = 0; i < 20; i += 1) log.write({ at: `t${i}`, kind: 'http', method: 'GET', path: `/api/agents/${'x'.repeat(40)}`, status: 200 });
+    expect((await readdir(join(configDir, 'cloud'))).sort()).toEqual(['access.1.jsonl', 'access.2.jsonl', 'access.jsonl']);
+    const newest = (await readFile(file, 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as AccessEntry);
+    expect(newest.at(-1)!.at).toBe('t19');
+  });
+
+  it('never throws when it cannot write', () => {
+    expect(() => new AccessLog('/dev/null/cannot/access.jsonl').write({ at: 't', kind: 'http' })).not.toThrow();
   });
 });
 
@@ -130,7 +138,11 @@ describe('tunnel dashboard frames', () => {
     expect(check()).toBe(true);
   };
 
+  let accessFile = '';
+  const accessLines = async () => (await readFile(accessFile, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as AccessEntry);
+
   const connect = async () => {
+    accessFile = join(configDir, 'cloud', 'access.jsonl');
     writeCloudConnection({
       url: `http://127.0.0.1:${cloud.port}`,
       machineId: 'm1',
@@ -139,10 +151,32 @@ describe('tunnel dashboard frames', () => {
       mcpUrl: `http://127.0.0.1:${cloud.port}/mcp`,
       connectedAt: new Date().toISOString(),
     });
-    tunnel = new CloudTunnel({ selfUrl: `http://127.0.0.1:${local.port}`, apiKey: 'operator-key', version: '9.9.9', log: () => {}, watchConfig: false });
+    tunnel = new CloudTunnel({ selfUrl: `http://127.0.0.1:${local.port}`, apiKey: 'operator-key', version: '9.9.9', log: () => {}, watchConfig: false, accessLog: new AccessLog(accessFile) });
     tunnel.start();
     await until(() => tunnel!.state.status === 'connected' && frames.some((frame) => frame.type === 'hello'));
   };
+
+  it('logs every relayed request with who asked, never its query or body', async () => {
+    await connect();
+    cloudSocket!.send(JSON.stringify({
+      type: 'http', id: 'a1', method: 'POST', path: '/api/sessions/s1/decision?token=SECRET&project=p',
+      headers: { 'content-type': 'application/json', 'x-agentuse-user': 'user-1', 'x-agentuse-role': 'owner', 'x-agentuse-client-ip': '203.0.113.7', 'x-agentuse-client-ua': 'Mobile Safari' },
+      body: Buffer.from('{"status":"approved","comment":"private words"}').toString('base64'),
+    }));
+    cloudSocket!.send(JSON.stringify({ type: 'http', id: 'a2', method: 'GET', path: '/mcp?x=1', headers: { 'x-agentuse-user': 'user-1' } }));
+    cloudSocket!.send(JSON.stringify({ type: 'mcp', id: 'a3', body: '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_agents","arguments":{"q":"private"}}}' }));
+    await until(() => frames.some((frame) => frame.type === 'mcp_result'));
+    await until(() => answerFor('a1').ended && answerFor('a2').ended);
+    const lines = await accessLines();
+    const text = JSON.stringify(lines);
+    expect(text).not.toContain('SECRET');
+    expect(text).not.toContain('private');
+    expect(lines.find((line) => line.path === '/api/sessions/s1/decision')).toMatchObject({
+      kind: 'http', user: 'user-1', role: 'owner', ip: '203.0.113.7', userAgent: 'Mobile Safari', method: 'POST', status: 200, action: 'decision', sessionId: 's1',
+    });
+    expect(lines.find((line) => line.path === '/mcp')).toMatchObject({ status: 404, error: 'NOT_FOUND', user: 'user-1' });
+    expect(lines.find((line) => line.kind === 'mcp')).toMatchObject({ mcp: 'tools/call list_agents', status: 200 });
+  });
 
   const answerFor = (id: string) => {
     const start = frames.find((frame) => frame.type === 'http_start' && frame.id === id);
@@ -194,9 +228,12 @@ describe('tunnel dashboard frames', () => {
     cloudSocket!.send(JSON.stringify({ type: 'http', id: 's1', method: 'GET', path: '/api/sessions/events', headers: { accept: 'text/event-stream' } }));
     await until(() => answerFor('s1').body.includes('event: sessions'));
     expect(answerFor('s1').start).toMatchObject({ status: 200, headers: { 'content-type': 'text/event-stream' } });
+    expect((await accessLines()).filter((line) => line.stream)).toMatchObject([{ stream: 'open', path: '/api/sessions/events', status: 200 }]);
     cloudSocket!.send(JSON.stringify({ type: 'http_cancel', id: 's1' }));
     await until(() => streamCancelled);
     expect(answerFor('s1').ended).toBe(false);
+    for (let i = 0; i < 50 && (await accessLines()).filter((line) => line.stream).length < 2; i += 1) await Bun.sleep(20);
+    expect((await accessLines()).filter((line) => line.stream).map((line) => [line.stream, line.error])).toEqual([['open', undefined], ['close', 'cancelled']]);
   });
 
   it('hands notifications to Cloud only after Cloud says it delivers them', async () => {

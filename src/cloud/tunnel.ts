@@ -1,7 +1,8 @@
 import { watch, type FSWatcher } from 'node:fs';
 import path from 'node:path';
 import { cloudConfigPath, readCloudConnection, type CloudConnection } from './config.js';
-import { isRelayablePath, RELAY_SECRET_HEADER, relaySecret } from './relay.js';
+import type { AccessEntry, AccessLog } from './access-log.js';
+import { isRelayablePath, RELAY_SECRET_HEADER, relayedActionName, relayedSessionId, relaySecret } from './relay.js';
 
 /**
  * `agentuse serve`'s line to AgentUse Cloud. The computer dials out, so it
@@ -65,6 +66,8 @@ export interface CloudTunnelOptions {
   version?: string;
   /** Cloud asked this computer to update. */
   onUpdate?: () => void;
+  /** Where every request Cloud makes to this computer is recorded (src/cloud/access-log.ts). */
+  accessLog?: AccessLog;
 }
 
 const PING_MS = 25_000;
@@ -379,7 +382,16 @@ export class CloudTunnel {
       return;
     }
     if (frame.type !== 'mcp' || !frame.id || typeof frame.body !== 'string') return;
+    const startedAt = Date.now();
+    const call = mcpCallName(frame.body);
     const reply = (status: number, contentType: string, body: string) => {
+      this.options.accessLog?.write({
+        at: new Date(startedAt).toISOString(),
+        kind: 'mcp',
+        ...(call && { mcp: call }),
+        status,
+        durationMs: Date.now() - startedAt,
+      });
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: 'mcp_result', id: frame.id, status, contentType, body }));
       }
@@ -413,6 +425,28 @@ export class CloudTunnel {
    * X-AgentUse-Role headers Cloud put on it.
    */
   private async onHttpFrame(socket: WebSocket, frame: HttpFrame): Promise<void> {
+    const startedAt = Date.now();
+    const method = typeof frame.method === 'string' ? frame.method.toUpperCase() : '';
+    const who = frameHeaders(frame.headers);
+    let pathname = typeof frame.path === 'string' ? frame.path.split(/[?#]/)[0]! : '';
+    let bytes = 0;
+    const log = (extra: Partial<AccessEntry>) => {
+      const action = relayedActionName(method, pathname);
+      const sessionId = relayedSessionId(pathname);
+      this.options.accessLog?.write({
+        at: new Date(startedAt).toISOString(),
+        kind: 'http',
+        ...(who.user && { user: who.user }),
+        ...(who.role && { role: who.role }),
+        ...(who.ip && { ip: who.ip }),
+        ...(who.userAgent && { userAgent: who.userAgent }),
+        method,
+        path: pathname.slice(0, 500),
+        ...(action && { action }),
+        ...(sessionId && { sessionId }),
+        ...extra,
+      });
+    };
     const send = (message: Record<string, unknown>) => {
       if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ...message, id: frame.id }));
     };
@@ -420,8 +454,8 @@ export class CloudTunnel {
       send({ type: 'http_start', status, headers: { 'content-type': 'application/json' } });
       send({ type: 'http_chunk', data: Buffer.from(JSON.stringify({ success: false, error: { code, message } })).toString('base64') });
       send({ type: 'http_end' });
+      log({ status, durationMs: Date.now() - startedAt, error: code });
     };
-    const method = typeof frame.method === 'string' ? frame.method.toUpperCase() : '';
     let target: URL;
     try {
       target = new URL(frame.path, this.options.selfUrl);
@@ -429,6 +463,7 @@ export class CloudTunnel {
       answer(400, 'BAD_PATH', 'This request has no valid path.');
       return;
     }
+    if (target.origin === new URL(this.options.selfUrl).origin) pathname = target.pathname;
     if (target.origin !== new URL(this.options.selfUrl).origin || !isRelayablePath(target.pathname)) {
       answer(404, 'NOT_FOUND', 'AgentUse Cloud can only reach this computer\'s data routes.');
       return;
@@ -455,6 +490,8 @@ export class CloudTunnel {
     const headersTimer = setTimeout(() => controller.abort(new Error('timed out')), LOCAL_HTTP_HEADERS_TIMEOUT_MS);
     headersTimer.unref?.();
     let started = false;
+    let status = 0;
+    let streaming = false;
     try {
       const response = await fetch(target, {
         method,
@@ -471,24 +508,63 @@ export class CloudTunnel {
       }
       send({ type: 'http_start', status: response.status, headers: responseHeaders });
       started = true;
+      status = response.status;
+      // A live stream gets a line when it opens and one when it closes, never one per event.
+      streaming = (response.headers.get('content-type') ?? '').includes('text/event-stream');
+      if (streaming) log({ stream: 'open', status });
       if (response.body) {
         const reader = response.body.getReader();
         for (;;) {
           const { value, done } = await reader.read();
           if (done) break;
+          bytes += value.byteLength;
           for (let offset = 0; offset < value.byteLength; offset += HTTP_CHUNK_BYTES) {
             send({ type: 'http_chunk', data: Buffer.from(value.subarray(offset, offset + HTTP_CHUNK_BYTES)).toString('base64') });
           }
         }
       }
       send({ type: 'http_end' });
+      log({ ...(streaming && { stream: 'close' as const }), status, durationMs: Date.now() - startedAt, bytes });
     } catch (error) {
       clearTimeout(headersTimer);
-      if (controller.signal.aborted && this.httpRequests.get(frame.id) !== controller) return; // cancelled by Cloud
-      if (started) send({ type: 'http_end', error: (error as Error).message });
-      else answer(502, 'LOCAL_UNAVAILABLE', `AgentUse on this computer did not answer: ${(error as Error).message}`);
+      const cancelled = controller.signal.aborted && this.httpRequests.get(frame.id) !== controller;
+      if (cancelled) {
+        log({ ...(streaming && { stream: 'close' as const }), ...(status && { status }), durationMs: Date.now() - startedAt, bytes, error: 'cancelled' });
+        return;
+      }
+      if (started) {
+        send({ type: 'http_end', error: (error as Error).message });
+        log({ ...(streaming && { stream: 'close' as const }), status, durationMs: Date.now() - startedAt, bytes, error: (error as Error).message.slice(0, 200) });
+      } else {
+        answer(502, 'LOCAL_UNAVAILABLE', `AgentUse on this computer did not answer: ${(error as Error).message}`);
+      }
     } finally {
       if (this.httpRequests.get(frame.id) === controller) this.httpRequests.delete(frame.id);
     }
+  }
+}
+
+/** Who Cloud says is asking: the person, their role, and the browser's address and user agent. */
+function frameHeaders(headers: Record<string, string> | undefined): { user?: string; role?: string; ip?: string; userAgent?: string } {
+  const get = (name: string) => {
+    const entry = Object.entries(headers ?? {}).find(([key]) => key.toLowerCase() === name);
+    return typeof entry?.[1] === 'string' ? entry[1].slice(0, 300) : undefined;
+  };
+  const user = get('x-agentuse-user');
+  const role = get('x-agentuse-role');
+  const ip = get('x-agentuse-client-ip');
+  const userAgent = get('x-agentuse-client-ua');
+  return { ...(user && { user }), ...(role && { role }), ...(ip && { ip }), ...(userAgent && { userAgent }) };
+}
+
+/** `tools/call list_agents`, `tools/list`, …: the JSON-RPC method and tool, never the arguments. */
+function mcpCallName(body: string): string | undefined {
+  try {
+    const parsed = JSON.parse(body) as { method?: unknown; params?: { name?: unknown } };
+    if (typeof parsed.method !== 'string') return undefined;
+    const tool = typeof parsed.params?.name === 'string' ? ` ${parsed.params.name}` : '';
+    return `${parsed.method}${tool}`.slice(0, 200);
+  } catch {
+    return undefined;
   }
 }

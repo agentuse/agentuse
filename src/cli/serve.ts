@@ -74,7 +74,8 @@ import { homeRoutes } from "./serve/routes/home";
 import { mcpServerRoutes } from "./serve/routes/mcp-server";
 import { projectContextRoutes } from "./serve/routes/project-context";
 import { activeTunnel, CloudTunnel } from "../cloud/tunnel";
-import { appendRelayAudit, dashboardPath, isKnownRelayRole, relayedActionName, relayedSessionId, requestActor } from "../cloud/relay";
+import { dashboardPath, isKnownRelayRole, requestActor } from "../cloud/relay";
+import { AccessLog } from "../cloud/access-log";
 import { notificationRoutes } from "./serve/routes/notifications";
 import { onboardingRoutes } from "./serve/routes/onboarding";
 import { codingAgentRoutes } from "./serve/routes/coding-agents";
@@ -4125,8 +4126,8 @@ export function createServeCommand(): Command {
       // subscriptions persist in the data dir; notifications fire on pending
       // approvals and session completions (see pushService.notify call sites).
       const pushService = new PushService(getAgentuseDataDir(), (msg) => console.log(msg));
-      // Who did what through the Cloud dashboard (src/cloud/relay.ts).
-      const relayAuditFile = join(getAgentuseDataDir(), "cloud", "relay-audit.jsonl");
+      // Every request AgentUse Cloud makes to this computer (src/cloud/access-log.ts).
+      const cloudAccessLog = new AccessLog(join(getAgentuseDataDir(), "cloud", "access.jsonl"));
       type NativeNotificationEvent = {
         category: PushCategory;
         payload: Pick<PushPayload, 'title' | 'body' | 'url' | 'tag' | 'appBadge'>;
@@ -4940,27 +4941,12 @@ export function createServeCommand(): Command {
         // A dashboard request relayed by AgentUse Cloud names its person. Only
         // the tunnel in this process can vouch for that (src/cloud/relay.ts);
         // without its secret the headers are ignored and the caller is the
-        // owner, as before. Approvals and runs record who asked.
+        // owner, as before. The tunnel records every relayed request in the
+        // Cloud access log.
         const actor = requestActor(req.headers);
-        if (actor.via === "cloud") {
-          if (!isKnownRelayRole(actor.role)) {
-            sendError(res, 403, "ROLE_NOT_SUPPORTED", `AgentUse on this computer does not know the role "${actor.role}". Update it to use the dashboard with this account.`);
-            return;
-          }
-          const action = relayedActionName(req.method, requestUrl.pathname);
-          if (action) {
-            const sessionId = relayedSessionId(requestUrl.pathname);
-            const project = requestUrl.searchParams.get("project") ?? undefined;
-            res.on("finish", () => appendRelayAudit(relayAuditFile, {
-              at: new Date().toISOString(),
-              ...(actor.user && { user: actor.user }),
-              role: actor.role,
-              action,
-              ...(sessionId && { sessionId }),
-              ...(project && { project }),
-              status: res.statusCode,
-            }));
-          }
+        if (actor.via === "cloud" && !isKnownRelayRole(actor.role)) {
+          sendError(res, 403, "ROLE_NOT_SUPPORTED", `AgentUse on this computer does not know the role "${actor.role}". Update it to use the dashboard with this account.`);
+          return;
         }
 
         // Capability auth for the unified session page + its action subroutes:
@@ -5028,6 +5014,7 @@ export function createServeCommand(): Command {
         version: packageVersion,
         log: (message) => console.log(`  ${chalk.cyan("Cloud")} ${message}`),
         onUpdate: () => updateWhenIdle(),
+        accessLog: cloudAccessLog,
       });
       activeTunnel.current = cloudTunnel;
 

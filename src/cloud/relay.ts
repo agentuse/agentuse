@@ -1,6 +1,4 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { appendFileSync, mkdirSync } from 'node:fs';
-import path from 'node:path';
 
 /**
  * What a dashboard request relayed from AgentUse Cloud may reach on this
@@ -88,9 +86,9 @@ export function dashboardPath(url: string): string {
 }
 
 /**
- * The relayed actions worth a record of who did them: approval decisions,
- * steering a run, and starting one by hand. Returns the action's name, or
- * undefined for everything else (reads, settings).
+ * The requests that change something on this computer: approval decisions,
+ * steering a run, and starting one by hand. The access log marks them with
+ * this name; reads and settings return undefined.
  */
 export function relayedActionName(method: string | undefined, pathname: string): string | undefined {
   if (method !== 'POST') return undefined;
@@ -109,28 +107,5 @@ export function relayedSessionId(pathname: string): string | undefined {
     return decodeURIComponent(match[1]!);
   } catch {
     return undefined;
-  }
-}
-
-export interface RelayAuditEntry {
-  at: string;
-  user?: string;
-  role: string;
-  action: string;
-  sessionId?: string;
-  project?: string;
-  status: number;
-}
-
-/**
- * One line per relayed action, so "who approved this from the dashboard" has
- * an answer. Best effort: a full disk must not fail the action itself.
- */
-export function appendRelayAudit(file: string, entry: RelayAuditEntry): void {
-  try {
-    mkdirSync(path.dirname(file), { recursive: true });
-    appendFileSync(file, `${JSON.stringify(entry)}\n`, { mode: 0o600 });
-  } catch {
-    // Recording is secondary to the action.
   }
 }
