@@ -1,9 +1,12 @@
 import { ErrorBoundary, LocationProvider, Router, Route, lazy } from 'preact-iso';
+import type { ComponentChildren } from 'preact';
 import { useEffect } from 'preact/hooks';
 import { AppShell } from './components/app-shell';
 import { AgentPalette } from './components/agent-palette';
 import { ApprovalToast } from './components/approval-toast';
 import { CopyLinkToast } from './components/copy-link-toast';
+import { CloudGate } from './components/cloud-gate';
+import { isCloudMode } from './lib/cloud';
 import { NavTracker } from './hooks/use-smart-back';
 import { GlobalApprovalsProvider } from './hooks/use-global-approvals';
 import { reloadOnChunkError } from './lib/lazy-route';
@@ -135,17 +138,24 @@ function RoutedApp() {
   return <AppShell><AppRoutes /></AppShell>;
 }
 
+/** On AgentUse Cloud nothing may reach a daemon until a computer is chosen; locally there is only one. */
+function MaybeCloudGate(props: { children: ComponentChildren }) {
+  return isCloudMode() ? <CloudGate>{props.children}</CloudGate> : <>{props.children}</>;
+}
+
 export function App() {
   return (
     <LocationProvider>
       <NavTracker />
       <ErrorBoundary>
-        <GlobalApprovalsProvider>
-          <AgentPalette />
-          <ApprovalToast />
-          <CopyLinkToast />
-          <RoutedApp />
-        </GlobalApprovalsProvider>
+        <MaybeCloudGate>
+          <GlobalApprovalsProvider>
+            <AgentPalette />
+            <ApprovalToast />
+            <CopyLinkToast />
+            <RoutedApp />
+          </GlobalApprovalsProvider>
+        </MaybeCloudGate>
       </ErrorBoundary>
     </LocationProvider>
   );

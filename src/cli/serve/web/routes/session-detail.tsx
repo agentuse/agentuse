@@ -47,6 +47,7 @@ import {
 import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
 import { ONBOARDING_AGENT_NAME, ONBOARDING_MODEL } from '../../../../onboarding';
+import { daemonUrl } from '../lib/cloud';
 
 type ApprovalHeader = Omit<ApprovalPageInfo, 'logs'>;
 
@@ -2241,7 +2242,7 @@ export default function SessionDetail() {
         .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
         .map((a) => {
           const encoded = a.name.split('/').map(encodeURIComponent).join('/');
-          const base = `/sessions/${encodeURIComponent(sessionId)}/artifacts/${encoded}`;
+          const base = daemonUrl(`/sessions/${encodeURIComponent(sessionId)}/artifacts/${encoded}`);
           const params = new URLSearchParams();
           if (token) params.set('token', token);
           if (resolvedTheme) params.set('theme', resolvedTheme);

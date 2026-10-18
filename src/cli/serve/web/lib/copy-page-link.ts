@@ -1,4 +1,5 @@
 import { fetchInfo } from './api';
+import { isCloudMode, withMachine } from './cloud';
 
 /** Fired by the Mac app's Edit ▸ Copy Link to Page menu item and by the web
  *  ⌘⇧C handler; CopyLinkToast owns the actual copy so both paths share one
@@ -26,6 +27,8 @@ let cachedPublicUrl: Promise<string | undefined> | null = null;
 /** Resolved once per page load; a failed lookup (auth-scoped deep link, daemon
  *  restarting) falls back to the page origin rather than blocking the copy. */
 export function currentPageLink(): Promise<string> {
+  // On Cloud the page's own address is the one to share, pinned to this computer.
+  if (isCloudMode()) return Promise.resolve(withMachine(window.location.href));
   cachedPublicUrl ??= fetchInfo().then((info) => info.publicUrl, () => undefined);
   return cachedPublicUrl.then((publicUrl) => pageLinkFor(publicUrl, window.location.href));
 }

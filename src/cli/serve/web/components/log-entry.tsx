@@ -12,6 +12,7 @@ import type { StoreItem } from '../../../../store/types';
 import { LogContent, InlineMarkdown } from './content';
 import { useNow } from '../hooks/use-now';
 import { CopyButton as ClipboardButton } from './copy-button';
+import { daemonUrl } from '../lib/cloud';
 
 interface StoreEvent {
   store?: string;
@@ -80,7 +81,7 @@ function StoreEventBlock(props: { event: StoreEvent }) {
 
 function artifactHref(sessionId: string, artifactPath: string, token: string | undefined, snapHash?: string): string {
   const encoded = artifactPath.split('/').map(encodeURIComponent).join('/');
-  const base = `/sessions/${encodeURIComponent(sessionId)}/artifacts/${encoded}`;
+  const base = daemonUrl(`/sessions/${encodeURIComponent(sessionId)}/artifacts/${encoded}`);
   const params = new URLSearchParams();
   if (token) params.set('token', token);
   if (snapHash) params.set('snap', snapHash);
@@ -90,7 +91,7 @@ function artifactHref(sessionId: string, artifactPath: string, token: string | u
 
 function toolArtifactHref(sessionId: string, artifactPath: string, token: string | undefined): string {
   const encoded = artifactPath.split('/').map(encodeURIComponent).join('/');
-  const base = `/sessions/${encodeURIComponent(sessionId)}/tool-artifacts/${encoded}`;
+  const base = daemonUrl(`/sessions/${encodeURIComponent(sessionId)}/tool-artifacts/${encoded}`);
   return token ? `${base}?token=${encodeURIComponent(token)}` : base;
 }
 

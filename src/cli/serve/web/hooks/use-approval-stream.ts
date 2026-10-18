@@ -4,6 +4,7 @@ import type { ApprovalLogEntry, ApprovalPageInfo } from '../../types';
 import { fetchSessionStatus } from '../lib/api';
 import { isLiveStatus } from '../lib/format';
 import { FIXTURE_SESSION_PREFIX } from '../lib/dev';
+import { daemonUrl } from '../lib/cloud';
 
 export interface ApprovalStreamHandlers {
   onStatus: (status: string, approval: Omit<ApprovalPageInfo, 'logs'>) => void;
@@ -91,7 +92,7 @@ export function useApprovalStream(options: {
     let polling = false;
     let errorTimes: number[] = [];
 
-    const url = new URL(`/sessions/${encodeURIComponent(sessionId)}/events`, location.origin);
+    const url = new URL(daemonUrl(`/sessions/${encodeURIComponent(sessionId)}/events`), location.origin);
     if (token) url.searchParams.set('token', token);
     if (project) url.searchParams.set('project', project);
     if (logsLimit !== undefined) url.searchParams.set('logsLimit', String(logsLimit));

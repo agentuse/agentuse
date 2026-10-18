@@ -163,33 +163,65 @@ export class WebAssets {
     if (this.shellCache && this.shellCache.key === key) {
       return this.shellCache.html;
     }
-    const cssLinks = manifest.css
-      .map((href) => `<link rel="stylesheet" href="/assets/${escapeHtml(href)}">`)
-      .join("\n  ");
-    // Fonts are referenced only from inside the stylesheet, so without this the
-    // browser can't even discover them until the CSS has downloaded and parsed:
-    // an extra round trip on the critical path and a visible flash of fallback
-    // text. Hashed filenames make them immutable, so preloading is never wasted.
-    const fontLinks = fonts
-      .map((href) => `<link rel="preload" as="font" type="font/woff2" crossorigin href="/assets/${escapeHtml(href)}">`)
-      .join("\n  ");
-    // Preload the entry's static-import chunks (shared framework/vendor code)
-    // so they download alongside the entry rather than after it parses.
-    const preloadLinks = preload
-      .map((href) => `<link rel="modulepreload" href="/assets/${escapeHtml(href)}">`)
-      .join("\n  ");
-    // Configured deployment brand and display nouns, injected for the client
-    // bundle (web/lib/brand.ts, web/lib/terms.ts) so the very first render
-    // already knows them: no fetch, no title flash. Both are static per
-    // server process, so the cached shell stays valid. JSON-escaping `<`
-    // keeps the values from ever closing the script tag.
-    const injectJson = (value: unknown): string => JSON.stringify(value).replace(/</g, "\\u003c");
-    const brand = this.brandName;
-    const globals: string[] = [];
-    if (brand) globals.push(`window.__AGENTUSE_BRAND__ = ${injectJson({ name: brand })};`);
-    if (this.terms) globals.push(`window.__AGENTUSE_TERMS__ = ${injectJson(this.terms)};`);
-    const brandTag = globals.length > 0 ? `\n  <script>${globals.join(" ")}</script>` : "";
-    const html = `<!doctype html>
+    const html = renderShellHtml(manifest, {
+      ...(this.brandName && { brandName: this.brandName }),
+      ...(this.terms && { terms: this.terms }),
+    });
+    this.shellCache = { html, key };
+    return html;
+  }
+}
+
+export interface ShellOptions {
+  brandName?: string;
+  terms?: Record<string, string>;
+  /**
+   * AgentUse Cloud's shell data, already a script-safe JSON literal (or a
+   * placeholder the Cloud Worker fills per request). Its presence puts the
+   * web app in cloud mode (web/lib/cloud.ts).
+   */
+  cloudJson?: string;
+  /** CSP nonce for the inline scripts and style, for a host that sends a strict CSP (Cloud). */
+  nonce?: string;
+}
+
+/**
+ * The SPA HTML shell for a build manifest. `agentuse serve` renders it once
+ * per build; AgentUse Cloud renders it at sync time, with placeholders for
+ * the nonce and its shell data (scripts/export-cloud-dashboard.ts).
+ */
+export function renderShellHtml(manifest: WebManifest, options: ShellOptions = {}): string {
+  const preload = manifest.preload ?? [];
+  const fonts = manifest.files.filter((file) => file.endsWith(".woff2"));
+  const nonceAttr = options.nonce ? ` nonce="${escapeHtml(options.nonce)}"` : "";
+  const cssLinks = manifest.css
+    .map((href) => `<link rel="stylesheet" href="/assets/${escapeHtml(href)}">`)
+    .join("\n  ");
+  // Fonts are referenced only from inside the stylesheet, so without this the
+  // browser can't even discover them until the CSS has downloaded and parsed:
+  // an extra round trip on the critical path and a visible flash of fallback
+  // text. Hashed filenames make them immutable, so preloading is never wasted.
+  const fontLinks = fonts
+    .map((href) => `<link rel="preload" as="font" type="font/woff2" crossorigin href="/assets/${escapeHtml(href)}">`)
+    .join("\n  ");
+  // Preload the entry's static-import chunks (shared framework/vendor code)
+  // so they download alongside the entry rather than after it parses.
+  const preloadLinks = preload
+    .map((href) => `<link rel="modulepreload" href="/assets/${escapeHtml(href)}">`)
+    .join("\n  ");
+  // Configured deployment brand and display nouns, injected for the client
+  // bundle (web/lib/brand.ts, web/lib/terms.ts) so the very first render
+  // already knows them: no fetch, no title flash. Both are static per
+  // server process, so the cached shell stays valid. JSON-escaping `<`
+  // keeps the values from ever closing the script tag.
+  const injectJson = (value: unknown): string => JSON.stringify(value).replace(/</g, "\\u003c");
+  const brand = options.brandName;
+  const globals: string[] = [];
+  if (brand) globals.push(`window.__AGENTUSE_BRAND__ = ${injectJson({ name: brand })};`);
+  if (options.terms) globals.push(`window.__AGENTUSE_TERMS__ = ${injectJson(options.terms)};`);
+  if (options.cloudJson) globals.push(`window.__AGENTUSE_CLOUD__ = ${options.cloudJson};`);
+  const brandTag = globals.length > 0 ? `\n  <script${nonceAttr}>${globals.join(" ")}</script>` : "";
+  return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -205,17 +237,17 @@ export class WebAssets {
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="${escapeHtml(brand ?? "AgentUse")}">${brandTag}
-  <script>${approvalThemeBootScript()}</script>
-  <style>
-    /* Boot loader: visible from first paint until the first route commits
-       (app.tsx removes #boot). Inline and theme-neutral because it must render
-       before the app bundle — and possibly before app.css — arrives. The fade
-       is delayed so fast loads never flash it. */
-    #boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; opacity: 0; animation: boot-in 300ms ease 250ms forwards; }
-    #boot .boot-spinner { width: 22px; height: 22px; border-radius: 50%; border: 2px solid rgba(128, 128, 128, 0.3); border-top-color: rgba(128, 128, 128, 0.9); animation: boot-spin 700ms linear infinite; }
-    @keyframes boot-spin { to { transform: rotate(360deg); } }
-    @keyframes boot-in { to { opacity: 1; } }
-    @media (prefers-reduced-motion: reduce) { #boot .boot-spinner { animation-duration: 1.6s; } }
+  <script${nonceAttr}>${approvalThemeBootScript()}</script>
+  <style${nonceAttr}>
+  /* Boot loader: visible from first paint until the first route commits
+     (app.tsx removes #boot). Inline and theme-neutral because it must render
+     before the app bundle — and possibly before app.css — arrives. The fade
+     is delayed so fast loads never flash it. */
+  #boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; opacity: 0; animation: boot-in 300ms ease 250ms forwards; }
+  #boot .boot-spinner { width: 22px; height: 22px; border-radius: 50%; border: 2px solid rgba(128, 128, 128, 0.3); border-top-color: rgba(128, 128, 128, 0.9); animation: boot-spin 700ms linear infinite; }
+  @keyframes boot-spin { to { transform: rotate(360deg); } }
+  @keyframes boot-in { to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { #boot .boot-spinner { animation-duration: 1.6s; } }
   </style>
   ${cssLinks}
   ${fontLinks}
@@ -228,9 +260,6 @@ export class WebAssets {
   <script type="module" src="/assets/${escapeHtml(manifest.entry)}"></script>
 </body>
 </html>`;
-    this.shellCache = { html, key };
-    return html;
-  }
 }
 
 export function renderWebAssetsMissingPage(): string {

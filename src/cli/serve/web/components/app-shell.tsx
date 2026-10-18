@@ -21,6 +21,8 @@ import { useMediaQuery } from '../hooks/use-media-query';
 import { useShellSessions } from '../hooks/use-shell-sessions';
 import { displayAgentName, formatRelativeTime, isRunningStatus, runTone } from '../lib/format';
 import { WORDMARK_SVG } from '../../brand';
+import { isCloudMode } from '../lib/cloud';
+import { MachineSwitcher } from './cloud-gate';
 
 const IS_APPLE = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
 const SIDEBAR_PREF_KEY = 'agentuse-sidebar-collapsed';
@@ -384,6 +386,7 @@ export function AppShell({ children }: { children: ComponentChildren }) {
             ><PanelLeft aria-hidden="true" strokeWidth={1.7} /></button>
           )}
         </div>
+        {isCloudMode() && <MachineSwitcher />}
         <nav class="sidebar-nav" aria-label="AgentUse">
           {navItem('home', 'Home')}
           {navItem('agents', 'Agents')}

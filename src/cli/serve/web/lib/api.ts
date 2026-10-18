@@ -30,6 +30,7 @@ import type { AboutInfo } from "../../about";
 import type { PushPrefs } from "../../push";
 
 import { FIXTURE_SESSION_PREFIX } from './dev';
+import { daemonUrl } from './cloud';
 
 export type { SerializedSchedule };
 
@@ -66,7 +67,7 @@ async function getJson<T>(
   options: { signal?: AbortSignal } = {}
 ): Promise<T> {
   rejectFixtureRequest(path);
-  const url = new URL(path, location.origin);
+  const url = new URL(daemonUrl(path), location.origin);
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined) url.searchParams.set(key, value);
   }
@@ -118,7 +119,7 @@ function waitForReadRetry(ms: number, signal?: AbortSignal): Promise<void> {
 
 async function postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
   rejectFixtureRequest(path);
-  const response = await fetch(path, {
+  const response = await fetch(daemonUrl(path), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -137,7 +138,7 @@ async function postJson<T>(path: string, body: Record<string, unknown>): Promise
 
 async function deleteJson<T>(path: string): Promise<T> {
   rejectFixtureRequest(path);
-  const response = await fetch(path, { method: 'DELETE', headers: { Accept: 'application/json' } });
+  const response = await fetch(daemonUrl(path), { method: 'DELETE', headers: { Accept: 'application/json' } });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     throw new ApiRequestError(
@@ -163,7 +164,7 @@ export function webUIPageForPath(pathname: string): WebUIPage {
 
 /** Best-effort local reporting; the browser never contacts PostHog. */
 export function reportWebUIPageView(page: WebUIPage): void {
-  void fetch('/api/telemetry', {
+  void fetch(daemonUrl('/api/telemetry'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ event: 'page_viewed', page }),
@@ -204,7 +205,7 @@ export function currentOnboardingRoute(): 'desktop' | 'web' {
 
 /** Best-effort onboarding reporting; names, paths, and prompt text are never accepted. */
 export function reportOnboardingTelemetry(payload: OnboardingTelemetryPayload): void {
-  void fetch('/api/telemetry', {
+  void fetch(daemonUrl('/api/telemetry'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...payload, onboarding_route: currentOnboardingRoute() }),
@@ -237,7 +238,7 @@ export function fetchApprovals(options: { days?: string | undefined; project?: s
 }
 
 export function approvalsEventUrl(options: { days?: string | undefined; project?: string | undefined } = {}): string {
-  const url = new URL('/api/approvals/events', location.origin);
+  const url = new URL(daemonUrl('/api/approvals/events'), location.origin);
   if (options.days !== undefined) url.searchParams.set('days', options.days);
   if (options.project !== undefined) url.searchParams.set('project', options.project);
   url.searchParams.set('view', 'buckets');
@@ -1409,7 +1410,7 @@ export function sessionsEventUrl(options: {
   metric?: string | undefined;
   results?: 'unseen' | undefined;
 } = {}): string {
-  const url = new URL('/sessions/events', location.origin);
+  const url = new URL(daemonUrl('/sessions/events'), location.origin);
   if (options.agent !== undefined) url.searchParams.set('agent', options.agent);
   if (options.status !== undefined) url.searchParams.set('status', options.status);
   if (options.triage !== undefined) url.searchParams.set('triage', options.triage);

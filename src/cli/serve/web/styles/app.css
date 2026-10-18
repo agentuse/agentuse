@@ -11803,3 +11803,19 @@ html[data-page="draft-panel"] .app-route {
 .coding-agents-state.is-done { color: var(--green); font-weight: 600; }
 .coding-agents button { padding: 6px 14px; border: 0; border-radius: 6px; background: var(--primary-bg); color: var(--primary-fg); font: inherit; font-size: var(--font-size-caption); font-weight: 600; cursor: pointer; white-space: nowrap; }
 .coding-agents button:disabled { opacity: 0.6; cursor: default; }
+
+/* AgentUse Cloud: the computer switcher and the screens shown instead of the
+   dashboard when no computer can be reached (components/cloud-gate.tsx). */
+.cloud-switcher { display: block; padding: 0 12px 8px; }
+.cloud-switcher select { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: inherit; font: inherit; font-size: var(--font-size-supporting); }
+.cloud-gate-body { color: var(--muted); max-width: 56ch; }
+.cloud-gate-label { margin-top: 32px; color: var(--muted-2); font-size: var(--font-size-supporting); }
+.cloud-gate-note { color: var(--muted); font-size: var(--font-size-supporting); }
+.cloud-gate-foot { margin-top: 40px; font-size: var(--font-size-supporting); }
+.cloud-machine-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; max-width: 480px; }
+.cloud-machine { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.cloud-machine:hover { border-color: var(--muted-2); }
+.cloud-machine-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted-2); flex: none; }
+.cloud-machine-dot.is-online { background: #22c55e; }
+.cloud-machine-name { flex: 1; }
+.cloud-machine-meta { color: var(--muted-2); font-size: var(--font-size-supporting); }
