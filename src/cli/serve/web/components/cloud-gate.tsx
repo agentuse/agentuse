@@ -23,6 +23,15 @@ type GateState =
   | { kind: 'error'; message: string }
   | { kind: 'ready'; payload: CloudMachinesPayload; machine: CloudMachine | undefined };
 
+/**
+ * A link to one of Cloud's own pages (/account, /setup), which are not routes
+ * of this app. `target="_top"` keeps the router from taking the click, so the
+ * browser loads the page.
+ */
+function CloudPageLink(props: { href: string; class?: string; children: ComponentChildren }) {
+  return <a href={props.href} target="_top" {...(props.class && { class: props.class })}>{props.children}</a>;
+}
+
 function dismissBootLoader() {
   document.getElementById('boot')?.remove();
 }
@@ -91,7 +100,7 @@ function GatePage(props: { title: string; body: string; machines?: CloudMachine[
             <MachineList machines={others} />
           </>
         )}
-        <p class="cloud-gate-foot"><a href="/account">Your account and computers</a></p>
+        <p class="cloud-gate-foot"><CloudPageLink href="/account">Your account and computers</CloudPageLink></p>
       </main>
     </div>
   );
@@ -104,7 +113,7 @@ function MachinePicker(props: { machines: CloudMachine[] }) {
         title="No computers yet"
         body="Connect a computer to see its agents, runs and approvals here."
       >
-        <p><a class="empty-action" href="/setup">Connect a computer</a></p>
+        <p><CloudPageLink class="empty-action" href="/setup">Connect a computer</CloudPageLink></p>
       </GatePage>
     );
   }
@@ -170,7 +179,7 @@ export function MachineSwitcher() {
   const current = selectedMachineId();
   if (!current || machines.length === 0) return null;
   return (
-    <label class="cloud-switcher">
+    <div class="cloud-switcher">
       <select
         aria-label="Computer"
         value={current}
@@ -185,6 +194,10 @@ export function MachineSwitcher() {
           </option>
         ))}
       </select>
-    </label>
+      <div class="cloud-switcher-links">
+        <CloudPageLink href="/setup">Add a computer</CloudPageLink>
+        <CloudPageLink href="/account">Manage</CloudPageLink>
+      </div>
+    </div>
   );
 }
