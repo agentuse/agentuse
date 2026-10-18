@@ -173,6 +173,12 @@ function NeedsUpdate(props: { machine: CloudMachine; machines: CloudMachine[] })
   );
 }
 
+/** Menu entries that open Cloud's own pages instead of switching computer. */
+const CLOUD_PAGE_OPTIONS = [
+  { value: '__setup', label: 'Add a computer…', href: '/setup' },
+  { value: '__account', label: 'Manage computers…', href: '/account' },
+] as const;
+
 /** The header's computer switcher, shown in cloud mode once a computer is open. */
 export function MachineSwitcher() {
   const machines = cloudMachines();
@@ -184,8 +190,15 @@ export function MachineSwitcher() {
         aria-label="Computer"
         value={current}
         onChange={(event) => {
-          const id = (event.currentTarget as HTMLSelectElement).value;
-          if (id !== current) switchMachine(id);
+          const select = event.currentTarget as HTMLSelectElement;
+          const page = CLOUD_PAGE_OPTIONS.find((option) => option.value === select.value);
+          if (page) {
+            // Keep showing this computer until the page loads.
+            select.value = current;
+            location.assign(page.href);
+            return;
+          }
+          if (select.value !== current) switchMachine(select.value);
         }}
       >
         {machines.map((machine) => (
@@ -193,11 +206,9 @@ export function MachineSwitcher() {
             {machine.name}{machine.online ? '' : ' (offline)'}
           </option>
         ))}
+        <option disabled>──────────</option>
+        {CLOUD_PAGE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
-      <div class="cloud-switcher-links">
-        <CloudPageLink href="/setup">Add a computer</CloudPageLink>
-        <CloudPageLink href="/account">Manage</CloudPageLink>
-      </div>
     </div>
   );
 }

@@ -11807,9 +11807,6 @@ html[data-page="draft-panel"] .app-route {
 /* AgentUse Cloud: the computer switcher and the screens shown instead of the
    dashboard when no computer can be reached (components/cloud-gate.tsx). */
 .cloud-switcher { display: block; padding: 0 12px 8px; }
-.cloud-switcher-links { display: flex; justify-content: space-between; gap: 8px; padding: 6px 2px 0; font-size: var(--font-size-supporting); }
-.cloud-switcher-links a { color: var(--muted-2); text-decoration: none; }
-.cloud-switcher-links a:hover { color: inherit; text-decoration: underline; }
 .cloud-switcher select { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: inherit; font: inherit; font-size: var(--font-size-supporting); }
 .cloud-gate-body { color: var(--muted); max-width: 56ch; }
 .cloud-gate-label { margin-top: 32px; color: var(--muted-2); font-size: var(--font-size-supporting); }
