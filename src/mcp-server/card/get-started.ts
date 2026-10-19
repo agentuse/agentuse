@@ -9,6 +9,7 @@ import { GET_STARTED_TOOL, type GetStartedArgs, type GetStartedResult } from '..
 
 const POLL_MS = 3000;
 const POLL_LIMIT_MS = 10 * 60 * 1000;
+const CODEX_LOGIN = 'codex mcp login agentuse';
 const CONNECT_TEXT = 'It shows a code. Paste it at cloud.agentuse.io/connect.';
 
 type View = 'auto' | 'waiting' | 'no_machine';
@@ -97,19 +98,29 @@ function signedInStep(d: GetStartedResult): StepSpec {
   return { done: true, title: d.account ? `Signed in as ${d.account}` : 'Signed in' };
 }
 
+type SignInApp = 'codex' | 'claude-code' | 'other';
+
+function signInApp(): SignInApp {
+  if (data?.client) return data.client;
+  const host = app.getHostVersion()?.name ?? '';
+  if (/codex|openai/i.test(host)) return 'codex';
+  if (/claude[- ]?code/i.test(host)) return 'claude-code';
+  return 'other';
+}
+
 /**
  * How to sign in from this app. Apps start sign-in themselves, from their own
  * connector settings; a card can't, and asking the model only loops back here.
  */
 function signInSteps(): Node[] {
-  const host = app.getHostVersion()?.name ?? '';
   const command = (text: string, value: string) => {
     const code = el('div', undefined, 'code');
     code.append(el('code', value), button(copied ? 'Copied' : 'Copy', 'copy', () => { void copy(value); }, 'copy'));
     return [el('p', text), code];
   };
-  if (/codex/i.test(host)) return command('In a terminal, run this and sign in in the browser it opens:', 'codex mcp login agentuse');
-  if (/claude[- ]?code/i.test(host)) return [el('p', 'Type /mcp, choose agentuse, then Authenticate.')];
+  const kind = signInApp();
+  if (kind === 'codex') return [...command('Codex runs this to open the sign-in page. If no page opens, run it in a terminal:', CODEX_LOGIN), el('p', 'If this card still says to sign in afterwards, restart Codex.', 'small')];
+  if (kind === 'claude-code') return [el('p', 'Type /mcp, choose agentuse, then Authenticate.')];
   return [el('p', 'Open this app\'s connector settings, find AgentUse, and press Connect.')];
 }
 
@@ -319,6 +330,10 @@ async function signIn(): Promise<void> {
     } catch {
       // Fall through to asking the app to sign in.
     }
+  }
+  // Codex can't start sign-in from a card, but its shell can: ask it to run the login, which opens the browser.
+  if (!showSignInHelp && signInApp() === 'codex' && app.getHostCapabilities()?.message?.text) {
+    await app.sendMessage({ role: 'user', content: [{ type: 'text', text: `Run \`${CODEX_LOGIN}\` to sign me in to AgentUse. It opens the sign-in page in my browser.` }] }).catch(() => undefined);
   }
   busy = false;
   showSignInHelp = true;
