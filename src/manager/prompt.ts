@@ -43,9 +43,10 @@ If you need to persist work items across runs, ask the user to add \`store: true
 
   return `## Work Tracking
 Use the "${storeName}" store for business records, drafts, and confirmed results:
-- Create items for new work: \`store_create({ type: "task", title: "...", status: "pending", data: {...} })\`
-- Mark complete: \`store_update(id, { status: "done", data: { result: "..." } })\`
-- List pending work: \`store_list({ status: "pending" })\`
+Route store operations through \`code_exec\` as \`tools.store_create\`, \`tools.store_update\`, and \`tools.store_list\` when Code Mode is available. Otherwise use separately exposed store tools. Never call a hidden tool directly. Each takes one input object:
+- Create new work: \`{ type: "task", title: "...", status: "pending", data: {...} }\`
+- Mark complete: \`{ id: "<item-id>", status: "done", data: { result: "..." } }\`
+- List pending work: \`{ status: "pending" }\`
 
 AgentUse sessions and gates own execution and approval state. Store statuses and timestamps do not prove liveness; check runtime ownership before selecting work and external results before retrying an uncertain action.
 
@@ -107,7 +108,7 @@ Delegate effectively and keep track of progress toward the goal.`;
  */
 function buildResponsibilitiesSection(storeName?: string): string {
   const checkLine = storeName
-    ? '2. **CHECK** structured workflow state and progress using store_list() to see what work is pending or in progress'
+    ? '2. **CHECK** structured workflow state and progress using the store tools to see what work is pending or in progress'
     : '2. **CHECK** available context using your existing notes, prior outputs, and provided context to see what work is pending or in progress';
 
   const trackLine = storeName

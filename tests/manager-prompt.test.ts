@@ -1,5 +1,12 @@
 import { describe, it, expect } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildManagerPrompt } from "../src/manager/prompt";
+import { executeCodeMode } from "../src/runner/code-mode";
+import { ToolDispatcher } from "../src/runner/tool-dispatcher";
+import { Store } from "../src/store/store";
+import { createStoreTools } from "../src/store/tools";
 import type { ManagerPromptContext } from "../src/manager/types";
 
 describe("buildManagerPrompt", () => {
@@ -148,6 +155,52 @@ describe("buildManagerPrompt", () => {
       expect(prompt).toContain("store_create");
       expect(prompt).toContain("store_update");
       expect(prompt).toContain("store_list");
+    });
+
+    it("routes store bookkeeping through Code Mode without teaching unavailable direct calls", () => {
+      const prompt = buildManagerPrompt({ subagents: [], storeName: "test" });
+
+      expect(prompt).toContain("through `code_exec` as `tools.store_create`, `tools.store_update`, and `tools.store_list`");
+      expect(prompt).toContain("Otherwise use separately exposed store tools");
+      expect(prompt).toContain("Never call a hidden tool directly");
+      expect(prompt).toContain('Each takes one input object');
+      expect(prompt).toContain('{ id: "<item-id>", status: "done", data: { result: "..." } }');
+      expect(prompt).not.toMatch(/\bstore_(?:create|update|list)\(/);
+      expect(buildManagerPrompt({ subagents: [] })).not.toContain("tools.store_update");
+    });
+
+    it("executes the manager's bookkeeping input examples through the Code Mode store catalog", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "manager-store-routing-"));
+      try {
+        const prompt = buildManagerPrompt({ subagents: [], storeName: "test" });
+        const create = prompt.match(/- Create new work: `([^`]+)`/)?.[1]?.replace("data: {...}", "data: {}");
+        const update = prompt.match(/- Mark complete: `([^`]+)`/)?.[1];
+        const list = prompt.match(/- List pending work: `([^`]+)`/)?.[1];
+        expect(create).toBeDefined();
+        expect(update).toBeDefined();
+        expect(list).toBeDefined();
+        const store = new Store(dir, "test", "manager");
+        const tools = createStoreTools(store);
+        const result = await executeCodeMode(`
+          const created = await tools.store_create(${create});
+          if (!created.success) throw new Error(created.error);
+          const updated = await tools.store_update({ ...${update}, id: created.item.id });
+          if (!updated.success) throw new Error(updated.error);
+          const pending = await tools.store_list(${list});
+          if (!pending.success) throw new Error(pending.error);
+          return { id: created.item.id, status: updated.item.status, pending: pending.items.length };
+        `, {
+          dispatcher: new ToolDispatcher(tools),
+          toolNames: Object.keys(tools),
+          toolDefinitions: tools,
+          parentCallId: "manager-bookkeeping",
+        }) as { id: string; status: string; pending: number };
+        expect(result.status).toBe("done");
+        expect(result.pending).toBe(0);
+        expect((await store.get(result.id))?.data.result).toBe("...");
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
     });
 
     it("shows no-store message when not configured", () => {
