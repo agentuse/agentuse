@@ -43,8 +43,6 @@ export const GET_STARTED_TOOL = 'get_started';
 export interface GetStartedArgs {
   /** The user's original request, picked up again once AgentUse is ready. */
   request?: string;
-  /** The app calling, when Cloud can tell from the request: it decides how sign-in works there. */
-  client?: 'codex' | 'claude-code';
 }
 
 export interface GetStartedMachine {
@@ -65,4 +63,6 @@ export interface GetStartedResult {
   download_url: string;
   install_command: string;
   request?: string;
+  /** The app calling, when Cloud can tell from the request: it decides how sign-in works there. */
+  client?: 'codex' | 'claude-code';
 }
