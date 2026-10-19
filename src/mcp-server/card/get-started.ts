@@ -24,6 +24,7 @@ let copied = false;
 let pollTimer: ReturnType<typeof setTimeout> | undefined;
 let pollStarted = 0;
 let pollExpired = false;
+let showSignInHelp = false;
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, className?: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -96,12 +97,31 @@ function signedInStep(d: GetStartedResult): StepSpec {
   return { done: true, title: d.account ? `Signed in as ${d.account}` : 'Signed in' };
 }
 
+/**
+ * How to sign in from this app. Apps start sign-in themselves, from their own
+ * connector settings; a card can't, and asking the model only loops back here.
+ */
+function signInSteps(): Node[] {
+  const host = app.getHostVersion()?.name ?? '';
+  const command = (text: string, value: string) => {
+    const code = el('div', undefined, 'code');
+    code.append(el('code', value), button(copied ? 'Copied' : 'Copy', 'copy', () => { void copy(value); }, 'copy'));
+    return [el('p', text), code];
+  };
+  if (/codex/i.test(host)) return command('In a terminal, run this and sign in in the browser it opens:', 'codex mcp login agentuse');
+  if (/claude[- ]?code/i.test(host)) return [el('p', 'Type /mcp, choose agentuse, then Authenticate.')];
+  return [el('p', 'Open this app\'s connector settings, find AgentUse, and press Connect.')];
+}
+
 function renderSignIn(): Node[] {
+  const extra = showSignInHelp
+    ? [...signInSteps(), actions(button('Check again', 'secondary', () => { void signIn(); }, 'sign-in'))]
+    : [actions(button('Sign in', 'primary', () => { void signIn(); }, 'sign-in'))];
   return [
     el('h1', 'Set up AgentUse'),
     el('p', 'Your agents run on your own machine. AgentUse Cloud passes messages between it and this chat.'),
     steps([
-      { current: true, title: 'Sign in to AgentUse Cloud', text: 'With Google, GitHub, or a code sent to your email.', extra: [actions(button('Sign in', 'primary', () => { void signIn(); }, 'sign-in'))] },
+      { current: true, title: 'Sign in to AgentUse Cloud', text: 'With Google, GitHub, or a code sent to your email.', extra },
       { title: 'Get AgentUse on your machine', text: 'The Mac app, or one command on Linux or a Mac.' },
       { title: 'Connect the machine', text: CONNECT_TEXT },
     ]),
@@ -300,11 +320,9 @@ async function signIn(): Promise<void> {
       // Fall through to asking the app to sign in.
     }
   }
-  if (app.getHostCapabilities()?.message?.text) {
-    await app.sendMessage({ role: 'user', content: [{ type: 'text', text: 'Sign me in to AgentUse.' }] }).catch(() => undefined);
-  }
   busy = false;
-  statusText = 'Sign in when your app asks, then this card updates.';
+  showSignInHelp = true;
+  statusText = 'This card updates once you sign in.';
   render();
   poll(result => result.state !== 'sign_in');
 }
