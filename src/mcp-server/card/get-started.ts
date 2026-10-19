@@ -119,7 +119,7 @@ function signInSteps(): Node[] {
     return [el('p', text), code];
   };
   const kind = signInApp();
-  if (kind === 'codex') return [...command('Codex runs this to open the sign-in page. If no page opens, run it in a terminal:', CODEX_LOGIN), el('p', 'If this card still says to sign in afterwards, restart Codex.', 'small')];
+  if (kind === 'codex') return [...command('Press Connect when Codex asks. If it doesn\'t ask, run this in a terminal:', CODEX_LOGIN), el('p', 'If this card still says to sign in afterwards, restart Codex.', 'small')];
   if (kind === 'claude-code') return [el('p', 'Type /mcp, choose agentuse, then Authenticate.')];
   return [el('p', 'Open this app\'s connector settings, find AgentUse, and press Connect.')];
 }
@@ -331,9 +331,9 @@ async function signIn(): Promise<void> {
       // Fall through to asking the app to sign in.
     }
   }
-  // Codex can't start sign-in from a card, but its shell can: ask it to run the login, which opens the browser.
+  // Codex shows its Connect prompt when the model calls a protected tool, not when a card does.
   if (!showSignInHelp && signInApp() === 'codex' && app.getHostCapabilities()?.message?.text) {
-    await app.sendMessage({ role: 'user', content: [{ type: 'text', text: `Run \`${CODEX_LOGIN}\` to sign me in to AgentUse. It opens the sign-in page in my browser.` }] }).catch(() => undefined);
+    await app.sendMessage({ role: 'user', content: [{ type: 'text', text: 'Sign me in to AgentUse.' }] }).catch(() => undefined);
   }
   busy = false;
   showSignInHelp = true;
