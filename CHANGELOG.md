@@ -14,6 +14,10 @@
 - **AgentUse Cloud: use AgentUse from anywhere.** `agentuse connect` links this computer to your AgentUse Cloud account: it opens a browser page where you sign in (the first time creates the account) and press Connect. `agentuse serve` then keeps a line open to the cloud, so Claude, ChatGPT, Cursor, or any app that supports MCP can reach AgentUse here through one address, without opening a port. Your agents still run on this computer. `agentuse status` shows the connection and `agentuse disconnect` removes it; disconnecting from the account page cuts it off at once.
 - **AgentUse is an MCP server too.** Point Claude Code or another MCP client at `http://<your serve address>/mcp` (send your API key as a bearer token when one is set), or add `agentuse mcp serve` as a local command for Claude Desktop. Type `/automate` to turn the chat into a draft agent, or `/triage` to find failing agents and propose fixes. A chat can see what a project already has (agents, MCP servers, skills, models), read a text file with secrets left out and blanked, look at runs, and start one. Before handing over, the chat practice-runs its draft with every tool faked, so nothing on your computer changes; drafts that would start a local MCP server or send keys to one are left for you to test. Drafts and fixes open on a review page, where you apply them: a chat cannot turn agents on, apply changes or approve steps.
 
+### Changed
+
+- **Commenting at an approval no longer eats the run's time.** When you comment and the agent revises, it starts over on its full `timeout` instead of what earlier rounds left. Approving keeps the clock as it was. Before, a few rounds of feedback could use up the time and stop the run before its last steps.
+
 ### Removed
 
 - **The dashboard's guided onboarding.** Find work worth automating, guided creation and Find agent ideas are gone: agents come from your coding agent or AI assistant. `/onboarding` opens Home. Join codes, `agentuse setup --join` and `agentuse://join` links are gone too.

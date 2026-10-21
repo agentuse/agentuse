@@ -2,6 +2,8 @@ import { matchingWorkerDeath, type WorkerDeath } from '../worker/death';
 import type { ModelMessage } from 'ai';
 import { assertResolvedToolCall, rehydrateMessages, type SessionManager } from '../session';
 import type { SessionInfo, ToolState } from '../session/types';
+import { isHumanCommentDecision } from '../session/gate-rounds';
+import type { ExecutionBudgetState } from './execution-budget';
 import { isProcessRefAliveAsync } from '../utils/process-info';
 import { LeaseStore, type ApprovalLease } from './approval-lease';
 import { GateSealStore, type GateSealSnapshot } from './gate-seal';
@@ -31,6 +33,8 @@ export interface ResumeToolRollback {
     lease?: ApprovalLease;
     seal: GateSealSnapshot;
   };
+  /** Budget ledgers a human Comment reset, restored if the resume fails. */
+  executionBudgets?: Array<{ sessionId: string; agentId: string; state: ExecutionBudgetState }>;
 }
 
 export interface AppliedResumeToolResult {
@@ -230,7 +234,14 @@ async function applyClaimedResumeToolResult(options: {
     throw new Error(`DECISION_NOT_PERSISTED: approval decision for session ${sessionId} did not persist to the gate part (${pending.part.id}); resume aborted before the run`);
   }
 
-  // Lease lifecycle (agentuse-lab#165, Phase 2): an APPROVE derives a
+  // A human Comment asks for new work, so the revision starts on a fresh
+  // execution budget instead of whatever earlier rounds left over. Ancestors
+  // reset too: a resumed child is also bounded by their restored clocks.
+  if (!isGenericToolApproval && isHumanCommentDecision(applied)) {
+    rollback.executionBudgets = await resetExecutionBudgets(sessionManager, found);
+  }
+
+    // Lease lifecycle (agentuse-lab#165, Phase 2): an APPROVE derives a
   // machine-readable lease from the gate's changes[] - the only grant that
   // lets `tools.bash.gated`-declared commands run. Any other decision (reject,
   // comment) revokes, and reject additionally seals the gate - see
@@ -402,6 +413,10 @@ export async function restoreClaimedResumeToolResult(options: {
     }
   }
 
+  for (const ledger of rollback.executionBudgets ?? []) {
+    await sessionManager.updateSession(ledger.sessionId, ledger.agentId, { executionBudget: ledger.state });
+  }
+
   await sessionManager.updatePart(
     rollback.sessionId,
     rollback.agentId,
@@ -410,6 +425,27 @@ export async function restoreClaimedResumeToolResult(options: {
     { state: rollback.state } as any
   );
   await sessionManager.setSessionSuspended(rollback.sessionId, rollback.agentId);
+}
+
+async function resetExecutionBudgets(
+  sessionManager: SessionManager,
+  start: { session: SessionInfo; agentId: string },
+): Promise<NonNullable<ResumeToolRollback['executionBudgets']>> {
+  const reset: NonNullable<ResumeToolRollback['executionBudgets']> = [];
+  const seen = new Set<string>();
+  let entry: { session: SessionInfo; agentId: string } | null = start;
+  while (entry && !seen.has(entry.session.id)) {
+    seen.add(entry.session.id);
+    const state = entry.session.executionBudget;
+    if (state) {
+      const { noticeDeliveredAt: _notice, wrappedUpAt: _wrapped, ...rest } = state;
+      await sessionManager.updateSession(entry.session.id, entry.agentId, { executionBudget: { ...rest, elapsedMs: 0 } });
+      reset.push({ sessionId: entry.session.id, agentId: entry.agentId, state });
+    }
+    const parentId: string | undefined = entry.session.parentSessionID;
+    entry = parentId ? await sessionManager.findSession(parentId) : null;
+  }
+  return reset;
 }
 
 export type ReopenGateResult =
