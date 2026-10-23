@@ -2,6 +2,8 @@ import chokidar, { type FSWatcher } from "chokidar";
 import { resolve, relative, join } from "path";
 import { readdir } from "fs/promises";
 import type { Dirent } from "fs";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { logger } from "../utils/logger";
 import { Semaphore } from "../utils/concurrency";
 
@@ -59,6 +61,37 @@ const IGNORED_DIR_SET = new Set(IGNORED_DIR_NAMES);
 // exhaust file descriptors (a known failure mode in this repo).
 const scanFsSemaphore = new Semaphore(64);
 
+const execFileAsync = promisify(execFile);
+const GIT_IGNORED_TIMEOUT_MS = 5_000;
+
+/**
+ * Absolute paths (NFC) of the directories git ignores under `dir`. Git stops at
+ * an ignored directory instead of listing its contents, so this stays cheap on
+ * trees whose bulk is ignored build output (one served project had ~150k
+ * ignored folders, and walking them every sweep held two cores for ~30s).
+ * fsmonitor is forced off so a project's `.git/config` cannot run a command
+ * in the server. Not a repository, or git missing: nothing is ignored.
+ */
+async function gitIgnoredDirs(dir: string): Promise<string[]> {
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["-c", "core.fsmonitor=false", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+      { cwd: dir, timeout: GIT_IGNORED_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024, encoding: "utf8" },
+    );
+    return stdout
+      .split("\0")
+      .filter((path) => path.endsWith("/"))
+      .map((path) => join(dir, path.slice(0, -1)).normalize("NFC"));
+  } catch (error) {
+    const { code, stderr } = error as { code?: unknown; stderr?: unknown };
+    if (code !== "ENOENT" && !(typeof stderr === "string" && /not a git repository/iu.test(stderr))) {
+      logger.warn(`Hot reload: could not read .gitignore rules in ${dir}, scanning every folder: ${(error as Error).message}`);
+    }
+    return [];
+  }
+}
+
 async function readDirEntries(dir: string): Promise<Dirent[]> {
   try {
     // The permit covers only the syscall. Holding it across the recursion would
@@ -76,15 +109,20 @@ async function readDirEntries(dir: string): Promise<Dirent[]> {
  *
  * Replaces a `glob("**\/*.agentuse")` call that cost ~800-1000ms of CPU per
  * sweep on a 200k-file tree. Dot-prefixed entries are skipped at every depth
- * (glob's default `dot: false`) and IGNORED_DIR_SET directories are pruned
- * rather than walked, so the result needs no post-filtering.
+ * (glob's default `dot: false`), and IGNORED_DIR_SET directories and
+ * directories git ignores are pruned rather than walked, so the result needs no
+ * post-filtering. A nested repository is asked about its own ignore rules.
  */
 export async function scanAgentFiles(watchRoot: string): Promise<string[]> {
   const found: string[] = [];
+  const gitIgnored = new Set(await gitIgnoredDirs(watchRoot));
 
   const walk = async (absoluteDir: string, relativeDir: string): Promise<void> => {
     const entries = await readDirEntries(absoluteDir);
     const pending: Promise<void>[] = [];
+    if (relativeDir && entries.some((entry) => entry.name === ".git")) {
+      for (const dir of await gitIgnoredDirs(absoluteDir)) gitIgnored.add(dir);
+    }
 
     for (const entry of entries) {
       const { name } = entry;
@@ -93,7 +131,9 @@ export async function scanAgentFiles(watchRoot: string): Promise<string[]> {
 
       if (entry.isDirectory()) {
         if (IGNORED_DIR_SET.has(name)) continue;
-        pending.push(walk(join(absoluteDir, name), relativePath));
+        const absolutePath = join(absoluteDir, name);
+        if (gitIgnored.has(absolutePath.normalize("NFC"))) continue;
+        pending.push(walk(absolutePath, relativePath));
       } else if (entry.isFile() && name.endsWith(".agentuse")) {
         found.push(relativePath);
       }

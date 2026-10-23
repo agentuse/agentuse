@@ -219,6 +219,32 @@ describe("scanAgentFiles", () => {
     }
   });
 
+  it("skips folders git ignores, using each nested repository's own rules", async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agentuse-scan-git-"));
+
+    const write = (relativePath: string, content = "---\nname: X\n---\n") => {
+      const full = path.join(tmpDir, relativePath);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, content);
+    };
+
+    write(".gitignore", "wp-files/\ndist-*/\n");
+    write("agents/kept.agentuse");
+    write("wp-files/a/b/ignored.agentuse");
+    write("dist-production/ignored.agentuse");
+    write("inner/.gitignore", "private/\n");
+    write("inner/private/ignored.agentuse");
+    write("inner/wp-files/kept.agentuse");
+    Bun.spawnSync(["git", "init", "-q"], { cwd: tmpDir });
+    Bun.spawnSync(["git", "init", "-q"], { cwd: path.join(tmpDir, "inner") });
+
+    try {
+      expect(await scanAgentFiles(tmpDir)).toEqual(["agents/kept.agentuse", "inner/wp-files/kept.agentuse"]);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("returns an empty list for an unreadable root instead of throwing", async () => {
     expect(await scanAgentFiles(path.join(os.tmpdir(), "agentuse-scan-does-not-exist"))).toEqual([]);
   });

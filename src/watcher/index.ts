@@ -1,1 +1,1 @@
-export { FileWatcher, type FileWatcherOptions } from "./file-watcher";
+export { FileWatcher, scanAgentFiles, type FileWatcherOptions } from "./file-watcher";

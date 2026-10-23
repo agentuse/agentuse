@@ -20,7 +20,6 @@ import { createServer, ServerResponse } from "http";
 import { spawn, type ChildProcess } from "child_process";
 import { join, basename, relative, dirname } from "path";
 import { readFile } from "fs/promises";
-import { glob } from "glob";
 import { createInterface, type Interface as ReadlineInterface } from "readline";
 import chalk from "chalk";
 import { parseAgent } from "../parser";
@@ -32,7 +31,7 @@ import { initStorage } from "../storage/index.js";
 import { getAgentuseDataDir } from "../storage/paths.js";
 import { Scheduler, type Schedule, type SerializedSchedule } from "../scheduler";
 import { normalizeScheduleAgentPath, setSchedulePaused } from '../scheduler/state.js';
-import { FileWatcher } from "../watcher";
+import { FileWatcher, scanAgentFiles } from "../watcher";
 import { telemetry, classifyExecution, configuredFeatureUsage, emptyToolCallMetrics, parseModel, type OnboardingRoute, type OnboardingStep, type WebUIClientSurface, type WebUITelemetryEvent } from "../telemetry";
 import { version as packageVersion } from "../../package.json";
 import { getBuildInfo, isDevCheckout } from "../utils/build-info";
@@ -2248,10 +2247,7 @@ export function createServeCommand(): Command {
       // Build projects with agent files and scan for schedules
       const projects: Project[] = [];
       for (const seed of projectSeeds) {
-        const agentFiles = await glob("**/*.agentuse", {
-          cwd: seed.scopeRoot,
-          ignore: ["node_modules/**", "tmp/**", ".git/**"],
-        });
+        const agentFiles = await scanAgentFiles(seed.scopeRoot);
         projects.push({ ...seed, agentFiles });
 
         for (const agentFile of agentFiles) {
@@ -2985,10 +2981,7 @@ export function createServeCommand(): Command {
         if (idPath) throw new Error(`A project named "${seed.id}" is already loaded from ${idPath}`);
         await initStorage(seed.root);
         const worker = await spawnProjectWorker(seed);
-        const agentFiles = await glob("**/*.agentuse", {
-          cwd: seed.scopeRoot,
-          ignore: ["node_modules/**", "tmp/**", ".git/**"],
-        });
+        const agentFiles = await scanAgentFiles(seed.scopeRoot);
         const project: Project = { ...seed, agentFiles };
         let watcher: FileWatcher | undefined;
         const rollback = async (): Promise<void> => {
