@@ -14,7 +14,7 @@ import {
   RELAY_SECRET_HEADER,
   requestActor,
 } from '../src/cloud/relay';
-import { CloudTunnel, TUNNEL_API_VERSION } from '../src/cloud/tunnel';
+import { CloudTunnel, MAX_MCP_FRAME_CHARS, TUNNEL_API_VERSION } from '../src/cloud/tunnel';
 
 const savedConfigDir = process.env.AGENTUSE_CONFIG_DIR;
 let configDir: string;
@@ -176,6 +176,19 @@ describe('tunnel dashboard frames', () => {
     });
     expect(lines.find((line) => line.path === '/mcp')).toMatchObject({ status: 404, error: 'NOT_FOUND', user: 'user-1' });
     expect(lines.find((line) => line.kind === 'mcp')).toMatchObject({ mcp: 'tools/call list_agents', status: 200 });
+  });
+
+  it('answers a too-large MCP reply with a tool error Cloud will deliver', async () => {
+    await connect();
+    // The fake daemon echoes the request, so a 1.1M-character argument makes a reply Cloud would drop.
+    cloudSocket!.send(JSON.stringify({ type: 'mcp', id: 'big', body: JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'get_session', arguments: { pad: 'x'.repeat(1_100_000) } } }) }));
+    await until(() => frames.some((frame) => frame.type === 'mcp_result' && frame.id === 'big'));
+    const result = frames.find((frame) => frame.id === 'big')!;
+    expect(JSON.stringify(result).length).toBeLessThan(MAX_MCP_FRAME_CHARS);
+    expect(result.status).toBe(200);
+    const body = JSON.parse(String(result.body));
+    expect(body).toMatchObject({ jsonrpc: '2.0', id: 7, result: { isError: true, structuredContent: { error: { code: 'TOO_LARGE' } } } });
+    expect(body.result.content[0].text).toContain('too large');
   });
 
   const answerFor = (id: string) => {

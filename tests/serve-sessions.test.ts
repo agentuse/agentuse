@@ -438,6 +438,14 @@ describe('session list helpers', () => {
     expect(new Set([realOnly, include, only]).size).toBe(3);
   });
 
+  it('partitions SSE snapshots by project', () => {
+    const all = __testing.sessionListStreamKey(new URL('http://localhost/sessions/events'));
+    const a = __testing.sessionListStreamKey(new URL('http://localhost/sessions/events?project=a'));
+    const b = __testing.sessionListStreamKey(new URL('http://localhost/sessions/events?project=b'));
+
+    expect(new Set([all, a, b]).size).toBe(3);
+  });
+
   const rows = [
     {
       projectId: 'project-1',

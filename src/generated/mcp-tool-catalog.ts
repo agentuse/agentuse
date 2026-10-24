@@ -207,7 +207,7 @@ export const MCP_TOOL_CATALOG = [
   {
     "name": "get_session",
     "title": "Get run",
-    "description": "One run: status, error, and the full final answer, plus a link to the run page.",
+    "description": "One run: status, error, the full final answer, a link to the run page, and every step with its status, input and error but not its output. If those do not explain what happened, call get_run_step for the outputs of the steps you suspect.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -222,6 +222,55 @@ export const MCP_TOOL_CATALOG = [
       },
       "required": [
         "session_id"
+      ],
+      "additionalProperties": false,
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": false
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "get_run_step",
+    "title": "Get run steps",
+    "description": "The full input and output of chosen steps of one run, by the step numbers get_session lists. Use it only when get_session's errors and steps do not explain what happened. Each output is cut at 100,000 characters and one answer holds about 300,000; steps that do not fit come back in not_sent, to ask for again.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "description": "From get_session"
+        },
+        "project": {
+          "type": "string",
+          "description": "Project id, if known"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "string",
+                "pattern": "^\\d+-\\d+$"
+              }
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 50,
+          "description": "Step numbers or ranges from get_session, e.g. [12, \"30-34\"]"
+        }
+      },
+      "required": [
+        "session_id",
+        "steps"
       ],
       "additionalProperties": false,
       "$schema": "http://json-schema.org/draft-07/schema#"

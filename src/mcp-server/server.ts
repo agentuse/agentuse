@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { version as packageVersion } from '../../package.json';
 import type { AgentDetail, AgentSummary } from '../cli/serve/agents-data.js';
 import type { SessionsPayload } from '../cli/serve/list-payloads.js';
-import type { SessionSummary } from '../cli/serve/types.js';
+import type { ApprovalLogEntry, SessionSummary } from '../cli/serve/types.js';
 import type { ChangesetFile } from '../agents/changeset-types.js';
 import { getApprovalBaseUrl, getSessionUrl } from '../tools/await-human.js';
 import { toErrorMessage } from '../utils/error-message.js';
@@ -73,6 +73,17 @@ function allowlisted(daemon: DaemonClient): DaemonClient {
 const LIST_LIMIT_MAX = 100;
 const PROBLEM_WINDOW = '30d';
 const FINAL_RESPONSE_PREVIEW_CHARS = 280;
+/** get_session sends the outline, never outputs, so a long run stays far under the relay's 1M-character frame. */
+const FINAL_RESPONSE_CHARS = 50_000;
+const OUTLINE_BUDGET_CHARS = 200_000;
+const STEP_TITLE_CHARS = 160;
+const STEP_INPUT_CHARS = 2_000;
+const STEP_ERROR_CHARS = 2_000;
+const STEP_MESSAGE_CHARS = 280;
+/** get_run_step cuts one output here, and stops adding steps to an answer here. */
+const STEP_OUTPUT_CHARS = 100_000;
+const STEP_BUDGET_CHARS = 300_000;
+const MAX_STEPS_PER_CALL = 200;
 
 function ok(text: string, structured: Record<string, unknown>): CallToolResult {
   return { content: [{ type: 'text', text }], structuredContent: structured };
@@ -125,6 +136,112 @@ function sessionView(row: SessionRow, projectRoots: Map<string, string>) {
     url: getSessionUrl(row.sessionId, projectRoots.get(row.project)),
   };
 }
+
+type RunSession = Record<string, unknown> & { project: string; logs?: ApprovalLogEntry[] };
+
+function clip(text: string, max: number): string;
+function clip(text: string | undefined, max: number): string | undefined;
+function clip(text: string | undefined, max: number): string | undefined {
+  return text !== undefined && text.length > max
+    ? `${text.slice(0, max)}… [cut: ${max.toLocaleString('en-US')} of ${text.length.toLocaleString('en-US')} characters shown]`
+    : text;
+}
+
+/** One step of a run as a chat sees it. `step` is the 1-based place in the
+ *  full log, so get_session and get_run_step agree on numbers even though the
+ *  outline hides debug lines. */
+interface RunStep {
+  step: number;
+  type: string;
+  tool?: string;
+  status?: string;
+  title: string;
+  intent?: string;
+  input?: string;
+  error?: string;
+  message?: string;
+  /** The step (a code_exec call) this one ran inside. */
+  inside?: number;
+  /** A later call fixed what this failed one could not do. */
+  recovered?: true;
+  output_chars?: number;
+}
+type RunStepDetail = RunStep & { output?: string };
+
+/** ok, failed, waiting or running, rather than the log's own words. */
+function stepStatus(entry: ApprovalLogEntry): string | undefined {
+  if (entry.status === 'completed') return 'ok';
+  if (entry.status === 'error') return 'failed';
+  if (entry.status === 'pending') return entry.tool === 'await_human' ? 'waiting' : 'running';
+  if (entry.level === 'warn' || entry.level === 'error') return entry.level;
+  return entry.status;
+}
+
+const OUTLINE_LIMITS = { title: STEP_TITLE_CHARS, input: STEP_INPUT_CHARS, error: STEP_ERROR_CHARS, message: STEP_MESSAGE_CHARS };
+const DETAIL_LIMITS = { title: STEP_TITLE_CHARS, input: STEP_OUTPUT_CHARS, error: STEP_OUTPUT_CHARS, message: STEP_OUTPUT_CHARS };
+
+function runStep(step: number, entry: ApprovalLogEntry, inside: number | undefined, limits: typeof OUTLINE_LIMITS): RunStep {
+  const details = entry.details;
+  const output = details?.output ?? details?.liveOutput;
+  const status = stepStatus(entry);
+  const message = entry.message ?? details?.prompt;
+  return {
+    step,
+    type: entry.type,
+    ...(entry.tool && { tool: entry.tool }),
+    ...(status && { status }),
+    title: clip(entry.title, limits.title),
+    ...(details?.intent && { intent: clip(details.intent, limits.title) }),
+    ...(details?.input && { input: clip(details.input, limits.input) }),
+    ...(details?.errorMessage && { error: clip(details.errorMessage, limits.error) }),
+    ...(message && { message: clip(message, limits.message) }),
+    ...(inside && { inside }),
+    ...(details?.recoveredByCallId && { recovered: true as const }),
+    ...(output && { output_chars: output.length }),
+  };
+}
+
+const stepOfCall = (logs: ApprovalLogEntry[]) =>
+  new Map(logs.flatMap((entry, index) => (entry.callId ? [[entry.callId, index + 1] as const] : [])));
+
+/** Every step but debug lines, without outputs. A run too long even for that
+ *  keeps its problems plus its start and end, and says how many it left out. */
+function runOutline(logs: ApprovalLogEntry[]): { steps: RunStep[]; omitted: number } {
+  const stepOf = stepOfCall(logs);
+  const steps = logs.flatMap((entry, index) => entry.level === 'debug'
+    ? []
+    : [runStep(index + 1, entry, entry.parentCallId ? stepOf.get(entry.parentCallId) : undefined, OUTLINE_LIMITS)]);
+  if (JSON.stringify(steps).length <= OUTLINE_BUDGET_CHARS) return { steps, omitted: 0 };
+  const problem = (step: RunStep) => step.status !== undefined && step.status !== 'ok';
+  const kept = steps.filter((step, index) => index < 20 || index >= steps.length - 40 || problem(step));
+  return { steps: kept, omitted: steps.length - kept.length };
+}
+
+function stepDetail(step: number, entry: ApprovalLogEntry, logs: ApprovalLogEntry[]): RunStepDetail {
+  const inside = entry.parentCallId ? stepOfCall(logs).get(entry.parentCallId) : undefined;
+  const output = entry.details?.output ?? entry.details?.liveOutput;
+  return { ...runStep(step, entry, inside, DETAIL_LIMITS), ...(output && { output: clip(output, STEP_OUTPUT_CHARS) }) };
+}
+
+/** [12, "30-34"] → [12, 30, 31, 32, 33, 34], each once, in the order asked. */
+function expandSteps(steps: Array<number | string>): number[] {
+  const out = new Set<number>();
+  for (const item of steps) {
+    if (typeof item === 'number') {
+      out.add(item);
+    } else {
+      const [a, b] = item.split('-').map(Number) as [number, number];
+      for (let n = Math.min(a, b); n <= Math.max(a, b) && out.size <= MAX_STEPS_PER_CALL; n += 1) out.add(n);
+    }
+    if (out.size > MAX_STEPS_PER_CALL) {
+      throw new McpToolError('TOO_MANY_STEPS', `Ask for at most ${MAX_STEPS_PER_CALL} steps at a time.`);
+    }
+  }
+  return [...out].filter((n) => n >= 1);
+}
+
+const stepHeading = (step: RunStep) =>
+  `${step.step}${step.inside ? ` (inside ${step.inside})` : ''} ${step.status ?? step.type} ${step.tool ?? step.type}: ${step.intent ?? step.title}`;
 
 interface ChatChangesetResponse {
   changeset: {
@@ -280,6 +397,9 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
   }, guarded(async ({ project, agent, status, window, limit }) => {
     const [payload, roots] = await Promise.all([
       daemon.get<SessionsPayload>('/sessions', {
+        // The daemon pages and counts within the project, so a busier
+        // project cannot push this one's runs off the page.
+        project,
         // The daemon matches a substring of the agent id (the path without
         // `.agentuse`); the exact run-path check below drops near misses.
         agent: agent?.replace(/\.agentuse$/u, ''),
@@ -290,29 +410,100 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
       projectRoots(),
     ]);
     const sessions = (payload.sessions as SessionRow[])
-      .filter((row) => !project || row.project === project)
       .map((row) => sessionView(row, roots))
       .filter((view) => !agent || view.agent === agent);
     const lines = sessions.map((s) => `${s.created_at} ${s.project}/${s.agent} ${s.status} ${s.session_id}`);
     return ok(lines.join('\n') || 'No runs in this window.', { sessions, counts: payload.counts });
   }));
 
+  const runSession = (session_id: string, project: string | undefined) =>
+    daemon.get<{ session: RunSession }>(`/sessions/${encodeURIComponent(session_id)}`, { project });
+
   server.registerTool('get_session', {
     title: 'Get run',
-    description: 'One run: status, error, and the full final answer, plus a link to the run page.',
+    description: 'One run: status, error, the full final answer, a link to the run page, and every step with its status, input and error but not its output. '
+      + 'If those do not explain what happened, call get_run_step for the outputs of the steps you suspect.',
     inputSchema: {
       session_id: z.string().describe('From list_sessions, list_problems or run_agent'),
       project: z.string().optional().describe('Project id, if known'),
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, guarded(async ({ session_id, project }) => {
-    const [{ session }, roots] = await Promise.all([
-      daemon.get<{ session: Record<string, unknown> & { project: string } }>(`/sessions/${encodeURIComponent(session_id)}`, { project }),
-      projectRoots(),
-    ]);
+    const [{ session }, roots] = await Promise.all([runSession(session_id, project), projectRoots()]);
+    const { logs = [], ...rest } = session;
     const url = getSessionUrl(session_id, roots.get(session.project));
-    const structured = { ...session, session_id, url };
-    return ok(`Run ${session_id}: ${String(session.status)}${url ? `\n${url}` : ''}`, structured);
+    const outline = runOutline(logs);
+    const finalResponse = clip(logs.filter((entry) => entry.type === 'text').at(-1)?.message, FINAL_RESPONSE_CHARS);
+    const structured = {
+      ...rest,
+      session_id,
+      url,
+      ...(finalResponse && { final_response: finalResponse }),
+      step_count: logs.length,
+      steps: outline.steps,
+      ...(outline.omitted > 0 && { omitted_steps: outline.omitted }),
+    };
+    return ok([
+      `Run ${session_id}: ${String(session.status)}`,
+      ...(url ? [url] : []),
+      ...(finalResponse ? [`Final answer: ${finalResponse}`] : []),
+      `Steps (${outline.steps.length} shown of ${logs.length}; debug lines hidden${outline.omitted > 0 ? `, ${outline.omitted} more left out for size` : ''}):`,
+      ...outline.steps.map((step) => `${stepHeading(step)}${step.error ? ` | error: ${clip(step.error, 200)}` : ''}`),
+    ].join('\n'), structured);
+  }));
+
+  server.registerTool('get_run_step', {
+    title: 'Get run steps',
+    description: 'The full input and output of chosen steps of one run, by the step numbers get_session lists. '
+      + 'Use it only when get_session\'s errors and steps do not explain what happened. '
+      + `Each output is cut at ${STEP_OUTPUT_CHARS.toLocaleString('en-US')} characters and one answer holds about ${STEP_BUDGET_CHARS.toLocaleString('en-US')}; steps that do not fit come back in not_sent, to ask for again.`,
+    inputSchema: {
+      session_id: z.string().describe('From get_session'),
+      project: z.string().optional().describe('Project id, if known'),
+      steps: z.array(z.union([z.number().int().min(1), z.string().regex(/^\d+-\d+$/u)])).min(1).max(50)
+        .describe('Step numbers or ranges from get_session, e.g. [12, "30-34"]'),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, guarded(async ({ session_id, project, steps }) => {
+    const { session } = await runSession(session_id, project);
+    const logs = session.logs ?? [];
+    const sent: RunStepDetail[] = [];
+    const notSent: number[] = [];
+    const missing: number[] = [];
+    let used = 0;
+    for (const number of expandSteps(steps)) {
+      const entry = logs[number - 1];
+      if (!entry) {
+        missing.push(number);
+        continue;
+      }
+      const detail = stepDetail(number, entry, logs);
+      const size = JSON.stringify(detail).length;
+      if (sent.length > 0 && used + size > STEP_BUDGET_CHARS) {
+        notSent.push(number);
+        continue;
+      }
+      sent.push(detail);
+      used += size;
+    }
+    const text = [
+      ...sent.map((step) => [
+        stepHeading(step),
+        ...(step.input ? [`input: ${step.input}`] : []),
+        ...(step.error ? [`error: ${step.error}`] : []),
+        ...(step.message ? [`message: ${step.message}`] : []),
+        ...(step.output ? [`output:\n${step.output}`] : []),
+      ].join('\n')),
+      ...(notSent.length ? [`Not sent, too large for one answer: ${notSent.join(', ')}. Ask again for these.`] : []),
+      ...(missing.length ? [`No such step: ${missing.join(', ')}. This run has ${logs.length} steps.`] : []),
+    ].join('\n\n');
+    return ok(text, {
+      session_id,
+      step_count: logs.length,
+      steps: sent,
+      ...(notSent.length > 0 && { not_sent: notSent }),
+      ...(missing.length > 0 && { missing }),
+    });
   }));
 
   server.registerTool('list_problems', {
@@ -321,7 +512,7 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
     inputSchema: { project: z.string().optional().describe('Project id. Omit for all projects.') },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, guarded(async ({ project }) => {
-    const query = (status: string) => ({ status, triage: 'undismissed', window: PROBLEM_WINDOW, limit: String(LIST_LIMIT_MAX) });
+    const query = (status: string) => ({ project, status, triage: 'undismissed', window: PROBLEM_WINDOW, limit: String(LIST_LIMIT_MAX) });
     const [errors, incompletes, roots] = await Promise.all([
       daemon.get<SessionsPayload>('/sessions', query('error')),
       daemon.get<SessionsPayload>('/sessions', query('incomplete')),
@@ -329,7 +520,6 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
     ]);
     const groups = new Map<string, { project: string; agent: string; cause: string; count: number; last_at: string; latest: ReturnType<typeof sessionView> }>();
     for (const row of [...errors.sessions, ...incompletes.sessions] as SessionRow[]) {
-      if (project && row.project !== project) continue;
       const view = sessionView(row, roots);
       const cause = row.errorCause ?? row.errorCode ?? (row.status === 'error' ? 'error' : 'incomplete');
       const key = `${row.project}\0${view.agent}\0${cause}`;

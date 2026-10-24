@@ -44,7 +44,7 @@ const TRIAGE = `You are fixing AgentUse agents that fail on the user's own compu
 
 Steps:
 1. Call list_problems (for one agent if the user named one). No problems: say so and stop.
-2. Take the newest or most frequent problem. Call get_session on its latest run, then get_agent for that agent.
+2. Take the newest or most frequent problem. Call get_session on its latest run, then get_agent for that agent. If the run's errors and steps do not explain the failure, call get_run_step for the outputs of the steps you suspect.
 3. Find the cause and say which layer owns it: the agent file, the project's code, setup (a login, key, or missing program), or AgentUse itself.
 4. If the agent file or its helper files are the cause, write the corrected files and call propose_fix with the failed run as from_session. If propose_fix is rejected, fix the files and call it again with the same fix_id. Then call test_draft with the fix_id and get_session until it ends, and adjust if the practice run shows the fix does not hold.
 5. If the cause is setup or project code, do not propose a fix. Tell the user exactly what to change and where.
@@ -54,7 +54,7 @@ Steps:
 const ASK = `Answer the user's request with the AgentUse tools, which reach AgentUse on the user's own computer. Use what the tools return, not memory or guesses.
 
 - If the request needs a project and none is clear, call list_projects first. With one project, use it; with several, pick from the conversation or ask which.
-- Look things up with get_project, list_agents, get_agent, list_sessions, get_session and list_problems. Keep answers short: names, states and times the user can act on.
+- Look things up with get_project, list_agents, get_agent, list_sessions, get_session, get_run_step and list_problems. Keep answers short: names, states and times the user can act on.
 - Call run_agent only when the user asked for that run.
 - To build a new agent or fix a failing one, say that /automate or /triage does it, and use that workflow if the user agrees.
 - You cannot approve steps, dismiss runs or turn on drafts on your own; the user does that.`;

@@ -74,10 +74,10 @@ describe('agentuse MCP server', () => {
     client = await connect(fakeDaemon({}).daemon);
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual(
-      ['apply_draft', 'draft_agent', 'get_agent', 'get_project', 'get_session', 'get_workflow', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'propose_fix', 'read_project_file', 'run_agent', 'test_draft'],
+      ['apply_draft', 'draft_agent', 'get_agent', 'get_project', 'get_run_step', 'get_session', 'get_workflow', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'propose_fix', 'read_project_file', 'run_agent', 'test_draft'],
     );
     const readOnly = tools.filter((tool) => tool.annotations?.readOnlyHint).map((tool) => tool.name);
-    expect(readOnly.sort()).toEqual(['get_agent', 'get_project', 'get_session', 'get_workflow', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'read_project_file']);
+    expect(readOnly.sort()).toEqual(['get_agent', 'get_project', 'get_run_step', 'get_session', 'get_workflow', 'list_agents', 'list_problems', 'list_projects', 'list_sessions', 'read_project_file']);
   });
 
   it('lists projects by name without their paths', async () => {
@@ -159,6 +159,90 @@ describe('agentuse MCP server', () => {
     const result = await call('list_sessions', { agent: 'agents/digest.agentuse' });
     expect((result.structuredContent?.sessions as Array<Record<string, any>>).map((s) => s.session_id)).toEqual(['a']);
     expect(calls.find((c) => c.path === '/sessions')?.query?.agent).toBe('agents/digest');
+  });
+
+  it('asks the daemon for one project, so its page and counts are that project alone', async () => {
+    const { daemon, calls } = fakeDaemon({
+      'GET ': serverInfo,
+      'GET /sessions': () => ({ sessions: [row({ sessionId: 'h1', project: 'home' })], counts: { all: 1 } }),
+    });
+    client = await connect(daemon);
+    const result = await call('list_sessions', { project: 'home', limit: 5 });
+    expect(calls.find((c) => c.path === '/sessions')?.query).toMatchObject({ project: 'home', limit: '5' });
+    expect((result.structuredContent?.sessions as Array<Record<string, any>>).map((s) => s.session_id)).toEqual(['h1']);
+    await call('list_problems', { project: 'home' });
+    expect(calls.filter((c) => c.path === '/sessions').slice(1).map((c) => c.query?.project)).toEqual(['home', 'home']);
+  });
+
+  // A long run shaped like the one Cloud could not send: big outputs, debug noise, a nested failure, a gate.
+  const longRun = () => ({
+    session: {
+      sessionId: 'r1', project: 'eng', status: 'waiting', summary: 'Approve the reply',
+      logs: [
+        { id: 'l1', type: 'log', level: 'debug', title: 'debug noise' },
+        { id: 'l2', type: 'tool', tool: 'code_exec', callId: 'c1', status: 'error', title: 'code_exec error', details: { input: '{"code":"…"}', errorMessage: 'Code Mode failed: bad input' } },
+        { id: 'l3', type: 'tool', tool: 'search', callId: 'c1:n', parentCallId: 'c1', status: 'error', title: 'search error', details: { input: 'i'.repeat(5_000), errorMessage: 'too_big' } },
+        ...Array.from({ length: 60 }, (_, i) => ({ id: `t${i}`, type: 'tool', tool: 'bash', callId: `b${i}`, status: 'completed', title: `bash ${i}`, details: { input: '{"command":"ls"}', output: 'o'.repeat(30_000) } })),
+        { id: 'l4', type: 'text', status: 'completed', title: 'Assistant response', message: 'Here is the draft.' },
+        { id: 'l5', type: 'tool', tool: 'await_human', callId: 'g1', status: 'pending', title: 'Pending for approval', details: { prompt: 'Send this reply?' } },
+      ],
+    },
+  });
+
+  it('get_session lists every step with status, input and error, but no outputs', async () => {
+    client = await connect(fakeDaemon({ 'GET ': serverInfo, 'GET /sessions/r1': longRun }).daemon);
+    const result = await call('get_session', { session_id: 'r1' });
+    const s = result.structuredContent!;
+    expect(JSON.stringify(result).length).toBeLessThan(100_000);
+    expect(s.logs).toBeUndefined();
+    expect(s.final_response).toBe('Here is the draft.');
+    expect(s.step_count).toBe(65);
+    const steps = s.steps as Array<Record<string, any>>;
+    expect(steps.map((step) => step.step)).not.toContain(1);
+    expect(steps).toHaveLength(64);
+    expect(steps[0]).toMatchObject({ step: 2, tool: 'code_exec', status: 'failed', error: 'Code Mode failed: bad input' });
+    expect(steps[1]).toMatchObject({ step: 3, status: 'failed', inside: 2 });
+    expect(steps[1]!.input).toContain('[cut: 2,000 of 5,000 characters shown]');
+    expect(steps[2]).toMatchObject({ step: 4, status: 'ok', output_chars: 30_000 });
+    expect(steps[2]!.output).toBeUndefined();
+    expect(steps.at(-1)).toMatchObject({ step: 65, tool: 'await_human', status: 'waiting', message: 'Send this reply?' });
+    expect(result.content[0]!.text).toContain('3 (inside 2) failed search: search error | error: too_big');
+  });
+
+  it('get_run_step returns outputs by step number and lists the ones that did not fit', async () => {
+    client = await connect(fakeDaemon({ 'GET ': serverInfo, 'GET /sessions/r1': longRun }).daemon);
+    const result = await call('get_run_step', { session_id: 'r1', steps: [3, '4-20', 999] });
+    const s = result.structuredContent!;
+    const sent = s.steps as Array<Record<string, any>>;
+    expect(sent[0]).toMatchObject({ step: 3, inside: 2, error: 'too_big' });
+    expect(sent[0]!.input).toHaveLength(5_000);
+    expect(sent[1]).toMatchObject({ step: 4, output: 'o'.repeat(30_000) });
+    expect(JSON.stringify(sent).length).toBeLessThanOrEqual(300_000);
+    expect(sent.map((step) => step.step)).toEqual([3, ...Array.from({ length: sent.length - 1 }, (_, i) => 4 + i)]);
+    expect(s.not_sent).toEqual(Array.from({ length: 17 - (sent.length - 1) }, (_, i) => 4 + (sent.length - 1) + i));
+    expect(s.missing).toEqual([999]);
+    expect(result.content[0]!.text).toContain('Ask again for these.');
+  });
+
+  it('get_session keeps a very long run under its budget, keeping the failures', async () => {
+    const logs = Array.from({ length: 400 }, (_, i) => ({
+      id: `t${i}`, type: 'tool', tool: 'bash', callId: `b${i}`, status: i === 200 ? 'error' : 'completed', title: `bash ${i}`,
+      details: { input: 'i'.repeat(2_000), ...(i === 200 && { errorMessage: 'exit 1' }) },
+    }));
+    client = await connect(fakeDaemon({ 'GET ': serverInfo, 'GET /sessions/r2': () => ({ session: { sessionId: 'r2', project: 'eng', status: 'error', logs } }) }).daemon);
+    const result = await call('get_session', { session_id: 'r2' });
+    const steps = result.structuredContent!.steps as Array<Record<string, any>>;
+    expect(JSON.stringify(result.structuredContent).length).toBeLessThan(250_000);
+    expect(result.structuredContent!.omitted_steps).toBe(400 - steps.length);
+    expect(steps.find((step) => step.step === 201)).toMatchObject({ status: 'failed', error: 'exit 1' });
+    expect(steps.at(-1)!.step).toBe(400);
+  });
+
+  it('get_run_step refuses a range wider than one call should read', async () => {
+    client = await connect(fakeDaemon({ 'GET ': serverInfo, 'GET /sessions/r1': longRun }).daemon);
+    const result = await call('get_run_step', { session_id: 'r1', steps: ['1-100000'] });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.error.code).toBe('TOO_MANY_STEPS');
   });
 
   it('starts a detached run and returns its link', async () => {

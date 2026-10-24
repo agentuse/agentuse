@@ -4238,6 +4238,15 @@ export function createServeCommand(): Command {
         const updatedAfter = sessionListUpdatedAfter(requestUrl);
         const daysFilter = sessionDaysFilterValue(requestUrl);
         const detail = requestUrl.searchParams.get('detail');
+        // ?project=<id>: one project's runs. Paging and the chip counts then
+        // cover that project alone, not the newest page of the whole machine.
+        const projectFilter = requestUrl.searchParams.get('project') || undefined;
+        let listedProjects = projects;
+        if (projectFilter) {
+          const selection = selectSessionProjects(projects, projectFilter);
+          if (!selection.success) return selection;
+          listedProjects = selection.projects;
+        }
         // Free-text lookup over agent identity and final output text. Matching the
         // output means the answer to "which run said X" no longer requires opening
         // runs one by one, which is the only reason this list gets opened at all.
@@ -4262,7 +4271,7 @@ export function createServeCommand(): Command {
         const errors: Array<{ projectId: string; message: string }> = [];
         const approvalSessionIdsByProject = new Map<string, Set<string>>();
 
-        const projectResults = await Promise.all(projects.map(async (project) => {
+        const projectResults = await Promise.all(listedProjects.map(async (project) => {
           const projectWorker = workers.get(project.id);
           if (!projectWorker) {
             return { project, error: 'Worker unavailable' };
@@ -4287,7 +4296,7 @@ export function createServeCommand(): Command {
         }));
 
         if (approvalFilter) {
-          const approvalResults = await Promise.all(projects.map(async (project) => {
+          const approvalResults = await Promise.all(listedProjects.map(async (project) => {
             const projectWorker = workers.get(project.id);
             if (!projectWorker) {
               return { project, error: 'Worker unavailable' };
@@ -4497,7 +4506,7 @@ export function createServeCommand(): Command {
         // it would silently expire every cursor at the next minute boundary and
         // restart Load more from page 1. A cursor row that slides out of the
         // window is still caught by cursorPage's row-lookup fallback.
-        const fingerprint = ['sessions', daysFilter, agentFilter ?? '', statusFilter ?? '', triageFilter ?? '', triggerFilter ?? '', approvalFilter ?? '', searchQuery, metricFilter ?? '', resultsFilter ?? ''].join('\0');
+        const fingerprint = ['sessions', daysFilter, projectFilter ?? '', agentFilter ?? '', statusFilter ?? '', triageFilter ?? '', triggerFilter ?? '', approvalFilter ?? '', searchQuery, metricFilter ?? '', resultsFilter ?? ''].join('\0');
         const page = cursorPage(requestUrl, fingerprint, statusRows, (row) =>
           `${row.session.createdAt}\0${row.projectId}\0${row.session.sessionId}`
         );

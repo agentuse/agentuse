@@ -74,6 +74,8 @@ const PING_MS = 25_000;
 const PONG_DEADLINE_MS = 60_000;
 const MAX_BACKOFF_MS = 60_000;
 const LOCAL_MCP_TIMEOUT_MS = 55_000;
+/** Cloud drops any frame longer than this (agentuse-cloud src/hub.ts), so the call would only time out there. */
+export const MAX_MCP_FRAME_CHARS = 1_000_000;
 /** How long a replayed dashboard request may take to start answering. Streams then run until either side ends them. */
 const LOCAL_HTTP_HEADERS_TIMEOUT_MS = 55_000;
 /** Raw bytes per `http_chunk`; base64 makes the frame about a third larger. */
@@ -395,8 +397,15 @@ export class CloudTunnel {
     }
     if (frame.type !== 'mcp' || !frame.id || typeof frame.body !== 'string') return;
     const startedAt = Date.now();
-    const call = mcpCallName(frame.body);
-    const reply = (status: number, contentType: string, body: string) => {
+    const requestBody = frame.body;
+    const call = mcpCallName(requestBody);
+    const reply = (status: number, contentType: string, answer: string) => {
+      let frameText = JSON.stringify({ type: 'mcp_result', id: frame.id, status, contentType, body: answer });
+      if (frameText.length > MAX_MCP_FRAME_CHARS) {
+        status = 200;
+        contentType = 'application/json';
+        frameText = JSON.stringify({ type: 'mcp_result', id: frame.id, status, contentType, body: mcpTooLarge(requestBody, frameText.length) });
+      }
       this.options.accessLog?.write({
         at: new Date(startedAt).toISOString(),
         kind: 'mcp',
@@ -405,7 +414,7 @@ export class CloudTunnel {
         durationMs: Date.now() - startedAt,
       });
       if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: 'mcp_result', id: frame.id, status, contentType, body }));
+        socket.send(frameText);
       }
     };
     try {
@@ -570,6 +579,21 @@ function frameHeaders(headers: Record<string, string> | undefined): { user?: str
 }
 
 /** `tools/call list_agents`, `tools/list`, …: the JSON-RPC method and tool, never the arguments. */
+/**
+ * What goes back instead of an answer Cloud would drop. A tool error, not an
+ * HTTP failure, so the chat reads why and can ask for less.
+ */
+function mcpTooLarge(requestBody: string, frameChars: number): string {
+  let id: unknown = null;
+  try {
+    id = (JSON.parse(requestBody) as { id?: unknown }).id ?? null;
+  } catch {
+    // Unparseable requests never got an answer to replace.
+  }
+  const text = `This answer is too large to send through AgentUse Cloud (${frameChars.toLocaleString('en-US')} characters, limit ${MAX_MCP_FRAME_CHARS.toLocaleString('en-US')}). Ask for less, for example fewer steps at a time.`;
+  return JSON.stringify({ jsonrpc: '2.0', id, result: { isError: true, content: [{ type: 'text', text }], structuredContent: { error: { code: 'TOO_LARGE', message: text } } } });
+}
+
 function mcpCallName(body: string): string | undefined {
   try {
     const parsed = JSON.parse(body) as { method?: unknown; params?: { name?: unknown } };

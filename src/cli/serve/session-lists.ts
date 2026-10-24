@@ -30,6 +30,7 @@ export function sessionListStreamKey(requestUrl: URL): string {
     requestUrl.searchParams.get('status') ?? '',
     requestUrl.searchParams.get('triage') ?? '',
     requestUrl.searchParams.get('trigger') ?? '',
+    requestUrl.searchParams.get('project') ?? '',
     requestUrl.searchParams.get('agent') ?? '',
     requestUrl.searchParams.get('approval') ?? '',
     requestUrl.searchParams.get('q') ?? '',
