@@ -543,6 +543,9 @@ function judgeMarksFor(judge: JudgeSummary | undefined, details: ApprovalLogDeta
   attempt: number;
   marks: Map<string, { candidate: JudgeCandidate; stale: boolean }>;
   href?: string | undefined;
+  /** The judge's slate-level line (e.g. which letter it would post). Only
+      from the current verdict: a carried-forward one judged other text. */
+  slate?: JudgeCandidate | undefined;
 } | undefined {
   if (!judge) return undefined;
   const source = judge.candidates && judge.candidates.length > 0
@@ -562,7 +565,10 @@ function judgeMarksFor(judge: JudgeSummary | undefined, details: ApprovalLogDeta
     const stale = Boolean(candidate.fingerprint) && now !== undefined && now !== candidate.fingerprint;
     marks.set(candidate.id, { candidate, stale });
   }
-  return { attempt: source.attempt, marks, href: judge.sessionHref };
+  const slate = source === judge && judge.critique
+    ? { id: 'slate', pass: judge.verdict === 'pass', critique: judge.critique }
+    : undefined;
+  return { attempt: source.attempt, marks, href: judge.sessionHref, slate };
 }
 
 export function OptionsBlock(props: {
@@ -581,6 +587,12 @@ export function OptionsBlock(props: {
   return (
     <section class="approval-section approval-options">
       <h4 class="approval-section-title">Pick one</h4>
+      {/* The per-option strips only carry each candidate's own verdict; the
+          judge's word on the slate as a whole (its recommendation on a pass)
+          lives in the top-level critique and otherwise never reaches the card. */}
+      {props.judgeMarks?.slate && (
+        <JudgeStrip candidate={props.judgeMarks.slate} attempt={props.judgeMarks.attempt} href={props.judgeMarks.href} />
+      )}
       <div class="approval-options-list" role={interactive ? 'radiogroup' : 'list'} aria-label="Options to pick from">
         {props.options.map((opt) => {
           const isDecided = props.decided === opt.id;

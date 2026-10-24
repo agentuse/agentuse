@@ -2991,6 +2991,33 @@ describe('judge verdict on an approval gate card', () => {
     expect(html.split('judge · attempt 1').length - 1).toBe(2);
   });
 
+  it('shows the slate-level critique above the options, where a passing judge recommends one', () => {
+    const html = renderEntry(gate({
+      options: [
+        { id: 'A', label: 'Draft A' },
+        { id: 'B', label: 'Draft B' },
+      ],
+      changes: [
+        { optionId: 'A', content: 'first reply' },
+        { optionId: 'B', content: 'second reply' },
+      ],
+      judge: {
+        verdict: 'pass',
+        attempt: 0,
+        maxAttempts: 3,
+        critique: 'Recommend A: it answers the question she asked.',
+        candidates: [
+          { id: 'A', pass: true, critique: 'Passes 1-10.' },
+          { id: 'B', pass: true, critique: 'Passes 1-10.' },
+        ],
+      },
+    }), { expanded: true });
+
+    expect(html).toContain('Recommend A: it answers the question she asked.');
+    expect(html.indexOf('Recommend A')).toBeLessThan(html.indexOf('Draft A'));
+    expect(html.split('approval-judge-strip is-pass').length - 1).toBe(3);
+  });
+
   it('renders a carried-forward pass as settled rather than a fresh verdict', () => {
     const html = renderEntry(gate({
       options: [{ id: 'B', label: 'Draft B' }],
