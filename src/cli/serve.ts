@@ -4235,6 +4235,8 @@ export function createServeCommand(): Command {
         // opened yet, the "don't miss the good ones" queue.
         const metricFilter = (requestUrl.searchParams.get('metric') ?? '').trim() || undefined;
         const resultsFilter = parseSessionResultsFilter(requestUrl.searchParams.get('results') ?? undefined);
+        // ?sort=created: newest start first. Default is last activity.
+        const sortByCreated = requestUrl.searchParams.get('sort') === 'created';
         const updatedAfter = sessionListUpdatedAfter(requestUrl);
         const daysFilter = sessionDaysFilterValue(requestUrl);
         const detail = requestUrl.searchParams.get('detail');
@@ -4365,12 +4367,14 @@ export function createServeCommand(): Command {
         // Live runs (actively running, or a parent whose delegated child is
         // running) sort ahead of everything else so in-flight work is never
         // buried below runs that merely finished more recently; within each tier,
-        // most-recently-active first. The cursor relocates rows by their stable
-        // key (createdAt+id), so this ordering does not affect pagination.
+        // most-recently-active first (or newest start, with ?sort=created). The
+        // cursor relocates rows by their stable key (createdAt+id), so this
+        // ordering does not affect pagination.
         const isLive = (s: SessionSummary) => isExecutingSessionStatus(s.status) || s.subagentActive === true;
+        const sortTime = (s: SessionSummary) => sortByCreated ? s.createdAt : s.updatedAt;
         rows.sort((a, b) =>
           (isLive(a.session) ? 0 : 1) - (isLive(b.session) ? 0 : 1) ||
-          b.session.updatedAt - a.session.updatedAt ||
+          sortTime(b.session) - sortTime(a.session) ||
           b.session.createdAt - a.session.createdAt ||
           a.projectId.localeCompare(b.projectId) ||
           a.session.sessionId.localeCompare(b.session.sessionId)
@@ -4506,7 +4510,7 @@ export function createServeCommand(): Command {
         // it would silently expire every cursor at the next minute boundary and
         // restart Load more from page 1. A cursor row that slides out of the
         // window is still caught by cursorPage's row-lookup fallback.
-        const fingerprint = ['sessions', daysFilter, projectFilter ?? '', agentFilter ?? '', statusFilter ?? '', triageFilter ?? '', triggerFilter ?? '', approvalFilter ?? '', searchQuery, metricFilter ?? '', resultsFilter ?? ''].join('\0');
+        const fingerprint = ['sessions', daysFilter, projectFilter ?? '', agentFilter ?? '', statusFilter ?? '', triageFilter ?? '', triggerFilter ?? '', approvalFilter ?? '', searchQuery, metricFilter ?? '', resultsFilter ?? '', sortByCreated ? 'created' : ''].join('\0');
         const page = cursorPage(requestUrl, fingerprint, statusRows, (row) =>
           `${row.session.createdAt}\0${row.projectId}\0${row.session.sessionId}`
         );

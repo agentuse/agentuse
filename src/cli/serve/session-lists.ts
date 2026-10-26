@@ -37,6 +37,7 @@ export function sessionListStreamKey(requestUrl: URL): string {
     requestUrl.searchParams.get('mock') ?? '',
     requestUrl.searchParams.get('metric') ?? '',
     requestUrl.searchParams.get('results') ?? '',
+    requestUrl.searchParams.get('sort') ?? '',
     requestUrl.searchParams.get('detail') ?? '',
     requestUrl.searchParams.get('limit') ?? '',
     requestUrl.searchParams.get('cursor') ?? '',

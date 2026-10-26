@@ -1310,6 +1310,9 @@ export function fetchSchedules(): Promise<SchedulesPayload> {
 
 export type SessionRow = SessionSummary & { project: string };
 
+/** Session list order. The server's default (absent) is last activity. */
+export type SessionSort = 'created';
+
 /** Status split of the window, taken before the status filter narrows the page. */
 export interface SessionStatusCounts {
   all: number;
@@ -1357,6 +1360,8 @@ export function fetchSessions(options: {
   metric?: string | undefined;
   /** 'unseen': finished runs with results no reviewer has opened yet. */
   results?: 'unseen' | undefined;
+  /** 'created': newest start first. Default is last activity. */
+  sort?: SessionSort | undefined;
 } = {}): Promise<SessionsPayload> {
   return getJson('/api/sessions', {
     agent: options.agent,
@@ -1372,6 +1377,7 @@ export function fetchSessions(options: {
     mock: options.mock,
     metric: options.metric,
     results: options.results,
+    sort: options.sort,
   });
 }
 
@@ -1415,6 +1421,7 @@ export function sessionsEventUrl(options: {
   mock?: 'include' | 'only' | undefined;
   metric?: string | undefined;
   results?: 'unseen' | undefined;
+  sort?: SessionSort | undefined;
 } = {}): string {
   const url = new URL(daemonUrl('/sessions/events'), location.origin);
   if (options.agent !== undefined) url.searchParams.set('agent', options.agent);
@@ -1429,5 +1436,6 @@ export function sessionsEventUrl(options: {
   if (options.mock !== undefined) url.searchParams.set('mock', options.mock);
   if (options.metric !== undefined) url.searchParams.set('metric', options.metric);
   if (options.results !== undefined) url.searchParams.set('results', options.results);
+  if (options.sort !== undefined) url.searchParams.set('sort', options.sort);
   return url.toString();
 }

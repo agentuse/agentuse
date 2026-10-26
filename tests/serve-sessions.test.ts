@@ -446,6 +446,13 @@ describe('session list helpers', () => {
     expect(new Set([all, a, b]).size).toBe(3);
   });
 
+  it('partitions SSE snapshots by sort order', () => {
+    const updated = __testing.sessionListStreamKey(new URL('http://localhost/sessions/events'));
+    const created = __testing.sessionListStreamKey(new URL('http://localhost/sessions/events?sort=created'));
+
+    expect(updated).not.toBe(created);
+  });
+
   const rows = [
     {
       projectId: 'project-1',

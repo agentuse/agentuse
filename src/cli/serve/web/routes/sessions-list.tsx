@@ -3,7 +3,7 @@ import { failureLabel } from '../../../../session/failure-label';
 import { Fragment, type ComponentChildren } from 'preact';
 import { useLocation } from 'preact-iso';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { SessionRow, SessionsPayload } from '../lib/api';
+import type { SessionRow, SessionSort, SessionsPayload } from '../lib/api';
 import { fetchSessions, fetchAgents, runAgentDetached, postSessionStop } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useElementWidth } from '../hooks/use-element-width';
@@ -27,6 +27,10 @@ const WINDOWS = ['24h', '7d', '30d', 'all'];
 /** Windows the URL accepts but the segmented control does not show. */
 const EXTRA_WINDOWS = ['1h', '6h', '90d'];
 const TRIGGERS = ['', 'manual', 'scheduled', 'slack', 'api'];
+const SORTS: Array<{ value: '' | SessionSort; label: string; title: string }> = [
+  { value: '', label: 'Updated', title: 'Most recently active first' },
+  { value: 'created', label: 'Started', title: 'Newest start first' },
+];
 const MOCK_OPTIONS: Array<{ value: string; label: string }> = [
   { value: '', label: 'hidden' },
   { value: 'include', label: 'shown' },
@@ -55,6 +59,11 @@ export interface SessionTail {
 
 /** The largest page the server returns (LIST_PAGE_MAX_LIMIT in session-lists). */
 const SESSION_PAGE_MAX = 100;
+
+/** The time a row sorts, groups, and is labelled by under each order. */
+export function sessionSortTime(row: Pick<SessionRow, 'createdAt' | 'updatedAt'>, sort: SessionSort | undefined): number {
+  return sort === 'created' ? row.createdAt : row.updatedAt;
+}
 
 /** Load `want` rows following `from`, in as few pages as the server allows. */
 export async function loadSessionTail(
@@ -233,9 +242,11 @@ export function SessionListItem(props: {
   href: string;
   now?: number | undefined;
   dismissed?: boolean | undefined;
+  sort?: SessionSort | undefined;
   onSelect?: ((event: MouseEvent) => void) | undefined;
 }) {
   const { row, selected, query } = props;
+  const time = sessionSortTime(row, props.sort);
   const dismissed = props.dismissed ?? isDismissedRow(row);
   const dot = statusDot(row);
   const running = dot === 'running';
@@ -292,8 +303,8 @@ export function SessionListItem(props: {
           <ResultChips results={row.results} unseen={isUnseenResultsRow(row)} />
         )}
       </span>
-      <span class="it-time" title={formatApprovalTime(row.createdAt)}>
-        {running ? 'now' : clockTime(row.createdAt)}
+      <span class="it-time" title={`${props.sort === 'created' ? 'Started' : 'Updated'} ${formatApprovalTime(time)}`}>
+        {running ? 'now' : clockTime(time)}
       </span>
     </a>
   );
@@ -482,6 +493,7 @@ export default function SessionsList() {
   // haven't opened") narrow the list to runs that recorded results.
   const metricFilter = (q.metric || '').trim() || undefined;
   const resultsFilter: 'unseen' | undefined = q.results === 'unseen' ? 'unseen' : undefined;
+  const sortParam: SessionSort | undefined = q.sort === 'created' ? 'created' : undefined;
 
   // 7d, not 24h: this page is opened to find a run someone remembers, and most
   // of those are older than today. An agent/approval filter widens further,
@@ -526,7 +538,7 @@ export default function SessionsList() {
     Boolean(resultsFilter),
   ].filter(Boolean).length;
 
-  const key = `sessions:${win}:${statusFilter}:${triageFilter}:${triggerFilter}:${mockFilter}:${agentFilter ?? ''}:${approvalFilter ?? ''}:${searchParam}:${metricFilter ?? ''}:${resultsFilter ?? ''}`;
+  const key = `sessions:${win}:${statusFilter}:${triageFilter}:${triggerFilter}:${mockFilter}:${agentFilter ?? ''}:${approvalFilter ?? ''}:${searchParam}:${metricFilter ?? ''}:${resultsFilter ?? ''}:${sortParam ?? ''}`;
   const [streamData, setStreamData] = useState<SessionsPayload | null>(null);
   const [streamError, setStreamError] = useState<Error | null>(null);
   const [streamFallback, setStreamFallback] = useState(false);
@@ -556,6 +568,7 @@ export default function SessionsList() {
     mock: mockParam,
     metric: metricFilter,
     results: resultsFilter,
+    sort: sortParam,
   };
 
   const fetched = useFetch(key, () => fetchSessions(query), streamFallback ? { refreshMs: 10_000 } : {});
@@ -618,11 +631,11 @@ export default function SessionsList() {
     seen.add(id);
     return true;
   });
-  // The server orders by last activity (a run that started yesterday and timed
-  // out this morning sorts among today's runs), but the list shows start times
-  // and groups by start day, so order by start here. Live runs still lead.
+  // Same order as the server, so the day groups (and the times shown) follow
+  // whichever time the list is sorted by and stay contiguous. Live runs lead.
   rows.sort((a, b) =>
     (isRunningRow(a) ? 0 : 1) - (isRunningRow(b) ? 0 : 1) ||
+    sessionSortTime(b, sortParam) - sessionSortTime(a, sortParam) ||
     b.createdAt - a.createdAt ||
     a.sessionId.localeCompare(b.sessionId)
   );
@@ -661,13 +674,13 @@ export default function SessionsList() {
     const base: Record<string, string | undefined> = {
       window: q.window, status: statusFilter, triage: triageFilter, trigger: triggerFilter,
       mock: mockFilter, agent: agentFilter, approval: approvalFilter, q: searchParam, open: openParam,
-      metric: metricFilter, results: resultsFilter,
+      metric: metricFilter, results: resultsFilter, sort: sortParam,
     };
     for (const [k, v] of Object.entries(changes)) base[k] = v;
     for (const [k, v] of Object.entries(base)) if (v) params.set(k, v);
     const qs = params.toString();
     return qs ? `/sessions?${qs}` : '/sessions';
-  }, [q.window, statusFilter, triageFilter, triggerFilter, mockFilter, agentFilter, approvalFilter, searchParam, openParam, metricFilter, resultsFilter]);
+  }, [q.window, statusFilter, triageFilter, triggerFilter, mockFilter, agentFilter, approvalFilter, searchParam, openParam, metricFilter, resultsFilter, sortParam]);
 
   // Debounced URL sync for the search box.
   useEffect(() => {
@@ -752,10 +765,11 @@ export default function SessionsList() {
 
   const groups: Array<{ key: string; label: string; rows: SessionRow[] }> = [];
   for (const row of rows) {
-    const day = dayKey(row.createdAt);
+    const time = sessionSortTime(row, sortParam);
+    const day = dayKey(time);
     const last = groups[groups.length - 1];
     if (last && last.key === day) last.rows.push(row);
-    else groups.push({ key: day, label: dayLabel(row.createdAt), rows: [row] });
+    else groups.push({ key: day, label: dayLabel(time), rows: [row] });
   }
 
   const statusChip = (value: string, label: string, count: number | undefined, dot?: string) => {
@@ -833,6 +847,12 @@ export default function SessionsList() {
           </a>
         )}
         <AgentFilterSelect options={agentOptions} value={agentFilter ?? ''} onChange={commitAgent} />
+        <div class="seg" role="group" aria-label="Sort by">
+          {SORTS.map((o) => {
+            const on = (sortParam ?? '') === o.value;
+            return <a class={`seg-i${on ? ' on' : ''}`} href={withParam({ sort: o.value })} key={o.value || 'updated'} title={o.title} aria-current={on ? 'true' : undefined}>{o.label}</a>;
+          })}
+        </div>
         <div class="seg" role="group" aria-label="Time window">
           {[...WINDOWS, ...(EXTRA_WINDOWS.includes(win) ? [win] : [])].map((w) => (
             <a class={`seg-i${w === win ? ' on' : ''}`} href={withParam({ window: w })} key={w} aria-current={w === win ? 'true' : undefined}>{w}</a>
@@ -885,6 +905,7 @@ export default function SessionsList() {
                     row={row}
                     query={searchParam}
                     dismissed={isDismissedRow(row, justDismissed, rowKey(row))}
+                    sort={sortParam}
                     selected={!narrow && selected !== undefined && rowKey(selected) === rowKey(row)}
                     href={narrow ? withParam({ open: row.sessionId }) : sessionHref(row)}
                     onSelect={narrow ? undefined : (event) => {

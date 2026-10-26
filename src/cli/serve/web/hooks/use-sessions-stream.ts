@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'preact/hooks';
 import { DashboardEventSource } from '../lib/dashboard-event-source';
-import { ApiRequestError, sessionsEventUrl, type SessionsPayload } from '../lib/api';
+import { ApiRequestError, sessionsEventUrl, type SessionSort, type SessionsPayload } from '../lib/api';
 
 const SSE_FAILURE_WINDOW_MS = 10_000;
 const SSE_FAILURES_BEFORE_FALLBACK = 2;
@@ -18,6 +18,7 @@ export function useSessionsStream(options: {
   mock?: 'include' | 'only' | undefined;
   metric?: string | undefined;
   results?: 'unseen' | undefined;
+  sort?: SessionSort | undefined;
   enabled: boolean;
   onData: (payload: SessionsPayload) => void;
   onError: (error: ApiRequestError) => void;
@@ -55,6 +56,7 @@ export function useSessionsStream(options: {
         mock: options.mock,
         metric: options.metric,
         results: options.results,
+        sort: options.sort,
       }));
       source = es;
 
@@ -103,5 +105,5 @@ export function useSessionsStream(options: {
       document.removeEventListener('visibilitychange', onVisible);
       source?.close();
     };
-  }, [options.agent, options.status, options.triage, options.trigger, options.approval, options.q, options.window, options.limit, options.detail, options.mock, options.metric, options.results, options.enabled]);
+  }, [options.agent, options.status, options.triage, options.trigger, options.approval, options.q, options.window, options.limit, options.detail, options.mock, options.metric, options.results, options.sort, options.enabled]);
 }
