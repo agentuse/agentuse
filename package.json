@@ -73,6 +73,7 @@
     "test": "bun test tests/plugin-manager.test.ts && for f in tests/*.test.ts tests/*.test.tsx; do [ \"$f\" = \"tests/plugin-manager.test.ts\" ] || bun test \"$f\" || exit 1; done",
     "test:coverage": "bun scripts/test-coverage.ts",
     "test:e2e": "bun run build:web && bun scripts/e2e-dashboard.ts",
+    "test:chat": "bun scripts/e2e-chat.ts",
     "test:release": "bun scripts/release.ts verify",
     "test:release:desktop": "bun scripts/release.ts verify-desktop",
     "typecheck": "tsc --noEmit",
