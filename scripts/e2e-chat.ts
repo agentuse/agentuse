@@ -7,9 +7,13 @@
  *   bun run test:chat local      Set up points Claude Code at this computer's serve
  *   bun run test:chat cloud      Claude Code reaches serve through AgentUse Cloud
  *
- * Everything runs under a throwaway HOME, so none of the person's own skills,
- * plugins or MCP servers load. Claude Code is real; it signs in with
- * CLAUDE_CODE_OAUTH_TOKEN (make one with `claude setup-token`). The work
+ * AgentUse runs under a throwaway HOME. Claude Code is real, in one of two modes:
+ * - Clean, when CLAUDE_CODE_OAUTH_TOKEN is set (`claude setup-token`): it runs
+ *   under the throwaway HOME too, so it sees only what a new user would.
+ * - Your own login (default): it keeps your HOME for the keychain sign-in, and
+ *   flags keep out your MCP servers, settings, CLAUDE.md, plugins, hooks and
+ *   skills. Inline plugins still load; each run prints which.
+ * The work
  * agent's model is the loopback mock from the dashboard E2E, so practice runs
  * never reach a provider. The cloud road runs `wrangler dev` from the sibling
  * agentuse-cloud checkout (AGENTUSE_CLOUD_REPO to move it) and reuses its
@@ -20,7 +24,7 @@
  * other chat apps.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { closeSync, existsSync, openSync } from 'node:fs';
+import { appendFileSync, closeSync, cpSync, existsSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -33,6 +37,7 @@ const cloudRepo = resolve(process.env.AGENTUSE_CLOUD_REPO ?? join(root, '..', 'a
 const CLOUD_BASE = 'http://localhost:8787';
 const GOAL = '/automate Every weekday at 8am, read notes/inbox.md in this project and write a three-line summary of it to reports/daily.md.';
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+const CLEAN = Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN);
 
 const children: ChildProcess[] = [];
 let workspace: string | undefined;
@@ -127,29 +132,59 @@ const MAX_REPLIES = 2;
 const mcp = (call: ToolCall, tool: string) => call.name === `mcp__agentuse__${tool}`;
 
 /**
+ * How Claude Code starts. Clean mode lives in the throwaway HOME, where Set up
+ * or the plugin wrote everything. Own-login mode keeps the real HOME and
+ * replays what they wrote: the MCP entry through --mcp-config, the skills as
+ * project skills (hidden from git status).
+ */
+function claudeLaunch(home: string, project: string, logDir: string): { env: NodeJS.ProcessEnv; flags: string[] } {
+  if (CLEAN) return { env: isolatedEnv(home), flags: [] };
+  const config = JSON.parse(readFileSync(join(home, '.claude.json'), 'utf8')) as { mcpServers?: unknown };
+  const mcpConfig = join(logDir, 'mcp.json');
+  writeFileSync(mcpConfig, JSON.stringify({ mcpServers: config.mcpServers }));
+  const skills = join(home, '.claude', 'skills');
+  if (existsSync(skills)) {
+    cpSync(skills, join(project, '.claude', 'skills'), { recursive: true });
+    appendFileSync(join(project, '.git', 'info', 'exclude'), '.claude/\n');
+  }
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  for (const key of Object.keys(env)) if (key.startsWith('AGENTUSE_')) delete env[key];
+  return { env, flags: ['--strict-mcp-config', '--mcp-config', mcpConfig, '--setting-sources', 'project'] };
+}
+
+/** Own-login mode: say what of the person's own setup still reached Claude Code. */
+function warnLeaks(init: { plugins?: Array<{ name: string; path: string }> }): void {
+  const plugins = (init.plugins ?? []).filter((p) => p.path !== 'builtin').map((p) => p.name);
+  console.log(`  ⚠ using your Claude login, not a clean one. Your plugins still loaded: ${plugins.join(', ') || 'none'}`);
+}
+
+/**
  * Talk to Claude Code headless in the project and collect every tool it tried,
  * allowed or not. If it stops before drafting, answer once or twice as the person would.
  */
 function runClaude(home: string, project: string, logDir: string): ToolCall[] {
   const calls = new Map<string, ToolCall>();
+  const launch = claudeLaunch(home, project, logDir);
   let sessionId: string | undefined;
   let transcript = '';
   for (let turn = 0; turn <= MAX_REPLIES; turn += 1) {
     const result = spawnSync('claude', [
+      ...launch.flags,
       '-p', turn === 0 ? GOAL : REPLY,
       ...(sessionId ? ['--resume', sessionId] : []),
       '--output-format', 'stream-json', '--verbose',
       '--max-turns', '40',
       // MCP tools and reading are allowed; anything else is denied but still shows up as an attempt.
       '--allowedTools', 'mcp__agentuse', 'Read', 'Glob', 'Grep', 'Skill',
-    ], { cwd: project, env: isolatedEnv(home), encoding: 'utf8', timeout: 15 * 60_000, maxBuffer: 64 * 1024 * 1024 });
+    ], { cwd: project, env: launch.env, encoding: 'utf8', timeout: 15 * 60_000, maxBuffer: 64 * 1024 * 1024 });
     transcript += result.stdout ?? '';
     void writeFile(join(logDir, 'claude.jsonl'), transcript);
     if (result.error) fail(`claude failed to run: ${result.error.message}`);
     for (const line of (result.stdout ?? '').split('\n')) {
       if (!line.trim()) continue;
-      const event = JSON.parse(line) as { type: string; session_id?: string; message?: { content?: unknown }; result?: string; is_error?: boolean };
+      const event = JSON.parse(line) as { type: string; subtype?: string; session_id?: string; message?: { content?: unknown }; result?: string; is_error?: boolean };
       sessionId = event.session_id ?? sessionId;
+      if (!CLEAN && turn === 0 && event.type === 'system' && event.subtype === 'init') warnLeaks(event as Parameters<typeof warnLeaks>[0]);
       const content = Array.isArray(event.message?.content) ? event.message.content as Array<Record<string, unknown>> : [];
       for (const part of content) {
         if (part.type === 'tool_use') calls.set(String(part.id), { name: String(part.name), input: (part.input ?? {}) as Record<string, unknown> });
@@ -283,9 +318,9 @@ async function runRoad(road: Road, mockUrl: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  if (!process.env.CLAUDE_CODE_OAUTH_TOKEN) {
-    fail('CLAUDE_CODE_OAUTH_TOKEN is not set. Make one with `claude setup-token`, then run under agent-secret-run or export it.');
-  }
+  console.log(CLEAN
+    ? 'Claude Code: clean (CLAUDE_CODE_OAUTH_TOKEN)'
+    : 'Claude Code: your own login. For a fully clean run, set CLAUDE_CODE_OAUTH_TOKEN (claude setup-token).');
   const arg = process.argv[2];
   const roads: Road[] = arg === 'local' || arg === 'cloud' ? [arg] : ['local', 'cloud'];
   workspace = await mkdtemp(join(tmpdir(), 'agentuse-chat-e2e-'));
