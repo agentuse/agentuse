@@ -1,6 +1,6 @@
 import { activeDuration } from '../../../../session/timing';
 import { failureLabel } from '../../../../session/failure-label';
-import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { AgentHealth, ApprovalRow, AutoPausedSchedule, DeliveryPaceAgent, HeldSchedule, ProjectInfo, SerializedSchedule, SessionRow } from '../lib/api';
 import { fetchInfo, fetchAgents, fetchAgentHealth, fetchProjectChangesets, fetchSchedules, fetchSessions, fetchStoreRows, postSessionStop, setAgentSchedulePaused } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
@@ -146,56 +146,76 @@ export function FailedRow(props: { row: SessionRow; onDismiss: (row: SessionRow)
  * stamps it reviewed, which the per-row ✕ does one at a time — fine for two
  * rows, a chore for fifteen.
  *
- * It asks first, in place rather than in a dialog: the count is the whole
- * warning, and a mis-click costs a stopped run. While it works the button
- * counts up, so a slow sweep of a long list never looks stuck.
+ * It asks first, in place rather than in a dialog, and the ask says what the
+ * click does, because a mis-click costs stopped runs. The confirm opens where
+ * the button was, so the pointer is already near it, and Escape backs out.
+ * While it works it counts up, so a slow sweep never looks stuck.
  */
 function DismissAll<Row>(props: {
   rows: Row[];
   onDismissAll: (rows: Row[], onProgress: (done: number) => void) => Promise<number>;
   /** What the sweep does to each row: dismiss a failed run, reject a stale gate. */
   verb?: 'dismiss' | 'reject';
-  /** Idle-button wording when "<verb> all N" does not fit, e.g. "reject 13 older". */
+  /** Idle-button wording when "<verb> all N" does not fit, e.g. "reject 13 older than 2 days". */
   label?: string;
+  /** One sentence the confirm shows: what happens to these rows. */
+  consequence?: string;
 }) {
   const verb = props.verb ?? 'dismiss';
   const [armed, setArmed] = useState(false);
   const [done, setDone] = useState<number | null>(null);
   const [failedCount, setFailedCount] = useState(0);
+  const confirmRef = useRef<HTMLButtonElement>(null);
   const total = props.rows.length;
   const busy = done !== null;
+  const Verb = verb === 'reject' ? 'Reject' : 'Dismiss';
 
   // A row dismissed elsewhere (its own ✕, another tab) shrinks the group under
   // a primed confirm, so the count on the button stops matching what it clears.
   useEffect(() => { if (!busy) setArmed(false); }, [total]);
+  useEffect(() => { if (armed) confirmRef.current?.focus(); }, [armed]);
 
-  if (busy) return <span class="attn-more attn-dismiss-all is-busy">{verb === 'reject' ? 'rejecting' : 'dismissing'} {done} of {total}…</span>;
+  const run = () => {
+    setArmed(false);
+    setDone(0);
+    void props.onDismissAll(props.rows, (n) => setDone(n))
+      .then((count) => setFailedCount(count))
+      .finally(() => setDone(null));
+  };
+
+  if (busy) {
+    return (
+      <span class="attn-bulk is-busy" role="status">
+        <span class="attn-bulk-spinner" aria-hidden="true" />
+        {verb === 'reject' ? 'Rejecting' : 'Dismissing'} {done} of {total}…
+      </span>
+    );
+  }
 
   if (!armed) {
     return (
-      <>
+      <span class="attn-bulk">
         {failedCount > 0 && <span class="attn-dismiss-failed">{failedCount} could not be {verb === 'reject' ? 'rejected' : 'dismissed'}</span>}
-        <button type="button" class="attn-more attn-dismiss-all" onClick={() => { setArmed(true); setFailedCount(0); }}>
+        <button type="button" class={`attn-bulk-btn verb-${verb}`} onClick={() => { setArmed(true); setFailedCount(0); }}>
+          <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
           {props.label ?? `${verb} all ${total}`}
         </button>
-      </>
+      </span>
     );
   }
 
   return (
-    <span class="attn-dismiss-confirm">
-      <button
-        type="button"
-        class="attn-more attn-dismiss-all is-armed"
-        onClick={() => {
-          setArmed(false);
-          setDone(0);
-          void props.onDismissAll(props.rows, (n) => setDone(n))
-            .then((count) => setFailedCount(count))
-            .finally(() => setDone(null));
-        }}
-      >{verb} {total}?</button>
-      <button type="button" class="attn-more" onClick={() => setArmed(false)}>cancel</button>
+    <span
+      class="attn-bulk is-armed"
+      role="group"
+      aria-label={`${Verb} ${total}?`}
+      onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); setArmed(false); } }}
+    >
+      <span class="attn-bulk-ask">{props.consequence ?? `${Verb} ${total}?`}</span>
+      <span class="attn-bulk-choices">
+        <button ref={confirmRef} type="button" class={`attn-bulk-confirm verb-${verb}`} onClick={run}>{Verb} {total}</button>
+        <button type="button" class="attn-bulk-cancel" onClick={() => setArmed(false)}>Cancel</button>
+      </span>
     </span>
   );
 }
@@ -363,7 +383,13 @@ function AttentionSection(props: {
                     blockingRuns={blocking.get(group.key) ?? 0}
                     held={props.held.some((h) => h.project === group.project && Boolean(group.agentFilePath?.endsWith(`/${h.path}`)))}
                     rejectStale={(rows) => (
-                      <DismissAll rows={rows} onDismissAll={props.onRejectGates} verb="reject" label={`reject ${rows.length} older`} />
+                      <DismissAll
+                        rows={rows}
+                        onDismissAll={props.onRejectGates}
+                        verb="reject"
+                        label={`Reject ${rows.length} older than 2 days`}
+                        consequence={`Reject ${plural(rows.length, 'ask')} older than 2 days? Each run records the rejection and ends.`}
+                      />
                     )}
                   />
                 ))}
@@ -385,7 +411,14 @@ function AttentionSection(props: {
                       agent={agent}
                       actions={<>
                         {agent.autoPause && agent.path && <ResumeButton onResume={() => props.onResume(agent.project, agent.path!)} />}
-                        {agent.rows.length > 0 && <DismissAll rows={agent.rows} onDismissAll={props.onDismissAll} {...(agent.rows.length === 1 && { label: 'dismiss' })} />}
+                        {agent.rows.length > 0 && (
+                          <DismissAll
+                            rows={agent.rows}
+                            onDismissAll={props.onDismissAll}
+                            label={agent.rows.length === 1 ? 'Dismiss' : `Dismiss ${agent.rows.length}`}
+                            consequence={`Mark ${plural(agent.rows.length, 'failed run')} as reviewed? ${agent.rows.length === 1 ? 'It stays' : 'They stay'} in Sessions.`}
+                          />
+                        )}
                       </>}
                     />
                   ))}
@@ -419,7 +452,14 @@ function AttentionSection(props: {
                     {expanded ? 'show less' : `show all ${broken.length + stranded.length} needing a look →`}
                   </button>
                 )}
-                {reviewable.length > 1 && <DismissAll rows={reviewable} onDismissAll={props.onDismissAll} />}
+                {reviewable.length > 1 && (
+                  <DismissAll
+                    rows={reviewable}
+                    onDismissAll={props.onDismissAll}
+                    label={`Dismiss all ${reviewable.length}`}
+                    consequence={`Mark all ${reviewable.length} failed and stranded runs as reviewed? They stay in Sessions.`}
+                  />
+                )}
               </div>
             )}
           </div>
