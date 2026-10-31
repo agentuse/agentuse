@@ -53,6 +53,7 @@ describe('serve schedule state recovery without a restart', () => {
       scheduler,
       pausedSchedulesByProject: state.paused,
       scheduleStateErrors: state.errors,
+      approvalHolds: new Map(),
       scheduleIsEnabled,
       wakeListHubs: () => {},
     } as unknown as ServeContext;

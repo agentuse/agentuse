@@ -65,6 +65,7 @@ describe('serve schedule state', () => {
       scheduler: new Scheduler({ onExecute: async () => ({ success: true, duration: 0 }) }),
       pausedSchedulesByProject: state.paused,
       scheduleStateErrors: state.errors,
+      approvalHolds: new Map(),
       wakeListHubs: () => {},
     } as unknown as ServeContext;
     const rq = { req: { method: 'GET' }, res, isApi: true, routePath: '/schedules' } as unknown as ServeRequest;

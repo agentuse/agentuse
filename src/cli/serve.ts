@@ -88,7 +88,7 @@ import { scheduleRoutes } from "./serve/routes/schedules";
 import { followingRoutes } from "./serve/routes/following";
 import { agentHealthRoutes } from "./serve/routes/agent-health";
 import { createFollowingStore, followingKey } from "./serve/following";
-import { findRepeatFailure, REPEAT_FAILURE_LOOKBACK_MS } from "./serve/auto-pause";
+import { APPROVAL_STACK_LIMIT, findRepeatFailure, REPEAT_FAILURE_LOOKBACK_MS, type ApprovalHold } from "./serve/auto-pause";
 import { agentDetailHref } from "./serve/web/lib/links";
 import { sessionLearningRoutes } from "./serve/routes/session-learnings";
 import { sessionLifecycleRoutes } from "./serve/routes/session-lifecycle";
@@ -2098,6 +2098,18 @@ export function createServeCommand(): Command {
         });
       };
 
+      // Hold on a stack (serve/auto-pause.ts): `${project}::${runPath}` of each
+      // schedule whose last fire was skipped because its approvals piled up.
+      const approvalHolds = new Map<string, ApprovalHold>();
+      const pendingApprovalsFor = async (project: Project, runPath: string): Promise<number> => {
+        const projectWorker = workers.get(project.id);
+        if (!projectWorker) return 0;
+        const listed = await projectWorker.listApprovals(project.root);
+        if (!listed.success) throw new Error(listed.error.message);
+        return listed.approvals.filter((approval) =>
+          approval.status === 'pending' && toAgentRunPath(project, approval.agentFilePath) === runPath).length;
+      };
+
       const executeScheduledAgent = async (
         schedule: Schedule
       ): Promise<{ success: boolean; duration: number; error?: string; sessionId?: string; suspended?: boolean; skipped?: string }> => {
@@ -2140,6 +2152,26 @@ export function createServeCommand(): Command {
             error: `Worker not available for project ${project.id}`,
           };
         }
+
+        // Too many of this agent's approvals already waiting: skip this fire
+        // rather than add another ask nobody will get to in time.
+        const holdKey = `${project.id}::${toProjectRelativeAgentPath(project, schedule.agentPath)}`;
+        // The hold only spares a pile-up; if approvals cannot be read, run as
+        // the schedule always did rather than skip on a guess.
+        const pending = await pendingApprovalsFor(project, toProjectRelativeAgentPath(project, schedule.agentPath)).catch((error) => {
+          console.error(`[schedule] Could not count waiting approvals for ${holdKey}: ${toErrorMessage(error)}`);
+          return 0;
+        });
+        if (pending >= APPROVAL_STACK_LIMIT) {
+          approvalHolds.set(holdKey, { at: Date.now(), pending });
+          wakeListHubs();
+          return {
+            success: false,
+            duration: Date.now() - startTime,
+            skipped: `${pending} approvals already waiting; held until fewer than ${APPROVAL_STACK_LIMIT} are open`,
+          };
+        }
+        if (approvalHolds.delete(holdKey)) wakeListHubs();
 
         // Execute via worker process to work around EBADF issue in async callbacks
         wakeListHubs();
@@ -4776,6 +4808,7 @@ export function createServeCommand(): Command {
         scheduler,
         pausedSchedulesByProject,
         scheduleStateErrors,
+        approvalHolds,
         schedulerLocksHeld,
         scheduleIsEnabled,
         canArmSchedules,

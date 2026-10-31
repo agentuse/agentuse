@@ -1,7 +1,7 @@
 import { activeDuration } from '../../../../session/timing';
 import { failureLabel } from '../../../../session/failure-label';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
-import type { AgentHealth, ApprovalRow, AutoPausedSchedule, DeliveryPaceAgent, ProjectInfo, SerializedSchedule, SessionRow } from '../lib/api';
+import type { AgentHealth, ApprovalRow, AutoPausedSchedule, DeliveryPaceAgent, HeldSchedule, ProjectInfo, SerializedSchedule, SessionRow } from '../lib/api';
 import { fetchInfo, fetchAgents, fetchAgentHealth, fetchProjectChangesets, fetchSchedules, fetchSessions, fetchStoreRows, postSessionStop, setAgentSchedulePaused } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useHomeSections } from '../hooks/use-home-sections';
@@ -280,6 +280,8 @@ function AttentionSection(props: {
   onRejectGates: (rows: ApprovalRow[], onProgress: (done: number) => void) => Promise<number>;
   /** Schedules the daemon paused itself after the same failure twice. */
   autoPaused: AutoPausedSchedule[];
+  /** Schedules whose last fire was held because their approvals piled up. */
+  held: HeldSchedule[];
   /** Per agent: whether its newest run failed, and its delivery pace. */
   health: AgentHealth[];
   /** `${project}::${path}` of every agent on a running schedule. */
@@ -359,6 +361,7 @@ function AttentionSection(props: {
                     group={group}
                     now={now}
                     blockingRuns={blocking.get(group.key) ?? 0}
+                    held={props.held.some((h) => h.project === group.project && Boolean(group.agentFilePath?.endsWith(`/${h.path}`)))}
                     rejectStale={(rows) => (
                       <DismissAll rows={rows} onDismissAll={props.onRejectGates} verb="reject" label={`reject ${rows.length} older`} />
                     )}
@@ -905,6 +908,7 @@ export default function Home() {
             onDismissAll={dismissAll}
             onRejectGates={rejectGates}
             autoPaused={schedules.data?.autoPaused ?? []}
+            held={schedules.data?.held ?? []}
             health={agentHealth.data?.agents ?? []}
             scheduledKeys={scheduledKeys}
             onResume={resumeSchedule}

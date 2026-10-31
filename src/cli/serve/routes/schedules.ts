@@ -18,6 +18,7 @@ export async function scheduleRoutes(ctx: ServeContext, rq: ServeRequest): Promi
     scheduleStateErrors,
     scheduleIsEnabled,
     wakeListHubs,
+    approvalHolds,
   } = ctx;
   const scheduleState = { paused: pausedSchedulesByProject, errors: scheduleStateErrors };
   // Verbatim slice of the original route chain. A `return` in here meant
@@ -43,10 +44,16 @@ export async function scheduleRoutes(ctx: ServeContext, rq: ServeRequest): Promi
           const state = await loadScheduleState(project.root);
           for (const [path, pause] of state.autoPaused) autoPaused.push({ project: project.id, path, ...pause });
         }
+        // Schedules whose last fire was held because approvals piled up.
+        const held = [...approvalHolds].map(([key, hold]) => {
+          const at = key.indexOf('::');
+          return { project: key.slice(0, at), path: key.slice(at + 2), ...hold };
+        });
         sendJSON(res, 200, {
           success: true,
           schedules,
           ...(autoPaused.length > 0 && { autoPaused }),
+          ...(held.length > 0 && { held }),
           ...(scheduleStateErrors.size > 0 && { stateErrors: Object.fromEntries(scheduleStateErrors) }),
         });
         return;

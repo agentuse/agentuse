@@ -14,6 +14,7 @@ import type { Scheduler } from "../../scheduler";
 import type { FileWatcher } from "../../watcher";
 import type { AboutInfo } from "./about";
 import type { FollowingStore } from "./following";
+import type { ApprovalHold } from "./auto-pause";
 import type { PushCategory, PushPayload, PushService } from "./push";
 import type { ApprovalEventHub, ApprovalListEventHub, NotificationEventHub } from "./sse";
 import type { WebAssets } from "./static";
@@ -121,6 +122,8 @@ export interface ServeContext {
   pausedSchedulesByProject: Map<string, Set<string>>;
   /** Project id -> why its schedule-state file could not be read (schedules disarmed). */
   scheduleStateErrors: Map<string, string>;
+  /** `${project}::${runPath}` -> why its last scheduled fire was held (too many approvals waiting). */
+  approvalHolds: Map<string, ApprovalHold>;
   schedulerLocksHeld: Set<string>;
   scheduleIsEnabled: (project: Project | Omit<Project, "agentFiles">, agentPath: string) => boolean;
   canArmSchedules: (projectId: string, projectRoot: string) => boolean;

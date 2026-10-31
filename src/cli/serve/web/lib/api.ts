@@ -1318,6 +1318,17 @@ export interface SchedulesPayload {
   stateErrors?: Record<string, string>;
   /** Schedules the daemon paused itself after the same failure twice in a row. */
   autoPaused?: AutoPausedSchedule[];
+  /** Schedules whose last fire was held: too many of their approvals were waiting. */
+  held?: HeldSchedule[];
+}
+
+export interface HeldSchedule {
+  project: string;
+  /** Project-relative agent path, as `SerializedSchedule.agentPath` gives it. */
+  path: string;
+  at: number;
+  /** Approvals waiting when the run was held. */
+  pending: number;
 }
 
 export interface AutoPausedSchedule {

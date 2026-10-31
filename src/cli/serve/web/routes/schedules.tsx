@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'preact/hooks';
 import type { SerializedSchedule } from '../../../../scheduler';
-import type { AutoPausedSchedule, SessionRow } from '../lib/api';
+import type { AutoPausedSchedule, HeldSchedule, SessionRow } from '../lib/api';
 import { fetchSchedules, fetchSessions, setAgentSchedulePaused } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
@@ -210,6 +210,8 @@ function ScheduleRow(props: {
   runs: SessionRow[];
   /** Set when the daemon paused this schedule after the same failure twice. */
   autoPause?: AutoPausedSchedule | undefined;
+  /** Set when its last fire was held because its approvals piled up. */
+  held?: HeldSchedule | undefined;
   multiProject: boolean;
   now: number;
   onToggled: () => void;
@@ -312,6 +314,12 @@ function ScheduleRow(props: {
           <button type="button" class="slot-error-link as-link" disabled={pauseBusy} onClick={() => void togglePause()}>Resume</button>
         </div>
       )}
+      {props.held && !paused && (
+        <div class="slot-error slot-held" role="note">
+          <span class="slot-error-text">Run held {formatRelativeTime(props.held.at)}: {props.held.pending} approvals already waiting. It runs again once fewer than 3 are open.</span>
+          <a class="slot-error-link" href="/approvals">Review approvals</a>
+        </div>
+      )}
       {failed && !autoPause && (
         <div class="slot-error" role="note">
           <span class="slot-error-text">{errorText ?? 'Last run failed'}</span>
@@ -337,6 +345,7 @@ export default function Schedules() {
   const multiProject = projects.length > 1;
   const runsFor = useMemo(() => scheduleRunFinder(schedules, sessions.data?.sessions ?? []), [schedules, sessions.data]);
   const autoPauseFor = (s: SerializedSchedule) => data?.autoPaused?.find((p) => p.project === s.projectId && p.path === s.agentPath);
+  const heldFor = (s: SerializedSchedule) => data?.held?.find((h) => h.project === s.projectId && h.path === s.agentPath);
 
   const attention = new Set<string>();
   const runningIds = new Set<string>();
@@ -428,7 +437,7 @@ export default function Schedules() {
                 <section class="day" key={g.bucket}>
                   <h2 class={`day-title${g.bucket === 'paused' ? ' day-paused' : ''}`}><span>{g.label}</span><span class="count">{g.list.length}</span></h2>
                   {g.list.map((s) => (
-                    <ScheduleRow key={s.id} schedule={s} bucket={g.bucket} runs={runsFor(s)} autoPause={autoPauseFor(s)} multiProject={multiProject} now={now} onToggled={refetch} />
+                    <ScheduleRow key={s.id} schedule={s} bucket={g.bucket} runs={runsFor(s)} autoPause={autoPauseFor(s)} held={heldFor(s)} multiProject={multiProject} now={now} onToggled={refetch} />
                   ))}
                 </section>
               ))}

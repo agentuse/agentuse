@@ -231,6 +231,8 @@ export function ApprovalAgentGroup(props: {
   group: AgentGroup;
   now: number;
   blockingRuns: number;
+  /** Its schedule's last fire was held because these asks piled up. */
+  held?: boolean;
   rejectStale: (rows: ApprovalRow[]) => ComponentChildren;
 }) {
   const [open, setOpen] = useState(false);
@@ -238,12 +240,16 @@ export function ApprovalAgentGroup(props: {
   const [newest, ...older] = group.rows;
   if (!newest) return null;
   const stale = older.filter((row) => now - (waitingSince(row) ?? now) > STALE_GATE_MS);
+  const alert = [
+    props.held ? 'new runs held' : '',
+    props.blockingRuns > 0 ? `blocking ${plural(props.blockingRuns, 'run')}` : '',
+  ].filter(Boolean).join(' · ');
   return (
     <div class={`pending-agent-group${open ? ' is-open' : ''}`}>
       <PendingApprovalRow
         row={newest}
         now={now}
-        {...(props.blockingRuns > 0 && { alert: `blocking ${plural(props.blockingRuns, 'run')}` })}
+        {...(alert && { alert })}
       />
       {older.length > 0 && (
         <div class="pending-agent-meta">

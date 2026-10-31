@@ -7556,6 +7556,9 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-schedules .slot-until.soon { color: var(--cyan); }
 /* Paused by the daemon after a repeat failure: it needs a fix, not a glance. */
 .page-schedules .slot-until.auto-paused { color: var(--red); }
+/* Held, not broken: it waits on the reviewer, so amber like a waiting gate. */
+.page-schedules .slot-held { background: color-mix(in srgb, var(--amber) 6%, transparent); }
+.page-schedules .slot-held .slot-error-text { color: var(--amber); }
 .page-schedules .slot-time.dim, .page-schedules .slot-until.dim { color: var(--muted-2); }
 .page-schedules .slot-main { min-width: 0; }
 .page-schedules a.slot-agent { display: inline-block; color: var(--fg); font-family: var(--sans); font-weight: var(--weight-medium); font-size: var(--font-size-supporting); text-decoration: none; border-bottom: 0; overflow-wrap: anywhere; }

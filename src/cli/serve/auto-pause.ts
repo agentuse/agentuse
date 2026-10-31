@@ -9,6 +9,20 @@ import type { SessionSummary } from './list-payloads';
  * schedule instead, says why, and the person resumes it once it is fixed.
  */
 
+/**
+ * Hold on a stack. A scheduled agent that already has this many approvals
+ * waiting does not start another run: each new run would only add one more
+ * ask to the pile, and asks that pile up expire unread. Its schedule stays
+ * on and the next run goes ahead once the stack is below this.
+ */
+export const APPROVAL_STACK_LIMIT = 3;
+
+/** A schedule held because too many of its approvals are waiting. */
+export interface ApprovalHold {
+  at: number;
+  pending: number;
+}
+
 /** How far back the run before this one is looked for: past a monthly schedule. */
 export const REPEAT_FAILURE_LOOKBACK_MS = 35 * 24 * 3_600_000;
 
