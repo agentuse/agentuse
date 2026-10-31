@@ -161,14 +161,19 @@ export function sessionRepeatRunPath(
   return row.purpose ? undefined : row.agent.runPath;
 }
 
+/** A finished run shows this many lines of its output in the list. */
+const PREVIEW_LINES = 3;
+
 /**
- * The one line under an agent name: what the run actually said. Markdown is
- * stripped rather than rendered, because a list line has no room for structure
- * and a stray `**` reads as noise.
+ * The lines under an agent name: what the run actually said, up to `maxLines`
+ * of substance joined by newlines, so a reader can tell what a run delivered
+ * without opening it. Markdown is stripped rather than rendered, because a
+ * list row has no room for structure and a stray `**` reads as noise.
  */
-export function outputPreview(value: string | undefined): string {
+export function outputPreview(value: string | undefined, maxLines = 1): string {
   if (!value) return '';
   let heading = '';
+  const lines: string[] = [];
   for (const raw of value.split(/\r?\n/)) {
     const isHeading = /^\s*#{1,6}\s/.test(raw);
     const line = raw
@@ -187,9 +192,10 @@ export function outputPreview(value: string | undefined): string {
       if (!heading) heading = line;
       continue;
     }
-    return line;
+    lines.push(line);
+    if (lines.length >= maxLines) break;
   }
-  return heading;
+  return lines.length > 0 ? lines.join('\n') : heading;
 }
 
 function clockTime(value: number): string {
@@ -273,11 +279,11 @@ export function SessionListItem(props: {
     const code = incomplete ? displayStatusLabel(row.status, row.errorCode, row.errorCause) : (failureLabel(row.errorCause) ?? row.errorCode);
     line = [code, detail].filter(Boolean).join(' · ') || displayStatusLabel(row.status, row.errorCode, row.errorCause);
   } else {
-    const preview = outputPreview(row.finalResponse);
+    const preview = outputPreview(row.finalResponse, PREVIEW_LINES);
     line = preview
       ? <Highlight text={preview} query={query} />
       : 'No final output.';
-    if (!preview) lineClass = 'it-line is-empty';
+    lineClass = preview ? 'it-line is-preview' : 'it-line is-empty';
   }
 
   return (
@@ -777,12 +783,12 @@ export default function SessionsList() {
     const nextStatus = on ? '' : value;
     return (
       <a
-        class={`qc${on ? ' on' : ''}`}
+        class={`st-tab${on ? ' on' : ''}`}
         // Moving to a status nothing can be dismissed under drops the triage
         // filter with it, rather than leaving it applied behind a control that
         // is no longer on screen.
         href={withParam({ status: nextStatus, ...(hasDismissals(nextStatus) ? {} : { triage: '' }) })}
-        aria-pressed={on}
+        aria-current={on ? 'page' : undefined}
       >
         {dot && <span class={`dot ${dot}`} aria-hidden="true" />}
         {label}
@@ -791,61 +797,25 @@ export default function SessionsList() {
     );
   };
 
-  const listPane = (
-    <div class="sessions-pane">
-      <div class="sessions-search">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="m20 20-4.3-4.3" /></svg>
-        <input
-          ref={searchRef}
-          type="search"
-          value={searchText}
-          placeholder="Search agents and outputs"
-          aria-label="Search sessions"
-          onInput={(event) => setSearchText((event.target as HTMLInputElement).value)}
-        />
-        {!narrow && <kbd>/</kbd>}
-      </div>
-      <div class="sessions-hint">Searches agent names and the final output text.</div>
-      {(metricFilter || resultsFilter) && (
-        <div class="sessions-scope" role="status">
-          <span class="sessions-scope-text">
-            {resultsFilter
-              ? 'Finished runs with results you have not opened yet. Opening a run clears it.'
-              : <>Runs that recorded <strong>{humanizeMetric(metricFilter ?? '')}</strong>.</>}
-          </span>
-          <a class="sessions-scope-clear" href={withParam({ metric: '', results: '' })}>show all runs →</a>
+  // Every filter in one bar above both panes: which runs (search, agent, time)
+  // on top, what state they ended in as tabs underneath. They all narrow the
+  // same list, so they read as one control rather than chips scattered down
+  // the list column.
+  const filterBar = (
+    <div class="sessions-bar" role="search" aria-label="Filter sessions">
+      <div class="sessions-bar-top">
+        <div class="sessions-search">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="m20 20-4.3-4.3" /></svg>
+          <input
+            ref={searchRef}
+            type="search"
+            value={searchText}
+            placeholder="Search agents and outputs"
+            aria-label="Search agent names and output text"
+            onInput={(event) => setSearchText((event.target as HTMLInputElement).value)}
+          />
+          {!narrow && <kbd>/</kbd>}
         </div>
-      )}
-      <div class="quick">
-        {statusChip('', 'All', counts?.all)}
-        {statusChip('running', 'Running', counts?.running, 'running')}
-        {statusChip('completed', 'Done', counts?.done)}
-        {statusChip('idle', 'Idle', counts?.idle, 'idle')}
-        {statusChip('incomplete', 'Incomplete', counts?.incomplete, 'incomplete')}
-        {statusChip('error', 'Failed', counts?.failed, 'failed')}
-        {/* Triage, not status, so it composes with the chips above: the counts
-            themselves drop the waved-off runs while it is on. Only a run that
-            ended badly can be dismissed, so the chip stays out of the Running
-            and Done views — and appears regardless while any triage filter is
-            on, including the `dismissed` one the URL can still ask for, so no
-            filter is ever applied by a control the reader cannot see. */}
-        {(hasDismissals(statusFilter) || triageFilter !== '') && (
-          <a
-            class={`qc qc-check${triageFilter !== '' ? ' on' : ''}`}
-            href={withParam({ triage: hideDismissed ? '' : 'undismissed' })}
-            role="switch"
-            aria-checked={hideDismissed}
-            title={onlyDismissed
-              ? 'Showing only runs already reviewed and waved off'
-              : 'Hide runs already reviewed and waved off'}
-          >
-            {/* A box, not a pill: the chips to its left are one-of, this is
-                on/off, and two controls that behave differently should not
-                look the same. */}
-            <span class="qc-box" aria-hidden="true" />
-            {onlyDismissed ? 'Only dismissed' : 'Hide dismissed'}
-          </a>
-        )}
         <AgentFilterSelect options={agentOptions} value={agentFilter ?? ''} onChange={commitAgent} />
         <div class="seg" role="group" aria-label="Sort by">
           {SORTS.map((o) => {
@@ -858,23 +828,69 @@ export default function SessionsList() {
             <a class={`seg-i${w === win ? ' on' : ''}`} href={withParam({ window: w })} key={w} aria-current={w === win ? 'true' : undefined}>{w}</a>
           ))}
         </div>
+        <details class="filters-advanced" open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
+          <summary>More filters{advancedFilterCount > 0 && <span>{advancedFilterCount}</span>}</summary>
+          <div class="filter-grid filter-grid-advanced">
+            <label class="filter-field">trigger
+              <select value={triggerFilter} onChange={onSelect('trigger')}>
+                {TRIGGERS.map((t) => <option value={t} key={t || 'any'}>{t || 'any'}</option>)}
+              </select>
+            </label>
+            <label class="filter-field">mock runs
+              <select value={mockFilter} onChange={onSelect('mock')}>
+                {MOCK_OPTIONS.map((m) => <option value={m.value} key={m.value || 'hidden'}>{m.label}</option>)}
+              </select>
+            </label>
+          </div>
+        </details>
       </div>
-      <details class="filters-advanced" open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
-        <summary>More filters{advancedFilterCount > 0 && <span>{advancedFilterCount}</span>}</summary>
-        <div class="filter-grid filter-grid-advanced">
-          <label class="filter-field">trigger
-            <select value={triggerFilter} onChange={onSelect('trigger')}>
-              {TRIGGERS.map((t) => <option value={t} key={t || 'any'}>{t || 'any'}</option>)}
-            </select>
-          </label>
-          <label class="filter-field">mock runs
-            <select value={mockFilter} onChange={onSelect('mock')}>
-              {MOCK_OPTIONS.map((m) => <option value={m.value} key={m.value || 'hidden'}>{m.label}</option>)}
-            </select>
-          </label>
-        </div>
-      </details>
+      <nav class="sessions-tabs" aria-label="Run status">
+        {statusChip('', 'All', counts?.all)}
+        {statusChip('running', 'Running', counts?.running, 'running')}
+        {statusChip('completed', 'Done', counts?.done)}
+        {statusChip('idle', 'Idle', counts?.idle, 'idle')}
+        {statusChip('incomplete', 'Incomplete', counts?.incomplete, 'incomplete')}
+        {statusChip('error', 'Failed', counts?.failed, 'failed')}
+        {/* Triage, not status, so it composes with the tabs beside it: the
+            counts themselves drop the waved-off runs while it is on. Only a run
+            that ended badly can be dismissed, so the toggle stays out of the
+            Running and Done views — and appears regardless while any triage
+            filter is on, including the `dismissed` one the URL can still ask
+            for, so no filter is ever applied by a control the reader cannot see. */}
+        {(hasDismissals(statusFilter) || triageFilter !== '') && (
+          <a
+            class={`qc qc-check${triageFilter !== '' ? ' on' : ''}`}
+            href={withParam({ triage: hideDismissed ? '' : 'undismissed' })}
+            role="switch"
+            aria-checked={hideDismissed}
+            title={onlyDismissed
+              ? 'Showing only runs already reviewed and waved off'
+              : 'Hide runs already reviewed and waved off'}
+          >
+            {/* A box, not a tab: the tabs to its left are one-of, this is
+                on/off, and two controls that behave differently should not
+                look the same. */}
+            <span class="qc-box" aria-hidden="true" />
+            {onlyDismissed ? 'Only dismissed' : 'Hide dismissed'}
+          </a>
+        )}
+      </nav>
+    </div>
+  );
 
+  const scopeNotice = (metricFilter || resultsFilter) && (
+    <div class="sessions-scope" role="status">
+      <span class="sessions-scope-text">
+        {resultsFilter
+          ? 'Finished runs with results you have not opened yet. Opening a run clears it.'
+          : <>Runs that recorded <strong>{humanizeMetric(metricFilter ?? '')}</strong>.</>}
+      </span>
+      <a class="sessions-scope-clear" href={withParam({ metric: '', results: '' })}>show all runs →</a>
+    </div>
+  );
+
+  const listPane = (
+    <div class="sessions-pane">
       {resolvedError && <InlineError>Failed to load sessions: {resolvedError.message}</InlineError>}
       {resolvedData && resolvedData.errors.length > 0 && (
         <InlineError>Some {term('project', 2)} failed: <ul>{resolvedData.errors.map((e) => <li key={e.projectId}>{e.projectId}: {e.message}</li>)}</ul></InlineError>
@@ -968,6 +984,8 @@ export default function SessionsList() {
             {runningCount > 0 && ` · ${runningCount} running`}
           </span>
         </div>
+        {filterBar}
+        {scopeNotice}
         {narrow
           ? listPane
           : (
