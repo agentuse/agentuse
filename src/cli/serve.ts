@@ -86,6 +86,7 @@ import { revisionRoutes } from "./serve/routes/revisions";
 import { runRoutes } from "./serve/routes/run";
 import { scheduleRoutes } from "./serve/routes/schedules";
 import { followingRoutes } from "./serve/routes/following";
+import { agentHealthRoutes } from "./serve/routes/agent-health";
 import { createFollowingStore, followingKey } from "./serve/following";
 import { findRepeatFailure, REPEAT_FAILURE_LOOKBACK_MS } from "./serve/auto-pause";
 import { agentDetailHref } from "./serve/web/lib/links";
@@ -5042,6 +5043,7 @@ export function createServeCommand(): Command {
         if (await agentRoutes(ctx, rq)) return;
         if (await scheduleRoutes(ctx, rq)) return;
         if (await followingRoutes(ctx, rq)) return;
+        if (await agentHealthRoutes(ctx, rq)) return;
         if (await storeRoutes(ctx, rq)) return;
         if (await sessionRoutes(ctx, rq)) return;
         if (await sessionLearningRoutes(ctx, rq)) return;

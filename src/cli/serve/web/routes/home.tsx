@@ -1,8 +1,8 @@
 import { activeDuration } from '../../../../session/timing';
 import { failureLabel } from '../../../../session/failure-label';
 import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
-import type { ApprovalRow, ProjectInfo, SerializedSchedule, SessionRow } from '../lib/api';
-import { fetchInfo, fetchAgents, fetchProjectChangesets, fetchSchedules, fetchSessions, fetchStoreRows, postSessionStop } from '../lib/api';
+import type { AgentHealth, ApprovalRow, AutoPausedSchedule, DeliveryPaceAgent, ProjectInfo, SerializedSchedule, SessionRow } from '../lib/api';
+import { fetchInfo, fetchAgents, fetchAgentHealth, fetchProjectChangesets, fetchSchedules, fetchSessions, fetchStoreRows, postSessionStop, setAgentSchedulePaused } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useHomeSections } from '../hooks/use-home-sections';
 import { useLiveHome, sessionRowKey, ORPHANED_LABEL, type ActivityEvent } from '../hooks/use-live-home';
@@ -14,7 +14,7 @@ import { NoAgentsYet } from '../components/no-agents-yet';
 import { Loading } from '../components/loading';
 import { AgentResultsRows } from '../components/metric-results';
 import { groupPendingByAgent, PendingChangesetRow } from '../components/pending-approval-card';
-import { ApprovalAgentGroup, BrokenGroupRow, groupBrokenRuns, waitingRunsByAgent } from '../components/attention-groups';
+import { ApprovalAgentGroup, BrokenAgentRow, groupBrokenByAgent, QuietAgentRow, waitingRunsByAgent } from '../components/attention-groups';
 import { displayAgentName, errorText, formatApprovalTime, formatRelativeTime, displayStatusLabel, plural, runTone, type RunTone } from '../lib/format';
 import { pageTitle } from '../lib/brand';
 import { term } from '../lib/terms';
@@ -200,6 +200,30 @@ function DismissAll<Row>(props: {
   );
 }
 
+/** Turns a schedule that paused itself back on. The fix is the person's to
+ *  make first; if it is not fixed, the next two failures pause it again. */
+function ResumeButton(props: { onResume: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+  return (
+    <>
+      {failed && <span class="attn-dismiss-failed">{failed}</span>}
+      <button
+        type="button"
+        class="attn-more attn-resume"
+        disabled={busy}
+        onClick={() => {
+          setBusy(true);
+          setFailed(null);
+          props.onResume()
+            .catch((error: Error) => setFailed(`could not resume: ${error.message}`))
+            .finally(() => setBusy(false));
+        }}
+      >{busy ? 'resuming…' : 'resume schedule'}</button>
+    </>
+  );
+}
+
 /** How many needs-a-look rows show before the tail folds away. Pending gates are
  *  never folded: a waiting human is the whole point of the section. */
 const ATTENTION_ROWS = 3;
@@ -254,6 +278,13 @@ function AttentionSection(props: {
   onDismissFailed: (row: SessionRow) => void;
   onDismissAll: (rows: SessionRow[], onProgress: (done: number) => void) => Promise<number>;
   onRejectGates: (rows: ApprovalRow[], onProgress: (done: number) => void) => Promise<number>;
+  /** Schedules the daemon paused itself after the same failure twice. */
+  autoPaused: AutoPausedSchedule[];
+  /** Per agent: whether its newest run failed, and its delivery pace. */
+  health: AgentHealth[];
+  /** `${project}::${path}` of every agent on a running schedule. */
+  scheduledKeys: string[];
+  onResume: (project: string, path: string) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [pendingOpen, setPendingOpen] = useState(false);
@@ -261,8 +292,26 @@ function AttentionSection(props: {
   const now = useNow(pending.length + changesets.length > 0);
   const agentGroups = useMemo(() => groupPendingByAgent(pending, 'newest'), [pending]);
   const blocking = useMemo(() => waitingRunsByAgent(props.waitingRuns), [props.waitingRuns]);
-  const broken = useMemo(() => groupBrokenRuns(failed), [failed]);
-  const total = pending.length + changesets.length + failed.length + stranded.length;
+  // Broken is the agent's state now: its newest run failed, or its schedule
+  // paused itself. Old failures it has since recovered from stay in Sessions.
+  const broken = useMemo(() => {
+    const failing = new Map(props.health.map((agent) => [`${agent.project}::${agent.path}`, agent.lastRun?.failed]));
+    return groupBrokenByAgent(failed, props.autoPaused)
+      .filter((agent) => agent.autoPause || failing.get(agent.key) !== false);
+  }, [failed, props.autoPaused, props.health]);
+  // Quiet means delivering stopped for no visible reason; an agent already
+  // listed as broken has its reason on screen.
+  const quiet = useMemo(() => {
+    const brokenKeys = new Set(broken.map((agent) => agent.key));
+    return props.health.filter((agent): agent is DeliveryPaceAgent =>
+      Boolean(agent.pace?.quiet) && !brokenKeys.has(`${agent.project}::${agent.path}`));
+  }, [broken, props.health]);
+  const okCount = useMemo(() => {
+    const flagged = new Set([...broken.map((agent) => agent.key), ...quiet.map((agent) => `${agent.project}::${agent.path}`)]);
+    return props.scheduledKeys.filter((key) => !flagged.has(key)).length;
+  }, [broken, quiet, props.scheduledKeys]);
+  const pausedCount = broken.filter((agent) => agent.autoPause).length;
+  const total = pending.length + changesets.length + broken.length + quiet.length + stranded.length;
   const shownGroups = pendingOpen ? agentGroups : agentGroups.slice(0, PENDING_ROWS);
   const foldedGroups = agentGroups.length - shownGroups.length;
   // Each group keeps its own head, so one long list never buries the other.
@@ -275,16 +324,35 @@ function AttentionSection(props: {
   return (
     <section class="group">
       <h2 class="group-title">
-        <span>Waiting on you</span>
+        <span>Needs attention</span>
         {total > 0 && <span class="count">{total}</span>}
         <span class="rule"></span>
       </h2>
+      {/* The four answers at a glance, each a jump to its list. */}
+      <nav class="attn-tiles" aria-label="Needs attention, summary">
+        <a class={`attn-tile tone-waiting${pending.length + changesets.length === 0 ? ' is-zero' : ''}`} href="#attn-you">
+          <span class="attn-tile-n">{pending.length + changesets.length}</span>
+          <span class="attn-tile-l"><span aria-hidden="true">◆</span> waiting on you</span>
+        </a>
+        <a class={`attn-tile tone-failed${broken.length === 0 ? ' is-zero' : ''}`} href="#attn-broken">
+          <span class="attn-tile-n">{broken.length}</span>
+          <span class="attn-tile-l"><span aria-hidden="true">×</span> {broken.length === 1 ? 'agent' : 'agents'} broken{pausedCount > 0 && ` · ${pausedCount} paused`}</span>
+        </a>
+        <a class={`attn-tile tone-failed${quiet.length === 0 ? ' is-zero' : ''}`} href="#attn-quiet">
+          <span class="attn-tile-n">{quiet.length}</span>
+          <span class="attn-tile-l"><span aria-hidden="true">○</span> gone quiet</span>
+        </a>
+        <a class="attn-tile tone-ok" href="/sessions">
+          <span class="attn-tile-n">{okCount}</span>
+          <span class="attn-tile-l"><span aria-hidden="true">✓</span> scheduled {okCount === 1 ? 'agent' : 'agents'} OK</span>
+        </a>
+      </nav>
       {total === 0
-        ? <div class="attn-empty">Nothing waiting on you.</div>
+        ? <div class="attn-empty">Nothing needs you. Every scheduled agent is delivering at its usual pace.</div>
         : (
           <div class="attn-list">
             {(agentGroups.length > 0 || changesets.length > 0) && (
-              <div class="surface appr-surface pending-rows">
+              <div id="attn-you" class="surface appr-surface pending-rows">
                 {shownGroups.map((group) => (
                   <ApprovalAgentGroup
                     key={group.key}
@@ -306,15 +374,26 @@ function AttentionSection(props: {
             )}
             {broken.length > 0 && (
               <>
-                <h3 class="attn-subhead">Broken · by blocker <span class="count">{broken.length}</span></h3>
+                <h3 id="attn-broken" class="attn-subhead">Broken · by agent <span class="count">{broken.length}</span></h3>
                 <div class="surface">
-                  {shownBroken.map((group) => (
-                    <BrokenGroupRow
-                      key={group.key}
-                      group={group}
-                      actions={<DismissAll rows={group.rows} onDismissAll={props.onDismissAll} {...(group.rows.length === 1 && { label: 'dismiss' })} />}
+                  {shownBroken.map((agent) => (
+                    <BrokenAgentRow
+                      key={agent.key}
+                      agent={agent}
+                      actions={<>
+                        {agent.autoPause && agent.path && <ResumeButton onResume={() => props.onResume(agent.project, agent.path!)} />}
+                        {agent.rows.length > 0 && <DismissAll rows={agent.rows} onDismissAll={props.onDismissAll} {...(agent.rows.length === 1 && { label: 'dismiss' })} />}
+                      </>}
                     />
                   ))}
+                </div>
+              </>
+            )}
+            {quiet.length > 0 && (
+              <>
+                <h3 id="attn-quiet" class="attn-subhead">Gone quiet <span class="count">{quiet.length}</span></h3>
+                <div class="surface">
+                  {quiet.map((agent) => <QuietAgentRow key={`${agent.project}::${agent.path}`} agent={agent} now={now} />)}
                 </div>
               </>
             )}
@@ -642,6 +721,18 @@ export default function Home() {
     return best;
   }, [schedules.data]);
 
+  // Which scheduled agents stopped delivering. Pace is learned from 30 days of
+  // runs, so it moves slowly: a five-minute refresh is plenty.
+  const agentHealth = useFetch('home-agent-health', () => fetchAgentHealth(), { refreshMs: 120_000, enabled: primaryReady });
+  const scheduledKeys = useMemo(
+    () => (schedules.data?.schedules ?? []).filter((s) => s.enabled && s.nextRun).map((s) => `${s.projectId}::${s.agentPath}`),
+    [schedules.data],
+  );
+  const resumeSchedule = useCallback(async (project: string, path: string) => {
+    await setAgentSchedulePaused(project, path, false);
+    schedules.refetch();
+  }, [schedules.refetch]);
+
   // Agent-recorded business metrics (reserved "metrics" store). Missing store
   // is normal and returns empty rows, so the section simply doesn't render.
   const metricRows = useFetch('home-metrics', () => fetchStoreRows('metrics'), { refreshMs: 60_000, enabled: primaryReady });
@@ -813,6 +904,10 @@ export default function Home() {
             onDismissFailed={dismissFailed}
             onDismissAll={dismissAll}
             onRejectGates={rejectGates}
+            autoPaused={schedules.data?.autoPaused ?? []}
+            health={agentHealth.data?.agents ?? []}
+            scheduledKeys={scheduledKeys}
+            onResume={resumeSchedule}
           />
         )}
 

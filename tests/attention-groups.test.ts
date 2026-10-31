@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { agentGroupKey, groupBrokenRuns, waitingRunsByAgent } from '../src/cli/serve/web/components/attention-groups';
+import { agentGroupKey, groupBrokenByAgent, groupBrokenRuns, waitingRunsByAgent } from '../src/cli/serve/web/components/attention-groups';
 import { groupPendingByAgent } from '../src/cli/serve/web/components/pending-approval-card';
 import type { ApprovalRow, SessionRow } from '../src/cli/serve/web/lib/api';
 
@@ -60,5 +60,31 @@ describe('waitingRunsByAgent', () => {
     const [group] = groupPendingByAgent([gate]);
     expect(agentGroupKey('p', waiting[0]!.agent)).toBe(group!.key);
     expect(waitingRunsByAgent(waiting).get(group!.key)).toBe(2);
+  });
+});
+
+describe('groupBrokenByAgent', () => {
+  it('makes one row per agent across blockers, and leaves out person-blocked runs', () => {
+    const agents = groupBrokenByAgent([
+      run('cloudflare', { agent: { id: 'cf', name: 'Cloudflare', runPath: 'utils/cf.agentuse' }, errorCode: 'PROVIDER_ERROR' }),
+      run('cloudflare', { agent: { id: 'cf', name: 'Cloudflare', runPath: 'utils/cf.agentuse' }, errorCause: 'service_down', errorSubject: 'api' }),
+      run('backup', { agent: { id: 'bk', name: 'Backup', runPath: 'utils/bk.agentuse' }, errorCause: 'no_access', errorSubject: 'vault' }),
+      run('x', { agent: { id: 'x', name: 'X', runPath: 'x.agentuse' }, errorCause: 'waiting_on_human', errorSubject: 'gate' }),
+    ], []);
+    expect(agents.map((a) => [a.name, a.rows.length, a.label])).toEqual([
+      ['Cloudflare', 2, 'Service down'],
+      ['Backup', 1, 'No access'],
+    ]);
+  });
+
+  it('lists a schedule that paused itself first, even with its failed runs dismissed', () => {
+    const agents = groupBrokenByAgent([
+      run('cloudflare', { agent: { id: 'cf', name: 'Cloudflare', runPath: 'utils/cf.agentuse' } }),
+      run('cloudflare', { agent: { id: 'cf', name: 'Cloudflare', runPath: 'utils/cf.agentuse' } }),
+    ], [{ project: 'p', path: 'utils/obsidian-backup.agentuse', at: 1, reason: 'Failed the same way twice in a row: No access: vault', sessionId: 's' }]);
+    expect(agents.map((a) => [a.name, a.rows.length, a.autoPause?.reason ?? null])).toEqual([
+      ['obsidian-backup', 0, 'Failed the same way twice in a row: No access: vault'],
+      ['Cloudflare', 2, null],
+    ]);
   });
 });

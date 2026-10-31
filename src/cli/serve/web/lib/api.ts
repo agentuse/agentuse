@@ -1330,6 +1330,32 @@ export interface AutoPausedSchedule {
   sessionId: string;
 }
 
+/** One agent's current health (GET /api/agent-health, serve/delivery-pace.ts). */
+export interface AgentHealth {
+  project: string;
+  path: string;
+  name: string;
+  /** Its newest finished run, and whether that run failed. */
+  lastRun?: { at: number; failed: boolean };
+  /** Agents on a running schedule that deliver often enough to have a pace. */
+  pace?: {
+    lastDeliveredAt: number;
+    usualGapMs: number;
+    deliveries: number;
+    runsSinceDelivery: number;
+    /** Deliveries per day, oldest first. */
+    strip: number[];
+    quiet: boolean;
+  };
+}
+
+/** An agent with a pace, as the quiet list shows it. */
+export type DeliveryPaceAgent = AgentHealth & { pace: NonNullable<AgentHealth['pace']> };
+
+export function fetchAgentHealth(): Promise<{ success: true; agents: AgentHealth[]; errors: Array<{ projectId: string; message: string }> }> {
+  return getJson('/api/agent-health');
+}
+
 export function fetchSchedules(): Promise<SchedulesPayload> {
   return getJson('/api/schedules');
 }

@@ -5385,6 +5385,42 @@ a.metric-row:hover .metric-row-open { opacity: 1; }
   .pending-older a.pending-row.no-agent .pending-row-age { grid-column: 2; grid-row: 1; }
 }
 
+/* Needs attention, at a glance: four counts, each a jump to its list. */
+.attn-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.attn-tile {
+  display: flex; flex-direction: column; gap: 2px;
+  min-height: 44px; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface); box-shadow: var(--surface-shadow);
+  color: var(--fg); text-decoration: none;
+  transition: border-color 120ms ease;
+}
+.attn-tile:hover { border-color: var(--line-strong); color: var(--fg); }
+.attn-tile:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 2px; }
+.attn-tile-n { color: var(--fg); font-size: var(--font-size-heading); line-height: var(--lh-tight); font-weight: var(--weight-bold); letter-spacing: var(--tracking-tight); font-variant-numeric: tabular-nums; }
+.attn-tile-l { font-size: var(--font-size-caption); color: var(--muted-3); }
+.attn-tile.tone-waiting .attn-tile-n, .attn-tile.tone-waiting .attn-tile-l span { color: var(--amber); }
+.attn-tile.tone-failed .attn-tile-n, .attn-tile.tone-failed .attn-tile-l span { color: var(--red); }
+.attn-tile.tone-ok .attn-tile-l span { color: var(--green); }
+/* A zero is good news: it stays legible but stops shouting. */
+.attn-tile.is-zero .attn-tile-n, .attn-tile.is-zero .attn-tile-l span { color: var(--muted); }
+
+/* Broken agents, one row each; a schedule that paused itself leads. */
+.broken-row.is-paused .broken-count { color: var(--red); font-weight: var(--weight-bold); }
+.attn-more.attn-resume { color: var(--cyan); }
+/* Gone quiet: delivered on a pace, then stopped. Hollow marks, not filled
+   ones, so it reads as an absence rather than another failure. */
+.quiet-dot { width: 8px; height: 8px; border-radius: 999px; border: 1.5px solid var(--red); box-sizing: border-box; flex: none; }
+.broken-count.quiet-count { color: var(--red); }
+.pace-strip { display: inline-flex; gap: 2px; margin-top: 4px; }
+.pace-day { width: 9px; height: 9px; border-radius: 2px; box-sizing: border-box; border: 1px solid var(--line-strong); }
+.pace-day.on { background: var(--green); border-color: transparent; }
+
 /* Failed runs, one row per stuck thing. */
 .attn-subhead {
   display: flex; align-items: baseline; gap: 8px; margin: 6px 0 0;
