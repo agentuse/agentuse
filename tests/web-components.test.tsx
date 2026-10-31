@@ -1054,6 +1054,9 @@ describe('Session list helpers', () => {
     expect(outputPreview('# Title\n\n- **Shipped** the [thing](http://x)')).toBe('Shipped the thing');
     expect(outputPreview('```\n\n```\nDone.')).toBe('Done.');
     expect(outputPreview(undefined)).toBe('');
+    // The status the row already shows is not repeated in its preview.
+    expect(outputPreview('✅ Complete: ✅ Complete: Total is $38.30', 3)).toBe('Total is $38.30');
+    expect(outputPreview('Completed the audit')).toBe('Completed the audit');
   });
 
   it('reads elapsed time in the largest unit that stays exact enough', () => {

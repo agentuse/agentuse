@@ -7956,7 +7956,7 @@ a.lastrun.waiting { color: var(--cyan); }
   .page-sessions .dot.running { animation: none; }
 }
 
-.page-sessions .list { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.page-sessions .list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
 .page-sessions .day {
   display: flex;
   align-items: baseline;
@@ -7976,7 +7976,7 @@ a.lastrun.waiting { color: var(--cyan); }
   grid-template-columns: 8px minmax(0, 1fr) auto;
   column-gap: 10px;
   align-items: start;
-  padding: 9px 10px;
+  padding: 11px 12px;
   border-radius: 10px;
 }
 .page-sessions .it:hover { background: var(--panel-hover); }
@@ -8017,14 +8017,48 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-sessions .it-line.warn { color: var(--amber); font-family: var(--mono); font-size: var(--font-size-micro); }
 .page-sessions .it-line.is-empty { color: var(--muted-2); font-style: italic; }
 /* A finished run's output, up to three lines, so what it delivered is readable
-   from the list without opening it. */
+   from the list without opening it. One step below the name in both size and
+   brightness, so a scan lands on names first and reads the output second. */
 .page-sessions .it-line.is-preview {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
+  margin-top: 3px;
   white-space: pre-line;
-  color: var(--muted-3);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+  color: var(--muted);
 }
+.page-sessions .it.sel .it-line.is-preview { color: var(--muted-3); }
+
+/* Two-pane: the page holds still at the window's height and each pane
+   scrolls on its own, as a mail app does, so the filters stay in reach and
+   the list never drags the reader away. */
+.page-sessions.is-split main {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 100dvh;
+  padding-bottom: 12px;
+}
+.app-shell[data-desktop="true"] .page-sessions.is-split main { height: calc(100dvh - 44px); }
+.page-sessions.is-split .sessions-head,
+.page-sessions.is-split .sessions-bar,
+.page-sessions.is-split .sessions-scope,
+.page-sessions.is-split .sessions-keys,
+.page-sessions.is-split footer { flex: none; }
+.page-sessions.is-split .sessions-split { flex: 1 1 auto; min-height: 0; align-items: stretch; }
+.page-sessions.is-split .sessions-pane {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  scrollbar-width: thin;
+}
+.page-sessions.is-split .sessions-pane .day:first-child { margin-top: 2px; }
+.page-sessions.is-split .reader { position: static; max-height: 100%; align-self: start; }
+.page-sessions.is-split .sessions-keys { margin-top: 10px; }
+.page-sessions.is-split footer { margin-top: 4px; }
 /* Reviewed and waved off. The row keeps its status colour — it is still a
    failure — and loses its weight, so a scan lands on what has not been dealt
    with yet. The selected row is exempt: dimming what you are reading is noise. */

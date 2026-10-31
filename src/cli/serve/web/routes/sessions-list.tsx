@@ -164,6 +164,18 @@ export function sessionRepeatRunPath(
   return row.purpose ? undefined : row.agent.runPath;
 }
 
+const STATUS_ECHO = /^(?:\p{Extended_Pictographic}️?\s*)*(?:complete|completed|done)\s*[:\-–—]\s*/iu;
+
+/** Drops leading "✅ Complete:" labels, however many are stacked. An idle
+ *  run keeps its "💤 Idle:" line: that is how the list says nothing was due. */
+function stripStatusEcho(line: string): string {
+  let rest = line;
+  for (let match = STATUS_ECHO.exec(rest); match && match[0].length > 0; match = STATUS_ECHO.exec(rest)) {
+    rest = rest.slice(match[0].length);
+  }
+  return rest.trim();
+}
+
 /** A finished run shows this many lines of its output in the list. */
 const PREVIEW_LINES = 3;
 
@@ -195,7 +207,11 @@ export function outputPreview(value: string | undefined, maxLines = 1): string {
       if (!heading) heading = line;
       continue;
     }
-    lines.push(line);
+    // "✅ Complete: ✅ Complete: …" repeats the status the row already shows,
+    // and pushes what the run actually did off the end of the preview.
+    const said = lines.length === 0 ? stripStatusEcho(line) : line;
+    if (!said) continue;
+    lines.push(said);
     if (lines.length >= maxLines) break;
   }
   return lines.length > 0 ? lines.join('\n') : heading;
@@ -1061,7 +1077,7 @@ export default function SessionsList() {
   }
 
   return (
-    <div class={`page-sessions${narrow ? ' is-phone' : ''}`}>
+    <div class={`page-sessions${narrow ? ' is-phone' : ' is-split'}`}>
       <main ref={mainRef}>
         <div class="sessions-head">
           <h1>Sessions <PushBell category="sessions" /></h1>
