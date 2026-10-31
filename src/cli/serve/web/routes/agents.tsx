@@ -12,7 +12,7 @@ import { useTitle } from '../hooks/use-title';
 import { useAgentsView } from '../hooks/use-agents-view';
 import { isRunningStatus } from '../lib/format';
 import { pageTitle } from '../lib/brand';
-import { usePins } from '../hooks/use-pins';
+import { useFollowing } from '../hooks/use-following';
 import { useAgentColumns } from '../hooks/use-agent-columns';
 import { useMediaQuery } from '../hooks/use-media-query';
 import { useRunAgent } from '../hooks/use-run-agent';
@@ -68,11 +68,10 @@ function RunButton(props: { agentPath: string; projectId: string }) {
 }
 
 function PinIcon(props: { filled?: boolean }) {
-  // Lucide "pin", drawn with stroke; the filled state is conveyed by colour.
+  // Lucide "star": a followed agent. The filled state is conveyed by colour.
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" class={props.filled ? 'pin-svg filled' : 'pin-svg'}>
-      <path d="M12 17v5" />
-      <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+      <path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z" />
     </svg>
   );
 }
@@ -152,7 +151,7 @@ function AgentMenu(props: { agent: AgentRow; pinned: boolean; onTogglePin: () =>
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); onTogglePin(); close(); }}
           >
             <PinIcon filled={pinned} />
-            <span>{pinned ? 'Unpin from top' : 'Pin to top'}</span>
+            <span>{pinned ? 'Unfollow' : 'Follow'}</span>
           </button>
           </>
         )}
@@ -285,7 +284,7 @@ function walk(node: TreeNode, levels: boolean[], rows: VNode[], ctx: RowCtx): vo
         <div class={pinned ? 'tree-row pinned' : 'tree-row'} key={a.path}>
           <span class="tree-path">
             {prefix}
-            {pinned && <span class="tree-pin" title="Pinned" aria-label="Pinned"><PinIcon filled /></span>}
+            {pinned && <span class="tree-pin" title="Following" aria-label="Following"><PinIcon filled /></span>}
             <a class="tree-label" href={agentDetailHref(a.projectId, a.runPath)}>
               <span class="tree-agent">{a.name}</span>
               {running && <span class="tree-live" title="Running now" aria-label="Running now"></span>}
@@ -328,7 +327,7 @@ function AgentCard(props: { agent: AgentRow; ctx: RowCtx; showProject?: boolean 
   return (
     <div class={running ? 'agent-card running' : 'agent-card'}>
       <div class="agent-card-head">
-        {pinned && <span class="tree-pin" title="Pinned" aria-label="Pinned"><PinIcon filled /></span>}
+        {pinned && <span class="tree-pin" title="Following" aria-label="Following"><PinIcon filled /></span>}
         <a class="agent-card-name" href={agentDetailHref(a.projectId, a.runPath)}>{a.name}</a>
         {running && <span class="tree-live" title="Running now" aria-label="Running now"></span>}
         <AgentMenu agent={a} pinned={pinned} onTogglePin={() => props.ctx.pins.toggle(a)} />
@@ -625,7 +624,7 @@ export default function Agents({ project }: { project?: string } = {}) {
   const aboutOf = (projectId: string, dir: string) => aboutIndex.get(`${projectId}::${dir || '.'}`);
   const projectLabel = (projectId: string) => aboutOf(projectId, '.')?.name ?? projectId;
   useTitle(pageTitle(scoped ? projectLabel(project) : 'Agents'));
-  const { isPinned, toggle, keys } = usePins();
+  const { isFollowing: isPinned, toggle, keys } = useFollowing();
   const pins: PinApi = { isPinned, toggle };
   const { columns, addColumn, removeColumn } = useAgentColumns();
   // Matches the .page-agents 900px breakpoint in app.css (sidebar-docked tablets).
@@ -724,8 +723,8 @@ export default function Agents({ project }: { project?: string } = {}) {
     ? [...byProject.entries()].map(([projectId, agents]) => ({ id: projectAnchor(projectId), label: projectLabel(projectId), count: agents.length }))
     : [];
 
-  // Pinned agents in the order they were pinned, skipping any that no longer
-  // exist in the served set (scoped views only resolve pins in this project).
+  // Followed agents in the order they were followed, skipping any that no
+  // longer exist in the served set (scoped views only resolve this project's).
   const byKey = new Map<string, AgentRow>(allAgents.map((a) => [`${a.projectId}::${a.path}`, a]));
   const pinnedAgents = keys.map((k) => byKey.get(k)).filter((a): a is AgentRow => a !== undefined);
 
@@ -883,7 +882,7 @@ export default function Agents({ project }: { project?: string } = {}) {
         </header>
         {pinnedAgents.length > 0 && (
           <section class="group pinned-group">
-            <h2 class="group-title"><span>Pinned</span><span class="count">{pinnedAgents.length}</span><span class="rule"></span></h2>
+            <h2 class="group-title"><span>Following</span><span class="count">{pinnedAgents.length}</span><span class="rule"></span></h2>
             {view === 'cards'
               ? <div class="agent-cards pinned-cards">
                   {pinnedAgents.map((a) => <AgentCard key={`${a.projectId}::${a.path}`} agent={a} ctx={rowCtx} showProject={!scoped} />)}

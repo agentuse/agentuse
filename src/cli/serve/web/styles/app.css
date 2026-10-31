@@ -7673,19 +7673,26 @@ a.lastrun.waiting { color: var(--cyan); }
   padding: 10px 12px;
 }
 .page-sessions .sessions-bar-top .sessions-search { flex: 1 1 260px; min-width: 0; }
+.page-sessions .seg-i { gap: 6px; }
+.page-sessions .seg-i .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+.page-sessions .seg-star { color: var(--amber); flex: none; }
+.page-sessions .btn.follow svg { flex: none; }
+.page-sessions .btn.follow.on { color: var(--fg); }
+.page-sessions .btn.follow.on svg { color: var(--amber); }
 .page-sessions .sessions-bar-top .agent-select { flex: none; width: 190px; }
-/* Opened, the extra fields take their own line instead of squeezing the row. */
-.page-sessions .sessions-bar-top .filters-advanced { margin-top: 0; }
-.page-sessions .sessions-bar-top .filters-advanced[open] { flex-basis: 100%; }
 .page-sessions .sessions-tabs {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 2px 4px;
+  gap: 2px 8px;
   padding: 0 8px;
   border-top: 1px solid var(--line);
 }
-.page-sessions .sessions-tabs .qc-check { margin-left: auto; }
+.page-sessions .sessions-tab-list { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; min-width: 0; }
+.page-sessions .sessions-tab-list .qc-check { margin-left: 6px; }
+/* Closes the tab row; opened, the extra fields take a full line underneath. */
+.page-sessions .sessions-tabs .filters-advanced { margin: 0 0 0 auto; }
+.page-sessions .sessions-tabs .filters-advanced[open] { flex-basis: 100%; margin-left: 0; padding: 8px 2px 12px; }
 /* Status tabs carry their own counts, so the shape of the window is legible
    before anything is clicked. The picked one is underlined, not filled: it is
    where you are, not a chip that is switched on. */
@@ -8295,8 +8302,9 @@ a.lastrun.waiting { color: var(--cyan); }
   .page-sessions .sessions-bar-top .agent-select { flex: 1 0 100%; width: auto; }
   /* Six tabs do not fit a phone: they scroll sideways instead of wrapping into
      a second ragged row. */
-  .page-sessions .sessions-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-  .page-sessions .sessions-tabs .qc-check { margin-left: 8px; flex: none; }
+  .page-sessions .sessions-tab-list { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; flex: 1 1 100%; }
+  .page-sessions .sessions-tab-list .qc-check { flex: none; }
+  .page-sessions .sessions-tabs .filters-advanced { margin: 4px 0 10px; }
   .page-sessions .filter-grid-advanced { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 380px) {

@@ -85,6 +85,8 @@ import { resumeRoutes } from "./serve/routes/resume";
 import { revisionRoutes } from "./serve/routes/revisions";
 import { runRoutes } from "./serve/routes/run";
 import { scheduleRoutes } from "./serve/routes/schedules";
+import { followingRoutes } from "./serve/routes/following";
+import { createFollowingStore, followingKey } from "./serve/following";
 import { sessionLearningRoutes } from "./serve/routes/session-learnings";
 import { sessionLifecycleRoutes } from "./serve/routes/session-lifecycle";
 import { sessionRoutes } from "./serve/routes/sessions";
@@ -4119,6 +4121,7 @@ export function createServeCommand(): Command {
       // subscriptions persist in the data dir; notifications fire on pending
       // approvals and session completions (see pushService.notify call sites).
       const pushService = new PushService(getAgentuseDataDir(), (msg) => console.log(msg));
+      const following = createFollowingStore();
       // Every request AgentUse Cloud makes to this computer (src/cloud/access-log.ts).
       const cloudAccessLog = new AccessLog(join(getAgentuseDataDir(), "cloud", "access.jsonl"));
       type NativeNotificationEvent = {
@@ -4221,6 +4224,11 @@ export function createServeCommand(): Command {
         | { success: false; status: number; code: string; message: string }
       > => {
         const agentFilter = requestUrl.searchParams.get('agent') ?? undefined;
+        // ?following=1: only the agents the person follows. Counts are taken
+        // after it, so the status tabs describe the followed agents alone.
+        const followedKeys = requestUrl.searchParams.get('following') === '1'
+          ? new Set(await following.list())
+          : undefined;
         const statusFilter = parseSessionStatusFilter(requestUrl.searchParams.get('status') ?? undefined);
         const triageFilter = parseSessionTriageFilter(requestUrl.searchParams.get('triage') ?? undefined);
         const triggerFilterRaw = requestUrl.searchParams.get('trigger') ?? undefined;
@@ -4265,7 +4273,7 @@ export function createServeCommand(): Command {
         const needSubagentIndex = detail === 'feed' || Boolean(metricFilter) || Boolean(resultsFilter);
         const canPrelimit = requestedLimit !== undefined &&
           !requestUrl.searchParams.get('cursor') &&
-          !agentFilter && !statusFilter && !triageFilter && !triggerFilter && !approvalFilter && !searchQuery &&
+          !agentFilter && !followedKeys && !statusFilter && !triageFilter && !triggerFilter && !approvalFilter && !searchQuery &&
           !needSubagentIndex;
 
         type ProjectSessionRow = { projectId: string; session: SessionSummary };
@@ -4360,6 +4368,10 @@ export function createServeCommand(): Command {
             if (triggerFilter && session.trigger !== triggerFilter) continue;
             if (approvalFilter && !approvalSessionIdsByProject.get(result.project.id)?.has(session.sessionId)) continue;
             if (agentFilter && !sessionMatchesAgentFilter(session, agentFilter)) continue;
+            if (followedKeys) {
+              const runPath = toAgentRunPath(result.project, session.agent.filePath);
+              if (!runPath || !followedKeys.has(followingKey(result.project.id, runPath))) continue;
+            }
             rows.push({ projectId: result.project.id, session });
           }
         }
@@ -4739,6 +4751,7 @@ export function createServeCommand(): Command {
         approvalListHub,
         sessionListHub,
         deliverNotification,
+        following,
         findApprovalInfo,
         findSessionInfo,
         findSessionStatusInfo,
@@ -4993,6 +5006,7 @@ export function createServeCommand(): Command {
         if (await projectContextRoutes(ctx, rq)) return;
         if (await agentRoutes(ctx, rq)) return;
         if (await scheduleRoutes(ctx, rq)) return;
+        if (await followingRoutes(ctx, rq)) return;
         if (await storeRoutes(ctx, rq)) return;
         if (await sessionRoutes(ctx, rq)) return;
         if (await sessionLearningRoutes(ctx, rq)) return;

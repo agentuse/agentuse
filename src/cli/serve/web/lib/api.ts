@@ -1108,6 +1108,20 @@ export function logoutAgentMcpServer(project: string, runPath: string, server: s
   return postJson('/api/agents/mcp/logout', { project, path: runPath, server });
 }
 
+/** The followed agents, as `${projectId}::${path}` keys in follow order. */
+export function fetchFollowing(): Promise<{ success: true; agents: string[] }> {
+  return getJson('/api/following');
+}
+
+export function setFollowing(key: string, following: boolean): Promise<{ success: true; agents: string[] }> {
+  return postJson('/api/following', { key, following });
+}
+
+/** Adds keys not already followed (the one-time import of local pins). */
+export function addFollowing(keys: string[]): Promise<{ success: true; agents: string[] }> {
+  return postJson('/api/following', { add: keys });
+}
+
 export function setAgentSchedulePaused(project: string, path: string, paused: boolean): Promise<{ success: true; paused: boolean; scheduleEnabled: boolean }> {
   return postJson('/api/schedules/state', { project, path, paused });
 }
@@ -1344,6 +1358,8 @@ export interface SessionsPayload {
 
 export function fetchSessions(options: {
   agent?: string | undefined;
+  /** '1': only the agents the person follows. */
+  following?: '1' | undefined;
   status?: string | undefined;
   triage?: string | undefined;
   trigger?: string | undefined;
@@ -1365,6 +1381,7 @@ export function fetchSessions(options: {
 } = {}): Promise<SessionsPayload> {
   return getJson('/api/sessions', {
     agent: options.agent,
+    following: options.following,
     status: options.status,
     triage: options.triage,
     trigger: options.trigger,
@@ -1410,6 +1427,7 @@ export function postPushSubscription(body: {
 
 export function sessionsEventUrl(options: {
   agent?: string | undefined;
+  following?: '1' | undefined;
   status?: string | undefined;
   triage?: string | undefined;
   trigger?: string | undefined;
@@ -1425,6 +1443,7 @@ export function sessionsEventUrl(options: {
 } = {}): string {
   const url = new URL(daemonUrl('/sessions/events'), location.origin);
   if (options.agent !== undefined) url.searchParams.set('agent', options.agent);
+  if (options.following !== undefined) url.searchParams.set('following', options.following);
   if (options.status !== undefined) url.searchParams.set('status', options.status);
   if (options.triage !== undefined) url.searchParams.set('triage', options.triage);
   if (options.trigger !== undefined) url.searchParams.set('trigger', options.trigger);

@@ -13,6 +13,7 @@ import type { IncomingMessage, ServerResponse } from "http";
 import type { Scheduler } from "../../scheduler";
 import type { FileWatcher } from "../../watcher";
 import type { AboutInfo } from "./about";
+import type { FollowingStore } from "./following";
 import type { PushCategory, PushPayload, PushService } from "./push";
 import type { ApprovalEventHub, ApprovalListEventHub, NotificationEventHub } from "./sse";
 import type { WebAssets } from "./static";
@@ -134,6 +135,8 @@ export interface ServeContext {
   sessionListHub: ApprovalListEventHub<SessionsPayload>;
   deliverNotification: (category: PushCategory, payload: PushPayload) => Promise<void>;
   wakeListHubs: () => void;
+  /** The agents the person follows (Sessions' default scope, Agents' stars). */
+  following: FollowingStore;
 
   // --- session / approval lookup ----------------------------------------
   findApprovalInfo: (options: {

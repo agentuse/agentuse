@@ -32,6 +32,7 @@ export function sessionListStreamKey(requestUrl: URL): string {
     requestUrl.searchParams.get('trigger') ?? '',
     requestUrl.searchParams.get('project') ?? '',
     requestUrl.searchParams.get('agent') ?? '',
+    requestUrl.searchParams.get('following') ?? '',
     requestUrl.searchParams.get('approval') ?? '',
     requestUrl.searchParams.get('q') ?? '',
     requestUrl.searchParams.get('mock') ?? '',

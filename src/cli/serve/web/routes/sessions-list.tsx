@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { SessionRow, SessionSort, SessionsPayload } from '../lib/api';
 import { fetchSessions, fetchAgents, runAgentDetached, postSessionStop } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
+import { useFollowing } from '../hooks/use-following';
 import { useElementWidth } from '../hooks/use-element-width';
 import { useSessionsStream } from '../hooks/use-sessions-stream';
 import { useTitle } from '../hooks/use-title';
@@ -347,6 +348,10 @@ export function SessionReader(props: {
   const statusText = row.subagentActive ? 'running · subagent' : status;
   const purposeLabel = sessionPurposeLabel(row);
   const repeatRunPath = sessionRepeatRunPath(row);
+  // An agent run (not an internal job) can be followed from its own output.
+  const following = useFollowing();
+  const followTarget = repeatRunPath ? { projectId: row.project, path: repeatRunPath } : undefined;
+  const followed = followTarget ? following.isFollowing(followTarget) : false;
   const changesetHref = row.purpose?.kind === 'changeset' ? row.purpose.href : undefined;
 
   const copy = useCallback(() => {
@@ -416,6 +421,18 @@ export function SessionReader(props: {
           </div>
         </div>
         <div class="reader-actions">
+          {followTarget && (
+            <button
+              type="button"
+              class={`btn follow${followed ? ' on' : ''}`}
+              aria-pressed={followed}
+              title={followed ? 'Stop following: its runs leave the Following list' : 'Follow: its runs show in the Following list'}
+              onClick={() => void following.toggle(followTarget)}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill={followed ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" /></svg>
+              {followed ? 'Following' : 'Follow'}
+            </button>
+          )}
           <button
             type="button"
             class="btn primary"
@@ -501,6 +518,13 @@ export default function SessionsList() {
   const resultsFilter: 'unseen' | undefined = q.results === 'unseen' ? 'unseen' : undefined;
   const sortParam: SessionSort | undefined = q.sort === 'created' ? 'created' : undefined;
 
+  // Following is the default scope once the person follows anyone: the list
+  // is for reading what the agents they care about delivered. ?who=all widens
+  // it, and naming one agent (?agent=) always shows that agent, followed or not.
+  const following = useFollowing();
+  const followedCount = following.keys.length;
+  const followingOn = !agentFilter && q.who !== 'all' && followedCount > 0;
+
   // 7d, not 24h: this page is opened to find a run someone remembers, and most
   // of those are older than today. An agent/approval filter widens further,
   // because a single agent often has not run at all this week. A results view
@@ -544,7 +568,7 @@ export default function SessionsList() {
     Boolean(resultsFilter),
   ].filter(Boolean).length;
 
-  const key = `sessions:${win}:${statusFilter}:${triageFilter}:${triggerFilter}:${mockFilter}:${agentFilter ?? ''}:${approvalFilter ?? ''}:${searchParam}:${metricFilter ?? ''}:${resultsFilter ?? ''}:${sortParam ?? ''}`;
+  const key = `sessions:${followingOn ? 'following' : 'all'}:${win}:${statusFilter}:${triageFilter}:${triggerFilter}:${mockFilter}:${agentFilter ?? ''}:${approvalFilter ?? ''}:${searchParam}:${metricFilter ?? ''}:${resultsFilter ?? ''}:${sortParam ?? ''}`;
   const [streamData, setStreamData] = useState<SessionsPayload | null>(null);
   const [streamError, setStreamError] = useState<Error | null>(null);
   const [streamFallback, setStreamFallback] = useState(false);
@@ -567,6 +591,7 @@ export default function SessionsList() {
     triage: triageFilter || undefined,
     trigger: triggerFilter || undefined,
     agent: agentFilter,
+    following: followingOn ? '1' as const : undefined,
     approval: approvalFilter,
     q: searchParam || undefined,
     limit: 50,
@@ -577,7 +602,10 @@ export default function SessionsList() {
     sort: sortParam,
   };
 
-  const fetched = useFetch(key, () => fetchSessions(query), streamFallback ? { refreshMs: 10_000 } : {});
+  // Wait for the followed list, so the first load is already the right scope
+  // rather than every agent's runs followed by a jump to the narrower list.
+  const scopeReady = following.loaded;
+  const fetched = useFetch(key, () => fetchSessions(query), { enabled: scopeReady, ...(streamFallback && { refreshMs: 10_000 }) });
 
   useEffect(() => {
     if (streamFallback) fetched.refetch();
@@ -585,7 +613,7 @@ export default function SessionsList() {
 
   useSessionsStream({
     ...query,
-    enabled: !streamFallback,
+    enabled: scopeReady && !streamFallback,
     onData: (payload) => { setStreamData(payload); setStreamError(null); },
     onError: setStreamError,
     onFallback: () => setStreamFallback(true),
@@ -680,13 +708,13 @@ export default function SessionsList() {
     const base: Record<string, string | undefined> = {
       window: q.window, status: statusFilter, triage: triageFilter, trigger: triggerFilter,
       mock: mockFilter, agent: agentFilter, approval: approvalFilter, q: searchParam, open: openParam,
-      metric: metricFilter, results: resultsFilter, sort: sortParam,
+      metric: metricFilter, results: resultsFilter, sort: sortParam, who: q.who,
     };
     for (const [k, v] of Object.entries(changes)) base[k] = v;
     for (const [k, v] of Object.entries(base)) if (v) params.set(k, v);
     const qs = params.toString();
     return qs ? `/sessions?${qs}` : '/sessions';
-  }, [q.window, statusFilter, triageFilter, triggerFilter, mockFilter, agentFilter, approvalFilter, searchParam, openParam, metricFilter, resultsFilter, sortParam]);
+  }, [q.window, statusFilter, triageFilter, triggerFilter, mockFilter, agentFilter, approvalFilter, searchParam, openParam, metricFilter, resultsFilter, sortParam, q.who]);
 
   // Debounced URL sync for the search box.
   useEffect(() => {
@@ -804,6 +832,15 @@ export default function SessionsList() {
   const filterBar = (
     <div class="sessions-bar" role="search" aria-label="Filter sessions">
       <div class="sessions-bar-top">
+        {followedCount > 0 && !agentFilter && (
+          <div class="seg" role="group" aria-label="Which agents">
+            <a class={`seg-i${followingOn ? ' on' : ''}`} href={withParam({ who: '' })} aria-current={followingOn ? 'true' : undefined}>
+              <svg class="seg-star" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" /></svg>
+              Following <span class="n">{followedCount}</span>
+            </a>
+            <a class={`seg-i${followingOn ? '' : ' on'}`} href={withParam({ who: 'all' })} aria-current={followingOn ? undefined : 'true'}>All agents</a>
+          </div>
+        )}
         <div class="sessions-search">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="m20 20-4.3-4.3" /></svg>
           <input
@@ -828,6 +865,41 @@ export default function SessionsList() {
             <a class={`seg-i${w === win ? ' on' : ''}`} href={withParam({ window: w })} key={w} aria-current={w === win ? 'true' : undefined}>{w}</a>
           ))}
         </div>
+      </div>
+      <div class="sessions-tabs">
+        <nav class="sessions-tab-list" aria-label="Run status">
+          {statusChip('', 'All', counts?.all)}
+          {statusChip('running', 'Running', counts?.running, 'running')}
+          {statusChip('completed', 'Done', counts?.done)}
+          {statusChip('idle', 'Idle', counts?.idle, 'idle')}
+          {statusChip('incomplete', 'Incomplete', counts?.incomplete, 'incomplete')}
+          {statusChip('error', 'Failed', counts?.failed, 'failed')}
+          {/* Triage, not status, so it composes with the tabs beside it: the
+              counts themselves drop the waved-off runs while it is on. Only a run
+              that ended badly can be dismissed, so the toggle stays out of the
+              Running and Done views — and appears regardless while any triage
+              filter is on, including the `dismissed` one the URL can still ask
+              for, so no filter is ever applied by a control the reader cannot see. */}
+          {(hasDismissals(statusFilter) || triageFilter !== '') && (
+            <a
+              class={`qc qc-check${triageFilter !== '' ? ' on' : ''}`}
+              href={withParam({ triage: hideDismissed ? '' : 'undismissed' })}
+              role="switch"
+              aria-checked={hideDismissed}
+              title={onlyDismissed
+                ? 'Showing only runs already reviewed and waved off'
+                : 'Hide runs already reviewed and waved off'}
+            >
+              {/* A box, not a tab: the tabs to its left are one-of, this is
+                  on/off, and two controls that behave differently should not
+                  look the same. */}
+              <span class="qc-box" aria-hidden="true" />
+              {onlyDismissed ? 'Only dismissed' : 'Hide dismissed'}
+            </a>
+          )}
+        </nav>
+        {/* The rarely used filters close the tab row rather than taking a line of
+            their own above it; opened, their fields drop to a full-width line. */}
         <details class="filters-advanced" open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
           <summary>More filters{advancedFilterCount > 0 && <span>{advancedFilterCount}</span>}</summary>
           <div class="filter-grid filter-grid-advanced">
@@ -844,37 +916,6 @@ export default function SessionsList() {
           </div>
         </details>
       </div>
-      <nav class="sessions-tabs" aria-label="Run status">
-        {statusChip('', 'All', counts?.all)}
-        {statusChip('running', 'Running', counts?.running, 'running')}
-        {statusChip('completed', 'Done', counts?.done)}
-        {statusChip('idle', 'Idle', counts?.idle, 'idle')}
-        {statusChip('incomplete', 'Incomplete', counts?.incomplete, 'incomplete')}
-        {statusChip('error', 'Failed', counts?.failed, 'failed')}
-        {/* Triage, not status, so it composes with the tabs beside it: the
-            counts themselves drop the waved-off runs while it is on. Only a run
-            that ended badly can be dismissed, so the toggle stays out of the
-            Running and Done views — and appears regardless while any triage
-            filter is on, including the `dismissed` one the URL can still ask
-            for, so no filter is ever applied by a control the reader cannot see. */}
-        {(hasDismissals(statusFilter) || triageFilter !== '') && (
-          <a
-            class={`qc qc-check${triageFilter !== '' ? ' on' : ''}`}
-            href={withParam({ triage: hideDismissed ? '' : 'undismissed' })}
-            role="switch"
-            aria-checked={hideDismissed}
-            title={onlyDismissed
-              ? 'Showing only runs already reviewed and waved off'
-              : 'Hide runs already reviewed and waved off'}
-          >
-            {/* A box, not a tab: the tabs to its left are one-of, this is
-                on/off, and two controls that behave differently should not
-                look the same. */}
-            <span class="qc-box" aria-hidden="true" />
-            {onlyDismissed ? 'Only dismissed' : 'Hide dismissed'}
-          </a>
-        )}
-      </nav>
     </div>
   );
 
@@ -907,6 +948,7 @@ export default function SessionsList() {
                 {widerWindow === 'all' ? 'Search all time' : `Widen to ${widerWindow}`}
               </a>
             )}
+            {followingOn && <a class="empty-action" href={withParam({ who: 'all' })}>Show all agents</a>}
             {activeCount > 0 && <a class="empty-action" href="/sessions">Clear all filters</a>}
           </p>
         )
