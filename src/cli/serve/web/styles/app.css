@@ -7676,6 +7676,29 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-sessions .seg-i { gap: 6px; }
 .page-sessions .seg-i .n { color: var(--muted); font-variant-numeric: tabular-nums; }
 .page-sessions .seg-star { color: var(--amber); flex: none; }
+.page-sessions .it-approved {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--font-size-micro);
+  font-weight: var(--weight-normal);
+  color: var(--green);
+  white-space: nowrap;
+}
+/* An agent approved as asked, gate after gate: it could run without one. */
+.page-sessions .gate-trust {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin: 12px 20px 0;
+  padding: 10px 12px 10px 14px;
+  border: 1px solid var(--cyan-border);
+  border-radius: 10px;
+  background: var(--cyan-soft);
+  color: var(--fg);
+  font-size: var(--font-size-caption);
+}
+.page-sessions .gate-trust span { flex: 999 1 260px; min-width: 0; }
 .page-sessions .btn.follow svg { flex: none; }
 .page-sessions .btn.follow.on { color: var(--fg); }
 .page-sessions .btn.follow.on svg { color: var(--amber); }

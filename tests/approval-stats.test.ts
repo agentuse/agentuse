@@ -4,6 +4,7 @@ import {
   agentApprovalStats,
   agentRunPathResolver,
   approvalOutcome,
+  approvedStreak,
   decidedThisWeek,
   decidedViaSlack,
   formatCompactAge,
@@ -235,5 +236,27 @@ describe('who decided, and where', () => {
     expect(reviewerLabel(row({ decisionReviewer: 'web' }))).toBe('you');
     expect(reviewerLabel(row({ decisionReviewer: 'Slack' }))).toBe('you');
     expect(reviewerLabel(row({ decisionReviewer: 'leon' }))).toBe('leon');
+  });
+});
+
+describe('approved streak', () => {
+  it('counts the newest decisions approved as asked, stopping at the first that was not', () => {
+    const rows = [
+      row({ sessionId: 'a', status: 'approved', decisionAt: NOW - 1 * HOUR }),
+      row({ sessionId: 'b', status: 'approved', decisionAt: NOW - 2 * HOUR }),
+      row({ sessionId: 'c', status: 'commented', decisionAt: NOW - 3 * HOUR }),
+      row({ sessionId: 'd', status: 'approved', decisionAt: NOW - 4 * HOUR }),
+    ];
+    expect(approvedStreak(rows)).toBe(2);
+  });
+
+  it('skips gates still waiting, and a rejection or expiry breaks the streak', () => {
+    expect(approvedStreak([
+      row({ sessionId: 'p', status: 'pending', suspendedAt: NOW }),
+      row({ sessionId: 'a', status: 'approved', decisionAt: NOW - HOUR }),
+      row({ sessionId: 'r', status: 'rejected', decisionAt: NOW - 2 * HOUR }),
+    ])).toBe(1);
+    expect(approvedStreak([row({ sessionId: 'e', status: 'expired', decisionAt: NOW })])).toBe(0);
+    expect(approvedStreak([])).toBe(0);
   });
 });

@@ -315,3 +315,25 @@ export function decidedViaSlack(row: ApprovalRow): boolean {
   if (row.channelMessage?.type?.toLowerCase().includes('slack')) return true;
   return (row.channels?.slack?.length ?? 0) > 0;
 }
+
+/** Approved-as-asked gates in a row before an agent is offered a run without
+ *  its gate. Ten clean approvals is a habit, not a lucky week. */
+export const GATE_TRUST_STREAK = 10;
+
+/**
+ * How many of an agent's most recent decided gates were approved exactly as
+ * asked, counting back from the newest until the first that was not: a
+ * rejection, a comment that sent it back, or a gate that expired. Still-open
+ * gates are skipped. `rows` are one agent's gates, in any order.
+ */
+export function approvedStreak(rows: ApprovalRow[]): number {
+  const decided = rows
+    .filter((row) => row.status !== 'pending')
+    .sort((a, b) => (b.decisionAt ?? askedAt(b) ?? 0) - (a.decisionAt ?? askedAt(a) ?? 0));
+  let streak = 0;
+  for (const row of decided) {
+    if (row.status !== 'approved') break;
+    streak += 1;
+  }
+  return streak;
+}

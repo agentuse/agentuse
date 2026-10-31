@@ -3,8 +3,10 @@ import { failureLabel } from '../../../../session/failure-label';
 import { Fragment, type ComponentChildren } from 'preact';
 import { useLocation } from 'preact-iso';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import type { SessionRow, SessionSort, SessionsPayload } from '../lib/api';
-import { fetchSessions, fetchAgents, runAgentDetached, postSessionStop } from '../lib/api';
+import type { ApprovalRow, SessionRow, SessionSort, SessionsPayload } from '../lib/api';
+import { fetchSessions, fetchAgents, fetchApprovals, runAgentDetached, postSessionStop } from '../lib/api';
+import { approvedStreak, GATE_TRUST_STREAK } from '../lib/approval-stats';
+import { agentDetailHref } from '../lib/links';
 import { useFetch } from '../hooks/use-fetch';
 import { useFollowing } from '../hooks/use-following';
 import { useElementWidth } from '../hooks/use-element-width';
@@ -251,6 +253,8 @@ export function SessionListItem(props: {
   dismissed?: boolean | undefined;
   sort?: SessionSort | undefined;
   onSelect?: ((event: MouseEvent) => void) | undefined;
+  /** The run passed an approval gate that a person approved. */
+  approved?: boolean | undefined;
 }) {
   const { row, selected, query } = props;
   const time = sessionSortTime(row, props.sort);
@@ -301,6 +305,9 @@ export function SessionListItem(props: {
           <span class="it-agent-name"><Highlight text={name} query={query} /></span>
           {dot === 'idle' && <span class="chip status idle">idle</span>}
           {purposeLabel && <span class="chip internal">{purposeLabel}</span>}
+          {/* A gated result and an ungated one sit in the same list; this says
+              which one a person signed off before it went out. */}
+          {props.approved && <span class="it-approved" title="This run passed an approval gate you approved">✓ approved</span>}
           {/* Says why the row is dimmed. A failure that has been waved off is
               still a failure, so it keeps its colour and loses its urgency. */}
           {dismissed && <span class="it-dismissed">dismissed</span>}
@@ -331,6 +338,10 @@ export function SessionReader(props: {
   dismissed?: boolean | undefined;
   /** Waves the run off without leaving the list. Absent = no Discard button. */
   onDiscard?: ((row: SessionRow) => Promise<void>) | undefined;
+  /** The run passed an approval gate that a person approved. */
+  approved?: boolean | undefined;
+  /** This agent's newest gates approved as asked, in a row. */
+  approvedStreak?: number | undefined;
 }) {
   const { row } = props;
   const location = useLocation();
@@ -414,6 +425,7 @@ export function SessionReader(props: {
             <span class={`chip status ${row.subagentActive ? 'running' : status}`}>{statusText}</span>
             {dismissed && <span class="chip dismissed" title="Reviewed and waved off: it no longer asks for attention on Home">dismissed</span>}
             {purposeLabel && <span class="chip internal">{purposeLabel}</span>}
+            {props.approved && <span class="chip status approved">approved by you</span>}
             <span class="chip trigger">{row.trigger}</span>
             <span>{formatApprovalTime(row.createdAt)}</span>
             <span>{activeDuration(row.timing) === null ? 'Active time unavailable' : `${formatElapsedShort(activeDuration(row.timing)!)} active`}</span>
@@ -463,6 +475,15 @@ export function SessionReader(props: {
           <a class="btn" href={sessionHref(row)}>{props.compact ? 'Session' : 'Full session'}</a>
         </div>
       </div>
+      {/* The gate was the only place this agent's results got seen. Once it has
+          been approved as asked often enough, say it could run without one:
+          its results keep landing in this list either way. */}
+      {props.approved && followTarget && (props.approvedStreak ?? 0) >= GATE_TRUST_STREAK && (
+        <div class="gate-trust" role="note">
+          <span>You approved this agent's last {props.approvedStreak} gates without changes. It could run without the gate; its results still show up here.</span>
+          <a class="btn" href={agentDetailHref(followTarget.projectId, followTarget.path)}>Open agent</a>
+        </div>
+      )}
       {runError && <InlineError>Could not start a run: {runError}</InlineError>}
       {discardError && <InlineError>Could not discard this run: {discardError}</InlineError>}
       <div class="out">
@@ -624,6 +645,27 @@ export default function SessionsList() {
   const resolvedLoading = fetched.loading && !resolvedData;
 
   const agentsFetch = useFetch('sessions-agent-options', () => fetchAgents(), { enabled: resolvedData !== null });
+
+  // Which runs a person approved at a gate, and how many of each agent's
+  // newest gates were approved as asked. Thirty days of decisions is one small
+  // request, and covers every window the list opens with.
+  const approvalsFetch = useFetch('sessions-approvals', () => fetchApprovals({ days: '30' }), { enabled: resolvedData !== null, refreshMs: 60_000 });
+  const approvalIndex = useMemo(() => {
+    const approved = new Set<string>();
+    const byAgent = new Map<string, ApprovalRow[]>();
+    const buckets = approvalsFetch.data?.buckets;
+    for (const row of [...(buckets?.completed ?? []), ...(buckets?.expired ?? [])]) {
+      if (row.status === 'approved') approved.add(`${row.project}:${row.sessionId}`);
+      if (!row.agentFilePath) continue;
+      const key = `${row.project}:${row.agentFilePath}`;
+      byAgent.set(key, [...(byAgent.get(key) ?? []), row]);
+    }
+    const streaks = new Map<string, number>();
+    for (const [key, rows] of byAgent) streaks.set(key, approvedStreak(rows));
+    return { approved, streaks };
+  }, [approvalsFetch.data]);
+  const isApproved = (row: SessionRow) => approvalIndex.approved.has(`${row.project}:${row.sessionId}`);
+  const streakFor = (row: SessionRow) => row.agent.filePath ? approvalIndex.streaks.get(`${row.project}:${row.agent.filePath}`) : undefined;
   const agentOptions = useMemo(() => {
     const byId = new Map<string, string>();
     for (const a of agentsFetch.data?.agents ?? []) {
@@ -964,6 +1006,7 @@ export default function SessionsList() {
                     query={searchParam}
                     dismissed={isDismissedRow(row, justDismissed, rowKey(row))}
                     sort={sortParam}
+                    approved={isApproved(row)}
                     selected={!narrow && selected !== undefined && rowKey(selected) === rowKey(row)}
                     href={narrow ? withParam({ open: row.sessionId }) : sessionHref(row)}
                     onSelect={narrow ? undefined : (event) => {
@@ -1008,6 +1051,8 @@ export default function SessionsList() {
             onNavigate={(row) => location.route(withParam({ open: row.sessionId }))}
             dismissed={isDismissedRow(openRow, justDismissed, rowKey(openRow))}
             onDiscard={discard}
+            approved={isApproved(openRow)}
+            approvedStreak={streakFor(openRow)}
             compact
           />
         </main>
@@ -1044,6 +1089,8 @@ export default function SessionsList() {
                     copySignal={copySignal}
                     dismissed={isDismissedRow(selected, justDismissed, rowKey(selected))}
                     onDiscard={discard}
+                    approved={isApproved(selected)}
+                    approvedStreak={streakFor(selected)}
                   />
                 )
                 : <section class="reader reader-blank"><p class="out-empty">Pick a run to read its output.</p></section>}
