@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'preact/hooks';
 import type { SerializedSchedule } from '../../../../scheduler';
-import type { SessionRow } from '../lib/api';
+import type { AutoPausedSchedule, SessionRow } from '../lib/api';
 import { fetchSchedules, fetchSessions, setAgentSchedulePaused } from '../lib/api';
 import { useFetch } from '../hooks/use-fetch';
 import { useTitle } from '../hooks/use-title';
@@ -208,6 +208,8 @@ function ScheduleRow(props: {
   schedule: SerializedSchedule;
   bucket: Bucket;
   runs: SessionRow[];
+  /** Set when the daemon paused this schedule after the same failure twice. */
+  autoPause?: AutoPausedSchedule | undefined;
   multiProject: boolean;
   now: number;
   onToggled: () => void;
@@ -215,6 +217,7 @@ function ScheduleRow(props: {
   const { schedule, bucket, runs, multiProject, now } = props;
   const last = runs[0];
   const paused = schedule.enabled === false || !schedule.nextRun;
+  const autoPause = paused ? props.autoPause : undefined;
   const { run, busy: runBusy, error: runError } = useRunAgent(schedule.agentPath, schedule.projectId);
   const [pauseBusy, setPauseBusy] = useState(false);
   const [pauseError, setPauseError] = useState<string | null>(null);
@@ -260,7 +263,7 @@ function ScheduleRow(props: {
       <div class={`slot${paused ? ' paused' : ''}${failed ? ' attention' : ''}${running ? ' running' : ''}`}>
         <div class="slot-when">
           {paused
-            ? <><div class="slot-time dim">—</div><div class="slot-until dim">paused</div></>
+            ? <><div class="slot-time dim">—</div><div class={`slot-until${autoPause ? ' auto-paused' : ' dim'}`}>{autoPause ? 'paused itself' : 'paused'}</div></>
             : <>
               <div class="slot-time">{bucket === 'later' ? weekdayClock(next) : clockLabel(next)}</div>
               <div class={`slot-until${next - now < 60 * 60 * 1000 ? ' soon' : ''}`}>{formatUntil(next, now)}</div>
@@ -302,7 +305,14 @@ function ScheduleRow(props: {
           >{pauseBusy ? <span class="btn-spinner" aria-hidden="true" /> : <PauseIcon />}</button>
         </div>
       </div>
-      {failed && (
+      {autoPause && (
+        <div class="slot-error" role="note">
+          <span class="slot-error-text">{autoPause.reason}. Paused {formatRelativeTime(autoPause.at)}; fix it, then resume.</span>
+          <a class="slot-error-link" href={`/sessions/${encodeURIComponent(autoPause.sessionId)}?project=${encodeURIComponent(schedule.projectId)}`}>Open session</a>
+          <button type="button" class="slot-error-link as-link" disabled={pauseBusy} onClick={() => void togglePause()}>Resume</button>
+        </div>
+      )}
+      {failed && !autoPause && (
         <div class="slot-error" role="note">
           <span class="slot-error-text">{errorText ?? 'Last run failed'}</span>
           {failedSessionId && <a class="slot-error-link" href={`/sessions/${encodeURIComponent(failedSessionId)}?project=${encodeURIComponent(schedule.projectId)}`}>Open session</a>}
@@ -326,6 +336,7 @@ export default function Schedules() {
   const projects = useMemo(() => [...new Set(schedules.map((s) => s.projectId))].sort(), [schedules]);
   const multiProject = projects.length > 1;
   const runsFor = useMemo(() => scheduleRunFinder(schedules, sessions.data?.sessions ?? []), [schedules, sessions.data]);
+  const autoPauseFor = (s: SerializedSchedule) => data?.autoPaused?.find((p) => p.project === s.projectId && p.path === s.agentPath);
 
   const attention = new Set<string>();
   const runningIds = new Set<string>();
@@ -417,7 +428,7 @@ export default function Schedules() {
                 <section class="day" key={g.bucket}>
                   <h2 class={`day-title${g.bucket === 'paused' ? ' day-paused' : ''}`}><span>{g.label}</span><span class="count">{g.list.length}</span></h2>
                   {g.list.map((s) => (
-                    <ScheduleRow key={s.id} schedule={s} bucket={g.bucket} runs={runsFor(s)} multiProject={multiProject} now={now} onToggled={refetch} />
+                    <ScheduleRow key={s.id} schedule={s} bucket={g.bucket} runs={runsFor(s)} autoPause={autoPauseFor(s)} multiProject={multiProject} now={now} onToggled={refetch} />
                   ))}
                 </section>
               ))}

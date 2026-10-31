@@ -87,6 +87,8 @@ import { runRoutes } from "./serve/routes/run";
 import { scheduleRoutes } from "./serve/routes/schedules";
 import { followingRoutes } from "./serve/routes/following";
 import { createFollowingStore, followingKey } from "./serve/following";
+import { findRepeatFailure, REPEAT_FAILURE_LOOKBACK_MS } from "./serve/auto-pause";
+import { agentDetailHref } from "./serve/web/lib/links";
 import { sessionLearningRoutes } from "./serve/routes/session-learnings";
 import { sessionLifecycleRoutes } from "./serve/routes/session-lifecycle";
 import { sessionRoutes } from "./serve/routes/sessions";
@@ -2068,6 +2070,33 @@ export function createServeCommand(): Command {
 
       // Helper function to execute an agent (used by scheduler)
       // Uses subprocess to work around EBADF issue when spawning from async callbacks
+      // Stop on repeat (serve/auto-pause.ts): after a scheduled run, pause the
+      // schedule when that run and the one before it failed the same way. The
+      // agent's runs are looked up rather than taken from the worker result,
+      // which carries no session id when the run failed.
+      const pauseOnRepeatFailure = async (project: Project, agentPath: string, startedAt: number): Promise<void> => {
+        const projectWorker = workers.get(project.id);
+        if (!projectWorker) return;
+        const runPath = toProjectRelativeAgentPath(project, agentPath);
+        const listed = await projectWorker.listSessions(project.root, { updatedAfter: startedAt - REPEAT_FAILURE_LOOKBACK_MS });
+        if (!listed.success) throw new Error(listed.error.message);
+        const agentRuns = listed.sessions.filter((run) => toAgentRunPath(project, run.agent.filePath) === runPath);
+        const pause = findRepeatFailure(agentRuns, startedAt);
+        if (!pause) return;
+        const paused = await setSchedulePaused(project.root, runPath, true, pause);
+        recordProjectScheduleState(scheduleState, project.id, paused);
+        armProjectSchedules(scheduler, project, scheduleIsEnabled);
+        wakeListHubs();
+        const agentName = agentRuns.find((run) => run.sessionId === pause.sessionId)?.agent.name ?? runPath;
+        console.log(`[schedule] Paused ${project.id}/${runPath}: ${pause.reason}`);
+        void deliverNotification('sessions', {
+          title: `${agentName} paused`,
+          body: `${pause.reason}. Its schedule is off until you resume it.`,
+          url: `${effectivePublicUrl}${agentDetailHref(project.id, runPath)}`,
+          tag: `auto-pause-${project.id}-${runPath}`,
+        });
+      };
+
       const executeScheduledAgent = async (
         schedule: Schedule
       ): Promise<{ success: boolean; duration: number; error?: string; sessionId?: string; suspended?: boolean; skipped?: string }> => {
@@ -2128,6 +2157,12 @@ export function createServeCommand(): Command {
         if (!spawnResult.success && spawnResult.error.code === SCHEDULED_RUN_ACTIVE) {
           return { success: false, duration, skipped: spawnResult.error.message };
         }
+
+        // A run can end in error even when the worker reports success (an
+        // agent that declared itself blocked), so check after every run.
+        await pauseOnRepeatFailure(project, schedule.agentPath, startTime).catch((error) => {
+          console.error(`[schedule] Could not check ${project.id}/${schedule.agentPath} for a repeat failure: ${toErrorMessage(error)}`);
+        });
 
         if (spawnResult.success) {
           serveState.totalExecutions++;

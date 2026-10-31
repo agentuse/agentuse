@@ -7518,6 +7518,8 @@ a.lastrun.waiting { color: var(--cyan); }
 .page-schedules .slot-time { font-family: var(--mono); font-size: var(--font-size-supporting); font-weight: var(--weight-medium); color: var(--fg); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .page-schedules .slot-until { font-size: var(--font-size-micro); color: var(--muted); margin-top: 2px; white-space: nowrap; }
 .page-schedules .slot-until.soon { color: var(--cyan); }
+/* Paused by the daemon after a repeat failure: it needs a fix, not a glance. */
+.page-schedules .slot-until.auto-paused { color: var(--red); }
 .page-schedules .slot-time.dim, .page-schedules .slot-until.dim { color: var(--muted-2); }
 .page-schedules .slot-main { min-width: 0; }
 .page-schedules a.slot-agent { display: inline-block; color: var(--fg); font-family: var(--sans); font-weight: var(--weight-medium); font-size: var(--font-size-supporting); text-decoration: none; border-bottom: 0; overflow-wrap: anywhere; }

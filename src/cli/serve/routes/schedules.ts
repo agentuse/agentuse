@@ -1,5 +1,5 @@
 import { parseAgent } from "../../../parser";
-import { setSchedulePaused } from "../../../scheduler/state.js";
+import { loadScheduleState, setSchedulePaused, type ScheduleAutoPause } from "../../../scheduler/state.js";
 import { toErrorMessage } from "../../../utils/error-message.js";
 import { parseJSONBody, sendError, sendJSON, sendRequestParseError } from "../http";
 import { resolveScopedAgentPath, toProjectRelativeAgentPath } from "../project";
@@ -36,9 +36,17 @@ export async function scheduleRoutes(ctx: ServeContext, rq: ServeRequest): Promi
           }
         }
         const schedules = scheduler.listSerialized();
+        // Schedules the daemon paused itself after a repeat failure, and why.
+        const autoPaused: Array<{ project: string; path: string } & ScheduleAutoPause> = [];
+        for (const project of projectsById.values()) {
+          if (scheduleStateErrors.has(project.id)) continue;
+          const state = await loadScheduleState(project.root);
+          for (const [path, pause] of state.autoPaused) autoPaused.push({ project: project.id, path, ...pause });
+        }
         sendJSON(res, 200, {
           success: true,
           schedules,
+          ...(autoPaused.length > 0 && { autoPaused }),
           ...(scheduleStateErrors.size > 0 && { stateErrors: Object.fromEntries(scheduleStateErrors) }),
         });
         return;

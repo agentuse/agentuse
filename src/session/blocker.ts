@@ -69,6 +69,16 @@ export function blockerGroupKey(kind: string, subject: string | undefined): stri
   return `${kind}:${normalizeBlockerSubject(subject ?? '')}`;
 }
 
+/**
+ * What one agent's failed run failed on, so two runs of it can be compared:
+ * the named blocker when there is one, else the failure cause or error code.
+ * Two runs with the same key failed the same way.
+ */
+export function repeatFailureKey(run: { errorCause?: string | undefined; errorSubject?: string | undefined; errorCode?: string | undefined }): string {
+  if (isBlockerKind(run.errorCause) && run.errorSubject) return blockerGroupKey(run.errorCause, run.errorSubject);
+  return run.errorCause ?? run.errorCode ?? 'error';
+}
+
 export const BLOCKER_LABELS: Record<BlockerKind, string> = {
   missing_tool: 'Missing tool',
   missing_package: 'Missing package',

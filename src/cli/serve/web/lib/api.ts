@@ -1316,6 +1316,18 @@ export interface SchedulesPayload {
   schedules: SerializedSchedule[];
   /** Project id -> unreadable schedule-state error; that project's schedules are disarmed. */
   stateErrors?: Record<string, string>;
+  /** Schedules the daemon paused itself after the same failure twice in a row. */
+  autoPaused?: AutoPausedSchedule[];
+}
+
+export interface AutoPausedSchedule {
+  project: string;
+  /** Project-relative agent path, as `SerializedSchedule.agentPath` gives it. */
+  path: string;
+  at: number;
+  reason: string;
+  /** The run that failed the second time. */
+  sessionId: string;
 }
 
 export function fetchSchedules(): Promise<SchedulesPayload> {
