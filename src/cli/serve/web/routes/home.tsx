@@ -310,6 +310,7 @@ function AttentionSection(props: {
 }) {
   const [expanded, setExpanded] = useState(false);
   const [pendingOpen, setPendingOpen] = useState(false);
+  const [brokenOpen, setBrokenOpen] = useState(false);
   const { pending, changesets, failed, stranded } = props;
   const now = useNow(pending.length + changesets.length > 0);
   const agentGroups = useMemo(() => groupPendingByAgent(pending, 'newest'), [pending]);
@@ -336,10 +337,11 @@ function AttentionSection(props: {
   const total = pending.length + changesets.length + broken.length + quiet.length + stranded.length;
   const shownGroups = pendingOpen ? agentGroups : agentGroups.slice(0, PENDING_ROWS);
   const foldedGroups = agentGroups.length - shownGroups.length;
-  // Each group keeps its own head, so one long list never buries the other.
-  const shownBroken = expanded ? broken : broken.slice(0, ATTENTION_ROWS);
+  // Each list unfolds right under itself. One toggle at the bottom of the
+  // section sat below Gone quiet, where nobody looks for more broken agents.
+  const shownBroken = brokenOpen ? broken : broken.slice(0, ATTENTION_ROWS);
   const shownStranded = expanded ? stranded : stranded.slice(0, ATTENTION_ROWS);
-  const folded = (broken.length - shownBroken.length) + (stranded.length - shownStranded.length);
+  const folded = stranded.length - shownStranded.length;
   // Everything the ✕ can clear, folded tail included. Bulk dismissal works on
   // the whole group, not the rows that happen to be on screen.
   const reviewable = [...failed, ...stranded];
@@ -422,6 +424,11 @@ function AttentionSection(props: {
                       </>}
                     />
                   ))}
+                  {broken.length > ATTENTION_ROWS && (
+                    <button type="button" class="attn-more pending-more" onClick={() => setBrokenOpen((on) => !on)}>
+                      {brokenOpen ? 'show fewer' : `show all ${broken.length} broken agents →`}
+                    </button>
+                  )}
                 </div>
               </>
             )}
@@ -449,7 +456,7 @@ function AttentionSection(props: {
               <div class="attn-actions">
                 {(folded > 0 || expanded) && (
                   <button type="button" class="attn-more" onClick={() => setExpanded((on) => !on)}>
-                    {expanded ? 'show less' : `show all ${broken.length + stranded.length} needing a look →`}
+                    {expanded ? 'show less' : `show all ${stranded.length} stranded →`}
                   </button>
                 )}
                 {reviewable.length > 1 && (
