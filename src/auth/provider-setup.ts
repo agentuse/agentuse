@@ -30,6 +30,7 @@ import type { AuthInteraction, ProviderDefinition } from '../plugin/types.js';
 import { checkCustomProviderCompletion, CUSTOM_PROVIDER_APIS, detectCustomProviderApi, discoverCustomProviderModelIds, resolveCustomProvider, normalizeCustomProviderBaseURL, normalizeCustomProviderModelIds, type CustomProviderApi } from './custom-provider-models.js';
 import type { CustomProviderAuth } from './types.js';
 import { toErrorMessage } from '../utils/error-message';
+import { getSuggestedModelIds } from '../generated/models';
 
 export type ProviderAuthMethod = 'oauth' | 'api_key';
 
@@ -80,6 +81,16 @@ interface PendingPluginOAuthAttempt {
 
 const OAUTH_ATTEMPT_TTL_MS = 10 * 60 * 1000;
 const CUSTOM_PROVIDER_PROBE_LIMIT = 3;
+
+/**
+ * The order to try an endpoint's models: the ones the user named, then current
+ * models this version knows, then the rest. Endpoints often list retired models
+ * first, and a few dead ones shouldn't fail the whole setup.
+ */
+export function customProviderProbes(named: readonly string[], models: readonly string[]): string[] {
+  const current = new Set(getSuggestedModelIds().map((id) => id.slice(id.indexOf(':') + 1)));
+  return [...new Set([...named, ...models.filter((model) => current.has(model)), ...models])];
+}
 const oauthAttempts = new Map<string, OAuthAttempt>();
 const pluginOAuthAttempts = new Map<string, PendingPluginOAuthAttempt>();
 
@@ -512,7 +523,7 @@ export async function prepareCustomProvider(input: CustomProviderInput): Promise
     throw new Error('Could not find any models at this endpoint. Enter at least one model ID manually.');
   }
   // An endpoint may list models it cannot serve, so probe a few before giving up.
-  const probes = models.slice(0, CUSTOM_PROVIDER_PROBE_LIMIT);
+  const probes = customProviderProbes(manualModels, models).slice(0, CUSTOM_PROVIDER_PROBE_LIMIT);
   const failures: unknown[] = [];
   for (const model of probes) {
     try {
