@@ -1,7 +1,7 @@
 import { useState } from 'preact/hooks';
 import { useFetch } from '../hooks/use-fetch';
 import { fetchCloudState } from '../lib/api';
-import { useCodingAgents } from './coding-agent-list';
+import { outdatedNote, useCodingAgents } from './coding-agent-list';
 import { CopyField } from './connect-apps-settings';
 
 const CHAT_APPS = [
@@ -32,6 +32,7 @@ export function AssistantCards(props: { agents: ReturnType<typeof useCodingAgent
   const address = cloudUrl ?? `${location.origin}/mcp`;
   const chat = cloudUrl ? CHAT_APPS.find((app) => app.id === open) : undefined;
   const isDesktop = typeof window !== 'undefined' && Boolean(window.agentuseDesktop);
+  const note = error ? undefined : outdatedNote(rows, via);
 
   const copyAddress = () => {
     void navigator.clipboard?.writeText(address).then(() => {
@@ -86,11 +87,7 @@ export function AssistantCards(props: { agents: ReturnType<typeof useCodingAgent
         </div>
       )}
       <p>Using Cursor or another app? <button type="button" class="assistant-cards-copy" onClick={copyAddress}>{copied ? 'Copied' : 'Copy the address'}</button></p>
-      {!error && rows.some((agent) => agent.state === 'outdated') && (
-        <p>{via === 'cloud'
-          ? 'This machine is now connected to AgentUse Cloud. Press Update to switch to it.'
-          : 'AgentUse has a new address on this machine. Press Update to switch to it.'}</p>
-      )}
+      {note && <p>{note}</p>}
       {via === 'cloud' && rows.some((agent) => agent.state === 'set-up') && (
         <p>Claude Code and Codex ask you to sign in to AgentUse once, the first time you use it.</p>
       )}

@@ -11999,6 +11999,10 @@ html[data-page="draft-panel"] .app-route {
 .tutorial-body p { margin: 0; color: var(--muted); font-size: var(--font-size-caption); }
 .tutorial-chat { display: flex; justify-content: flex-end; max-width: 520px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
 .tutorial-chat-bubble { padding: 8px 14px; border-radius: 16px 16px 4px 16px; background: var(--surface); border: 1px solid var(--line-strong); color: var(--fg); font-size: 14px; overflow-wrap: anywhere; }
+.tutorial-commands { display: flex; flex-direction: column; gap: 6px; max-width: 520px; margin: 0; padding: 0; list-style: none; }
+.tutorial-commands li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.tutorial-commands span { color: var(--muted-3); font-size: var(--font-size-caption); }
+.tutorial-commands code { color: var(--fg); font-size: 14px; overflow-wrap: anywhere; user-select: all; }
 .no-agents button:focus-visible, .no-agents a:focus-visible, .connect-apps button:focus-visible { outline: 2px solid var(--cyan-border); outline-offset: 2px; }
 .no-agents-more { margin: 0; border-top: 1px solid var(--line); padding-top: 16px; color: var(--muted-3); font-size: var(--font-size-caption); }
 .no-agents-more a { color: var(--fg); }

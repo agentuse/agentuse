@@ -9,7 +9,8 @@ import { useCodingAgents } from './coding-agent-list';
  */
 export function NoAgentsYet(props: { noProjects: boolean }) {
   const agents = useCodingAgents();
-  const connected = agents.rows.some((agent) => agent.state === 'set-up');
+  const ready = agents.rows.filter((agent) => agent.state === 'set-up');
+  const connected = ready.length > 0;
 
   return (
     <section class="no-agents" aria-labelledby="no-agents-title">
@@ -38,11 +39,24 @@ export function NoAgentsYet(props: { noProjects: boolean }) {
           <span class="tutorial-mark" aria-hidden="true">2</span>
           <div class="tutorial-body">
             <h2>Ask it to automate what it just did</h2>
-            <p>Go back to a chat where your assistant did a job for you, and send:</p>
-            <div class="tutorial-chat">
-              <span class="tutorial-chat-bubble">Use AgentUse to run this every Monday at 9am</span>
-            </div>
-            <p>In Codex you can also start with @AgentUse. No chat like that yet? Ask it to do the job once first.</p>
+            <p>Go back to a chat where your assistant did a job for you, and {connected ? 'type' : 'send'}:</p>
+            {connected
+              ? (
+                <ul class="tutorial-commands">
+                  {ready.map((agent) => (
+                    <li key={agent.id}><span>In {agent.name}</span><code>{agent.command}</code></li>
+                  ))}
+                </ul>
+              )
+              : (
+                <div class="tutorial-chat">
+                  <span class="tutorial-chat-bubble">Use AgentUse to run this every Monday at 9am</span>
+                </div>
+              )}
+            <p>
+              {connected && 'Or just say "Use AgentUse to run this every Monday at 9am". '}
+              No chat like that yet? Ask it to do the job once first.
+            </p>
           </div>
         </li>
 

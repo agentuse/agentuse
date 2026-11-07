@@ -207,6 +207,7 @@ function runClaude(home: string, project: string, logDir: string): ToolCall[] {
 function judge(road: Road, project: string, calls: ToolCall[]): void {
   console.log(`  tools tried: ${calls.map((c) => c.name.replace('mcp__agentuse__', '')).join(', ') || 'none'}`);
   const drafts = calls.filter((c) => mcp(c, 'draft_agent'));
+  check(calls.some((c) => mcp(c, 'get_workflow')), 'fetched the steps with get_workflow');
   check(drafts.length > 0, 'made the agent with draft_agent');
   check(drafts.some((c) => !c.isError && !/"isError":true/.test(c.result ?? '')), 'draft_agent accepted a draft', drafts.map((c) => c.result?.slice(0, 300)).join('\n      '));
   check(calls.some((c) => mcp(c, 'test_draft')), 'practice-ran the draft with test_draft');

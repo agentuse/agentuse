@@ -1,6 +1,5 @@
 import { codingAgentStatuses, codingAgentTarget, isCodingAgentId, setUpCodingAgent } from "../../../onboarding/coding-agents";
 import { readCloudConnection } from "../../../cloud/config";
-import { automateWorkflow } from "../../../mcp-server/prompts";
 import { toErrorMessage } from "../../../utils/error-message.js";
 import { canUseHostFolderPicker } from "../../../utils/local-request";
 import { parseJSONBody, sendError, sendJSON, sendRequestParseError } from "../http";
@@ -45,7 +44,7 @@ export async function codingAgentRoutes(ctx: ServeContext, rq: ServeRequest): Pr
       return true;
     }
     try {
-      sendJSON(res, 200, { success: true, via, agent: await setUpCodingAgent(body.id, target, await automateWorkflow()) });
+      sendJSON(res, 200, { success: true, via, agent: await setUpCodingAgent(body.id, target) });
     } catch (err) {
       sendError(res, 500, "CODING_AGENT_SETUP_FAILED", toErrorMessage(err));
     }

@@ -2,7 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { loadBuiltinSkillSource } from '../skill/builtin.js';
 import {
-  AUTHORING_RULES_URI, GET_WORKFLOW, PROMPTS, automateText, getWorkflowResult, promptResult,
+  AUTHORING_RULES_URI, GET_WORKFLOW, PROMPTS, getWorkflowResult, promptResult,
 } from './workflow-text.js';
 
 /**
@@ -16,11 +16,6 @@ import {
 /** The creator rules installed with this build. The core guide is a map of CLI commands and is left out. */
 async function authoringRules(): Promise<string> {
   return (await loadBuiltinSkillSource('creator')).trim();
-}
-
-/** The /automate workflow on its own, for the skill AgentUse adds to coding agents. */
-export async function automateWorkflow(): Promise<string> {
-  return automateText(await authoringRules());
 }
 
 export function registerAgentUsePrompts(server: McpServer): void {

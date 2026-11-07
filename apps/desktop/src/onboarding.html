@@ -594,7 +594,7 @@
             });
             action.append(button);
           }
-          list.append(appCard(agent.name, agent.where, action, !installed));
+          list.append(appCard(agent.name, agent.state === "set-up" ? `Type ${agent.command}` : agent.where, action, !installed));
         }
         for (const chat of CHAT_APPS) {
           const action = el("span", undefined, "app-action");

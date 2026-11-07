@@ -51,8 +51,9 @@ Use AgentUse to run the workflow we just completed every Monday at 9am
 ```
 
 If you set up from the AgentUse app or dashboard, you can also type `/automate`
-in Claude Code or `$automate` in Codex. The plugin doesn't add those short
-commands.
+or `/triage` in Claude Code, or `$automate` or `$triage` in Codex. A command
+always starts the workflow, while plain words depend on the chat choosing to.
+The plugin doesn't add those short commands.
 
 The app checks what your project already has, writes the agent, saves it as a
 draft, and practice-runs it with every tool faked. It gives you a review link.
