@@ -133,7 +133,7 @@ function renderSignIn(): Node[] {
     el('p', 'Your agents run on your own machine. AgentUse Cloud passes messages between it and this chat.'),
     steps([
       { current: true, title: 'Sign in to AgentUse Cloud', text: 'With Google, GitHub, or a code sent to your email.', extra },
-      { title: 'Get AgentUse on your machine', text: 'The Mac app, or one command on Linux or a Mac.' },
+      { title: 'Install on this machine or on a server', text: 'The Mac app, or one command on Linux or a Mac.' },
       { title: 'Connect the machine', text: CONNECT_TEXT },
     ]),
   ];
@@ -148,7 +148,7 @@ function renderNoMachine(d: GetStartedResult): Node[] {
     el('p', 'Next, put AgentUse on the machine your agents will run on.'),
     steps([
       signedInStep(d),
-      { current: true, title: 'Get AgentUse on your machine', extra: [download, el('p', 'Or in a terminal on Linux or a Mac:'), code, el('p', 'In Claude Code or Codex, say “set it up” and it runs this for you.', 'small')] },
+      { current: true, title: 'Install on this machine or on a server', extra: [el('p', 'On a Mac:'), download, el('p', 'On a server, or in a terminal on Linux or a Mac:'), code, el('p', 'In Claude Code or Codex, say “set it up” and it runs this for you.', 'small')] },
       { title: 'Connect the machine', text: CONNECT_TEXT, extra: [actions(button('Open cloud.agentuse.io/connect', 'secondary', () => { open(d.connect_url); startWaiting(); }, 'open-connect'))] },
     ]),
   ];
