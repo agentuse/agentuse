@@ -262,6 +262,11 @@ describe('client registrations the server dropped', () => {
   let server: ReturnType<typeof Bun.serve>;
   let base = '';
   let registered = 0;
+  // Holds registrations until this many have arrived, so two logins really overlap.
+  let holdFor = 0;
+  let arrived = 0;
+  let releaseHeld = () => {};
+  const held = new Promise<void>((resolve) => { releaseHeld = resolve; });
   const codes = new Map<string, string>();
   beforeAll(() => {
     server = Bun.serve({ port: 0, hostname: '127.0.0.1', async fetch(req) {
@@ -278,7 +283,13 @@ describe('client registrations the server dropped', () => {
       }
       if (url.pathname === '/register') {
         registered += 1;
-        return Response.json({ ...(await req.json() as object), client_id: `client-${registered}` }, { status: 201 });
+        const clientId = `client-${registered}`;
+        if (holdFor > 0) {
+          arrived += 1;
+          if (arrived >= holdFor) releaseHeld();
+          await held;
+        }
+        return Response.json({ ...(await req.json() as object), client_id: clientId }, { status: 201 });
       }
       if (url.pathname === '/token') {
         const form = new URLSearchParams(await req.text());
@@ -313,7 +324,9 @@ describe('client registrations the server dropped', () => {
 
   it('finishes each of two logins started at once with its own client', async () => {
     const serverUrl = `${base}/mcp`;
+    holdFor = 2;
     const [first, second] = await Promise.all([start(), start()]);
+    holdFor = 0;
     const firstClient = clientOf(first.authorizationUrl);
     expect(firstClient).not.toBe(clientOf(second.authorizationUrl));
     codes.set('c-first', firstClient);
