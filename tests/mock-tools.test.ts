@@ -55,6 +55,19 @@ describe("isMockMode", () => {
   });
 });
 
+describe("cheapestMockModel", () => {
+  it("picks the lowest price among the models this person can use", () => {
+    expect(mod.cheapestMockModel(["anthropic:claude-opus-5-5", "anthropic:claude-haiku-5-5", "anthropic:claude-sonnet-5-5"])).toBe("anthropic:claude-haiku-5-5");
+  });
+  it("reads a custom endpoint's price from the same model id", () => {
+    expect(mod.cheapestMockModel(["proxy:claude-opus-5-5", "proxy:claude-haiku-5-5", "proxy:no-such-model"])).toBe("proxy:claude-haiku-5-5");
+  });
+  it("gives no answer when no price is known", () => {
+    expect(mod.cheapestMockModel(["proxy:no-such-model"])).toBeUndefined();
+    expect(mod.cheapestMockModel([])).toBeUndefined();
+  });
+});
+
 describe("resolveMockModel", () => {
   it("returns AGENTUSE_MOCK_MODEL", () => {
     process.env.AGENTUSE_MOCK_MODEL = "openai:gpt-5.4-nano";

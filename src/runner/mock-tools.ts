@@ -1,6 +1,7 @@
 import * as aiSdk from 'ai';
 import type { Tool } from 'ai';
 import { completeText } from '../complete-text';
+import { getModelFromRegistry, getSuggestedModelIds } from '../generated/models';
 import { isEffectful } from './approval-lease';
 import { awaitHumanDecisionTarget, validateGateDecision } from './gate-decision';
 import { parseBashCommand } from '../tools/bash-parser';
@@ -93,6 +94,33 @@ export function mockRunEnv(options: {
 /** The configured mock model, or undefined when the operator has not named one. */
 export function configuredMockModel(): string | undefined {
   return process.env.AGENTUSE_MOCK_MODEL || undefined;
+}
+
+/** A custom endpoint's models carry no price, so read it from the same model id in the registry. */
+function knownPrice(model: string): number | undefined {
+  const bareId = model.slice(model.indexOf(':') + 1);
+  const twin = getSuggestedModelIds().find((suggested) => suggested.endsWith(`:${bareId}`));
+  const info = getModelFromRegistry(model) ?? (twin ? getModelFromRegistry(twin) : undefined);
+  return info ? info.cost.input + info.cost.output : undefined;
+}
+
+/**
+ * The lowest-priced model among those this person can use, for a test run nobody
+ * named a mock model for. Chosen by price, never from the agent's own model, so a
+ * test still can't land on a premium token. A price of zero sorts last: it usually
+ * means a rate-limited free tier or an unpriced plan. Undefined when no price is known.
+ */
+export function cheapestMockModel(available: readonly string[]): string | undefined {
+  const rank = (model: string) => {
+    const price = knownPrice(model);
+    return price === undefined ? undefined : price === 0 ? Infinity : price;
+  };
+  let cheapest: { model: string; rank: number } | undefined;
+  for (const model of available) {
+    const value = rank(model);
+    if (value !== undefined && (!cheapest || value < cheapest.rank)) cheapest = { model, rank: value };
+  }
+  return cheapest?.model;
 }
 
 /**

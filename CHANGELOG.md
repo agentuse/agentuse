@@ -16,6 +16,7 @@
 
 ### Changed
 
+- **Test run works without setup.** On a draft's review page and in chats, a test run now uses the cheapest AI model you have connected to fake tool results, instead of stopping to ask for `AGENTUSE_MOCK_MODEL`. Setting that variable still wins. `agentuse test` and `--mock` on the command line still need a model named.
 - **Commenting at an approval no longer eats the run's time.** When you comment and the agent revises, it starts over on its full `timeout` instead of what earlier rounds left. Approving keeps the clock as it was. Before, a few rounds of feedback could use up the time and stop the run before its last steps.
 
 ### Removed

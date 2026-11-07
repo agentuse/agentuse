@@ -123,7 +123,7 @@ import { toErrorMessage } from '../utils/error-message.js';
 import { stringifyJsonLine } from '../utils/json-line.js';
 import { mountChangesetShadow } from "../agents/changeset-mount";
 import { type ChangesetProposal, type ChangesetRecord } from "../agents/changeset-types";
-import { configuredMockModel, mockRunEnv, resolveMockScope } from "../runner/mock-tools";
+import { cheapestMockModel, configuredMockModel, mockRunEnv, resolveMockScope } from "../runner/mock-tools";
 import { parseAgentContent } from "../parser";
 import {
   readInternalAgentJobRecord,
@@ -2502,6 +2502,20 @@ export function createServeCommand(): Command {
         };
       };
 
+      /** The model that fakes tool results in a test run: the one the operator
+       *  named, else the cheapest they can use. Never the agent's own by default. */
+      const testRunMockModel = async (): Promise<string> => {
+        const named = configuredMockModel();
+        if (named) return named;
+        const snapshot = await providerSetupSnapshot();
+        const providers = await agentCreationProviders(snapshot.status, preferredAgentCreationModel);
+        const cheapest = cheapestMockModel(providers.flatMap((provider) => provider.models));
+        if (cheapest) return cheapest;
+        throw new Error(providers.length
+          ? 'AgentUse could not tell which of your AI models is cheapest for a test run. Set AGENTUSE_MOCK_MODEL to a low-cost one, in the env block of the AgentUse config.'
+          : 'Test runs need an AI. Run `agentuse provider login`, then try again.');
+      };
+
       /** Run the current draft for real shape but with no real effects: a
        *  dedicated worker carries the mock env, so the shared project worker
        *  keeps executing real runs untouched. The session it produces is marked
@@ -2523,13 +2537,7 @@ export function createServeCommand(): Command {
         // model the operator has named. Falling back to the agent's own premium
         // model is exactly what `agentuse test` refuses to do, and a test run
         // must not be the one path that quietly does it.
-        const mockModel = configuredMockModel();
-        if (!mockModel) {
-          throw new Error(
-            'Test runs need a mock model. Set AGENTUSE_MOCK_MODEL to a cheap, reachable model '
-            + 'such as anthropic:claude-haiku-4-5, in the shell or in the env block of the AgentUse config.',
-          );
-        }
+        const mockModel = await testRunMockModel();
         // The same adaptive scope `agentuse test` uses: an agent that fences
         // commands behind tools.bash.gated gets those faked and everything else
         // real, so the run is grounded in the operator's actual project.
@@ -2615,13 +2623,7 @@ export function createServeCommand(): Command {
       ): Promise<{ sessionId: string; proposalIndex: number; sessionToken?: string }> => {
         const entry = proposal.entry;
         if (!entry) throw new Error('This change set has no entry agent to run');
-        const mockModel = configuredMockModel();
-        if (!mockModel) {
-          throw new Error(
-            'Test runs need a mock model. Set AGENTUSE_MOCK_MODEL to a cheap, reachable model '
-            + 'such as anthropic:claude-haiku-4-5, in the shell or in the env block of the AgentUse config.',
-          );
-        }
+        const mockModel = await testRunMockModel();
         const mount = await mountChangesetShadow({
           projectRoot: project.root,
           scopeRoot: project.scopeRoot,
