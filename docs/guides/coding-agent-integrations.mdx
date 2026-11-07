@@ -50,20 +50,20 @@ local server instead: `http://127.0.0.1:12233/mcp`.
 Use AgentUse to run the workflow we just completed every Monday at 9am
 ```
 
-If you set up from the AgentUse app or dashboard, you can also type `/automate`
-or `/triage` in Claude Code, or `$automate` or `$triage` in Codex. A command
-always starts the workflow, while plain words depend on the chat choosing to.
-The plugin doesn't add those short commands.
+If an app doesn't pick that up, Claude Code has a menu: type `/agentuse` and choose
+`automate` or `triage`. In Codex with the AgentUse plugin, start with `@AgentUse`.
 
 The app checks what your project already has, writes the agent, saves it as a
 draft, and practice-runs it with every tool faked. It gives you a review link.
 Open it and select **Apply** to turn the agent on, with its schedule if it has
 one. A chat can never turn an agent on by itself.
 
-## CLI guide for coding agents
+## Work on agent files directly
 
-The `agentuse` discovery skill teaches a coding agent the AgentUse CLI
-(running, listing, and inspecting agents):
+AgentUse adds no skills on its own. If you'd rather have your coding agent edit
+`.agentuse` files and do real runs from the command line, add the `agentuse`
+skill yourself. This way has no draft or review step, so check what the agent
+changes before you schedule it.
 
 ```bash
 npx skills add agentuse/agentuse

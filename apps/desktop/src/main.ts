@@ -420,7 +420,7 @@ function registerDesktopIpc(): void {
     const project = await ensureSetupProject();
     return { project, dashboardUrl: dashboardUrl!, mcpUrl: `${dashboardUrl!.replace(/\/+$/u, "")}/mcp` };
   });
-  // Through the local server: it owns the address and the automate skill text
+  // Through the local server: it owns the address
   // (read from the builtin skills, which this bundle cannot resolve).
   ipcMain.handle("agentuse:setup:coding-agents", async (event) => {
     assertSetupSender(event);

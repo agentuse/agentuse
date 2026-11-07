@@ -2,8 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { GET_WORKFLOW } from '../src/mcp-server/workflow-text';
-import { codingAgentStatuses, codingAgentTarget, setUpCodingAgent, skillText } from '../src/onboarding/coding-agents';
+import { codingAgentStatuses, codingAgentTarget, setUpCodingAgent } from '../src/onboarding/coding-agents';
 
 
 const target = { url: 'http://127.0.0.1:12233/mcp' };
@@ -100,63 +99,53 @@ describe('coding agents', () => {
     expect(readFileSync(path.join(home, '.codex', 'config.toml'), 'utf8')).toBe('[mcp_servers.agentuse]\nurl = "http://127.0.0.1:12233/mcp"\n');
   });
 
-  it('writes tiny automate and triage skills that point at get_workflow, and says Update when one is missing', async () => {
+  it('writes no skills, and names a command only where the app has one', async () => {
     writeFileSync(path.join(home, '.claude.json'), '{}');
     mkdirSync(path.join(home, '.codex'));
     await setUpCodingAgent('claude-code', target, home);
     await setUpCodingAgent('codex', target, home);
-    const claudeSkill = path.join(home, '.claude', 'skills', 'automate', 'SKILL.md');
-    const codexSkill = path.join(home, '.agents', 'skills', 'automate', 'SKILL.md');
-    expect(readFileSync(claudeSkill, 'utf8')).toContain('name: automate');
-    expect(readFileSync(codexSkill, 'utf8')).toContain('`get_workflow`');
-    expect(readFileSync(codexSkill, 'utf8').length).toBeLessThan(1_000);
-    expect(readFileSync(path.join(home, '.claude', 'skills', 'triage', 'SKILL.md'), 'utf8')).toContain('`workflow` set to `triage`');
-    expect(readFileSync(path.join(home, '.agents', 'skills', 'triage', 'SKILL.md'), 'utf8')).toContain('name: triage');
-    expect((await codingAgentStatuses(target, home)).map((s) => s.triageCommand)).toEqual(['/triage', '$triage']);
-    expect((await codingAgentStatuses(target, home)).map((s) => [s.command, s.state])).toEqual([['/automate', 'set-up'], ['$automate', 'set-up']]);
-
-    rmSync(codexSkill);
-    expect(existsSync(codexSkill)).toBe(false);
-    expect((await codingAgentStatuses(target, home))[1].state).toBe('outdated');
+    expect(existsSync(path.join(home, '.claude', 'skills'))).toBe(false);
+    expect(existsSync(path.join(home, '.agents', 'skills'))).toBe(false);
+    const statuses = await codingAgentStatuses(target, home);
+    expect(statuses.map((s) => [s.command, s.state])).toEqual([['/agentuse', 'set-up'], [undefined, 'set-up']]);
   });
 
-  it("never replaces a person's own automate skill", async () => {
-    const skill = path.join(home, '.claude', 'skills', 'automate', 'SKILL.md');
-    mkdirSync(path.dirname(skill), { recursive: true });
-    writeFileSync(skill, 'mine');
-    await setUpCodingAgent('claude-code', target, home);
-    expect(readFileSync(skill, 'utf8')).toBe('mine');
-  });
-
-  it('shows what works instead when the name is taken, and still counts as set up', async () => {
-    for (const dir of [path.join(home, '.claude', 'skills', 'triage'), path.join(home, '.agents', 'skills', 'automate')]) {
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(path.join(dir, 'SKILL.md'), 'mine');
+  it("never touches a person's own automate or triage skill", async () => {
+    const skills = ['automate', 'triage'].map((name) => path.join(home, '.claude', 'skills', name, 'SKILL.md'));
+    for (const skill of skills) {
+      mkdirSync(path.dirname(skill), { recursive: true });
+      writeFileSync(skill, 'mine');
     }
-    mkdirSync(path.join(home, '.codex'));
-    expect((await setUpCodingAgent('claude-code', target, home))).toMatchObject({ state: 'set-up', command: '/automate', triageCommand: '/mcp__agentuse__triage' });
-    expect((await setUpCodingAgent('codex', target, home))).toMatchObject({ state: 'set-up', command: 'Use AgentUse to automate this', triageCommand: '$triage' });
+    expect((await setUpCodingAgent('claude-code', target, home)).state).toBe('set-up');
+    for (const skill of skills) expect(readFileSync(skill, 'utf8')).toBe('mine');
   });
 
-  it('offers Update for an old copy of the skill, and replaces it', async () => {
-    const skill = path.join(home, '.claude', 'skills', 'automate', 'SKILL.md');
+  it('offers Update for a skill an earlier version wrote, and removes it', async () => {
     writeFileSync(path.join(home, '.claude.json'), '{}');
     await setUpCodingAgent('claude-code', target, home);
-    writeFileSync(skill, '---\nname: automate\n---\n<!-- agentuse:automate -->\n\nThe whole workflow, copied.\n');
-    expect((await codingAgentStatuses(target, home))[0]).toMatchObject({ state: 'outdated', outdatedBecause: 'skills', command: '/automate' });
+    const folder = path.join(home, '.claude', 'skills', 'automate');
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(path.join(folder, 'SKILL.md'), '---\nname: automate\n---\n<!-- agentuse:automate -->\n\nThe whole workflow, copied.\n');
+    expect((await codingAgentStatuses(target, home))[0]).toMatchObject({ state: 'outdated', outdatedBecause: 'skills' });
+    expect((await setUpCodingAgent('claude-code', target, home)).state).toBe('set-up');
+    expect(existsSync(folder)).toBe(false);
+  });
+
+  it('keeps anything else the person added next to an old skill', async () => {
+    writeFileSync(path.join(home, '.claude.json'), '{}');
+    const folder = path.join(home, '.claude', 'skills', 'automate');
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(path.join(folder, 'SKILL.md'), '<!-- agentuse:automate -->\n');
+    writeFileSync(path.join(folder, 'notes.md'), 'mine');
     await setUpCodingAgent('claude-code', target, home);
-    expect(readFileSync(skill, 'utf8')).toBe(skillText('automate'));
-    expect((await codingAgentStatuses(target, home))[0].state).toBe('set-up');
+    expect(existsSync(path.join(folder, 'SKILL.md'))).toBe(false);
+    expect(readFileSync(path.join(folder, 'notes.md'), 'utf8')).toBe('mine');
   });
 
   it('says the address is why when it changed', async () => {
     writeFileSync(path.join(home, '.claude.json'), '{}');
     await setUpCodingAgent('claude-code', target, home);
     expect((await codingAgentStatuses({ url: 'http://127.0.0.1:5000/mcp' }, home))[0].outdatedBecause).toBe('address');
-  });
-
-  it('points only at workflows get_workflow serves', () => {
-    for (const workflow of GET_WORKFLOW.workflows) expect(skillText(workflow)).toContain(`\`workflow\` set to \`${workflow}\``);
   });
 
   it('points coding agents at AgentUse Cloud once this computer is connected, with no key', async () => {

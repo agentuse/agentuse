@@ -42,7 +42,7 @@ export function useCodingAgents() {
 export function outdatedNote(rows: CodingAgentStatus[], via: string | undefined): string | undefined {
   const outdated = rows.filter((agent) => agent.state === 'outdated');
   if (outdated.length === 0) return undefined;
-  if (outdated.every((agent) => agent.outdatedBecause === 'skills')) return 'AgentUse has updated its commands. Press Update to get them.';
+  if (outdated.every((agent) => agent.outdatedBecause === 'skills')) return 'AgentUse no longer needs the skills it added here. Press Update to remove them.';
   return via === 'cloud'
     ? 'This machine is now connected to AgentUse Cloud. Press Update to switch to it.'
     : 'AgentUse has a new address on this machine. Press Update to switch to it.';
@@ -58,7 +58,7 @@ export function CodingAgentList(props: { agents: ReturnType<typeof useCodingAgen
           <li key={agent.id} class={agent.state === 'not-installed' ? 'is-missing' : undefined}>
             <span class="coding-agents-name">
               <strong>{agent.name}</strong>
-              <span>{agent.state === 'set-up' ? `Type ${agent.command} or ${agent.triageCommand}` : agent.where}</span>
+              <span>{agent.state === 'set-up' && agent.command ? `Or type ${agent.command} and choose automate` : agent.where}</span>
             </span>
             {agent.state === 'not-installed'
               ? <span class="coding-agents-state">Not installed</span>

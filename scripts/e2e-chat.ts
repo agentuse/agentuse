@@ -1,5 +1,5 @@
 /**
- * The chat path end to end: a clean Claude Code types /automate and must make
+ * The chat path end to end: a clean Claude Code is asked in plain words and must make
  * the agent through the AgentUse MCP tools, never by writing files or running
  * the agentuse command line.
  *
@@ -35,7 +35,7 @@ type Road = 'local' | 'cloud';
 const root = resolve(import.meta.dir, '..');
 const cloudRepo = resolve(process.env.AGENTUSE_CLOUD_REPO ?? join(root, '..', 'agentuse-cloud'));
 const CLOUD_BASE = 'http://localhost:8787';
-const GOAL = '/automate Every weekday at 8am, read notes/inbox.md in this project and write a three-line summary of it to reports/daily.md.';
+const GOAL = 'Use AgentUse to do this every weekday at 8am: read notes/inbox.md in this project and write a three-line summary of it to reports/daily.md.';
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 const CLEAN = Boolean(process.env.CLAUDE_CODE_OAUTH_TOKEN);
 
@@ -225,7 +225,7 @@ function judge(road: Road, project: string, calls: ToolCall[]): void {
 }
 
 async function setUpLocal(home: string, base: string): Promise<void> {
-  // The real Set up button: writes ~/.claude.json and the automate skill.
+  // The real Set up button: writes ~/.claude.json.
   const res = await fetch(`${base}/api/coding-agents/setup`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: 'claude-code' }),
   });

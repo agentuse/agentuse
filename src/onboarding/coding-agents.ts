@@ -1,21 +1,21 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, realpath, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
 /**
- * Adds AgentUse's local MCP server to the coding agents on this computer, plus
- * tiny `automate` and `triage` skills, so the person types /automate (Claude
- * Code) or $automate (Codex) and the command always fires. The skills hold no
- * steps: they call get_workflow, so fixes to the steps need no new Set up. The
- * Mac app's setup and the dashboard's empty Home share it. Claude Code and
- * Codex for now.
+ * Adds AgentUse's MCP server to the coding agents on this computer. MCP is the
+ * one source of the steps: the person says what they want in plain words, or
+ * types /agentuse in Claude Code and picks from its menu of MCP prompts.
+ * Set up writes no skills, and removes the ones earlier versions wrote. The Mac
+ * app's setup and the dashboard's empty Home share it. Claude Code and Codex
+ * for now.
  */
 
 export const CODING_AGENT_IDS = ['claude-code', 'codex'] as const;
 export type CodingAgentId = typeof CODING_AGENT_IDS[number];
 
-/** `outdated`: set up, but for another address or key (the server moved ports), or with old or missing skills. */
+/** `outdated`: set up, but for another address or key (the server moved ports), or with a skill an earlier version wrote. */
 export type CodingAgentState = 'not-installed' | 'not-set-up' | 'set-up' | 'outdated';
 
 export interface CodingAgentStatus {
@@ -24,11 +24,9 @@ export interface CodingAgentStatus {
   /** The file AgentUse writes, with the home folder shown as `~`. */
   configPath: string;
   state: CodingAgentState;
-  /** What to type to make an agent: the short command, or what works instead when the person has their own skill by that name. */
-  command: string;
-  /** The same for fixing agents that fail. */
-  triageCommand: string;
-  /** Why it's `outdated`: the address only matters when it changed, so the Update note can say which. */
+  /** What to type to open the menu of AgentUse's commands, in apps that show MCP prompts. */
+  command?: string;
+  /** Why it's `outdated`, so the Update note can say which. */
   outdatedBecause?: 'address' | 'skills';
   /** Where people use it: its Mac app or the terminal, which share one config. */
   where: string;
@@ -48,12 +46,11 @@ interface Entry {
 interface CodingAgent {
   id: CodingAgentId;
   name: string;
-  /** The short command for a skill, and what works when the person's own skill has that name. */
-  command: (skill: SkillName) => string;
-  fallbackCommand: (skill: SkillName) => string;
+  command?: string;
   where: string;
   configFile: (home: string) => string;
-  skillFile: (home: string, skill: SkillName) => string;
+  /** Where earlier versions wrote their skills. */
+  skillsDir: (home: string) => string;
   /** Installed: its folder exists, or (Claude) its Mac app, which makes no folder until signed in. */
   installed: (home: string, appDirs: readonly string[]) => boolean;
   read: (text: string) => Entry | undefined;
@@ -62,27 +59,21 @@ interface CodingAgent {
 
 const SERVER_NAME = 'agentuse';
 
-const SKILLS = {
-  automate: 'Turn work from this conversation into an AgentUse work agent that runs on its own. Use when the person types automate, or asks to automate a job or run it on a schedule with AgentUse.',
-  triage: 'Find and fix AgentUse work agents that are failing. Use when the person types triage, or asks to fix their failing AgentUse agents.',
-} as const;
-type SkillName = keyof typeof SKILLS;
-const SKILL_NAMES = Object.keys(SKILLS) as SkillName[];
-
-/** Marks a skill file AgentUse wrote, so a person's own skill by that name is never replaced. */
-const skillMarker = (skill: SkillName): string => `<!-- agentuse:${skill} -->`;
+/** Skills earlier versions wrote. The marker tells them from a person's own skill by that name. */
+const OLD_SKILLS = ['automate', 'triage'] as const;
+const skillMarker = (skill: string): string => `<!-- agentuse:${skill} -->`;
 
 const bearer = (target: McpTarget): string | undefined => target.apiKey ? `Bearer ${target.apiKey}` : undefined;
 
 const claudeCode: CodingAgent = {
   id: 'claude-code',
   name: 'Claude Code',
-  command: (skill) => `/${skill}`,
-  // The MCP server's own prompt, under the name Claude Code gives it.
-  fallbackCommand: (skill) => `/mcp__${SERVER_NAME}__${skill}`,
+  // Claude Code lists MCP prompts as /agentuse:automate, but typing that in full
+  // fails: the menu fills in the real name, /mcp__agentuse__automate.
+  command: `/${SERVER_NAME}`,
   where: 'App or terminal',
   configFile: (home) => path.join(home, '.claude.json'),
-  skillFile: (home, skill) => path.join(home, '.claude', 'skills', skill, 'SKILL.md'),
+  skillsDir: (home) => path.join(home, '.claude', 'skills'),
   installed: (home, appDirs) => existsSync(path.join(home, '.claude.json')) || existsSync(path.join(home, '.claude'))
     || appDirs.some((dir) => existsSync(path.join(dir, 'Claude.app'))),
   read(text) {
@@ -133,12 +124,10 @@ function splitCodexTable(text: string): { rest: string[]; table: string[] } {
 const codex: CodingAgent = {
   id: 'codex',
   name: 'Codex',
-  command: (skill) => `$${skill}`,
-  // Codex has no slash commands from MCP, so plain words are what's left.
-  fallbackCommand: (skill) => skill === 'automate' ? 'Use AgentUse to automate this' : 'Use AgentUse to fix my failing agents',
+  // No command: Codex shows no MCP prompts, and @AgentUse needs the plugin.
   where: 'App or terminal',
   configFile: (home) => path.join(home, '.codex', 'config.toml'),
-  skillFile: (home, skill) => path.join(home, '.agents', 'skills', skill, 'SKILL.md'),
+  skillsDir: (home) => path.join(home, '.agents', 'skills'),
   // The Codex app makes ~/.codex on first open, before sign-in.
   installed: (home) => existsSync(path.join(home, '.codex')),
   read(text) {
@@ -190,30 +179,13 @@ function displayPath(file: string, home: string): string {
   return file.startsWith(`${home}${path.sep}`) ? `~${file.slice(home.length)}` : file;
 }
 
-/** The skill: a pointer to the MCP server's workflow, which stays the one source of the steps. */
-export function skillText(skill: SkillName): string {
-  return [
-    '---',
-    `name: ${skill}`,
-    `description: ${SKILLS[skill]}`,
-    '---',
-    skillMarker(skill),
-    '',
-    `Call the \`get_workflow\` tool from the \`${SERVER_NAME}\` MCP server with \`workflow\` set to \`${skill}\`, then follow what it returns. Pass along anything the person typed after the command: as \`goal\` for automate, or as \`agent\` for triage when they named one.`,
-    '',
-    'If that tool is missing or asks for sign-in, stop and say AgentUse is not connected here yet: press Set up on AgentUse\'s Home, or sign in to AgentUse in this app. If AgentUse is not running, say to open it. Do not use the `agentuse` command line or write agent files yourself instead.',
-    '',
-  ].join('\n');
-}
-
-type SkillState = 'current' | 'old' | 'missing' | 'theirs';
-
-async function skillState(agent: CodingAgent, skill: SkillName, home: string): Promise<SkillState> {
-  const file = agent.skillFile(home, skill);
-  if (!existsSync(file)) return 'missing';
-  const text = await readText(file);
-  if (text === skillText(skill)) return 'current';
-  return text.includes(skillMarker(skill)) ? 'old' : 'theirs';
+/** The skill files an earlier version of AgentUse wrote here. */
+async function oldSkillFiles(agent: CodingAgent, home: string): Promise<string[]> {
+  const found = await Promise.all(OLD_SKILLS.map(async (skill) => {
+    const file = path.join(agent.skillsDir(home), skill, 'SKILL.md');
+    return (await readText(file)).includes(skillMarker(skill)) ? file : undefined;
+  }));
+  return found.filter((file): file is string => file !== undefined);
 }
 
 /** Where Mac apps are installed. */
@@ -223,23 +195,20 @@ export function appFolders(home = homedir()): string[] {
 
 async function statusOf(agent: CodingAgent, target: McpTarget, home: string, appDirs: readonly string[]): Promise<CodingAgentStatus> {
   const file = agent.configFile(home);
-  const [automate, triage] = await Promise.all(SKILL_NAMES.map((skill) => skillState(agent, skill, home)));
-  const commandFor = (skill: SkillName, state: SkillState | undefined): string =>
-    state === 'theirs' ? agent.fallbackCommand(skill) : agent.command(skill);
   const base = {
     id: agent.id,
     name: agent.name,
     configPath: displayPath(file, home),
-    command: commandFor('automate', automate),
-    triageCommand: commandFor('triage', triage),
+    ...(agent.command && { command: agent.command }),
     where: agent.where,
   };
   if (!agent.installed(home, appDirs)) return { ...base, state: 'not-installed' };
   const entry = agent.read(await readText(file));
   if (!entry) return { ...base, state: 'not-set-up' };
   if (entry.url !== target.url || entry.authorization !== bearer(target)) return { ...base, state: 'outdated', outdatedBecause: 'address' };
-  const skillsReady = [automate, triage].every((state) => state === 'current' || state === 'theirs');
-  return skillsReady ? { ...base, state: 'set-up' } : { ...base, state: 'outdated', outdatedBecause: 'skills' };
+  return (await oldSkillFiles(agent, home)).length === 0
+    ? { ...base, state: 'set-up' }
+    : { ...base, state: 'outdated', outdatedBecause: 'skills' };
 }
 
 /** Write next to the file and rename over it, keeping its mode (these configs can hold keys) and following a symlink. */
@@ -259,8 +228,8 @@ export async function codingAgentStatuses(target: McpTarget, home = homedir(), a
 
 /**
  * Adds (or points again) AgentUse in this coding agent's config, keeping its
- * other settings, and writes the skills, replacing older copies AgentUse
- * wrote. A person's own skill by the same name is left alone.
+ * other settings, and removes skills an earlier version wrote. A person's own
+ * skill by the same name is left alone.
  */
 export async function setUpCodingAgent(
   id: CodingAgentId,
@@ -273,8 +242,10 @@ export async function setUpCodingAgent(
   if (!agent.installed(home, appDirs)) throw new Error(`${agent.name} is not installed on this computer.`);
   const file = agent.configFile(home);
   await writeAtomically(file, agent.write(await readText(file), target));
-  for (const skill of SKILL_NAMES) {
-    if (await skillState(agent, skill, home) !== 'theirs') await writeAtomically(agent.skillFile(home, skill), skillText(skill));
+  for (const skill of await oldSkillFiles(agent, home)) {
+    await rm(skill);
+    // Only when empty: anything the person added to the folder stays.
+    await rmdir(path.dirname(skill)).catch(() => undefined);
   }
   return statusOf(agent, target, home, appDirs);
 }

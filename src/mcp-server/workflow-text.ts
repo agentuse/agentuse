@@ -56,7 +56,7 @@ const ASK = `Answer the user's request with the AgentUse tools, which reach Agen
 - If the request needs a project and none is clear, call list_projects first. With one project, use it; with several, pick from the conversation or ask which.
 - Look things up with get_project, list_agents, get_agent, list_sessions, get_session, get_run_step and list_problems. Keep answers short: names, states and times the user can act on.
 - Call run_agent only when the user asked for that run.
-- To build a new agent or fix a failing one, say that /automate or /triage does it, and use that workflow if the user agrees.
+- To build a new agent or fix a failing one, say that AgentUse's automate or triage workflow does it, and use that workflow if the user agrees.
 - You cannot approve steps, dismiss runs or turn on drafts on your own; the user does that.`;
 
 const AUDIT = `Audit only: report the problems, their causes and the fix you would propose. Do not call propose_fix.`;

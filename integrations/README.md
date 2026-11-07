@@ -4,10 +4,10 @@ Templates for the AgentUse plugins for Claude Code and Codex. Each plugin is
 only an MCP server entry pointing at AgentUse Cloud
 (`https://cloud.agentuse.io/mcp`). The `agentuse`, `automate` and `triage`
 workflows come from the AgentUse MCP server itself
-(`src/mcp-server/prompts.ts`), so the plugins carry no copy of them. That also
-means the plugins add no short slash command: MCP prompts get a longer name in
-Claude Code and no slash command in Codex, so plugin text leads with plain
-requests, which reach the same workflows through `get_workflow`.
+(`src/mcp-server/prompts.ts`), so the plugins carry no copy of them. Claude Code
+lists them when you type `/agentuse`. Codex shows no MCP prompts,
+so there the plugin gives `@AgentUse` instead. Plain requests reach the same
+workflows through `get_workflow` in both.
 
 Build local marketplaces and release archives with:
 
