@@ -1,10 +1,9 @@
 # Coding-agent integrations
 
 Use AgentUse from Claude Code, Codex, Cursor, or any coding agent that supports
-MCP. Type `/automate` to turn the workflow in your conversation into an agent
-that runs on its own, or `/triage` to find and fix agents that fail. Both come
-from the AgentUse MCP server, so every app gets the same version-matched
-workflow.
+MCP. Ask it to turn the workflow in your conversation into an agent that runs on
+its own, or to find and fix agents that fail. Both come from the AgentUse MCP
+server, so every app gets the same version-matched workflow.
 
 ## Connect your computer
 
@@ -48,8 +47,12 @@ local server instead: `http://127.0.0.1:12233/mcp`.
 ## Use it
 
 ```text
-/automate turn the workflow we just completed into a reusable agent
+Use AgentUse to run the workflow we just completed every Monday at 9am
 ```
+
+If you set up from the AgentUse app or dashboard, you can also type `/automate`
+in Claude Code or `$automate` in Codex. The plugin doesn't add those short
+commands.
 
 The app checks what your project already has, writes the agent, saves it as a
 draft, and practice-runs it with every tool faked. It gives you a review link.

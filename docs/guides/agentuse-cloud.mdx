@@ -4,8 +4,8 @@ description: Use AgentUse on your computer from Claude, ChatGPT, Cursor, or any 
 ---
 
 AgentUse Cloud lets a chat app reach AgentUse on your own computer. Connect the
-computer once, add one address to your chat app, and type `/automate` to turn
-the conversation into an agent, or `/triage` to fix agents that fail.
+computer once, add one address to your chat app, and ask it to turn the
+conversation into an agent or to fix agents that fail.
 
 Your agents still run on your computer, with your model keys, files, and
 logins. AgentUse Cloud handles your account and sign-in, and passes messages
@@ -144,8 +144,9 @@ before it reaches your computer.
 
 ## 3. Use it
 
-In a chat, type `/automate` (in some apps it is listed under the AgentUse
-connector's prompts):
+In a chat, say something like "Use AgentUse to run this every Monday at 9am".
+Some apps also list `automate`, `triage`, and `agentuse` among the AgentUse
+connector's prompts, under a name that differs by app.
 
 1. The chat looks at what your project already has: agents, MCP servers and
    their logins, skills, and the models you can run. It reads only the files
@@ -165,15 +166,15 @@ needs a tap: open the review link and select **Apply**. The review page shows
 everything, including the schedule ("Runs: At 08:00 AM, Monday through
 Friday").
 
-Type `/triage` when agents fail. The chat lists open failures grouped by agent
+When agents fail, ask "Use AgentUse to find and fix my failing agents". The chat lists open failures grouped by agent
 and cause, and reads the failed run and the agent's file. If the agent file is
 at fault, it proposes a fix for you to review and apply. If the cause is
 elsewhere (a login, a key, project code), it tells you what to change.
 
 You can also just ask: "what ran last night?", "why did the digest fail?",
 "run the inbox agent now". If the chat answers from memory instead of your
-computer, start with `/agentuse` ("Ask AgentUse"), for example
-`/agentuse list my projects`.
+computer, name AgentUse in the request, for example "Use AgentUse to list my
+projects".
 
 ### What a chat can never do on its own
 

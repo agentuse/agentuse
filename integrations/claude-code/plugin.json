@@ -1,7 +1,7 @@
 {
   "name": "agentuse",
   "version": "__AGENTUSE_VERSION__",
-  "description": "AgentUse on your own computer, through AgentUse Cloud: /agentuse asks about your agents, /automate turns this into a work agent that runs on its own, /triage fixes agents that fail.",
+  "description": "AgentUse on your own computer, through AgentUse Cloud: ask about your agents, turn this into a work agent that runs on its own, or find and fix agents that fail.",
   "author": {
     "name": "AgentUse"
   },
