@@ -2,6 +2,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { httpDaemonClient } from "../../../mcp-server/daemon";
 import { createAgentUseMcpServer } from "../../../mcp-server/server";
+import { cloudDashboardLink, requestActor } from "../../../cloud/relay";
 import { serverBaseUrl } from "../../../utils/server-registry";
 import { toErrorMessage } from "../../../utils/error-message";
 import { logger } from "../../../utils/logger";
@@ -44,7 +45,10 @@ export async function mcpServerRoutes(ctx: ServeContext, rq: ServeRequest): Prom
 
   // Stateless: a fresh server and transport per request. No sessionIdGenerator
   // means no Mcp-Session-Id, which the relay relies on.
-  const server = createAgentUseMcpServer(daemon);
+  const connection = requestActor(req.headers).via === "cloud"
+    ? (() => { try { return readCloudConnection(); } catch { return undefined; } })()
+    : undefined;
+  const server = createAgentUseMcpServer(daemon, connection ? { link: (url) => cloudDashboardLink(url, connection) } : {});
   const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
   res.on("close", () => {
     void transport.close();

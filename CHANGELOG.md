@@ -16,6 +16,10 @@
 
 ### Changed
 
+- **Links from a chat through AgentUse Cloud open on Cloud.** Draft, run and practice run links used to be this computer's local address, which can't open from a phone or for a server.
+- **Agent file errors say what's wrong.** They used to blame a "selected model" even when a person or a chat wrote the file. With no AI set up, the error now says so and gives the next step.
+- **`run_agent` and `get_agent` take the name you'd use.** `digest` and `agents/digest` work, as does the `project/path` that `list_agents` prints.
+- **Adding a custom AI endpoint tries current models first.** An endpoint that lists retired models first no longer fails setup.
 - **Test run works without setup.** On a draft's review page and in chats, a test run now uses the cheapest AI model you have connected to fake tool results, instead of stopping to ask for `AGENTUSE_MOCK_MODEL`. Setting that variable still wins. `agentuse test` and `--mock` on the command line still need a model named.
 - **Commenting at an approval no longer eats the run's time.** When you comment and the agent revises, it starts over on its full `timeout` instead of what earlier rounds left. Approving keeps the clock as it was. Before, a few rounds of feedback could use up the time and stop the run before its last steps.
 

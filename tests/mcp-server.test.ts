@@ -256,6 +256,35 @@ describe('agentuse MCP server', () => {
     expect(result.structuredContent).toMatchObject({ session_id: 'run1', url: 'http://agentuse.test/sessions/run1' });
   });
 
+  it('runs an agent by the name a person would use, or by what list_agents prints', async () => {
+    const { daemon, calls } = fakeDaemon({
+      'GET ': serverInfo,
+      'GET /agents': () => ({ agents: [
+        { projectId: 'eng', runPath: 'agents/digest.agentuse', name: 'Digest', model: 'anthropic:x' },
+        { projectId: 'home', runPath: 'digest.agentuse', name: 'digest', model: 'anthropic:x' },
+      ] }),
+      'POST /run': () => ({ success: true, sessionId: 'run1', status: 'running' }),
+    });
+    client = await connect(daemon);
+    for (const agent of ['digest', 'Digest', 'agents/digest', 'eng/agents/digest.agentuse']) {
+      await call('run_agent', { project: 'eng', agent });
+      expect(calls.filter((c) => c.method === 'POST').at(-1)?.body).toMatchObject({ agent: 'agents/digest.agentuse' });
+    }
+  });
+
+  it('hands out links through the option a Cloud request sets', async () => {
+    const { daemon } = fakeDaemon({
+      'GET ': serverInfo,
+      'POST /run': () => ({ success: true, sessionId: 'run1', status: 'running' }),
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await createAgentUseMcpServer(daemon, { link: (url) => `cloud:${new URL(url).pathname}` }).connect(serverTransport);
+    client = new Client({ name: 'test', version: '0.0.0' });
+    await client.connect(clientTransport);
+    const result = await call('run_agent', { project: 'eng', agent: 'agents/digest.agentuse' });
+    expect(result.structuredContent).toMatchObject({ url: 'cloud:/sessions/run1' });
+  });
+
   it('saves a draft as a chat change set and returns an absolute review link', async () => {
     const { daemon, calls } = fakeDaemon({
       'GET ': serverInfo,

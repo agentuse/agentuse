@@ -118,7 +118,10 @@ type SessionRow = SessionSummary & { project: string };
 /** A session row cut down to what a chat needs, with a link a person can open.
  *  `agent` is the scope-relative run path (what run_agent takes), never the
  *  absolute file path, which would tell a remote chat the computer's layout. */
-function sessionView(row: SessionRow, projectRoots: Map<string, string>) {
+/** A session's page, as this request's person can open it. */
+type SessionLink = (sessionId: string, projectRoot: string | undefined) => string | undefined;
+
+function sessionView(row: SessionRow, projectRoots: Map<string, string>, sessionLink: SessionLink) {
   return {
     session_id: row.sessionId,
     project: row.project,
@@ -133,7 +136,7 @@ function sessionView(row: SessionRow, projectRoots: Map<string, string>) {
     ...(row.errorCause && { error_cause: row.errorCause }),
     ...(row.errorMessage && { error_message: row.errorMessage }),
     ...(row.finalResponse && { final_response: preview(row.finalResponse) }),
-    url: getSessionUrl(row.sessionId, projectRoots.get(row.project)),
+    url: sessionLink(row.sessionId, projectRoots.get(row.project)),
   };
 }
 
@@ -266,8 +269,25 @@ const fileInput = z.array(z.object({
   content: z.string().max(64_000).describe('The whole file'),
 })).min(1).max(12);
 
-export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
+export function createAgentUseMcpServer(rawDaemon: DaemonClient, options: { link?: (url: string) => string } = {}): McpServer {
   const daemon = allowlisted(rawDaemon);
+  const link = options.link ?? ((url: string) => url);
+  const sessionLink: SessionLink = (sessionId, projectRoot) => {
+    const url = getSessionUrl(sessionId, projectRoot);
+    return url && link(url);
+  };
+  /** A name a person would use, or list_agents' own project/path, as the path the daemon runs. */
+  const agentPath = async (project: string, agent: string): Promise<string> => {
+    const path = agent.startsWith(`${project}/`) ? agent.slice(project.length + 1) : agent;
+    if (path.endsWith('.agentuse')) return path;
+    const { agents } = await daemon.get<{ agents: AgentSummary[] }>('/agents');
+    const matches = agents.filter((item) => item.projectId === project
+      && (item.name === path || item.runPath === `${path}.agentuse` || item.runPath.endsWith(`/${path}.agentuse`)));
+    if (matches.length > 1) {
+      throw new Error(`More than one agent is called ${path}: ${matches.map((item) => item.runPath).join(', ')}. Use one of those.`);
+    }
+    return matches[0]?.runPath ?? path;
+  };
   const server = new McpServer(
     { name: 'agentuse', version: packageVersion },
     { instructions: SERVER_INSTRUCTIONS },
@@ -366,7 +386,7 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, guarded(async ({ project, agent }) => {
-    const detail = await daemon.get<AgentDetail & { scheduleEnabled?: boolean }>('/agents/detail', { project, path: agent });
+    const detail = await daemon.get<AgentDetail & { scheduleEnabled?: boolean }>('/agents/detail', { project, path: await agentPath(project, agent) });
     const structured = {
       project: detail.projectId,
       agent: detail.runPath,
@@ -410,7 +430,7 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
       projectRoots(),
     ]);
     const sessions = (payload.sessions as SessionRow[])
-      .map((row) => sessionView(row, roots))
+      .map((row) => sessionView(row, roots, sessionLink))
       .filter((view) => !agent || view.agent === agent);
     const lines = sessions.map((s) => `${s.created_at} ${s.project}/${s.agent} ${s.status} ${s.session_id}`);
     return ok(lines.join('\n') || 'No runs in this window.', { sessions, counts: payload.counts });
@@ -431,7 +451,7 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
   }, guarded(async ({ session_id, project }) => {
     const [{ session }, roots] = await Promise.all([runSession(session_id, project), projectRoots()]);
     const { logs = [], ...rest } = session;
-    const url = getSessionUrl(session_id, roots.get(session.project));
+    const url = sessionLink(session_id, roots.get(session.project));
     const outline = runOutline(logs);
     const finalResponse = clip(logs.filter((entry) => entry.type === 'text').at(-1)?.message, FINAL_RESPONSE_CHARS);
     const structured = {
@@ -520,7 +540,7 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
     ]);
     const groups = new Map<string, { project: string; agent: string; cause: string; count: number; last_at: string; latest: ReturnType<typeof sessionView> }>();
     for (const row of [...errors.sessions, ...incompletes.sessions] as SessionRow[]) {
-      const view = sessionView(row, roots);
+      const view = sessionView(row, roots, sessionLink);
       const cause = row.errorCause ?? row.errorCode ?? (row.status === 'error' ? 'error' : 'incomplete');
       const key = `${row.project}\0${view.agent}\0${cause}`;
       const group = groups.get(key);
@@ -548,12 +568,13 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
       prompt: z.string().max(12_000).optional().describe('Extra input for this run. Most agents need none.'),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-  }, guarded(async ({ project, agent, prompt }) => {
+  }, guarded(async ({ project, agent: named, prompt }) => {
+    const agent = await agentPath(project, named);
     const [result, roots] = await Promise.all([
       daemon.post<{ sessionId: string }>('/run', { project, agent, ...(prompt && { prompt }), detach: true }),
       projectRoots(),
     ]);
-    const url = getSessionUrl(result.sessionId, roots.get(project));
+    const url = sessionLink(result.sessionId, roots.get(project));
     return ok(`Started ${project}/${agent}: ${result.sessionId}${url ? `\n${url}` : ''}`, { session_id: result.sessionId, project, agent, url });
   }));
 
@@ -569,7 +590,7 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
       projectRoots(),
     ]);
     const proposal = result.changeset.proposals.at(-1);
-    const reviewUrl = `${getApprovalBaseUrl(roots.get(projectId)).replace(/\/$/u, '')}${result.reviewHref}`;
+    const reviewUrl = link(`${getApprovalBaseUrl(roots.get(projectId)).replace(/\/$/u, '')}${result.reviewHref}`);
     const entry = proposal?.entry ?? '';
     return {
       id: result.changeset.sessionId,
@@ -640,7 +661,7 @@ export function createAgentUseMcpServer(rawDaemon: DaemonClient): McpServer {
       ),
       projectRoots(),
     ]);
-    const url = getSessionUrl(testRun.sessionId, roots.get(project));
+    const url = sessionLink(testRun.sessionId, roots.get(project));
     return ok(
       `Practice run started: ${testRun.sessionId}. Check it with get_session.${url ? `\n${url}` : ''}`,
       { session_id: testRun.sessionId, project, mock: true, url },

@@ -423,6 +423,7 @@ export class CloudTunnel {
         headers: {
           'Content-Type': 'application/json',
           Accept: 'application/json, text/event-stream',
+          [RELAY_SECRET_HEADER]: relaySecret(),
           ...(this.options.apiKey && { Authorization: `Bearer ${this.options.apiKey}` }),
         },
         body: frame.body,

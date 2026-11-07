@@ -86,6 +86,19 @@ export function dashboardPath(url: string): string {
 }
 
 /**
+ * A link for someone who came through Cloud: the same page on Cloud's own
+ * address, opened on this computer. The local address can't work from their
+ * phone or for a server. The session token stays behind: Cloud has its own
+ * sign-in, and the token shouldn't travel through it.
+ */
+export function cloudDashboardLink(url: string, connection: { url: string; machineId: string }): string {
+  const target = new URL(dashboardPath(url), connection.url);
+  target.searchParams.delete('token');
+  target.searchParams.set('m', connection.machineId);
+  return target.toString();
+}
+
+/**
  * The requests that change something on this computer: approval decisions,
  * steering a run, and starting one by hand. The access log marks them with
  * this name; reads and settings return undefined.
