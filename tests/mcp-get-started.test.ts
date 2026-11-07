@@ -16,8 +16,9 @@ describe('generated MCP get_started card', () => {
     const sources = ['get-started.ts', 'get-started.html'].map((name) => readFileSync(resolve(import.meta.dir, '..', 'src/mcp-server/card', name), 'utf8')).join('\n');
     expect(sources).not.toContain('—');
     expect(sources.toLowerCase()).not.toContain('computer');
-    for (const text of ['Set up AgentUse', 'Sign in to AgentUse Cloud', 'Free account · 1 person · 1 machine', 'Download for Mac', 'Waiting for your machine', 'AgentUse is ready', 'Continue my request', 'Waiting on you']) {
+    for (const text of ['Set up AgentUse', 'Sign in to AgentUse Cloud', 'Download for Mac', 'Waiting for your machine', 'AgentUse is ready', 'Continue my request', 'Waiting on you']) {
       expect(GET_STARTED_HTML).toContain(text);
     }
+    expect(GET_STARTED_HTML).not.toContain('Free account · 1 person · 1 machine');
   });
 });

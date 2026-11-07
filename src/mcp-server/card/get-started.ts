@@ -136,7 +136,6 @@ function renderSignIn(): Node[] {
       { title: 'Get AgentUse on your machine', text: 'The Mac app, or one command on Linux or a Mac.' },
       { title: 'Connect the machine', text: CONNECT_TEXT },
     ]),
-    el('p', 'Free account · 1 person · 1 machine', 'small'),
   ];
 }
 
