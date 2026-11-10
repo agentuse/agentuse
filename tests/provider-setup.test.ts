@@ -339,6 +339,21 @@ describe('Dashboard provider setup service', () => {
       authMethods: ['oauth'],
       authMethodId: 'subscription',
       apiVersion: 1,
+    }, {
+      id: 'synap',
+      packageName: 'agentuse-synap-provider',
+      version: '1.0.0',
+      name: 'Synap',
+      description: 'Use Synap-hosted open models through its OpenAI-compatible API.',
+      source: 'jimmyplup/agentuse-synap-provider@cde73db17fe218c6741a4975260c5e564a72fd66',
+      commit: 'cde73db17fe218c6741a4975260c5e564a72fd66',
+      repository: 'https://github.com/jimmyplup/agentuse-synap-provider',
+      publisher: 'jimmyplup',
+      provenance: 'community',
+      provider: 'synap',
+      authMethods: ['api_key'],
+      authMethodId: 'api-key',
+      apiVersion: 1,
     }]);
     expect(payload.status.providers.find((provider) => provider.id === 'openrouter')?.sources[0]?.name).toBe('OPENROUTER_API_KEY');
     expect(JSON.stringify(payload)).not.toContain('environment-secret');
@@ -352,7 +367,7 @@ describe('Dashboard provider setup service', () => {
     expect(providerSetupOptions({ success: true, ...payload }, false, 'provider', 'openai').map((item) => item.value))
       .toEqual(['openai']);
     expect(providerSetupOptions({ success: true, ...payload }, false, 'plugins').map((item) => item.value))
-      .toEqual(['plugin:pi-cli', 'plugin:claude-code-subscription', 'plugin:advanced']);
+      .toEqual(['plugin:pi-cli', 'plugin:claude-code-subscription', 'plugin:synap', 'plugin:advanced']);
     expect(providerSetupOptions({ success: true, ...payload, availableExternalPlugins: [] }, true).map((item) => [item.value, item.group]))
       .toEqual([
         ['anthropic', 'Built in'],
@@ -361,6 +376,7 @@ describe('Dashboard provider setup service', () => {
         ['opencode-go', 'Built in'],
         ['custom', 'Built in'],
         ['plugin:claude-code-subscription', 'Community plugins'],
+        ['plugin:synap', 'Community plugins'],
         ['plugin:advanced', 'Advanced'],
       ]);
 
@@ -380,7 +396,7 @@ describe('Dashboard provider setup service', () => {
     expect(providerSetupOptions(withInstalledPlugin, false, 'provider', 'anthropic').map((item) => item.value))
       .toEqual(['anthropic', 'plugin:claude-code-subscription']);
     expect(providerSetupOptions(withInstalledPlugin, false, 'plugins').map((item) => item.value))
-      .toEqual(['plugin:pi-cli', 'plugin:advanced']);
+      .toEqual(['plugin:pi-cli', 'plugin:synap', 'plugin:advanced']);
   });
 
   it('offers only missing supported connection methods without blocking plugin installation', async () => {

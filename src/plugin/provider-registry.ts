@@ -68,6 +68,22 @@ export const PROVIDER_PLUGIN_REGISTRY: readonly ProviderPluginRegistryEntry[] = 
     authMethodId: 'subscription',
     apiVersion: 1,
   },
+  {
+    id: 'synap',
+    packageName: 'agentuse-synap-provider',
+    version: '1.0.0',
+    name: 'Synap',
+    description: 'Use Synap-hosted open models through its OpenAI-compatible API.',
+    source: 'jimmyplup/agentuse-synap-provider@cde73db17fe218c6741a4975260c5e564a72fd66',
+    commit: 'cde73db17fe218c6741a4975260c5e564a72fd66',
+    repository: 'https://github.com/jimmyplup/agentuse-synap-provider',
+    publisher: 'jimmyplup',
+    provenance: 'community',
+    provider: 'synap',
+    authMethods: ['api_key'],
+    authMethodId: 'api-key',
+    apiVersion: 1,
+  },
 ];
 
 /** Immutable install source: the reviewed commit, not the movable tag. */
