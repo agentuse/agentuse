@@ -43,4 +43,17 @@ describe('curated provider plugin registry', () => {
     });
     expect(getProviderPluginRegistryEntry('not-in-the-registry')).toBeUndefined();
   });
+
+  it('offers Synap as an API-key provider from an immutable reviewed commit', () => {
+    expect(getProviderPluginRegistryEntry('synap')).toMatchObject({
+      packageName: 'agentuse-synap-provider',
+      version: '1.0.0',
+      repository: 'https://github.com/jimmyplup/agentuse-synap-provider',
+      publisher: 'jimmyplup',
+      provider: 'synap',
+      authMethods: ['api_key'],
+      authMethodId: 'api-key',
+      apiVersion: 1,
+    });
+  });
 });
