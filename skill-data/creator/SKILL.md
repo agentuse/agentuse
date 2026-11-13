@@ -205,6 +205,13 @@ protocol demands it, or the job is explicitly compliance-heavy. A rule earns a
 place only when a capable model would otherwise make a materially wrong choice,
 the requirement is non-obvious, or the rule establishes a safety boundary.
 
+When a judgment-heavy body does list quality criteria, say they illustrate the
+bar and are not the whole of it; a list read as complete only catches what
+someone already named. When fixing a miss, name the principle it reveals and
+strengthen that line; add a narrow rule only if the principle would not have
+caught it. Before finishing, ask: could a run obey every line and still produce
+something the user would push back on? Then the goal statement is too weak.
+
 The same split applies to tools: the frontmatter allowlist is the real
 capability ceiling, and no prompt wording can widen it. Scope a compliance
 agent tightly; give a judgment agent the read surface and search commands it
