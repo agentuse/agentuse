@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { cloudConfigPath, cloudUrl, computerName, platformLabel, readCloudConnection, removeCloudConnection, writeCloudConnection } from '../cloud/config.js';
+import { cloudConfigPath, cloudEnabled, cloudUrl, computerName, platformLabel, readCloudConnection, removeCloudConnection, writeCloudConnection } from '../cloud/config.js';
 import { connectionRevoked, revokeThisComputer, startPairing, waitForApproval } from '../cloud/pairing.js';
 import { openBrowser } from '../utils/open-browser.js';
 import { daemonRequestHeaders, findServerForProject, serverBaseUrl } from '../utils/server-registry.js';
@@ -66,8 +66,10 @@ async function linkOnly(options: { name?: string; url?: string; browser: boolean
 }
 
 export function registerCloudCommands(program: Command): void {
+  // Hidden from help while Cloud is in preview; typing them still works.
+  const hidden = !cloudEnabled();
   program
-    .command('connect')
+    .command('connect', { hidden })
     .description('Connect this computer to AgentUse Cloud, so Claude, ChatGPT, Cursor or any MCP app can use AgentUse here (setup with Cloud already picked)')
     .option('--name <name>', 'How this computer is shown in your account', undefined)
     .option('--url <url>', 'AgentUse Cloud address', undefined)
@@ -90,7 +92,7 @@ export function registerCloudCommands(program: Command): void {
     });
 
   program
-    .command('status')
+    .command('status', { hidden })
     .description('Show whether this computer is connected to AgentUse Cloud')
     .action(async () => {
       try {
@@ -111,7 +113,7 @@ export function registerCloudCommands(program: Command): void {
     });
 
   program
-    .command('disconnect')
+    .command('disconnect', { hidden })
     .description('Disconnect this computer from AgentUse Cloud')
     .action(async () => {
       try {

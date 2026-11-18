@@ -1,8 +1,8 @@
-import { Command } from 'commander';
+import { Command, Option } from 'commander';
 import chalk from 'chalk';
 import type * as ClackPrompts from '@clack/prompts';
 import type { ProviderStatus } from '../auth/provider-status';
-import { cloudUrl, computerName, platformLabel, readCloudConnection, removeCloudConnection, writeCloudConnection, type CloudConnection } from '../cloud/config';
+import { cloudEnabled, cloudUrl, computerName, platformLabel, readCloudConnection, removeCloudConnection, writeCloudConnection, type CloudConnection } from '../cloud/config';
 import { connectionRevoked, startPairing, waitForApproval } from '../cloud/pairing';
 import { FIRST_PROJECT_DEFAULT_NAME } from '../onboarding';
 import { loadGlobalConfig } from '../utils/global-config';
@@ -14,12 +14,13 @@ import { createServeCommand } from './serve';
 import { installService, serviceInstalled, serviceLogPath, serviceProgram } from './service';
 
 /**
- * `agentuse setup`: one flow from install to a running AgentUse, in four steps.
+ * `agentuse setup`: one flow from install to a running AgentUse.
  *
- *   1. Where you use it: Cloud (from an AI assistant) or Local (this computer only)
- *   2. Sign in, Cloud only: this computer shows a code, the person types it on the web
- *   3. Pick the AI that runs agents
- *   4. Ready: a project, and `agentuse serve` kept running in the background
+ *   1. Pick the AI that runs agents
+ *   2. Ready: a project, and `agentuse serve` kept running in the background
+ *
+ * With AgentUse Cloud turned on (see cloudEnabled), it first asks where you
+ * use AgentUse, and signs in for Cloud.
  *
  * Every step that is already done shows a ✓ and is skipped, so running it
  * again is safe. `agentuse connect` is this flow with Cloud already picked.
@@ -56,13 +57,14 @@ export function resolveRoute(
   options: Pick<SetupOptions, 'cloud' | 'local' | 'yes'>,
   connected: boolean,
   interactive: boolean,
+  offerCloud = true,
 ): SetupRoute | 'prompt' {
   if (options.cloud && options.local) throw new Error('Choose either --cloud or --local, not both');
   if (options.local && connected) {
     throw new Error('This computer is connected to AgentUse Cloud. Run `agentuse disconnect` first to use it locally only.');
   }
   if (options.cloud || connected) return 'cloud';
-  if (options.local) return 'local';
+  if (options.local || !offerCloud) return 'local';
   if (interactive && !options.yes) return 'prompt';
   return 'local';
 }
@@ -156,17 +158,36 @@ async function signIn(options: SetupOptions): Promise<CloudConnection> {
   }
 }
 
-async function chatGptLogin(): Promise<void> {
+async function chatGptLogin(browser: boolean): Promise<void> {
   const p = await loadPrompts();
-  const { startProviderOAuth, completeProviderOAuth } = await import('../auth/provider-setup');
+  const { startProviderOAuth, completeProviderOAuth, listenForProviderOAuth } = await import('../auth/provider-setup');
   const flow = await startProviderOAuth('openai');
+  // The browser comes back to localhost:1455 on this computer, so only listen
+  // when the browser opens here; over SSH it lands on the other machine.
+  const listener = browser ? await listenForProviderOAuth(flow.flowId) : undefined;
+  if (listener) {
+    p.log.message(['Sign in to ChatGPT in your browser.', '', chalk.cyan(flow.authorizationUrl)].join('\n'));
+    await openBrowser(flow.authorizationUrl);
+    const spin = p.spinner();
+    spin.start('Waiting for you to sign in');
+    try {
+      await listener.done;
+      spin.stop('Signed in to ChatGPT');
+      return;
+    } catch (error) {
+      spin.stop('ChatGPT sign-in did not finish', 1);
+      throw error;
+    } finally {
+      listener.close();
+    }
+  }
   p.log.message([
     'Sign in to ChatGPT in your browser. Afterwards the page may show an error: that is expected.',
     'Copy the full address from the browser and paste it here.',
     '',
     chalk.cyan(flow.authorizationUrl),
   ].join('\n'));
-  await openBrowser(flow.authorizationUrl);
+  if (browser) await openBrowser(flow.authorizationUrl);
   const callback = await ask(p.text({ message: 'Paste the address from your browser' }));
   await completeProviderOAuth(flow.flowId, callback);
 }
@@ -187,7 +208,7 @@ async function pasteKey(): Promise<void> {
   await saveProviderApiKey(provider, key);
 }
 
-async function pickAi(interactive: boolean, yes: boolean | undefined): Promise<void> {
+async function pickAi(interactive: boolean, yes: boolean | undefined, browser: boolean): Promise<void> {
   const p = await loadPrompts();
   const { getProviderStatus } = await import('../auth/provider-status');
   const step = aiStep(await getProviderStatus({ readiness: 'defer' }));
@@ -225,7 +246,7 @@ async function pickAi(interactive: boolean, yes: boolean | undefined): Promise<v
     p.log.success(`AI  ${chalk.dim(`${step.providerName}, from ${step.envVar}`)}`);
     return;
   }
-  if (choice === 'chatgpt') await chatGptLogin();
+  if (choice === 'chatgpt') await chatGptLogin(browser);
   else await pasteKey();
   p.log.success(`AI  ${chalk.dim(choice === 'chatgpt' ? 'your ChatGPT plan' : 'key saved')}`);
 }
@@ -285,7 +306,13 @@ async function keepRunning(options: SetupOptions): Promise<string | undefined> {
   }
 }
 
-export function readyText(route: SetupRoute, mcpUrl: string | undefined, dashboard: string | undefined, command = cliCommand()): string {
+export function readyText(
+  route: SetupRoute,
+  mcpUrl: string | undefined,
+  dashboard: string | undefined,
+  command = cliCommand(),
+  offerCloud = cloudEnabled(),
+): string {
   if (route === 'cloud' && mcpUrl) {
     return [
       chalk.bold('You\'re set.'),
@@ -305,8 +332,7 @@ export function readyText(route: SetupRoute, mcpUrl: string | undefined, dashboa
     '',
     `Dashboard     ${chalk.cyan(base)}`,
     `Claude Code   ${chalk.cyan(`claude mcp add --transport http agentuse ${base}/mcp`)}`,
-    '',
-    chalk.dim(`Use it from Claude or ChatGPT later: ${command} connect`),
+    ...(offerCloud ? ['', chalk.dim(`Use it from Claude or ChatGPT later: ${command} connect`)] : []),
   ].join('\n');
 }
 
@@ -330,10 +356,11 @@ export async function runSetup(options: SetupOptions): Promise<void> {
   }
 
   try {
-    const decided = resolveRoute(options, Boolean(connection), interactive);
+    const offerCloud = cloudEnabled();
+    const decided = resolveRoute(options, Boolean(connection), interactive, offerCloud);
     p.intro('AgentUse setup');
     const route = decided === 'prompt' ? await chooseRoute() : decided;
-    p.log.success(`Where  ${chalk.dim(route === 'cloud' ? 'AgentUse Cloud' : 'Only on this computer')}`);
+    if (offerCloud) p.log.success(`Where  ${chalk.dim(route === 'cloud' ? 'AgentUse Cloud' : 'Only on this computer')}`);
 
     if (route === 'cloud') {
       if (revoked) p.log.warn('This computer was disconnected from your account, so it signs in again.');
@@ -343,10 +370,10 @@ export async function runSetup(options: SetupOptions): Promise<void> {
         connection = await signIn(options);
       }
     }
-    await pickAi(interactive, options.yes);
+    await pickAi(interactive, options.yes, options.browser !== false);
     await ensureProject(options);
     const dashboard = await keepRunning(options);
-    p.outro(readyText(route, connection?.mcpUrl, dashboard));
+    p.outro(readyText(route, connection?.mcpUrl, dashboard, cliCommand(), offerCloud));
   } catch (error) {
     if (error instanceof SetupCancelled) {
       p.cancel('Setup cancelled. Run it again any time; finished steps are kept.');
@@ -358,13 +385,14 @@ export async function runSetup(options: SetupOptions): Promise<void> {
 }
 
 export function createSetupCommand(): Command {
+  const hideCloud = !cloudEnabled();
   return new Command('setup')
-    .description('Set up AgentUse: where you use it, sign in, the AI that runs agents, and keep it running')
-    .option('--cloud', 'Use AgentUse from your AI assistant (Claude, ChatGPT, any MCP app)')
-    .option('--local', 'Use AgentUse only on this computer, with no account')
+    .description('Set up AgentUse: the AI that runs agents, a project, and keep it running')
+    .addOption(new Option('--cloud', 'Use AgentUse from your AI assistant (Claude, ChatGPT, any MCP app)').hideHelp(hideCloud))
+    .addOption(new Option('--local', 'Use AgentUse only on this computer, with no account').hideHelp(hideCloud))
     .option('--name <name>', `Project name for a first project (default: ${FIRST_PROJECT_DEFAULT_NAME})`)
-    .option('--computer-name <name>', 'How this computer is shown in your account')
-    .option('--url <url>', 'AgentUse Cloud address')
+    .addOption(new Option('--computer-name <name>', 'How this computer is shown in your account').hideHelp(hideCloud))
+    .addOption(new Option('--url <url>', 'AgentUse Cloud address').hideHelp(hideCloud))
     .option('-y, --yes', 'Use the defaults without asking')
     .option('--no-service', 'Do not install the background service')
     .option('--no-browser', 'Print links instead of opening a browser')

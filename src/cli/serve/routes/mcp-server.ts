@@ -7,7 +7,7 @@ import { serverBaseUrl } from "../../../utils/server-registry";
 import { toErrorMessage } from "../../../utils/error-message";
 import { logger } from "../../../utils/logger";
 import { sendError, sendJSON } from "../http";
-import { readCloudConnection } from "../../../cloud/config";
+import { cloudEnabled, readCloudConnection } from "../../../cloud/config";
 import { activeTunnel } from "../../../cloud/tunnel";
 import type { ServeContext, ServeRequest } from "../context";
 
@@ -27,6 +27,7 @@ export async function mcpServerRoutes(ctx: ServeContext, rq: ServeRequest): Prom
     const connection = (() => { try { return readCloudConnection(); } catch { return undefined; } })();
     sendJSON(res, 200, {
       success: true,
+      enabled: cloudEnabled(),
       ...(activeTunnel.current?.state ?? { status: "not connected" }),
       ...(connection && { account: connection.account, name: connection.name, mcpUrl: connection.mcpUrl, url: connection.url }),
     });

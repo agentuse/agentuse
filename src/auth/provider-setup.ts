@@ -3,6 +3,7 @@ import { recordProviderHealth } from './provider-health';
 import { oauthHealthSubject } from './provider-health-identity';
 import { randomUUID } from 'crypto';
 import { CodexAuth } from './codex.js';
+import { listenForOAuthCallback } from './oauth-callback.js';
 import { getProviderReadiness, getProviderStatus, type ProviderReadinessResult, type ProviderStatus, type ProviderStatusOptions } from './provider-status.js';
 import { AuthStorage } from './storage.js';
 import { BUILTIN_PROVIDERS } from '../providers/registry-sources.js';
@@ -182,6 +183,19 @@ export async function startProviderOAuth(
   const { url, pkce } = await CodexAuth.authorize();
   oauthAttempts.set(flowId, { provider: 'openai', pkce, expiresAt });
   return { flowId, provider: 'openai', authorizationUrl: url, expiresAt };
+}
+
+/**
+ * Finishes a ChatGPT sign-in by itself when the browser comes back to
+ * localhost:1455. Undefined when that port is taken: then paste the address
+ * into completeProviderOAuth as before.
+ */
+export async function listenForProviderOAuth(flowId: string): Promise<{ done: Promise<ProviderSetupSnapshot>; close(): void } | undefined> {
+  const attempt = oauthAttempts.get(flowId);
+  if (!attempt) throw new Error('OAuth flow expired or was not found');
+  const listener = await listenForOAuthCallback(attempt.pkce.verifier);
+  if (!listener) return undefined;
+  return { done: listener.address.then((address) => completeProviderOAuth(flowId, address)), close: listener.close };
 }
 
 function oauthCode(value: unknown): string {

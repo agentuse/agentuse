@@ -656,8 +656,8 @@ export function fetchInfo(): Promise<InfoPayload> {
   return getJson('/api');
 }
 
-/** This daemon's line to AgentUse Cloud; `mcpUrl` once the computer is connected. */
-export function fetchCloudState(): Promise<{ status: string; account?: string; mcpUrl?: string }> {
+/** This daemon's line to AgentUse Cloud; `mcpUrl` once the computer is connected. `enabled`: Cloud is shown (it is in preview). */
+export function fetchCloudState(): Promise<{ status: string; enabled?: boolean; account?: string; mcpUrl?: string }> {
   return getJson('/api/cloud');
 }
 

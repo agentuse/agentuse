@@ -250,15 +250,15 @@
       <p class="lede">Ask the AI you already use to automate a job. The agent lives on your Mac and runs on whichever AI you choose.</p>
     </div>
     <ul class="points">
-      <li><svg class="point-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><span><strong>Open to any assistant</strong><span>Build agents from Claude, ChatGPT, Claude Code, Codex or any app that supports MCP.</span></span></li>
+      <li><svg class="point-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><span><strong>Open to any assistant</strong><span id="route-assistants">Build agents from Claude Code, Codex or any app on your Mac that supports MCP.</span></span></li>
       <li><svg class="point-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 8h10M7 12h10M7 16h6"/></svg><span><strong>Any AI provider</strong><span>Run them on your ChatGPT plan, an API key or a model on your Mac. Switch any time.</span></span></li>
       <li><svg class="point-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span><strong>Your agents stay with you</strong><span>They live in a folder on your Mac, with your files and logins. Not locked in our cloud.</span></span></li>
     </ul>
     <p class="error" role="alert" data-error></p>
     <div class="welcome-actions">
-      <button class="primary" type="button" id="route-cloud">Sign in or create an account</button>
-      <span class="footer-hint">With your email. No password to remember.</span>
-      <button class="link" type="button" id="route-local">Skip, and use it only on this Mac</button>
+      <button class="primary" type="button" id="route-cloud" hidden>Sign in or create an account</button>
+      <span class="footer-hint" id="route-cloud-hint" hidden>With your email. No password to remember.</span>
+      <button class="primary" type="button" id="route-local">Get started</button>
     </div>
   </section>
 
@@ -301,7 +301,8 @@
         </span>
       </button>
       <div class="detail" id="chatgpt-detail" hidden>
-        <p>After you sign in, the browser may show an error page. That's expected. Copy the full address from the browser and paste it here.</p>
+        <p id="chatgpt-waiting">Finish signing in to ChatGPT in your browser. This moves on by itself.</p>
+        <p id="chatgpt-paste-hint">After you sign in, the browser may show an error page. That's expected. Copy the full address from the browser and paste it here.</p>
         <div class="row">
           <input class="grow mono" type="text" id="chatgpt-address" placeholder="http://localhost:1455/auth/callback?code=…" aria-label="Address from your browser" autocomplete="off" spellcheck="false">
           <button class="secondary" type="button" id="chatgpt-reopen">Open again</button>
@@ -401,7 +402,7 @@
     <div class="agents" data-apps></div>
     <p class="error" role="alert" data-error></p>
     <div class="actions">
-      <span class="footer-hint">Claude and ChatGPT reach this Mac through AgentUse Cloud.</span>
+      <span class="footer-hint" id="ready-local-cloud-hint" hidden>Claude and ChatGPT reach this Mac through AgentUse Cloud.</span>
       <div class="end"><button class="primary" type="button" id="local-dashboard" data-needs-ready>Open dashboard</button></div>
     </div>
   </section>
@@ -450,10 +451,12 @@
     const bridge = window.agentuseSetup;
     const $ = (id) => document.getElementById(id);
     const steps = ["step-route", "step-signin", "step-ai", "step-ready-cloud", "step-ready-local", "step-project"];
-    let state = { cloud: { status: "none" }, ai: { ready: false }, connectPage: "cloud.agentuse.io/connect" };
+    let state = { cloud: { status: "none" }, ai: { ready: false }, cloudEnabled: false, connectPage: "cloud.agentuse.io/connect" };
     let route = "cloud";
     let ai = "chatgpt";
     let chatGptStarted = false;
+    // The app catches the ChatGPT sign-in itself; false: paste the address.
+    let chatGptListening = false;
     let current = "step-route";
     let shownAt = 0;
     let ready;
@@ -596,7 +599,7 @@
           }
           list.append(appCard(agent.name, agent.state === "set-up" && agent.command ? `Or type ${agent.command} and choose automate` : agent.where, action, !installed));
         }
-        for (const chat of CHAT_APPS) {
+        for (const chat of state.cloudEnabled ? CHAT_APPS : []) {
           const action = el("span", undefined, "app-action");
           if (cloud) {
             const button = el("button", "Connect", "plain");
@@ -685,24 +688,31 @@
       $("ai-meta").textContent = signedIn
         ? `✓ Signed in${state.cloud.account ? ` as ${state.cloud.account}` : ""}`
         : "Only on this Mac";
+      // Without Cloud there is no other place to be, so "Only on this Mac" says nothing.
+      $("ai-meta").hidden = !state.cloudEnabled && !signedIn;
+      $("ai-meta").previousElementSibling.hidden = $("ai-meta").hidden;
       $("ai-meta").className = signedIn ? "done" : "";
       $("ai-lede").textContent = route === "cloud"
         ? "Your assistant writes the work agent. This AI runs it here, on schedule, even when the assistant is closed."
-        : "This AI writes and runs your agents here, on schedule.";
+        : "Your coding agent writes your agents. This AI runs them here, on schedule.";
       pick("ai", ai);
       $("chatgpt-detail").hidden = ai !== "chatgpt" || !chatGptStarted;
+      $("chatgpt-waiting").hidden = !chatGptListening;
+      $("chatgpt-paste-hint").hidden = chatGptListening;
+      $("chatgpt-address").hidden = chatGptListening;
       $("key-detail").hidden = ai !== "key";
       const listing = ai === "custom" && !customForm;
       $("local-detail").hidden = !listing;
       $("custom-detail").hidden = ai !== "custom" || !customForm;
       if (listing) renderLocalModels();
-      $("ai-continue").textContent = ai === "chatgpt" && !chatGptStarted ? "Sign in with ChatGPT" : "Continue";
+      const waiting = ai === "chatgpt" && chatGptStarted && chatGptListening;
+      $("ai-continue").textContent = ai === "chatgpt" && !chatGptStarted ? "Sign in with ChatGPT" : waiting ? "Waiting for sign-in…" : "Continue";
       // Nothing to check yet: an empty key or address can't be saved.
       $("ai-continue").disabled = ai === "key"
         ? !$("key-value").value.trim()
         : ai === "custom"
           ? customForm ? !$("custom-url").value.trim() : !localModel
-          : chatGptStarted && !$("chatgpt-address").value.trim();
+          : chatGptStarted && (chatGptListening || !$("chatgpt-address").value.trim());
     }
 
     function formatSize(bytes) {
@@ -760,6 +770,7 @@
       $("local-ai-mark").textContent = state.ai.ready ? "✓" : "!";
       $("local-ai-mark").className = state.ai.ready ? "mark" : "mark warn";
       $("local-project").textContent = ready?.project ?? "my-agents";
+      $("ready-local-cloud-hint").hidden = !state.cloudEnabled;
       $("project-change").disabled = !ready;
       // The server starts in the background; say so instead of a greyed button.
       for (const button of document.querySelectorAll("[data-needs-ready]")) {
@@ -769,10 +780,28 @@
       }
     }
 
+    // Cloud is in preview: Welcome offers sign-in only once it is turned on.
+    function renderWelcome() {
+      const cloud = Boolean(state.cloudEnabled);
+      $("route-cloud").hidden = !cloud;
+      $("route-cloud-hint").hidden = !cloud;
+      $("route-local").className = cloud ? "link" : "primary";
+      $("route-local").textContent = cloud ? "Skip, and use it only on this Mac" : "Get started";
+      $("route-assistants").textContent = cloud
+        ? "Build agents from Claude, ChatGPT, Claude Code, Codex or any app that supports MCP."
+        : "Build agents from Claude Code, Codex or any app on your Mac that supports MCP.";
+    }
+
     async function refresh() {
       const previous = state.cloud.status;
+      const aiWasReady = state.ai.ready;
       state = await bridge.getState();
-      if (current === "step-signin") {
+      if (current === "step-route") {
+        renderWelcome();
+      } else if (current === "step-ai") {
+        // The app finished the ChatGPT sign-in on its own.
+        if (chatGptListening && state.ai.ready && !aiWasReady) await goReady();
+      } else if (current === "step-signin") {
         renderSignIn();
         if (state.cloud.status === "connected" && previous !== "connected") afterSignIn();
       } else if (current === "step-ready-cloud") {
@@ -790,7 +819,7 @@
       });
     }
 
-    $("route-local").addEventListener("click", () => busy($("route-local"), "Skip, and use it only on this Mac", async () => {
+    $("route-local").addEventListener("click", () => busy($("route-local"), $("route-local").textContent, async () => {
       route = "local";
       state = await bridge.getState();
       afterSignIn();
@@ -825,7 +854,10 @@
 
     $("ai-back").addEventListener("click", () => show("step-route"));
     $("ai-skip").addEventListener("click", () => goReady());
-    $("chatgpt-reopen").addEventListener("click", () => busy($("chatgpt-reopen"), "Opening…", () => bridge.startChatGpt()));
+    $("chatgpt-reopen").addEventListener("click", () => busy($("chatgpt-reopen"), "Opening…", async () => {
+      chatGptListening = await bridge.startChatGpt();
+      renderAi();
+    }));
     $("key-value").addEventListener("input", renderAi);
     $("custom-url").addEventListener("input", renderAi);
     $("local-other").addEventListener("click", () => {
@@ -840,10 +872,10 @@
       const starting = ai === "chatgpt" && !chatGptStarted;
       busy($("ai-continue"), starting ? "Opening…" : ai === "custom" ? "Checking…" : "Saving…", async () => {
         if (starting) {
-          await bridge.startChatGpt();
+          chatGptListening = await bridge.startChatGpt();
           chatGptStarted = true;
           renderAi();
-          $("chatgpt-address").focus();
+          if (!chatGptListening) $("chatgpt-address").focus();
           return;
         }
         state.ai = ai === "chatgpt"
@@ -856,6 +888,9 @@
         $("key-value").value = "";
         $("custom-key").value = "";
         await goReady();
+      }).then(() => {
+        // busy() re-enables the button; while ChatGPT sign-in is pending it stays off.
+        if (current === "step-ai") renderAi();
       });
     });
 

@@ -1,16 +1,20 @@
+import { useFetch } from '../hooks/use-fetch';
+import { fetchCloudState } from '../lib/api';
 import { AssistantCards } from './assistant-cards';
 import { useCodingAgents } from './coding-agent-list';
 
 /**
  * Home with no agents yet: a short tutorial for making the first one. The
  * person automates work their AI assistant just did: step 1 connects it
- * (Claude Code, Codex, Claude, ChatGPT), step 2 says what to send in a chat
+ * (Claude Code, Codex; Claude and ChatGPT too with AgentUse Cloud), step 2 says what to send in a chat
  * that did a job, step 3 says where the result shows up.
  */
 export function NoAgentsYet(props: { noProjects: boolean }) {
   const agents = useCodingAgents();
   const connected = agents.rows.some((agent) => agent.state === 'set-up');
   const withCommand = agents.rows.find((agent) => agent.state === 'set-up' && agent.command);
+  const cloud = useFetch('home-cloud', () => fetchCloudState());
+  const chatApps = Boolean(cloud.data?.enabled);
 
   return (
     <section class="no-agents" aria-labelledby="no-agents-title">
@@ -30,7 +34,7 @@ export function NoAgentsYet(props: { noProjects: boolean }) {
           <span class="tutorial-mark" aria-hidden="true">{connected ? '✓' : '1'}</span>
           <div class="tutorial-body">
             <h2>Connect your AI assistant</h2>
-            <p>Claude Code and Codex set up in one click. For Claude and ChatGPT, Connect shows the two steps.</p>
+            <p>Claude Code and Codex set up in one click.{chatApps && ' For Claude and ChatGPT, Connect shows the two steps.'}</p>
             <AssistantCards agents={agents} />
           </div>
         </li>
@@ -60,7 +64,7 @@ export function NoAgentsYet(props: { noProjects: boolean }) {
       </ol>
 
       <p class="no-agents-more">
-        Use Claude or ChatGPT on the web, or Cursor? <a href="/settings?tab=apps">Connect them in Settings</a>.
+        {chatApps ? 'Use Claude or ChatGPT on the web, or Cursor? ' : 'Use Cursor or another app? '}<a href="/settings?tab=apps">{chatApps ? 'Connect them in Settings' : 'Connect it in Settings'}</a>.
       </p>
     </section>
   );

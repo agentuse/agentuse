@@ -5,6 +5,8 @@ import type { LocalModelServer, SetupAiState, SetupApiKeyProvider, SetupCloudSta
 export interface DesktopSetupState {
   cloud: SetupCloudState;
   ai: SetupAiState;
+  /** AgentUse Cloud is in preview: off unless turned on, so setup stays on this Mac. */
+  cloudEnabled: boolean;
   /** Where to type the code by hand, e.g. cloud.agentuse.io/connect. */
   connectPage: string;
 }
@@ -24,7 +26,8 @@ contextBridge.exposeInMainWorld("agentuseSetup", Object.freeze({
   connectCloud: (): Promise<void> => ipcRenderer.invoke("agentuse:setup:connect-cloud"),
   cancelCloud: (): Promise<void> => ipcRenderer.invoke("agentuse:setup:cancel-cloud"),
   openConnectPage: (): Promise<void> => ipcRenderer.invoke("agentuse:setup:open-connect-page"),
-  startChatGpt: (): Promise<void> => ipcRenderer.invoke("agentuse:setup:start-chatgpt"),
+  /** True when the app finishes the sign-in itself; false means paste the address. */
+  startChatGpt: (): Promise<boolean> => ipcRenderer.invoke("agentuse:setup:start-chatgpt"),
   finishChatGpt: (address: string): Promise<SetupAiState> => ipcRenderer.invoke("agentuse:setup:finish-chatgpt", address),
   saveApiKey: (provider: SetupApiKeyProvider, key: string): Promise<SetupAiState> => ipcRenderer.invoke("agentuse:setup:save-api-key", provider, key),
   localModels: (): Promise<LocalModelServer[]> => ipcRenderer.invoke("agentuse:setup:local-models"),

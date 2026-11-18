@@ -19,9 +19,9 @@ const CHAT_APPS = [
 
 /**
  * Home step 1: one narrow card per assistant people know. Claude Code and
- * Codex set up with a button. Claude and ChatGPT reach this machine through
- * AgentUse Cloud, so Connect shows the address and that app's two steps, and
- * without Cloud they say so. Any other app copies the address.
+ * Codex set up with a button. With AgentUse Cloud turned on, Claude and
+ * ChatGPT reach this machine through it, so Connect shows the address and
+ * that app's two steps. Any other app copies the address.
  */
 export function AssistantCards(props: { agents: ReturnType<typeof useCodingAgents> }) {
   const { rows, via, busy, failed, setUp, error } = props.agents;
@@ -31,6 +31,7 @@ export function AssistantCards(props: { agents: ReturnType<typeof useCodingAgent
   const cloudUrl = cloud.data?.mcpUrl;
   const address = cloudUrl ?? `${location.origin}/mcp`;
   const chat = cloudUrl ? CHAT_APPS.find((app) => app.id === open) : undefined;
+  const chatApps = cloud.data?.enabled ? CHAT_APPS : [];
   const isDesktop = typeof window !== 'undefined' && Boolean(window.agentuseDesktop);
   const note = error ? undefined : outdatedNote(rows, via);
 
@@ -61,7 +62,7 @@ export function AssistantCards(props: { agents: ReturnType<typeof useCodingAgent
             </span>
           </li>
         ))}
-        {CHAT_APPS.map((app) => (
+        {chatApps.map((app) => (
           <li key={app.id}>
             <span class="coding-agents-name">
               <strong>{app.name}</strong>

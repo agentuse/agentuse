@@ -43,6 +43,8 @@ private struct SettingsState: Codable, Equatable {
     var cloudMcpUrl: String?
     var cloudActionLabel: String
     var cloudActionDisabled: Bool
+    /// AgentUse Cloud is in preview: its tab shows only once it is turned on.
+    var cloudEnabled: Bool?
 
     static let loading = SettingsState(
         status: .starting,
@@ -831,9 +833,11 @@ private struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
                 .tag("general")
 
-            CloudSettingsView(model: model)
-                .tabItem { Label("AgentUse Cloud", systemImage: "cloud") }
-                .tag("cloud")
+            if model.state.cloudEnabled == true {
+                CloudSettingsView(model: model)
+                    .tabItem { Label("AgentUse Cloud", systemImage: "cloud") }
+                    .tag("cloud")
+            }
 
             LogsSettingsView(model: model)
                 .tabItem { Label("Logs", systemImage: "doc.text") }

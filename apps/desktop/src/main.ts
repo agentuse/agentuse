@@ -41,8 +41,8 @@ import {
 } from "./dashboard-shortcut";
 import { getProviderStatus } from "../../../src/auth/provider-status";
 import { getManagedProjectsRoot, loadGlobalConfig } from "../../../src/utils/global-config";
-import { cloudUrl, readCloudConnection } from "../../../src/cloud/config";
-import { completeProviderOAuth, configureCustomProvider, saveProviderApiKey, startProviderOAuth } from "../../../src/auth/provider-setup";
+import { cloudEnabled, cloudUrl, readCloudConnection } from "../../../src/cloud/config";
+import { completeProviderOAuth, configureCustomProvider, listenForProviderOAuth, saveProviderApiKey, startProviderOAuth } from "../../../src/auth/provider-setup";
 import { CloudConnector, cloudSettingsState, type CloudApiState } from "./cloud-settings";
 import { isCodingAgentId, type CodingAgentStatus } from "../../../src/onboarding/coding-agents";
 import { connectPageUrl, customProviderName, detectLocalModels, isSetupApiKeyProvider, setupAiState, setupCloudState } from "./setup-wizard";
@@ -121,6 +121,7 @@ let userLoginPath: Promise<string> | undefined;
 let desktopSetupStartedAt: number | undefined;
 // The ChatGPT sign-in the first-run window started, finished by pasting the address.
 let setupChatGptFlow: string | undefined;
+let setupChatGptListener: { close(): void } | undefined;
 /** The project the first-run window picked, and whether setup added it (so a switch can take it back). */
 let setupProject: { id: string; added: boolean } | undefined;
 let dashboardShortcut: string | null = DEFAULT_DASHBOARD_SHORTCUT;
@@ -206,6 +207,7 @@ async function desktopSetupState() {
       ...(view.error && { error: view.error }),
     }),
     ai: setupAiState(await getProviderStatus()),
+    cloudEnabled: cloudEnabled(),
     connectPage: `${cloudUrl().replace(/^https?:\/\//u, "")}/connect`,
   };
 }
@@ -360,11 +362,24 @@ function registerDesktopIpc(): void {
     if (code) clipboard.writeText(code);
     await shell.openExternal(connectPageUrl(cloudUrl()));
   });
+  // Returns whether the app catches the sign-in itself; false means paste the address.
   ipcMain.handle("agentuse:setup:start-chatgpt", async (event) => {
     assertSetupSender(event);
+    setupChatGptListener?.close();
     const flow = await startProviderOAuth("openai");
     setupChatGptFlow = flow.flowId;
+    const listener = await listenForProviderOAuth(flow.flowId);
+    setupChatGptListener = listener;
+    if (listener) {
+      listener.done.then(() => {
+        if (setupChatGptFlow === flow.flowId) setupChatGptFlow = undefined;
+        notifySetupWindow();
+      }, (error: unknown) => {
+        console.warn("ChatGPT sign-in did not finish:", error);
+      });
+    }
     await shell.openExternal(flow.authorizationUrl);
+    return Boolean(listener);
   });
   ipcMain.handle("agentuse:setup:finish-chatgpt", async (event, address: unknown) => {
     assertSetupSender(event);
@@ -372,6 +387,7 @@ function registerDesktopIpc(): void {
     if (typeof address !== "string" || !address.trim()) throw new Error("Paste the address from your browser.");
     await completeProviderOAuth(setupChatGptFlow, address);
     setupChatGptFlow = undefined;
+    setupChatGptListener?.close();
     return setupAiState(await getProviderStatus());
   });
   ipcMain.handle("agentuse:setup:save-api-key", async (event, provider: unknown, key: unknown) => {
@@ -1403,6 +1419,7 @@ async function desktopSettingsState() {
     cliActionDisabled: cli.actionDisabled,
     cliCommands: cli.commands.map(displayHomePath),
     ...cloud,
+    cloudEnabled: cloudEnabled(),
     ...desktopUpdateSettingsState(),
   };
   if (serverOperation === "starting") {

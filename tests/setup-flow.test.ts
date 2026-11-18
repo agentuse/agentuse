@@ -18,6 +18,12 @@ describe('setup route', () => {
     expect(resolveRoute({ local: true }, false, true)).toBe('local');
   });
 
+  it('stays on this computer without asking while Cloud is hidden', () => {
+    expect(resolveRoute({}, false, true, false)).toBe('local');
+    expect(resolveRoute({ cloud: true }, false, true, false)).toBe('cloud');
+    expect(resolveRoute({}, true, true, false)).toBe('cloud');
+  });
+
   it('refuses choices that contradict each other', () => {
     expect(() => resolveRoute({ cloud: true, local: true }, false, true)).toThrow('not both');
     expect(() => resolveRoute({ local: true }, true, true)).toThrow('agentuse disconnect');
@@ -58,10 +64,16 @@ describe('ready screen', () => {
   });
 
   it('shows the dashboard and the local MCP address on the local route', () => {
-    const text = strip(readyText('local', undefined, 'http://127.0.0.1:14000', 'agentuse'));
+    const text = strip(readyText('local', undefined, 'http://127.0.0.1:14000', 'agentuse', true));
     expect(text).toContain('http://127.0.0.1:14000');
     expect(text).toContain('claude mcp add --transport http agentuse http://127.0.0.1:14000/mcp');
     expect(text).toContain('agentuse connect');
+  });
+
+  it('leaves Cloud out of the local ready screen while Cloud is hidden', () => {
+    const text = strip(readyText('local', undefined, 'http://127.0.0.1:14000', 'agentuse', false));
+    expect(text).toContain('http://127.0.0.1:14000');
+    expect(text).not.toContain('connect');
   });
 });
 
