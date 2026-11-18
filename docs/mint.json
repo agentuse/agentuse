@@ -62,7 +62,6 @@
       "pages": [
         "guides/serve-dashboard",
         "guides/macos-desktop",
-        "guides/agentuse-cloud",
         "guides/schedule",
         "guides/webhooks",
         "guides/channels",

@@ -33,23 +33,15 @@ Set up AgentUse:
 agentuse setup
 ```
 
-Setup asks four things, and skips any that are already done, so it is safe to
+Setup does two things, and skips any that are already done, so it is safe to
 run again:
 
-1. **Where you'll use AgentUse.** From your AI assistant (Claude, ChatGPT, Claude
-   Code, Codex, or any app that supports MCP) through
-   [AgentUse Cloud](/guides/agentuse-cloud), or only on this computer with no
-   account.
-2. **Sign in,** for AgentUse Cloud only. Your browser opens; press **Connect**.
-3. **The AI that runs your agents.** A key already in your shell comes first,
-   then ChatGPT sign-in or pasting an API key. Keys stay on this computer.
-4. **Ready.** Setup creates the `my-agents` project and starts AgentUse in the
+1. **The AI that runs your agents.** A key already in your shell comes first,
+   then ChatGPT sign-in or pasting an API key. ChatGPT sign-in finishes on its
+   own once you sign in in the browser. Keys stay on this computer.
+2. **Ready.** Setup creates the `my-agents` project and starts AgentUse in the
    background (launchd on macOS, a systemd user service on Linux), so it keeps
    running after you close the terminal and starts again when you log in.
-
-Came from the AgentUse plugin in Claude or ChatGPT? Run the same command. It
-shows a code and opens AgentUse Cloud, where you're already signed in: paste
-the code and select **Connect**.
 
 ### Guided Web setup
 
@@ -64,10 +56,8 @@ AgentUse opens its Web UI and keeps the server running in your terminal.
 With no agents yet, Home lists the coding agents on this computer. Select
 **Set up** next to Claude Code or Codex: AgentUse adds itself to that app. Then
 say what you want done, such as "Use AgentUse to run this every Monday at 9am".
-In Claude Code, you can also type `/agentuse` and choose `automate`. The agent it writes shows
-up in the
-dashboard, where you review and run it. Chat apps such as Claude and ChatGPT
-use the AgentUse Cloud address shown on the same page.
+In Claude Code, you can also type `/agentuse` and choose `automate`. The agent
+it writes shows up in the dashboard, where you review and run it.
 
 <Warning>
   Your coding agent's own login does not authenticate the agents it creates.
@@ -78,14 +68,11 @@ use the AgentUse Cloud address shown on the same page.
 
 ### Headless setup
 
-On a server or in a script, choose the route and accept the defaults:
+On a server or in a script, accept the defaults:
 
 ```bash
-agentuse setup --local --yes
+agentuse setup --yes
 ```
-
-Without a browser, the Cloud route prints a link and a code: open the link on
-any phone or laptop, sign in, and press **Connect**.
 
 ## Create an agent without a coding agent
 

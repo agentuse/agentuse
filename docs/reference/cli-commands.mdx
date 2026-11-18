@@ -1571,18 +1571,6 @@ AgentUse uses standard exit codes:
 | 7 | Network error |
 | 130 | User interrupted (Ctrl+C) |
 
-## agentuse connect
-
-Connects this computer to [AgentUse Cloud](/guides/agentuse-cloud), so Claude, ChatGPT, Cursor, or any app that supports MCP can use AgentUse here. It prints a code, opens the browser to sign in and approve, and saves this computer's token to `~/.agentuse/cloud.json`. A running `agentuse serve` opens its line to the cloud within a minute.
-
-```bash
-agentuse connect
-agentuse connect --no-browser          # print the address and code (servers without a screen)
-agentuse connect --name "Studio Mac"   # how the computer appears in your account
-```
-
-`agentuse status` shows the account, this computer, the MCP address, and whether the running server is connected. `agentuse disconnect` revokes this computer's token and removes the file.
-
 ## agentuse mcp serve
 
 Runs AgentUse as a local MCP server over stdio, for apps that start MCP servers as commands. It needs `agentuse serve` running. `agentuse serve` also answers MCP directly at `/mcp`.
@@ -1603,9 +1591,6 @@ agentuse sessions [list|show|resume|path] # View and resume sessions
 agentuse sessions reconcile [--all]      # Settle runs stuck at "running"
 agentuse sessions backfill-blockers      # Add blockers to older incomplete runs
 agentuse setup [--web|--terminal]        # First-run setup in the Mac app, browser, or terminal
-agentuse connect                         # Connect this computer to AgentUse Cloud
-agentuse status                          # Show this computer's AgentUse Cloud connection
-agentuse disconnect                      # Disconnect this computer from AgentUse Cloud
 agentuse mcp serve                       # Run AgentUse as a local (stdio) MCP server
 agentuse provider login [provider]       # Authenticate with a provider
 agentuse provider add <name> --url <url> # Add custom provider (Ollama, LM Studio, etc.)

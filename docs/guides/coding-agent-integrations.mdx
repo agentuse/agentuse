@@ -3,46 +3,21 @@
 Use AgentUse from Claude Code, Codex, Cursor, or any coding agent that supports
 MCP. Ask it to turn the workflow in your conversation into an agent that runs on
 its own, or to find and fix agents that fail. Both come from the AgentUse MCP
-server, so every app gets the same version-matched workflow.
-
-## Connect your computer
-
-The coding agent reaches AgentUse on your computer through
-[AgentUse Cloud](/guides/agentuse-cloud). Connect the computer once, in the
-AgentUse app (**Settings → AgentUse Cloud → Connect**) or in a terminal:
-
-```bash
-agentuse connect
-```
+server on your computer, so every app gets the same version-matched workflow.
 
 ## Add AgentUse to your coding agent
 
-- **Claude Code and Codex:** install the AgentUse plugin. It adds the AgentUse
-  Cloud MCP server, and nothing else.
-- **Any other MCP app:** add `https://cloud.agentuse.io/mcp` as a remote (HTTP)
-  MCP server. For Claude Code without the plugin:
+- **Claude Code and Codex:** in the AgentUse app or dashboard, open Home (or
+  **Settings → Connect apps**) and select **Set up** next to each one. AgentUse
+  adds its MCP server to that app's own config and changes nothing else.
+- **Any other MCP app:** add your local server as a remote (HTTP) MCP server:
+  `http://127.0.0.1:12233/mcp`. For Claude Code by hand:
 
   ```bash
-  claude mcp add --transport http agentuse https://cloud.agentuse.io/mcp
+  claude mcp add --transport http agentuse http://127.0.0.1:12233/mcp
   ```
 
-Complete your coding agent's OAuth sign-in to AgentUse Cloud after installation.
-For a Codex CLI plugin install, run:
-
-```bash
-codex mcp login agentuse
-```
-
-Finish sign-in and consent in the browser, then start a new Codex task. The Codex
-CLI installs plugins without starting OAuth; mentioning AgentUse in a chat or
-starting a new task does not complete that step. `agentuse connect` connects your
-computer, while this OAuth sign-in authorizes Codex to reach it.
-
-Other MCP clients may start sign-in on first use or expose an Authenticate action
-in their MCP settings.
-
-To use AgentUse on the same computer without the cloud, point the app at your
-local server instead: `http://127.0.0.1:12233/mcp`.
+  If your server uses an API key, send it as a bearer token.
 
 ## Use it
 
@@ -51,7 +26,7 @@ Use AgentUse to run the workflow we just completed every Monday at 9am
 ```
 
 If an app doesn't pick that up, Claude Code has a menu: type `/agentuse` and choose
-`automate` or `triage`. In Codex with the AgentUse plugin, start with `@AgentUse`.
+`automate` or `triage`.
 
 The app checks what your project already has, writes the agent, saves it as a
 draft, and practice-runs it with every tool faked. It gives you a review link.
@@ -71,9 +46,3 @@ npx skills add agentuse/agentuse
 
 It loads the `core`, `creator`, and `tester` guidance from the installed
 AgentUse CLI, so it matches the version that runs your agents.
-
-## Local development
-
-Contributors can run `bun run integrations:build` in the AgentUse repository.
-The generated local-development marketplaces use `agentuse-development`; their
-installation commands are in the repository's `integrations` READMEs.
