@@ -43,20 +43,21 @@ run again:
    background (launchd on macOS, a systemd user service on Linux), so it keeps
    running after you close the terminal and starts again when you log in.
 
-### Guided Web setup
+### Open the dashboard
 
-Prefer the dashboard? Start the guided Web setup:
+Setup already started AgentUse in the background, so the dashboard is at
+[http://127.0.0.1:12233](http://127.0.0.1:12233).
 
-```bash
-agentuse setup --web
-```
+`agentuse setup --web` only runs AgentUse in this terminal and opens the
+dashboard. It does not pick the AI, make the project, or start the background
+service, so run `agentuse setup` for those.
 
-AgentUse opens its Web UI and keeps the server running in your terminal.
+### Make your first agent
 
 With no agents yet, Home lists the coding agents on this computer. Select
 **Set up** next to Claude Code or Codex: AgentUse adds itself to that app. Then
 say what you want done, such as "Use AgentUse to run this every Monday at 9am".
-In Claude Code, you can also type `/agentuse` and choose `automate`. The agent
+In Claude Code, you can also type `/agentuse`, then pick `automate` from the menu that opens. The agent
 it writes shows up in the dashboard, where you review and run it.
 
 <Warning>

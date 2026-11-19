@@ -48,7 +48,7 @@ export function NoAgentsYet(props: { noProjects: boolean }) {
               <span class="tutorial-chat-bubble">Use AgentUse to run this every Monday at 9am</span>
             </div>
             <p>
-              {withCommand && <>If it doesn't pick that up, type <code>{withCommand.command}</code> in {withCommand.name} and choose automate. </>}
+              {withCommand && <>If it doesn't pick that up, type <code>{withCommand.command}</code> in {withCommand.name}, then pick automate from the menu. </>}
               No chat like that yet? Ask it to do the job once first.
             </p>
           </div>

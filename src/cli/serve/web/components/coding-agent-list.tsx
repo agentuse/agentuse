@@ -58,7 +58,7 @@ export function CodingAgentList(props: { agents: ReturnType<typeof useCodingAgen
           <li key={agent.id} class={agent.state === 'not-installed' ? 'is-missing' : undefined}>
             <span class="coding-agents-name">
               <strong>{agent.name}</strong>
-              <span>{agent.state === 'set-up' && agent.command ? `Or type ${agent.command} and choose automate` : agent.where}</span>
+              <span>{agent.state === 'set-up' && agent.command ? `Or type ${agent.command}, then pick automate from the menu` : agent.where}</span>
             </span>
             {agent.state === 'not-installed'
               ? <span class="coding-agents-state">Not installed</span>
