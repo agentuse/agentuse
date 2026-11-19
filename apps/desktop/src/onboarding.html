@@ -704,7 +704,7 @@
         ? "Your assistant writes the work agent. This AI runs it here, on schedule, even when the assistant is closed."
         : "Your coding agent writes your agents. This AI runs them here, on schedule.";
       pick("ai", ai);
-      $("chatgpt-detail").hidden = ai !== "chatgpt" || !chatGptStarted;
+      $("chatgpt-detail").hidden = ai !== "chatgpt" || !chatGptStarted || chatGptFailed;
       $("chatgpt-waiting").hidden = !chatGptListening || chatGptFailed;
       $("chatgpt-paste-hint").hidden = chatGptListening;
       $("chatgpt-address").hidden = chatGptListening;
@@ -828,6 +828,10 @@
 
     for (const button of document.querySelectorAll("[data-ai]")) {
       button.addEventListener("click", () => {
+        if (ai !== button.dataset.ai) {
+          const error = $(current).querySelector("[data-error]");
+          if (error) error.textContent = "";
+        }
         ai = button.dataset.ai;
         renderAi();
         if (ai === "key") $("key-value").focus();

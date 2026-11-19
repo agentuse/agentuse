@@ -381,7 +381,8 @@ function registerDesktopIpc(): void {
         console.warn("ChatGPT sign-in did not finish:", error);
         if (setupChatGptFlow !== flow.flowId) return;
         setupChatGptFlow = undefined;
-        setupChatGptError = `${error instanceof Error ? error.message : String(error)}. Press Try again.`;
+        const reason = error instanceof Error ? error.message : String(error);
+        setupChatGptError = reason.startsWith("ChatGPT") ? `${reason}. Press Try again.` : `ChatGPT sign-in didn't finish (${reason}). Press Try again.`;
         notifySetupWindow();
       });
     }
