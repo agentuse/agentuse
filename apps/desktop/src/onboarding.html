@@ -457,6 +457,8 @@
     let chatGptStarted = false;
     // The app catches the ChatGPT sign-in itself; false: paste the address.
     let chatGptListening = false;
+    // The sign-in the app was waiting for stopped; Continue becomes Try again.
+    let chatGptFailed = false;
     let current = "step-route";
     let shownAt = 0;
     let ready;
@@ -480,6 +482,12 @@
       const number = { "step-route": 1, "step-signin": 2, "step-ai": total - 1, "step-ready-cloud": 4, "step-ready-local": 3, "step-project": 3 }[id];
       for (const label of document.querySelectorAll(`#${id} [data-step-label]`)) label.textContent = `Step ${number} of ${total}`;
       $(id).querySelector("button.primary:not([hidden])")?.focus();
+    }
+
+    function clearError() {
+      chatGptFailed = false;
+      const target = $(current).querySelector("[data-error]");
+      if (target) target.textContent = "";
     }
 
     function fail(error) {
@@ -597,7 +605,7 @@
             });
             action.append(button);
           }
-          list.append(appCard(agent.name, agent.state === "set-up" && agent.command ? `Or type ${agent.command} and choose automate` : agent.where, action, !installed));
+          list.append(appCard(agent.name, agent.state === "set-up" && agent.command ? `Or type ${agent.command}, then pick automate from the menu` : agent.where, action, !installed));
         }
         for (const chat of state.cloudEnabled ? CHAT_APPS : []) {
           const action = el("span", undefined, "app-action");
@@ -697,7 +705,7 @@
         : "Your coding agent writes your agents. This AI runs them here, on schedule.";
       pick("ai", ai);
       $("chatgpt-detail").hidden = ai !== "chatgpt" || !chatGptStarted;
-      $("chatgpt-waiting").hidden = !chatGptListening;
+      $("chatgpt-waiting").hidden = !chatGptListening || chatGptFailed;
       $("chatgpt-paste-hint").hidden = chatGptListening;
       $("chatgpt-address").hidden = chatGptListening;
       $("key-detail").hidden = ai !== "key";
@@ -705,14 +713,17 @@
       $("local-detail").hidden = !listing;
       $("custom-detail").hidden = ai !== "custom" || !customForm;
       if (listing) renderLocalModels();
-      const waiting = ai === "chatgpt" && chatGptStarted && chatGptListening;
-      $("ai-continue").textContent = ai === "chatgpt" && !chatGptStarted ? "Sign in with ChatGPT" : waiting ? "Waiting for sign-in…" : "Continue";
+      const waiting = ai === "chatgpt" && chatGptStarted && chatGptListening && !chatGptFailed;
+      $("ai-continue").textContent = ai !== "chatgpt" ? "Continue"
+        : !chatGptStarted ? "Sign in with ChatGPT"
+        : chatGptFailed ? "Try again"
+        : waiting ? "Waiting for sign-in…" : "Continue";
       // Nothing to check yet: an empty key or address can't be saved.
       $("ai-continue").disabled = ai === "key"
         ? !$("key-value").value.trim()
         : ai === "custom"
           ? customForm ? !$("custom-url").value.trim() : !localModel
-          : chatGptStarted && (chatGptListening || !$("chatgpt-address").value.trim());
+          : chatGptStarted && !chatGptFailed && (chatGptListening || !$("chatgpt-address").value.trim());
     }
 
     function formatSize(bytes) {
@@ -801,6 +812,11 @@
       } else if (current === "step-ai") {
         // The app finished the ChatGPT sign-in on its own.
         if (chatGptListening && state.ai.ready && !aiWasReady) await goReady();
+        else if (chatGptListening && state.chatGptError && !chatGptFailed) {
+          chatGptFailed = true;
+          renderAi();
+          fail(new Error(state.chatGptError));
+        }
       } else if (current === "step-signin") {
         renderSignIn();
         if (state.cloud.status === "connected" && previous !== "connected") afterSignIn();
@@ -855,6 +871,7 @@
     $("ai-back").addEventListener("click", () => show("step-route"));
     $("ai-skip").addEventListener("click", () => goReady());
     $("chatgpt-reopen").addEventListener("click", () => busy($("chatgpt-reopen"), "Opening…", async () => {
+      clearError();
       chatGptListening = await bridge.startChatGpt();
       renderAi();
     }));
@@ -869,9 +886,10 @@
     $("ai-continue").addEventListener("click", () => {
       // A double-click on Continue in step 1 lands here; don't let it open sign-in.
       if (Date.now() - shownAt < 500) return;
-      const starting = ai === "chatgpt" && !chatGptStarted;
+      const starting = ai === "chatgpt" && (!chatGptStarted || chatGptFailed);
       busy($("ai-continue"), starting ? "Opening…" : ai === "custom" ? "Checking…" : "Saving…", async () => {
         if (starting) {
+          clearError();
           chatGptListening = await bridge.startChatGpt();
           chatGptStarted = true;
           renderAi();

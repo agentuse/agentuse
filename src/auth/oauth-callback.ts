@@ -5,9 +5,9 @@ export const CHATGPT_CALLBACK_PORT = 1455;
 const CALLBACK_PATH = '/auth/callback';
 const LISTEN_MS = 10 * 60_000;
 
-export interface OAuthCallbackListener {
-  /** The full callback address, once the browser arrives with the matching state. */
-  address: Promise<string>;
+export interface OAuthCallbackListener<T> {
+  /** What `finish` made of the callback address, once the browser came back with the matching state. */
+  done: Promise<T>;
   close(): void;
 }
 
@@ -26,14 +26,17 @@ function listen(server: Server, host: string, port: number): Promise<boolean> {
  * address from an error page. Undefined when the port is taken (Codex signing
  * in at the same moment): the caller falls back to pasting the address.
  * Only the sign-in this app started counts: the state must match.
+ * The browser hears "Signed in" only after `finish` (saving the login) worked.
  */
-export async function listenForOAuthCallback(
+export async function listenForOAuthCallback<T>(
   expectedState: string,
+  finish: (address: string) => Promise<T>,
   port = CHATGPT_CALLBACK_PORT,
   timeoutMs = LISTEN_MS,
-): Promise<OAuthCallbackListener | undefined> {
-  let settle!: { resolve: (address: string) => void; reject: (error: Error) => void };
-  const address = new Promise<string>((resolve, reject) => { settle = { resolve, reject }; });
+): Promise<OAuthCallbackListener<T> | undefined> {
+  let settle!: { resolve: (value: T) => void; reject: (error: Error) => void };
+  const done = new Promise<T>((resolve, reject) => { settle = { resolve, reject }; });
+  let arrived = false;
   const handler = (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => {
     const url = new URL(req.url ?? '/', `http://localhost:${port}`);
     if (url.pathname !== CALLBACK_PATH) {
@@ -45,15 +48,27 @@ export async function listenForOAuthCallback(
         .end(page('This sign-in is out of date', 'Go back to AgentUse and start signing in again.'));
       return;
     }
+    if (arrived) {
+      res.writeHead(409, { 'Content-Type': 'text/html; charset=utf-8' })
+        .end(page('Already received', 'Go back to AgentUse.'));
+      return;
+    }
+    arrived = true;
     const error = url.searchParams.get('error_description') ?? url.searchParams.get('error');
     if (error) {
-      res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' }).end(page('ChatGPT sign-in stopped', 'Go back to AgentUse and try again.'));
+      res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' }).end(page('ChatGPT sign-in stopped', 'Go back to AgentUse and press Try again.'));
       settle.reject(new Error(`ChatGPT sign-in stopped: ${error}`));
       return;
     }
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-      .end(page('Signed in to ChatGPT', 'You can close this tab and go back to AgentUse.'));
-    settle.resolve(url.toString());
+    finish(url.toString()).then((value) => {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        .end(page('Signed in to ChatGPT', 'You can close this tab and go back to AgentUse.'));
+      settle.resolve(value);
+    }, (cause: unknown) => {
+      res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' })
+        .end(page("ChatGPT sign-in didn't finish", 'Go back to AgentUse and press Try again.'));
+      settle.reject(cause instanceof Error ? cause : new Error(String(cause)));
+    });
   };
 
   const ipv4 = createServer(handler);
@@ -69,6 +84,6 @@ export async function listenForOAuthCallback(
     ipv4.close();
     if (hasIpv6) ipv6.close();
   };
-  address.then(close, close);
-  return { address, close };
+  done.then(close, close);
+  return { done, close };
 }

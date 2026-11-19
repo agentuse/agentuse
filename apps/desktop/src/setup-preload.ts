@@ -7,6 +7,8 @@ export interface DesktopSetupState {
   ai: SetupAiState;
   /** AgentUse Cloud is in preview: off unless turned on, so setup stays on this Mac. */
   cloudEnabled: boolean;
+  /** Why the ChatGPT sign-in the app was waiting for stopped. */
+  chatGptError?: string;
   /** Where to type the code by hand, e.g. cloud.agentuse.io/connect. */
   connectPage: string;
 }

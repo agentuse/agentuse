@@ -193,9 +193,7 @@ export async function startProviderOAuth(
 export async function listenForProviderOAuth(flowId: string): Promise<{ done: Promise<ProviderSetupSnapshot>; close(): void } | undefined> {
   const attempt = oauthAttempts.get(flowId);
   if (!attempt) throw new Error('OAuth flow expired or was not found');
-  const listener = await listenForOAuthCallback(attempt.pkce.verifier);
-  if (!listener) return undefined;
-  return { done: listener.address.then((address) => completeProviderOAuth(flowId, address)), close: listener.close };
+  return listenForOAuthCallback(attempt.pkce.verifier, (address) => completeProviderOAuth(flowId, address));
 }
 
 function oauthCode(value: unknown): string {

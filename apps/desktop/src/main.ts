@@ -122,6 +122,7 @@ let desktopSetupStartedAt: number | undefined;
 // The ChatGPT sign-in the first-run window started, finished by pasting the address.
 let setupChatGptFlow: string | undefined;
 let setupChatGptListener: { close(): void } | undefined;
+let setupChatGptError: string | undefined;
 /** The project the first-run window picked, and whether setup added it (so a switch can take it back). */
 let setupProject: { id: string; added: boolean } | undefined;
 let dashboardShortcut: string | null = DEFAULT_DASHBOARD_SHORTCUT;
@@ -207,6 +208,7 @@ async function desktopSetupState() {
       ...(view.error && { error: view.error }),
     }),
     ai: setupAiState(await getProviderStatus()),
+    ...(setupChatGptError && { chatGptError: setupChatGptError }),
     cloudEnabled: cloudEnabled(),
     connectPage: `${cloudUrl().replace(/^https?:\/\//u, "")}/connect`,
   };
@@ -366,6 +368,7 @@ function registerDesktopIpc(): void {
   ipcMain.handle("agentuse:setup:start-chatgpt", async (event) => {
     assertSetupSender(event);
     setupChatGptListener?.close();
+    setupChatGptError = undefined;
     const flow = await startProviderOAuth("openai");
     setupChatGptFlow = flow.flowId;
     const listener = await listenForProviderOAuth(flow.flowId);
@@ -376,6 +379,10 @@ function registerDesktopIpc(): void {
         notifySetupWindow();
       }, (error: unknown) => {
         console.warn("ChatGPT sign-in did not finish:", error);
+        if (setupChatGptFlow !== flow.flowId) return;
+        setupChatGptFlow = undefined;
+        setupChatGptError = `${error instanceof Error ? error.message : String(error)}. Press Try again.`;
+        notifySetupWindow();
       });
     }
     await shell.openExternal(flow.authorizationUrl);
