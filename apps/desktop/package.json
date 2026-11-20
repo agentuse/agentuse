@@ -72,7 +72,14 @@
       "!node_modules/agentuse/static/**",
       "!node_modules/agentuse/templates/**",
       "!node_modules/agentuse/tests/**",
-      "!node_modules/agentuse/.github/**"
+      "!node_modules/agentuse/.github/**",
+      "!node_modules/agentuse/tmp/**",
+      "!node_modules/agentuse/.claude/**",
+      "!node_modules/agentuse/.agentuse/**",
+      "!node_modules/agentuse/design-qa/**",
+      "!node_modules/agentuse/design-qa.md",
+      "!node_modules/agentuse/AGENTS.md",
+      "!node_modules/agentuse/CLAUDE.md"
     ],
     "extraFiles": [
       {
