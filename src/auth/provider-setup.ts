@@ -501,6 +501,8 @@ export async function prepareCustomProvider(input: CustomProviderInput): Promise
   name: string;
   provider: { baseURL: string; key?: string; api: CustomProviderApi; compatibility?: CustomProviderAuth['compatibility'] };
   models: string[];
+  /** The model that answered the check. */
+  answered: string;
 }> {
   if (typeof input.name !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(input.name)) {
     throw new Error('Provider name must start with a letter and contain only letters, numbers, hyphens, and underscores');
@@ -535,16 +537,20 @@ export async function prepareCustomProvider(input: CustomProviderInput): Promise
     throw new Error('Could not find any models at this endpoint. Enter at least one model ID manually.');
   }
   // An endpoint may list models it cannot serve, so probe a few before giving up.
-  const probes = customProviderProbes(manualModels, models).slice(0, CUSTOM_PROVIDER_PROBE_LIMIT);
+  // A model the user named has to answer itself: another model answering says nothing about it.
+  const probes = (manualModels.length > 0 ? manualModels : customProviderProbes([], models)).slice(0, CUSTOM_PROVIDER_PROBE_LIMIT);
   const failures: unknown[] = [];
   for (const model of probes) {
     try {
       if (requestedApi === 'auto') provider.api = await detectCustomProviderApi(provider, model);
       else await checkCustomProviderCompletion(provider, model);
-      return { name, provider, models };
+      return { name, provider, models, answered: model };
     } catch (error) {
       failures.push(error);
     }
+  }
+  if (failures.length === 1 && manualModels.length > 0) {
+    throw new Error(`The model "${probes[0]}" did not answer at this address. Check its name. ${toErrorMessage(failures[0])}`);
   }
   if (failures.length === 1) throw failures[0];
   throw new Error([
@@ -569,7 +575,10 @@ export async function configureCustomProvider(input: CustomProviderInput): Promi
   models: string[];
   snapshot: ProviderSetupSnapshot;
 }> {
-  const { name, provider, models } = await prepareCustomProvider(input);
+  const prepared = await prepareCustomProvider(input);
+  const { name, provider } = prepared;
+  // The model that answered goes first: setup and agents take the first one as the default.
+  const models = [prepared.answered, ...prepared.models.filter((model) => model !== prepared.answered)];
   await AuthStorage.setCustomProvider(name, {
     ...provider,
     models,

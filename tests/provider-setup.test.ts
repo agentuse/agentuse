@@ -237,6 +237,32 @@ describe('Dashboard provider setup service', () => {
     })).resolves.toMatchObject({ api: 'openai-completions', models: ['retired-model', 'live-model'] });
   });
 
+  it('rejects a named model that does not answer, even when another model there would', async () => {
+    fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input).endsWith('/models')) return new Response(JSON.stringify({ data: [{ id: 'live-model' }] }), { status: 200 });
+      const { model } = JSON.parse(String(init?.body));
+      return model === 'live-model'
+        ? new Response(JSON.stringify({ choices: [] }), { status: 200 })
+        : new Response(JSON.stringify({ error: { message: 'model not found' } }), { status: 404 });
+    });
+    await expect(checkCustomProvider({ name: 'proxy', baseURL: 'http://localhost:8080/v1', models: ['mistyped-model'] }))
+      .rejects.toThrow('The model "mistyped-model" did not answer at this address');
+  });
+
+  it('saves the model that answered first, so the default is one that runs', async () => {
+    fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input).endsWith('/models')) return new Response(JSON.stringify({ data: [{ id: 'retired-model' }, { id: 'live-model' }] }), { status: 200 });
+      const { model } = JSON.parse(String(init?.body));
+      return model === 'live-model'
+        ? new Response(JSON.stringify({ choices: [] }), { status: 200 })
+        : new Response(JSON.stringify({ error: { message: 'model not found' } }), { status: 404 });
+    });
+    const saved = await configureCustomProvider({ name: 'proxy', baseURL: 'http://localhost:8080/v1' });
+    expect(saved.models).toEqual(['live-model', 'retired-model']);
+    expect(saved.snapshot.status.customProviders[0]?.models).toEqual(['live-model', 'retired-model']);
+    await removeCustomProvider('proxy');
+  });
+
   it('names each probed model when none can be served', async () => {
     fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input) => String(input).endsWith('/models')
       ? new Response(JSON.stringify({ data: [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }] }), { status: 200 })
