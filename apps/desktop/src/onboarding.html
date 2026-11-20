@@ -227,6 +227,8 @@
     .model-size { font-size: 13px; color: var(--muted); }
     .form-grid { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
     .form-grid input { width: 100%; min-width: 0; }
+    /* An empty error line takes no room; the buttons are pinned, so nothing jumps when one appears. */
+    .error:empty { display: none; }
     .form-grid label, .detail > label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; }
     .optional { font-weight: 400; color: var(--muted); }
     .apps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
@@ -346,7 +348,7 @@
             <input class="mono" type="text" id="custom-url" placeholder="http://localhost:1234/v1" autocomplete="off" spellcheck="false">
           </label>
           <label>Model
-            <input class="mono" type="text" id="custom-model" placeholder="qwen2.5-coder-14b" autocomplete="off" spellcheck="false">
+            <input class="mono" type="text" id="custom-model" placeholder="qwen2.5-coder" autocomplete="off" spellcheck="false">
           </label>
           <label>
             <span>API key <span class="optional">(optional)</span></span>
