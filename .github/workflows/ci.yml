@@ -39,3 +39,4 @@ jobs:
       - uses: ./.github/actions/setup
       - run: npm install -g agent-browser
       - run: bun run test:e2e
+      - run: bun run test:cards
