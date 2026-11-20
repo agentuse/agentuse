@@ -83,7 +83,7 @@ Report three different things, and keep them apart:
 - concerns: things that look off but did not stop the flow (wording, layout, a slow step). These do not fail the test.
 - blocked: the test itself could not run (VM unreachable, upload failed, build failed). Say what stopped it. A flow you could not reach is blocked, not passed.
 
-The overall verdict is fail if any flow failed, otherwise blocked if any flow was blocked, otherwise pass. Before you finish, stop anything you started on the VM host, as the skill says.`;
+The overall verdict is fail if any flow failed, otherwise blocked if any flow was blocked, otherwise pass. Before you finish, stop anything you started on the VM host, as the skill says. Do not post a handback card or submit an artifact: whoever ran this test reports its result.`;
 }
 
 const asked = process.argv.slice(2);
