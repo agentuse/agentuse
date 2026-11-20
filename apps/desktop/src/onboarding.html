@@ -106,7 +106,8 @@
     .points strong { font-size: 15px; color: var(--fg); }
     .welcome-actions { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: auto; }
     .welcome-actions .primary { width: 100%; }
-    .actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: auto; }
+    /* Stays in view when a step grows past the window, so Back and Continue are never scrolled away. */
+    .actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: auto -40px -24px; padding: 12px 40px 24px; position: sticky; bottom: 0; background: var(--bg); }
     .actions .end { display: flex; align-items: center; gap: 12px; margin-left: auto; }
     .primary, .secondary {
       min-height: 44px;
@@ -190,7 +191,7 @@
     .card button { margin-top: auto; }
     .footer-hint { margin: 0; font-size: 13px; color: var(--muted); }
     .agents { display: flex; flex-direction: column; gap: 8px; }
-    .agents-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+    .agents-head { display: flex; flex-direction: column; gap: 2px; }
     .agent-list { margin: 0; padding: 0; list-style: none; border: 1px solid var(--line); border-radius: 12px; }
     .agent-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; }
     .agent-list li + li { border-top: 1px solid var(--line); }
@@ -605,7 +606,7 @@
             });
             action.append(button);
           }
-          list.append(appCard(agent.name, agent.state === "set-up" && agent.command ? `Or type ${agent.command}, then pick automate from the menu` : agent.where, action, !installed));
+          list.append(appCard(agent.name, agent.state === "set-up" && agent.command ? `You can also type ${agent.command}, then pick automate` : agent.where, action, !installed));
         }
         for (const chat of state.cloudEnabled ? CHAT_APPS : []) {
           const action = el("span", undefined, "app-action");
