@@ -149,7 +149,8 @@
     .hint { margin: 0; font-size: 14px; color: var(--muted); }
     .error { margin: 0; min-height: 20px; color: var(--red); font-size: 13.5px; user-select: text; }
     .lock { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
-    .detail { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+    /* The scroll margin clears the pinned Back and Continue row when a form is brought into view. */
+    .detail { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); scroll-margin-bottom: 96px; }
     .detail p { margin: 0; font-size: 14px; color: var(--muted); }
     .row { display: flex; gap: 8px; }
     input[type="text"], input[type="password"], select {
@@ -714,6 +715,8 @@
       $("local-detail").hidden = !listing;
       $("custom-detail").hidden = ai !== "custom" || !customForm;
       if (listing) renderLocalModels();
+      // A form that opens below the window's edge is scrolled up into view; one already in view stays put.
+      document.querySelector("#step-ai .detail:not([hidden])")?.scrollIntoView({ block: "nearest" });
       const waiting = ai === "chatgpt" && chatGptStarted && chatGptListening && !chatGptFailed;
       $("ai-continue").textContent = ai !== "chatgpt" ? "Continue"
         : !chatGptStarted ? "Sign in with ChatGPT"
