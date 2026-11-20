@@ -905,7 +905,7 @@ export default function Agents({ project }: { project?: string } = {}) {
                 <button type="button" class="empty-action" onClick={() => updateFilter('')}>Clear filter</button>
               )}
               {!filterActive && !projectMissing && (
-                <a class="empty-action" href="/">Connect a coding agent</a>
+                <a class="empty-action" href="/">How to make one</a>
               )}
             </div>}</div>
           : [...byProject.entries()].map(([projectId, agents]) => (
