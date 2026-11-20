@@ -23,6 +23,8 @@ export interface ServiceProgram {
   node: string;
   /** Absolute, stable path to the agentuse CLI entry. */
   cli: string;
+  /** Extra environment the service needs to start as a CLI. */
+  env?: Record<string, string>;
 }
 
 export type ServiceProgramResult =
@@ -37,6 +39,7 @@ export function serviceProgram(
   scriptPath = process.argv[1] ?? '',
   nodePath = process.execPath,
   platform: NodeJS.Platform = osPlatform(),
+  onElectron = Boolean(process.versions.electron),
 ): ServiceProgramResult {
   if (platform !== 'darwin' && platform !== 'linux') return { ok: false, reason: 'unsupported' };
   if (isNpxRun(scriptPath)) return { ok: false, reason: 'npx' };
@@ -46,7 +49,9 @@ export function serviceProgram(
   } catch {
     // Keep the given path; the plist or unit then shows what was used.
   }
-  return { ok: true, program: { node: nodePath, cli } };
+  // The CLI inside the Mac app runs on the app's own binary. Without this the
+  // service would open the app's window instead of starting serve.
+  return { ok: true, program: { node: nodePath, cli, ...(onElectron && { env: { ELECTRON_RUN_AS_NODE: '1' } }) } };
 }
 
 const xml = (value: string): string =>
@@ -56,6 +61,8 @@ export const serviceLogPath = (): string => path.join(getGlobalConfigDir(), 'log
 
 export function launchdPlist(program: ServiceProgram, envPath: string, logPath = serviceLogPath()): string {
   const args = [program.node, program.cli, 'serve'].map((arg) => `    <string>${xml(arg)}</string>`).join('\n');
+  const env = Object.entries({ PATH: envPath, ...program.env })
+    .map(([name, value]) => `    <key>${xml(name)}</key>\n    <string>${xml(value)}</string>`).join('\n');
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -68,8 +75,7 @@ ${args}
   </array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>PATH</key>
-    <string>${xml(envPath)}</string>
+${env}
   </dict>
   <key>RunAtLoad</key>
   <true/>
@@ -97,7 +103,7 @@ Wants=network-online.target
 
 [Service]
 ExecStart=${[program.node, program.cli, 'serve'].map(unitArg).join(' ')}
-Environment=${unitArg(`PATH=${envPath}`)}
+${Object.entries({ PATH: envPath, ...program.env }).map(([name, value]) => `Environment=${unitArg(`${name}=${value}`)}`).join('\n')}
 Restart=on-failure
 RestartSec=5
 

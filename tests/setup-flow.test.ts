@@ -96,6 +96,16 @@ describe('background service', () => {
     expect(plist).toContain('/usr/bin:/a&amp;b');
   });
 
+  it('starts as a CLI, not as the app, when the CLI runs inside the Mac app', () => {
+    const inApp = serviceProgram('/no/such/cli.js', '/Applications/AgentUse.app/Contents/MacOS/AgentUse', 'darwin', true);
+    expect(inApp).toEqual({ ok: true, program: { node: '/Applications/AgentUse.app/Contents/MacOS/AgentUse', cli: '/no/such/cli.js', env: { ELECTRON_RUN_AS_NODE: '1' } } });
+    if (!inApp.ok) throw new Error('unreachable');
+    const plist = launchdPlist(inApp.program, '/usr/bin', '/tmp/serve.log');
+    expect(plist).toContain('<key>PATH</key>\n    <string>/usr/bin</string>\n    <key>ELECTRON_RUN_AS_NODE</key>\n    <string>1</string>');
+    expect(launchdPlist(program, '/usr/bin', '/tmp/serve.log')).not.toContain('ELECTRON_RUN_AS_NODE');
+    expect(systemdUnit(inApp.program, '/usr/bin')).toContain('Environment="PATH=/usr/bin"\nEnvironment="ELECTRON_RUN_AS_NODE=1"');
+  });
+
   it('writes a systemd user unit with quoted arguments', () => {
     const unit = systemdUnit({ node: '/opt/my node/node', cli: '/x/cli.js' }, '/usr/bin');
     expect(unit).toContain('ExecStart="/opt/my node/node" "/x/cli.js" "serve"');
