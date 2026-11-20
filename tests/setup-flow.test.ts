@@ -67,6 +67,7 @@ describe('ready screen', () => {
     const text = strip(readyText('local', undefined, 'http://127.0.0.1:14000', 'agentuse', true));
     expect(text).toContain('http://127.0.0.1:14000');
     expect(text).toContain('claude mcp add --transport http agentuse http://127.0.0.1:14000/mcp');
+    expect(text).toContain('codex mcp add agentuse --url http://127.0.0.1:14000/mcp');
     expect(text).toContain('agentuse connect');
   });
 

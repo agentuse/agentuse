@@ -208,6 +208,48 @@ async function pasteKey(): Promise<void> {
   await saveProviderApiKey(provider, key);
 }
 
+/** Both ways to add an AI after setup: a sign-in or key, and an address for everything else. */
+function addAiLater(): string {
+  return `Run \`${cliCommand()} provider login\`, or \`${cliCommand()} provider add <name> --url <address>\` for Ollama, LM Studio or another address.`;
+}
+
+/** Asks for an address, checks that a model there answers, and saves it. Returns what was saved, or nothing if the check failed. */
+async function otherProvider(): Promise<string | undefined> {
+  const p = await loadPrompts();
+  const { configureCustomProvider } = await import('../auth/provider-setup');
+  const { customProviderName } = await import('../auth/custom-provider-name');
+  const baseURL = await ask(p.text({
+    message: 'Address',
+    placeholder: 'http://localhost:11434/v1',
+    validate: (value) => {
+      try {
+        customProviderName(value ?? '');
+        return undefined;
+      } catch (error) {
+        return (error as Error).message;
+      }
+    },
+  }));
+  const model = await ask(p.text({ message: 'Model', placeholder: 'leave empty to use the ones it lists' }));
+  const key = await ask(p.password({ message: 'API key, if it needs one (Enter to skip)' }));
+  const spin = p.spinner();
+  spin.start('Checking that the model answers');
+  try {
+    const saved = await configureCustomProvider({
+      name: customProviderName(baseURL),
+      baseURL: baseURL.trim(),
+      ...(key?.trim() && { key: key.trim() }),
+      ...(model?.trim() && { models: [model.trim()] }),
+    });
+    spin.stop('The model answered');
+    return `${saved.models[0]} on ${saved.name}`;
+  } catch (error) {
+    spin.stop('Could not reach a model there', 1);
+    p.log.warn((error as Error).message);
+    return undefined;
+  }
+}
+
 async function pickAi(interactive: boolean, yes: boolean | undefined, browser: boolean): Promise<void> {
   const p = await loadPrompts();
   const { getProviderStatus } = await import('../auth/provider-status');
@@ -219,11 +261,11 @@ async function pickAi(interactive: boolean, yes: boolean | undefined, browser: b
   if (!interactive || yes) {
     p.log.warn(step.kind === 'save-env'
       ? `${step.envVar} is only set in this shell, so the background service won't see it. Run \`${cliCommand()} provider login\`.`
-      : `No AI is set up to run agents yet. Run \`${cliCommand()} provider login\`.`);
+      : `No AI is set up to run agents yet. ${addAiLater()}`);
     return;
   }
 
-  type Choice = 'save-env' | 'chatgpt' | 'key' | 'skip';
+  type Choice = 'save-env' | 'chatgpt' | 'key' | 'other' | 'skip';
   const options: { value: Choice; label: string; hint?: string }[] = [];
   if (step.kind === 'save-env') {
     options.push({ value: 'save-env', label: `Use ${step.envVar} from your shell`, hint: 'found · saved so agents can use it in the background' });
@@ -231,13 +273,20 @@ async function pickAi(interactive: boolean, yes: boolean | undefined, browser: b
   options.push(
     { value: 'chatgpt', label: 'Sign in with ChatGPT', hint: 'uses your ChatGPT plan' },
     { value: 'key', label: 'Paste an API key', hint: 'Anthropic, OpenAI, OpenRouter' },
+    { value: 'other', label: 'Use a model on this computer or another provider', hint: 'Ollama, LM Studio, or any OpenAI-compatible address' },
     { value: 'skip', label: 'Skip for now' },
   );
   p.log.message(chalk.dim('Your assistant writes agents. This AI runs them here, on schedule.\nKeys stay on this computer. A Claude Pro or Max plan can\'t run agents here.'));
   const choice = await ask(p.select<Choice>({ message: 'Which AI runs your agents?', options, initialValue: options[0]!.value }));
 
   if (choice === 'skip') {
-    p.log.warn(`No AI yet. Agents can't run until you add one: \`${cliCommand()} provider login\`.`);
+    p.log.warn(`No AI yet. Agents can't run until you add one. ${addAiLater()}`);
+    return;
+  }
+  if (choice === 'other') {
+    const added = await otherProvider();
+    if (added) p.log.success(`AI  ${chalk.dim(added)}`);
+    else p.log.warn(`No AI yet. ${addAiLater()}`);
     return;
   }
   if (choice === 'save-env' && step.kind === 'save-env') {
@@ -332,6 +381,7 @@ export function readyText(
     '',
     `Dashboard     ${chalk.cyan(base)}`,
     `Claude Code   ${chalk.cyan(`claude mcp add --transport http agentuse ${base}/mcp`)}`,
+    `Codex         ${chalk.cyan(`codex mcp add agentuse --url ${base}/mcp`)}`,
     ...(offerCloud ? ['', chalk.dim(`Use it from Claude or ChatGPT later: ${command} connect`)] : []),
   ].join('\n');
 }
