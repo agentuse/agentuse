@@ -1,6 +1,6 @@
 import { hasExecutable } from '../plugin/executable-discovery';
 import { recordProviderHealth } from './provider-health';
-import { oauthHealthSubject } from './provider-health-identity';
+import { apiHealthSubject, oauthHealthSubject } from './provider-health-identity';
 import { randomUUID } from 'crypto';
 import { CodexAuth } from './codex.js';
 import { listenForOAuthCallback } from './oauth-callback.js';
@@ -574,6 +574,9 @@ export async function configureCustomProvider(input: CustomProviderInput): Promi
     ...provider,
     models,
   });
+  // prepareCustomProvider just got an answer from a model here, so status says so.
+  const resolved = resolveCustomProvider(name, provider);
+  await recordProviderHealth(apiHealthSubject(name, resolved.apiKey, resolved.baseURL), 'verified', Date.now(), { force: true });
   return { name, provider, models, snapshot: await providerSetupSnapshot() };
 }
 

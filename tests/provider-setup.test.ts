@@ -147,6 +147,8 @@ describe('Dashboard provider setup service', () => {
       : new Response(JSON.stringify({ choices: [] }), { status: 200 }));
     const payload = await saveCustomProvider({ name: 'Local_Models', baseURL: 'http://localhost:11434/v1/', key: 'local-secret', models: ['qwen3'] });
     expect(payload.status.customProviders).toMatchObject([{ id: 'local_models', baseURL: 'http://localhost:11434/v1', hasApiKey: true, api: 'openai-completions', models: ['qwen3'] }]);
+    // Saving only happens after a model answered, so the row must not read as unchecked.
+    expect(payload.status.customProviders[0]?.health?.state).toBe('verified');
     expect(JSON.stringify(payload)).not.toContain('local-secret');
 
     await expect(saveCustomProvider({ name: 'openai', baseURL: 'http://localhost:11434/v1', models: ['qwen3'] })).rejects.toThrow('reserved');
