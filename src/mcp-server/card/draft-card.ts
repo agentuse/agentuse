@@ -83,7 +83,7 @@ function render(app: App, data: DraftResult): void {
     };
     actions.append(turnOn, details);
   } else {
-    const reasons = data.needs_review_because?.length ? data.needs_review_because.join(', ') : 'it needs a closer look';
+    const reasons = data.needs_review_because?.length ? data.needs_review_because.join(', ') : 'needs a closer look';
     status.textContent = `Needs your review, because it ${reasons}.`;
     const review = el('button', 'primary', 'Review and apply');
     review.type = 'button';
