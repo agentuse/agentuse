@@ -35,17 +35,17 @@ function render(): void {
   root.replaceChildren(el('h1', selected ? 'Destination selected' : 'Choose where to work'));
   if (selected && data.selection) {
     const facts = el('dl', undefined, 'selection');
-    facts.append(el('dt', 'Computer'), el('dd', data.selection.machine.name), el('dt', 'Project'), el('dd', data.selection.project.name));
+    facts.append(el('dt', 'Machine'), el('dd', data.selection.machine.name), el('dt', 'Project'), el('dd', data.selection.project.name));
     const change = el('button', 'Change machine/project');
     change.type = 'button';
     change.onclick = () => { void refresh(); };
     root.append(facts, change);
   } else {
-    root.append(el('p', 'Choose the connected computer and project for this request.'));
+    root.append(el('p', 'Choose the connected machine and project for this request.'));
     const fields = el('div', undefined, 'fields');
     const machine = el('select');
     machine.id = 'machine';
-    const placeholder = el('option', 'Choose a computer');
+    const placeholder = el('option', 'Choose a machine');
     placeholder.value = '';
     machine.append(placeholder);
     for (const item of data.machines) {
@@ -70,7 +70,7 @@ function render(): void {
     project.value = projectId;
     project.disabled = loading || !machineId || !data.projects?.length;
     project.onchange = () => { projectId = project.value; statusText = ''; render(); };
-    for (const [label, input] of [['Computer', machine], ['Project', project]] as const) {
+    for (const [label, input] of [['Machine', machine], ['Project', project]] as const) {
       const field = el('div', undefined, 'field');
       const caption = el('label', label);
       caption.htmlFor = input.id;
@@ -88,7 +88,7 @@ function render(): void {
     refreshButton.onclick = () => { void refresh(); };
     actions.append(next, refreshButton);
     if (data.setup_url && !data.machines.some(item => item.online)) {
-      const setup = el('button', 'Connect a computer');
+      const setup = el('button', 'Connect a machine');
       setup.type = 'button';
       setup.onclick = () => { if (data.setup_url) void app.openLink({ url: data.setup_url }); };
       actions.append(setup);
@@ -117,7 +117,7 @@ async function loadProjects(id: string): Promise<void> {
     data = result;
     const projects = result.projects ?? [];
     projectId = projects.length === 1 ? projects[0]!.id : '';
-    statusText = projects.length ? '' : 'No projects on this computer. Add a project in AgentUse, then refresh.';
+    statusText = projects.length ? '' : 'No projects on this machine. Add a project in AgentUse, then refresh.';
   } catch (error) {
     if (current !== revision) return;
     statusText = (error as Error).message;
@@ -137,7 +137,7 @@ function receive(result: ContextPickerResult): void {
   if (!selected && !machineId && !result.error) {
     const online = result.machines.filter(item => item.online);
     if (online.length === 1) { void loadProjects(online[0]!.id); return; }
-    if (!online.length) statusText = 'No computers online. Connect a computer, then refresh.';
+    if (!online.length) statusText = 'No machines online. Connect a machine, then refresh.';
   }
   render();
 }
@@ -149,7 +149,7 @@ async function refresh(): Promise<void> {
   machineId = '';
   projectId = '';
   data = { machines: data.machines };
-  statusText = 'Refreshing connected computers…';
+  statusText = 'Refreshing connected machines…';
   render();
   try {
     const result = await request({});
@@ -209,6 +209,6 @@ void app.connect().then(() => {
   const theme = app.getHostContext()?.theme;
   if (theme) document.documentElement.dataset.theme = theme;
 }).catch(() => {
-  statusText = 'Could not connect to the app. Ask your assistant to choose a computer and project with choose_context.';
+  statusText = 'Could not connect to the app. Ask your assistant to choose a machine and project with choose_context.';
   render();
 });

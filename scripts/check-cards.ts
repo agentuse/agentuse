@@ -141,7 +141,7 @@ const cases: Case[] = [
     card: 'context-picker',
     toolResult: { machines: picker.machines },
     tools: { choose_context: { ...picker } },
-    first: { shows: ['Choose where to work', 'Old Mini (offline)', 'Revenue Operations'], buttons: ['Continue (off)', 'Refresh'], asked: called('choose_context') },
+    first: { shows: ['Choose where to work', 'Old Mini (offline)', 'Revenue Operations'], hides: ['computer'], buttons: ['Continue (off)', 'Refresh'], asked: called('choose_context') },
     then: [
       { choose: { field: 'project', value: 'p1' }, buttons: ['Continue', 'Refresh'] },
       { press: 'Continue', shows: ['Destination selected', 'Studio', 'my-agents'], asked: (log) => log.some((entry) => 'context' in entry) && sentMessage(log) },
@@ -151,7 +151,7 @@ const cases: Case[] = [
     name: 'picker nothing online',
     card: 'context-picker',
     toolResult: { machines: [{ id: 'm2', name: 'Old Mini', online: false }], setup_url: links.connect_url },
-    first: { shows: ['Old Mini (offline)'], buttons: ['Continue (off)', 'Refresh', 'Connect a computer'] },
+    first: { shows: ['Old Mini (offline)'], buttons: ['Continue (off)', 'Refresh', 'Connect a machine'] },
   },
   {
     name: 'draft that a yes can turn on',
