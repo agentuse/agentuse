@@ -220,7 +220,7 @@ async function otherProvider(): Promise<string | undefined> {
   const { customProviderName } = await import('../auth/custom-provider-name');
   const baseURL = await ask(p.text({
     message: 'Address',
-    placeholder: 'http://localhost:11434/v1',
+    placeholder: 'http://localhost:1234/v1',
     validate: (value) => {
       try {
         customProviderName(value ?? '');

@@ -914,7 +914,7 @@ function createWindow(): BrowserWindow {
 function createSetupWindow(): BrowserWindow {
   const browser = new BrowserWindow({
     width: 720,
-    height: 660,
+    height: 720,
     minWidth: 640,
     minHeight: 560,
     title: "Welcome to AgentUse",
