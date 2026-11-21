@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-21
+
 ### Added
 
 - **A simpler setup, from the Mac app or the terminal.**
