@@ -35,6 +35,10 @@
 - **Agents write shorter approval requests.** They're asked to write like a team member asking a busy manager: what you need to decide, without their working notes.
 - **AgentUse uses much less CPU watching big projects.** Looking for new agent files now skips folders git ignores. On one machine a full sweep went from about 36 seconds of CPU to under half a second.
 
+### Fixed
+
+- **Manager agents with a work list use it again when Code Mode is on.** Their instructions told them to call the store tools directly, which Code Mode hides, so marking work done failed. They now go through `code_exec`, and each store example takes one input object.
+
 ### Removed
 
 - **The dashboard's guided onboarding.** Find work worth automating, guided creation and Find agent ideas are gone: agents come from your coding agent or AI assistant. `/onboarding` opens Home. Join codes, `agentuse setup --join` and `agentuse://join` links are gone too.
